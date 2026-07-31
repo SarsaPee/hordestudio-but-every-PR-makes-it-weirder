@@ -329,12 +329,6 @@ When reporting an issue, include your operating system, browser, provider, model
 
 ---
 
-## License
-
-Add the project's chosen license before public distribution. Until a license is included, normal copyright restrictions apply.
-
----
-
 <div align="center">
 
 ## Launch your universe.
