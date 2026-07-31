@@ -1,0 +1,21 @@
+{
+  "spec": "chara_card_v2",
+  "spec_version": "2.0",
+  "data": {
+    "name": "Test V2 Bot",
+    "description": "A bot for testing V2 import.",
+    "personality": "Helpful and concise.",
+    "scenario": "In a testing lab.",
+    "first_mes": "Hello! I am a V2 test bot.",
+    "mes_example": "User: Hi\nBot: Hello!",
+    "system_prompt": "Always be helpful.",
+    "character_book": {
+      "entries": [
+        {
+          "keys": ["test", "keyword"],
+          "content": "This is a test lore entry."
+        }
+      ]
+    }
+  }
+}
