@@ -49,6 +49,24 @@ test('step inside and through the door use the same contextual resolver', () => 
     assert.equal(resolveMovement(movementWorld(), 'I go through the door').target?.id, 'library');
 });
 
+test('movement after a first-person action still updates the canonical room', () => {
+    const home = {
+        locations: [
+            { id: 'user_room', name: "User's Room", mapType: 'room',
+                exits: ['to Upstairs Hallway'] },
+            { id: 'upstairs_hall', name: 'Upstairs Hallway', mapType: 'room',
+                exits: ["to User's Room"] }
+        ]
+    };
+    const phrase = context.extractUserMovementTarget('i yawn and step out of the room');
+    assert.equal(phrase, 'out');
+    assert.equal(context.resolveWorldMovementTarget(home, 'user_room', phrase)?.id, 'upstairs_hall');
+
+    assert.equal(context.extractUserMovementTarget('I open the door, then walk into the hallway'), 'the hallway');
+    assert.equal(context.extractUserMovementTarget('I tell Emily to step out of the room'), '');
+    assert.equal(context.extractUserMovementTarget('I watch as Emily leaves the room'), '');
+});
+
 test('a generic building never guesses between two plausible doors', () => {
     assert.equal(resolveMovement(movementWorld(true), 'I enter the building').target, null);
 });
@@ -72,6 +90,26 @@ test('player outfit replacement, addition and removal preserve the right state',
     result = context.applyPlayerOutfitIntent(session, 'I change into a blue evening dress and silver shoes.');
     assert.equal(result.mode, 'replace');
     assert.match(session.outfit, /blue evening dress/i);
+});
+
+test('natural first-person outfit declarations update state without a model tool call', () => {
+    const exactReport = {
+        outfit: 'Standard attire.'
+    };
+    const result = context.applyPlayerOutfitIntent(
+        exactReport,
+        'I get up and stretch as i step out of the bed, my hair are shaggy, my morning erection is hard, im wearing a thin pair of boxer shorts and an old tshirt.'
+    );
+    assert.equal(result.mode, 'replace');
+    assert.equal(exactReport.outfit, 'thin pair of boxer shorts and an old tshirt');
+
+    const curly = { outfit: '' };
+    context.applyPlayerOutfitIntent(curly, 'I’m wearing a grey hoodie and jeans.');
+    assert.equal(curly.outfit, 'grey hoodie and jeans');
+
+    const haveOn = { outfit: '' };
+    context.applyPlayerOutfitIntent(haveOn, 'I have my work uniform on.');
+    assert.equal(haveOn.outfit, 'work uniform');
 });
 
 test('quoted clothing dialogue does not alter player state', () => {
