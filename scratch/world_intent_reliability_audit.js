@@ -49,6 +49,24 @@ test('step inside and through the door use the same contextual resolver', () => 
     assert.equal(resolveMovement(movementWorld(), 'I go through the door').target?.id, 'library');
 });
 
+test('movement after a first-person action still updates the canonical room', () => {
+    const home = {
+        locations: [
+            { id: 'user_room', name: "User's Room", mapType: 'room',
+                exits: ['to Upstairs Hallway'] },
+            { id: 'upstairs_hall', name: 'Upstairs Hallway', mapType: 'room',
+                exits: ["to User's Room"] }
+        ]
+    };
+    const phrase = context.extractUserMovementTarget('i yawn and step out of the room');
+    assert.equal(phrase, 'out');
+    assert.equal(context.resolveWorldMovementTarget(home, 'user_room', phrase)?.id, 'upstairs_hall');
+
+    assert.equal(context.extractUserMovementTarget('I open the door, then walk into the hallway'), 'the hallway');
+    assert.equal(context.extractUserMovementTarget('I tell Emily to step out of the room'), '');
+    assert.equal(context.extractUserMovementTarget('I watch as Emily leaves the room'), '');
+});
+
 test('a generic building never guesses between two plausible doors', () => {
     assert.equal(resolveMovement(movementWorld(true), 'I enter the building').target, null);
 });

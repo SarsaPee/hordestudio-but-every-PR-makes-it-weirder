@@ -16109,6 +16109,20 @@ function extractUserMovementTarget(userInput) {
         if (resolved) return resolved;
     }
 
+    // A first-person turn commonly begins with another action before moving:
+    // "I yawn and step out", "I open the door, then walk into the hall".
+    // The subject remains the player across that coordinated clause. Requiring
+    // locomotion to be the first verb made the narration move while canonical
+    // state stayed behind. Keep this actor-safe by requiring a coordinator
+    // immediately before the movement verb; "I tell Emily to step out" and
+    // "I watch as Emily leaves" therefore remain somebody else's movement.
+    const continuedActorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:i|we)\b[^.!?]{0,100}?(?:,\s*(?:and\s+|then\s+)?|\s+(?:and|then|so|before|after|as|while)\s+)(?:(?:i|we)\s+)?(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|moved?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|ma[dk]e\s+(?:my|our)\s+way)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/i;
+    const continuedMatch = text.match(continuedActorMovement);
+    if (continuedMatch) {
+        const resolved = resolveMatch(continuedMatch);
+        if (resolved) return resolved;
+    }
+
     // Bare commands are accepted only when the message is not quoted dialogue.
     // `"Go to the tower," I tell Rowan` must move Rowan, not the player.
     if (!/^["'“‘]/.test(original)) {
@@ -18491,6 +18505,11 @@ function trimOutfitPhrase(phrase) {
     for (const rawSegment of text.split(',')) {
         const segment = rawSegment.trim();
         if (!segment) break;
+        // Once at least one garment has been captured, a relative clause is
+        // narration about it, not another item: "the dress, which Maera left
+        // out". Keep "that black dress" valid when it is the actual first
+        // garment rather than treating every demonstrative as a clause.
+        if (kept.length && /^(?:which|who|that)\b/i.test(segment)) break;
         if (OUTFIT_CLAUSE_START.test(segment)) break;
         // Real outfits are often a coordinated list without commas ("a thin
         // pair of boxer shorts and an old tshirt"). Action/scene clauses have
