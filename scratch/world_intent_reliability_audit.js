@@ -74,6 +74,26 @@ test('player outfit replacement, addition and removal preserve the right state',
     assert.match(session.outfit, /blue evening dress/i);
 });
 
+test('natural first-person outfit declarations update state without a model tool call', () => {
+    const exactReport = {
+        outfit: 'Standard attire.'
+    };
+    const result = context.applyPlayerOutfitIntent(
+        exactReport,
+        'I get up and stretch as i step out of the bed, my hair are shaggy, my morning erection is hard, im wearing a thin pair of boxer shorts and an old tshirt.'
+    );
+    assert.equal(result.mode, 'replace');
+    assert.equal(exactReport.outfit, 'thin pair of boxer shorts and an old tshirt');
+
+    const curly = { outfit: '' };
+    context.applyPlayerOutfitIntent(curly, 'I’m wearing a grey hoodie and jeans.');
+    assert.equal(curly.outfit, 'grey hoodie and jeans');
+
+    const haveOn = { outfit: '' };
+    context.applyPlayerOutfitIntent(haveOn, 'I have my work uniform on.');
+    assert.equal(haveOn.outfit, 'work uniform');
+});
+
 test('quoted clothing dialogue does not alter player state', () => {
     assert.equal(context.detectPlayerOutfitIntent('"I put on the coat," she says.'), null);
 });

@@ -18492,7 +18492,12 @@ function trimOutfitPhrase(phrase) {
         const segment = rawSegment.trim();
         if (!segment) break;
         if (OUTFIT_CLAUSE_START.test(segment)) break;
-        if (segment.split(/\s+/).length > 6) break;   // too long to be a garment
+        // Real outfits are often a coordinated list without commas ("a thin
+        // pair of boxer shorts and an old tshirt"). Action/scene clauses have
+        // already been cut by OUTFIT_NEXT_ACTION and OUTFIT_CLAUSE_START, so a
+        // six-word ceiling discarded valid clothing far more often than it
+        // protected us. Keep the capture bounded, but allow a natural outfit.
+        if (segment.split(/\s+/).length > 14) break;
         kept.push(segment);
         if (kept.length >= 4) break;
     }
@@ -18525,7 +18530,13 @@ function detectPlayerOutfitIntent(input) {
     }
     const replacePatterns = [
         /\bI\b[^.!?]{0,25}\b(?:change|changed|slip|slipped|dress|dressed)\s+(?:in)?to\s+([^.!?;]{2,100})/i,
-        /\bI(?:'m| am)\s+(?:now\s+)?(?:wearing|dressed\s+in|clad\s+in)\s+([^.!?;]{2,100})/i,
+        // Treat explicit first-person clothing declarations as authoritative.
+        // Players routinely type contractions without apostrophes ("im wearing")
+        // or with a curly apostrophe; neither should require the model to repeat
+        // the same fact in a tool call before the HUD can reflect it.
+        /\bI(?:\s+am|['’]?m)\s+(?:now\s+)?(?:wearing|dressed\s+in|clad\s+in)\s+([^.!?;]{2,100})/i,
+        /\bI\s+have\s+([^.!?;]{2,100}?)\s+on\b/i,
+        /\bmy\s+(?:current\s+)?outfit\s+is\s+([^.!?;]{2,100})/i,
         /\bI\b[^.!?]{0,25}\b(?:swap|swapped)\s+(?:my\s+)?(?:outfit|clothes?)\s+(?:for|to)\s+([^.!?;]{2,100})/i
     ];
     for (const pattern of replacePatterns) {
