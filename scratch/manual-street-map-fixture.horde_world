@@ -1,0 +1,70 @@
+{
+  "id": "world_manual_street_fixture",
+  "name": "Manual Street Map Fixture",
+  "description": "Regression fixture for region, street, building, and room nesting.",
+  "locations": [
+    {
+      "id": "greenfield",
+      "name": "Greenfield",
+      "mapType": "region",
+      "description": "A quiet residential neighborhood.",
+      "exits": []
+    },
+    {
+      "id": "willowbrook",
+      "name": "Willowbrook Lane",
+      "mapType": "route",
+      "parentLocationId": "greenfield",
+      "region": "Greenfield",
+      "description": "A tree-lined residential street.",
+      "exits": ["to Smith House", "to Harris House"]
+    },
+    {
+      "id": "smith",
+      "name": "Smith House",
+      "mapType": "building",
+      "parentLocationId": "willowbrook",
+      "region": "Smith House",
+      "description": "The Smith family home.",
+      "exits": ["to Willowbrook Lane", "to Smith Bedroom", "to Smith Backyard"]
+    },
+    {
+      "id": "smith_bed",
+      "name": "Smith Bedroom",
+      "mapType": "room",
+      "parentLocationId": "smith",
+      "region": "Smith House",
+      "description": "A bedroom inside Smith House.",
+      "exits": ["to Smith House"]
+    },
+    {
+      "id": "smith_backyard",
+      "name": "Smith Backyard",
+      "mapType": "outdoor",
+      "parentLocationId": "smith",
+      "region": "Smith House",
+      "description": "A fenced yard attached to Smith House.",
+      "exits": ["to Smith House"]
+    },
+    {
+      "id": "harris",
+      "name": "Harris House",
+      "mapType": "building",
+      "parentLocationId": "willowbrook",
+      "region": "Harris House",
+      "description": "The Harris family home.",
+      "exits": ["to Willowbrook Lane", "to Emily's Room"]
+    },
+    {
+      "id": "emily_room",
+      "name": "Emily's Room",
+      "mapType": "room",
+      "parentLocationId": "harris",
+      "region": "Harris House",
+      "description": "Emily's bedroom inside Harris House.",
+      "exits": ["to Harris House"]
+    }
+  ],
+  "entities": [],
+  "lorebook": []
+}

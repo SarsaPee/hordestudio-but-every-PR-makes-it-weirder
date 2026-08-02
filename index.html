@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=20260730-image-display-v39">
+    <link rel="stylesheet" href="style.css?v=20260802-gameplay-overhaul-v42">
 </head>
 <body>
 <div id="app">
@@ -140,13 +140,13 @@
                             <div class="chat-model-badge" id="chat-char-model">No Model</div>
                         </div>
                     </div>
-                    <div class="chat-toolbar">
+                    <div class="chat-toolbar chat-toolbar-wrap">
                         <div class="session-selector-wrap">
                             <select id="session-select" class="tool-select"></select>
                             <button class="tool-btn" id="new-session-btn" title="New Session">➕ New</button>
                             <button class="tool-btn" id="rename-session-btn" title="Rename Session">✏️ Rename</button>
                         </div>
-                        <div style="width: 1px; height: 20px; background: var(--border2); margin: 0 4px;"></div>
+                        <div class="toolbar-divider"></div>
                         <button class="tool-btn" id="roll-dice-btn" title="Roll 1d6">🎲 Roll</button>
                         <button class="tool-btn" id="continue-chat-btn" title="AI continues without your input">⏩ Continue</button>
                         <button class="tool-btn" id="impersonate-btn" title="AI drafts your next message">✍️ Write for me</button>
@@ -204,16 +204,16 @@
                                 <div id="world-model-name" class="chat-model-badge" style="opacity:0.7;">Model: None</div>
                             </div>
                         </div>
-                        <div class="chat-toolbar" style="flex-direction: column; align-items: flex-end; gap: 8px; padding-top: 4px;">
+                        <div class="chat-toolbar world-toolbar">
                             <!-- Row 1: Primary Controls & Context -->
-                            <div style="display: flex; gap: 8px; align-items: center;">
+                            <div class="world-toolbar-row world-toolbar-primary">
                                 <div class="session-selector-wrap">
                                     <select id="world-session-select" class="tool-select"></select>
                                     <button class="tool-btn" id="world-new-session-btn" title="New World Session">➕ New</button>
                                     <button class="tool-btn" id="world-rename-session-btn" title="Rename Current Session">✏️ Rename</button>
                                     <button class="tool-btn tool-btn-danger" id="world-del-session-btn" title="Delete Current Session">🗑️</button>
                                 </div>
-                                <div style="width: 1px; height: 16px; background: var(--border2); margin: 0 4px;"></div>
+                                <div class="toolbar-divider"></div>
                                 
                                 <div id="world-context-meter-wrap" style="display:flex; align-items:center; gap:8px; background:var(--surface2); padding:4px 10px; border-radius:10px; border:1px solid var(--border);">
                                     <span style="font-size:0.6rem; color:var(--text-3); font-weight:800;">CTX</span>
@@ -224,22 +224,26 @@
                                 </div>
                                 
                                 <button class="tool-btn" id="world-studio-btn" title="Open World in Studio">⚙️ Studio</button>
+                                <button class="tool-btn world-hud-toggle" id="world-hud-toggle" title="Show or hide world status">◫ HUD</button>
                                 <button class="tool-btn tool-btn-danger" id="world-exit-btn" title="Exit World">✕ Exit</button>
                             </div>
 
                             <!-- Row 2: Secondary / Narrative Tools -->
-                            <div style="display: flex; gap: 6px; align-items: center;">
+                            <div class="world-toolbar-row world-toolbar-secondary">
                                 <button class="tool-btn" id="world-roll-btn" title="Roll Dice">🎲 Roll</button>
                                 <button class="tool-btn" id="world-continue-btn" title="DM continues without your input">⏩ Continue</button>
                                 <button class="tool-btn" id="world-session-zero-btn" title="Open session identity and story preferences">🎬 Session Setup</button>
-                                <button class="tool-btn" id="world-toggle-headers-btn" title="Toggle Message Metadata">👁️ Metadata</button>
-                                <button class="tool-btn" id="world-system-btn" title="Inject System Instruction">🖥️ System</button>
                                 <button class="tool-btn" id="world-map-btn" title="Toggle Map View">🗺️ Map</button>
-                                <button class="tool-btn" id="world-summarize-btn" title="Summarize World History">✨ Summarize</button>
-                                <button class="tool-btn" id="world-open-vector-memory-btn" title="Inspect World Vector Memories">🧠 Memory</button>
                                 <button class="tool-btn" id="world-reroll-btn" title="Reroll last DM response">🔄 Reroll</button>
-                                <button class="tool-btn" id="world-download-btn" title="Download Transcript">💾 Save</button>
-                                <button class="tool-btn tool-btn-danger" id="world-clear-btn" title="Clear World History">🗑️ Clear</button>
+                                <button class="tool-btn world-more-btn" id="world-more-btn" type="button" aria-expanded="false">••• More</button>
+                                <div class="world-more-actions" id="world-more-actions">
+                                    <button class="tool-btn" id="world-toggle-headers-btn" title="Toggle Message Metadata">👁️ Metadata</button>
+                                    <button class="tool-btn" id="world-system-btn" title="Inject System Instruction">🖥️ System</button>
+                                    <button class="tool-btn" id="world-summarize-btn" title="Summarize World History">✨ Summarize</button>
+                                    <button class="tool-btn" id="world-open-vector-memory-btn" title="Inspect World Vector Memories">🧠 Memory</button>
+                                    <button class="tool-btn" id="world-download-btn" title="Download Transcript">💾 Save</button>
+                                    <button class="tool-btn tool-btn-danger" id="world-clear-btn" title="Clear World History">🗑️ Clear</button>
+                                </div>
                             </div>
                         </div>
                     </header>
@@ -371,6 +375,29 @@
         </section>
 
         <!-- ────────── WORLD MAP MODAL ────────── -->
+        <div id="world-check-modal" class="modal-bg hidden">
+            <div class="modal world-check-modal" role="dialog" aria-labelledby="world-check-title">
+                <div class="modal-hd">
+                    <div><span class="vh-eyebrow">AUTHORITATIVE CHECK</span><h2 id="world-check-title">Roll the dice</h2></div>
+                    <button class="tool-btn" id="close-world-check-modal" type="button">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div id="world-check-pending-note" class="world-check-pending-note hidden"></div>
+                    <div class="world-check-form-grid">
+                        <div class="world-check-label-field"><label class="form-label">What is being attempted?</label><input id="world-check-label" class="form-input" maxlength="120" placeholder="Sneak past the guards"></div>
+                        <div><label class="form-label">Relevant stat</label><select id="world-check-stat" class="form-select"><option value="">No stat</option></select></div>
+                        <div><label class="form-label">Difficulty</label><input id="world-check-difficulty" type="number" class="form-input" min="2" max="30"></div>
+                        <div><label class="form-label">Situation modifier</label><input id="world-check-modifier" type="number" class="form-input" min="-5" max="5" value="0"></div>
+                    </div>
+                    <div id="world-check-preview" class="world-check-preview">Choose the check, then roll. The result becomes canonical before the DM narrates it.</div>
+                </div>
+                <div class="modal-ft">
+                    <button class="btn btn-ghost" id="cancel-world-check">Cancel</button>
+                    <button class="btn btn-primary" id="confirm-world-check">🎲 Roll &amp; continue</button>
+                </div>
+            </div>
+        </div>
+
         <div id="map-modal" class="modal-bg hidden">
             <div class="modal modal-xl world-map-modal">
                 <div class="modal-hd">
@@ -434,6 +461,7 @@
                                             <span>Click to upload</span>
                                         </div>
                                     </div>
+                                    <p class="form-hint image-upload-hint">JPEG, PNG or WebP up to 25 MB. Automatically resized and normalized for the world card and play background.</p>
                                 </div>
                                 <div class="form-col form-col-grow">
                                     <label class="form-label">World Name</label>
@@ -603,20 +631,54 @@
                             </div>
 
                             <!-- World Agent: off-screen simulation with genuine invention -->
+                            <div class="form-section world-kernel-card">
+                                <div class="world-kernel-card-head">
+                                    <div>
+                                        <span class="vh-eyebrow">WORLD KERNEL</span>
+                                        <h3>One-call scene compiler</h3>
+                                    </div>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-kernel-enabled" checked> Enabled</label>
+                                </div>
+                                <p class="form-hint">Compiles a compact, authoritative scene packet instead of resending the whole world. Mechanics still resolve locally; model repairs and semantic-memory calls happen only when their selected policy requires them.</p>
+                                <div class="world-kernel-config-grid">
+                                    <div>
+                                        <label class="form-label">Scene location budget</label>
+                                        <input id="w-kernel-location-limit" type="number" class="form-input" min="8" max="80" value="24">
+                                        <p class="form-hint">Current, adjacent and explicitly referenced places are always prioritized.</p>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Memory retrieval</label>
+                                        <select id="w-kernel-memory-mode" class="form-select">
+                                            <option value="ledger">Canonical ledger · no embedding calls</option>
+                                            <option value="semantic">Semantic archives · extra background calls</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Missing receipt policy</label>
+                                        <select id="w-kernel-repair-mode" class="form-select">
+                                            <option value="adaptive">Adaptive · repair only likely canon changes</option>
+                                            <option value="always">Always repair</option>
+                                            <option value="never">Never repair · freeze uncertain state</option>
+                                        </select>
+                                    </div>
+                                    <label class="vh-test-check world-kernel-compact-toggle"><input type="checkbox" id="w-kernel-compact-tools" checked> Compact tool contract</label>
+                                </div>
+                            </div>
+
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
                                 <label class="form-label" style="display:flex; align-items:center; gap:8px; margin:0;">
                                     <input type="checkbox" id="w-agent-enabled">
-                                    🌍 World Agent (costs extra API calls)
+                                    🌍 Background World Agent
                                 </label>
                                 <div class="form-hint" style="margin-top: 8px;">
-                                    The turn-by-turn simulation keeps the world consistent but cannot invent. When enabled, one extra
-                                    call every so often lets the world surprise you: debts called in, routines changed, consequences
-                                    landing off-screen. It shapes the world only — it can never move, harm, or reward your character.
+                                    The local kernel advances schedules and known consequences without an API call. This optional agent
+                                    runs after a response only when future momentum is running low, inventing grounded off-screen developments.
+                                    It shapes the world only — it can never move, harm, or reward your character.
                                 </div>
                                 <div style="display:flex; gap:12px; margin-top:12px;">
                                     <div style="flex:0 0 140px;">
-                                        <label class="form-label" style="font-size:0.75rem;">Every N turns</label>
-                                        <input type="number" id="w-agent-interval" class="form-input" min="4" max="200" step="1" value="12">
+                                        <label class="form-label" style="font-size:0.75rem;">Earliest interval</label>
+                                        <input type="number" id="w-agent-interval" class="form-input" min="8" max="200" step="1" value="24">
                                     </div>
                                     <div style="flex:1;">
                                         <label class="form-label" style="font-size:0.75rem;">Model <span class="form-hint">(blank = this world's DM model; a cheaper one is fine)</span></label>
@@ -864,6 +926,23 @@
                                 </div>
                                 <div class="form-hint" style="margin-top:10px;">Core movement, memory, world canon, and NPC identity always remain active. Every mechanical module above is optional and can be changed later without deleting its saved data.</div>
                             </div>
+
+                            <div class="form-section" data-rule-detail="checks">
+                                <div class="world-kernel-card-head">
+                                    <div>
+                                        <span class="vh-eyebrow">CHECK ENGINE</span>
+                                        <h3>Dice &amp; resolution</h3>
+                                    </div>
+                                </div>
+                                <p class="form-hint">The DM may request a canonical check and stop before the outcome. In player-roll mode the Roll button resolves that exact check, persists it across rerolls, and asks the DM to narrate the authoritative result.</p>
+                                <div class="world-kernel-config-grid">
+                                    <div><label class="form-label">Resolution</label><select id="w-dice-resolution" class="form-select"><option value="automatic">Engine rolls automatically</option><option value="player">Player rolls requested checks</option></select></div>
+                                    <div><label class="form-label">Base die</label><select id="w-dice-sides" class="form-select"><option value="20">d20</option><option value="12">d12</option><option value="10">d10</option><option value="6">d6</option></select></div>
+                                    <div><label class="form-label">Stat modifier</label><select id="w-dice-modifier-mode" class="form-select"><option value="per_stat">Per-stat mechanics (recommended)</option><option value="direct">Legacy direct value · clamped ±10</option><option value="ability">Legacy ability formula</option><option value="none">No stat modifier</option></select></div>
+                                    <div><label class="form-label">Default difficulty</label><input id="w-dice-default-difficulty" type="number" class="form-input" min="2" max="30" value="11"></div>
+                                    <label class="vh-test-check"><input id="w-dice-criticals" type="checkbox" checked> Natural minimum/maximum are critical</label>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -1067,6 +1146,7 @@
                                             <span>Click to upload</span>
                                         </div>
                                     </div>
+                                    <p class="form-hint image-upload-hint">JPEG, PNG or WebP up to 25 MB. Automatically resized, rotated and normalized.</p>
                                 </div>
                                 <div class="form-col form-col-grow">
                                     <label class="form-label">Name</label>
@@ -1554,7 +1634,7 @@
                                         <input type="file" id="cs-photo-input" hidden accept="image/*">
                                         <div class="img-preview vh-image-preview" id="cs-photo-preview"><span>Upload profile photo</span></div>
                                     </div>
-                                    <p class="form-hint">Used in the library and chat. It is never sent to the image provider.</p>
+                                    <p class="form-hint">Used in the library and chat. It is never sent to the image provider. Upload any browser-readable image up to 25 MB; it is automatically resized and normalized to JPEG.</p>
                                 </div>
                                 <div class="vh-image-card">
                                     <div class="vh-image-card-head">
@@ -1567,7 +1647,7 @@
                                         <input type="file" id="cs-reference-input" hidden accept="image/*">
                                         <div class="img-preview vh-image-preview" id="cs-reference-preview"><span>Upload identity reference</span></div>
                                     </div>
-                                    <p class="form-hint">Sent using the selected provider’s supported reference-image format when this human generates a photo. Keep it clear and identity-focused.</p>
+                                    <p class="form-hint">Sent using the selected provider’s supported reference-image format when this human generates a photo. Upload any browser-readable image up to 25 MB; it is automatically resized and normalized. JPEG, PNG and WebP are safest; HEIC depends on browser support.</p>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -3448,7 +3528,8 @@
     </div>
 </div>
 
+<script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
-<script src="app.js?v=20260730-image-display-v39"></script>
+<script src="app.js?v=20260802-gameplay-overhaul-v42"></script>
 </body>
 </html>

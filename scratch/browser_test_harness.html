@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Horde Studio — Node test harness (browser shim)</title>
+<style>body{font:13px/1.5 Menlo,monospace;background:#111;color:#ddd;padding:16px}
+.suite{margin-bottom:14px;border-left:3px solid #444;padding-left:10px}
+.pass{color:#7c7}.fail{color:#f77}.hdr{color:#7af;font-weight:bold}</style>
+</head>
+<body>
+<h2>Horde Studio test suites (Node-shim harness)</h2>
+<div id="out"></div>
+<script>
+window.__RESULTS = { done: false, suites: {} };
+const outEl = document.getElementById('out');
+
+// ---------- assert shim ----------
+function fmt(v){ try { return JSON.stringify(v); } catch(e){ return String(v); } }
+function isObj(v){ return v !== null && typeof v === 'object'; }
+function deepEq(a, b, strict){
+    if (strict ? Object.is(a,b) || a===b : a==b && typeof a === typeof b) return true;
+    if (!strict && a == b && (!isObj(a) && !isObj(b))) return true;
+    if (typeof a === 'number' && typeof b === 'number' && isNaN(a) && isNaN(b)) return true;
+    if (!isObj(a) || !isObj(b)) return strict ? false : a == b;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    if (a instanceof Date || b instanceof Date) {
+        return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+    }
+    const ta = Object.prototype.toString.call(a), tb = Object.prototype.toString.call(b);
+    if (ta !== tb) return false;
+    if (ta === '[object Map]') {
+        if (a.size !== b.size) return false;
+        for (const [k,v] of a) { if (!b.has(k) || !deepEq(v, b.get(k), strict)) return false; }
+        return true;
+    }
+    if (ta === '[object Set]') {
+        if (a.size !== b.size) return false;
+        for (const v of a) { if (![...b].some(x => deepEq(v, x, strict))) return false; }
+        return true;
+    }
+    const ka = Object.keys(a), kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) { if (!(k in b) || !deepEq(a[k], b[k], strict)) return false; }
+    return true;
+}
+function AssertionError(msg){ const e = new Error(msg); e.name = 'AssertionError'; return e; }
+function makeAssert(){
+    const assert = function(value, message){ if (!value) throw AssertionError(message || `Expected truthy, got ${fmt(value)}`); };
+    assert.ok = assert;
+    assert.equal = (a,b,m)=>{ if (!(a==b || deepEq(a,b,false))) throw AssertionError(m || `equal: ${fmt(a)} != ${fmt(b)}`); };
+    assert.strictEqual = (a,b,m)=>{ if (!(a===b || (typeof a==='number'&&typeof b==='number'&&isNaN(a)&&isNaN(b)))) throw AssertionError(m || `strictEqual: ${fmt(a)} !== ${fmt(b)}`); };
+    assert.notStrictEqual = (a,b,m)=>{ if (a===b) throw AssertionError(m || `notStrictEqual: both ${fmt(a)}`); };
+    assert.deepEqual = (a,b,m)=>{ if (!deepEq(a,b,false)) throw AssertionError(m || `deepEqual mismatch: ${fmt(a)} vs ${fmt(b)}`); };
+    assert.deepStrictEqual = (a,b,m)=>{ if (!deepEq(a,b,true)) throw AssertionError(m || `deepStrictEqual mismatch: ${fmt(a)} vs ${fmt(b)}`); };
+    assert.throws = (fn, matcher, m)=>{
+        let threw = false, err;
+        try { fn(); } catch(e){ threw = true; err = e; }
+        if (!threw) throw AssertionError(m || 'Expected function to throw');
+        if (matcher instanceof RegExp && !matcher.test(String(err && err.message))) {
+            throw AssertionError(m || `Thrown message ${fmt(err.message)} does not match ${matcher}`);
+        }
+    };
+    assert.doesNotThrow = (fn, m)=>{
+        try { fn(); }
+        catch(e){ throw AssertionError(m || `Expected no throw, got: ${e && e.message}`); }
+    };
+    assert.fail = (m)=>{ throw AssertionError(m || 'assert.fail'); };
+    return assert;
+}
+const assertShim = makeAssert();
+
+// ---------- path shim ----------
+const pathShim = {
+    join(...parts){
+        const segs = parts.join('/').split('/');
+        const out = [];
+        for (const s of segs){
+            if (s === '' || s === '.') continue;
+            if (s === '..') out.pop(); else out.push(s);
+        }
+        return '/' + out.join('/');
+    },
+    resolve(...parts){ return pathShim.join(...parts); },
+    basename(p){ return String(p).split('/').filter(Boolean).pop() || ''; }
+};
+
+// ---------- fs shim (backed by prefetched files) ----------
+const FILES = {};   // basename -> text
+const fsShim = {
+    readFileSync(p){
+        const base = pathShim.basename(p);
+        if (!(base in FILES)) throw new Error(`fs shim: file not preloaded: ${p}`);
+        return FILES[base];
+    }
+};
+
+// ---------- vm shim (with()-scoped, Node-vm-like semantics) ----------
+// The context object shadows globals (so `document`/`state` stubs win), function
+// declarations are exported back onto the context, and closures capture the
+// with()-scope so later `context.x = ...` assignments are visible to them.
+const vmShim = {
+    createContext(context){ return context; },
+    runInContext(__vmCode, __vmCtx){
+        const fnNames = [...__vmCode.matchAll(/^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1]);
+        const varNames = [...__vmCode.matchAll(/^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/gm)].map(m => m[1]);
+        const names = [...new Set([...fnNames, ...varNames])];
+        const epilogue = ';\n' + names.map(n =>
+            `try{ if (typeof ${n} !== 'undefined') __vmExports[${JSON.stringify(n)}] = ${n}; }catch(__e){}`
+        ).join('\n');
+        const __vmExports = {};
+        const result = (function(__vmCtx, __vmExports, __vmSrc){
+            with (__vmCtx) {
+                return eval(__vmSrc);
+            }
+        }).call(__vmCtx, __vmCtx, __vmExports, __vmCode + epilogue);
+        for (const k of Object.keys(__vmExports)){
+            if (!(k in __vmCtx)) __vmCtx[k] = __vmExports[k];
+            else if (typeof __vmExports[k] === 'function') __vmCtx[k] = __vmExports[k];
+        }
+        return result;
+    },
+    runInNewContext(code, context){
+        context = context || {};
+        return vmShim.runInContext(code, context);
+    }
+};
+
+// ---------- require / process / module ----------
+// Local modules (./app_source.js) are evaluated as CommonJS and cached, so the
+// suites can share one source-extraction toolkit instead of each carrying a
+// copy. They are preloaded into FILES alongside app.js.
+const LOCAL_MODULES = {};
+function makeRequire(){
+    return function require(name){
+        switch (name){
+            case 'assert': case 'node:assert': case 'assert/strict': case 'node:assert/strict':
+                return assertShim;
+            case 'fs': case 'node:fs': return fsShim;
+            case 'path': case 'node:path': return pathShim;
+            case 'vm': case 'node:vm': return vmShim;
+            case 'perf_hooks': case 'node:perf_hooks': return { performance: window.performance };
+        }
+        if (name.startsWith('./') || name.startsWith('../')){
+            const base = pathShim.basename(name);
+            if (LOCAL_MODULES[base]) return LOCAL_MODULES[base].exports;
+            if (!(base in FILES)) throw new Error(`require shim: local module not preloaded: ${name}`);
+            const mod = { exports: {} };
+            LOCAL_MODULES[base] = mod;      // cache first, so a cycle resolves
+            const fn = new Function('require','__dirname','__filename','module','exports','console',
+                FILES[base] + '\n//# sourceURL=' + base);
+            fn(makeRequire(), '/project/scratch', '/project/scratch/' + base, mod, mod.exports, console);
+            return mod.exports;
+        }
+        throw new Error(`require shim: unknown module ${name}`);
+    };
+}
+function ProcessExit(code){ const e = new Error(`process.exit(${code})`); e.__exit = code; return e; }
+
+// ---------- runner ----------
+async function main(){
+    const sourceFiles = ['app.js','index.html','style.css','presets.js'];
+    for (const f of sourceFiles){
+        FILES[f] = await (await fetch('../' + f + '?t=' + Date.now(), {cache: 'no-store'})).text();
+    }
+    // Shared suite modules live beside the suites, not above them.
+    for (const f of ['app_source.js']){
+        FILES[f] = await (await fetch(f + '?t=' + Date.now(), {cache: 'no-store'})).text();
+    }
+    const suites = [
+        'extractor_audit.js',
+        'engine_audit.js',
+        'living_world_stress_test.js',
+        'quest_engine_stress_test.js',
+        'rules_engine_stress_test.js',
+        'world_map_stress_test.js',
+        'movement_ledger_stress_test.js',
+        'movement_hierarchy_audit.js',
+        'living_world_audit.js',
+        'inline_state_rescue_audit.js',
+        'tool_contract_audit.js',
+        'narrated_presence_audit.js',
+        'world_systems_audit.js',
+        'calibration_audit.js',
+        'shop_audit.js',
+        'faction_audit.js',
+        'society_audit.js',
+        'authored_world_audit.js',
+        'companion_audit.js'
+    ];
+    // Prefetch every suite up front, so a suite that inspects another suite's
+    // source (extractor_audit) can read it through the fs shim.
+    const SUITE_SRC = {};
+    for (const suite of suites){
+        SUITE_SRC[suite] = await (await fetch(suite + '?t=' + Date.now(), {cache: 'no-store'})).text();
+        FILES[suite] = SUITE_SRC[suite];
+    }
+    for (const suite of suites){
+        const div = document.createElement('div');
+        div.className = 'suite';
+        div.innerHTML = `<div class="hdr">${suite}</div>`;
+        outEl.appendChild(div);
+        const lines = [];
+        const log = (cls, ...args) => {
+            const text = args.map(a => typeof a === 'string' ? a : fmt(a)).join(' ');
+            lines.push(text);
+            const p = document.createElement('div');
+            p.className = cls;
+            p.textContent = text;
+            div.appendChild(p);
+        };
+        const consoleShim = {
+            log: (...a) => log('pass', ...a),
+            error: (...a) => log('fail', ...a),
+            warn: (...a) => log('fail', ...a),
+            info: (...a) => log('pass', ...a)
+        };
+        const processShim = { exit(code){ throw ProcessExit(code); }, argv: [], env: {} };
+        let status = 'pass', error = null;
+        const src = SUITE_SRC[suite];
+        const t0 = performance.now();
+        try {
+            const fn = new Function('require','__dirname','__filename','process','module','exports','console',
+                src + '\n//# sourceURL=' + suite);
+            fn(makeRequire(), '/project/scratch', '/project/scratch/' + suite,
+               processShim, {exports:{}}, {}, consoleShim);
+        } catch(e){
+            if (e && e.__exit !== undefined){
+                status = e.__exit === 0 ? 'pass' : 'fail';
+                error = `exited with code ${e.__exit}`;
+            } else {
+                status = 'error';
+                error = (e && (e.stack || e.message)) || String(e);
+            }
+            log('fail', `[harness] ${error}`);
+        }
+        const ms = Math.round(performance.now() - t0);
+        window.__RESULTS.suites[suite] = { status, ms, error, lines };
+        log(status === 'pass' ? 'pass' : 'fail', `[harness] suite ${status} in ${ms}ms`);
+        await new Promise(r => setTimeout(r, 30));
+    }
+    window.__RESULTS.done = true;
+    const summary = document.createElement('div');
+    summary.className = 'hdr';
+    summary.textContent = 'ALL SUITES FINISHED';
+    outEl.appendChild(summary);
+}
+main().catch(e => {
+    window.__RESULTS.done = true;
+    window.__RESULTS.fatal = String(e && (e.stack || e.message) || e);
+    outEl.textContent = 'HARNESS FATAL: ' + window.__RESULTS.fatal;
+});
+</script>
+</body>
+</html>

@@ -1,3 +1,5 @@
+window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
+
 // --- Horde Persistence (IndexedDB) ---
 const DB_NAME = 'HordeStudioDB';
 const DB_VERSION = 1;
@@ -1933,28 +1935,24 @@ const STARTER_WORLDS = [
 /** 
  * Resize and compress images to save space and improve performance.
  */
-async function optimizeImage(base64Str, maxWidth = 1024, quality = 0.85) {
-    return new Promise((resolve) => {
+async function optimizeImage(base64Str, maxDimension = 1024, quality = 0.85) {
+    return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
-            // Already small enough on both axes? Return UNTOUCHED — re-encoding
-            // an already-small image is pure quality loss for zero size gain.
-            if (img.width <= maxWidth && base64Str.length < 300_000) {
-                return resolve(base64Str);
-            }
+            if (!img.naturalWidth || !img.naturalHeight) return reject(new Error('The image has no readable dimensions.'));
 
-            let width = img.width;
-            let height = img.height;
-            if (width > maxWidth) {
-                height = Math.round((height * maxWidth) / width);
-                width = maxWidth;
-            }
+            // Always draw through canvas, even for small files. Besides resizing,
+            // this normalizes orientation, colour profiles and odd encodings that
+            // browsers can preview as stripes/blank colours after persistence.
+            const scale = Math.min(1, maxDimension / img.naturalWidth, maxDimension / img.naturalHeight);
+            const width = Math.max(1, Math.round(img.naturalWidth * scale));
+            const height = Math.max(1, Math.round(img.naturalHeight * scale));
 
             // Iterative halving: a single drawImage from e.g. 2048→512 uses
             // low-quality sampling in most browsers → the "pixelated" artifact.
             // Stepping down by ≤2× per pass keeps it clean.
             let src = img;
-            let curW = img.width, curH = img.height;
+            let curW = img.naturalWidth, curH = img.naturalHeight;
             while (curW / 2 >= width) {
                 const step = document.createElement('canvas');
                 step.width = Math.round(curW / 2);
@@ -1970,14 +1968,33 @@ async function optimizeImage(base64Str, maxWidth = 1024, quality = 0.85) {
             canvas.width = width;
             canvas.height = height;
             const ctx = canvas.getContext('2d');
+            if (!ctx) return reject(new Error('This browser could not create an image canvas.'));
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(src, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', quality));
+            const normalized = canvas.toDataURL('image/jpeg', quality);
+            if (!normalized || normalized === 'data:,') return reject(new Error('The browser could not encode this image.'));
+            resolve(normalized);
         };
-        img.onerror = () => resolve(base64Str);
+        img.onerror = () => reject(new Error('This browser could not decode the image. Try JPEG, PNG or WebP; HEIC support depends on the browser.'));
         img.src = base64Str;
     });
+}
+
+function readImageFile(file) {
+    return new Promise((resolve, reject) => {
+        if (!file) return reject(new Error('No image was selected.'));
+        if (file.size > 25 * 1024 * 1024) return reject(new Error('The image is larger than 25 MB.'));
+        if (file.type && !file.type.startsWith('image/')) return reject(new Error('That file is not an image.'));
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('The browser could not read that file.'));
+        reader.readAsDataURL(file);
+    });
+}
+
+async function normalizeUploadedImage(file, maxDimension = 1024, quality = 0.85) {
+    return optimizeImage(await readImageFile(file), maxDimension, quality);
 }
 
 // --- DOM References ---
@@ -3578,25 +3595,26 @@ function setupStudioLogic() {
     profileInput.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            const optimized = await optimizeImage(event.target.result, 512, 0.8);
+        try {
+            const optimized = await normalizeUploadedImage(file, 512, 0.8);
             state.editingChar.avatar = optimized;
             profilePreview.innerHTML = `<img src="${optimized}">`;
-        };
-        reader.readAsDataURL(file);
+        } catch (error) {
+            showToast(`Image upload failed: ${error.message}`, 'error');
+        } finally { e.target.value = ''; }
     };
 
     const bgInput = document.getElementById('bg-input');
     bgInput.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            const optimized = await optimizeImage(event.target.result, 1280, 0.7);
+        try {
+            const optimized = await normalizeUploadedImage(file, 1280, 0.7);
             state.editingChar.bg = optimized;
-        };
-        reader.readAsDataURL(file);
+            showToast('Background image normalized and ready.', 'success');
+        } catch (error) {
+            showToast(`Image upload failed: ${error.message}`, 'error');
+        } finally { e.target.value = ''; }
     };
 
     document.getElementById('studio-name').oninput = updateTokenCount;
@@ -5282,6 +5300,21 @@ function stripSlop(text) {
     return t.replace(/ {2,}/g, ' ');
 }
 
+function parseLoreKeywords(value) {
+    const text = String(value || '').trim();
+    if (!text) return [];
+    const parts = /[,;\n|]/.test(text)
+        ? text.split(/[,;\n|]+/)
+        : (text.match(/"[^"]+"|'[^']+'|[^\s]+/g) || []);
+    return [...new Set(parts.map(item => item.replace(/^['"]|['"]$/g, '').trim().toLowerCase()).filter(Boolean))].slice(0, 80);
+}
+
+function loreKeywordMatches(haystack, keyword) {
+    const escaped = String(keyword || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!escaped) return false;
+    return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(haystack);
+}
+
 async function buildContext(config, targetChar, messages, userText) {
     const isRoom = !!state.activeRoomId;
     const activePersona = state.personas.find(p => p.id === state.activePersonaId);
@@ -5302,8 +5335,8 @@ async function buildContext(config, targetChar, messages, userText) {
         // Constant entries: always on (no keyword trigger needed)
         let triggered = entry.constant === true;
         if (!triggered) {
-            const keywords = entry.keyword.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-            triggered = keywords.some(k => loreScanText.includes(k));
+            const keywords = parseLoreKeywords(entry.keyword);
+            triggered = keywords.some(keyword => loreKeywordMatches(loreScanText, keyword));
         }
         if (!triggered) return false;
         // Probability gate (0-100): entry fires only some of the time
@@ -6173,6 +6206,95 @@ function buildWorldSceneFrame(world, sess) {
     };
 }
 
+function buildKernelLocationManifest(world, sess, userInput) {
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const locations = view.locations;
+    const kernel = normalizeWorldKernelConfig(world);
+    if (!kernel.enabled || locations.length <= kernel.sceneLocationLimit) {
+        return locations.map(location => `  - "${location.name}" → id: "${location.id}"`).join('\n');
+    }
+    const selected = new Map();
+    const add = (location, priority, reason) => {
+        if (!location?.id) return;
+        const prior = selected.get(location.id);
+        if (!prior || priority > prior.priority) selected.set(location.id, { location, priority, reason });
+    };
+    const current = getLocationRef(view, sess?.playerLocation);
+    add(current, 1000, 'current');
+
+    // Two-hop graph neighborhood: enough for sensible movement without shipping
+    // a 300-place town bible on a conversation inside one kitchen.
+    let frontier = current ? [current] : [];
+    const visited = new Set(frontier.map(location => location.id));
+    for (let depth = 1; depth <= 2; depth++) {
+        const next = [];
+        frontier.forEach(location => {
+            (location.exits || []).forEach(exit => {
+                const target = resolveWorldExitTarget(view, exit);
+                if (!target) return;
+                add(target, 850 - depth * 100, `hop_${depth}`);
+                if (!visited.has(target.id)) { visited.add(target.id); next.push(target); }
+            });
+            const parent = resolveWorldContainmentParent(view, location);
+            if (parent) add(parent, 820 - depth * 80, 'container');
+            locations.filter(candidate => candidate.parentLocationId === location.id)
+                .slice(0, 12).forEach(child => add(child, 760 - depth * 60, 'contained'));
+        });
+        frontier = next;
+    }
+
+    const input = normalizeLocationSearchText(userInput);
+    if (input) {
+        locations.forEach(location => {
+            const name = normalizeLocationSearchText(location.name);
+            const id = normalizeLocationSearchText(location.id);
+            if ((name.length > 2 && ` ${input} `.includes(` ${name} `))
+                || (id.length > 2 && ` ${input} `.includes(` ${id} `))) add(location, 980, 'player_reference');
+        });
+        const movementPhrase = extractUserMovementTarget(userInput);
+        const movementTarget = movementPhrase
+            ? resolveWorldMovementTarget(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, movementPhrase) : null;
+        if (movementTarget) add(movementTarget, 990, 'movement_target');
+    }
+
+    (sess?.quests || []).filter(quest => quest.status === 'active').slice(0, 12).forEach(quest => {
+        (quest.objectives || []).forEach(objective => {
+            const target = getLocationRef(view, objective.target || objective.locationId || objective.location_id);
+            if (target) add(target, 620, 'quest');
+        });
+    });
+    (sess?.scheduledEvents || []).filter(event => event.status === 'scheduled').slice(0, 10).forEach(event => {
+        const location = getLocationRef(view, event.locationId || event.location_id);
+        if (location) add(location, 590, 'scheduled');
+    });
+
+    const chosen = [...selected.values()]
+        .sort((a, b) => b.priority - a.priority || String(a.location.name).localeCompare(String(b.location.name)))
+        .slice(0, kernel.sceneLocationLimit);
+    const omitted = Math.max(0, locations.length - chosen.length);
+    return chosen.map(({ location, reason }) => `  - "${location.name}" → id: "${location.id}" [${reason}]`).join('\n')
+        + (omitted ? `\n  - … ${omitted} distant locations omitted by World Kernel; referenced places are loaded on demand.` : '');
+}
+
+function compactWorldToolContract(tools) {
+    const strip = value => {
+        if (Array.isArray(value)) return value.forEach(strip);
+        if (!isPlainObject(value)) return;
+        delete value.description;
+        delete value.examples;
+        delete value.default;
+        Object.values(value).forEach(strip);
+    };
+    tools.forEach(tool => {
+        const name = tool.function?.name;
+        strip(tool.function?.parameters);
+        if (tool.function) tool.function.description = name === 'commit_world_turn'
+            ? 'Commit the canonical ending scene and only completed durable changes.'
+            : 'Reveal one gated secret that the player actually investigated.';
+    });
+    return tools;
+}
+
 function normalizeWorldTurnReceipt(world, sess, rawReceipt) {
     const source = isPlainObject(rawReceipt?.receipt) ? rawReceipt.receipt
         : isPlainObject(rawReceipt) ? rawReceipt : {};
@@ -6310,7 +6432,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                     return;
                 }
                 const routeOrigin = alreadyCommitted ? playerStart : sess.playerLocation;
-                if (!proposedDestination.introduced && routeOrigin !== toLoc.id && !findWorldTravelPath(world, routeOrigin, toLoc.id)
+                if (!proposedDestination.introduced && routeOrigin !== toLoc.id && !findWorldTravelPath(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, routeOrigin, toLoc.id)
                     && movement.movement_mode !== 'teleport') {
                     reject(index, event, 'unreachable_player_destination', `${routeOrigin} → ${toLoc.id}`);
                     return;
@@ -6331,7 +6453,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                 return;
             }
             if (!proposedDestination.introduced && actualFrom && actualFrom.id !== toLoc.id
-                && !findWorldTravelPath(world, actualFrom.id, toLoc.id)
+                && !findWorldTravelPath(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, actualFrom.id, toLoc.id)
                 && movement.movement_mode !== 'teleport') {
                 reject(index, event, 'unreachable_npc_destination', `${actualFrom.id} → ${toLoc.id}`);
                 return;
@@ -6661,10 +6783,42 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
 
 function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 'tool_call') {
     const validation = validateWorldTurnReceipt(world, sess, rawReceipt, context);
+    const hasConditionalCheck = Array.isArray(validation.legacyArgs?.checks) && validation.legacyArgs.checks.length > 0;
+    if (hasConditionalCheck) {
+        // An unresolved check cannot coexist with already-completed event or
+        // entity assertions for its outcome. Preserve attempts as
+        // informational, reject completed mutations, and let the selected
+        // on_success/on_failure branch own the canonical consequence.
+        validation.acceptedEvents.forEach((event, index) => {
+            validation.rejectedEvents.push({
+                index,
+                type: event.type || 'event',
+                reason: 'completed_event_beside_unresolved_check',
+                actor_id: event.actor_id || '',
+                detail: 'Move the persistent consequence into checks[0].on_success or on_failure.'
+            });
+        });
+        validation.acceptedEvents = [];
+        if (validation.entityPatches.length) {
+            validation.rejectedEvents.push({
+                index: -1, type: 'entity_update', reason: 'entity_patch_beside_unresolved_check', actor_id: '',
+                detail: 'Ending entity changes must be supplied by the resolved outcome.'
+            });
+            validation.entityPatches = [];
+        }
+    }
     const previousLocation = sess.playerLocation;
     const actionResult = processStructuredActions(validation.legacyArgs);
     applyWorldEntityPatches(world, sess, validation.entityPatches);
     if (sess.playerLocation !== previousLocation) rollForScenePopulation(sess.playerLocation, false);
+    if (hasConditionalCheck && actionResult.checkResults.some(result => !result.pending && !result.reason)) {
+        const resolvedFrame = buildWorldSceneFrame(world, sess);
+        validation.sceneAssertion = {
+            player_location_id: resolvedFrame.player_location_id,
+            player_location_changed: resolvedFrame.player_location_id !== previousLocation,
+            present_character_ids: resolvedFrame.present_character_ids
+        };
+    }
     const audit = recordWorldTurnCommit(world, sess, validation, actionResult, source);
     return { validation, actionResult, audit };
 }
@@ -6771,8 +6925,48 @@ function appendWorldLedgerEntry(session, value) {
         const existing = String(session.ledger || '').trim();
         session.ledger = `${existing}${existing ? '\n' : ''}• ${entry}`;
         session.ledgerRevision = (Number(session.ledgerRevision) || 0) + 1;
+        compactWorldLedger(session);
     }
     return entry;
+}
+
+const WORLD_LEDGER_HOT_LINES = 100;
+const WORLD_LEDGER_HOT_CHARS = 24000;
+
+function compactWorldLedger(session) {
+    if (!session) return;
+    let lines = String(session.ledger || '').split('\n').map(line => line.trim()).filter(Boolean);
+    if (lines.length <= WORLD_LEDGER_HOT_LINES && lines.join('\n').length <= WORLD_LEDGER_HOT_CHARS) return;
+    if (!Array.isArray(session.ledgerArchive)) session.ledgerArchive = [];
+    let keepFrom = Math.max(0, lines.length - WORLD_LEDGER_HOT_LINES);
+    while (keepFrom < lines.length - 1 && lines.slice(keepFrom).join('\n').length > WORLD_LEDGER_HOT_CHARS) keepFrom++;
+    keepFrom = Math.max(1, keepFrom);
+    const archived = lines.slice(0, keepFrom);
+    session.ledger = lines.slice(keepFrom).join('\n');
+    session.ledgerArchive.push({
+        id: `ledger_archive_${Date.now()}_${session.ledgerArchive.length + 1}`,
+        fromTurn: Math.max(1, (Number(session.turnCount) || 1) - lines.length),
+        toTurn: Math.max(1, Number(session.turnCount) || 1),
+        lines: archived.slice(0, 120),
+        createdAt: Date.now()
+    });
+    session.ledgerArchive = session.ledgerArchive.slice(-120);
+}
+
+function retrieveWorldLedgerArchive(session, query, limit = 12) {
+    const archives = Array.isArray(session?.ledgerArchive) ? session.ledgerArchive : [];
+    if (!archives.length) return '';
+    const terms = [...new Set(String(query || '').toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [])].slice(0, 40);
+    const candidates = [];
+    archives.forEach((archive, archiveIndex) => {
+        (Array.isArray(archive.lines) ? archive.lines : []).forEach((line, lineIndex) => {
+            const lower = String(line || '').toLowerCase();
+            const matches = terms.reduce((score, term) => score + (lower.includes(term) ? 1 : 0), 0);
+            if (matches > 0) candidates.push({ line, matches, recency: archiveIndex * 1000 + lineIndex });
+        });
+    });
+    return candidates.sort((a, b) => b.matches - a.matches || b.recency - a.recency)
+        .slice(0, limit).map(item => item.line).join('\n').slice(0, 6000);
 }
 
 function syncCurrentWorldSnapshotLedger(session) {
@@ -6939,7 +7133,8 @@ function buildStructuredLedgerFallback(world, session, args = {}, questResult = 
  * flood the source-of-truth ledger.
  */
 function buildLocalNarrativeLedgerFallback(userInput, narrative) {
-    const source = stripWorldLedgerDirective(String(narrative || ''))
+    const strippedDirective = stripWorldLedgerDirective(String(narrative || ''));
+    const source = (typeof stripSpokenDialogue === 'function' ? stripSpokenDialogue(strippedDirective) : strippedDirective)
         .replace(/<details[\s\S]*?<\/details>/gi, ' ')
         .replace(/```[\s\S]*?```/g, ' ')
         .replace(/[*_~#>`]/g, ' ')
@@ -6956,7 +7151,7 @@ function buildLocalNarrativeLedgerFallback(userInput, narrative) {
         { score: 8, pattern: /\b(?:promised|swore|pledged|joined|betrayed|forgave|rescued|freed|arrested|banished)\b/i },
         { score: 7, pattern: /\b(?:became allies|became enemies|fell in love|ended their alliance|took control|declared war|made peace)\b/i }
     ];
-    const uncertain = /\b(?:almost|nearly|tries?|attempts?|might|may|could|would|perhaps|maybe|rumou?r|seems?|appears?|if|unless)\b/i;
+    const uncertain = /\b(?:almost|nearly|tries?|attempts?|might|may|could|would|perhaps|maybe|rumou?r|seems?|appears?|if|unless|claims?|claimed|says?|said|alleges?|alleged|lies?|lied|according to|supposedly|reportedly|believes?|suspects?)\b/i;
     const negativeOutcome = /\b(?:not|never|didn'?t|doesn'?t|hasn'?t|hadn'?t|failed to)\b.{0,45}\b(?:die|dead|killed|slain|destroyed|collapsed|obtained|acquired|received|lost|accepted|completed|discovered|revealed|promised|joined|betrayed|rescued|freed|arrested)\b/i;
     const candidates = (source.match(/[^.!?\n]+[.!?]?/g) || [])
         .map(sentence => sentence.trim())
@@ -6983,6 +7178,18 @@ function buildLocalNarrativeLedgerFallback(userInput, narrative) {
         .trim();
     if (!/[.!?]$/.test(entry)) entry += '.';
     return normalizeWorldLedgerEntry(entry);
+}
+
+function shouldRepairMissingWorldReceipt(world, command, userInput, narrative) {
+    const kernel = normalizeWorldKernelConfig(world);
+    if (!kernel.enabled) return true;
+    if (kernel.repairMode === 'always') return true;
+    if (kernel.repairMode === 'never') return false;
+    if (['init', 'look', 'continue'].includes(command)) return false;
+    const source = `${String(userInput || '')}\n${String(narrative || '')}`.slice(0, 9000);
+    // Repair only when prose plausibly established durable canon. Small talk,
+    // description and ordinary reactions safely receive a local no-op receipt.
+    return /\b(?:buy|bought|sell|sold|pay|paid|give|gave|take|took|steal|stole|drop|dropped|wear|wore|change[sd]? clothes|attack|hit|hurt|injur|heal|kill|died|dead|destroy|break|broke|discover|reveal|learned|promise|swore|join|betray|arrest|escape|quest|mission|objective|relationship|trust|reputation|faction|schedule|arriv|depart|enter|leave|left|travel|move[sd]?|time pass|waited|slept|day later|hour later|condition|poison|disease|fire|flood|collapse)\b/i.test(source);
 }
 
 /**
@@ -8246,16 +8453,16 @@ function setupPersonasLogic() {
         pInput.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = async (event) => {
-                const optimized = await optimizeImage(event.target.result, 256, 0.8);
+            try {
+                const optimized = await normalizeUploadedImage(file, 256, 0.8);
                 const p = state.personas.find(x => x.id === document.getElementById('persona-edit-pane').dataset.id);
                 if (p) {
                     p.avatar = optimized;
                     document.getElementById('persona-preview').innerHTML = `<img src="${optimized}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">`;
                 }
-            };
-            reader.readAsDataURL(file);
+            } catch (error) {
+                showToast(`Image upload failed: ${error.message}`, 'error');
+            } finally { e.target.value = ''; }
         };
     }
 
@@ -8905,21 +9112,22 @@ function setupWorldStudioLogic() {
     const bannerInput = document.getElementById('w-banner-input');
     if (bannerArea && bannerInput) {
         bannerArea.onclick = () => bannerInput.click();
-        bannerInput.onchange = (e) => {
+        bannerInput.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = async (ev) => {
+            try {
                 // Optimize like character images do — banners are used full-bleed
                 // as the chat background, so 1280px wide at 0.7 quality is plenty.
-                const optimized = await optimizeImage(ev.target.result, 1280, 0.7);
+                const optimized = await normalizeUploadedImage(file, 1280, 0.7);
                 state.editingWorld.banner = optimized;
                 const preview = document.getElementById('w-banner-preview');
                 preview.style.backgroundImage = `url('${optimized}')`;
                 preview.innerHTML = '';
                 renderWorlds(); // Update the card in library
-            };
-            reader.readAsDataURL(file);
+                showToast('World banner normalized and ready.', 'success');
+            } catch (error) {
+                showToast(`Image upload failed: ${error.message}`, 'error');
+            } finally { e.target.value = ''; }
         };
     }
 
@@ -9076,6 +9284,12 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-agent-enabled').checked = agentConfig.enabled;
     document.getElementById('w-agent-interval').value = agentConfig.intervalTurns;
     document.getElementById('w-agent-model').value = agentConfig.model;
+    const kernelConfig = normalizeWorldKernelConfig(w);
+    document.getElementById('w-kernel-enabled').checked = kernelConfig.enabled;
+    document.getElementById('w-kernel-location-limit').value = kernelConfig.sceneLocationLimit;
+    document.getElementById('w-kernel-memory-mode').value = kernelConfig.memoryMode;
+    document.getElementById('w-kernel-repair-mode').value = kernelConfig.repairMode;
+    document.getElementById('w-kernel-compact-tools').checked = kernelConfig.compactTools;
 
     document.getElementById('w-studio-temp').value = w.temp ?? 0.9;
     document.getElementById('w-studio-min-p').value = w.minP ?? 0.0;
@@ -9145,6 +9359,13 @@ async function saveWorld() {
             model: document.getElementById('w-agent-model').value
         }
     });
+    w.kernel = normalizeWorldKernelConfig({ kernel: {
+        enabled: document.getElementById('w-kernel-enabled').checked,
+        sceneLocationLimit: document.getElementById('w-kernel-location-limit').value,
+        memoryMode: document.getElementById('w-kernel-memory-mode').value,
+        repairMode: document.getElementById('w-kernel-repair-mode').value,
+        compactTools: document.getElementById('w-kernel-compact-tools').checked
+    } });
     w.temp = parseFloat(document.getElementById('w-studio-temp').value) || 0.9;
     w.minP = parseFloat(document.getElementById('w-studio-min-p').value) || 0.0;
     w.topP = parseFloat(document.getElementById('w-studio-top-p').value) || 1.0;
@@ -12190,7 +12411,11 @@ function addWorldStat() {
     const w = state.editingWorld;
     if (!w) return;
     w.hudConfig.stats = w.hudConfig.stats || [];
-    w.hudConfig.stats.push({ id: 'stat_' + Date.now(), name: 'New Stat', value: 0, min: 0, max: 0, color: 'var(--accent)' });
+    w.hudConfig.stats.push({
+        id: 'stat_' + Date.now(), name: 'New Stat', value: 0, min: 0, max: 0,
+        color: 'var(--accent)',
+        roll: { enabled: false, mode: 'normalized', direction: 'higher', scale: 10, fixedModifier: 0 }
+    });
     renderWorldStudioStats();
     loadWorldGameRuleControls(w);
 }
@@ -12216,6 +12441,12 @@ function loadWorldGameRuleControls(world) {
     currency.value = rules.currencyStatId;
     document.getElementById('w-rules-zero-hp-mode').value = rules.zeroHpMode;
     document.getElementById('w-rules-currency-name').value = rules.currencyName;
+    const dice = normalizeWorldDiceConfig(world);
+    if (document.getElementById('w-dice-resolution')) document.getElementById('w-dice-resolution').value = dice.resolution;
+    if (document.getElementById('w-dice-sides')) document.getElementById('w-dice-sides').value = String(dice.sides);
+    if (document.getElementById('w-dice-modifier-mode')) document.getElementById('w-dice-modifier-mode').value = dice.modifierMode;
+    if (document.getElementById('w-dice-default-difficulty')) document.getElementById('w-dice-default-difficulty').value = dice.defaultDifficulty;
+    if (document.getElementById('w-dice-criticals')) document.getElementById('w-dice-criticals').checked = dice.criticals;
     document.querySelectorAll('[data-rule-detail]').forEach(container => {
         const enabled = !!rules.modules[container.dataset.ruleDetail];
         container.style.opacity = enabled ? '1' : '0.42';
@@ -12255,6 +12486,13 @@ function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
     world.gameRules.zeroHpMode = document.getElementById('w-rules-zero-hp-mode')?.value === 'lethal'
         ? 'lethal' : 'fail_forward';
     world.gameRules.currencyName = String(document.getElementById('w-rules-currency-name')?.value || 'coin').trim().slice(0, 60) || 'coin';
+    world.gameRules.dice = normalizeWorldDiceConfig({ gameRules: { dice: {
+        resolution: document.getElementById('w-dice-resolution')?.value,
+        sides: document.getElementById('w-dice-sides')?.value,
+        modifierMode: document.getElementById('w-dice-modifier-mode')?.value,
+        defaultDifficulty: document.getElementById('w-dice-default-difficulty')?.value,
+        criticals: document.getElementById('w-dice-criticals')?.checked !== false
+    } } });
     world.hudConfig.enableSchedules = !!world.gameRules.modules.schedules;
 }
 
@@ -12276,6 +12514,13 @@ function syncWorldStudioStatsFromDOM(world) {
         stat.min = Number.isFinite(min) ? min : 0;
         stat.max = Number.isFinite(max) ? Math.max(0, max) : 0;
         stat.color = String(card.querySelector('.stat-color')?.value || stat.color || 'var(--accent)').trim();
+        stat.roll = {
+            enabled: !!card.querySelector('.stat-roll-enabled')?.checked,
+            mode: card.querySelector('.stat-roll-mode')?.value || 'normalized',
+            direction: card.querySelector('.stat-roll-direction')?.value === 'lower' ? 'lower' : 'higher',
+            scale: Math.max(1, Number(card.querySelector('.stat-roll-scale')?.value) || 10),
+            fixedModifier: Math.max(-10, Math.min(10, Math.trunc(Number(card.querySelector('.stat-roll-fixed')?.value) || 0)))
+        };
         if (oldId !== stat.id) renames.set(oldId, stat.id);
     });
     return renames;
@@ -12289,6 +12534,7 @@ function renderWorldStudioStats() {
     container.innerHTML = '';
 
     w.hudConfig.stats.forEach((stat, idx) => {
+        const rollConfig = worldStatRollConfig(stat);
         const div = document.createElement('div');
         div.className = 'studio-card';
         div.style.padding = '12px';
@@ -12322,6 +12568,31 @@ function renderWorldStudioStats() {
                 <label style="font-size:0.6rem; opacity:0.6;">Color</label>
                 <input type="text" class="form-input stat-color" value="${escapeHTML(stat.color)}" placeholder="var(--red)">
             </div>
+            <label class="stat-roll-toggle">
+                <input type="checkbox" class="stat-roll-enabled" ${rollConfig.enabled ? 'checked' : ''}>
+                <span><strong>Usable in checks</strong><small>Resources such as health, money and XP should normally stay off.</small></span>
+            </label>
+            <div>
+                <label style="font-size:0.6rem; opacity:0.6;">Roll formula</label>
+                <select class="form-select stat-roll-mode">
+                    <option value="normalized" ${rollConfig.mode === 'normalized' ? 'selected' : ''}>Normalized to −3…+3</option>
+                    <option value="ability" ${rollConfig.mode === 'ability' ? 'selected' : ''}>Ability: floor((value−10)/2)</option>
+                    <option value="direct" ${rollConfig.mode === 'direct' ? 'selected' : ''}>Value ÷ scale</option>
+                    <option value="fixed" ${rollConfig.mode === 'fixed' ? 'selected' : ''}>Fixed modifier</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:0.6rem; opacity:0.6;">Direction</label>
+                <select class="form-select stat-roll-direction"><option value="higher" ${rollConfig.direction !== 'lower' ? 'selected' : ''}>Higher is better</option><option value="lower" ${rollConfig.direction === 'lower' ? 'selected' : ''}>Lower is better</option></select>
+            </div>
+            <div>
+                <label style="font-size:0.6rem; opacity:0.6;">Direct scale</label>
+                <input type="number" class="form-input stat-roll-scale" min="1" value="${escapeHTML(String(rollConfig.scale))}">
+            </div>
+            <div>
+                <label style="font-size:0.6rem; opacity:0.6;">Fixed modifier</label>
+                <input type="number" class="form-input stat-roll-fixed" min="-10" max="10" value="${escapeHTML(String(rollConfig.fixedModifier))}">
+            </div>
             <button class="tool-btn tool-btn-danger del-stat" style="margin-top:15px;">✕</button>
         `;
 
@@ -12340,6 +12611,12 @@ function renderWorldStudioStats() {
         div.querySelector('.stat-min').oninput = (e) => stat.min = Number(e.target.value) || 0;
         div.querySelector('.stat-max').oninput = (e) => stat.max = Math.max(0, Number(e.target.value) || 0);
         div.querySelector('.stat-color').oninput = (e) => stat.color = e.target.value;
+        const ensureRoll = () => (stat.roll ||= { ...rollConfig });
+        div.querySelector('.stat-roll-enabled').onchange = (e) => { ensureRoll().enabled = e.target.checked; };
+        div.querySelector('.stat-roll-mode').onchange = (e) => { ensureRoll().mode = e.target.value; };
+        div.querySelector('.stat-roll-direction').onchange = (e) => { ensureRoll().direction = e.target.value; };
+        div.querySelector('.stat-roll-scale').oninput = (e) => { ensureRoll().scale = Math.max(1, Number(e.target.value) || 10); };
+        div.querySelector('.stat-roll-fixed').oninput = (e) => { ensureRoll().fixedModifier = Math.max(-10, Math.min(10, Number(e.target.value) || 0)); };
         div.querySelector('.del-stat').onclick = () => {
             if (w.gameRules?.vitalStatId === stat.id) w.gameRules.vitalStatId = '';
             if (w.gameRules?.currencyStatId === stat.id) w.gameRules.currencyStatId = '';
@@ -12396,9 +12673,152 @@ function renderWorlds() {
 }
 
 // --- World Play & Engine ---
+function rollSecureDie(sides) {
+    const count = Math.max(2, parseInt(sides) || 20);
+    if (globalThis.crypto?.getRandomValues) {
+        const values = new Uint32Array(1);
+        globalThis.crypto.getRandomValues(values);
+        return 1 + (values[0] % count);
+    }
+    return 1 + Math.floor(Math.random() * count);
+}
+
+function openWorldCheckModal() {
+    if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return;
+    if (!normalizeWorldGameRules(world).modules.checks) {
+        return showToast('Dice checks are disabled. Enable Dice checks in World Studio → HUD & Stats.', 'info');
+    }
+    if (normalizePlayerRulesState(world, sess)?.status === 'dead') {
+        return showToast('Game Over — this timeline cannot roll another action.', 'error');
+    }
+    const dice = normalizeWorldDiceConfig(world);
+    const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
+    const modal = document.getElementById('world-check-modal');
+    const label = document.getElementById('world-check-label');
+    const stat = document.getElementById('world-check-stat');
+    const difficulty = document.getElementById('world-check-difficulty');
+    const modifier = document.getElementById('world-check-modifier');
+    stat.innerHTML = '<option value="">No stat</option>' + (world.hudConfig?.stats || [])
+        .filter(item => worldStatRollConfig(item).enabled)
+        .map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || item.id)} · ${escapeHTML(String(sess.playerStats?.[item.id] ?? item.value ?? 0))}</option>`).join('');
+    label.value = pending?.label || '';
+    stat.value = pending?.stat_id || '';
+    difficulty.value = pending?.difficulty || dice.defaultDifficulty;
+    modifier.value = pending?.modifier || 0;
+    [label, stat, difficulty, modifier].forEach(control => { control.disabled = !!pending; });
+    const note = document.getElementById('world-check-pending-note');
+    note.classList.toggle('hidden', !pending);
+    note.innerHTML = pending
+        ? `<strong>The DM requested this check.</strong><br>${escapeHTML(pending.label)} · d${dice.sides} vs ${escapeHTML(String(pending.difficulty))}. Its result will be locked into the timeline and survives rerolls.`
+        : '<strong>Player-initiated check.</strong> Define an uncertain action before it is narrated. The roll is resolved first, so the DM receives the real result instead of inventing one.';
+    document.getElementById('world-check-title').textContent = pending ? 'Resolve requested check' : 'Create a check';
+    document.getElementById('confirm-world-check').textContent = `🎲 Roll d${dice.sides} & continue`;
+    modal.classList.remove('hidden');
+    renderWorldCheckPreview();
+    if (!pending) label.focus();
+}
+
+function closeWorldCheckModal() {
+    document.getElementById('world-check-modal')?.classList.add('hidden');
+}
+
+function worldCheckModifier(world, sess, statId) {
+    const dice = normalizeWorldDiceConfig(world);
+    const definition = (world.hudConfig?.stats || []).find(stat => stat.id === statId);
+    if (!definition || dice.modifierMode === 'none') return 0;
+    const value = Number(sess.playerStats?.[definition.id] ?? definition.value) || 0;
+    if (dice.modifierMode === 'ability') return Math.max(-10, Math.min(10, Math.floor((value - 10) / 2)));
+    if (dice.modifierMode === 'direct') return Math.max(-10, Math.min(10, Math.trunc(value)));
+    const roll = worldStatRollConfig(definition);
+    if (!roll.enabled) return 0;
+    let modifier = 0;
+    if (roll.mode === 'ability') modifier = Math.floor((value - 10) / 2);
+    else if (roll.mode === 'fixed') modifier = Number(roll.fixedModifier) || 0;
+    else if (roll.mode === 'direct') modifier = Math.trunc(value / Math.max(1, Number(roll.scale) || 10));
+    else {
+        const min = Number(definition.min) || 0;
+        const max = Number(definition.max);
+        if (Number.isFinite(max) && max > min) {
+            const ratio = Math.max(0, Math.min(1, (value - min) / (max - min)));
+            modifier = Math.round((ratio * 6) - 3);
+        } else {
+            modifier = Math.trunc(value / Math.max(1, Number(roll.scale) || 10));
+        }
+    }
+    if (roll.direction === 'lower') modifier *= -1;
+    return Math.max(-10, Math.min(10, Math.trunc(modifier)));
+}
+
+function renderWorldCheckPreview() {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    const preview = document.getElementById('world-check-preview');
+    if (!world || !sess || !preview) return;
+    const dice = normalizeWorldDiceConfig(world);
+    const statId = document.getElementById('world-check-stat')?.value || '';
+    const statModifier = worldCheckModifier(world, sess, statId);
+    const situation = Math.max(-5, Math.min(5, parseInt(document.getElementById('world-check-modifier')?.value) || 0));
+    const difficulty = Math.max(2, Math.min(dice.sides + 10, parseInt(document.getElementById('world-check-difficulty')?.value) || dice.defaultDifficulty));
+    const combined = statModifier + situation;
+    preview.innerHTML = `Roll <span class="world-check-result-chip">d${dice.sides}${combined ? `${combined > 0 ? '+' : ''}${combined}` : ''}</span> against <span class="world-check-result-chip">${difficulty}</span>. ${dice.criticals ? `Natural 1/${dice.sides} are critical.` : 'No automatic critical results.'}`;
+}
+
+async function resolveWorldCheckFromModal() {
+    if (worldTurnInProgress) return;
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return;
+    const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
+    const label = String(pending?.label || document.getElementById('world-check-label')?.value || 'Unspecified check').trim().slice(0, 120);
+    if (!label) return showToast('Describe what is being attempted first.', 'info');
+    const dice = normalizeWorldDiceConfig(world);
+    const roll = rollSecureDie(dice.sides);
+    const check = {
+        id: pending?.id || `manual_${Math.max(1, sess.turnCount || 1)}_${Date.now()}`,
+        label,
+        stat_id: pending?.stat_id || document.getElementById('world-check-stat')?.value || '',
+        difficulty: pending?.difficulty || parseInt(document.getElementById('world-check-difficulty')?.value) || dice.defaultDifficulty,
+        modifier: pending?.modifier ?? (parseInt(document.getElementById('world-check-modifier')?.value) || 0),
+        failure_cost: pending?.failure_cost || undefined,
+        provided_roll: roll,
+        force_resolve: true
+    };
+    const result = performAuthoritativeChecks(world, sess, [check])[0];
+    if (!result || result.pending) return showToast('The check could not be resolved.', 'error');
+    const outcome = sanitizeCheckOutcomeActions(result.success ? pending?.on_success : pending?.on_failure);
+    const outcomeResult = outcome ? processStructuredActions(outcome, world, sess) : null;
+    commitEngineWorldNoOp(world, sess, 'engine_check_outcome',
+        `${result.label}: ${result.success ? 'success' : 'failure'} (${result.total} vs ${result.difficulty}).`);
+    sess.pendingChecks = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks : [])
+        .filter(item => item.id !== check.id);
+    sess.pendingCheck = sess.pendingChecks[0] || null;
+    closeWorldCheckModal();
+    const modifierText = result.statModifier || result.situationalModifier
+        ? ` + modifiers ${result.statModifier + result.situationalModifier >= 0 ? '+' : ''}${result.statModifier + result.situationalModifier}` : '';
+    addWorldMessage('system', `[WORLD KERNEL — AUTHORITATIVE CHECK RESULT]\n${result.label}: d${result.sides} rolled ${result.roll}${modifierText} = ${result.total} against difficulty ${result.difficulty}. Result: ${result.success ? 'SUCCESS' : 'FAILURE'}${result.critical ? ` (${result.critical.toUpperCase()} CRITICAL)` : ''}. The selected ${result.success ? 'success' : 'failure'} consequence has already been committed${outcomeResult?.ledgerEntry ? `: ${outcomeResult.ledgerEntry}` : ''}. Narrate this exact outcome now; do not request or invent another roll for this action.`, { location: sess.playerLocation, deferPersist: true });
+    await saveState();
+    renderWorldPlayState();
+    executeWorldTurn('continue');
+}
+
 function setupWorldPlayLogic() {
     document.getElementById('world-exit-btn').onclick = () => switchView('worlds');
     document.getElementById('world-map-btn').onclick = renderWorldMap;
+    document.getElementById('world-more-btn').onclick = () => {
+        const actions = document.getElementById('world-more-actions');
+        const button = document.getElementById('world-more-btn');
+        const open = !actions.classList.contains('is-open');
+        actions.classList.toggle('is-open', open);
+        button.setAttribute('aria-expanded', String(open));
+    };
+    document.getElementById('world-hud-toggle').onclick = () => {
+        const hud = document.querySelector('#world-play-view .world-status-col');
+        const collapsed = hud.classList.toggle('is-collapsed');
+        document.getElementById('world-hud-toggle').textContent = collapsed ? '◧ Show HUD' : '◫ Hide HUD';
+    };
     document.getElementById('close-map-modal').onclick = () => document.getElementById('map-modal').classList.add('hidden');
     
     document.getElementById('w-hud-adjust-time-btn').onclick = () => {
@@ -12738,21 +13158,14 @@ function setupWorldPlayLogic() {
         }
     };
 
-    document.getElementById('world-roll-btn').onclick = async () => {
-        if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
-        const sess = getCurrentWorldSession();
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
-        if (!sess || !world) return;
-        if (!normalizeWorldGameRules(world).modules.checks) {
-            return showToast('Dice checks are disabled for this world profile.', 'info');
-        }
-        if (normalizePlayerRulesState(world, sess)?.status === 'dead') {
-            return showToast('Game Over — this timeline cannot roll another action.', 'error');
-        }
-        const roll = Math.floor(Math.random() * 20) + 1; // RPGs usually use d20
-        const rollMsg = `*You roll a natural ${roll} on a d20.*`;
-        executeWorldTurn(rollMsg);
-    };
+    document.getElementById('world-roll-btn').onclick = openWorldCheckModal;
+    document.getElementById('close-world-check-modal').onclick = closeWorldCheckModal;
+    document.getElementById('cancel-world-check').onclick = closeWorldCheckModal;
+    document.getElementById('confirm-world-check').onclick = resolveWorldCheckFromModal;
+    ['world-check-stat', 'world-check-difficulty', 'world-check-modifier'].forEach(id => {
+        document.getElementById(id).oninput = renderWorldCheckPreview;
+        document.getElementById(id).onchange = renderWorldCheckPreview;
+    });
 
     const sysModal = document.getElementById('system-inject-modal-overlay');
     const sysInput = document.getElementById('system-inject-input');
@@ -12811,68 +13224,11 @@ function setupWorldPlayLogic() {
             const sess = getCurrentWorldSession();
             const world = state.worlds.find(w => w.id === state.activeWorldId);
             if (sess && world) {
-                sess.history = [];
-                sess.ledger = "";
-                sess.ledgerRevision = 0;
-                sess.ledgerManualRevision = 0;
-                sess.ledgerManualOverrideText = "";
-                sess.turnCount = 1;
-                sess.outfit = "";
-                sess.inventory = [];
-                sess.quests = [];
-                sess.revealedSecrets = [];
-                sess.threads = [];
-                sess.engineEvents = [];
-                sess.bonusTimeMinutes = 0;
-                sess.scheduledEvents = [];
-                sess.locationStates = {};
-                sess.npcRelationships = {};
-                sess.npcScheduleOverrides = {};
-                sess.factions = [];
-                sess.economy = { currency: 'coin', markets: {} };
-                sess.playerState = { status: 'active', defeatCount: 0, lastDefeatTurn: null, lastDefeatCause: '', conditions: [] };
-                sess.checkHistory = [];
-                sess.playstyle = {
-                    turnsObserved: 0,
-                    signals: {},
-                    preferences: {},
-                    dominant: [],
-                    summary: 'No clear playstyle pattern yet.'
-                };
-                sess.worldNews = [];
-                sess.lastLivingWorldTick = 0;
-                sess.livingWorldActivity = {
-                    turn: 0, events: 0, goals: 0, factions: 0,
-                    markets: 0, scheduleMoves: 0, activeSchedules: 0
-                };
-                sess.ledgerDiagnostics = { turn: 0, status: 'not_checked', source: 'none' };
-                
-                const defaultStartId = world.startLocationId || world.locations[0]?.id || null;
-
-                // Reset NPC Memories
-                sess.entityStates = {};
-                world.entities.forEach(ent => {
-                    if (ent.type === 'npc') {
-                        const loc = world.locations.find(l => l.name === ent.startLocation || l.id === ent.startLocation);
-                        sess.entityStates[ent.id] = {
-                            location: loc ? loc.id : defaultStartId,
-                            observations: []
-                        };
-                    }
-                });
-
-                // Reset Stats to Studio Defaults
-                sess.playerStats = {};
-                (world.hudConfig?.stats || []).forEach(s => {
-                    sess.playerStats[s.id] = s.value;
-                });
-
-                // Reset Location
-                sess.playerLocation = defaultStartId;
-
+                resetWorldTimeline(world, sess);
                 await saveState();
                 renderWorldPlayState();
-                showToast('Session Reset to Day 1', 'info');
+                openSessionZero(() => executeWorldTurn('init'));
+                showToast('Timeline reset. Choose a new starting life.', 'info');
             }
         });
     };
@@ -12880,6 +13236,99 @@ function setupWorldPlayLogic() {
     document.getElementById('world-studio-btn').onclick = () => {
         if (state.activeWorldId) openWorldStudio(state.activeWorldId);
     };
+}
+
+function resetWorldTimeline(world, sess) {
+    const id = sess.id;
+    const name = sess.name;
+
+    // Remove only objects generated by this timeline. Authored content and
+    // story-born content from other timelines are never touched.
+    const removedLocations = new Set((world.locations || [])
+        .filter(location => location?.sessionOrigin === id)
+        .map(location => String(location.id || '').toLowerCase()));
+    const removedNames = new Set((world.locations || [])
+        .filter(location => removedLocations.has(String(location.id || '').toLowerCase()))
+        .map(location => String(location.name || '').toLowerCase()));
+    world.locations = (world.locations || []).filter(location => location?.sessionOrigin !== id);
+    world.entities = (world.entities || []).filter(entity => entity?.sessionOrigin !== id);
+    world.locations.forEach(location => {
+        location.exits = (Array.isArray(location.exits) ? location.exits : []).filter(exit => {
+            const target = String(getExitTargetName(exit) || '').toLowerCase();
+            return !removedLocations.has(target) && !removedNames.has(target);
+        });
+    });
+
+    // Invalidate every asynchronous operation before replacing timeline data.
+    bumpMemoryEpoch(sess);
+    bumpWorldEpoch(sess);
+    const epochs = { _memEpoch: sess._memEpoch, _worldEpoch: sess._worldEpoch };
+    Object.keys(sess).forEach(key => delete sess[key]);
+    Object.assign(sess, { id, name, ...epochs });
+
+    const rules = normalizeWorldGameRules(world);
+    const defaultStartId = world.startLocationId || world.locations[0]?.id || null;
+    Object.assign(sess, {
+        playerLocation: defaultStartId,
+        history: [],
+        inventory: [],
+        outfit: '',
+        ledger: '',
+        ledgerArchive: [],
+        ledgerRevision: 0,
+        ledgerManualRevision: 0,
+        ledgerManualOverrideText: '',
+        ledgerDiagnostics: { turn: 0, status: 'not_checked', source: 'none' },
+        entityStates: {},
+        playerStats: {},
+        playerState: { status: 'active', defeatCount: 0, lastDefeatTurn: null, lastDefeatCause: '', conditions: [] },
+        playerSceneConditions: [],
+        playerActivity: '',
+        checkHistory: [],
+        pendingChecks: [],
+        pendingCheck: null,
+        quests: [],
+        revealedSecrets: [],
+        threads: [],
+        engineEvents: [],
+        bonusTimeMinutes: 0,
+        scheduledEvents: safeJsonClone(Array.isArray(world.scheduledEvents) ? world.scheduledEvents : []),
+        locationStates: seedLocationStatesFromWorld(world),
+        npcRelationships: seedRelationshipsFromWorld(world),
+        npcScheduleOverrides: {},
+        dynamicExits: {},
+        factions: seedFactionsFromWorld(world),
+        economy: { currency: rules.currencyName, markets: seedMarketsFromWorld(world) },
+        playstyle: { turnsObserved: 0, signals: {}, preferences: {}, dominant: [], summary: 'No clear playstyle pattern yet.' },
+        worldNews: [],
+        lastLivingWorldTick: 0,
+        lastLivingWorldMinute: 0,
+        lastWorldAgentTurn: 0,
+        livingWorldActivity: { turn: 0, events: 0, goals: 0, factions: 0, markets: 0, scheduleMoves: 0, activeSchedules: 0 },
+        turnCount: 1,
+        turnEvents: [],
+        worldTurnReceipts: [],
+        worldStateVersion: 0,
+        lastTurnAudit: null,
+        lastTurnStateSource: 'none',
+        lastWorldAgentTurn: 0,
+        toolCallMissStreak: 0,
+        episodicMemories: [],
+        playerIdentity: {},
+        personaId: state.activePersonaId || '',
+        lifeSeed: null,
+        legalStanding: {},
+        society: null,
+        setupComplete: false
+    });
+    sessionNpcs(world, sess).forEach(npc => {
+        const location = world.locations.find(item => item.id === npc.startLocation || item.name === npc.startLocation);
+        sess.entityStates[npc.id] = { location: location?.id || defaultStartId, observations: [] };
+    });
+    (world.hudConfig?.stats || []).forEach(stat => { sess.playerStats[stat.id] = stat.value; });
+    normalizePlayerRulesState(world, sess);
+    normalizeWorldSocietyState(world, sess);
+    return sess;
 }
 
 function getCurrentWorldSession() {
@@ -13057,6 +13506,52 @@ const WORLD_RULE_PROFILES = Object.freeze({
     }
 });
 
+function normalizeWorldKernelConfig(world) {
+    const raw = isPlainObject(world?.kernel) ? world.kernel : {};
+    const config = {
+        enabled: raw.enabled !== false,
+        sceneLocationLimit: Math.max(8, Math.min(80, parseInt(raw.sceneLocationLimit) || 24)),
+        memoryMode: ['ledger', 'semantic'].includes(raw.memoryMode) ? raw.memoryMode : 'ledger',
+        repairMode: ['adaptive', 'always', 'never'].includes(raw.repairMode) ? raw.repairMode : 'adaptive',
+        compactTools: raw.compactTools !== false
+    };
+    if (world) world.kernel = config;
+    return config;
+}
+
+function normalizeWorldDiceConfig(world) {
+    if (world) world.gameRules = isPlainObject(world.gameRules) ? world.gameRules : {};
+    const raw = isPlainObject(world?.gameRules?.dice) ? world.gameRules.dice : {};
+    const sides = [6, 10, 12, 20].includes(parseInt(raw.sides)) ? parseInt(raw.sides) : 20;
+    const config = {
+        // Existing worlds historically resolved checks immediately. Preserve
+        // that behavior until an author deliberately switches to player rolls.
+        resolution: ['player', 'automatic'].includes(raw.resolution) ? raw.resolution : 'automatic',
+        sides,
+        // `per_stat` is the safe modern mode. Legacy global formulas remain
+        // import-compatible, but new and edited worlds use each stat's own
+        // roll configuration instead of turning HP, money, XP, etc. into +10.
+        modifierMode: ['per_stat', 'direct', 'ability', 'none'].includes(raw.modifierMode) ? raw.modifierMode : 'per_stat',
+        defaultDifficulty: Math.max(2, Math.min(sides + 10, parseInt(raw.defaultDifficulty) || Math.ceil(sides * 0.55))),
+        criticals: raw.criticals !== false
+    };
+    if (world) world.gameRules.dice = config;
+    return config;
+}
+
+function worldStatRollConfig(stat) {
+    const raw = isPlainObject(stat?.roll) ? stat.roll : {};
+    const resourceLike = /(?:hp|health|armor|armour|gold|coin|cash|money|xp|experience|level|stress|hunger|thirst|energy|stamina|mana|currency)/i
+        .test(`${stat?.id || ''} ${stat?.name || ''}`);
+    return {
+        enabled: typeof raw.enabled === 'boolean' ? raw.enabled : !resourceLike,
+        mode: ['normalized', 'ability', 'direct', 'fixed'].includes(raw.mode) ? raw.mode : 'normalized',
+        direction: raw.direction === 'lower' ? 'lower' : 'higher',
+        scale: Math.max(1, Math.min(1000, Number(raw.scale) || 10)),
+        fixedModifier: Math.max(-10, Math.min(10, Math.trunc(Number(raw.fixedModifier) || 0)))
+    };
+}
+
 function worldRuleProfileDescription(profileId) {
     if (profileId === 'custom') {
         return 'Choose each system independently. Existing saved data is preserved when a module is disabled.';
@@ -13101,6 +13596,8 @@ function normalizeWorldGameRules(world) {
         if (max > 0 && max < min) max = min;
         let value = Number.isFinite(Number(stat.value)) ? Number(stat.value) : 0;
         value = Math.max(min, max > 0 ? Math.min(max, value) : value);
+        const hadRollConfig = isPlainObject(stat.roll);
+        const roll = worldStatRollConfig({ ...stat, id });
         return {
             ...stat,
             id,
@@ -13108,12 +13605,14 @@ function normalizeWorldGameRules(world) {
             value,
             min,
             max,
-            color: cssColor(stat.color, 'var(--accent)')
+            color: cssColor(stat.color, 'var(--accent)'),
+            ...(hadRollConfig ? { roll } : {})
         };
     });
 
     const stats = world.hudConfig.stats;
     const raw = isPlainObject(world.gameRules) ? world.gameRules : {};
+    const diceRaw = isPlainObject(raw.dice) ? { ...raw.dice } : {};
     const legacyModules = {
         stats: true,
         health: true,
@@ -13169,8 +13668,10 @@ function normalizeWorldGameRules(world) {
         vitalStatId: exactStatId(raw.vitalStatId) || inferredVital,
         zeroHpMode: raw.zeroHpMode === 'lethal' ? 'lethal' : 'fail_forward',
         currencyStatId,
-        currencyName: String(raw.currencyName || currencyDefinition?.name || 'coin').trim().slice(0, 60) || 'coin'
+        currencyName: String(raw.currencyName || currencyDefinition?.name || 'coin').trim().slice(0, 60) || 'coin',
+        dice: diceRaw
     };
+    normalizeWorldDiceConfig(world);
     world.hudConfig.enableSchedules = modules.schedules;
     return world.gameRules;
 }
@@ -13188,6 +13689,7 @@ function normalizePlayerRulesState(world, sess) {
         .map(condition => String(condition || '').trim().slice(0, 120))
         .filter(Boolean))].slice(0, 50);
     sess.checkHistory = (Array.isArray(sess.checkHistory) ? sess.checkHistory : []).slice(-100);
+    if (!isPlainObject(sess.pendingCheck)) sess.pendingCheck = null;
 
     const vitalDef = (world.hudConfig?.stats || []).find(stat => stat.id === rules.vitalStatId);
     const vitalValue = vitalDef ? Number(sess.playerStats?.[vitalDef.id] ?? vitalDef.value) : null;
@@ -13445,11 +13947,15 @@ function performAuthoritativeChecks(world, sess, checks) {
         }));
     }
     if (!Array.isArray(sess.checkHistory)) sess.checkHistory = [];
+    const dice = normalizeWorldDiceConfig(world);
     const definitions = world.hudConfig?.stats || [];
     checks.slice(0, 10).forEach((raw, index) => {
-        const label = String(raw?.label || `Check ${index + 1}`).trim().slice(0, 120);
-        const checkId = String(raw?.id || questTextKey(label).replace(/\s+/g, '_') || `check_${index + 1}`).slice(0, 80);
         const turn = sess.turnCount || 1;
+        const label = String(raw?.label || `Check ${index + 1}`).trim().slice(0, 120);
+        // Model wording and IDs may change on reroll; the mechanical slot does
+        // not. Engine-authored IDs make a roll immutable for this turn/index.
+        const checkId = String(raw?.force_resolve === true && raw?.id
+            ? raw.id : `check_${turn}_${index + 1}`).slice(0, 80);
         let existing = null;
         for (let historyIndex = sess.checkHistory.length - 1; historyIndex >= 0; historyIndex--) {
             const candidate = sess.checkHistory[historyIndex];
@@ -13466,14 +13972,37 @@ function performAuthoritativeChecks(world, sess, checks) {
         }
         const statId = String(raw?.stat_id || '').trim();
         const definition = definitions.find(stat => stat.id.toLowerCase() === statId.toLowerCase());
-        const statModifier = definition
-            ? Math.max(-10, Math.min(10, Math.trunc(Number(sess.playerStats?.[definition.id]) || 0)))
-            : 0;
+        const statModifier = worldCheckModifier(world, sess, definition?.id || '');
         const situationalModifier = Math.max(-5, Math.min(5, Math.trunc(Number(raw?.modifier) || 0)));
-        const difficulty = Math.max(2, Math.min(30, Math.trunc(Number(raw?.difficulty) || 10)));
-        const roll = 1 + Math.floor(stableWorldRoll(`${world.id}|${sess.id}|${turn}|${checkId}`) * 20);
+        const difficulty = Math.max(2, Math.min(dice.sides + 10,
+            Math.trunc(Number(raw?.difficulty) || dice.defaultDifficulty)));
+
+        if (dice.resolution === 'player' && !Number.isFinite(Number(raw?.provided_roll)) && raw?.force_resolve !== true) {
+            const pendingRequest = {
+                id: checkId, label, stat_id: definition?.id || '', modifier: situationalModifier,
+                difficulty, failure_cost: isPlainObject(raw?.failure_cost)
+                    ? JSON.parse(JSON.stringify(raw.failure_cost)) : null,
+                on_success: isPlainObject(raw?.on_success) ? safeJsonClone(raw.on_success) : null,
+                on_failure: isPlainObject(raw?.on_failure) ? safeJsonClone(raw.on_failure) : null,
+                requestedTurn: turn, requestedAt: Date.now()
+            };
+            if (!Array.isArray(sess.pendingChecks)) sess.pendingChecks = [];
+            if (!sess.pendingChecks.some(item => item.id === checkId)) sess.pendingChecks.push(pendingRequest);
+            sess.pendingChecks = sess.pendingChecks.slice(0, 10);
+            sess.pendingCheck = sess.pendingChecks[0] || pendingRequest;
+            results.push({ id: checkId, label, statId: definition?.id || '', difficulty, pending: true, success: null });
+            showToast(`🎲 Check requested: ${label} · roll d${dice.sides} vs ${difficulty}`, 'info');
+            return;
+        }
+
+        const provided = Number(raw?.provided_roll);
+        const roll = Number.isFinite(provided)
+            ? Math.max(1, Math.min(dice.sides, Math.trunc(provided)))
+            : 1 + Math.floor(stableWorldRoll(`${world.id}|${sess.id}|${turn}|${checkId}`) * dice.sides);
         const total = roll + statModifier + situationalModifier;
-        const success = roll === 20 || (roll !== 1 && total >= difficulty);
+        const criticalSuccess = dice.criticals && roll === dice.sides;
+        const criticalFailure = dice.criticals && roll === 1;
+        const success = criticalSuccess || (!criticalFailure && total >= difficulty);
         const result = {
             id: checkId,
             label,
@@ -13484,7 +14013,8 @@ function performAuthoritativeChecks(world, sess, checks) {
             total,
             difficulty,
             success,
-            critical: roll === 20 ? 'success' : roll === 1 ? 'failure' : ''
+            sides: dice.sides,
+            critical: criticalSuccess ? 'success' : criticalFailure ? 'failure' : ''
         };
         if (!success && isPlainObject(raw?.failure_cost)) {
             const cost = raw.failure_cost;
@@ -13532,6 +14062,8 @@ function performAuthoritativeChecks(world, sess, checks) {
             }
         }
         sess.checkHistory.push({ ...result, turn });
+        if (Array.isArray(sess.pendingChecks)) sess.pendingChecks = sess.pendingChecks.filter(item => item.id !== checkId);
+        sess.pendingCheck = sess.pendingChecks?.[0] || null;
         results.push(result);
         showToast(`${success ? '✓' : '×'} ${label}: ${roll}${statModifier || situationalModifier ? ` → ${total}` : ''} vs ${difficulty}`, success ? 'success' : 'info');
     });
@@ -14042,6 +14574,7 @@ async function createNewWorldSession() {
         playerStats: {},
         playerState: { status: 'active', defeatCount: 0, lastDefeatTurn: null, lastDefeatCause: '', conditions: [] },
         checkHistory: [],
+        pendingCheck: null,
         quests: [],
         revealedSecrets: [],
         bonusTimeMinutes: 0,
@@ -14049,6 +14582,7 @@ async function createNewWorldSession() {
         locationStates: seedLocationStatesFromWorld(world),
         npcRelationships: seedRelationshipsFromWorld(world),
         npcScheduleOverrides: {},
+        dynamicExits: {},
         factions: seedFactionsFromWorld(world),
         economy: { currency: gameRules.currencyName, markets: seedMarketsFromWorld(world) },
         playstyle: {
@@ -14068,7 +14602,9 @@ async function createNewWorldSession() {
         personaId: state.activePersonaId || '',
         lifeSeed: null,
         legalStanding: {},
-        society: null
+        society: null,
+        setupComplete: false,
+        pendingChecks: []
     };
 
     // Standardize playerLocation to ID immediately
@@ -14209,6 +14745,10 @@ function openSessionZero(onDone) {
         Object.assign(sess, JSON.parse(JSON.stringify(sessionSetupSnapshot)));
         finished = true;
         close();
+        // A brand-new blank timeline is not valid gameplay state. Dismissing
+        // setup returns to the world library instead of leaving a live input
+        // that can start play without a chosen identity/start state.
+        if (isFirstRun && !sess.history?.length && !sess.setupComplete) switchView('worlds');
     };
 
     const readPreferences = () => ({
@@ -14249,6 +14789,7 @@ function openSessionZero(onDone) {
         }
         s.storyPrefs = readPreferences();
         s.personaId = personaSelect.value || '';
+        s.setupComplete = true;
         try {
             if (seedLife && isFirstRun && lifeSeedEnabled.checked && !s.lifeSeed?.initialized) {
                 saveStatus.textContent = 'Initializing home and social life…';
@@ -14513,6 +15054,10 @@ function renderWorldPlayState() {
         }
         (ruleModules.stats ? (world.hudConfig?.stats || []) : []).forEach(stat => {
             const val = sess.playerStats[stat.id] !== undefined ? sess.playerStats[stat.id] : stat.value;
+            const hasRange = Number(stat.max) > Number(stat.min);
+            const fillPercent = hasRange
+                ? livingClamp(((Number(val) - Number(stat.min)) / (Number(stat.max) - Number(stat.min))) * 100, 0, 100)
+                : 0;
             const div = document.createElement('div');
             div.className = 'world-card';
             div.style.padding = '8px 12px';
@@ -14521,17 +15066,26 @@ function renderWorldPlayState() {
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="font-size:0.75rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">${escapeHTML(stat.name)}</div>
                     <div style="font-size:0.9rem; font-weight:700; color:${cssColor(stat.color)};">${escapeHTML(String(val))}${stat.max > 0 ? ` / ${escapeHTML(String(stat.max))}` : ''}</div>
-                </div>`;
+                </div>
+                ${hasRange ? `<div class="world-stat-track"><span style="width:${fillPercent}%; background:${cssColor(stat.color)};"></span></div>` : ''}`;
             statsContainer.appendChild(div);
         });
     }
     const editStatsButton = document.getElementById('edit-player-stats-btn');
     if (editStatsButton) editStatsButton.style.display = ruleModules.stats ? '' : 'none';
     const rollButton = document.getElementById('world-roll-btn');
-    if (rollButton) rollButton.style.display = ruleModules.checks ? '' : 'none';
+    if (rollButton) {
+        rollButton.style.display = ruleModules.checks ? '' : 'none';
+        const pending = (Array.isArray(sess.pendingChecks) ? sess.pendingChecks[0] : null) || sess.pendingCheck;
+        rollButton.textContent = pending ? `🎲 Roll: ${String(pending.label || 'check').slice(0, 24)}` : '🎲 Check';
+        rollButton.classList.toggle('pending-check', !!pending);
+        rollButton.title = pending
+            ? `Resolve ${pending.label} against difficulty ${pending.difficulty}`
+            : 'Create a check or roll one requested by the DM';
+    }
 
     // 3. Location & Exits
-    const loc = world.locations.find(l => l.id === sess.playerLocation); // sess.playerLocation is normalized to ID by healing pass
+    const loc = sessionLocations(world, sess).find(l => l.id === sess.playerLocation); // session-scoped geography
     document.getElementById('world-loc-name').textContent = loc ? loc.name : 'Unknown Realm';
     document.getElementById('world-loc-desc').textContent = loc ? loc.description : 'The surroundings are indistinct.';
 
@@ -15053,6 +15607,14 @@ function appendWorldMessageUI(msg, index = null) {
         if (msg.narrativeAuditWarnings) {
             metaParts.push(`⚠️ ${escapeHTML(msg.narrativeAuditWarnings)} prose/state contradiction${msg.narrativeAuditWarnings === 1 ? '' : 's'} frozen`);
         }
+        if (msg.callAudit?.foregroundTotal) {
+            const extras = [];
+            if (msg.callAudit.providerFallback) extras.push('provider fallback');
+            if (msg.callAudit.receiptRepair) extras.push('receipt repair');
+            if (msg.callAudit.narrativeFollowUp) extras.push('dice/tool narration');
+            if (msg.callAudit.chronicleClassifier) extras.push('chronicle classifier');
+            metaParts.push(`🧮 ${escapeHTML(msg.callAudit.foregroundTotal)} foreground model call${msg.callAudit.foregroundTotal === 1 ? '' : 's'}${extras.length ? ` · ${escapeHTML(extras.join(', '))}` : ' · scene kernel'}`);
+        }
         if (msg.narratedMove) {
             metaParts.push(`📍 followed the prose to ${escapeHTML(msg.narratedMove)} (no location_id was recorded)`);
         }
@@ -15194,16 +15756,20 @@ function appendWorldMessageUI(msg, index = null) {
 function captureWorldTurnState(world, sess) {
     const sessionState = {};
     Object.entries(sess).forEach(([key, value]) => {
-        // _memEpoch must never be captured/restored: it is a monotonic guard
-        // against in-flight consolidations — restoring an old value would
-        // defeat the race check.
-        if (key !== 'history' && key !== 'id' && key !== 'name' && key !== '_memEpoch') sessionState[key] = value;
+        // Epochs must never be captured/restored: they are monotonic guards
+        // against late background work committing into a rewound timeline.
+        if (!['history', 'id', 'name', '_memEpoch', '_worldEpoch'].includes(key)) sessionState[key] = value;
     });
+    // Authored geography and template characters belong to the world, not a
+    // single timeline. A reroll must never replace them. Only story-born NPCs
+    // are timeline-owned and therefore participate in rollback.
+    const dynamicEntities = (world.entities || [])
+        .filter(entity => entity?.sessionOrigin === sess.id);
     return safeJsonClone({
+        schema: 2,
         session: sessionState,
         world: {
-            locations: world.locations || [],
-            entities: world.entities || []
+            dynamicEntities
         }
     });
 }
@@ -15215,8 +15781,16 @@ function restoreWorldTurnState(world, sess, snapshot) {
     const snapshotManualRevision = Number(snapshot.session.ledgerManualRevision) || 0;
     const liveManualLedger = String(sess.ledgerManualOverrideText ?? sess.ledger ?? '');
     const liveLedgerDiagnostics = safeJsonClone(sess.ledgerDiagnostics || {});
-    const preserved = { id: sess.id, name: sess.name, history: sess.history, _memEpoch: sess._memEpoch };
-    Object.keys(sess).forEach(key => { if (!['id', 'name', 'history', '_memEpoch'].includes(key)) delete sess[key]; });
+    const preserved = {
+        id: sess.id,
+        name: sess.name,
+        history: sess.history,
+        _memEpoch: sess._memEpoch,
+        _worldEpoch: sess._worldEpoch
+    };
+    Object.keys(sess).forEach(key => {
+        if (!['id', 'name', 'history', '_memEpoch', '_worldEpoch'].includes(key)) delete sess[key];
+    });
     Object.assign(sess, safeJsonClone(snapshot.session), preserved);
     // A manual ledger save is an explicit source-of-truth correction. Rerolls
     // restore automated state, but must not silently erase a newer correction.
@@ -15227,9 +15801,19 @@ function restoreWorldTurnState(world, sess, snapshot) {
         sess.ledgerRevision = Math.max(Number(sess.ledgerRevision) || 0, liveLedgerRevision, liveManualRevision);
         sess.ledgerDiagnostics = liveLedgerDiagnostics;
     }
-    world.locations = safeJsonClone(Array.isArray(snapshot.world.locations) ? snapshot.world.locations : world.locations);
-    world.entities = safeJsonClone(Array.isArray(snapshot.world.entities) ? snapshot.world.entities : world.entities);
+    // Schema 1 snapshots contained the entire shared world. Never restore those
+    // arrays: doing so allowed a reroll in one timeline to erase another
+    // timeline's NPCs, later Studio edits, or newly authored locations.
+    const modernSnapshot = snapshot.schema >= 2 && Array.isArray(snapshot.world.dynamicEntities);
+    const snapshotDynamic = modernSnapshot
+        ? snapshot.world.dynamicEntities.filter(entity => entity?.sessionOrigin === sess.id)
+        : [];
+    if (modernSnapshot) {
+        world.entities = (world.entities || []).filter(entity => entity?.sessionOrigin !== sess.id);
+        world.entities.push(...safeJsonClone(snapshotDynamic));
+    }
     bumpMemoryEpoch(sess); // any in-flight consolidation must now abort its commit
+    if (typeof bumpWorldEpoch === 'function') bumpWorldEpoch(sess);  // and so must the asynchronous World Agent
     return true;
 }
 
@@ -15330,7 +15914,11 @@ function addWorldMessage(role, text, metadata = {}) {
     }
 
     // Background, non-blocking asynchronous embedding pre-computation for future world turns
-    if (targetMsgRef && text) {
+    const embeddingWorld = state.worlds.find(w => w.id === state.activeWorldId);
+    const shouldEmbedMessage = !embeddingWorld
+        || !normalizeWorldKernelConfig(embeddingWorld).enabled
+        || normalizeWorldKernelConfig(embeddingWorld).memoryMode === 'semantic';
+    if (targetMsgRef && text && shouldEmbedMessage) {
         const msgText = text;
         const msgRef = targetMsgRef;
         (async () => {
@@ -15394,7 +15982,9 @@ async function getMemoryMatrixContext(world, sess, userInput) {
     const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 4;
     
     let retrieved = [];
-    if (userInput && allCandidates.length > 0) {
+    const kernelMemoryMode = normalizeWorldKernelConfig(world).memoryMode;
+    const useSemanticMemory = !normalizeWorldKernelConfig(world).enabled || kernelMemoryMode === 'semantic';
+    if (useSemanticMemory && userInput && allCandidates.length > 0) {
         try {
             // Check cache for ledger lines or other missing embeddings to be fast
             for (const cand of allCandidates) {
@@ -15438,7 +16028,7 @@ async function getMemoryMatrixContext(world, sess, userInput) {
 
     // 4. Perform vector search over episodic memories
     let retrievedEpisodic = [];
-    if (sess.episodicMemories && sess.episodicMemories.length > 0 && userInput) {
+    if (useSemanticMemory && sess.episodicMemories && sess.episodicMemories.length > 0 && userInput) {
         try {
             retrievedEpisodic = await HordeVectorMemory.search(sess.episodicMemories, userInput, topk, thresh);
         } catch (e) {
@@ -15542,7 +16132,7 @@ function applyUserDirectedMovement(world, sess, userInput) {
             : 'You are incapacitated and cannot travel until you recover.', 'info');
         return '';
     }
-    const targetLoc = resolveWorldMovementTarget(world, sess.playerLocation, targetPhrase);
+    const targetLoc = resolveWorldMovementTarget(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, targetPhrase);
     if (!targetLoc) {
         const knownButBlocked = findFuzzyLocation(targetPhrase, world.locations);
         if (knownButBlocked) {
@@ -15612,6 +16202,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     let failureRestoreSnapshot = null;
     let committedMovement = null;
     let committedOutfit = null;
+    let turnCallAudit = null;
 
     try {
         world = state.worlds.find(w => w.id === state.activeWorldId);
@@ -15620,6 +16211,19 @@ async function executeWorldTurn(commandOrReroll = null) {
         if (!world || !sess) {
             throw new Error("World state not initialized. Please ensure a world is selected.");
         }
+        normalizeLivingWorldState(world, sess);
+        if (sess.pendingChecks?.length && !isReroll && command !== 'init') {
+            showToast('Resolve the pending check before taking another action.', 'info');
+            return;
+        }
+        if (!isReroll) bumpWorldEpoch(sess);
+        turnCallAudit = {
+            main: 0,
+            providerFallback: 0,
+            receiptRepair: 0,
+            narrativeFollowUp: 0,
+            chronicleClassifier: 0
+        };
         // A failed reroll must restore the currently selected take's live
         // state, not the old turn's pre-action snapshot.
         failureRestoreSnapshot = captureWorldTurnState(world, sess);
@@ -15650,8 +16254,8 @@ async function executeWorldTurn(commandOrReroll = null) {
                 },
                 deferPersist: true
             });
-            introMsg.postSnapshot = captureWorldTurnState(world, sess);
-            introMsg.versionSnapshots = [introMsg.postSnapshot];
+            introMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
+            delete introMsg.postSnapshot;
             delete sess.pendingOriginIntro;
             await saveState();
             renderWorldPlayState();
@@ -15684,20 +16288,6 @@ async function executeWorldTurn(commandOrReroll = null) {
         if (command !== "init" && !userInput) return;
         submittedInput = userInput;
 
-        // The world agent runs BEFORE the snapshot is taken, so its developments
-        // become part of the world this turn happens in. A reroll then replays
-        // against them instead of paying for a second, different roll of the
-        // dice — and a failure here must never cost the player their turn.
-        if (command !== 'init' && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
-            try {
-                showToast('🌍 The world moves...', 'info');
-                await runWorldAgent(world, sess);
-                renderWorldPlayState();
-            } catch (agentError) {
-                console.warn('Horde Engine: world agent skipped —', agentError.message);
-            }
-        }
-
         turnSnapshot = captureWorldTurnState(world, sess);
         historyStartLength = sess.history.length;
         if (!command) document.getElementById('world-user-input').value = '';
@@ -15709,6 +16299,9 @@ async function executeWorldTurn(commandOrReroll = null) {
 
         if (command !== "init" && command !== "look" && command !== "continue") {
             const movementOrigin = sess.playerLocation;
+            const originWitnesses = sessionNpcs(world, sess)
+                .filter(npc => sess.entityStates?.[npc.id]?.location === movementOrigin && isNpcActive(sess.entityStates[npc.id]))
+                .map(npc => npc.id);
             arrivalContext = applyUserDirectedMovement(world, sess, userInput);
             if (sess.playerLocation !== movementOrigin) {
                 committedMovement = {
@@ -15718,7 +16311,12 @@ async function executeWorldTurn(commandOrReroll = null) {
             }
             const outfitResult = applyPlayerOutfitIntent(sess, userInput);
             if (outfitResult) committedOutfit = outfitResult;
-            addWorldMessage('user', userInput, { location: sess.playerLocation, deferPersist: true });
+            addWorldMessage('user', userInput, {
+                location: movementOrigin,
+                witnesses: originWitnesses,
+                arrivalLocation: sess.playerLocation !== movementOrigin ? sess.playerLocation : undefined,
+                deferPersist: true
+            });
             // sess.turnCount increment moved to success block to prevent time-skip on failure
         }
     }
@@ -15742,9 +16340,11 @@ async function executeWorldTurn(commandOrReroll = null) {
 
     // --- The Engine Logic ---
     // Robust Lookup: Support both ID and Name for legacy compatibility
-        const loc = world.locations.find(l => l.id === sess.playerLocation) || world.locations.find(l => l.name === sess.playerLocation);
-        const presentNPCs = sessionNpcs(world, sess).filter(ent =>
+        const visibleLocations = sessionLocations(world, sess);
+        const loc = visibleLocations.find(l => l.id === sess.playerLocation) || visibleLocations.find(l => l.name === sess.playerLocation);
+        const allPresentNPCs = sessionNpcs(world, sess).filter(ent =>
             sess.entityStates[ent.id]?.location === sess.playerLocation && isNpcActive(sess.entityStates[ent.id]));
+        const presentNPCs = selectForegroundNpcs(world, sess, allPresentNPCs, userInput, 16);
 
         // KNOWLEDGE GRAPH: stamp the just-submitted player message with who
         // witnessed it. Every message's witness list is the ground truth for
@@ -15758,6 +16358,9 @@ async function executeWorldTurn(commandOrReroll = null) {
 
         locName = loc ? loc.name : "Unknown Location";
         locDesc = loc ? loc.description : "You are lost in the void.";
+        if (allPresentNPCs.length > presentNPCs.length) {
+            locDesc += ` The location is crowded: ${allPresentNPCs.length - presentNPCs.length} additional background people are present. Treat them as a crowd unless one becomes directly relevant; do not invent full profiles for them.`;
+        }
         const currentLocationState = sess.locationStates?.[sess.playerLocation];
         if (turnRuleModules.livingWorld && currentLocationState?.conditions?.length) {
             locDesc += ` Current persistent conditions: ${currentLocationState.conditions.map(condition => condition.label).join(', ')}.`;
@@ -15768,15 +16371,27 @@ async function executeWorldTurn(commandOrReroll = null) {
             return `${ex.text}${ex.travelTime ? ` (takes ${ex.travelTime}m)` : ''}${ex.isOneWay ? ' [One-Way]' : ''}`;
         }).join(', ') : "None";
 
-    const ledgerPrompt = sess.ledger ? `\n\n[WORLD LEDGER: PERSISTENT HISTORY]\n${sess.ledger}\nUse this as the source of truth for past events.` : "";
+    const archiveQuery = [userInput, locName, locDesc,
+        ...presentNPCs.map(npc => npc.name),
+        ...(sess.quests || []).filter(quest => quest.status === 'active').map(quest => quest.title)
+    ].join(' ');
+    const recalledLedger = retrieveWorldLedgerArchive(sess, archiveQuery);
+    const ledgerPrompt = (sess.ledger || recalledLedger)
+        ? `\n\n[WORLD LEDGER: PERSISTENT HISTORY]\n${sess.ledger || ''}${recalledLedger ? `\n\n[RECALLED OLDER CANON — relevant to this scene]\n${recalledLedger}` : ''}\nUse this as the source of truth for past events. Older canon not recalled here still exists; do not contradict it.`
+        : "";
     // World Lore Injection
     let relevantLore = "";
     if (world.lorebook) {
-        const combinedContext = (userInput || "").toString().toLowerCase() + " " + (locName || "").toLowerCase() + " " + (locDesc || "").toLowerCase();
+        const combinedContext = [
+            userInput, locName, locDesc,
+            ...presentNPCs.map(npc => `${npc.name} ${npc.role || ''}`),
+            ...(sess.quests || []).filter(quest => quest.status === 'active').map(quest => `${quest.title} ${quest.description || ''}`),
+            ...(sess.engineEvents || []).slice(-8)
+        ].join(' ').toLowerCase();
         world.lorebook.forEach(entry => {
             if (!entry.keyword || !entry.text) return;
-            const keywords = entry.keyword.split(',').map(k => k.trim().toLowerCase());
-            if (keywords.some(kw => kw && combinedContext.includes(kw))) {
+            const keywords = parseLoreKeywords(entry.keyword);
+            if (keywords.some(keyword => loreKeywordMatches(combinedContext, keyword))) {
                 relevantLore += `\n[LORE: ${entry.keyword}] ${entry.text}`;
             }
         });
@@ -15881,6 +16496,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     const questPrompt = getQuestPrompt(world, sess);
 
     const playerRulesState = normalizePlayerRulesState(world, sess);
+    const diceConfig = normalizeWorldDiceConfig(world);
     const statContext = (ruleModules.stats ? (world.hudConfig?.stats || []) : []).map(s => {
         const val = sess.playerStats[s.id] !== undefined ? sess.playerStats[s.id] : s.value;
         return `${s.name} [${s.id}]: ${val}${s.max > 0 ? `/${s.max}` : ''}`;
@@ -15922,7 +16538,7 @@ async function executeWorldTurn(commandOrReroll = null) {
         }
     });
 
-    const locationManifest = world.locations.map(l => `  - "${l.name}" → id: "${l.id}"`).join('\n');
+    const locationManifest = buildKernelLocationManifest(world, sess, userInput);
     
     // --- MEMORY MATRIX INJECTION ---
     const memoryContext = await getMemoryMatrixContext(world, sess, userInput);
@@ -16028,6 +16644,7 @@ Player Condition: ${ruleModules.health || ruleModules.conditions
         : 'Disabled for this world'}
 Rules Profile: ${gameRules.profileId}. Enabled modules: ${WORLD_RULE_MODULE_KEYS.filter(key => ruleModules[key]).join(', ') || 'none'}. Disabled modules: ${WORLD_RULE_MODULE_KEYS.filter(key => !ruleModules[key]).join(', ') || 'none'}.
 Special rules: vital stat "${ruleModules.health ? (gameRules.vitalStatId || 'none') : 'disabled'}"; zero-health mode "${ruleModules.health ? gameRules.zeroHpMode : 'disabled'}"; currency stat "${ruleModules.commerce ? (gameRules.currencyStatId || 'none') : 'disabled'}" (${gameRules.currencyName}).
+Check Engine: ${ruleModules.checks ? `d${diceConfig.sides}, ${diceConfig.resolution} resolution, default difficulty ${diceConfig.defaultDifficulty}, stat modifier ${diceConfig.modifierMode}. Submit at most ONE check and put every result-dependent persistent mutation inside its on_success/on_failure object; completed top-level consequences beside a check are rejected. ${diceConfig.resolution === 'player' ? 'End at the moment of uncertainty. The player must resolve the queued check before any other action; the next response receives the canonical result.' : 'The engine resolves it immediately; never invent a roll.'}` : 'Disabled — resolve through fiction without dice.'}
 Player Outfit: ${sess.outfit || 'Standard attire'}
 ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPrompt}${societyPrompt}`;
     
@@ -16360,12 +16977,13 @@ ${modularMandate}
                         },
                         checks: {
                             type: "array",
+                            maxItems: 1,
                             items: {
                                 type: "object",
                                 properties: {
                                     id: { type: "string" },
                                     label: { type: "string" },
-                                    stat_id: { type: "string", description: "Optional stat whose current value is used as a modifier, clamped to -10..+10." },
+                                    stat_id: { type: "string", description: "Optional roll-enabled ability/skill stat. Never use health, money, XP, level, stress or another resource unless the author explicitly marked it rollable." },
                                     difficulty: { type: "integer", minimum: 2, maximum: 30 },
                                     modifier: { type: "integer", minimum: -5, maximum: 5, description: "Situational modifier only." },
                                     failure_cost: {
@@ -16377,11 +16995,21 @@ ${modularMandate}
                                             condition: { type: "string" },
                                             cause: { type: "string" }
                                         }
+                                    },
+                                    on_success: {
+                                        type: "object",
+                                        additionalProperties: true,
+                                        description: "Persistent updates applied only if this check succeeds. Use the same state-update fields as commit_world_turn (inventory_add/remove, stat_changes, quests_update, npc_disposition_changes, etc.)."
+                                    },
+                                    on_failure: {
+                                        type: "object",
+                                        additionalProperties: true,
+                                        description: "Persistent updates applied only if this check fails. Prefer this over failure_cost when the consequence includes quests, relationships, discoveries, identity, or other world state."
                                     }
                                 },
                                 required: ["label", "difficulty"]
                             },
-                            description: "Authoritative d20 checks. The engine rolls, applies the selected stat/situation modifier, records the immutable result, and atomically applies declared failure costs."
+                            description: "At most one authoritative check per turn. Put every result-dependent mutation inside on_success or on_failure; never place a completed consequence at the receipt top level."
                         },
                         player_condition_updates: {
                             type: "array",
@@ -16757,6 +17385,14 @@ ${modularMandate}
         if (!ruleModules.commerce && !ruleModules.livingWorld) removeToolFields(['economy_updates']);
 
         const failureCostProperties = worldStateProperties.checks?.items?.properties?.failure_cost?.properties;
+        const checkSchema = worldStateProperties.checks;
+        if (checkSchema) {
+            checkSchema.description = diceConfig.resolution === 'player'
+                ? `Request a d${diceConfig.sides} check only when failure is meaningfully possible. End the prose at the moment of uncertainty; the player rolls and the next turn narrates the locked result.`
+                : `Request an authoritative d${diceConfig.sides} check. The engine rolls and persists it; never invent a roll value.`;
+            const difficultySchema = checkSchema.items?.properties?.difficulty;
+            if (difficultySchema) difficultySchema.maximum = diceConfig.sides + 10;
+        }
         if (failureCostProperties) {
             if (!ruleModules.stats) delete failureCostProperties.stat_changes;
             if (!ruleModules.inventory) delete failureCostProperties.inventory_remove;
@@ -16791,6 +17427,10 @@ ${modularMandate}
             tool_choice: "auto",
             tools: toolsConfig
         };
+        if (normalizeWorldKernelConfig(world).enabled && normalizeWorldKernelConfig(world).compactTools) {
+            compactWorldToolContract(requestBody.tools);
+            requestBody.parallel_tool_calls = false;
+        }
 
         const supported = world.supportedParams || [];
         const hasSupported = supported.length > 0;
@@ -16826,6 +17466,7 @@ ${modularMandate}
         }
 
         let questFallbackMode = false;
+        turnCallAudit.main++;
         let response = await fetch(apiBase() + '/chat/completions', {
             method: 'POST',
             signal: controller.signal,
@@ -16853,6 +17494,7 @@ ${modularMandate}
                 requestBody.messages = requestBody.messages.map((message, index) =>
                     index === 0 ? { ...message, content: String(message.content || '') + fallbackInstruction } : message);
                 
+                turnCallAudit.providerFallback++;
                 response = await fetch(apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
@@ -16960,10 +17602,11 @@ ${modularMandate}
         const toolResponses = [];
         let structuredChronicle = null;
         let successfulStateCall = false;
+        let resolvedCheckThisTurn = false;
         const receiptPlayerStart = String(turnSnapshot?.session?.playerLocation || sess.playerLocation);
         const receiptMovementPhrase = extractUserMovementTarget(submittedInput || userInput);
         const receiptAuthorizedTarget = receiptMovementPhrase
-            ? resolveWorldMovementTarget(world, receiptPlayerStart, receiptMovementPhrase) : null;
+            ? resolveWorldMovementTarget(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, receiptPlayerStart, receiptMovementPhrase) : null;
         const receiptContext = {
             playerStartLocationId: receiptPlayerStart,
             committedPlayerDestinationId: sess.playerLocation !== receiptPlayerStart ? sess.playerLocation : '',
@@ -16995,6 +17638,7 @@ ${modularMandate}
                     const transactionResults = actionResult?.transactionResults || [];
                     const transactionsOk = transactionResults.every(result => result.success);
                     const checkResults = actionResult?.checkResults || [];
+                    if (checkResults.some(result => !result.pending && !result.reason)) resolvedCheckThisTurn = true;
                     const checksOk = checkResults.every(result =>
                         result.success || (!result.reason && result.failureCost?.applied !== false));
                     const conditionResults = actionResult?.conditionResults || [];
@@ -17064,18 +17708,20 @@ ${modularMandate}
         // already-written narrative. This repair request runs only when the
         // provider failed the primary contract.
         let repairedReceiptApplied = false;
-        if (!successfulStateCall && !inlineStateApplied && fullText.trim()) {
+        const receiptRepairNeeded = shouldRepairMissingWorldReceipt(world, command, submittedInput || userInput, fullText);
+        if (!successfulStateCall && !inlineStateApplied && fullText.trim() && receiptRepairNeeded) {
             try {
                 if (dmTypingLabel) dmTypingLabel.textContent = 'DM is reconciling the world state...';
                 const repairFrame = buildWorldSceneFrame(world, sess);
                 const repairPrompt = `[WORLD TURN RECEIPT REPAIR]\nThe narrative below has already been shown and MUST NOT be rewritten. Return JSON only for one commit_world_turn receipt with required keys scene, events, entity_updates, state_updates, and summary.\n- Every action names actor_id.\n- NPC movement never changes player location.\n- Intent, attempts, movement toward somewhere, dialogue claims and hypotheticals are not completed events.\n- scene is the complete ENDING checksum.\n- If nothing persistent changed, use empty events/state_updates but still return the current scene.\nAuthoritative pre-repair scene: ${JSON.stringify(repairFrame)}\nPlayer input: ${JSON.stringify(String(submittedInput || userInput).slice(0, 1200))}\nNarrative: ${JSON.stringify(String(fullText).slice(0, 7000))}`;
                 const repairBody = {
-                    model: modelId,
+                    model: structuredModelFor(world),
                     stream: false,
-                    max_tokens: Math.min(1400, Math.max(700, parseInt(world.maxTokens) || 1000)),
+                    max_tokens: 650,
                     temperature: 0,
                     messages: [{ role: 'system', content: repairPrompt }]
                 };
+                turnCallAudit.receiptRepair++;
                 const repairResponse = await fetch(apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
@@ -17165,7 +17811,8 @@ ${modularMandate}
         // --- FOLLOW-UP LOOP ---
         // If the AI made a tool call but produced no narrative text,
         // we need a second API call to get the actual story response.
-        if (toolCalls.length > 0 && !fullText.trim()) {
+        const toolResultNeedsNarration = toolCalls.some(call => call.function?.name === 'investigate_secret');
+        if (toolCalls.length > 0 && (!fullText.trim() || resolvedCheckThisTurn || toolResultNeedsNarration)) {
             console.log("Horde Engine: Tool call with no text — requesting narrative follow-up.");
 
             // Update label during follow-up call
@@ -17174,15 +17821,16 @@ ${modularMandate}
             try {
                 const followUpMessages = [
                     ...messages,
-                    { role: 'assistant', content: null, tool_calls: toolCalls },
+                    { role: 'assistant', content: fullText.trim() || null, tool_calls: toolCalls },
                     ...toolResponses,
-                    { role: 'user', content: `[SYSTEM: The requested tools have been processed. Now finish the response:\n1. Narrate the result in vivid, immersive prose. If a secret was revealed, narrate its discovery.\n2. If canon changed and ledger_update was not already supplied, add a one-sentence [MEMORY] line.${directorNotesRequired ? '\n3. DIRECTOR MODE remains required: append the active preset\'s <details><summary>Plot Momentum</summary>...</details> block as the final element.' : ''}]` }
+                    { role: 'user', content: `[SYSTEM: The requested tools have been processed. Now finish the response:\n1. Narrate the authoritative result in vivid, immersive prose.${resolvedCheckThisTurn ? ' A dice check was resolved by the engine: use the tool result exactly, never invent or reroll it, and do not repeat the pre-roll setup.' : ' If a secret was revealed, narrate its discovery.'}\n2. If canon changed and ledger_update was not already supplied, add a one-sentence [MEMORY] line.${directorNotesRequired ? '\n3. DIRECTOR MODE remains required: append the active preset\'s <details><summary>Plot Momentum</summary>...</details> block as the final element.' : ''}]` }
                 ];
 
                 const followUpBody = { ...requestBody, messages: sanitizeMessagesForProvider(followUpMessages), stream: false };
                 delete followUpBody.tools;
                 followUpBody.tool_choice = 'none';
 
+                turnCallAudit.narrativeFollowUp++;
                 const followUpResponse = await fetch(apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
@@ -17258,12 +17906,13 @@ ${modularMandate}
             try {
                 const finalFrame = buildWorldSceneFrame(world, sess);
                 const finalRepairPrompt = `[WORLD TURN RECEIPT REPAIR]\nReturn JSON only. Do not rewrite the narrative. Produce one commit_world_turn receipt with scene, events, entity_updates, state_updates and summary. Actor-scope every action; NPC movement never moves the player; intent/attempt/in_progress does not mutate state; scene is the complete ending checksum.\nAuthoritative scene: ${JSON.stringify(finalFrame)}\nPlayer input: ${JSON.stringify(String(submittedInput || userInput).slice(0, 1200))}\nFinal narrative: ${JSON.stringify(String(fullText).slice(0, 7000))}`;
+                turnCallAudit.receiptRepair++;
                 const finalRepairResponse = await fetch(apiBase() + '/chat/completions', {
                     method: 'POST',
                     signal: controller.signal,
                     headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
                     body: JSON.stringify({
-                        model: modelId, stream: false, max_tokens: 1400, temperature: 0,
+                        model: structuredModelFor(world), stream: false, max_tokens: 650, temperature: 0,
                         messages: [{ role: 'system', content: finalRepairPrompt }]
                     })
                 });
@@ -17337,7 +17986,10 @@ ${modularMandate}
             }
             cleanText = stripWorldLedgerDirective(fullText);
 
-            if (!extractedChronicle && command !== 'init' && command !== 'look') {
+            const kernelConfig = normalizeWorldKernelConfig(world);
+            if (!extractedChronicle && (!kernelConfig.enabled || kernelConfig.memoryMode === 'semantic')
+                && command !== 'init' && command !== 'look') {
+                turnCallAudit.chronicleClassifier++;
                 const recovered = await recoverWorldLedgerEntry(structuredModelFor(world), submittedInput || userInput, cleanText, controller.signal);
                 extractedChronicle = appendWorldLedgerEntry(sess, recovered);
                 if (extractedChronicle) {
@@ -17345,7 +17997,7 @@ ${modularMandate}
                     console.log(`Horde Engine: Chronicle recovered — ${extractedChronicle}`);
                 }
             }
-            if (!extractedChronicle && command !== 'init' && command !== 'look') {
+            if (!extractedChronicle && !kernelConfig.enabled && command !== 'init' && command !== 'look') {
                 const localFallback = buildLocalNarrativeLedgerFallback(submittedInput || userInput, cleanText);
                 extractedChronicle = appendWorldLedgerEntry(sess, localFallback);
                 if (extractedChronicle) {
@@ -17410,6 +18062,9 @@ ${modularMandate}
             // The scene went somewhere this world has never heard of.
             const missingPlace = sess.unresolvedDestination || '';
             sess.unresolvedDestination = '';
+            const endingWitnesses = sessionNpcs(world, sess)
+                .filter(npc => sess.entityStates?.[npc.id]?.location === sess.playerLocation && isNpcActive(sess.entityStates[npc.id]))
+                .map(npc => npc.id);
 
             const dmMsg = addWorldMessage('dm', cleanText, {
                 location: sess.playerLocation,
@@ -17429,8 +18084,13 @@ ${modularMandate}
                 stateFallbackArmed: command !== 'look' && command !== 'init',
                 ledgerStatus: sess.ledgerDiagnostics?.source === 'none' && !extractedChronicle
                     ? 'classifier_empty' : (sess.ledgerDiagnostics?.source || ''),
+                callAudit: turnCallAudit ? {
+                    ...turnCallAudit,
+                    foregroundTotal: Object.values(turnCallAudit).reduce((sum, value) => sum + value, 0),
+                    kernelMode: normalizeWorldKernelConfig(world).enabled ? 'scene_kernel' : 'legacy'
+                } : undefined,
                 turnSnapshot,
-                witnesses: presentNPCs.map(n => n.id),
+                witnesses: endingWitnesses,
                 deferPersist: true
             });
             const postSnapshot = captureWorldTurnState(world, sess);
@@ -17442,7 +18102,10 @@ ${modularMandate}
             } else {
                 dmMsg.versionSnapshots = [postSnapshot];
             }
-            dmMsg.postSnapshot = postSnapshot;
+            // versionSnapshots is the single canonical store. Keeping an
+            // identical postSnapshot beside it doubled every ordinary turn in
+            // persisted timelines, especially painfully in large worlds.
+            delete dmMsg.postSnapshot;
             await saveState();
         } else if (command === "init") {
             // INIT RESCUE: If the AI failed to introduce the world, provide a basic descriptive fallback
@@ -17461,8 +18124,8 @@ ${modularMandate}
                 },
                 deferPersist: true
             });
-            fallbackMsg.postSnapshot = captureWorldTurnState(world, sess);
-            fallbackMsg.versionSnapshots = [fallbackMsg.postSnapshot];
+            fallbackMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
+            delete fallbackMsg.postSnapshot;
             await saveState();
             fullText = fallbackIntro; // Set fullText so sync logic has something to work with if needed
         } else {
@@ -17480,10 +18143,24 @@ ${modularMandate}
 
         renderWorldPlayState();
 
+        // World imagination is a background replenishment pass, never part of
+        // the blocking chat transaction. Deterministic schedules, events and
+        // goals have already advanced locally; this call only seeds future
+        // surprises when the configured interval says the queue needs it.
+        if (command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
+            runWorldAgent(world, sess).then(async () => {
+                await saveState();
+                if (state.activeWorldId === world.id) renderWorldPlayState();
+            }).catch(agentError => console.warn('Horde Engine: background world agent skipped —', agentError.message));
+        }
+
         // Trigger non-blocking rolling episodic memory consolidation for World Mode
-        consolidateSessionEpisodicMemory(sess, world).catch(err => {
-            console.warn("World consolidation error in background:", err);
-        });
+        if (!normalizeWorldKernelConfig(world).enabled
+            || normalizeWorldKernelConfig(world).memoryMode === 'semantic') {
+            consolidateSessionEpisodicMemory(sess, world).catch(err => {
+                console.warn("World consolidation error in background:", err);
+            });
+        }
 
     } catch (err) {
         const dmTypingEl = document.getElementById('world-dm-typing');
@@ -17579,8 +18256,8 @@ ${modularMandate}
                     },
                     deferPersist: true
                 });
-                fallbackMsg.postSnapshot = captureWorldTurnState(world, sess);
-                fallbackMsg.versionSnapshots = [fallbackMsg.postSnapshot];
+                fallbackMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
+                delete fallbackMsg.postSnapshot;
                 await saveState();
                 renderWorldPlayState();
             }
@@ -17710,7 +18387,7 @@ function detectNarratedLocation(world, sess, narrative) {
         const phrase = String(contextualMove[1] || '')
             .split(/\s+(?:and|then|while|as|where|before|after)\s+/i)[0]
             .trim();
-        const contextualTarget = resolveWorldMovementTarget(world, sess.playerLocation, phrase);
+        const contextualTarget = resolveWorldMovementTarget(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, phrase);
         if (contextualTarget) return contextualTarget;
     }
     for (const location of world.locations || []) {
@@ -17723,7 +18400,7 @@ function detectNarratedLocation(world, sess, narrative) {
             `\\byou(?:'re| are)?\\s+(?:now\\s+)?(?:step|steps|stepped|walk|walks|walked|enter|enters|entered|move|moved|slip|slipped|duck|ducked|arrive|arrived|stand|standing)\\b[^.!?]{0,40}\\b${escaped}\\b`,
             'i');
         if (!framed.test(opening)) continue;
-        if (!findWorldTravelPath(world, sess.playerLocation, location.id)) continue;
+        if (!findWorldTravelPath(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, location.id)) continue;
         return location;
     }
     return null;
@@ -17841,6 +18518,11 @@ function normalizeOutfitItem(phrase) {
 function detectPlayerOutfitIntent(input) {
     const prose = stripSpokenDialogue(String(input || '')).replace(/[*_~]/g, ' ');
     if (!prose.trim()) return null;
+    // Deterministic state only follows completed first-person actions. Attempts,
+    // refusals, hypotheticals and explicit negation belong to narration.
+    if (/\bI\b[^.!?]{0,35}\b(?:try|tries|tried|attempt|attempted|want|wanted|plan|planned|might|may|could|would|refuse|refused|don['’]?t|do not|didn['’]?t|did not|never)\b[^.!?]{0,40}\b(?:change|dress|slip|swap|put|pull|throw|tug|don|wrap|fasten|buckle|strap|take|peel|strip|undress)\b/i.test(prose)) {
+        return null;
+    }
     const replacePatterns = [
         /\bI\b[^.!?]{0,25}\b(?:change|changed|slip|slipped|dress|dressed)\s+(?:in)?to\s+([^.!?;]{2,100})/i,
         /\bI(?:'m| am)\s+(?:now\s+)?(?:wearing|dressed\s+in|clad\s+in)\s+([^.!?;]{2,100})/i,
@@ -18047,6 +18729,51 @@ function sessionNpcs(world, sess) {
     return world.entities.filter(e => e.type === 'npc' && isVisibleToSession(e, sess));
 }
 
+function sessionLocations(world, sess) {
+    const extras = isPlainObject(sess?.dynamicExits) ? sess.dynamicExits : {};
+    return (world.locations || []).filter(location => isVisibleToSession(location, sess)).map(location => {
+        const added = Array.isArray(extras[location.id]) ? extras[location.id] : [];
+        return added.length ? { ...location, exits: [...(Array.isArray(location.exits) ? location.exits : []), ...added] } : location;
+    });
+}
+
+function worldForSession(world, sess) {
+    return { ...world, locations: sessionLocations(world, sess), entities: world.entities };
+}
+
+function addSessionDynamicExit(sess, fromLocationId, targetName) {
+    if (!sess || !fromLocationId || !targetName) return;
+    if (!isPlainObject(sess.dynamicExits)) sess.dynamicExits = {};
+    const exits = Array.isArray(sess.dynamicExits[fromLocationId]) ? sess.dynamicExits[fromLocationId] : [];
+    const wanted = `to ${String(targetName).trim()}`;
+    if (!exits.some(exit => getExitTargetName(exit).toLowerCase() === String(targetName).trim().toLowerCase())) exits.push(wanted);
+    sess.dynamicExits[fromLocationId] = exits.slice(0, 100);
+}
+
+function rotatingWorldWindow(items, limit, turn = 0) {
+    if (!Array.isArray(items) || items.length <= limit) return Array.isArray(items) ? [...items] : [];
+    const start = Math.abs(Math.trunc(Number(turn) || 0) * Math.max(1, limit)) % items.length;
+    return Array.from({ length: limit }, (_, index) => items[(start + index) % items.length]);
+}
+
+function selectForegroundNpcs(world, sess, allPresent, userInput, limit = 16) {
+    if (allPresent.length <= limit) return allPresent;
+    const input = String(userInput || '').toLowerCase();
+    const scored = allPresent.map(npc => {
+        const entState = sess.entityStates?.[npc.id] || {};
+        let score = npc.isMajor ? 100 : 0;
+        if (input && npcReferenceVariants(npc).some(name => name.length > 1 && input.includes(name))) score += 200;
+        if (entState.relationshipToPlayer) score += 50;
+        if (entState.interactingWith?.includes('player')) score += 80;
+        score += Math.min(20, (entState.observations || []).length);
+        return { npc, score };
+    });
+    const priority = scored.filter(item => item.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
+    const chosen = new Set(priority.map(item => item.npc.id));
+    const rotating = rotatingWorldWindow(scored.filter(item => !chosen.has(item.npc.id)), limit - priority.length, sess.turnCount || 0);
+    return [...priority.map(item => item.npc), ...rotating.map(item => item.npc)];
+}
+
 function normalizedNpcNameParts(name) {
     const clean = String(name || '').toLowerCase()
         .replace(/[’']/g, '')
@@ -18111,9 +18838,34 @@ function resolveNpcId(world, llmNpcId, sess = null) {
     return npc ? npc.id : null;
 }
 
+const CHECK_GUARDED_ACTION_FIELDS = Object.freeze([
+    'location_id', 'location_introduced', 'time_skip_minutes', 'transactions',
+    'inventory_add', 'inventory_remove', 'stat_changes', 'player_condition_updates',
+    'outfit_update', 'player_identity_update', 'quests_update', 'npc_moves',
+    'npc_introduced', 'npc_goal_updates', 'npc_disposition_changes',
+    'npc_relationship_updates', 'npc_observations', 'world_events',
+    'location_state_updates', 'faction_updates', 'economy_updates',
+    'schedule_updates', 'player_preference_updates', 'relationship_update',
+    'relationship_event', 'memory_write', 'ledger_update'
+]);
+
+function sanitizeCheckOutcomeActions(raw) {
+    if (!isPlainObject(raw)) return null;
+    const clean = {};
+    CHECK_GUARDED_ACTION_FIELDS.forEach(field => {
+        if (raw[field] !== undefined) clean[field] = safeJsonClone(raw[field]);
+    });
+    return Object.keys(clean).length ? clean : null;
+}
+
 function processStructuredActions(args) {
-    const world = state.worlds.find(w => w.id === state.activeWorldId);
-    const sess = getCurrentWorldSession();
+    // Optional explicit targets let the background World Agent finish safely
+    // even if the player switches sessions while its request is in flight.
+    // Keep the public one-argument signature stable for extensions/audits.
+    const explicitWorld = arguments[1] || null;
+    const explicitSession = arguments[2] || null;
+    const world = explicitWorld || state.worlds.find(w => w.id === state.activeWorldId);
+    const sess = explicitSession || getCurrentWorldSession();
     if (!world || !sess) return null;
     normalizeLivingWorldState(world, sess);
     normalizePlayerRulesState(world, sess);
@@ -18123,6 +18875,7 @@ function processStructuredActions(args) {
     let statResult = null;
     let transactionResults = [];
     let checkResults = [];
+    let checkOutcomeResults = [];
     let conditionResults = [];
     const moduleRejections = [];
     const rejectDisabledField = (field, module) => {
@@ -18132,11 +18885,35 @@ function processStructuredActions(args) {
         }
     };
 
+    // Resolve uncertainty before touching any result-dependent state. A model
+    // must place those mutations in on_success/on_failure. Any guarded field at
+    // the same level as a check is rejected, preventing a failed roll from
+    // accidentally committing the successful outcome.
+    if (Array.isArray(args.checks) && args.checks.length) {
+        const requestedChecks = args.checks.slice(0, 10);
+        checkResults = performAuthoritativeChecks(world, sess, requestedChecks);
+        checkResults.forEach((result, index) => {
+            if (result.pending || result.reason) return;
+            const requested = requestedChecks[index] || {};
+            const branch = sanitizeCheckOutcomeActions(result.success ? requested.on_success : requested.on_failure);
+            if (branch) checkOutcomeResults.push(processStructuredActions(branch, world, sess));
+        });
+        const guarded = { ...args };
+        delete guarded.checks;
+        CHECK_GUARDED_ACTION_FIELDS.forEach(field => {
+            if (guarded[field] !== undefined) {
+                moduleRejections.push({ field, module: 'checks', reason: 'unconditional_update_beside_check' });
+                delete guarded[field];
+            }
+        });
+        args = guarded;
+    }
+
     // --- DYNAMIC WORLD GROWTH: register new locations FIRST so a move to
     // a just-introduced location in the same tool call resolves correctly.
     if (args.location_introduced && Array.isArray(args.location_introduced)) {
         args.location_introduced.forEach(li => {
-            if (!li.name || findFuzzyLocation(li.name, world.locations)) return; // already exists
+            if (!li.name || findFuzzyLocation(li.name, sessionLocations(world, sess))) return; // already exists here
             const requestedId = String(li.id || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100);
             const newLoc = {
                 id: requestedId && !world.locations.some(location => location.id === requestedId)
@@ -18149,19 +18926,18 @@ function processStructuredActions(args) {
                 description: li.description || 'A newly discovered place.',
                 hiddenDescription: '',
                 exits: [],
-                secrets: []
+                secrets: [],
+                sessionOrigin: sess.id
             };
             // Link exits both ways to an anchor (stated connection, else current location)
-            const anchor = (li.connects_to && findFuzzyLocation(li.connects_to, world.locations))
-                || world.locations.find(l => l.id === sess.playerLocation);
-            const mapParent = li.parent_location_id && findFuzzyLocation(li.parent_location_id, world.locations);
+            const visibleLocations = sessionLocations(world, sess);
+            const anchor = (li.connects_to && findFuzzyLocation(li.connects_to, visibleLocations))
+                || visibleLocations.find(l => l.id === sess.playerLocation);
+            const mapParent = li.parent_location_id && findFuzzyLocation(li.parent_location_id, visibleLocations);
             if (mapParent) newLoc.parentLocationId = mapParent.id;
             if (anchor) {
                 newLoc.exits.push(`to ${anchor.name}`);
-                anchor.exits = anchor.exits || [];
-                if (!anchor.exits.some(ex => (typeof ex === 'string' ? ex : ex.text || '').toLowerCase().includes(newLoc.name.toLowerCase()))) {
-                    anchor.exits.push(`to ${newLoc.name}`);
-                }
+                addSessionDynamicExit(sess, anchor.id, newLoc.name);
             }
             world.locations.push(newLoc);
             showToast(`🗺️ New location discovered: ${newLoc.name}`, 'success');
@@ -18173,7 +18949,7 @@ function processStructuredActions(args) {
 
     if (args.location_id) {
         const playerState = normalizePlayerRulesState(world, sess);
-        const targetLoc = findFuzzyLocation(args.location_id, world.locations);
+        const targetLoc = findFuzzyLocation(args.location_id, sessionLocations(world, sess));
         if (playerState.status !== 'active') {
             movementResult = { ok: false, moved: false, reason: playerState.status, path: [] };
         } else if (targetLoc) {
@@ -18225,10 +19001,6 @@ function processStructuredActions(args) {
                 showToast(`Purchase not settled: ${explanation}.`, 'warning');
             }
         });
-    }
-
-    if (Array.isArray(args.checks)) {
-        checkResults = performAuthoritativeChecks(world, sess, args.checks);
     }
 
     if (Array.isArray(args.player_condition_updates)) {
@@ -18628,7 +19400,7 @@ function processStructuredActions(args) {
             // dropping the move and leaving the room reading as empty.
             const destinationRef = move?.target_location_id ?? move?.location_id
                 ?? move?.to_location_id ?? move?.destination_id ?? move?.destination;
-            const targetLoc = findFuzzyLocation(destinationRef, world.locations);
+            const targetLoc = findFuzzyLocation(destinationRef, sessionLocations(world, sess));
             if (entState && targetLoc) {
                 entState.location = targetLoc.id;
                 // Narrative placement outranks schedules/population for the next few turns
@@ -18660,7 +19432,7 @@ function processStructuredActions(args) {
                 const newId = 'ent_' + Date.now() + Math.floor(Math.random() * 1000);
                 // Home: only if the narrative states one — meeting someone at an inn
                 // must NOT make them a resident of the inn. No home = wanderer.
-                const statedHome = npc.home_location ? findFuzzyLocation(npc.home_location, world.locations) : null;
+                const statedHome = npc.home_location ? findFuzzyLocation(npc.home_location, sessionLocations(world, sess)) : null;
                 const newNpc = {
                     id: newId,
                     type: 'npc',
@@ -18819,6 +19591,7 @@ function processStructuredActions(args) {
         statResult,
         transactionResults,
         checkResults,
+        checkOutcomeResults,
         conditionResults,
         moduleRejections,
         playerState: safeJsonClone(normalizePlayerRulesState(world, sess))
@@ -18838,7 +19611,7 @@ async function renderWorldMap() {
 
     try {
         const sess = getCurrentWorldSession();
-        renderSemanticWorldMap(container, world, {
+        renderSemanticWorldMap(container, worldForSession(world, sess), {
             currentLocationId: sess?.playerLocation || ''
         });
     } catch (err) {
@@ -18854,6 +19627,7 @@ async function renderWorldMap() {
 // Start
 init().catch(error => {
     console.error('Initialization failed:', error);
+    window.__hordeRuntimeErrors.push({ message: `Initialization failed: ${String(error?.message || error)}`, stack: String(error?.stack || '') });
     showToast(`Unable to start Horde Studio: ${error.message || error}`, 'error');
 });
 
@@ -18979,7 +19753,7 @@ function getWorldPathTravelTime(world, path) {
 
 function movePlayerAlongWorldPath(world, sess, targetLocation, options = {}) {
     if (!world || !sess || !targetLocation) return { ok: false, moved: false, reason: 'unknown_destination', path: [] };
-    const path = findWorldTravelPath(world, sess.playerLocation, targetLocation.id);
+    const path = findWorldTravelPath(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, targetLocation.id);
     if (!path) return { ok: false, moved: false, reason: 'unreachable', path: [] };
     if (path.length === 1) return { ok: true, moved: false, reason: 'already_there', path };
 
@@ -19576,6 +20350,9 @@ function normalizeAuthoredWorld(world) {
     });
     normalizeWorldRelationships(world);
     normalizeWorldSandboxConfig(world);
+    normalizeWorldGameRules(world);
+    normalizeWorldKernelConfig(world);
+    world.worldAgent = normalizeWorldAgentConfig(world);
     return world;
 }
 
@@ -19588,6 +20365,12 @@ function normalizeLivingWorldState(world, sess) {
     sess.turnEvents = sess.turnEvents.slice(-1200);
     sess.worldTurnReceipts = sess.worldTurnReceipts.slice(-120);
     sess.worldStateVersion = Math.max(0, parseInt(sess.worldStateVersion) || 0);
+    if (!Array.isArray(sess.pendingChecks)) {
+        sess.pendingChecks = sess.pendingCheck ? [sess.pendingCheck] : [];
+    }
+    sess.pendingChecks = sess.pendingChecks
+        .filter(item => item && typeof item === 'object' && !Array.isArray(item)).slice(0, 10);
+    sess.pendingCheck = sess.pendingChecks[0] || null;
     if (!isPlainObject(sess.lastTurnAudit)) sess.lastTurnAudit = null;
     if (!Array.isArray(sess.playerSceneConditions)) sess.playerSceneConditions = [];
     if (typeof sess.playerActivity !== 'string') sess.playerActivity = '';
@@ -19601,6 +20384,7 @@ function normalizeLivingWorldState(world, sess) {
     if (!sess.locationStates || typeof sess.locationStates !== 'object' || Array.isArray(sess.locationStates)) sess.locationStates = {};
     if (!sess.npcRelationships || typeof sess.npcRelationships !== 'object' || Array.isArray(sess.npcRelationships)) sess.npcRelationships = {};
     if (!sess.npcScheduleOverrides || typeof sess.npcScheduleOverrides !== 'object' || Array.isArray(sess.npcScheduleOverrides)) sess.npcScheduleOverrides = {};
+    if (!isPlainObject(sess.dynamicExits)) sess.dynamicExits = {};
     if (!Array.isArray(sess.factions)) sess.factions = [];
     if (!sess.economy || typeof sess.economy !== 'object' || Array.isArray(sess.economy)) sess.economy = {};
     if (!sess.economy.currency) sess.economy.currency = 'coin';
@@ -20010,8 +20794,7 @@ function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = '
             hiddenDescription: '', exits: anchor ? [`to ${anchor.name}`] : [], secrets: [], sessionOrigin: sess.id
         };
         if (anchor) {
-            anchor.exits = Array.isArray(anchor.exits) ? anchor.exits : [];
-            if (!anchor.exits.some(exit => getExitTargetName(exit)?.toLowerCase() === home.name.toLowerCase())) anchor.exits.push(`to ${home.name}`);
+            addSessionDynamicExit(sess, anchor.id, home.name);
         }
         world.locations.push(home);
         createdLocationIds.push(home.id);
@@ -20103,7 +20886,7 @@ function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = '
         generatedAt: Date.now()
     };
     const line = `Active life initialized: ${sess.lifeSeed.summary}`;
-    if (!String(sess.ledger || '').includes(line)) sess.ledger = [sess.ledger, line].filter(Boolean).join('\n');
+    appendWorldLedgerEntry(sess, line);
     normalizeAuthoredWorld(world);
     normalizeLivingWorldState(world, sess);
     return sess.lifeSeed;
@@ -20349,7 +21132,13 @@ function buildNpcLocationIndex(world, sess) {
         if (!entState?.location || !isNpcActive(entState)) return;
         let group = index.get(entState.location);
         if (!group) index.set(entState.location, group = []);
-        if (group.length < LIVING_ROOM_CAP) group.push(npc.id);
+        group.push(npc.id);
+    });
+    index.forEach((group, locationId) => {
+        if (group.length > LIVING_ROOM_CAP) {
+            index.set(locationId, rotatingWorldWindow(group, LIVING_ROOM_CAP,
+                (sess.turnCount || 0) + Math.floor(stableWorldRoll(locationId) * group.length)));
+        }
     });
     return index;
 }
@@ -20673,9 +21462,11 @@ function resolveFactionVictory(world, sess, faction, turn) {
 }
 
 function driftFactionRelations(world, sess, turn) {
-    const active = (sess.factions || [])
-        .filter(faction => !['defeated', 'disbanded'].includes(faction.status))
-        .slice(0, FACTION_PAIR_CAP);
+    const activePool = (sess.factions || [])
+        .filter(faction => !['defeated', 'disbanded'].includes(faction.status));
+    const active = typeof rotatingWorldWindow === 'function'
+        ? rotatingWorldWindow(activePool, FACTION_PAIR_CAP, turn)
+        : activePool.slice(0, FACTION_PAIR_CAP);
     let changes = 0;
     for (let i = 0; i < active.length - 1; i++) {
         for (let j = i + 1; j < active.length; j++) {
@@ -21221,7 +22012,7 @@ function normalizeWorldAgentConfig(world) {
         ? world.worldAgent : {};
     return {
         enabled: raw.enabled === true,
-        intervalTurns: Math.max(4, Math.min(200, parseInt(raw.intervalTurns) || 12)),
+        intervalTurns: Math.max(8, Math.min(200, parseInt(raw.intervalTurns) || 24)),
         model: String(raw.model || '').trim().slice(0, 160)
     };
 }
@@ -21234,8 +22025,18 @@ function shouldRunWorldAgent(world, sess, options = {}) {
     if (!config.enabled) return false;
     const turn = Math.max(1, parseInt(sess.turnCount) || 1);
     const last = Math.max(0, parseInt(sess.lastWorldAgentTurn) || 0);
-    if (last === 0) return turn >= config.intervalTurns;   // let a session settle first
-    return turn - last >= config.intervalTurns;
+    const elapsed = last === 0 ? turn : turn - last;
+    if (elapsed < config.intervalTurns) return false;
+    if (elapsed >= config.intervalTurns * 2) return true; // eventual momentum guarantee
+    const queued = (sess.scheduledEvents || []).filter(event => event.status === 'scheduled'
+        && (event.dueTurn == null || event.dueTurn >= turn)).length;
+    const activeGoals = sessionNpcs(world, sess).filter(npc => {
+        const npcState = sess.entityStates?.[npc.id];
+        return npcState?.goal && ['active', 'blocked'].includes(npcState.goalStatus || 'active');
+    }).length;
+    // Ask for invention only when the deterministic kernel is running out of
+    // future material. A populated event queue already keeps the world alive.
+    return queued < Math.max(2, Math.min(6, Math.ceil(activeGoals / 4)));
 }
 
 // Compact enough to stay cheap: what is in motion, not the whole world.
@@ -21248,15 +22049,16 @@ function buildWorldAgentDigest(world, sess) {
     lines.push(`TIME: day ${time.days}, ${String(time.hours24).padStart(2, '0')}:${String(time.mins).padStart(2, '0')} (turn ${sess.turnCount || 1})`);
     lines.push(`PLAYER IS AT: ${locName(sess.playerLocation)} — do not move, harm, reward, or otherwise touch the player.`);
 
-    const agendas = sessionNpcs(world, sess).map(npc => {
+    const agendaPool = sessionNpcs(world, sess).map(npc => {
         const entState = sess.entityStates?.[npc.id];
         if (!entState?.goal || !isNpcActive(entState)) return null;
         const step = entState.goalSteps?.[entState.goalStepIndex || 0];
         return `- ${npc.name} [${npc.id}] at ${locName(entState.location)} — ${entState.goalStatus} "${entState.goal}" ${entState.goalProgress || 0}%${step ? ` (currently: ${step})` : ''}`;
-    }).filter(Boolean).slice(0, 20);
+    }).filter(Boolean);
+    const agendas = rotatingWorldWindow(agendaPool, 20, sess.turnCount || 0);
     if (agendas.length) lines.push(`NPC AGENDAS IN MOTION:\n${agendas.join('\n')}`);
 
-    const factions = (sess.factions || []).filter(f => !['defeated', 'disbanded'].includes(f.status)).slice(0, 10)
+    const factions = rotatingWorldWindow((sess.factions || []).filter(f => !['defeated', 'disbanded'].includes(f.status)), 10, sess.turnCount || 0)
         .map(f => `- ${f.name} [${f.id}] influence ${f.influence}, reputation ${f.reputation}${f.goal ? ` — "${f.goal}" ${f.goalProgress}%` : ''}`);
     if (factions.length) lines.push(`FACTIONS:\n${factions.join('\n')}`);
 
@@ -21264,9 +22066,8 @@ function buildWorldAgentDigest(world, sess) {
         .map(e => `- ${e.title} (turn ${e.dueTurn ?? '?'}${e.locationId ? ` at ${locName(e.locationId)}` : ''})`);
     if (pending.length) lines.push(`ALREADY SCHEDULED (do not duplicate):\n${pending.join('\n')}`);
 
-    const notable = Object.entries(sess.locationStates || {})
-        .filter(([, s]) => (s.conditions || []).length || s.danger > 30)
-        .slice(0, 10)
+    const notable = rotatingWorldWindow(Object.entries(sess.locationStates || {})
+        .filter(([, s]) => (s.conditions || []).length || s.danger > 30), 10, sess.turnCount || 0)
         .map(([id, s]) => `- ${locName(id)} [${id}]: danger ${s.danger}, prosperity ${s.prosperity}${(s.conditions || []).length ? `, ${s.conditions.map(c => c.label).join('/')}` : ''}`);
     if (notable.length) lines.push(`LOCATION STATES:\n${notable.join('\n')}`);
 
@@ -21276,8 +22077,13 @@ function buildWorldAgentDigest(world, sess) {
     const acted = (sess.history || []).filter(m => m.role === 'user').slice(-5).map(m => `- ${String(m.text || '').slice(0, 160)}`);
     if (acted.length) lines.push(`WHAT THE PLAYER HAS BEEN DOING:\n${acted.join('\n')}`);
 
-    lines.push(`PLACES: ${world.locations.slice(0, 60).map(l => `${l.name} [${l.id}]`).join(', ')}`);
+    lines.push(`PLACES: ${rotatingWorldWindow(sessionLocations(world, sess), 60, sess.turnCount || 0).map(l => `${l.name} [${l.id}]`).join(', ')}`);
     return lines.join('\n\n');
+}
+
+function bumpWorldEpoch(session) {
+    if (session) session._worldEpoch = (Number(session._worldEpoch) || 0) + 1;
+    return Number(session?._worldEpoch) || 0;
 }
 
 // Strip anything that would let an off-screen simulation edit the player.
@@ -21299,6 +22105,7 @@ function sanitizeWorldAgentActions(raw) {
 async function runWorldAgent(world, sess) {
     const config = normalizeWorldAgentConfig(world);
     const turn = Math.max(1, parseInt(sess.turnCount) || 1);
+    const startEpoch = Number(sess._worldEpoch) || 0;
     sess.lastWorldAgentTurn = turn;   // set first: a failure must not retry every turn
 
     const system = `You are the WORLD AGENT for a persistent roleplay world. Between the player's scenes you decide what the rest of the world does.
@@ -21329,7 +22136,7 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
-            model: structuredModelFor(world),
+            model: config.model || structuredModelFor(world),
             max_tokens: 1200,
             messages: [
                 { role: 'system', content: system },
@@ -21344,11 +22151,22 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
     const parsed = parseWorldAgentPayload(content);
     if (!parsed) throw new Error('World agent returned no usable JSON');
 
+    // The player may have rerolled, reset, deleted this timeline, or advanced
+    // it while the background request was in flight. Never apply a development
+    // authored against a state that no longer exists.
+    const liveInstance = state.worldInstances?.[world.id];
+    const timelineStillExists = liveInstance?.sessions?.includes(sess);
+    if (!timelineStillExists || (Number(sess._worldEpoch) || 0) !== startEpoch
+        || Math.max(1, parseInt(sess.turnCount) || 1) !== turn) {
+        console.warn('Horde Engine: discarded stale World Agent response after timeline changed.');
+        return { applied: false, stale: true, turn, developments: [] };
+    }
+
     const { actions, dropped } = sanitizeWorldAgentActions(parsed);
     if (dropped) console.warn(`Horde Engine: world agent proposed ${dropped} out-of-scope field(s); ignored.`);
     if (!Object.keys(actions).length) return { applied: false, turn, developments: [] };
 
-    processStructuredActions(actions);
+    processStructuredActions(actions, world, sess);
 
     const developments = (Array.isArray(parsed.developments) ? parsed.developments : [])
         .map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
@@ -23259,7 +24077,7 @@ function salvageTruncatedPayload(text, usable) {
 // A pass costs an API call, so its proposals must outlive a re-render of the
 // audit panel. Applying one finding used to rebuild the panel and destroy the
 // rest of the list, forcing another paid run to get them back.
-let calibrationPassState = null;   // { worldId, findings, applied:Set<number> }
+let calibrationPassState = null;   // { worldId, findings, applied:Set<number>, dismissed:Set<number> }
 
 // Handlers are attached here rather than inline, because the page's CSP blocks
 // inline event attributes outright.
@@ -23372,7 +24190,7 @@ function wireCalibrationControls(world, calibration, container) {
                 });
                 calibrationPassState = {
                     worldId: world.id, pass, findings: result.findings,
-                    applied: new Set(), note: result.note
+                    applied: new Set(), dismissed: new Set(), note: result.note
                 };
                 renderCalibrationPassFindings(world, passResults);
             } catch (error) {
@@ -23390,39 +24208,48 @@ function wireCalibrationControls(world, calibration, container) {
 function renderCalibrationPassFindings(world, host) {
     const state = calibrationPassState;
     if (!host || !state || state.worldId !== world.id) return;
-    const { findings, applied } = state;
+    const findings = Array.isArray(state.findings) ? state.findings : [];
+    const applied = state.applied instanceof Set ? state.applied : (state.applied = new Set());
+    const dismissed = state.dismissed instanceof Set ? state.dismissed : (state.dismissed = new Set());
     if (!findings.length) {
         host.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Nothing to add — this world already says everything the ${escapeHTML(String(CALIBRATION_PASSES[state.pass]?.label || state.pass).toLowerCase())} pass looks for.</div>`;
         return;
     }
     const sevStyle = { critical: 'var(--red)', warning: 'var(--warning, #F4A261)', suggestion: 'var(--text-3)' };
-    const remaining = findings.length - applied.size;
+    const remainingIndexes = findings.map((_, index) => index)
+        .filter(index => !applied.has(index) && !dismissed.has(index));
+    const remaining = remainingIndexes.length;
     host.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <strong style="font-size:0.85rem;">${escapeHTML(CALIBRATION_PASSES[state.pass]?.label || '')} — ${remaining} of ${findings.length} proposal${findings.length === 1 ? '' : 's'} left${state.note ? ` · ${escapeHTML(state.note)}` : ''}</strong>
-            ${remaining ? `<button id="calibrate-pass-apply-all" class="btn btn-primary" style="font-size:0.7rem; padding:4px 10px;">Apply remaining</button>` : ''}
+        <div class="calibration-proposal-head">
+            <strong>${escapeHTML(CALIBRATION_PASSES[state.pass]?.label || '')} — ${remaining} open · ${applied.size} applied · ${dismissed.size} dismissed${state.note ? ` · ${escapeHTML(state.note)}` : ''}</strong>
+            <div class="calibration-proposal-actions">
+                ${remaining ? `<button id="calibrate-pass-apply-all" class="btn btn-primary">Apply remaining</button>
+                    <button id="calibrate-pass-dismiss-all" class="btn btn-ghost">Dismiss remaining</button>` : ''}
+                <button id="calibrate-pass-clear" class="btn btn-ghost">Clear proposals</button>
+            </div>
         </div>
         <div style="display:flex; flex-direction:column; gap:6px;">
-            ${findings.map((finding, index) => {
-                const isApplied = applied.has(index);
-                return `
-                <div style="background:var(--surface2); padding:9px 11px; border-radius:8px; border-left:3px solid ${isApplied ? 'var(--green, #2a9d8f)' : (sevStyle[finding.severity] || 'var(--text-3)')}; font-size:0.8rem; display:flex; gap:10px; align-items:flex-start; ${isApplied ? 'opacity:0.55;' : ''}">
+            ${remainingIndexes.length ? remainingIndexes.map(index => {
+                const finding = findings[index];
+                return `<div class="calibration-proposal" style="border-left-color:${sevStyle[finding.severity] || 'var(--text-3)'};">
                     <div style="flex:1;">
-                        <div style="font-weight:bold;">${isApplied ? '✓ ' : ''}${escapeHTML(finding.title)}</div>
+                        <div style="font-weight:bold;">${escapeHTML(finding.title)}</div>
                         <div style="color:var(--text-3); margin-top:2px;">${escapeHTML(finding.detail)}</div>
                     </div>
-                    ${isApplied
-                        ? '<span class="mini-tag" style="white-space:nowrap;">applied</span>'
-                        : `<button class="btn btn-ghost calibrate-pass-one" data-index="${index}" style="font-size:0.68rem; padding:3px 8px; white-space:nowrap;">Apply</button>`}
+                    <div class="calibration-proposal-actions">
+                        <button class="btn btn-ghost calibrate-pass-dismiss" data-index="${index}">Dismiss</button>
+                        <button class="btn btn-primary calibrate-pass-one" data-index="${index}">Apply</button>
+                    </div>
                 </div>`;
-            }).join('')}
+            }).join('') : '<div class="form-hint">No open proposals. Clear this result or run another pass.</div>'}
         </div>`;
 
     // Re-render the panel so Tier 0 reflects the change, then put these
     // proposals straight back — they are paid for and must not vanish.
     const afterApply = (count) => {
-        if (!count) return showToast('That one was already in place.', 'info');
-        showToast(`Applied ${count} change${count === 1 ? '' : 's'} — remember to Save World.`, 'success');
+        showToast(count
+            ? `Applied ${count} change${count === 1 ? '' : 's'} — remember to Save World.`
+            : 'That proposal was already represented, so it was closed without changing the world.', count ? 'success' : 'info');
         renderWorldAudit();
         renderWorldStudio();
     };
@@ -23431,8 +24258,8 @@ function renderCalibrationPassFindings(world, host) {
     if (applyAll) {
         applyAll.onclick = () => {
             let count = 0;
-            findings.forEach((finding, index) => {
-                if (applied.has(index)) return;
+            remainingIndexes.forEach(index => {
+                const finding = findings[index];
                 if (applyCalibrationFinding(world, finding)) count++;
                 applied.add(index);   // mark either way: it is no longer outstanding
             });
@@ -23447,6 +24274,23 @@ function renderCalibrationPassFindings(world, host) {
             afterApply(changed);
         };
     });
+    host.querySelectorAll('.calibrate-pass-dismiss').forEach(button => {
+        button.onclick = () => {
+            dismissed.add(Number(button.dataset.index));
+            renderCalibrationPassFindings(world, host);
+        };
+    });
+    const dismissAll = host.querySelector('#calibrate-pass-dismiss-all');
+    if (dismissAll) dismissAll.onclick = () => {
+        remainingIndexes.forEach(index => dismissed.add(index));
+        renderCalibrationPassFindings(world, host);
+        showToast(`Dismissed ${remainingIndexes.length} proposal${remainingIndexes.length === 1 ? '' : 's'}.`, 'info');
+    };
+    const clear = host.querySelector('#calibrate-pass-clear');
+    if (clear) clear.onclick = () => {
+        calibrationPassState = null;
+        host.innerHTML = '<div class="form-hint">Proposals cleared. Run a pass whenever you want a fresh set.</div>';
+    };
 }
 
 function renderWorldAudit() {
@@ -30984,14 +31828,15 @@ function setupCompanionsLogic() {
         if (!file) return;
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            const optimized = await optimizeImage(event.target.result, 512, 0.84);
+        try {
+            const optimized = await normalizeUploadedImage(file, 512, 0.84);
             companion.profilePhoto = optimized;
             document.getElementById('cs-photo-preview').innerHTML = `<img src="${escapeHTML(optimized)}" alt="">`;
             await saveState();
-        };
-        reader.readAsDataURL(file);
+            showToast('Profile photo normalized and saved.', 'success');
+        } catch (error) {
+            showToast(`Image upload failed: ${error.message}`, 'error');
+        } finally { e.target.value = ''; }
     };
 
     const referenceUpload = document.getElementById('cs-reference-upload-area');
@@ -31002,9 +31847,8 @@ function setupCompanionsLogic() {
         if (!file) return;
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
-        const reader = new FileReader();
-        reader.onload = async (loadEvent) => {
-            const optimized = await optimizeImage(loadEvent.target.result, 1024, 0.9);
+        try {
+            const optimized = await normalizeUploadedImage(file, 1024, 0.9);
             companion.basePhoto = optimized;
             document.getElementById('cs-reference-preview').innerHTML = `<img src="${escapeHTML(optimized)}" alt="">`;
             const testReference = document.getElementById('cs-photo-test-use-reference');
@@ -31015,8 +31859,10 @@ function setupCompanionsLogic() {
             await saveState();
             if (!['higgsfield', 'magnific', 'comfyui'].includes(companion.imageSource)) populateCompanionImageModelPicker(companion);
             else renderCompanionMcpToolSchema(companion);
-        };
-        reader.readAsDataURL(file);
+            showToast('Generation reference normalized and saved.', 'success');
+        } catch (error) {
+            showToast(`Image upload failed: ${error.message}`, 'error');
+        } finally { event.target.value = ''; }
     };
 
     const search = document.getElementById('vh-search');
@@ -31579,7 +32425,24 @@ function renderCompanionTimelineControls(companion) {
         `<option value="${escapeHTML(session.id)}"${session.id === store.activeSessionId ? ' selected' : ''}>${escapeHTML(session.name)}</option>`
     ).join('');
     const thread = getCompanionThread(companion.id);
-    if (reroll) reroll.disabled = !thread.some(message => message.role === 'companion' && message.turnSnapshot);
+    if (reroll) {
+        const lastCompanion = [...thread].reverse().find(message => message.role === 'companion' && !message.pending);
+        const groupId = lastCompanion?.responseGroupId;
+        const lastGroupIndex = lastCompanion ? thread.reduce((latest, message, index) =>
+            message.role === 'companion' && (groupId ? message.responseGroupId === groupId : message === lastCompanion)
+                ? index : latest, -1) : -1;
+        const hasNewerUserTurn = lastGroupIndex >= 0 && thread.slice(lastGroupIndex + 1)
+            .some(message => message.role === 'user');
+        const groupSize = lastCompanion ? thread.filter(message => message.role === 'companion'
+            && (groupId ? message.responseGroupId === groupId : message === lastCompanion)).length : 0;
+        reroll.disabled = hasNewerUserTurn || !lastCompanion || !(lastCompanion.turnSnapshot
+            || (groupId && thread.some(message => message.responseGroupId === groupId && message.turnSnapshot)));
+        reroll.title = hasNewerUserTurn
+            ? 'Wait for the current message to be answered before rerolling the previous reply'
+            : groupSize > 1
+            ? `Regenerate the latest reply (${groupSize} chat bubbles) and roll back only that reply's consequences`
+            : 'Regenerate the latest reply and roll back its consequences';
+    }
     const timeline = getActiveCompanionTimeline(companion.id);
     const experience = normalizeCompanionChatExperience(timeline?.experience);
     const realTimeInput = document.getElementById('cc-real-time-life');
@@ -31616,7 +32479,7 @@ function openCompanionSimulationDetails() {
                 <p class="form-hint">${escapeHTML(companionRelationshipDescription(companion.mood.relationship))}</p>
                 ${dimensions.map(([label, value, min, max]) => {
                     const percent = Math.round((value - min) / (max - min) * 100);
-                    return `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div><i style="width:${percent}%"></i></div><strong>${escapeHTML(String(value))}</strong></div>`;
+                    return `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(percent, 0, 100)}%"></span></div><strong>${escapeHTML(String(value))}</strong></div>`;
                 }).join('')}
             </section>
             <section class="form-section">
@@ -32247,15 +33110,29 @@ async function rerollLastCompanionReply() {
     if (!companion || !messages?.length || !hasTextCredentials) {
         return showToast(!hasTextCredentials ? 'Conversation provider API key missing (Settings).' : 'Nothing to reroll.', 'info');
     }
-    const lastReply = [...messages].reverse().find(message =>
-        message.role === 'companion' && isPlainObject(message.turnSnapshot));
-    if (!lastReply) return showToast('This reply predates reversible Virtual Human turns.', 'info');
-    const snapshot = safeJsonClone(lastReply.turnSnapshot);
-    const cutAt = Math.max(0, Math.min(messages.length, parseInt(snapshot.messageCount) || 0));
+    // A model reply can intentionally be split into several texting bubbles.
+    // Reroll the latest explicit response group, using its first bubble as the
+    // boundary, instead of trusting a historical message-count snapshot that
+    // could also remove an earlier user message or response group.
+    const latestReply = [...messages].reverse().find(message => message.role === 'companion' && !message.pending);
+    if (!latestReply) return showToast('There is no completed reply to reroll.', 'info');
+    const groupId = String(latestReply.responseGroupId || '');
+    const groupIndexes = messages.map((message, index) => ({ message, index }))
+        .filter(item => item.message.role === 'companion'
+            && (groupId ? item.message.responseGroupId === groupId : item.message === latestReply));
+    const snapshotMessage = groupIndexes.map(item => item.message)
+        .find(message => isPlainObject(message.turnSnapshot));
+    if (!snapshotMessage) return showToast('This reply predates reversible Virtual Human turns.', 'info');
+    const lastGroupIndex = groupIndexes[groupIndexes.length - 1].index;
+    if (messages.slice(lastGroupIndex + 1).some(message => message.role === 'user')) {
+        return showToast('The latest human reply already has a newer player message after it. Wait for that message to resolve before rerolling.', 'info');
+    }
+    const snapshot = safeJsonClone(snapshotMessage.turnSnapshot);
+    const cutAt = groupIndexes[0].index;
+    const backupMessages = safeJsonClone(messages);
     const removed = messages.slice(cutAt);
     removed.forEach(message => { message.invalidated = true; });
     const backupRuntime = captureCompanionRuntime(companion);
-    const backupMessages = safeJsonClone(messages);
     applyCompanionRuntime(companion, snapshot.runtime);
     messages.splice(cutAt);
     const trigger = snapshot.initiative ? null : [...messages].reverse().find(message => message.role === 'user');
@@ -32270,7 +33147,7 @@ async function rerollLastCompanionReply() {
         if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
         await saveState();
         renderCompanionThread();
-        showToast('Reply regenerated; its previous emotional and media consequences were rolled back.', 'success');
+        showToast(`Reply regenerated (${removed.length} bubble${removed.length === 1 ? '' : 's'} replaced); only that reply's consequences were rolled back.`, 'success');
     } catch (error) {
         messages.splice(0, messages.length, ...backupMessages.map(normalizeCompanionMessage));
         applyCompanionRuntime(companion, backupRuntime);

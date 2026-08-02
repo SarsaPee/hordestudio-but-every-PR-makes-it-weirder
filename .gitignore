@@ -1,0 +1,10 @@
+.DS_Store
+.claude/
+
+# Local audit extraction/debug artifacts. The actual regression suites remain tracked.
+scratch/app_source.js
+scratch/debug_sync.js
+scratch/simulate.py
+scratch/verify_exits.py
+scratch/verify_logic.py
+scratch/verify_npc_parser.py
