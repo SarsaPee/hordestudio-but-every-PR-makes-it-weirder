@@ -1,8 +1,14 @@
+![Horde Studio — living worlds, characters, and virtual humans](assets/readme/horde-studio-hero.png)
+
+<div align="center">
+
 # Horde Studio 10+
 
-### Build Characters. Shape Worlds. Simulate Lives.
+### Build characters. Shape worlds. Simulate lives.
 
-A local-first creative studio for advanced AI roleplay, persistent worlds, and believable virtual humans.
+**A local-first creative studio for persistent AI stories that remember, react, and evolve.**
+
+Characters & group rooms · Living sandbox worlds · Autonomous virtual humans · Local models & cloud providers
 
 </div>
 
@@ -16,6 +22,33 @@ Horde Studio is **local-first**: the application runs on your computer and store
 
 > [!NOTE]
 > Local-first does not automatically mean fully offline. Content sent to a cloud model or media provider is processed under that provider's own terms. Use a local OpenAI-compatible endpoint when you want generation to remain on your machine.
+
+---
+
+## See it in action
+
+### Virtual humans who have somewhere else to be
+
+![A Horde Studio Virtual Human conversation with real-time status, autonomous messages, timelines, and an in-chat generated photo](assets/readme/virtual-human-chat.png)
+
+Virtual Humans maintain their own clock, routine, mood, relationship state, memories, and availability. They can reply late, follow up on their own, refuse a request, send a context-aware photo or voice note, and continue across persistent or forked timelines.
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="assets/readme/world-living-society.png" alt="World Studio starting lives and living society editor" />
+    </td>
+    <td width="50%">
+      <img src="assets/readme/world-npc-editor.png" alt="World Studio NPC autonomy and agenda editor" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Start anywhere</strong><br />Create starting lives, homes, families, roles, schedules, and social ties.</td>
+    <td align="center"><strong>Build people with agency</strong><br />Give NPCs goals, secrets, routines, autonomy, and persistent relationships.</td>
+  </tr>
+</table>
+
+> Screens shown are from the real application. Generated character imagery depends on the image provider and model you connect.
 
 ---
 
