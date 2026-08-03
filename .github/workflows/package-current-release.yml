@@ -1,0 +1,33 @@
+name: Attach Portable Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/package-current-release.yml'
+      - '.github/workflows/release.yml'
+      - 'scripts/build-portable.sh'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository and tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build and attach portable application
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(git tag --sort=-v:refname | head -n 1)
+          test -n "$tag"
+          ./scripts/build-portable.sh "${tag#v}"
+          gh release upload "$tag" \
+            "dist/Horde-Studio-${tag}-portable.zip#Horde Studio portable app" \
+            --clobber

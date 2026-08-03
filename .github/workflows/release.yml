@@ -15,6 +15,9 @@ jobs:
       - name: Check out tagged release
         uses: actions/checkout@v4
 
+      - name: Build portable application
+        run: ./scripts/build-portable.sh "${GITHUB_REF_NAME#v}"
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -24,9 +27,11 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --title "Horde Studio ${GITHUB_REF_NAME}" \
               --notes-file "$notes_file" \
+              "dist/Horde-Studio-${GITHUB_REF_NAME}-portable.zip#Horde Studio portable app" \
               "Policy Panic at Bramble and Pike.horde_world#Policy Panic at Bramble and Pike.horde_world"
           else
             gh release create "$GITHUB_REF_NAME" \
               --title "Horde Studio ${GITHUB_REF_NAME}" \
-              --generate-notes
+              --generate-notes \
+              "dist/Horde-Studio-${GITHUB_REF_NAME}-portable.zip#Horde Studio portable app"
           fi
