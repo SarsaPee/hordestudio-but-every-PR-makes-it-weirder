@@ -8,3 +8,6 @@ scratch/simulate.py
 scratch/verify_exits.py
 scratch/verify_logic.py
 scratch/verify_npc_parser.py
+
+# Generated source renders; optimized JPEGs and embedded world media are shipped.
+assets/worlds/**/*.png

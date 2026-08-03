@@ -4,6 +4,13 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 const DB_NAME = 'HordeStudioDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'state';
+// Bump this when publishing a GitHub Release. The checker accepts tags such as
+// v10.1.0, 10.1 or Horde-Studio-10.1.0.
+const HORDE_STUDIO_VERSION = '10.0.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-03T00:00:00Z';
+const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
+const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
+let worldMediaDirty = false;
 
 const HordeDB = {
     db: null,
@@ -769,6 +776,11 @@ function validateWorldData(value, label = 'World') {
         requireSafeId(loc.id, `${label} location ${index + 1} id`, { optional: true });
         ['description', 'region', 'mapType', 'parentLocationId', 'mapFloor'].forEach(key =>
             requireString(loc[key], `${label} location ${index + 1} ${key}`, { optional: true }));
+        if (loc.visuals !== undefined) {
+            requirePlainObject(loc.visuals, `${label} location ${index + 1} visuals`);
+            ['backgroundAssetId', 'backgroundPosition'].forEach(key =>
+                requireString(loc.visuals[key], `${label} location ${index + 1} visuals ${key}`, { optional: true, max: 200 }));
+        }
         requireArray(loc.exits, `${label} location ${index + 1} exits`, { optional: true, max: 500 });
         (loc.exits || []).forEach((exit, exitIndex) => {
             if (typeof exit === 'string') return requireString(exit, `${label} location ${index + 1} exit ${exitIndex + 1}`, { max: 1000 });
@@ -786,6 +798,11 @@ function validateWorldData(value, label = 'World') {
         requireSafeId(entity.id, `${label} entity ${index + 1} id`, { optional: true });
         ['description', 'persona', 'type', 'startLocation', 'homeLocation', 'goal', 'agenda', 'goalAutonomy'].forEach(key =>
             requireString(entity[key], `${label} entity ${index + 1} ${key}`, { optional: true }));
+        if (entity.visuals !== undefined) {
+            requirePlainObject(entity.visuals, `${label} entity ${index + 1} visuals`);
+            ['portraitAssetId', 'portraitPosition', 'dialogueColor'].forEach(key =>
+                requireString(entity.visuals[key], `${label} entity ${index + 1} visuals ${key}`, { optional: true, max: 200 }));
+        }
         requireArray(entity.goalSteps, `${label} entity ${index + 1} goal steps`, { optional: true, max: 20 });
         (entity.goalSteps || []).forEach((step, stepIndex) =>
             requireString(step, `${label} entity ${index + 1} goal step ${stepIndex + 1}`, { max: 1000 }));
@@ -799,6 +816,28 @@ function validateWorldData(value, label = 'World') {
             requirePlainObject(block, `${label} entity ${index + 1} schedule ${blockIndex + 1}`);
             ['time', 'locationId', 'activity'].forEach(key => requireString(block[key], `${label} entity ${index + 1} schedule ${blockIndex + 1} ${key}`, { optional: true, max: 1000 }));
         });
+    });
+    if (value.presentation !== undefined) {
+        requirePlainObject(value.presentation, `${label} presentation`);
+        ['mode', 'artStyle', 'artDirection', 'accent', 'mapSkinAssetId', 'imageProvider', 'imageModel'].forEach(key =>
+            requireString(value.presentation[key], `${label} presentation ${key}`, { optional: true, max: key === 'artDirection' ? 4000 : 500 }));
+        if (value.presentation.enabled !== undefined && typeof value.presentation.enabled !== 'boolean') {
+            throw new Error(`${label} presentation enabled setting is invalid`);
+        }
+    }
+    requireArray(value.mediaAssets, `${label} media assets`, { optional: true, max: WORLD_MEDIA_ASSET_LIMIT });
+    let mediaBytes = 0;
+    (value.mediaAssets || []).forEach((asset, index) => {
+        requirePlainObject(asset, `${label} media asset ${index + 1}`);
+        requireSafeId(asset.id, `${label} media asset ${index + 1} id`);
+        ['kind', 'label', 'hash', 'model', 'prompt'].forEach(key =>
+            requireString(asset[key], `${label} media asset ${index + 1} ${key}`, { optional: true, max: key === 'prompt' ? 8000 : 500 }));
+        requireString(asset.data, `${label} media asset ${index + 1} image data`, { max: WORLD_MEDIA_ASSET_BYTES_LIMIT });
+        if (!/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(asset.data)) {
+            throw new Error(`${label} media asset ${index + 1} is not an embedded image`);
+        }
+        mediaBytes += asset.data.length;
+        if (mediaBytes > 512_000_000) throw new Error(`${label} embedded media is larger than 512 MB`);
     });
     validateLorebook(value.lorebook, `${label} lorebook`);
     if (value.hudConfig !== undefined) {
@@ -856,6 +895,7 @@ function validateBackupData(value) {
         requirePlainObject(item, `Backup persona ${index + 1}`);
         requireString(item.name, `Backup persona ${index + 1} name`, { max: 300 });
         requireString(item.text, `Backup persona ${index + 1} text`, { optional: true });
+        requireString(item.color, `Backup persona ${index + 1} color`, { optional: true, max: 20 });
         requireSafeId(item.id, `Backup persona ${index + 1} id`, { optional: true });
     });
     (value.worlds || []).forEach((item, index) => validateWorldData(item, `Backup world ${index + 1}`));
@@ -1015,6 +1055,10 @@ function repairLoadedState() {
         character.memory = (character.memory || []).map(memory => typeof memory === 'string' ? { text: memory, embedding: null } : memory);
     });
     state.personas = Array.isArray(state.personas) ? state.personas.filter(p => isPlainObject(p) && typeof p.name === 'string' && typeof (p.text || '') === 'string') : [];
+    state.personas.forEach(persona => {
+        persona.color = /^#[0-9a-f]{6}$/i.test(String(persona.color || ''))
+            ? String(persona.color).toUpperCase() : '#4A90E2';
+    });
     state.rooms = Array.isArray(state.rooms) ? state.rooms.filter(r => {
         try { validateRoomData(r); return true; } catch (err) { console.warn('Dropped invalid stored room:', err.message); return false; }
     }) : [];
@@ -1035,6 +1079,7 @@ function repairLoadedState() {
             showInventory: true,
             timeStep: 5,
             startTimeHours: 8,
+            startTimeMinutes: 0,
             showDays: false,
             enableSchedules: false,
             ...(isPlainObject(world.hudConfig) ? world.hudConfig : {})
@@ -1130,6 +1175,12 @@ async function loadState() {
         state.systemPresets = await HordeDB.get('systemPresets') || [];
         state.regexScripts = await HordeDB.get('regexScripts') || [];
         state.worlds = await HordeDB.get('worlds') || [];
+        const storedWorldMedia = await HordeDB.get('worldMediaAssets') || {};
+        state.worlds.forEach(world => {
+            const separateAssets = Array.isArray(storedWorldMedia[world.id]) ? storedWorldMedia[world.id] : null;
+            if (separateAssets) world.mediaAssets = separateAssets;
+            else if ((world.mediaAssets || []).length) worldMediaDirty = true; // migrate early embedded builds
+        });
         state.worldInstances = await HordeDB.get('worldInstances') || {};
         state.activeWorldId = await HordeDB.get('activeWorldId') || null;
         await loadCompanionsState();
@@ -1202,6 +1253,80 @@ async function loadState() {
         if (fresh.length || !Array.isArray(state.globalSettings.seededWorldIds)) {
             state.worlds.push(...JSON.parse(JSON.stringify(fresh)));
             state.globalSettings.seededWorldIds = [...new Set([...seeded, ...STARTER_WORLDS.map(w => w.id)])];
+            await saveState();
+        }
+    }
+
+    // Optional showcase worlds are shipped separately from STARTER_WORLDS so
+    // their embedded artwork does not bloat the gameplay source or get cloned
+    // on every ordinary state repair. Offer each bundle exactly once. The
+    // receipt deliberately survives deletion: a user who removes a showcase
+    // world has made a choice and should not have it resurrect on next launch.
+    {
+        const included = Array.isArray(globalThis.HORDE_INCLUDED_WORLDS)
+            ? globalThis.HORDE_INCLUDED_WORLDS
+            : [];
+        const offered = Array.isArray(state.globalSettings.includedWorldReceipts)
+            ? state.globalSettings.includedWorldReceipts
+            : [];
+        let changed = !Array.isArray(state.globalSettings.includedWorldReceipts);
+        for (const candidate of included) {
+            const bundleId = String(candidate?.bundledId || '').trim();
+            if (!bundleId || offered.includes(bundleId)) continue;
+            try {
+                const installed = state.worlds.find(world => world?.id === candidate.id);
+                // v1 accidentally stored cast standing on each NPC instead of
+                // the canonical society graph. This targeted upgrade adds only
+                // the missing relationships, preserving every authored/player
+                // edit elsewhere in the bundled world.
+                if (['policy-panic-v1', 'policy-panic-v2', 'policy-panic-v3'].includes(installed?.bundledId)
+                    && bundleId === 'policy-panic-v4') {
+                    if (!Array.isArray(installed.relationships)) {
+                        installed.relationships = safeJsonClone(candidate.relationships || []);
+                    }
+                    // New visual metadata is additive. Fill only missing NPC
+                    // dialogue colours so creator customisations always win.
+                    (candidate.entities || []).forEach(candidateEntity => {
+                        const target = (installed.entities || []).find(entity => entity.id === candidateEntity.id);
+                        const candidateColor = candidateEntity.visuals?.dialogueColor;
+                        if (!target || target.visuals?.dialogueColor || !candidateColor) return;
+                        target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+                        target.visuals.dialogueColor = candidateColor;
+                    });
+                    installed.hudConfig = installed.hudConfig || {};
+                    installed.hudConfig.startTimeHours = 8;
+                    installed.hudConfig.startTimeMinutes = 57;
+                    installed.hudConfig.startWeekday = 'Monday';
+                    // Repair only the opening scene of an existing timeline.
+                    // Later play is never rewritten by a bundled-world update.
+                    const timelines = state.worldInstances?.[installed.id]?.sessions || [];
+                    timelines.filter(timeline => (timeline.history || []).length <= 4
+                        && timeline.playerLocation === 'loc_reception').forEach(timeline => {
+                        const opening = (timeline.history || []).filter(entry => entry.role === 'dm')
+                            .map(entry => entry.text || '').join('\n\n');
+                        if (opening) applyNarratedPresence(installed, timeline, opening);
+                    });
+                    installed.bundledId = bundleId;
+                } else if (!state.worlds.some(world => world?.bundledId === bundleId || world?.id === candidate.id)) {
+                    const world = validateWorldData(candidate, `Included world ${bundleId}`);
+                    world.locations.forEach((location, index) => {
+                        if (!location.id) location.id = `loc_included_${Date.now()}_${index}`;
+                        location.exits = Array.isArray(location.exits) ? location.exits : [];
+                    });
+                    world.entities = Array.isArray(world.entities) ? world.entities : [];
+                    world.lorebook = Array.isArray(world.lorebook) ? world.lorebook : [];
+                    normalizeAuthoredWorld(world);
+                    state.worlds.push(world);
+                    worldMediaDirty = true;
+                }
+                offered.push(bundleId);
+                changed = true;
+            } catch (error) {
+                console.error(`Could not install included world ${bundleId}:`, error);
+            }
+        }
+        if (changed) {
+            state.globalSettings.includedWorldReceipts = [...new Set(offered)];
             await saveState();
         }
     }
@@ -1288,7 +1413,14 @@ async function loadState() {
 async function saveState() {
     try {
         (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
-        await HordeDB.setMultiple({
+        // Keep heavy image payloads out of the world manifest that is rewritten
+        // on virtually every turn. The separate payload is only rewritten when
+        // an asset changes, then reattached on load and embedded on export.
+        const storedWorlds = (state.worlds || []).map(world => ({
+            ...world,
+            mediaAssets: []
+        }));
+        const records = {
             // Credentials are tab-session only unless the user opts in to
             // "Remember key on this device". Persisting '' erases stored copies.
             apiKey: state.globalSettings.rememberApiKey ? (state.apiKey || '') : '',
@@ -1303,14 +1435,22 @@ async function saveState() {
             theme: state.theme,
             systemPresets: state.systemPresets,
             regexScripts: state.regexScripts,
-            worlds: state.worlds,
+            worlds: storedWorlds,
             worldInstances: state.worldInstances,
             activeWorldId: state.activeWorldId,
             companions: state.companions,
             companionThreads: state.companionThreads,
             companionTimelines: state.companionTimelines,
             activeCompanionId: state.activeCompanionId
-        });
+        };
+        if (worldMediaDirty) {
+            records.worldMediaAssets = Object.fromEntries((state.worlds || []).map(world => [
+                world.id,
+                safeJsonClone(Array.isArray(world.mediaAssets) ? world.mediaAssets : [])
+            ]));
+        }
+        await HordeDB.setMultiple(records);
+        worldMediaDirty = false;
     } catch (err) {
         const isQuota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
         if (isQuota) {
@@ -1995,6 +2135,128 @@ function readImageFile(file) {
 
 async function normalizeUploadedImage(file, maxDimension = 1024, quality = 0.85) {
     return optimizeImage(await readImageFile(file), maxDimension, quality);
+}
+
+// --- Portable World Presentation Media ------------------------------------
+// World visuals are authored presentation, never simulation state. Assets live
+// inside the world record so a .horde_world file remains a complete, portable
+// artifact instead of a collection of expired provider URLs or machine-local
+// paths. References keep locations/NPCs small and let one asset be reused.
+const WORLD_MEDIA_SCHEMA_VERSION = 1;
+const WORLD_MEDIA_ASSET_LIMIT = 10000;
+const WORLD_MEDIA_ASSET_BYTES_LIMIT = 8_000_000;
+
+function normalizeWorldPresentation(world) {
+    if (!world || typeof world !== 'object') return null;
+    const raw = isPlainObject(world.presentation) ? world.presentation : {};
+    const mode = raw.mode === 'visual_novel' ? 'cinematic'
+        : (['classic', 'cinematic'].includes(raw.mode) ? raw.mode : 'classic');
+    world.presentation = {
+        version: 1,
+        enabled: raw.enabled === true,
+        mode,
+        playerCanOverride: raw.playerCanOverride !== false,
+        artStyle: String(raw.artStyle || 'cinematic').slice(0, 80),
+        artDirection: String(raw.artDirection || '').slice(0, 4000),
+        accent: cssColor(raw.accent, '#E63946'),
+        panelOpacity: livingClamp(raw.panelOpacity == null ? 88 : raw.panelOpacity, 35, 100),
+        backgroundDim: livingClamp(raw.backgroundDim == null ? 68 : raw.backgroundDim, 0, 95),
+        mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),
+        imageProvider: ['inherit', 'openrouter', 'gptproto'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
+        imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500)
+    };
+    if (!Array.isArray(world.mediaAssets)) world.mediaAssets = [];
+    world.mediaAssets = world.mediaAssets.filter(asset => isPlainObject(asset)
+        && typeof asset.id === 'string' && typeof asset.data === 'string').slice(0, WORLD_MEDIA_ASSET_LIMIT);
+    return world.presentation;
+}
+
+function worldMediaAsset(world, assetId) {
+    if (!assetId) return null;
+    normalizeWorldPresentation(world);
+    return world.mediaAssets.find(asset => asset.id === assetId) || null;
+}
+
+function worldMediaSource(world, assetId) {
+    return worldMediaAsset(world, assetId)?.data || '';
+}
+
+function worldMediaHash(data) {
+    const text = String(data || '');
+    let hash = 2166136261;
+    const stride = Math.max(1, Math.floor(text.length / 4096));
+    for (let i = 0; i < text.length; i += stride) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `${text.length.toString(36)}_${(hash >>> 0).toString(36)}`;
+}
+
+function addWorldMediaAsset(world, data, kind, label = '', metadata = {}) {
+    normalizeWorldPresentation(world);
+    const source = String(data || '');
+    if (!/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(source)) {
+        throw new Error('World media must be embedded image data so exported worlds remain portable.');
+    }
+    if (source.length > WORLD_MEDIA_ASSET_BYTES_LIMIT) {
+        throw new Error('The normalized image is still too large for a portable world asset.');
+    }
+    const hash = worldMediaHash(source);
+    const existing = world.mediaAssets.find(asset => asset.hash === hash);
+    if (existing) return existing.id;
+    if (world.mediaAssets.length >= WORLD_MEDIA_ASSET_LIMIT) {
+        throw new Error(`This world has reached the ${WORLD_MEDIA_ASSET_LIMIT.toLocaleString()} media-asset limit.`);
+    }
+    const existingBytes = world.mediaAssets.reduce((sum, asset) => sum + String(asset.data || '').length, 0);
+    if (existingBytes + source.length > 512_000_000) {
+        throw new Error('This world has reached the 512 MB portable-media limit. Remove unused visuals before adding more.');
+    }
+    const id = `media_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+    world.mediaAssets.push({
+        id,
+        kind: String(kind || 'image').slice(0, 80),
+        label: String(label || '').slice(0, 240),
+        data: source,
+        hash,
+        createdAt: Date.now(),
+        generated: metadata.generated === true,
+        model: String(metadata.model || '').slice(0, 500),
+        prompt: String(metadata.prompt || '').slice(0, 8000)
+    });
+    if ((state.worlds || []).includes(world)) worldMediaDirty = true;
+    return id;
+}
+
+function worldMediaReferenceIds(world) {
+    const ids = new Set();
+    const add = value => { if (typeof value === 'string' && value) ids.add(value); };
+    add(world?.presentation?.mapSkinAssetId);
+    (world?.locations || []).forEach(location => add(location?.visuals?.backgroundAssetId));
+    (world?.entities || []).forEach(entity => add(entity?.visuals?.portraitAssetId));
+    return ids;
+}
+
+function pruneWorldMediaAssets(world) {
+    normalizeWorldPresentation(world);
+    const referenced = worldMediaReferenceIds(world);
+    const before = world.mediaAssets.length;
+    world.mediaAssets = world.mediaAssets.filter(asset => referenced.has(asset.id));
+    const removed = before - world.mediaAssets.length;
+    if (removed && (state.worlds || []).includes(world)) worldMediaDirty = true;
+    return removed;
+}
+
+function worldMediaSummary(world) {
+    normalizeWorldPresentation(world);
+    const bytes = world.mediaAssets.reduce((sum, asset) => sum + String(asset.data || '').length, 0);
+    return { count: world.mediaAssets.length, bytes };
+}
+
+function formatByteSize(bytes) {
+    const value = Math.max(0, Number(bytes) || 0);
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // --- DOM References ---
@@ -3151,6 +3413,8 @@ async function init() {
     applyTheme();
     setupCustomizeModal();
     setupAccessibility();
+    // Update discovery must never delay startup or make offline use noisy.
+    void checkForAppUpdate();
 
     // Hook up real-time slider UI updates
     const sliders = [
@@ -6765,6 +7029,7 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
         rejected: validation.rejectedEvents,
         applied_fields: Object.keys(validation.legacyArgs),
         entity_patches: validation.entityPatches.map(patch => patch.entity_id),
+        presence_recoveries: validation.recoveredPresence || [],
         scene: resultingFrame,
         cast_checksum_match: !castMismatch,
         movement: actionResult?.movementResult || null,
@@ -6810,6 +7075,29 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     const previousLocation = sess.playerLocation;
     const actionResult = processStructuredActions(validation.legacyArgs);
     applyWorldEntityPatches(world, sess, validation.entityPatches);
+    // Recover an omitted NPC movement only when two independent channels
+    // agree: the structured ending checksum names the NPC and the visible
+    // prose explicitly places that same named person in the player's scene.
+    // Either signal alone remains non-authoritative.
+    const assertedCast = new Set((validation.sceneAssertion?.present_character_ids || [])
+        .map(ref => resolveWorldActorId(world, sess, ref)).filter(Boolean));
+    const recoverablePresence = context.narrativeText
+        ? detectNarratedPresence(world, sess, context.narrativeText)
+        : [];
+    const recoveredPresence = [];
+    recoverablePresence.forEach(hit => {
+        if (!assertedCast.has(hit.id)) return;
+        const entState = sess.entityStates?.[hit.id];
+        if (!entState || isNpcPinned(sess, entState)) return;
+        const from = getLocationRef(world, entState.location);
+        const to = getLocationRef(world, sess.playerLocation);
+        const sessionWorld = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+        if (!to || (from && from.id !== to.id && !findWorldTravelPath(sessionWorld, from.id, to.id))) return;
+        entState.location = to.id;
+        entState.pinnedUntilTurn = (sess.turnCount || 1) + 6;
+        recoveredPresence.push(hit.id);
+    });
+    validation.recoveredPresence = recoveredPresence;
     if (sess.playerLocation !== previousLocation) rollForScenePopulation(sess.playerLocation, false);
     if (hasConditionalCheck && actionResult.checkResults.some(result => !result.pending && !result.reason)) {
         const resolvedFrame = buildWorldSceneFrame(world, sess);
@@ -8095,8 +8383,11 @@ function exportFullBackup() {
 }
 
 function importFullBackup(file) {
-    if (file.size > 50 * 1024 * 1024) {
-        showToast('Restore failed: backup is larger than 50 MB.', 'error');
+    // Visual worlds legitimately carry many embedded room backgrounds and NPC
+    // portraits. Keep a defensive ceiling, but do not reject complete worlds at
+    // the old text-only 50 MB limit.
+    if (file.size > 512 * 1024 * 1024) {
+        showToast('Restore failed: backup is larger than 512 MB.', 'error');
         return;
     }
     const reader = new FileReader();
@@ -8115,6 +8406,7 @@ function importFullBackup(file) {
                         'worlds', 'worldInstances', 'activeWorldId', 'companions',
                         'companionThreads', 'companionTimelines', 'activeCompanionId'];
                     keys.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
+                    worldMediaDirty = true;
                     await saveState();
                     showToast('Backup restored! Reloading...', 'success');
                     setTimeout(() => window.location.reload(), 800);
@@ -8223,6 +8515,89 @@ function showToast(msg, type = 'info') {
     toast.textContent = msg;
     document.getElementById('toast-container').appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
+}
+
+function numericVersionParts(value) {
+    const match = String(value || '').match(/\d+(?:\.\d+){0,3}/);
+    return match ? match[0].split('.').map(part => Number(part) || 0) : [];
+}
+
+function compareAppVersions(candidate, current) {
+    const a = numericVersionParts(candidate);
+    const b = numericVersionParts(current);
+    if (!a.length || !b.length) return 0;
+    const length = Math.max(a.length, b.length);
+    for (let index = 0; index < length; index++) {
+        const difference = (a[index] || 0) - (b[index] || 0);
+        if (difference) return difference > 0 ? 1 : -1;
+    }
+    return 0;
+}
+
+function showAppUpdateNotice(release) {
+    const tag = String(release?.tag_name || release?.name || 'new release').trim();
+    let dismissed = '';
+    try { dismissed = localStorage.getItem('horde_update_dismissed') || ''; } catch (_) {}
+    if (!tag || dismissed === tag || document.querySelector('.app-update-notice')) return;
+
+    const notice = document.createElement('aside');
+    notice.className = 'app-update-notice';
+    notice.setAttribute('role', 'status');
+    notice.innerHTML = `
+        <span class="app-update-icon" aria-hidden="true">↑</span>
+        <span class="app-update-copy">
+            <strong>Horde Studio ${escapeHTML(tag)} is available</strong>
+            <small>You are using ${escapeHTML(HORDE_STUDIO_VERSION)}.</small>
+        </span>
+        <a class="app-update-link" href="${escapeHTML(release?.html_url || HORDE_STUDIO_RELEASES_URL)}" target="_blank" rel="noopener noreferrer">View update</a>
+        <button class="app-update-dismiss" type="button" aria-label="Dismiss this update">Later</button>`;
+    notice.querySelector('.app-update-dismiss').onclick = () => {
+        try { localStorage.setItem('horde_update_dismissed', tag); } catch (_) {}
+        notice.remove();
+    };
+    document.body.appendChild(notice);
+}
+
+async function checkForAppUpdate() {
+    const cacheKey = 'horde_update_check_cache_v1';
+    const cacheDuration = 24 * 60 * 60 * 1000;
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(cacheKey) || 'null'); } catch (_) {}
+
+    let release = cached?.release || null;
+    if (!cached?.checkedAt || Date.now() - Number(cached.checkedAt) > cacheDuration) {
+        try {
+            const response = await fetch(HORDE_STUDIO_RELEASE_API, {
+                headers: { Accept: 'application/vnd.github+json' },
+                cache: 'no-store',
+                referrerPolicy: 'no-referrer'
+            });
+            if (!response.ok) {
+                // Cache "no public release" and rate-limit responses too, so a
+                // local-first app never retries GitHub on every launch.
+                try { localStorage.setItem(cacheKey, JSON.stringify({ checkedAt: Date.now(), release: null })); } catch (_) {}
+                return;
+            }
+            const result = await response.json();
+            if (result?.draft || result?.prerelease || !result?.tag_name) return;
+            release = {
+                tag_name: String(result.tag_name).slice(0, 80),
+                name: String(result.name || '').slice(0, 160),
+                html_url: /^https:\/\/github\.com\/ddkhan24\/hordestudio\/releases\//i.test(result.html_url || '')
+                    ? result.html_url : HORDE_STUDIO_RELEASES_URL,
+                published_at: String(result.published_at || '')
+            };
+            try { localStorage.setItem(cacheKey, JSON.stringify({ checkedAt: Date.now(), release })); } catch (_) {}
+        } catch (_) {
+            return; // Offline is a normal supported state.
+        }
+    }
+    if (!release) return;
+
+    const versionOrder = compareAppVersions(release.tag_name, HORDE_STUDIO_VERSION);
+    const publishedAfterThisBuild = !numericVersionParts(release.tag_name).length
+        && Date.parse(release.published_at || '') > Date.parse(HORDE_STUDIO_RELEASED_AT);
+    if (versionOrder > 0 || publishedAfterThisBuild) showAppUpdateNotice(release);
 }
 
 // --- Summarizer Utility ---
@@ -8406,6 +8781,7 @@ function setupPersonasLogic() {
     const closeBtn = document.getElementById('close-personas-btn');
     const nameInput = document.getElementById('persona-name');
     const descInput = document.getElementById('persona-desc');
+    const colorInput = document.getElementById('persona-color');
     
     if (btn) btn.onclick = () => {
         renderPersonasList();
@@ -8414,7 +8790,7 @@ function setupPersonasLogic() {
     if (closeBtn) closeBtn.onclick = () => overlay.classList.add('hidden');
 
     document.getElementById('add-persona-btn').onclick = async () => {
-        const p = { id: 'persona_' + Date.now(), name: 'New Persona', text: '' };
+        const p = { id: 'persona_' + Date.now(), name: 'New Persona', text: '', color: '#4A90E2' };
         state.personas.push(p);
         state.activePersonaId = p.id;
         await saveState();
@@ -8430,6 +8806,10 @@ function setupPersonasLogic() {
     descInput.oninput = () => {
         const p = state.personas.find(x => x.id === (document.getElementById('persona-edit-pane').dataset.id));
         if (p) p.text = descInput.value;
+    };
+    colorInput.oninput = () => {
+        const p = state.personas.find(x => x.id === document.getElementById('persona-edit-pane').dataset.id);
+        if (p) p.color = /^#[0-9a-f]{6}$/i.test(colorInput.value) ? colorInput.value.toUpperCase() : '#4A90E2';
     };
 
     document.getElementById('save-persona-btn').onclick = async () => {
@@ -8494,7 +8874,7 @@ function renderPersonasList() {
         const div = document.createElement('div');
         div.className = `persona-list-item`;
         const isActive = p.id === state.activePersonaId;
-        if (isActive) div.style.borderLeft = '3px solid var(--red)';
+        if (isActive) div.style.borderLeft = `3px solid ${cssColor(p.color || '#4A90E2', '#4A90E2')}`;
         
         const avatarHtml = p.avatar
             ? `<div style="width:32px;height:32px;border-radius:50%;background-image:url('${cssUrl(p.avatar)}');background-size:cover;background-position:center;flex-shrink:0;border:1px solid var(--border2);"></div>`
@@ -8532,8 +8912,10 @@ function selectPersona(id) {
     
     const nameInput = document.getElementById('persona-name');
     const descInput = document.getElementById('persona-desc');
+    const colorInput = document.getElementById('persona-color');
     if (document.activeElement !== nameInput) nameInput.value = p.name;
     if (document.activeElement !== descInput) descInput.value = p.text;
+    if (colorInput) colorInput.value = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '#4A90E2';
     
     const preview = document.getElementById('persona-preview');
     if (preview) {
@@ -8908,6 +9290,7 @@ function setupWorldStudioTabs() {
 function renderWorldStudioPanel(target) {
     if (!state.editingWorld) return;
     const renderers = {
+        'w-visuals': renderWorldVisuals,
         'w-locations': renderWorldLocations,
         'w-entities': renderWorldEntities,
         'w-factions': renderWorldFactions,
@@ -8971,7 +9354,17 @@ function setupWorldStudioLogic() {
         if (!state.editingWorld) return;
         // Never hand someone a world carrying references to things that are gone.
         normalizeAuthoredWorld(state.editingWorld);
-        const data = JSON.stringify(state.editingWorld, null, 2);
+        const exportedWorld = safeJsonClone(state.editingWorld);
+        pruneWorldMediaAssets(exportedWorld);
+        const media = worldMediaSummary(exportedWorld);
+        exportedWorld._format = 'horde-world';
+        exportedWorld._version = 2;
+        exportedWorld._mediaManifest = {
+            schema: WORLD_MEDIA_SCHEMA_VERSION,
+            count: media.count,
+            embedded: true
+        };
+        const data = JSON.stringify(exportedWorld, null, 2);
         const blob = new Blob([data], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -8979,7 +9372,7 @@ function setupWorldStudioLogic() {
         a.download = `${state.editingWorld.name.replace(/\s+/g, '_')}.horde_world`;
         a.click();
         URL.revokeObjectURL(url);
-        showToast('World exported successfully!', 'success');
+        showToast(`World exported with ${media.count} embedded media asset${media.count === 1 ? '' : 's'} (${formatByteSize(media.bytes)}).`, 'success');
     };
     document.getElementById('add-location-btn').onclick = () => addWorldLocation('top');
     document.getElementById('add-location-btn-bottom').onclick = () => addWorldLocation('bottom');
@@ -9094,6 +9487,11 @@ function setupWorldStudioLogic() {
         const parsed = parseInt(e.target.value, 10);
         state.editingWorld.hudConfig.startTimeHours = Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 8;
     };
+    document.getElementById('w-hud-start-minute').oninput = (e) => {
+        if (!state.editingWorld.hudConfig) state.editingWorld.hudConfig = {};
+        const parsed = parseInt(e.target.value, 10);
+        state.editingWorld.hudConfig.startTimeMinutes = Number.isFinite(parsed) ? Math.max(0, Math.min(59, parsed)) : 0;
+    };
     document.getElementById('w-hud-time-step').oninput = (e) => {
         if (!state.editingWorld.hudConfig) state.editingWorld.hudConfig = {};
         state.editingWorld.hudConfig.timeStep = isNaN(parseInt(e.target.value)) ? 5 : parseInt(e.target.value);
@@ -9200,6 +9598,10 @@ function setupWorldImport() {
         input.onchange = (e) => {
             const file = e.target.files[0];
             if (!file) return;
+            if (file.size > 512 * 1024 * 1024) {
+                showToast('Import failed: the portable world is larger than 512 MB.', 'error');
+                return;
+            }
             const reader = new FileReader();
             reader.onload = async (ev) => {
                 try {
@@ -9231,10 +9633,12 @@ function setupWorldImport() {
                     // was opened. Repair rather than reject — the fiction is
                     // still the author's, only the shape is wrong.
                     normalizeAuthoredWorld(world);
+                    const importedMedia = worldMediaSummary(world);
                     state.worlds.push(world);
+                    worldMediaDirty = true;
                     await saveState();
                     renderWorlds();
-                    showToast(`Imported "${world.name}"!`, 'success');
+                    showToast(`Imported "${world.name}" with ${importedMedia.count} media asset${importedMedia.count === 1 ? '' : 's'}.`, 'success');
                 } catch (err) {
                     showToast('Failed to import world: ' + err.message, 'error');
                 }
@@ -9319,6 +9723,7 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-hud-show-ledger').checked = w.hudConfig.showLedger;
     document.getElementById('w-hud-show-inventory').checked = w.hudConfig.showInventory;
     document.getElementById('w-hud-start-time').value = w.hudConfig.startTimeHours !== undefined ? w.hudConfig.startTimeHours : 8;
+    document.getElementById('w-hud-start-minute').value = w.hudConfig.startTimeMinutes !== undefined ? w.hudConfig.startTimeMinutes : 0;
     document.getElementById('w-hud-time-step').value = w.hudConfig.timeStep !== undefined ? w.hudConfig.timeStep : 5;
     document.getElementById('w-hud-start-weekday').value = WORLD_WEEKDAYS.includes(w.hudConfig.startWeekday) ? w.hudConfig.startWeekday : 'Monday';
     document.getElementById('w-hud-show-days').checked = w.hudConfig.showDays || false;
@@ -9387,6 +9792,8 @@ async function saveWorld() {
     w.hudConfig.showInventory = document.getElementById('w-hud-show-inventory').checked;
     const startHour = parseInt(document.getElementById('w-hud-start-time').value, 10);
     w.hudConfig.startTimeHours = Number.isFinite(startHour) ? Math.max(0, Math.min(23, startHour)) : 8;
+    const startMinute = parseInt(document.getElementById('w-hud-start-minute').value, 10);
+    w.hudConfig.startTimeMinutes = Number.isFinite(startMinute) ? Math.max(0, Math.min(59, startMinute)) : 0;
     w.hudConfig.timeStep = isNaN(parseInt(document.getElementById('w-hud-time-step').value)) ? 5 : parseInt(document.getElementById('w-hud-time-step').value);
     w.hudConfig.startWeekday = WORLD_WEEKDAYS.includes(document.getElementById('w-hud-start-weekday').value)
         ? document.getElementById('w-hud-start-weekday').value : 'Monday';
@@ -9406,6 +9813,7 @@ async function saveWorld() {
         state.worlds.push(JSON.parse(JSON.stringify(w)));
     }
 
+    worldMediaDirty = true;
     await saveState();
     showToast('World Saved!', 'success');
     renderWorlds();
@@ -9416,6 +9824,7 @@ async function deleteWorld() {
     if (!confirm(`Are you sure you want to delete "${state.editingWorld.name}"? This cannot be undone.`)) return;
 
     state.worlds = state.worlds.filter(w => w.id !== state.editingWorld.id);
+    worldMediaDirty = true;
     if (state.worldInstances[state.editingWorld.id]) {
         delete state.worldInstances[state.editingWorld.id];
     }
@@ -10087,6 +10496,186 @@ function renderWorldStudio() {
     updateWorldTokenCount();
 }
 
+let worldVisualModelSearchRenderId = 0;
+
+async function renderWorldVisualModelSearch(world, force = false) {
+    const input = document.getElementById('w-visual-image-model');
+    const results = document.getElementById('w-visual-image-model-results');
+    const status = document.getElementById('w-visual-image-model-status');
+    if (!world || !input || !results || !status) return;
+    const renderId = ++worldVisualModelSearchRenderId;
+    const provider = worldVisualProvider(world);
+    if (!['openrouter', 'gptproto'].includes(provider)) {
+        status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter or GPTProto, or enter the exact model ID used by your provider.';
+        results.innerHTML = '<div class="smart-input-empty">Choose a catalog-backed image provider to browse compatible models.</div>';
+        setCompanionSearchOpen(input, results, true);
+        return;
+    }
+    status.textContent = `Loading compatible image models from ${providerDisplayName(provider)}…`;
+    let models = [];
+    try {
+        models = rankCompanionImageModels(
+            await getCompanionOutputModels('image', force, provider), provider);
+    } catch (error) {
+        console.warn('Could not load the World Visuals image catalog:', error);
+    }
+    if (renderId !== worldVisualModelSearchRenderId || state.editingWorld?.id !== world.id) return;
+    const query = input.value.trim().toLowerCase();
+    const matches = models.filter(model => !query
+        || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)).slice(0, 60);
+    const options = matches.map(model => ({
+        value: model.id,
+        label: model.name || model.id,
+        meta: [model.id, model.supportsReference === true ? 'reference capable' : '',
+            Number.isFinite(model.price) ? `$${model.price.toFixed(5)}/image` : '']
+            .filter(Boolean).join(' · ')
+    }));
+    renderCompanionSearchResults(results, options, option => {
+        const liveWorld = state.editingWorld;
+        if (!liveWorld) return;
+        const presentation = normalizeWorldPresentation(liveWorld);
+        presentation.imageModel = option.value;
+        input.value = option.value;
+        setCompanionSearchOpen(input, results, false);
+        status.textContent = `${option.label} selected · ${providerDisplayName(provider)}`;
+    }, models.length
+        ? 'No compatible model matches. Keep typing to use an exact custom model ID.'
+        : `No image models were returned by ${providerDisplayName(provider)}. You may still enter an exact model ID.`);
+    input.setAttribute('aria-expanded', 'true');
+    const selected = models.find(model => model.id === input.value.trim());
+    status.textContent = selected
+        ? `${selected.name || selected.id} · ${selected.supportsReference === true ? 'reference capable' : 'reference support not advertised'} · ${providerDisplayName(provider)}`
+        : `${models.length} compatible image model${models.length === 1 ? '' : 's'} available from ${providerDisplayName(provider)}${input.value.trim() ? ' · custom ID entered' : ''}.`;
+}
+
+function renderWorldVisuals() {
+    const world = state.editingWorld;
+    if (!world) return;
+    const presentation = normalizeWorldPresentation(world);
+    const byId = id => document.getElementById(id);
+    byId('w-visual-enabled').checked = presentation.enabled;
+    byId('w-visual-player-override').checked = presentation.playerCanOverride;
+    byId('w-visual-mode').value = presentation.mode;
+    byId('w-visual-art-style').value = presentation.artStyle;
+    byId('w-visual-art-direction').value = presentation.artDirection;
+    byId('w-visual-image-provider').value = presentation.imageProvider;
+    byId('w-visual-image-model').value = presentation.imageModel;
+    byId('w-visual-accent').value = presentation.accent;
+    byId('w-visual-background-dim').value = presentation.backgroundDim;
+    byId('w-visual-panel-opacity').value = presentation.panelOpacity;
+    byId('w-visual-dim-value').textContent = `${presentation.backgroundDim}%`;
+    byId('w-visual-opacity-value').textContent = `${presentation.panelOpacity}%`;
+    const summary = worldMediaSummary(world);
+    byId('w-visual-media-summary').textContent = `${summary.count} asset${summary.count === 1 ? '' : 's'} · ${formatByteSize(summary.bytes)}`;
+    const mapSkin = worldMediaSource(world, presentation.mapSkinAssetId);
+    const mapPreview = byId('w-visual-map-skin-preview');
+    mapPreview.style.backgroundImage = mapSkin ? `url('${cssUrl(mapSkin)}')` : 'none';
+    mapPreview.textContent = mapSkin ? '' : 'No map skin';
+    byId('w-visual-map-skin-clear').disabled = !mapSkin;
+
+    const mapInput = byId('w-visual-map-skin-input');
+    byId('w-visual-map-skin-upload').onclick = () => mapInput.click();
+    mapInput.onchange = async event => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+            const image = await normalizeUploadedImage(file, 1600, 0.76);
+            presentation.mapSkinAssetId = addWorldMediaAsset(world, image, 'map_skin', `${world.name} map skin`);
+            pruneWorldMediaAssets(world);
+            renderWorldVisuals();
+            showToast('Map skin embedded in this world.', 'success');
+        } catch (error) {
+            showToast(`Map skin upload failed: ${error.message}`, 'error');
+        } finally { event.target.value = ''; }
+    };
+    byId('w-visual-map-skin-generate').onclick = async event => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = 'Generating…';
+        try {
+            presentation.mapSkinAssetId = await generateWorldMapSkin(world);
+            pruneWorldMediaAssets(world);
+            renderWorldVisuals();
+            showToast('Generated map skin embedded in this world.', 'success');
+        } catch (error) {
+            showToast(`Map skin generation failed: ${error.message}`, 'error');
+            button.disabled = false;
+            button.textContent = '✨ Generate';
+        }
+    };
+    byId('w-visual-map-skin-clear').onclick = () => {
+        presentation.mapSkinAssetId = '';
+        pruneWorldMediaAssets(world);
+        renderWorldVisuals();
+    };
+
+    const assign = (id, field, property = 'value') => {
+        const input = byId(id);
+        input.onchange = event => {
+            presentation[field] = property === 'checked' ? event.target.checked : event.target.value;
+        };
+    };
+    assign('w-visual-enabled', 'enabled', 'checked');
+    assign('w-visual-player-override', 'playerCanOverride', 'checked');
+    assign('w-visual-mode', 'mode');
+    assign('w-visual-art-style', 'artStyle');
+    assign('w-visual-art-direction', 'artDirection');
+    assign('w-visual-accent', 'accent');
+    byId('w-visual-image-provider').onchange = event => {
+        const previous = presentation.imageProvider;
+        presentation.imageProvider = event.target.value;
+        if (presentation.imageProvider === 'gptproto' && presentation.imageModel === 'google/gemini-3.1-flash-lite-image') {
+            presentation.imageModel = 'gemini-3.1-flash-lite-image';
+        } else if (previous === 'gptproto' && presentation.imageModel === 'gemini-3.1-flash-lite-image') {
+            presentation.imageModel = 'google/gemini-3.1-flash-lite-image';
+        }
+        byId('w-visual-image-model').value = presentation.imageModel;
+        renderWorldVisualModelSearch(world);
+    };
+    const imageModelInput = byId('w-visual-image-model');
+    const imageModelResults = byId('w-visual-image-model-results');
+    imageModelInput.onfocus = () => renderWorldVisualModelSearch(world);
+    imageModelInput.oninput = event => {
+        presentation.imageModel = event.target.value.trim().slice(0, 500);
+        renderWorldVisualModelSearch(world);
+    };
+    imageModelInput.onkeydown = event => {
+        if (event.key === 'Escape') setCompanionSearchOpen(imageModelInput, imageModelResults, false);
+    };
+    imageModelInput.onblur = () => setTimeout(() =>
+        setCompanionSearchOpen(imageModelInput, imageModelResults, false), 120);
+    byId('w-visual-refresh-models').onclick = async event => {
+        const button = event.currentTarget;
+        const provider = worldVisualProvider(world);
+        if (!['openrouter', 'gptproto'].includes(provider)) {
+            return showToast('Choose OpenRouter or GPTProto to browse cloud image models.', 'info');
+        }
+        button.disabled = true;
+        button.textContent = '↻ Loading…';
+        try {
+            await renderWorldVisualModelSearch(world, true);
+            imageModelInput.focus();
+            showToast('Image model catalog refreshed.', 'success');
+        } catch (error) {
+            showToast(`Image model catalog failed: ${error.message}`, 'error');
+        } finally {
+            button.disabled = false;
+            button.textContent = '↻ Refresh';
+        }
+    };
+    byId('w-visual-background-dim').oninput = event => {
+        presentation.backgroundDim = livingClamp(event.target.value, 0, 95);
+        byId('w-visual-dim-value').textContent = `${presentation.backgroundDim}%`;
+    };
+    byId('w-visual-panel-opacity').oninput = event => {
+        presentation.panelOpacity = livingClamp(event.target.value, 35, 100);
+        byId('w-visual-opacity-value').textContent = `${presentation.panelOpacity}%`;
+    };
+    // Opening the panel should be enough to discover compatible models; users
+    // should never have to know that a catalog exists or press Refresh first.
+    void renderWorldVisualModelSearch(world);
+}
+
 const WORLD_STUDIO_PAGE_SIZE = 24;
 const worldStudioListState = {
     worldId: '',
@@ -10132,6 +10721,42 @@ function appendWorldStudioListToolbar(container, kind, pageData, rerender, noun)
     container.appendChild(toolbar);
 }
 
+function renameWorldLocationId(world, location, requestedId) {
+    const oldId = String(location?.id || '').trim();
+    const newId = String(requestedId || '').trim().replace(/\s+/g, '_').slice(0, 120);
+    if (!oldId || !newId || oldId === newId) return oldId;
+    if ((world.locations || []).some(other => other !== location && other.id === newId)) {
+        throw new Error(`Another location already uses “${newId}”.`);
+    }
+    location.id = newId;
+    if (world.startLocationId === oldId) world.startLocationId = newId;
+    (world.locations || []).forEach(candidate => {
+        if (candidate.parentLocationId === oldId) candidate.parentLocationId = newId;
+        candidate.exits = (candidate.exits || []).map(exit => {
+            const text = typeof exit === 'string' ? exit : String(exit?.text || '');
+            if (String(getExitTargetName(text) || '').trim() !== oldId) return exit;
+            const direction = getExitDirection(text);
+            const nextText = direction ? `${direction} to ${newId}` : `to ${newId}`;
+            return typeof exit === 'string' ? nextText : { ...exit, text: nextText };
+        });
+    });
+    (world.entities || []).forEach(entity => {
+        if (entity.startLocation === oldId) entity.startLocation = newId;
+        if (entity.homeLocation === oldId) entity.homeLocation = newId;
+        (entity.schedule || []).forEach(block => {
+            if (block.locationId === oldId) block.locationId = newId;
+        });
+    });
+    (world.startingLives || []).forEach(life => {
+        if (life.startLocationId === oldId) life.startLocationId = newId;
+        life.holdings = (life.holdings || []).map(holding => holding === oldId ? newId : holding);
+    });
+    (world.factions || []).forEach(faction => {
+        faction.territory = (faction.territory || []).map(id => id === oldId ? newId : id);
+    });
+    return newId;
+}
+
 function renderWorldLocations() {
     const world = state.editingWorld;
     if (!world) return;
@@ -10155,6 +10780,23 @@ function renderWorldLocations() {
         opt.value = l.name;
         datalist.appendChild(opt);
     });
+    let regionDatalist = document.getElementById('world-region-datalist');
+    if (!regionDatalist) {
+        regionDatalist = document.createElement('datalist');
+        regionDatalist.id = 'world-region-datalist';
+        document.body.appendChild(regionDatalist);
+    }
+    regionDatalist.innerHTML = [...new Set(world.locations.map(location => String(location.region || '').trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b))
+        .map(region => `<option value="${escapeHTML(region)}"></option>`).join('');
+    let floorDatalist = document.getElementById('world-floor-datalist');
+    if (!floorDatalist) {
+        floorDatalist = document.createElement('datalist');
+        floorDatalist.id = 'world-floor-datalist';
+        document.body.appendChild(floorDatalist);
+    }
+    floorDatalist.innerHTML = ['Auto', 'Outside', 'Basement', 'Lower ground', 'Ground', 'Mezzanine', '1', '2', '3', 'Roof']
+        .map(floor => `<option value="${floor}"></option>`).join('');
     
     // Group by Region
     const regions = {};
@@ -10188,8 +10830,8 @@ function renderWorldLocations() {
             div.innerHTML = `
                 <div style="display:flex; gap:12px; margin-bottom:12px;">
                     <div style="flex:1">
-                        <label class="form-label" style="font-size:0.7rem; opacity:0.6;">Location ID</label>
-                        <input type="text" class="form-input loc-id" value="${escapeHTML(loc.id)}" placeholder="e.g. loc_tavern">
+                        <label class="form-label" style="font-size:0.7rem; opacity:0.6; display:flex; justify-content:space-between; gap:8px;">Location ID <button type="button" class="inline-link-btn edit-loc-id">Edit carefully</button></label>
+                        <input type="text" class="form-input loc-id" value="${escapeHTML(loc.id)}" placeholder="Generated automatically" readonly title="Horde Studio generates this stable link. Use Edit carefully only when repairing imported data.">
                     </div>
                     <div style="flex:1.5">
                         <label class="form-label" style="font-size:0.7rem; opacity:0.6;">Display Name</label>
@@ -10197,7 +10839,7 @@ function renderWorldLocations() {
                     </div>
                     <div style="flex:1">
                         <label class="form-label" style="font-size:0.7rem; opacity:0.6;">Region</label>
-                        <input type="text" class="form-input loc-region" value="${escapeHTML(loc.region || '')}" placeholder="e.g. The Palace">
+                        <input type="text" list="world-region-datalist" class="form-input loc-region" value="${escapeHTML(loc.region || '')}" placeholder="Search existing or create a region…">
                     </div>
                     <div style="display:flex; flex-direction:column; gap:4px; align-self:flex-end;">
                         <button class="tool-btn set-start-btn ${world.startLocationId === loc.id ? 'btn-success' : ''}" style="width:100%; white-space:nowrap; font-size:10px;" title="Set as player starting point">
@@ -10215,6 +10857,22 @@ function renderWorldLocations() {
                     <div>
                         <label class="form-label" style="font-size:0.75rem;">Hidden Details (DM Only)</label>
                         <textarea class="form-textarea loc-hidden-desc" rows="3" placeholder="Secret info, list of items, vibes...">${escapeHTML(loc.hiddenDescription || '')}</textarea>
+                    </div>
+                </div>
+
+                <div class="world-media-editor">
+                    <div class="world-media-preview" style="${worldMediaSource(world, loc.visuals?.backgroundAssetId) ? `background-image:url('${cssUrl(worldMediaSource(world, loc.visuals.backgroundAssetId))}')` : ''}">
+                        ${worldMediaSource(world, loc.visuals?.backgroundAssetId) ? '' : 'No location background'}
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size:.75rem;">Location Background</label>
+                        <p class="form-hint" style="margin:0 0 8px;">Used only in Cinematic mode. It never changes location state.</p>
+                        <div class="world-media-actions">
+                            <input class="loc-background-input" type="file" accept="image/*" hidden>
+                            <button class="tool-btn loc-background-upload" type="button">Upload</button>
+                            <button class="tool-btn loc-background-generate" type="button">✨ Generate</button>
+                            <button class="tool-btn loc-background-clear" type="button" ${loc.visuals?.backgroundAssetId ? '' : 'disabled'}>Clear</button>
+                        </div>
                     </div>
                 </div>
 
@@ -10237,7 +10895,7 @@ function renderWorldLocations() {
                     </div>
                     <div>
                         <label class="form-label" style="font-size:0.7rem;">Floor / Level</label>
-                        <input type="text" class="form-input loc-map-floor" value="${escapeHTML(loc.mapFloor || '')}" placeholder="Auto, ground, 2, basement…">
+                        <input type="text" list="world-floor-datalist" class="form-input loc-map-floor" value="${escapeHTML(loc.mapFloor || '')}" placeholder="Choose or enter a floor…">
                     </div>
                 </div>
                 
@@ -10345,6 +11003,42 @@ function renderWorldLocations() {
                 renderWorldSecrets(loc, secretsList);
             };
 
+            const backgroundInput = div.querySelector('.loc-background-input');
+            div.querySelector('.loc-background-upload').onclick = () => backgroundInput.click();
+            backgroundInput.onchange = async event => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                try {
+                    const image = await normalizeUploadedImage(file, 1600, 0.78);
+                    loc.visuals.backgroundAssetId = addWorldMediaAsset(world, image, 'location_background', loc.name);
+                    pruneWorldMediaAssets(world);
+                    renderWorldLocations();
+                    showToast(`Background added to ${loc.name}. It will be included in world saves.`, 'success');
+                } catch (error) {
+                    showToast(`Background upload failed: ${error.message}`, 'error');
+                } finally { event.target.value = ''; }
+            };
+            div.querySelector('.loc-background-generate').onclick = async event => {
+                const button = event.currentTarget;
+                button.disabled = true;
+                button.textContent = 'Generating…';
+                try {
+                    loc.visuals.backgroundAssetId = await generateWorldLocationBackground(world, loc);
+                    pruneWorldMediaAssets(world);
+                    renderWorldLocations();
+                    showToast(`Generated a portable background for ${loc.name}.`, 'success');
+                } catch (error) {
+                    showToast(`Background generation failed: ${error.message}`, 'error');
+                    button.disabled = false;
+                    button.textContent = '✨ Generate';
+                }
+            };
+            div.querySelector('.loc-background-clear').onclick = () => {
+                loc.visuals.backgroundAssetId = '';
+                pruneWorldMediaAssets(world);
+                renderWorldLocations();
+            };
+
             // --- Opening state ---
             // Touching either slider commits both, so a place never ends up
             // dangerous-but-unset — the pair is what the engine reads.
@@ -10443,11 +11137,29 @@ function renderWorldLocations() {
                 };
             });
 
-            div.querySelector('.loc-id').onchange = (e) => { 
+            const locationIdInput = div.querySelector('.loc-id');
+            div.querySelector('.edit-loc-id').onclick = () => {
+                locationIdInput.readOnly = false;
+                locationIdInput.focus();
+                locationIdInput.select();
+                showToast('Changing an internal ID can affect saved sessions. Linked world records will be updated automatically.', 'info');
+            };
+            locationIdInput.onchange = (e) => {
                 const oldId = (loc.id || "").trim();
                 const newId = e.target.value.trim();
-                if (!newId || oldId === newId) return;
-                loc.id = newId; 
+                if (!newId || oldId === newId) {
+                    e.target.value = oldId;
+                    e.target.readOnly = true;
+                    return;
+                }
+                try {
+                    renameWorldLocationId(world, loc, newId);
+                } catch (error) {
+                    showToast(error.message, 'error');
+                    e.target.value = oldId;
+                    e.target.readOnly = true;
+                    return;
+                }
                 renderWorldStudio();
             };
             div.querySelector('.loc-name').onchange = (e) => { loc.name = e.target.value; renderWorldStudio(); };
@@ -11753,6 +12465,31 @@ function renderWorldEntities() {
                     <label class="form-label" style="font-size:0.75rem;">Basic Description</label>
                     <textarea class="form-textarea ent-desc" rows="2" placeholder="Physical features, items they carry, etc.">${escapeHTML(ent.description)}</textarea>
                 </div>
+
+                ${ent.type === 'npc' ? `
+                    <div class="world-media-editor">
+                        <div class="world-media-preview is-portrait" style="${worldMediaSource(world, ent.visuals?.portraitAssetId) ? `background-image:url('${cssUrl(worldMediaSource(world, ent.visuals.portraitAssetId))}')` : ''}">
+                            ${worldMediaSource(world, ent.visuals?.portraitAssetId) ? '' : escapeHTML((ent.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}
+                        </div>
+                        <div>
+                            <label class="form-label" style="font-size:.75rem;">NPC Portrait</label>
+                            <p class="form-hint" style="margin:0 0 8px;">Optional. Missing portraits use initials and never block play.</p>
+                            <div class="world-media-actions">
+                                <input class="ent-portrait-input" type="file" accept="image/*" hidden>
+                                <button class="tool-btn ent-portrait-upload" type="button">Upload</button>
+                                <button class="tool-btn ent-portrait-generate" type="button">✨ Generate</button>
+                                <button class="tool-btn ent-portrait-clear" type="button" ${ent.visuals?.portraitAssetId ? '' : 'disabled'}>Clear</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px; align-items:end;">
+                        <div>
+                            <label class="form-label" style="font-size:.75rem;">Dialogue Color</label>
+                            <input class="ent-dialogue-color" type="color" value="${escapeHTML(ent.visuals?.dialogueColor || '#E63946')}" style="width:100%; height:42px; padding:3px; border:1px solid var(--border); border-radius:9px; background:var(--surface);">
+                        </div>
+                        <p class="form-hint" style="margin:0 0 8px;">Colors this NPC’s name, border and dialogue panel in Cinematic mode. Stored with the world.</p>
+                    </div>
+                ` : ''}
                 
                 ${ent.isMajor && ent.type === 'npc' ? `
                     <div>
@@ -11893,6 +12630,46 @@ function renderWorldEntities() {
         div.querySelector('.ent-desc').oninput = (e) => { ent.description = e.target.value; updateWorldTokenCount(); };
         
         if (ent.type === 'npc') {
+            ent.visuals = isPlainObject(ent.visuals) ? ent.visuals : {};
+            div.querySelector('.ent-dialogue-color').oninput = event => {
+                ent.visuals.dialogueColor = /^#[0-9a-f]{6}$/i.test(event.target.value)
+                    ? event.target.value.toUpperCase() : '';
+            };
+            const portraitInput = div.querySelector('.ent-portrait-input');
+            div.querySelector('.ent-portrait-upload').onclick = () => portraitInput.click();
+            portraitInput.onchange = async event => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                try {
+                    const image = await normalizeUploadedImage(file, 768, 0.82);
+                    ent.visuals.portraitAssetId = addWorldMediaAsset(world, image, 'npc_portrait', ent.name);
+                    pruneWorldMediaAssets(world);
+                    renderWorldEntities();
+                    showToast(`Portrait added to ${ent.name}. It will be included in world saves.`, 'success');
+                } catch (error) {
+                    showToast(`Portrait upload failed: ${error.message}`, 'error');
+                } finally { event.target.value = ''; }
+            };
+            div.querySelector('.ent-portrait-generate').onclick = async event => {
+                const button = event.currentTarget;
+                button.disabled = true;
+                button.textContent = 'Generating…';
+                try {
+                    ent.visuals.portraitAssetId = await generateWorldNpcPortrait(world, ent);
+                    pruneWorldMediaAssets(world);
+                    renderWorldEntities();
+                    showToast(`Generated a portable portrait for ${ent.name}.`, 'success');
+                } catch (error) {
+                    showToast(`Portrait generation failed: ${error.message}`, 'error');
+                    button.disabled = false;
+                    button.textContent = '✨ Generate';
+                }
+            };
+            div.querySelector('.ent-portrait-clear').onclick = () => {
+                ent.visuals.portraitAssetId = '';
+                pruneWorldMediaAssets(world);
+                renderWorldEntities();
+            };
             div.querySelector('.ent-major').onchange = (e) => { 
                 ent.isMajor = e.target.checked; 
                 renderWorldEntities(); 
@@ -12298,24 +13075,47 @@ function renderWorldSandboxStudio() {
         `<option value="${escapeHTML(location.id)}">${escapeHTML(location.name)}</option>`).join('');
     const factionOptions = (world.factions || []).map(faction =>
         `<option value="${escapeHTML(faction.id)}">${escapeHTML(faction.name)}</option>`).join('');
+    const ensureOptions = (id, values) => {
+        let datalist = document.getElementById(id);
+        if (!datalist) {
+            datalist = document.createElement('datalist');
+            datalist.id = id;
+            document.body.appendChild(datalist);
+        }
+        datalist.innerHTML = [...new Set(values.filter(Boolean))]
+            .map(value => `<option value="${escapeHTML(value)}"></option>`).join('');
+    };
+    ensureOptions('world-origin-icons', ['◈', '⚔️', '👑', '🛡️', '🏹', '🪓', '🧙', '🎭', '🔧', '📚', '🌾', '💰', '🕵️', '💉', '🚀']);
+    ensureOptions('world-origin-roles', ['wanderer', 'peasant', 'student', 'merchant', 'guard', 'knight', 'healer', 'criminal', 'noble', 'ruler',
+        ...world.startingLives.map(life => life.role)]);
+    ensureOptions('world-origin-ranks', ['outcast', 'enslaved', 'commoner', 'artisan', 'retainer', 'gentry', 'nobility', 'royalty',
+        ...world.startingLives.map(life => life.socialRank)]);
+    ensureOptions('world-origin-legal', ['free', 'citizen', 'resident', 'visitor', 'indentured', 'wanted', 'imprisoned', 'exiled', 'protected',
+        ...world.startingLives.map(life => life.legalStatus)]);
     world.startingLives.forEach((life, index) => {
-        const statText = Object.entries(life.statOverrides || {}).map(([key, value]) => `${key}: ${value}`).join(', ');
+        const statDefinitions = [...(world.hudConfig?.stats || [])];
+        Object.keys(life.statOverrides || {}).forEach(id => {
+            if (!statDefinitions.some(stat => stat.id === id)) statDefinitions.push({ id, name: id });
+        });
+        const statControls = statDefinitions.length
+            ? `<div class="origin-wide smart-field-group"><span class="smart-field-label">Starting stat overrides <small>Leave blank to use the world's default</small></span><div class="origin-stat-grid">${statDefinitions.map(stat => `<label><span>${escapeHTML(stat.name || stat.id)}</span><input class="form-input origin-stat-override" type="number" data-stat-id="${escapeHTML(stat.id)}" value="${life.statOverrides?.[stat.id] == null ? '' : escapeHTML(String(life.statOverrides[stat.id]))}" placeholder="Default"></label>`).join('')}</div></div>`
+            : '<div class="origin-wide form-hint">Add HUD stats under Systems to configure starting stat overrides here.</div>';
         const card = document.createElement('div');
         card.className = 'sandbox-origin-editor';
         card.innerHTML = `
             <div class="sandbox-origin-editor-grid">
                 <input class="form-input origin-name" value="${escapeHTML(life.name)}" placeholder="Starting life name">
-                <input class="form-input origin-icon" value="${escapeHTML(life.icon)}" placeholder="Icon">
-                <input class="form-input origin-role" value="${escapeHTML(life.role)}" placeholder="Role / occupation">
-                <input class="form-input origin-rank" value="${escapeHTML(life.socialRank)}" placeholder="Social rank">
+                <input class="form-input origin-icon" list="world-origin-icons" value="${escapeHTML(life.icon)}" placeholder="Choose an icon">
+                <input class="form-input origin-role" list="world-origin-roles" value="${escapeHTML(life.role)}" placeholder="Choose or enter a role">
+                <input class="form-input origin-rank" list="world-origin-ranks" value="${escapeHTML(life.socialRank)}" placeholder="Choose or enter a social rank">
                 <input class="form-input origin-title" value="${escapeHTML(life.title)}" placeholder="Title (optional)">
-                <input class="form-input origin-legal" value="${escapeHTML(life.legalStatus)}" placeholder="Legal status">
+                <input class="form-input origin-legal" list="world-origin-legal" value="${escapeHTML(life.legalStatus)}" placeholder="Choose or enter legal status">
                 <select class="form-select origin-location"><option value="">Default starting location</option>${locationOptions}</select>
                 <select class="form-select origin-faction"><option value="">No starting allegiance</option>${factionOptions}</select>
                 <input class="form-input origin-faction-rep" type="number" min="-100" max="100" value="${life.factionReputation}" placeholder="Faction reputation">
                 <textarea class="form-textarea origin-desc origin-wide" rows="2" placeholder="What this life feels like and what makes its opening distinct.">${escapeHTML(life.description)}</textarea>
                 <input class="form-input origin-inventory origin-wide" value="${escapeHTML((life.inventory || []).join(', '))}" placeholder="Starting possessions, comma separated">
-                <input class="form-input origin-stats origin-wide" value="${escapeHTML(statText)}" placeholder="Stat overrides, e.g. gold: 2, hp: 14">
+                ${statControls}
                 <textarea class="form-textarea origin-obligations" rows="3" placeholder="Obligations, one per line">${escapeHTML((life.obligations || []).join('\n'))}</textarea>
                 <textarea class="form-textarea origin-privileges" rows="3" placeholder="Privileges, one per line">${escapeHTML((life.privileges || []).join('\n'))}</textarea>
                 <textarea class="form-textarea origin-holdings" rows="3" placeholder="Holdings, comma separated">${escapeHTML((life.holdings || []).join(', '))}</textarea>
@@ -12347,15 +13147,21 @@ function renderWorldSandboxStudio() {
             life.factionReputation = livingClamp(event.target.value, -100, 100);
             event.target.value = life.factionReputation;
         };
-        card.querySelector('.origin-stats').onchange = event => {
-            const parsed = {};
-            String(event.target.value || '').split(',').forEach(pair => {
-                const [key, raw] = pair.split(':');
-                if (key?.trim() && Number.isFinite(Number(raw))) parsed[key.trim()] = Number(raw);
-            });
-            life.statOverrides = parsed;
-            event.target.value = Object.entries(parsed).map(([key, value]) => `${key}: ${value}`).join(', ');
-        };
+        card.querySelectorAll('.origin-stat-override').forEach(input => {
+            input.onchange = event => {
+                const id = event.target.dataset.statId;
+                const raw = event.target.value.trim();
+                life.statOverrides = isPlainObject(life.statOverrides) ? life.statOverrides : {};
+                if (!raw || !Number.isFinite(Number(raw))) {
+                    delete life.statOverrides[id];
+                    event.target.value = '';
+                } else {
+                    life.statOverrides[id] = Number(raw);
+                    event.target.value = String(life.statOverrides[id]);
+                }
+                updateWorldTokenCount();
+            };
+        });
         card.querySelector('.delete-origin').onclick = () => {
             world.startingLives.splice(index, 1);
             renderWorldSandboxStudio();
@@ -12526,6 +13332,18 @@ function syncWorldStudioStatsFromDOM(world) {
     return renames;
 }
 
+function worldStatColorHex(value) {
+    const raw = String(value || '').trim();
+    if (/^#[0-9a-f]{6}$/i.test(raw)) return raw;
+    const named = {
+        'var(--red)': '#e63946', 'var(--accent)': '#e63946', 'var(--success)': '#30d158',
+        'var(--warning)': '#ffb020', 'var(--cyan)': '#00f5ff', 'var(--purple)': '#b892ff'
+    };
+    if (named[raw.toLowerCase()]) return named[raw.toLowerCase()];
+    const short = raw.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+    return short ? `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}` : '#e63946';
+}
+
 function renderWorldStudioStats() {
     const w = state.editingWorld;
     if (!w) return;
@@ -12566,7 +13384,7 @@ function renderWorldStudioStats() {
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Color</label>
-                <input type="text" class="form-input stat-color" value="${escapeHTML(stat.color)}" placeholder="var(--red)">
+                <input type="color" class="form-input stat-color smart-color-input" value="${escapeHTML(worldStatColorHex(stat.color))}" title="Choose the HUD color">
             </div>
             <label class="stat-roll-toggle">
                 <input type="checkbox" class="stat-roll-enabled" ${rollConfig.enabled ? 'checked' : ''}>
@@ -12814,6 +13632,22 @@ function setupWorldPlayLogic() {
         actions.classList.toggle('is-open', open);
         button.setAttribute('aria-expanded', String(open));
     };
+    document.getElementById('world-presentation-btn').onclick = async () => {
+        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const sess = getCurrentWorldSession();
+        if (!world || !sess) return;
+        const presentation = normalizeWorldPresentation(world);
+        if (!presentation.playerCanOverride) {
+            return showToast('This world author locked the recommended presentation mode.', 'info');
+        }
+        const modes = ['classic', 'cinematic'];
+        const current = modes.includes(sess.presentationMode)
+            ? sess.presentationMode : (presentation.enabled ? presentation.mode : 'classic');
+        sess.presentationMode = modes[(modes.indexOf(current) + 1) % modes.length];
+        await saveState();
+        renderWorldPlayState();
+        showToast(`World view: ${sess.presentationMode[0].toUpperCase() + sess.presentationMode.slice(1)}.`, 'success');
+    };
     document.getElementById('world-hud-toggle').onclick = () => {
         const hud = document.querySelector('#world-play-view .world-status-col');
         const collapsed = hud.classList.toggle('is-collapsed');
@@ -12898,7 +13732,8 @@ function setupWorldPlayLogic() {
         
         const targetTotalMinutes = (targetDay - 1) * 24 * 60 + h24 * 60 + targetMins;
         const timeStep = world.hudConfig?.timeStep !== undefined ? world.hudConfig.timeStep : 5;
-        const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60;
+        const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60
+            + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
         
         const newBonusTimeMinutes = targetTotalMinutes - startMinutes - (sess.turnCount - 1) * timeStep;
         sess.bonusTimeMinutes = newBonusTimeMinutes;
@@ -15024,12 +15859,32 @@ function renderWorldPlayState() {
     const modelName = (world.model || state.globalSettings.defaultModel || 'Default').split('/').pop();
     document.getElementById('world-model-name').textContent = 'Model: ' + modelName;
 
-    // Apply world banner as chat background (like char bg in normal chat)
+    // Apply the optional presentation layer. Canonical location/session state
+    // chooses the visual; the visual can never choose or mutate game state.
     const playView = document.getElementById('world-play-view');
-    if (world.banner) {
-        playView.style.backgroundImage = `linear-gradient(rgba(10,10,15,0.75), rgba(10,10,15,0.75)), url('${cssUrl(world.banner)}')`;
+    const presentation = normalizeWorldPresentation(world);
+    const requestedPresentation = ['classic', 'cinematic'].includes(sess.presentationMode)
+        ? sess.presentationMode : (presentation.enabled ? presentation.mode : 'classic');
+    const visualLocation = world.locations.find(location => location.id === sess.playerLocation);
+    const locationBackground = worldMediaSource(world, visualLocation?.visuals?.backgroundAssetId);
+    const background = requestedPresentation === 'classic' ? world.banner : (locationBackground || world.banner);
+    const activePresentation = requestedPresentation !== 'classic';
+    const presentationButton = document.getElementById('world-presentation-btn');
+    if (presentationButton) {
+        presentationButton.style.display = presentation.playerCanOverride ? '' : 'none';
+        presentationButton.textContent = requestedPresentation === 'classic' ? '🎨 Classic' : '🎨 Cinematic';
+    }
+    playView.classList.toggle('world-presentation-active', activePresentation);
+    playView.dataset.presentation = requestedPresentation;
+    playView.style.setProperty('--world-panel-opacity', String(presentation.panelOpacity / 100));
+    playView.style.setProperty('--world-visual-accent', presentation.accent);
+    if (activePresentation) playView.style.setProperty('--accent', presentation.accent);
+    else playView.style.removeProperty('--accent');
+    if (background) {
+        const dim = activePresentation ? presentation.backgroundDim / 100 : 0.75;
+        playView.style.backgroundImage = `linear-gradient(rgba(10,10,15,${dim}), rgba(10,10,15,${dim})), url('${cssUrl(background)}')`;
         playView.style.backgroundSize = 'cover';
-        playView.style.backgroundPosition = 'center';
+        playView.style.backgroundPosition = visualLocation?.visuals?.backgroundPosition || 'center';
         playView.style.backgroundAttachment = 'local';
     } else {
         playView.style.backgroundImage = 'none';
@@ -15194,13 +16049,20 @@ function renderWorldPlayState() {
     if (presentNPCs.length) {
         presentNPCs.forEach(npc => {
             const div = document.createElement('div');
+            div.className = 'world-present-npc';
             div.style.padding = '8px'; div.style.background = 'var(--surface2)'; div.style.borderRadius = '6px';
             div.style.marginBottom = '4px';
             div.style.fontSize = '0.85rem';
             div.style.borderLeft = '3px solid var(--accent)';
             div.style.cursor = 'pointer';
             div.title = 'Open dossier';
-            div.textContent = npc.name;
+            const portrait = activePresentation ? worldMediaSource(world, npc.visuals?.portraitAssetId) : '';
+            if (activePresentation) {
+                const initials = String(npc.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
+                div.innerHTML = `<span class="world-present-npc-avatar" style="${portrait ? `background-image:url('${cssUrl(portrait)}')` : ''}">${portrait ? '' : escapeHTML(initials)}</span><span>${escapeHTML(npc.name)}</span>`;
+            } else {
+                div.textContent = npc.name;
+            }
             div.onclick = () => openNpcDossier(npc.id);
             div.onmouseenter = () => { div.style.background = 'var(--surface3)'; };
             div.onmouseleave = () => { div.style.background = 'var(--surface2)'; };
@@ -15569,6 +16431,152 @@ function renderWorldPlayState() {
     }
 }
 
+function worldDialogueSpeaker(world, paragraph, quoteStart, quoteEnd) {
+    if (!world || !paragraph) return null;
+    const before = paragraph.slice(Math.max(0, quoteStart - 360), quoteStart);
+    const after = paragraph.slice(quoteEnd, Math.min(paragraph.length, quoteEnd + 180));
+    const candidates = (world.entities || []).filter(entity => entity?.type === 'npc' || !entity?.type);
+    let best = null;
+    const consider = (entity, distance, specificity) => {
+        if (!best || distance < best.distance || (distance === best.distance && specificity > best.specificity)) {
+            best = { entity, distance, specificity };
+        }
+    };
+    candidates.forEach(entity => {
+        const full = String(entity.name || '').trim();
+        if (!full) return;
+        const variants = [...new Set([full, full.split(/\s+/)[0]].filter(name => name.length >= 2))];
+        variants.forEach(variant => {
+            const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const beforeMatches = [...before.matchAll(new RegExp(`\\b${escaped}(?:'s|’s)?\\b`, 'gi'))];
+            if (beforeMatches.length) {
+                const match = beforeMatches[beforeMatches.length - 1];
+                consider(entity, before.length - (match.index + match[0].length), variant === full ? 2 : 1);
+            }
+            const afterMatch = new RegExp(`^.{0,90}?\\b${escaped}\\b`, 'i').exec(after);
+            if (afterMatch) consider(entity, afterMatch[0].length, variant === full ? 2 : 1);
+        });
+    });
+    return best?.entity || null;
+}
+
+function worldNpcMentions(world, text) {
+    const mentions = [];
+    (world?.entities || []).filter(entity => entity?.type === 'npc' || !entity?.type).forEach(entity => {
+        const full = String(entity.name || '').trim();
+        const variants = [...new Set([full, full.split(/\s+/)[0]].filter(name => name.length >= 2))];
+        variants.forEach((variant, specificity) => {
+            const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            for (const match of String(text || '').matchAll(new RegExp(`\\b${escaped}(?:'s|’s)?\\b`, 'gi'))) {
+                mentions.push({ entity, index: match.index || 0, end: (match.index || 0) + match[0].length, specificity });
+            }
+        });
+    });
+    return mentions.sort((a, b) => a.index - b.index || b.specificity - a.specificity);
+}
+
+function renderWorldDialogueCard(world, speaker, dialogue, className = 'world-npc-dialogue') {
+    const portrait = worldMediaSource(world, speaker?.visuals?.portraitAssetId);
+    const initials = String(speaker?.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
+    const color = cssColor(speaker?.visuals?.dialogueColor || 'var(--accent)');
+    return `<div class="${className}" data-speaker-id="${escapeHTML(speaker?.id || '')}" style="--speaker-color:${color}">
+        <span class="world-npc-dialogue-avatar" style="${portrait ? `background-image:url('${cssUrl(portrait)}')` : ''}">${portrait ? '' : escapeHTML(initials)}</span>
+        <span class="world-npc-dialogue-copy"><strong>${escapeHTML(speaker?.name || 'Unknown')}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
+    </div>`;
+}
+
+function renderWorldNarrativeHtml(world, text) {
+    const source = String(text || '');
+    if (!world || !source) return parseHordeMarkdown(source);
+    const paragraphs = source.split(/\n{2,}/);
+    const quotePattern = /“([^”\n]+)”|"([^"\n]+)"/g;
+    let recognized = 0;
+    let carriedSpeaker = null;
+    let carryAge = 99;
+    const html = paragraphs.map(paragraph => {
+        const mentions = worldNpcMentions(world, paragraph);
+        const uniqueMentions = [...new Set(mentions.map(mention => mention.entity.id))];
+        const screenplay = /^\s*([^:\n]{2,60}):\s+([\s\S]+)$/.exec(paragraph);
+        if (screenplay) {
+            const label = screenplay[1].trim().toLowerCase();
+            const speaker = (world.entities || []).find(entity => {
+                const full = String(entity.name || '').toLowerCase();
+                return full === label || full.split(/\s+/)[0] === label;
+            });
+            if (speaker) {
+                carriedSpeaker = speaker;
+                carryAge = 0;
+                recognized++;
+                return renderWorldDialogueCard(world, speaker, screenplay[2]);
+            }
+        }
+
+        const matches = [...paragraph.matchAll(quotePattern)];
+        if (!matches.length) {
+            if (uniqueMentions.length === 1) {
+                carriedSpeaker = mentions[mentions.length - 1].entity;
+                carryAge = 0;
+            } else {
+                carryAge++;
+                if (uniqueMentions.length > 1) carriedSpeaker = null;
+            }
+            return `<div class="world-narrative-prose">${parseHordeMarkdown(paragraph)}</div>`;
+        }
+
+        let cursor = 0;
+        let paragraphHtml = '';
+        let paragraphSpeaker = null;
+        matches.forEach(match => {
+            const start = match.index || 0;
+            const end = start + match[0].length;
+            let speaker = worldDialogueSpeaker(world, paragraph, start, end);
+            const beforeMentions = mentions.filter(mention => mention.end <= start);
+            const competingSinceLastQuote = mentions.some(mention => mention.index >= cursor
+                && mention.end <= start && paragraphSpeaker && mention.entity.id !== paragraphSpeaker.id);
+            const after = paragraph.slice(end, Math.min(paragraph.length, end + 120));
+            const pronounTag = /^\s*[,—-]?\s*(?:he|she|they)\s+(?:says?|asks?|replies?|murmurs?|whispers?|shouts?|calls?|adds?|continues?|snaps?|laughs?|yells?)\b/i.test(after);
+            const startsWithQuote = paragraph.slice(0, start).trim() === '';
+            if (!speaker && paragraphSpeaker && !competingSinceLastQuote) {
+                speaker = paragraphSpeaker;
+            }
+            if (!speaker && carriedSpeaker && carryAge <= 1
+                && !beforeMentions.length && (startsWithQuote || pronounTag)) {
+                speaker = carriedSpeaker;
+            }
+            if (!speaker) return;
+            const lead = paragraph.slice(cursor, start);
+            if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
+            paragraphHtml += renderWorldDialogueCard(world, speaker, match[1] ?? match[2] ?? '');
+            cursor = end;
+            paragraphSpeaker = speaker;
+            carriedSpeaker = speaker;
+            carryAge = 0;
+            recognized++;
+        });
+        if (!paragraphHtml) {
+            if (uniqueMentions.length === 1) { carriedSpeaker = mentions[mentions.length - 1].entity; carryAge = 0; }
+            else carryAge++;
+            return `<div class="world-narrative-prose">${parseHordeMarkdown(paragraph)}</div>`;
+        }
+        const tail = paragraph.slice(cursor);
+        if (tail.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(tail)}</div>`;
+        return paragraphHtml;
+    }).join('');
+    return recognized ? html : parseHordeMarkdown(source);
+}
+
+function renderWorldPlayerMessageHtml(sess, text) {
+    const persona = state.personas.find(item => item.id === (sess?.personaId || state.activePersonaId));
+    const name = persona?.name || 'You';
+    const avatar = persona?.avatar || '';
+    const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
+    const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
+    return `<div class="world-npc-dialogue world-player-dialogue" style="--speaker-color:${color}">
+        <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${cssUrl(avatar)}')` : ''}">${avatar ? '' : escapeHTML(initials)}</span>
+        <span class="world-npc-dialogue-copy"><strong>${escapeHTML(name)}</strong><span>${parseHordeMarkdown(text)}</span></span>
+    </div>`;
+}
+
 function appendWorldMessageUI(msg, index = null) {
     const container = document.getElementById('world-messages-container');
     const div = document.createElement('div');
@@ -15580,6 +16588,16 @@ function appendWorldMessageUI(msg, index = null) {
 
     // Per-message metadata line (revealed by the 👁️ Metadata toggle)
     const world = state.worlds.find(w => w.id === state.activeWorldId);
+    const activeSession = getCurrentWorldSession();
+    const presentation = world ? normalizeWorldPresentation(world) : null;
+    const presentationMode = ['classic', 'cinematic'].includes(activeSession?.presentationMode)
+        ? activeSession.presentationMode
+        : (presentation?.enabled ? presentation.mode : 'classic');
+    const messageHtml = msg.role === 'dm' && presentationMode !== 'classic'
+        ? renderWorldNarrativeHtml(world, displayText)
+        : msg.role === 'user' && presentationMode !== 'classic'
+            ? renderWorldPlayerMessageHtml(activeSession, displayText)
+            : parseHordeMarkdown(displayText);
     const metaParts = [];
     if (msg.location) {
         const locObj = world ? world.locations.find(l => l.id === msg.location) : null;
@@ -15646,7 +16664,7 @@ function appendWorldMessageUI(msg, index = null) {
     // Allow editing/deletion for parity
     div.innerHTML = `
         <div class="msg-bubble">
-            <div class="msg-text">${parseHordeMarkdown(displayText)}</div>
+            <div class="msg-text">${messageHtml}</div>
             ${metaHtml}
             <textarea class="msg-edit-area hidden" style="width:100%; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:8px; margin-top:8px; font-family:inherit; font-size:inherit;"></textarea>
             ${msg.role === 'dm' && versions.length > 1 && !isLastEntry ? `
@@ -16253,6 +17271,10 @@ async function executeWorldTurn(commandOrReroll = null) {
         if (command === "init" && authoredOpening && sess.history.length === 0) {
             normalizeLivingWorldState(world, sess);
             syncNPCSchedules(world, sess);
+            // An authored opening is trusted world data, not uncertain model
+            // prose. Make explicitly present named NPCs canonical before the
+            // no-op receipt snapshots the first scene.
+            applyNarratedPresence(world, sess, authoredOpening);
             const introCommit = commitEngineWorldNoOp(world, sess, 'engine_intro', 'Authored world introduction.');
             const introSnapshot = captureWorldTurnState(world, sess);
             const introMsg = addWorldMessage('dm', authoredOpening, {
@@ -16621,6 +17643,7 @@ You are the DM. You have access to "Hints" about secrets in this scene.
 
 [ENGINE MANDATE: CANONICAL TURN COMMIT]
 Every response MUST submit exactly one commit_world_turn receipt, including pure dialogue and no-change turns.
+- Keep spoken dialogue naturally attributable. When the speaker changes, identify them in the surrounding prose or use Name: dialogue; never leave a chain of different speakers ambiguous.
 - Models propose events; the engine commits reality.
 - Every action names actor_id. NPC movement NEVER means player movement.
 - "walks toward", "tries", "plans", "starts", and hypothetical actions are intended/attempted/in_progress, not completed.
@@ -17625,7 +18648,8 @@ ${modularMandate}
             playerStartLocationId: receiptPlayerStart,
             committedPlayerDestinationId: sess.playerLocation !== receiptPlayerStart ? sess.playerLocation : '',
             playerMovementAuthorized: !!receiptAuthorizedTarget,
-            authorizedPlayerDestinationId: receiptAuthorizedTarget?.id || ''
+            authorizedPlayerDestinationId: receiptAuthorizedTarget?.id || '',
+            narrativeText: fullText
         };
         for (const call of toolCalls) {
             let responsePayload = { success: true, status: 'Action processed.' };
@@ -18313,7 +19337,7 @@ ${modularMandate}
 const PRESENCE_VERBS = 'is|s|stands|sits|leans|steps|walks|moves|enters|arrives|appears|freezes|pauses|turns|looks|watches|grins|smiles|laughs|nods|shrugs|reaches|holds|takes|blocks|waits|follows|lingers|hovers|crosses|slips|ducks|settles|glances|tilts|shifts|stares|hesitates|hovers|kneels|crouches|rises|stops';
 // Deliberately specific. A bare "away" would veto "three feet away", which is
 // as present as it gets, and a bare "left" would veto "her left hand".
-const ELSEWHERE_MARKERS = /\b(?:downstairs|upstairs|outside|elsewhere|in the (?:kitchen|hall|garden|car|basement|yard|other room|distance)|from (?:the )?(?:other|another) room|back (?:home|at work)|still (?:at|in) (?:the|her|his|work|school)|(?:had|has|have) (?:left|gone)|is gone|walks? away|walked away|turns? away|turned away|far away|miles away)\b/i;
+const ELSEWHERE_MARKERS = /\b(?:downstairs|upstairs|outside|elsewhere|in the (?:kitchen|hall|garden|car|basement|yard|other room|distance)|from (?:the )?(?:other|another) room|(?:from|out of|through) (?:his|her|their|the) (?:office|room|hall|kitchen|basement|car|yard)|back (?:home|at work)|still (?:at|in) (?:the|her|his|work|school)|(?:had|has|have) (?:left|gone)|is gone|walks? away|walked away|turns? away|turned away|far away|miles away)\b/i;
 
 // "Mrs. Harrington" must key on "Harrington", never on "Mrs." — otherwise one
 // title would match every titled character in the cast.
@@ -19641,6 +20665,14 @@ async function renderWorldMap() {
 
     try {
         const sess = getCurrentWorldSession();
+        const presentation = normalizeWorldPresentation(world);
+        const mapSkin = worldMediaSource(world, presentation.mapSkinAssetId);
+        const effectiveMode = ['classic', 'cinematic'].includes(sess?.presentationMode)
+            ? sess.presentationMode : (presentation.enabled ? presentation.mode : 'classic');
+        container.style.backgroundImage = mapSkin && effectiveMode !== 'classic'
+            ? `linear-gradient(rgba(8,8,12,.5),rgba(8,8,12,.5)),url('${cssUrl(mapSkin)}')` : 'none';
+        container.style.backgroundSize = 'cover';
+        container.style.backgroundPosition = 'center';
         renderSemanticWorldMap(container, worldForSession(world, sess), {
             currentLocationId: sess?.playerLocation || ''
         });
@@ -19674,7 +20706,8 @@ function getLocationRef(world, ref) {
 function getWorldTimeData(world, sess) {
     if (!sess.turnCount) sess.turnCount = 1;
     const timeStep = world.hudConfig?.timeStep !== undefined ? world.hudConfig.timeStep : 5;
-    const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60;
+    const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60
+        + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
     const totalElapsedMinutes = (sess.turnCount - 1) * timeStep + (sess.bonusTimeMinutes || 0);
     const currentTotalMinutes = Math.max(0, startMinutes + totalElapsedMinutes);
     
@@ -20347,9 +21380,20 @@ function normalizeAuthoredWorld(world) {
     // hole is not a place or a person — every pass below would throw on it.
     world.locations = (Array.isArray(world.locations) ? world.locations : []).filter(isPlainObject);
     world.entities = (Array.isArray(world.entities) ? world.entities : []).filter(isPlainObject);
+    normalizeWorldPresentation(world);
+    const validMediaIds = new Set(world.mediaAssets.map(asset => asset.id));
+    if (world.presentation.mapSkinAssetId && !validMediaIds.has(world.presentation.mapSkinAssetId)) {
+        world.presentation.mapSkinAssetId = '';
+    }
 
     normalizeWorldShops(world);
     world.locations.forEach(location => {
+        if (!isPlainObject(location.visuals)) location.visuals = {};
+        location.visuals.backgroundAssetId = String(location.visuals.backgroundAssetId || '').slice(0, 160);
+        location.visuals.backgroundPosition = String(location.visuals.backgroundPosition || 'center').slice(0, 80);
+        if (location.visuals.backgroundAssetId && !validMediaIds.has(location.visuals.backgroundAssetId)) {
+            location.visuals.backgroundAssetId = '';
+        }
         if (location.danger != null && location.danger !== '') location.danger = livingClamp(location.danger, 0, 100);
         if (location.prosperity != null && location.prosperity !== '') location.prosperity = livingClamp(location.prosperity, 0, 100);
         if (location.conditions !== undefined) {
@@ -20361,6 +21405,14 @@ function normalizeAuthoredWorld(world) {
         }
     });
     world.entities.forEach(entity => {
+        if (!isPlainObject(entity.visuals)) entity.visuals = {};
+        entity.visuals.portraitAssetId = String(entity.visuals.portraitAssetId || '').slice(0, 160);
+        entity.visuals.portraitPosition = String(entity.visuals.portraitPosition || 'center').slice(0, 80);
+        entity.visuals.dialogueColor = /^#[0-9a-f]{6}$/i.test(String(entity.visuals.dialogueColor || ''))
+            ? String(entity.visuals.dialogueColor).toUpperCase() : '';
+        if (entity.visuals.portraitAssetId && !validMediaIds.has(entity.visuals.portraitAssetId)) {
+            entity.visuals.portraitAssetId = '';
+        }
         // A vendor bound to a location that no longer exists is not a vendor.
         if (entity.vendorFor && !world.locations.some(l => l.id === entity.vendorFor)) {
             delete entity.vendorFor;
@@ -22439,15 +23491,26 @@ function renderWorldScheduler() {
                 </div>
             </div>
             <div class="blocks-container" style="display:flex; flex-direction:column; gap:10px;">
-                ${(npc.schedule || []).map((block, idx) => `
-                    <div style="display:flex; gap:10px; align-items:center; background:var(--surface3); padding:10px; border-radius:8px; border:1px solid var(--border);">
+                ${(npc.schedule || []).map((block, idx) => {
+                    const selectedDays = (Array.isArray(block.days) ? block.days : (block.day ? [block.day] : []))
+                        .map(day => String(day || '').trim().toLowerCase()).filter(Boolean);
+                    const everyDay = !selectedDays.length || selectedDays.some(day => /^(daily|everyday)$/.test(day));
+                    const dayChoices = [
+                        ['weekday', 'Weekdays'], ['weekend', 'Weekend'], ['monday', 'Mon'], ['tuesday', 'Tue'],
+                        ['wednesday', 'Wed'], ['thursday', 'Thu'], ['friday', 'Fri'], ['saturday', 'Sat'], ['sunday', 'Sun']
+                    ];
+                    return `
+                    <div class="world-schedule-block">
                         <div style="flex:1">
                             <label style="font-size:10px; opacity:0.6; display:block; margin-bottom:4px;">Start Time</label>
                             <input type="time" class="form-input block-time" value="${escapeHTML(block.time)}" data-idx="${idx}">
                         </div>
-                        <div style="flex:1.4">
+                        <div class="world-schedule-days">
                             <label style="font-size:10px; opacity:0.6; display:block; margin-bottom:4px;">Days</label>
-                            <input type="text" class="form-input block-days" value="${escapeHTML((Array.isArray(block.days) ? block.days : (block.day ? [block.day] : [])).join(', '))}" data-idx="${idx}" placeholder="Daily, weekday, weekend, Mon…">
+                            <div class="smart-chip-picker" role="group" aria-label="Schedule days">
+                                <label><input type="checkbox" class="block-day" data-idx="${idx}" data-day="daily" ${everyDay ? 'checked' : ''}><span>Every day</span></label>
+                                ${dayChoices.map(([value, label]) => `<label><input type="checkbox" class="block-day" data-idx="${idx}" data-day="${value}" ${!everyDay && selectedDays.includes(value) ? 'checked' : ''}><span>${label}</span></label>`).join('')}
+                            </div>
                         </div>
                         <div style="flex:2">
                             <label style="font-size:10px; opacity:0.6; display:block; margin-bottom:4px;">Location</label>
@@ -22462,7 +23525,7 @@ function renderWorldScheduler() {
                         </div>
                         <button class="tool-btn del-block-btn" data-idx="${idx}" style="align-self:flex-end; margin-bottom:5px;">✕</button>
                     </div>
-                `).join('')}
+                `; }).join('')}
             </div>
         `;
 
@@ -22494,11 +23557,24 @@ function renderWorldScheduler() {
         div.querySelectorAll('.block-loc').forEach(sel => {
             sel.onchange = (e) => { npc.schedule[e.target.dataset.idx].locationId = e.target.value; };
         });
-        div.querySelectorAll('.block-days').forEach(inp => {
-            inp.onchange = (e) => {
-                const days = String(e.target.value || '').split(',').map(day => day.trim()).filter(Boolean).slice(0, 7);
-                if (days.length && !days.some(day => /^(daily|everyday)$/i.test(day))) npc.schedule[e.target.dataset.idx].days = days;
-                else delete npc.schedule[e.target.dataset.idx].days;
+        div.querySelectorAll('.block-day').forEach(input => {
+            input.onchange = event => {
+                const index = Number(event.target.dataset.idx);
+                const group = [...div.querySelectorAll(`.block-day[data-idx="${index}"]`)];
+                const daily = group.find(control => control.dataset.day === 'daily');
+                if (event.target.dataset.day === 'daily' && event.target.checked) {
+                    group.forEach(control => { if (control !== daily) control.checked = false; });
+                    delete npc.schedule[index].days;
+                    return;
+                }
+                if (event.target.dataset.day !== 'daily' && event.target.checked && daily) daily.checked = false;
+                const days = group.filter(control => control.dataset.day !== 'daily' && control.checked)
+                    .map(control => control.dataset.day);
+                if (days.length) npc.schedule[index].days = days;
+                else {
+                    if (daily) daily.checked = true;
+                    delete npc.schedule[index].days;
+                }
             };
         });
         div.querySelectorAll('.block-act').forEach(inp => {
@@ -28828,6 +29904,117 @@ async function generateCompanionPhoto(companion, sceneDescription, options = {})
             providerId: imageProvider
         }), imageProvider);
     }
+}
+
+function worldVisualProvider(world) {
+    const presentation = normalizeWorldPresentation(world);
+    const requested = presentation.imageProvider === 'inherit'
+        ? normalizedProviderId(state.globalSettings.apiProvider) : presentation.imageProvider;
+    return normalizedProviderId(requested);
+}
+
+function worldVisualModel(world, provider) {
+    const authored = String(normalizeWorldPresentation(world).imageModel || '').trim();
+    if (provider === 'gptproto' && authored === 'google/gemini-3.1-flash-lite-image') {
+        return 'gemini-3.1-flash-lite-image';
+    }
+    if (provider === 'openrouter' && authored === 'gemini-3.1-flash-lite-image') {
+        return 'google/gemini-3.1-flash-lite-image';
+    }
+    return authored || companionImageModelFallback(provider);
+}
+
+function blobAsDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('The generated image could not be embedded in the world save.'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function makeWorldVisualPortable(source, maxDimension, quality) {
+    let data = normalizeGeneratedImageSource(source);
+    if (!data) throw new Error('The image provider returned no usable image.');
+    if (!data.startsWith('data:image/')) {
+        let response;
+        try { response = await fetch(data); }
+        catch (error) { throw new Error('The image was generated, but its temporary URL could not be downloaded into the portable world save.'); }
+        if (!response.ok) throw new Error(`The generated image URL could not be downloaded (${response.status}).`);
+        data = await blobAsDataUrl(await response.blob());
+    }
+    return optimizeImage(data, maxDimension, quality);
+}
+
+async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label } = {}) {
+    const presentation = normalizeWorldPresentation(world);
+    const provider = worldVisualProvider(world);
+    if (!['openrouter', 'gptproto'].includes(provider)) {
+        throw new Error('Choose OpenRouter or GPTProto under World Studio → Visuals, or upload an image manually.');
+    }
+    if (!providerHasCredentials(provider)) {
+        throw new Error(`Add a ${providerDisplayName(provider)} API key in Settings before generating world visuals.`);
+    }
+    const model = worldVisualModel(world, provider);
+    let modelInfo = companionImageModelInfo(model);
+    if (!modelInfo) {
+        const ranked = rankCompanionImageModels(await getCompanionOutputModels('image', false, provider), provider);
+        companionImageModelCatalog = ranked;
+        modelInfo = ranked.find(item => item.id === model) || null;
+    }
+    const endpoints = await getCompanionImageEndpoints(model, false, provider);
+    const endpoint = chooseCompanionImageEndpoint(endpoints, { imageProviderTag: '' }, false);
+    const requestConfig = {
+        imageModel: model,
+        imageParameters: { aspect_ratio: aspectRatio },
+        imageProviderOptions: {},
+        imageProviderTag: ''
+    };
+    const body = applyCompanionImageParameters({ model, prompt }, requestConfig,
+        companionImageCapabilities(modelInfo, endpoint), endpoint);
+    const generated = await requestCompanionPhoto(body, provider);
+    const portable = await makeWorldVisualPortable(generated, maxDimension, quality);
+    return addWorldMediaAsset(world, portable, kind, label, { generated: true, model, prompt });
+}
+
+function worldVisualStylePrompt(world) {
+    const presentation = normalizeWorldPresentation(world);
+    const namedStyles = {
+        cinematic: 'cinematic environmental concept art with believable materials and restrained dramatic lighting',
+        painted_fantasy: 'richly painted fantasy illustration with cohesive brushwork and grounded detail',
+        graphic_novel: 'painterly graphic-novel art with confident shapes and controlled contrast',
+        sitcom_2000s: 'warm early-2000s television sitcom production design and consumer digital-camera color',
+        anime_vn: 'polished cinematic anime visual-novel artwork with coherent environments and character design',
+        retro_rpg: 'detailed retro role-playing game key art, clean readable silhouettes and atmospheric color',
+        parchment: 'hand-inked parchment illustration with restrained pigments and cartographic texture',
+        horror: 'grounded dark-horror concept art with oppressive atmosphere and readable shadow detail',
+        custom: 'follow the authored art direction exactly'
+    };
+    return `${namedStyles[presentation.artStyle] || namedStyles.cinematic}. ${presentation.artDirection || 'Maintain one coherent visual language across this world.'}`;
+}
+
+async function generateWorldLocationBackground(world, location) {
+    const prompt = `Create a wide establishing background for an interactive text RPG location.\nWorld: ${world.name}.\nWorld premise: ${world.description || 'Not specified.'}\nLocation: ${location.name}.\nVisible description: ${location.description || 'Use the location name and world premise.'}\nRegion: ${location.region || 'Not specified.'}\nArt direction: ${worldVisualStylePrompt(world)}\nShow the physical space clearly from a useful eye-level viewpoint. No text, labels, interface, frame, watermark, map markers or prominent posed characters. Do not reveal secrets or invent a story event. This is a reusable location background, not a one-time action scene.`;
+    return generateWorldVisual(world, prompt, {
+        aspectRatio: '16:9', maxDimension: 1600, quality: 0.78,
+        kind: 'location_background', label: location.name
+    });
+}
+
+async function generateWorldNpcPortrait(world, npc) {
+    const prompt = `Create a square identity portrait for a persistent NPC in an interactive text RPG.\nWorld: ${world.name}.\nCharacter: ${npc.name}.\nCanonical visible appearance: ${npc.description || 'Derive a grounded appearance from the world and character name.'}\nArt direction: ${worldVisualStylePrompt(world)}\nUse only the visible description above; do not infer or depict secrets, hidden allegiances, future events or private goals. Chest-up single-character portrait, face clearly readable, neutral reusable expression, clothing appropriate to the setting. No text, border, watermark, duplicate person, glamour retouching or sexualization. Preserve distinctive physical details so this portrait can become the character identity reference later.`;
+    return generateWorldVisual(world, prompt, {
+        aspectRatio: '1:1', maxDimension: 768, quality: 0.82,
+        kind: 'npc_portrait', label: npc.name
+    });
+}
+
+async function generateWorldMapSkin(world) {
+    const prompt = `Create a wide decorative background texture for the interactive map of an RPG world.\nWorld: ${world.name}.\nWorld premise: ${world.description || 'Not specified.'}\nArt direction: ${worldVisualStylePrompt(world)}\nThis image sits underneath a live semantic graph, so keep the center readable and relatively low contrast. Suggest terrain, material, borders, compass ornament or cartographic atmosphere appropriate to the world, but do not draw named locations, route lines, labels, legends, interface controls or text. No watermark. The application will place the authoritative nodes and connections on top.`;
+    return generateWorldVisual(world, prompt, {
+        aspectRatio: '16:9', maxDimension: 1600, quality: 0.76,
+        kind: 'map_skin', label: `${world.name} map skin`
+    });
 }
 
 // --- Voice notes and calls: OpenRouter Neural TTS & Browser text-to-speech ---
