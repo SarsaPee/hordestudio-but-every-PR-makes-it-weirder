@@ -6,7 +6,7 @@ const DB_VERSION = 1;
 const STORE_NAME = 'state';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '10.0.0';
+const HORDE_STUDIO_VERSION = '11.5.0';
 const HORDE_STUDIO_RELEASED_AT = '2026-08-03T00:00:00Z';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
@@ -2151,7 +2151,12 @@ function normalizeWorldPresentation(world) {
     const raw = isPlainObject(world.presentation) ? world.presentation : {};
     const mode = raw.mode === 'visual_novel' ? 'cinematic'
         : (['classic', 'cinematic'].includes(raw.mode) ? raw.mode : 'classic');
-    world.presentation = {
+    // Preserve the object identity. World Studio controls keep a live reference
+    // to this object while helpers such as worldMediaSummary() normalize it.
+    // Replacing the object on every read orphaned those controls: a checked
+    // toggle or generated map skin was written into the old object and then
+    // silently disappeared on save/re-open.
+    Object.assign(raw, {
         version: 1,
         enabled: raw.enabled === true,
         mode,
@@ -2164,11 +2169,12 @@ function normalizeWorldPresentation(world) {
         mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),
         imageProvider: ['inherit', 'openrouter', 'gptproto'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
         imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500)
-    };
+    });
+    world.presentation = raw;
     if (!Array.isArray(world.mediaAssets)) world.mediaAssets = [];
     world.mediaAssets = world.mediaAssets.filter(asset => isPlainObject(asset)
         && typeof asset.id === 'string' && typeof asset.data === 'string').slice(0, WORLD_MEDIA_ASSET_LIMIT);
-    return world.presentation;
+    return raw;
 }
 
 function worldMediaAsset(world, assetId) {
@@ -3765,13 +3771,14 @@ function renderLibrary() {
     list.forEach(char => {
         const card = document.createElement('div');
         card.className = 'char-card';
-        card.onclick = () => {
+        const playCharacter = () => {
             char.lastUsedAt = Date.now();
             saveState().catch(() => {});
             state.activeCharId = char.id;
             state.activeRoomId = null; // Clear room state if present
             switchView('chat');
         };
+        card.onclick = playCharacter;
         
         const isFav = !!char.isFavorite;
         const model = (char.model || 'No Model').split('/').pop();
@@ -3788,7 +3795,11 @@ function renderLibrary() {
                 <div class="char-card-name">${escapeHTML(char.name)}</div>
                 <div class="char-card-desc">${escapeHTML(char.desc || 'No description provided.')}</div>
                 <div class="char-card-tags">${tagsHtml}</div>
-                <div class="char-card-tag" style="margin-top:auto;">${escapeHTML(model)}</div>
+                <div class="char-card-tag">${escapeHTML(model)}</div>
+                <div class="char-card-actions">
+                    <button class="btn btn-primary char-card-play" type="button">Play</button>
+                    <button class="btn btn-ghost char-card-edit" type="button" title="Edit in Character Studio">Edit</button>
+                </div>
             </div>
         `;
         
@@ -3799,6 +3810,15 @@ function renderLibrary() {
             if (idx !== -1) state.characters[idx].isFavorite = char.isFavorite;
             await saveState();
             renderLibrary();
+        };
+        card.querySelector('.char-card-play').onclick = (event) => {
+            event.stopPropagation();
+            playCharacter();
+        };
+        card.querySelector('.char-card-edit').onclick = (event) => {
+            event.stopPropagation();
+            editCharacter(char.id);
+            switchView('studio');
         };
 
         charGrid.appendChild(card);
@@ -3869,14 +3889,18 @@ function setupStudioLogic() {
     };
 
     const bgInput = document.getElementById('bg-input');
+    const bgStatus = document.getElementById('bg-file-status');
     bgInput.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        if (bgStatus) bgStatus.textContent = `Processing ${file.name}…`;
         try {
             const optimized = await normalizeUploadedImage(file, 1280, 0.7);
             state.editingChar.bg = optimized;
+            if (bgStatus) bgStatus.textContent = `${file.name} · ready`;
             showToast('Background image normalized and ready.', 'success');
         } catch (error) {
+            if (bgStatus) bgStatus.textContent = 'Upload failed — choose another image';
             showToast(`Image upload failed: ${error.message}`, 'error');
         } finally { e.target.value = ''; }
     };
@@ -3900,6 +3924,14 @@ function setupStudioLogic() {
 
     document.getElementById('fetch-model-btn').onclick = fetchModelSettings;
     document.getElementById('save-studio-btn').onclick = saveStudioCharacter;
+    document.getElementById('save-chat-studio-btn').onclick = async () => {
+        const saved = await saveStudioCharacter();
+        if (!saved || !state.editingChar?.id) return;
+        state.activeCharId = state.editingChar.id;
+        state.activeRoomId = null;
+        switchView('chat');
+    };
+    document.getElementById('close-chat-studio-btn').onclick = () => switchView('library');
     document.getElementById('delete-char-btn').onclick = () => {
         if (!state.editingChar) return;
         showConfirmModal('Delete Character', `Permanently delete ${state.editingChar.name}?`, async () => {
@@ -4322,6 +4354,8 @@ function loadStudioData() {
     if (hideBottom) hideBottom.value = c.hideBottomLines || 0;
     
     document.getElementById('profile-preview').innerHTML = c.avatar ? `<img src="${escapeHTML(c.avatar)}">` : 'Click to upload';
+    const bgStatus = document.getElementById('bg-file-status');
+    if (bgStatus) bgStatus.textContent = c.bg ? 'Background image ready' : 'No image selected';
 
     // Author's Note
     const anField = document.getElementById('studio-authors-note');
@@ -4537,14 +4571,14 @@ async function saveStudioCharacter() {
     const c = state.editingChar;
     if (!c) {
         showToast('No active character to save', 'error');
-        return;
+        return false;
     }
 
     const name = document.getElementById('studio-name').value.trim();
     const model = document.getElementById('studio-model').value.trim();
     
-    if (!name) return showToast('Character Name is required', 'error');
-    if (!model) return showToast('Model ID is required', 'error');
+    if (!name) { showToast('Character Name is required', 'error'); return false; }
+    if (!model) { showToast('Model ID is required', 'error'); return false; }
 
     c.name = name;
     c.desc = document.getElementById('studio-desc').value.trim();
@@ -4617,6 +4651,7 @@ async function saveStudioCharacter() {
 
     await saveState();
     showToast('Character Saved!', 'success');
+    return true;
 }
 
 // --- Chat View Logic ---
@@ -9168,16 +9203,13 @@ function renderRooms() {
                 ${room.avatar ? `<div class="char-card-avatar" style="background-image:url('${cssUrl(room.avatar)}'); width:50px; height:50px; border-radius:50%; border:2px solid var(--surface2); background-size:cover; margin-top:20px;"></div>` : ''}
             </div>
             <div class="char-card-body">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div class="char-card-name">${escapeHTML(room.name)}</div>
-                    <button class="tool-btn edit-room-config-btn" style="padding:4px 8px; font-size:12px;">⚙️ Configure</button>
-                </div>
+                <div class="char-card-name">${escapeHTML(room.name)}</div>
                 <div class="char-card-desc" style="font-style: italic;">${room.characterIds.length} members engaged</div>
                 <div class="char-card-desc" style="white-space: pre-wrap; font-size: 0.8rem; height:40px; overflow:hidden;">${escapeHTML(room.scenario || 'No scenario')}</div>
-                <div style="margin-top:12px;"><button class="btn btn-ghost btn-full enter-room-btn">Enter Scenario →</button></div>
+                <div class="char-card-actions"><button class="btn btn-primary char-card-play enter-room-btn">Play</button><button class="btn btn-ghost edit-room-bottom-btn">Edit</button></div>
             </div>
         `;
-        card.querySelector('.edit-room-config-btn').onclick = (e) => {
+        card.querySelector('.edit-room-bottom-btn').onclick = (e) => {
             e.stopPropagation();
             openRoomStudio(room.id);
         };
@@ -9305,6 +9337,10 @@ function setupWorldStudioLogic() {
 
     document.getElementById('close-world-studio-btn').onclick = () => switchView('worlds');
     document.getElementById('save-world-btn').onclick = saveWorld;
+    document.getElementById('save-play-world-btn').onclick = async () => {
+        await saveWorld();
+        if (state.editingWorld?.id) enterWorld(state.editingWorld.id);
+    };
     document.getElementById('delete-world-btn').onclick = deleteWorld;
     
     document.getElementById('open-scheduler-btn').onclick = () => {
@@ -10599,6 +10635,7 @@ function renderWorldVisuals() {
             showToast('Generated map skin embedded in this world.', 'success');
         } catch (error) {
             showToast(`Map skin generation failed: ${error.message}`, 'error');
+        } finally {
             button.disabled = false;
             button.textContent = '✨ Generate';
         }
@@ -11029,6 +11066,7 @@ function renderWorldLocations() {
                     showToast(`Generated a portable background for ${loc.name}.`, 'success');
                 } catch (error) {
                     showToast(`Background generation failed: ${error.message}`, 'error');
+                } finally {
                     button.disabled = false;
                     button.textContent = '✨ Generate';
                 }
@@ -12661,6 +12699,7 @@ function renderWorldEntities() {
                     showToast(`Generated a portable portrait for ${ent.name}.`, 'success');
                 } catch (error) {
                     showToast(`Portrait generation failed: ${error.message}`, 'error');
+                } finally {
                     button.disabled = false;
                     button.textContent = '✨ Generate';
                 }
@@ -15827,7 +15866,7 @@ function enterWorld(worldId) {
     const entryScheduleSync = syncNPCSchedules(world, sess);
     if (entryScheduleSync.moves > 0) saveState().catch(() => {});
     
-    document.getElementById('world-active-name').textContent = 'World: ' + world.name;
+    document.getElementById('world-active-name').textContent = 'Living world';
     renderWorldPlayState();
     switchView('worldPlay');
     
@@ -15855,7 +15894,14 @@ function renderWorldPlayState() {
     }
 
     // 1. Core Header
-    document.getElementById('world-active-name').textContent = 'World: ' + world.name;
+    document.getElementById('world-dm-name').textContent = world.name || 'Untitled World';
+    document.getElementById('world-active-name').textContent = 'Living world';
+    const worldAvatar = document.getElementById('world-dm-avatar');
+    if (worldAvatar) {
+        worldAvatar.style.backgroundImage = world.banner ? `url('${cssUrl(world.banner)}')` : '';
+        worldAvatar.textContent = world.banner ? '' : '🌐';
+        worldAvatar.title = world.banner ? `${world.name || 'World'} artwork` : 'World';
+    }
     const modelName = (world.model || state.globalSettings.defaultModel || 'Default').split('/').pop();
     document.getElementById('world-model-name').textContent = 'Model: ' + modelName;
 
@@ -16431,48 +16477,101 @@ function renderWorldPlayState() {
     }
 }
 
-function worldDialogueSpeaker(world, paragraph, quoteStart, quoteEnd) {
-    if (!world || !paragraph) return null;
-    const before = paragraph.slice(Math.max(0, quoteStart - 360), quoteStart);
-    const after = paragraph.slice(quoteEnd, Math.min(paragraph.length, quoteEnd + 180));
-    const candidates = (world.entities || []).filter(entity => entity?.type === 'npc' || !entity?.type);
-    let best = null;
-    const consider = (entity, distance, specificity) => {
-        if (!best || distance < best.distance || (distance === best.distance && specificity > best.specificity)) {
-            best = { entity, distance, specificity };
-        }
-    };
-    candidates.forEach(entity => {
+const WORLD_SPEECH_VERBS = 'says?|asks?|replies?|answers?|murmurs?|whispers?|shouts?|calls?|adds?|continues?|snaps?|laughs?|yells?|grunts?|mutters?|notes?|insists?|warns?|offers?|admits?|tells?|remarks?';
+
+function worldSpeakerAliases(world) {
+    const npcs = (world?.entities || []).filter(entity => entity?.type === 'npc' || !entity?.type);
+    const firstNameCounts = new Map();
+    npcs.forEach(entity => {
+        const first = String(entity.name || '').trim().split(/\s+/)[0].toLowerCase();
+        if (first) firstNameCounts.set(first, (firstNameCounts.get(first) || 0) + 1);
+    });
+    const aliases = [];
+    npcs.forEach(entity => {
         const full = String(entity.name || '').trim();
         if (!full) return;
-        const variants = [...new Set([full, full.split(/\s+/)[0]].filter(name => name.length >= 2))];
-        variants.forEach(variant => {
-            const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const beforeMatches = [...before.matchAll(new RegExp(`\\b${escaped}(?:'s|’s)?\\b`, 'gi'))];
-            if (beforeMatches.length) {
-                const match = beforeMatches[beforeMatches.length - 1];
-                consider(entity, before.length - (match.index + match[0].length), variant === full ? 2 : 1);
-            }
-            const afterMatch = new RegExp(`^.{0,90}?\\b${escaped}\\b`, 'i').exec(after);
-            if (afterMatch) consider(entity, afterMatch[0].length, variant === full ? 2 : 1);
-        });
+        aliases.push({ entity, value: full, specificity: 2 });
+        const first = full.split(/\s+/)[0];
+        if (first.length >= 2 && firstNameCounts.get(first.toLowerCase()) === 1 && first.toLowerCase() !== full.toLowerCase()) {
+            aliases.push({ entity, value: first, specificity: 1 });
+        }
     });
-    return best?.entity || null;
+    return aliases.sort((a, b) => b.value.length - a.value.length || b.specificity - a.specificity);
 }
 
-function worldNpcMentions(world, text) {
+function maskWorldQuotedText(text) {
+    return String(text || '').replace(/“[^”\n]*”|"[^"\n]*"/g, match => ' '.repeat(match.length));
+}
+
+function worldNpcMentions(world, text, { ignoreDialogue = false } = {}) {
+    const source = ignoreDialogue ? maskWorldQuotedText(text) : String(text || '');
     const mentions = [];
-    (world?.entities || []).filter(entity => entity?.type === 'npc' || !entity?.type).forEach(entity => {
-        const full = String(entity.name || '').trim();
-        const variants = [...new Set([full, full.split(/\s+/)[0]].filter(name => name.length >= 2))];
-        variants.forEach((variant, specificity) => {
-            const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            for (const match of String(text || '').matchAll(new RegExp(`\\b${escaped}(?:'s|’s)?\\b`, 'gi'))) {
-                mentions.push({ entity, index: match.index || 0, end: (match.index || 0) + match[0].length, specificity });
-            }
-        });
+    worldSpeakerAliases(world).forEach(alias => {
+        const escaped = alias.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        for (const match of source.matchAll(new RegExp(`\\b${escaped}(?:'s|’s)?\\b`, 'gi'))) {
+            mentions.push({
+                entity: alias.entity,
+                index: match.index || 0,
+                end: (match.index || 0) + match[0].length,
+                specificity: alias.specificity
+            });
+        }
     });
-    return mentions.sort((a, b) => a.index - b.index || b.specificity - a.specificity);
+    const deduped = new Map();
+    mentions.forEach(mention => {
+        const key = `${mention.entity.id}:${mention.index}`;
+        const previous = deduped.get(key);
+        if (!previous || mention.specificity > previous.specificity) deduped.set(key, mention);
+    });
+    return [...deduped.values()].sort((a, b) => a.index - b.index || b.specificity - a.specificity);
+}
+
+function worldNarrativeFocus(world, prose, current = null) {
+    const source = maskWorldQuotedText(prose).trim();
+    if (!source) return current;
+    const aliases = worldSpeakerAliases(world);
+    const clauses = source.split(/(?:[.!?]\s+|\n+|;\s+)/).filter(Boolean);
+    for (const clause of clauses) {
+        let explicit = null;
+        for (const alias of aliases) {
+            const escaped = alias.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // Prefer a grammatical subject or an explicit speech tag. A name
+            // merely mentioned as an object must not steal the next quote.
+            const subject = new RegExp(`^\\s*(?:then\\s+|and\\s+|but\\s+)?${escaped}(?:'s|’s)?\\b`, 'i');
+            const speech = new RegExp(`\\b${escaped}\\b.{0,48}?\\b(?:${WORLD_SPEECH_VERBS})\\b`, 'i');
+            if (subject.test(clause) || speech.test(clause)) {
+                explicit = alias.entity;
+                break;
+            }
+        }
+        if (explicit) current = explicit;
+    }
+    if (current) return current;
+    const mentions = worldNpcMentions(world, source, { ignoreDialogue: true });
+    const unique = [...new Set(mentions.map(mention => mention.entity.id))];
+    return unique.length === 1 ? mentions[mentions.length - 1].entity : null;
+}
+
+function worldDialogueSpeaker(world, paragraph, quoteStart, quoteEnd, currentFocus = null) {
+    if (!world || !paragraph) return null;
+    const masked = maskWorldQuotedText(paragraph);
+    const before = masked.slice(Math.max(0, quoteStart - 420), quoteStart);
+    const after = masked.slice(quoteEnd, Math.min(masked.length, quoteEnd + 220));
+    const aliases = worldSpeakerAliases(world);
+    for (const alias of aliases) {
+        const escaped = alias.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const afterTag = new RegExp(`^\\s*[,—–-]?\\s*${escaped}\\s+(?:${WORLD_SPEECH_VERBS})\\b`, 'i');
+        const beforeTag = new RegExp(`(?:\\b${escaped}\\b\\s*(?:${WORLD_SPEECH_VERBS})?\\s*[,—–:-]?\\s*)$`, 'i');
+        if (afterTag.test(after) || beforeTag.test(before)) return alias.entity;
+    }
+    const focused = worldNarrativeFocus(world, before, currentFocus);
+    const pronounTag = /^\s*[,—–-]?\s*(?:he|she|they)\s+(?:says?|asks?|replies?|answers?|murmurs?|whispers?|shouts?|calls?|adds?|continues?|snaps?|laughs?|yells?|grunts?|mutters?|notes?|insists?|warns?|offers?|admits?|remarks?)\b/i.test(after);
+    if (pronounTag && focused) return focused;
+    const precedingPronounTag = /\b(?:he|she|they)\s+(?:says?|asks?|replies?|answers?|murmurs?|whispers?|shouts?|calls?|adds?|continues?|snaps?|laughs?|yells?|grunts?|mutters?|notes?|insists?|warns?|offers?|admits?|remarks?)[^.!?]{0,100}[.!?]?\s*$/i.test(before);
+    if (precedingPronounTag && focused) return focused;
+    const nearby = worldNpcMentions(world, `${before.slice(-180)} ${after.slice(0, 120)}`, { ignoreDialogue: true });
+    const unique = [...new Set(nearby.map(mention => mention.entity.id))];
+    return unique.length === 1 ? nearby[nearby.length - 1].entity : null;
 }
 
 function renderWorldDialogueCard(world, speaker, dialogue, className = 'world-npc-dialogue') {
@@ -16494,15 +16593,12 @@ function renderWorldNarrativeHtml(world, text) {
     let carriedSpeaker = null;
     let carryAge = 99;
     const html = paragraphs.map(paragraph => {
-        const mentions = worldNpcMentions(world, paragraph);
-        const uniqueMentions = [...new Set(mentions.map(mention => mention.entity.id))];
-        const screenplay = /^\s*([^:\n]{2,60}):\s+([\s\S]+)$/.exec(paragraph);
+        const mentions = worldNpcMentions(world, paragraph, { ignoreDialogue: true });
+        const screenplay = /^\s*(?:\*\*)?([^:*\n]{2,60})(?:\*\*)?:\s+([\s\S]+)$/.exec(paragraph);
         if (screenplay) {
             const label = screenplay[1].trim().toLowerCase();
-            const speaker = (world.entities || []).find(entity => {
-                const full = String(entity.name || '').toLowerCase();
-                return full === label || full.split(/\s+/)[0] === label;
-            });
+            const matchingAliases = worldSpeakerAliases(world).filter(alias => alias.value.toLowerCase() === label);
+            const speaker = matchingAliases.length === 1 ? matchingAliases[0].entity : null;
             if (speaker) {
                 carriedSpeaker = speaker;
                 carryAge = 0;
@@ -16513,53 +16609,49 @@ function renderWorldNarrativeHtml(world, text) {
 
         const matches = [...paragraph.matchAll(quotePattern)];
         if (!matches.length) {
-            if (uniqueMentions.length === 1) {
-                carriedSpeaker = mentions[mentions.length - 1].entity;
+            const nextFocus = worldNarrativeFocus(world, paragraph, carriedSpeaker);
+            if (nextFocus) {
+                carriedSpeaker = nextFocus;
                 carryAge = 0;
             } else {
                 carryAge++;
-                if (uniqueMentions.length > 1) carriedSpeaker = null;
+                if (carryAge > 2) carriedSpeaker = null;
             }
             return `<div class="world-narrative-prose">${parseHordeMarkdown(paragraph)}</div>`;
         }
 
         let cursor = 0;
         let paragraphHtml = '';
-        let paragraphSpeaker = null;
         matches.forEach(match => {
             const start = match.index || 0;
             const end = start + match[0].length;
-            let speaker = worldDialogueSpeaker(world, paragraph, start, end);
-            const beforeMentions = mentions.filter(mention => mention.end <= start);
-            const competingSinceLastQuote = mentions.some(mention => mention.index >= cursor
-                && mention.end <= start && paragraphSpeaker && mention.entity.id !== paragraphSpeaker.id);
-            const after = paragraph.slice(end, Math.min(paragraph.length, end + 120));
-            const pronounTag = /^\s*[,—-]?\s*(?:he|she|they)\s+(?:says?|asks?|replies?|murmurs?|whispers?|shouts?|calls?|adds?|continues?|snaps?|laughs?|yells?)\b/i.test(after);
-            const startsWithQuote = paragraph.slice(0, start).trim() === '';
-            if (!speaker && paragraphSpeaker && !competingSinceLastQuote) {
-                speaker = paragraphSpeaker;
-            }
-            if (!speaker && carriedSpeaker && carryAge <= 1
-                && !beforeMentions.length && (startsWithQuote || pronounTag)) {
-                speaker = carriedSpeaker;
-            }
-            if (!speaker) return;
             const lead = paragraph.slice(cursor, start);
+            const leadFocus = worldNarrativeFocus(world, lead, carriedSpeaker);
+            if (leadFocus) carriedSpeaker = leadFocus;
+            let speaker = worldDialogueSpeaker(world, paragraph, start, end, carriedSpeaker);
+            // Ambiguous dialogue remains ordinary prose. A missing portrait is
+            // preferable to confidently putting another person's face/name on
+            // the line.
+            if (!speaker) return;
             if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
             paragraphHtml += renderWorldDialogueCard(world, speaker, match[1] ?? match[2] ?? '');
             cursor = end;
-            paragraphSpeaker = speaker;
             carriedSpeaker = speaker;
             carryAge = 0;
             recognized++;
         });
         if (!paragraphHtml) {
-            if (uniqueMentions.length === 1) { carriedSpeaker = mentions[mentions.length - 1].entity; carryAge = 0; }
+            const nextFocus = worldNarrativeFocus(world, paragraph, carriedSpeaker);
+            if (nextFocus) { carriedSpeaker = nextFocus; carryAge = 0; }
             else carryAge++;
             return `<div class="world-narrative-prose">${parseHordeMarkdown(paragraph)}</div>`;
         }
         const tail = paragraph.slice(cursor);
-        if (tail.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(tail)}</div>`;
+        if (tail.trim()) {
+            paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(tail)}</div>`;
+            const tailFocus = worldNarrativeFocus(world, tail, carriedSpeaker);
+            if (tailFocus) carriedSpeaker = tailFocus;
+        }
         return paragraphHtml;
     }).join('');
     return recognized ? html : parseHordeMarkdown(source);
@@ -17643,7 +17735,7 @@ You are the DM. You have access to "Hints" about secrets in this scene.
 
 [ENGINE MANDATE: CANONICAL TURN COMMIT]
 Every response MUST submit exactly one commit_world_turn receipt, including pure dialogue and no-change turns.
-- Keep spoken dialogue naturally attributable. When the speaker changes, identify them in the surrounding prose or use Name: dialogue; never leave a chain of different speakers ambiguous.
+- Dialogue attribution is part of the output contract, not decoration. Put every change of speaker in its own paragraph and identify that speaker by their exact full NPC name before the line (prefer Full Name: “dialogue”). Never introduce a new speaker with only he/she/they, and never leave alternating quoted lines unlabelled. Natural narration may surround those paragraphs.
 - Models propose events; the engine commits reality.
 - Every action names actor_id. NPC movement NEVER means player movement.
 - "walks toward", "tries", "plans", "starts", and hypothetical actions are intended/attempted/in_progress, not completed.
@@ -26950,6 +27042,12 @@ function normalizeCompanionMessage(raw) {
         turnAudit: isPlainObject(m.turnAudit) ? safeJsonClone(m.turnAudit) : null,
         generationError: String(m.generationError || '').slice(0, 1000),
         invalidated: m.invalidated === true,
+        autonomous: m.autonomous === true,
+        returnGapMs: Number.isFinite(m.returnGapMs)
+            ? livingClamp(Math.round(m.returnGapMs), 0, 1000 * 60 * 60 * 24 * 365 * 10) : 0,
+        returnSilenceStage: ['noticed', 'concerned', 'hurt', 'detached'].includes(m.returnSilenceStage)
+            ? m.returnSilenceStage : '',
+        returnAnchorAt: Number.isFinite(m.returnAnchorAt) ? m.returnAnchorAt : 0,
         links: (Array.isArray(m.links) ? m.links : []).filter(link =>
             isPlainObject(link) && /^https?:\/\//i.test(String(link.url || '')))
             .map(link => ({
@@ -27441,8 +27539,193 @@ function companionInitiativeDelayMs(companion, anchorMs) {
     return (rangeHours[0] + roll * (rangeHours[1] - rangeHours[0])) * 60 * 60 * 1000;
 }
 
+/**
+ * Silence is conversation state, not empty space. Count assistant response
+ * groups since the player's last message so multi-bubble replies remain one
+ * turn. This lets the agency engine follow up once, then wait instead of
+ * cheerfully stacking unrelated messages forever.
+ */
+function companionUnansweredState(messages, nowMs = Date.now()) {
+    const thread = Array.isArray(messages) ? messages : [];
+    let lastUserIndex = -1;
+    for (let index = thread.length - 1; index >= 0; index -= 1) {
+        if (thread[index]?.role === 'user' && !thread[index]?.invalidated) {
+            lastUserIndex = index;
+            break;
+        }
+    }
+    const unanswered = thread.slice(lastUserIndex + 1).filter(message =>
+        message?.role === 'companion' && !message.invalidated && !message.pending);
+    const responseGroups = new Set();
+    unanswered.forEach(message => responseGroups.add(message.responseGroupId || 'legacy-response'));
+    const lastMessage = unanswered[unanswered.length - 1] || null;
+    return {
+        hasUserEverSpoken: lastUserIndex >= 0,
+        responseTurns: responseGroups.size,
+        messageCount: unanswered.length,
+        lastCompanionAt: Number(lastMessage?.timestamp) || 0,
+        silentForMs: lastMessage ? Math.max(0, nowMs - Number(lastMessage.timestamp || nowMs)) : 0,
+        mayFollowUp: responseGroups.size < 2,
+        shouldAcknowledgeSilence: responseGroups.size >= 1
+    };
+}
+
+const COMPANION_SILENCE_STAGE_ORDER = Object.freeze(['noticed', 'concerned', 'hurt', 'detached']);
+
+function companionElapsedLabel(milliseconds) {
+    const minutes = Math.max(0, Math.round(Number(milliseconds) / 60000));
+    if (minutes < 2) return 'about a minute';
+    if (minutes < 60) return `${minutes} minutes`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 36) return `${hours} hour${hours === 1 ? '' : 's'}`;
+    const days = Math.round(hours / 24);
+    if (days < 45) return `${days} day${days === 1 ? '' : 's'}`;
+    const months = Math.round(days / 30);
+    return `${months} month${months === 1 ? '' : 's'}`;
+}
+
+function companionTimestampLabel(companion, timestamp) {
+    const atMs = Number(timestamp);
+    if (!Number.isFinite(atMs) || atMs <= 0) return 'an unknown time';
+    const options = {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', hour12: true
+    };
+    if (companionUsesFixedTimezoneOffset(companion)) {
+        return companionFixedOffsetDate(companion, atMs).toLocaleString('en-US', { ...options, timeZone: 'UTC' });
+    }
+    try {
+        return new Date(atMs).toLocaleString('en-US', { ...options, timeZone: companion.timezone || undefined });
+    } catch (error) {
+        return new Date(atMs).toLocaleString('en-US', options);
+    }
+}
+
+function companionSilenceSensitivity(companion) {
+    const authored = [
+        companion.relationshipStyle, companion.vulnerabilities,
+        companion.personality, companion.contradictions
+    ].join(' ').toLowerCase();
+    let factor = 1;
+    if (/(?:anxious|abandon|cling|reassur|fear.*los|lonely|overthink)/.test(authored)) factor *= 0.68;
+    if (/(?:avoidant|independent|self[- ]sufficient|needs? space|emotionally guarded)/.test(authored)) factor *= 1.45;
+    const relationship = Number(companion.mood?.relationship) || 0;
+    if (relationship >= 55) factor *= 0.78;
+    else if (relationship < 8) factor *= 1.35;
+    return livingClamp(factor, 0.55, 1.8);
+}
+
+function companionSilenceInterpretation(companion, stage) {
+    const authored = [companion.relationshipStyle, companion.vulnerabilities, companion.personality]
+        .join(' ').toLowerCase();
+    const relationship = Number(companion.mood?.relationship) || 0;
+    if (relationship < 8) return stage === 'detached'
+        ? 'They have stopped expecting this conversation to continue.'
+        : 'They mostly assume the player got busy, because the relationship is not close yet.';
+    if (/(?:anxious|abandon|cling|overthink|lonely)/.test(authored)) return stage === 'noticed'
+        ? 'Their attachment style makes the quiet noticeable and slightly worrying.'
+        : 'The unexplained silence touches their fear of being abandoned; they feel worried before they feel angry.';
+    if (/(?:avoidant|independent|self[- ]sufficient|needs? space|guarded)/.test(authored)) return stage === 'detached'
+        ? 'They protect themselves by emotionally stepping back and matching the distance.'
+        : 'They give the player space and refuse to chase, although they still register the distance.';
+    if ((Number(companion.relationshipDynamics?.resentment) || 0) >= 30) {
+        return 'Existing resentment makes the silence feel dismissive rather than merely accidental.';
+    }
+    return stage === 'noticed'
+        ? 'They notice the broken rhythm but initially assume ordinary life got in the way.'
+        : stage === 'concerned'
+        ? 'They are unsure whether to worry or feel ignored.'
+        : stage === 'hurt'
+        ? 'The continued silence now feels personal, even if they do not know the reason.'
+        : 'They have begun lowering their expectations and emotionally moving on.';
+}
+
+function companionCurrentSilence(companion, messages, nowMs = Date.now(), rawExperience = null) {
+    const experience = normalizeCompanionChatExperience(rawExperience);
+    const unanswered = companionUnansweredState(messages, nowMs);
+    const anchor = [...(Array.isArray(messages) ? messages : [])].reverse().find(message =>
+        message?.role === 'companion' && !message.invalidated && !message.pending) || null;
+    const durationMs = unanswered.shouldAcknowledgeSilence && anchor
+        ? Math.max(0, nowMs - Number(anchor.timestamp || nowMs)) : 0;
+    if (!experience.realTimeLife || !experience.silenceConsequences
+        || !unanswered.shouldAcknowledgeSilence || !anchor) {
+        return { stage: '', durationMs, anchor, interpretation: '', unanswered };
+    }
+    const sensitivity = companionSilenceSensitivity(companion);
+    const thresholds = {
+        noticed: 18 * 60 * 60 * 1000 * sensitivity,
+        concerned: 3 * 24 * 60 * 60 * 1000 * sensitivity,
+        hurt: 7 * 24 * 60 * 60 * 1000 * sensitivity,
+        detached: 21 * 24 * 60 * 60 * 1000 * sensitivity
+    };
+    let stage = '';
+    COMPANION_SILENCE_STAGE_ORDER.forEach(candidate => {
+        if (durationMs >= thresholds[candidate]) stage = candidate;
+    });
+    return {
+        stage, durationMs, anchor, thresholds, sensitivity, unanswered,
+        interpretation: stage ? companionSilenceInterpretation(companion, stage) : ''
+    };
+}
+
+function applyCompanionSilenceProgress(companion, timeline, nowMs = Date.now()) {
+    if (!companion || !timeline) return false;
+    const current = companionCurrentSilence(companion, timeline.messages, nowMs, timeline.experience);
+    const silence = timeline.silence ||= normalizeCompanionSilenceState();
+    const anchorId = String(current.anchor?.id || '');
+    if (!anchorId || !current.stage) {
+        if (!current.unanswered.shouldAcknowledgeSilence
+            && (silence.anchorMessageId || silence.appliedStage)) {
+            timeline.silence = normalizeCompanionSilenceState();
+            return true;
+        }
+        return false;
+    }
+    if (silence.anchorMessageId !== anchorId) {
+        silence.anchorMessageId = anchorId;
+        silence.appliedStage = '';
+        silence.changedAt = nowMs;
+    }
+    const previousIndex = COMPANION_SILENCE_STAGE_ORDER.indexOf(silence.appliedStage);
+    const targetIndex = COMPANION_SILENCE_STAGE_ORDER.indexOf(current.stage);
+    if (targetIndex <= previousIndex) return false;
+
+    const closeness = livingClamp(((Number(companion.mood?.relationship) || 0) + 20) / 80, 0.25, 1.25);
+    const changes = {
+        noticed: { valence_change: -1, arousal_change: 2, relationship_change: 0, trust_change: 0, warmth_change: 0, resentment_change: 0, stability_change: 0 },
+        concerned: { valence_change: -3, arousal_change: 3, relationship_change: -1, trust_change: -1, warmth_change: -1, resentment_change: 1, stability_change: -1 },
+        hurt: { valence_change: -6, arousal_change: 2, relationship_change: -2, trust_change: -3, warmth_change: -2, resentment_change: 4, stability_change: -2 },
+        detached: { valence_change: -3, arousal_change: -4, relationship_change: -4, trust_change: -2, warmth_change: -5, resentment_change: 3, stability_change: -2 }
+    };
+    for (let index = previousIndex + 1; index <= targetIndex; index += 1) {
+        const stage = COMPANION_SILENCE_STAGE_ORDER[index];
+        const change = changes[stage];
+        applyCompanionMoodUpdate(companion, {
+            ...change,
+            valence_change: Math.round(change.valence_change * closeness),
+            relationship_change: Math.round(change.relationship_change * closeness),
+            mood_label: stage === 'detached' ? 'numb' : stage === 'hurt' ? 'hurt' : stage === 'concerned' ? 'anxious' : companion.mood.label
+        }, nowMs);
+        const eventId = `vh_silence_${anchorId}_${stage}`.slice(0, 100);
+        if (!companion.lifeEvents.some(event => event.id === eventId)) {
+            companion.lifeEvents.push(normalizeCompanionLifeEvent({
+                id: eventId,
+                text: `The player had not replied for ${companionElapsedLabel(current.durationMs)}. ${companionSilenceInterpretation(companion, stage)}`,
+                createdAt: nowMs,
+                source: 'relationship'
+            }));
+        }
+    }
+    silence.appliedStage = current.stage;
+    silence.changedAt = nowMs;
+    companion.lifeEvents = companion.lifeEvents.slice(-200);
+    persistCompanionRuntime(companion);
+    return true;
+}
+
 function companionNextInitiativeAt(companion, messages, nowMs) {
     if (companion.initiativeMode === 'off') return Infinity;
+    if (!companionUnansweredState(messages, nowMs).mayFollowUp) return Infinity;
     const last = messages[messages.length - 1];
     const anchor = Math.max(companion.lastProactiveAt || 0, last?.timestamp || companion.createdAt || nowMs);
     return anchor + companionInitiativeDelayMs(companion, anchor);
@@ -27569,6 +27852,21 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
         }
     }
     const activePersona = state.personas.find(persona => persona.id === state.activePersonaId) || null;
+    const currentSilence = companionCurrentSilence(companion, messages, nowMs, experience);
+    const latestUser = [...messages].reverse().find(message => message.role === 'user' && !message.invalidated) || null;
+    const latestConversationalMessage = [...messages].reverse().find(message =>
+        ['user', 'companion'].includes(message?.role) && !message.invalidated) || null;
+    const returnContext = latestConversationalMessage === latestUser
+        && experience.realTimeLife && experience.silenceConsequences
+        && (latestUser?.returnSilenceStage || Number(latestUser?.returnGapMs) >= 18 * 60 * 60 * 1000)
+        ? `The player has just returned after ${companionElapsedLabel(latestUser.returnGapMs)} without replying. Their previous absence is still part of this moment even though they have now sent a message. ${latestUser.returnSilenceStage ? `By the end of that gap you had reached the "${latestUser.returnSilenceStage}" stage: ${companionSilenceInterpretation(companion, latestUser.returnSilenceStage)}` : 'You noticed the long interruption, but had not yet treated it as a relationship rupture.'} React according to your personality, relationship and what they actually wrote: you may mention the gap, ask what happened, show relief, remain cool, or genuinely let it pass. Do not automatically forgive, punish, guilt-trip, or pretend the conversation was continuous.`
+        : '';
+    const silenceContext = returnContext || (currentSilence.unanswered.shouldAcknowledgeSilence
+        ? `The player has not replied for ${companionElapsedLabel(currentSilence.durationMs)} since your last ${currentSilence.unanswered.responseTurns === 1 ? 'response' : `${currentSilence.unanswered.responseTurns} response turns`}. Their silence is real conversation state. Do not act as though they answered, saw the message, agreed, or continued the topic.${currentSilence.stage ? ` Current silence stage: ${currentSilence.stage}. ${currentSilence.interpretation}` : ''} ${options.initiative ? 'If you reach out now, make it a plausible follow-up: lightly notice they may be busy, continue the same thread, or send one concrete new reason for texting. Never guilt-trip them or restart with unrelated cheerful small talk.' : 'Wait for what they actually say next and do not invent their missing side of the exchange.'}`
+        : 'There is no currently unanswered message from you; respond only to what the player actually sent.');
+    const latestTiming = latestUser && experience.realTimeLife
+        ? `Latest player message: sent ${companionTimestampLabel(companion, latestUser.timestamp)}${latestUser.deliveredAt > latestUser.timestamp + 1000 ? `; delivered ${companionTimestampLabel(companion, latestUser.deliveredAt)}` : ''}${latestUser.readAt > latestUser.timestamp + 1000 ? `; read ${companionTimestampLabel(companion, latestUser.readAt)}` : ''}. You are responding at ${companionTimestampLabel(companion, nowMs)}. Never confuse the send time with the time you finally saw it.`
+        : 'Exact wall-clock message timing is paused for this timeline.';
 
     return `You are ${companion.name}, ${options.channel === 'call'
         ? 'on a live phone call with someone'
@@ -27617,6 +27915,10 @@ WHO YOU ARE TEXTING:
 ${activePersona
         ? `${activePersona.name || 'The player'}: ${activePersona.text || '(no additional self-description provided)'}`
         : 'The player has not selected a persona. Know only what they have told you in this timeline and in the authored starting relationship context.'}
+
+CONVERSATION CONTINUITY:
+${silenceContext}
+${latestTiming}
 
 ${experience.realTimeLife ? `RIGHT NOW, IT IS ${timeStr}${companion.timezone ? ` in ${companion.timezone}` : ''}${companionUsesFixedTimezoneOffset(companion) ? ` (${formatCompanionUtcOffset(companion.timezoneOffsetMinutes)})` : ''}${companion.locationLabel ? ` (${companion.locationLabel})` : ''}.
 Your actual situation: ${situation.label}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}${situation.withNames?.length ? ` with ${situation.withNames.join(', ')}` : ''}${situation.endsAt > nowMs ? ` until roughly ${companionClockParts(situation.endsAt, companion).time}` : ''}${life.availability === 'asleep' && experience.replyDelays ? ' — you are asleep and will not see this until you wake up' : life.availability === 'busy' && experience.replyDelays ? ', so a reply might be shorter or delayed, and you may reference being in the middle of it' : !experience.replyDelays ? '. Responsive chat mode is enabled, so this activity must not postpone the current reply' : ''}.
@@ -27669,6 +27971,7 @@ ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_
 /** The messages array sent to the model: system prompt + short-term buffer. */
 function buildCompanionMessages(companion, messages, nowMs, options = {}) {
     const systemContent = buildCompanionSystemPrompt(companion, messages, nowMs, options);
+    const experience = normalizeCompanionChatExperience(options.experience);
     const candidates = messages.slice(-COMPANION_SHORT_TERM_LIMIT);
     const contextChars = Math.max(2048, companion.contextSize || 8192) * 3.5;
     const outputReserveChars = Math.max(128, companion.maxTokens || 1000) * 3.5;
@@ -27683,14 +27986,21 @@ function buildCompanionMessages(companion, messages, nowMs, options = {}) {
     }
     return [
         { role: 'system', content: systemContent },
-        ...recent.map(m => ({
-            role: m.role === 'companion' ? 'assistant' : 'user',
-            content: m.channel === 'call' ? `[spoken on a phone call: ${m.text}]`
-                : m.type === 'system' ? `[conversation event: ${m.text}]`
-                : m.type === 'photo' ? `[sent a photo: ${m.text || 'no caption'}]`
-                : m.type === 'voice' ? `[voice note: "${m.text}"]`
-                : m.text
-        }))
+        ...recent.map(m => {
+            const timing = experience.realTimeLife && m.type !== 'system'
+                ? m.role === 'user'
+                    ? `[player sent this ${companionTimestampLabel(companion, m.timestamp)}${m.readAt > m.timestamp + 1000 ? `; you read it ${companionTimestampLabel(companion, m.readAt)}` : ''}]\n`
+                    : `[you sent this ${companionTimestampLabel(companion, m.timestamp)}]\n`
+                : '';
+            return {
+                role: m.role === 'companion' ? 'assistant' : 'user',
+                content: timing + (m.channel === 'call' ? `[spoken on a phone call: ${m.text}]`
+                    : m.type === 'system' ? `[conversation event: ${m.text}]`
+                    : m.type === 'photo' ? `[sent a photo: ${m.text || 'no caption'}]`
+                    : m.type === 'voice' ? `[voice note: "${m.text}"]`
+                    : m.text)
+            };
+        })
     ];
 }
 
@@ -28153,7 +28463,18 @@ function normalizeCompanionChatExperience(raw) {
     return {
         realTimeLife: source.realTimeLife !== false,
         replyDelays: source.replyDelays !== false,
-        allowNoReply: source.allowNoReply !== false
+        allowNoReply: source.allowNoReply !== false,
+        silenceConsequences: source.silenceConsequences !== false
+    };
+}
+
+function normalizeCompanionSilenceState(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    return {
+        anchorMessageId: String(source.anchorMessageId || '').slice(0, 100),
+        appliedStage: ['noticed', 'concerned', 'hurt', 'detached'].includes(source.appliedStage)
+            ? source.appliedStage : '',
+        changedAt: Number.isFinite(source.changedAt) ? source.changedAt : 0
     };
 }
 
@@ -28164,8 +28485,8 @@ function companionChatExperience(companionId = state.activeCompanionId) {
 
 function companionExperienceLevel(experience) {
     const value = normalizeCompanionChatExperience(experience);
-    if (value.realTimeLife && value.replyDelays && value.allowNoReply) return 'Full';
-    if (!value.realTimeLife && !value.replyDelays && !value.allowNoReply) return 'Instant';
+    if (value.realTimeLife && value.replyDelays && value.allowNoReply && value.silenceConsequences) return 'Full';
+    if (!value.realTimeLife && !value.replyDelays && !value.allowNoReply && !value.silenceConsequences) return 'Instant';
     if (!value.replyDelays && !value.allowNoReply) return 'Responsive';
     return 'Custom';
 }
@@ -28180,6 +28501,7 @@ function normalizeCompanionTimeline(raw, companion, fallbackMessages = []) {
         updatedAt: Number.isFinite(source.updatedAt) ? source.updatedAt : createdAt,
         lastViewedAt: Number.isFinite(source.lastViewedAt) ? source.lastViewedAt : 0,
         experience: normalizeCompanionChatExperience(source.experience),
+        silence: normalizeCompanionSilenceState(source.silence),
         messages: (Array.isArray(source.messages) ? source.messages : fallbackMessages)
             .map(normalizeCompanionMessage).slice(-5000),
         runtime: normalizeCompanionRuntime(source.runtime, companion)
@@ -28675,7 +28997,8 @@ async function sendCompanionMessage(companion, messages, userText, nowMs = Date.
     // remain available everywhere.
     const tools = companionToolsFor(companion, textProvider !== 'openrouter');
     const promptMessages = buildCompanionMessages(companion, messages, nowMs, {
-        experience: options.experience || companionChatExperience(companion.id)
+        experience: options.experience || companionChatExperience(companion.id),
+        initiative: options.initiative === true
     });
     if (options.initiative) {
         const initiativeReason = String(options.initiativeReason || '').trim();
@@ -28809,13 +29132,15 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
             timestamp: nowMs + (index + 1) * 400, moodLabel: companion.mood.label,
             links: index === 0 ? links : [],
             responseGroupId, turnAudit: index === 0 ? turnAudit : null,
-            turnSnapshot: index === 0 ? turnSnapshot : null
+            turnSnapshot: index === 0 ? turnSnapshot : null,
+            autonomous: options.initiative === true
         }));
     if (!newMessages.length && links.length) {
         newMessages.push(normalizeCompanionMessage({
             role: 'companion', type: 'text', text: '',
             timestamp: nowMs + 400, moodLabel: companion.mood.label, links,
-            responseGroupId, turnSnapshot, turnAudit
+            responseGroupId, turnSnapshot, turnAudit,
+            autonomous: options.initiative === true
         }));
     }
 
@@ -28825,7 +29150,8 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
             role: 'companion', type: 'voice', text: String(actions.voice.text).trim(),
             timestamp: nowMs + (newMessages.length + 1) * 400, moodLabel: companion.mood.label,
             responseGroupId, turnSnapshot: newMessages.length ? null : turnSnapshot,
-            turnAudit: newMessages.length ? null : turnAudit
+            turnAudit: newMessages.length ? null : turnAudit,
+            autonomous: options.initiative === true
         }));
     }
 
@@ -28841,7 +29167,8 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
             photographer: String(actions.photo.photographer || '').trim(),
             timestamp: nowMs + (newMessages.length + 1) * 400, moodLabel: companion.mood.label,
             responseGroupId, turnSnapshot: newMessages.length ? null : turnSnapshot,
-            turnAudit: newMessages.length ? null : turnAudit
+            turnAudit: newMessages.length ? null : turnAudit,
+            autonomous: options.initiative === true
         });
         newMessages.push(pendingPhoto);
     }
@@ -29499,7 +29826,12 @@ function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', 
     }
     if (isPlainObject(value)) {
         const mime = value.media_type || value.mime_type || value.mimeType || requestedMediaType;
-        for (const key of ['url', 'image_url', 'imageUrl', 'image', 'output', 'outputs']) {
+        // Dedicated image endpoints commonly return data[].b64_json, while
+        // multimodal/chat routes may nest images under message.images,
+        // content parts, output arrays or inlineData. Walk all documented
+        // containers before deciding that a paid generation returned nothing.
+        for (const key of ['url', 'image_url', 'imageUrl', 'image', 'images',
+            'output', 'outputs', 'content', 'parts', 'inlineData', 'inline_data']) {
             const normalized = normalizeGeneratedImageSource(value[key], mime, depth + 1);
             if (normalized) return normalized;
         }
@@ -29538,10 +29870,12 @@ function gptProtoImageFromResponse(data, requestedMediaType = 'image/png') {
     const part = data?.candidates?.[0]?.content?.parts?.find(candidate =>
         candidate?.inlineData?.data || candidate?.inline_data?.data);
     const inline = part?.inlineData || part?.inline_data;
-    const markdown = String(data?.choices?.[0]?.message?.content || '')
+    const message = data?.choices?.[0]?.message;
+    const markdown = String(message?.content || '')
         .match(/!\[[^\]]*\]\((data:image\/[^)]+|https?:\/\/[^)]+)\)/i)?.[1] || '';
     const normalized = normalizeGeneratedImageSource(
-        [output, item, markdown], requestedMediaType);
+        [output, item, message?.images, message?.content, data?.images,
+            data?.output, data?.result, markdown], requestedMediaType);
     if (normalized) return normalized;
     if (inline?.data) return `data:${inline.mimeType || inline.mime_type || requestedMediaType};base64,${inline.data}`;
     return '';
@@ -31303,6 +31637,7 @@ function renderCompanionsGrid() {
             message.role === 'companion' && message.timestamp > (timeline?.lastViewedAt || 0)).length;
         const last = thread[thread.length - 1];
         const life = companionLifeState(companion, now);
+        const unanswered = companionUnansweredState(thread, now);
         const card = document.createElement('article');
         card.className = 'vh-card';
         const meta = [companion.age ? `${companion.age}` : '', companion.pronouns].filter(Boolean).join(' · ');
@@ -31325,6 +31660,7 @@ function renderCompanionsGrid() {
             <div class="vh-card-state">
                 <span class="vh-chip">${escapeHTML(life.label)}</span>
                 <span class="vh-chip">Mood: ${escapeHTML(companion.mood?.label || 'content')}</span>
+                ${unanswered.shouldAcknowledgeSilence ? '<span class="vh-chip">Awaiting your reply</span>' : ''}
             </div>
             <div class="vh-card-last">${escapeHTML(lastText.slice(0, 120))}</div>
             ${unreadCount ? `<div class="vh-card-state"><span class="vh-chip">${unreadCount} unread</span></div>` : ''}
@@ -33596,12 +33932,12 @@ function setupCompanionsLogic() {
 
 function companionExperiencePreset(name) {
     if (name === 'instant') {
-        return { realTimeLife: false, replyDelays: false, allowNoReply: false };
+        return { realTimeLife: false, replyDelays: false, allowNoReply: false, silenceConsequences: false };
     }
     if (name === 'responsive') {
-        return { realTimeLife: true, replyDelays: false, allowNoReply: false };
+        return { realTimeLife: true, replyDelays: false, allowNoReply: false, silenceConsequences: true };
     }
-    return { realTimeLife: true, replyDelays: true, allowNoReply: true };
+    return { realTimeLife: true, replyDelays: true, allowNoReply: true, silenceConsequences: true };
 }
 
 function reconcileCompanionExperienceMessages(timeline, previous, next, nowMs = Date.now()) {
@@ -33665,9 +34001,17 @@ function renderCompanionTimelineControls(companion) {
     const realTimeInput = document.getElementById('cc-real-time-life');
     const delayInput = document.getElementById('cc-reply-delays');
     const noReplyInput = document.getElementById('cc-allow-no-reply');
+    const silenceInput = document.getElementById('cc-silence-consequences');
     if (realTimeInput) realTimeInput.checked = experience.realTimeLife;
     if (delayInput) delayInput.checked = experience.replyDelays;
     if (noReplyInput) noReplyInput.checked = experience.allowNoReply;
+    if (silenceInput) silenceInput.checked = experience.silenceConsequences;
+    if (silenceInput) {
+        silenceInput.disabled = !experience.realTimeLife;
+        silenceInput.title = experience.realTimeLife
+            ? 'Apply personality-dependent emotional consequences to long unanswered gaps.'
+            : 'Enable Real-time life to simulate elapsed silence.';
+    }
     const level = document.getElementById('cc-immersion-level');
     if (level) level.textContent = companionExperienceLevel(experience);
 }
@@ -33689,6 +34033,7 @@ function openCompanionSimulationDetails() {
     const media = timeline.messages.filter(message =>
         (message.type === 'photo' && message.photo) || message.type === 'voice' || message.channel === 'call');
     const latestAudit = [...timeline.messages].reverse().find(message => message.turnAudit)?.turnAudit;
+    const silence = companionCurrentSilence(companion, timeline.messages, Date.now(), experience);
     content.innerHTML = `
         <div class="companion-sim-grid">
             <section class="form-section">
@@ -33708,6 +34053,11 @@ function openCompanionSimulationDetails() {
                     : '<p class="form-hint">Identity, relationship and memories still evolve, but clock, sleep and schedule do not gate this chat.</p>'}
                 <p class="form-hint">${companion.initiativeMode === 'off' ? 'Only responds when messaged.' : `May reach out first (${escapeHTML(companion.initiativeMode)}).`} Agency runs while Horde Studio is open.</p>
                 <p class="form-hint">${experience.replyDelays ? 'Natural reply timing is on.' : 'Replies are immediate.'} ${experience.allowNoReply ? 'They may choose not to answer.' : 'They will always answer.'}</p>
+                <p class="form-hint">${experience.silenceConsequences
+                    ? silence.unanswered.shouldAcknowledgeSilence
+                        ? `No player reply for ${escapeHTML(companionElapsedLabel(silence.durationMs))}${silence.stage ? ` · ${escapeHTML(silence.stage)}` : ''}. ${escapeHTML(silence.interpretation || 'They have noticed the pause but are not treating it as a rupture yet.')}`
+                        : 'No unanswered silence is currently affecting the relationship.'
+                    : 'Silence consequences are disabled for this timeline.'}</p>
             </section>
             <section class="form-section">
                 <h3>Pending follow-through</h3>
@@ -33763,9 +34113,10 @@ function setupCompanionTimelineControls() {
     const readExperienceControls = () => ({
         realTimeLife: document.getElementById('cc-real-time-life')?.checked !== false,
         replyDelays: document.getElementById('cc-reply-delays')?.checked !== false,
-        allowNoReply: document.getElementById('cc-allow-no-reply')?.checked !== false
+        allowNoReply: document.getElementById('cc-allow-no-reply')?.checked !== false,
+        silenceConsequences: document.getElementById('cc-silence-consequences')?.checked !== false
     });
-    ['cc-real-time-life', 'cc-reply-delays', 'cc-allow-no-reply'].forEach(id => {
+    ['cc-real-time-life', 'cc-reply-delays', 'cc-allow-no-reply', 'cc-silence-consequences'].forEach(id => {
         document.getElementById(id).onchange = () => saveExperience(readExperienceControls());
     });
     document.querySelectorAll('[data-companion-immersion-preset]').forEach(button => {
@@ -33908,11 +34259,16 @@ function companionBubbleHTML(companion, message) {
     return `<div class="companion-bubble">${message.text ? escapeHTML(message.text) : ''}${links}</div>`;
 }
 
-function companionDeliveryHTML(message) {
+function companionDeliveryHTML(message, companion) {
     if (message.role !== 'user') return '';
     const stateLabel = message.deliveryState || 'sent';
     const marks = stateLabel === 'sent' ? '✓' : '✓✓';
-    return `<span class="companion-delivery ${escapeHTML(stateLabel)}" title="${escapeHTML(stateLabel)}">${marks}</span>`;
+    const detail = [
+        `Sent ${companionTimestampLabel(companion, message.timestamp)}`,
+        message.deliveredAt ? `Delivered ${companionTimestampLabel(companion, message.deliveredAt)}` : '',
+        message.readAt && message.deliveryState === 'read' ? `Read ${companionTimestampLabel(companion, message.readAt)}` : ''
+    ].filter(Boolean).join(' · ');
+    return `<span class="companion-delivery ${escapeHTML(stateLabel)}" title="${escapeHTML(detail)}" aria-label="${escapeHTML(detail)}">${marks}</span>`;
 }
 
 function renderCompanionThread() {
@@ -33936,6 +34292,7 @@ function renderCompanionThread() {
     const clock = companionClockParts(nowMs, companion);
     const statusEl = document.getElementById('cc-status');
     const thread = getCompanionThread(companion.id);
+    const silence = companionCurrentSilence(companion, thread, nowMs, experience);
     const nextPending = thread.filter(message => message.role === 'user' && message.awaitingReply).pop();
     statusEl.textContent = !experience.realTimeLife
         ? 'available · real-time life paused'
@@ -33962,7 +34319,9 @@ function renderCompanionThread() {
         const responseMode = !experience.replyDelays
             ? 'instant replies'
             : !experience.allowNoReply ? 'always replies' : '';
-        agencyStatus.textContent = [initiative, responseMode, companion.webAccess ? 'shares links' : '']
+        const silenceStatus = silence.stage
+            ? `${silence.stage} after ${companionElapsedLabel(silence.durationMs)} quiet` : '';
+        agencyStatus.textContent = [initiative, responseMode, silenceStatus, companion.webAccess ? 'shares links' : '']
             .filter(Boolean).join(' · ');
     }
 
@@ -33980,17 +34339,19 @@ function renderCompanionThread() {
     } else {
         let previousDateKey = '';
         container.innerHTML = messages.map(message => {
-            const parts = companionClockParts(message.timestamp);
+            const parts = companionClockParts(message.timestamp, companion);
             const separator = parts.dateKey !== previousDateKey
                 ? `<div class="companion-date-separator">${escapeHTML(parts.day)}</div>` : '';
             previousDateKey = parts.dateKey;
+            const returnSeparator = message.role === 'user' && message.returnGapMs >= 6 * 60 * 60 * 1000
+                ? `<div class="companion-date-separator companion-gap-separator">${escapeHTML(companionElapsedLabel(message.returnGapMs))} later</div>` : '';
             if (message.role === 'system') {
                 return `${separator}<div class="companion-date-separator">${escapeHTML(message.text)}</div>`;
             }
-            return `${separator}<div class="companion-msg-row ${message.role === 'user' ? 'mine' : 'theirs'}">
+            return `${separator}${returnSeparator}<div class="companion-msg-row ${message.role === 'user' ? 'mine' : 'theirs'}">
                 <div class="companion-msg-stack">
                     ${companionBubbleHTML(companion, message)}
-                    <div class="companion-msg-time">${message.channel === 'call' ? '☎ ' : ''}${escapeHTML(parts.time)} ${companionDeliveryHTML(message)}</div>
+                    <div class="companion-msg-time">${message.channel === 'call' ? '☎ ' : ''}${escapeHTML(parts.time)} ${companionDeliveryHTML(message, companion)}</div>
                 </div>
             </div>`;
         }).join('');
@@ -34205,6 +34566,9 @@ async function processCompanionAgency(nowMs = Date.now()) {
                 stateChanged = true;
             }
         });
+        if (timeline && applyCompanionSilenceProgress(companion, timeline, nowMs)) {
+            stateChanged = true;
+        }
 
         if (companionAgencyInFlight.has(companion.id)
             || !providerHasCredentials(companionTextProviderId(companion))) continue;
@@ -34243,7 +34607,9 @@ async function processCompanionAgency(nowMs = Date.now()) {
             commitment.status === 'pending' && commitment.dueAt > 0 && commitment.dueAt <= nowMs);
         const lifeTrigger = companion.initiativeMode === 'off' ? null : companion.lifeRuntime.pendingInitiative;
         const initiativeDue = nowMs >= companionNextInitiativeAt(companion, messages, nowMs);
-        if (!hasPendingReply && (dueCommitment || lifeTrigger || initiativeDue) && life.availability === 'available') {
+        const unanswered = companionUnansweredState(messages, nowMs);
+        if (!hasPendingReply && unanswered.mayFollowUp
+            && (dueCommitment || lifeTrigger || initiativeDue) && life.availability === 'available') {
             companionAgencyInFlight.add(companion.id);
             companion.lastProactiveAt = nowMs;
             if (dueCommitment) dueCommitment.dueAt = nowMs + 60 * 60 * 1000;
@@ -34388,12 +34754,18 @@ async function handleCompanionSend() {
     input.value = '';
     input.style.height = 'auto';
     const messages = getCompanionThread(companion.id);
+    const activeTimeline = getActiveCompanionTimeline(companion.id);
+    if (activeTimeline) applyCompanionSilenceProgress(companion, activeTimeline, Date.now());
+    const experience = companionChatExperience(companion.id);
+    const returnSilence = companionCurrentSilence(companion, messages, Date.now(), experience);
 
     const optimisticUser = normalizeCompanionMessage({
         role: 'user', type: 'text', text, timestamp: Date.now(),
-        deliveryState: 'sent', awaitingReply: true
+        deliveryState: 'sent', awaitingReply: true,
+        returnGapMs: returnSilence.unanswered.shouldAcknowledgeSilence ? returnSilence.durationMs : 0,
+        returnSilenceStage: returnSilence.stage,
+        returnAnchorAt: Number(returnSilence.anchor?.timestamp) || 0
     });
-    const experience = companionChatExperience(companion.id);
     const plan = companionResponsePlan(companion, optimisticUser, optimisticUser.timestamp, experience);
     optimisticUser.deliveredAt = plan.deliveredAt;
     optimisticUser.readAt = plan.readAt;

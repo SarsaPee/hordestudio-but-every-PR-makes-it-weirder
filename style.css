@@ -379,6 +379,10 @@ body {
   display: flex;
   flex-direction: column;
 }
+.char-card:focus-within {
+  border-color: var(--border2);
+  box-shadow: 0 12px 34px rgba(0,0,0,.42);
+}
 .char-card:hover {
   transform: translateY(-4px);
   border-color: var(--border2);
@@ -476,6 +480,16 @@ body {
   text-transform: uppercase;
   border: 1px solid rgba(230,57,70,0.15);
 }
+
+.char-card-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+.char-card-actions .btn { min-width: 0; }
+.char-card-actions .char-card-play { font-weight: 750; }
 
 .empty-state {
   grid-column: 1/-1;
@@ -1189,6 +1203,84 @@ body {
 
 .form-col { display: flex; flex-direction: column; gap: 10px; }
 .form-col-grow { flex: 1; gap: 10px; }
+
+/* Character Studio identity uses a real grid. Generic flex rows produced a
+   huge dead zone at desktop widths and collapsed unpredictably when resized. */
+.chat-identity-grid {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+  min-width: 0;
+}
+.chat-profile-column,
+.chat-identity-fields { min-width: 0; }
+.chat-profile-column .img-uploader,
+.chat-profile-column .img-preview { width: 100%; }
+.chat-profile-column .img-preview { height: auto; aspect-ratio: 1 / 1; }
+.chat-identity-fields { gap: 14px; }
+.media-file-field {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface2);
+  cursor: pointer;
+}
+.media-file-button {
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  background: var(--surface3);
+  border-right: 1px solid var(--border);
+  color: var(--text);
+  font-size: .8rem;
+  font-weight: 700;
+}
+.media-file-status {
+  min-width: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: .8rem;
+}
+.media-file-field:hover { border-color: var(--border2); }
+
+/* World identity is a deliberate two-column editor, not two auto-sized flex
+   children. The latter let long worlds collapse their name/description fields
+   to a few pixels at some zoom and viewport combinations. */
+.world-basics-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+.world-basics-header-row > div:first-child { min-width: 0; }
+.world-basics-header-row .studio-token-counter { flex: 0 0 auto; white-space: nowrap; }
+.world-identity-grid {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+}
+.world-banner-column,
+.world-identity-fields { min-width: 0; }
+.world-banner-column .img-uploader,
+.world-banner-column .img-preview { width: 100%; }
+.world-banner-column .img-preview { height: auto; aspect-ratio: 4 / 3; }
+.world-identity-fields { gap: 18px; }
+.world-identity-fields .form-section,
+.world-identity-fields .form-input,
+.world-identity-fields .form-textarea { width: 100%; min-width: 0; }
 
 .form-section { display: flex; flex-direction: column; gap: 8px; }
 
@@ -2590,8 +2682,10 @@ input[type=number].form-input::-webkit-inner-spin-button {
     padding:22px 26px !important;
     border:1px solid rgba(255,255,255,.14) !important;
     border-radius:18px !important;
-    background:rgba(8,8,13,var(--world-panel-opacity,.88)) !important;
-    backdrop-filter:blur(12px);
+    background:linear-gradient(135deg,
+      rgba(8,8,13,calc(var(--world-panel-opacity,.88) * .82)),
+      rgba(8,8,13,calc(var(--world-panel-opacity,.88) * .70))) !important;
+    backdrop-filter:blur(8px) saturate(1.08);
     box-shadow:0 18px 50px rgba(0,0,0,.28);
 }
 .world-present-npc { display:flex; gap:9px; align-items:center; }
@@ -2608,8 +2702,19 @@ input[type=number].form-input::-webkit-inner-spin-button {
     border:1px solid color-mix(in srgb,var(--speaker-color,var(--accent)) 58%,rgba(255,255,255,.18));
     border-left:4px solid var(--speaker-color,var(--accent));
     border-radius:16px;
-    background:color-mix(in srgb,var(--speaker-color,var(--accent)) 18%,rgba(8,8,13,.92));
+    background:color-mix(in srgb,var(--speaker-color,var(--accent)) 15%,rgba(8,8,13,.76));
     box-shadow:0 12px 34px rgba(0,0,0,.25);
+}
+.world-header-avatar {
+  background-color: var(--surface3);
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--border2);
+}
+
+.sidebar-external-link {
+  text-decoration: none;
+  box-sizing: border-box;
 }
 .world-npc-dialogue-avatar {
     width:68px;
@@ -4232,6 +4337,11 @@ input[type=number].form-input::-webkit-inner-spin-button {
   .fallback-banner { margin: 8px 12px 0; }
   .form-row, .form-row-4 { display: grid; grid-template-columns: minmax(0, 1fr) !important; gap: 12px; }
   .form-row > * { min-width: 0; }
+  .chat-identity-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .chat-profile-column { max-width: 240px; }
+  .world-basics-header-row { flex-direction: column; gap: 12px; }
+  .world-identity-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .world-banner-column { max-width: 260px; }
   .preview-grid, .model-info-stats { grid-template-columns: minmax(0, 1fr); }
   .modal-bg, .modal-overlay { padding: 8px; }
   .modal-body { padding: 18px 14px; }
@@ -5408,6 +5518,14 @@ input[type=number].form-input::-webkit-inner-spin-button {
     align-self: center; margin: 16px 0 13px; padding: 4px 9px;
     border-radius: 10px; background: rgba(35,37,44,.82);
     color: #8d8f99; font-size: .64rem; font-weight: 600;
+}
+.companion-gap-separator {
+    margin: 22px auto 18px;
+    padding: 5px 13px;
+    background: rgba(10,132,255,.09);
+    border: 1px solid rgba(77,163,255,.18);
+    color: #8ebef2;
+    letter-spacing: .02em;
 }
 .companion-msg-row { display: flex; margin-bottom: 2px; align-items: flex-end; }
 .companion-msg-row.mine { justify-content: flex-end; }

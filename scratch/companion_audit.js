@@ -27,7 +27,7 @@ const context = {
 buildContext(vm, [
     'normalizeCompanion', 'normalizeCompanionTrauma', 'normalizeCompanionMemoryEntry',
     'normalizeCompanionLifeEvent', 'normalizeCompanionCommitment',
-    'normalizeCompanionMessage', 'normalizeCompanionAndThread',
+    'normalizeCompanionMessage', 'normalizeCompanionAndThread', 'normalizeCompanionSilenceState',
     'captureCompanionRuntime', 'freshCompanionRuntime', 'normalizeCompanionRuntime',
     'applyCompanionRuntime', 'normalizeCompanionChatExperience', 'companionExperienceLevel',
     'normalizeCompanionTimeline', 'ensureCompanionTimelineStore', 'getActiveCompanionTimeline',
@@ -37,7 +37,10 @@ buildContext(vm, [
     'normalizeCompanionLifeProfile', 'normalizeCompanionLifeRuntime',
     'buildProceduralCompanionLifeProfile', 'companionScheduleBlockAt',
     'companionSituationAt', 'advanceCompanionLife', 'companionWeatherLabel',
-    'companionResponsePlan', 'companionInitiativeDelayMs', 'companionNextInitiativeAt',
+    'companionResponsePlan', 'companionInitiativeDelayMs', 'companionUnansweredState',
+    'companionElapsedLabel', 'companionTimestampLabel', 'companionSilenceSensitivity',
+    'companionSilenceInterpretation', 'companionCurrentSilence', 'applyCompanionSilenceProgress',
+    'companionNextInitiativeAt',
     'companionExperiencePreset', 'reconcileCompanionExperienceMessages',
     'consolidateCompanionMemory',
     'companionMoodDescription', 'companionRelationshipDescription',
@@ -78,7 +81,8 @@ buildContext(vm, [
     'requirePlainObject', 'requireString', 'requireSafeId', 'requireArray',
     'validateCompanionData', 'validateCompanionTimelineStoreData', 'validateCompanionArchiveData',
     'buildCompanionShareData', 'buildCompanionArchivePayload', 'companionArchiveFileName', 'restoreCompanionArchive',
-    'COMPANION_SHORT_TERM_LIMIT', 'extractCompanionToolCalls', 'extractCompanionEmbeddedToolCalls',
+    'COMPANION_SHORT_TERM_LIMIT', 'COMPANION_SILENCE_STAGE_ORDER',
+    'extractCompanionToolCalls', 'extractCompanionEmbeddedToolCalls',
     'normalizeCompanionEmbeddedToolValue', 'safeParseJSONRepair',
     'COMPANION_TOOLS', 'COMPANION_WEB_SEARCH_TOOL', 'companionToolsFor',
     'COMPANION_IMAGE_PARAMETER_DEFS',
@@ -828,7 +832,8 @@ test('chat immersion defaults preserve the full simulation for existing timeline
     assert.deepEqual({ ...experience }, {
         realTimeLife: true,
         replyDelays: true,
-        allowNoReply: true
+        allowNoReply: true,
+        silenceConsequences: true
     });
     assert.equal(context.companionExperienceLevel(experience), 'Full');
 });
@@ -1788,6 +1793,130 @@ test('a photo request with no scene is not treated as a photo the caller must ha
     const calls = [{ function: { name: 'send_photo', arguments: '{"caption":"hi"}' } }];
     const actions = context.extractCompanionToolCalls(calls);
     assert.equal(actions.photo.scene, undefined);
+});
+
+test('multi-bubble replies count as one unanswered response turn', () => {
+    const messages = [
+        context.normalizeCompanionMessage({ role: 'user', text: 'how was work?', timestamp: 1000 }),
+        context.normalizeCompanionMessage({ role: 'companion', text: 'long', responseGroupId: 'reply-1', timestamp: 1400 }),
+        context.normalizeCompanionMessage({ role: 'companion', text: 'tell you later', responseGroupId: 'reply-1', timestamp: 1800 })
+    ];
+    const unanswered = context.companionUnansweredState(messages, 3000);
+    assert.equal(unanswered.responseTurns, 1);
+    assert.equal(unanswered.messageCount, 2);
+    assert.equal(unanswered.mayFollowUp, true);
+    assert.equal(unanswered.shouldAcknowledgeSilence, true);
+});
+
+test('agency pauses after one unanswered follow-up and resets on user reply', () => {
+    const companion = context.normalizeCompanion({ id: 'silence-test', initiativeMode: 'high' });
+    const messages = [
+        context.normalizeCompanionMessage({ role: 'user', text: 'hey', timestamp: 1000 }),
+        context.normalizeCompanionMessage({ role: 'companion', text: 'hey you', responseGroupId: 'reply-1', timestamp: 1400 }),
+        context.normalizeCompanionMessage({ role: 'companion', text: 'guess you got busy?', responseGroupId: 'followup-1', autonomous: true, timestamp: 5000 })
+    ];
+    assert.equal(context.companionUnansweredState(messages, 9000).mayFollowUp, false);
+    assert.equal(context.companionNextInitiativeAt(companion, messages, 9000), Infinity);
+    messages.push(context.normalizeCompanionMessage({ role: 'user', text: 'sorry, back now', timestamp: 10000 }));
+    assert.equal(context.companionUnansweredState(messages, 11000).responseTurns, 0);
+    assert.notEqual(context.companionNextInitiativeAt(companion, messages, 11000), Infinity);
+});
+
+test('a 2am message carries its exact send and morning read time into the model prompt', () => {
+    const c = freshCompanion({
+        id: 'night-message', locationMode: 'custom', timezoneOffsetMinutes: 0,
+        timezone: '', sleepArchetype: 'normal'
+    });
+    const sentAt = Date.UTC(2026, 7, 5, 2, 0);
+    const readAt = Date.UTC(2026, 7, 5, 7, 10);
+    const messages = [context.normalizeCompanionMessage({
+        id: 'night-user', role: 'user', text: 'you awake?', timestamp: sentAt,
+        deliveryState: 'read', deliveredAt: sentAt + 500, readAt
+    })];
+    const prompt = context.buildCompanionSystemPrompt(c, messages, readAt + 60_000, {
+        experience: context.companionExperiencePreset('full')
+    });
+    const apiMessages = context.buildCompanionMessages(c, messages, readAt + 60_000, {
+        experience: context.companionExperiencePreset('full')
+    });
+    assert.match(prompt, /sent Wed, Aug 5, 2:00 AM/);
+    assert.match(prompt, /read Wed, Aug 5, 7:10 AM/);
+    assert.match(apiMessages[1].content, /player sent this Wed, Aug 5, 2:00 AM/);
+    assert.match(apiMessages[1].content, /you read it Wed, Aug 5, 7:10 AM/);
+});
+
+test('silence stages are elapsed-time state and anxious humans notice sooner', () => {
+    const anchorAt = Date.UTC(2026, 7, 1, 12, 0);
+    const messages = [
+        context.normalizeCompanionMessage({ role: 'user', text: 'talk later', timestamp: anchorAt - 1000 }),
+        context.normalizeCompanionMessage({ id: 'last-reply', role: 'companion', text: 'okay', responseGroupId: 'g1', timestamp: anchorAt })
+    ];
+    const steady = freshCompanion({ id: 'steady', relationshipStyle: 'secure and patient' });
+    const anxious = freshCompanion({ id: 'anxious', relationshipStyle: 'anxious, overthinks abandonment and needs reassurance' });
+    steady.mood.relationship = 20;
+    anxious.mood.relationship = 20;
+    const after14Hours = anchorAt + 14 * 60 * 60 * 1000;
+    assert.equal(context.companionCurrentSilence(steady, messages, after14Hours).stage, '');
+    assert.equal(context.companionCurrentSilence(anxious, messages, after14Hours).stage, 'noticed');
+    assert.equal(context.companionCurrentSilence(steady, messages, anchorAt + 8 * 86400000).stage, 'hurt');
+});
+
+test('silence consequences catch up locally once and never need a model call', () => {
+    const anchorAt = Date.UTC(2026, 7, 1, 12, 0);
+    const c = freshCompanion({ id: 'ghost-catchup', relationshipStyle: 'secure and affectionate' });
+    c.mood.relationship = 40;
+    const timeline = context.normalizeCompanionTimeline({
+        id: 'ghost-timeline', name: 'Main Timeline',
+        messages: [
+            { role: 'user', text: 'night', timestamp: anchorAt - 1000 },
+            { id: 'ghost-anchor', role: 'companion', text: 'sleep well', responseGroupId: 'g1', timestamp: anchorAt }
+        ]
+    }, c);
+    context.state.companions = [c];
+    context.state.companionTimelines = { [c.id]: { activeSessionId: timeline.id, sessions: [timeline] } };
+    context.state.companionThreads = { [c.id]: timeline.messages };
+    const before = c.mood.relationship;
+    const afterEightDays = anchorAt + 8 * 86400000;
+    assert.equal(context.applyCompanionSilenceProgress(c, timeline, afterEightDays), true);
+    assert.equal(timeline.silence.appliedStage, 'hurt');
+    assert(c.mood.relationship < before);
+    const eventCount = c.lifeEvents.filter(event => event.id.includes('ghost-anchor')).length;
+    assert(eventCount >= 3, 'elapsed stages did not catch up');
+    const relationshipAfterFirstPass = c.mood.relationship;
+    assert.equal(context.applyCompanionSilenceProgress(c, timeline, afterEightDays), false);
+    assert.equal(c.mood.relationship, relationshipAfterFirstPass);
+    assert.equal(c.lifeEvents.filter(event => event.id.includes('ghost-anchor')).length, eventCount);
+});
+
+test('returning after days preserves the gap after unanswered state resets', () => {
+    const c = freshCompanion({ id: 'return-gap', relationshipStyle: 'warm but proud' });
+    const now = Date.UTC(2026, 7, 10, 12, 0);
+    const messages = [
+        context.normalizeCompanionMessage({ role: 'companion', text: 'are you okay?', timestamp: now - 6 * 86400000, responseGroupId: 'old' }),
+        context.normalizeCompanionMessage({
+            role: 'user', text: 'hey sorry', timestamp: now,
+            returnGapMs: 6 * 86400000, returnSilenceStage: 'concerned', returnAnchorAt: now - 6 * 86400000
+        })
+    ];
+    assert.equal(context.companionUnansweredState(messages, now).responseTurns, 0);
+    const prompt = context.buildCompanionSystemPrompt(c, messages, now, {
+        experience: context.companionExperiencePreset('full')
+    });
+    assert.match(prompt, /just returned after 6 days/);
+    assert.match(prompt, /reached the "concerned" stage/);
+    assert.match(prompt, /Do not automatically forgive, punish, guilt-trip/);
+});
+
+test('silence consequences can be disabled without disabling exact message timing', () => {
+    const c = freshCompanion({ id: 'no-silence-effects', locationMode: 'custom', timezoneOffsetMinutes: 0 });
+    const now = Date.UTC(2026, 7, 20, 12, 0);
+    const messages = [context.normalizeCompanionMessage({
+        id: 'old', role: 'companion', text: 'hello?', timestamp: now - 30 * 86400000, responseGroupId: 'g'
+    })];
+    const experience = { realTimeLife: true, replyDelays: true, allowNoReply: true, silenceConsequences: false };
+    assert.equal(context.companionCurrentSilence(c, messages, now, experience).stage, '');
+    const apiMessages = context.buildCompanionMessages(c, messages, now, { experience });
+    assert.match(apiMessages[1].content, /you sent this/);
 });
 
 let failures = 0;

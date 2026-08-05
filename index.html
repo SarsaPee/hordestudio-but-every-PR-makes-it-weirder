@@ -40,6 +40,10 @@
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 000 20"/><path d="M12 7v5l3 3"/></svg>
             Customize
         </button>
+        <a class="settings-btn sidebar-external-link" href="https://discord.gg/9eyjcMbsST" target="_blank" rel="noopener noreferrer" title="Join the official Horde Studio Discord">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 8.5c2.3-1.1 4.7-1.1 7 0M7 17c3.4 1.6 6.6 1.6 10 0M8 18l-2 2-1.5-5.5C4 10.4 5.7 6.8 9 5.5l.8 1.5M16 18l2 2 1.5-5.5C20 10.4 18.3 6.8 15 5.5l-.8 1.5"/><circle cx="9" cy="13" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1" fill="currentColor" stroke="none"/></svg>
+            Discord
+        </a>
         <button class="settings-btn" id="global-settings-btn">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
             Settings
@@ -198,10 +202,10 @@
                 <div class="world-narrative-col">
                     <header class="chat-header">
                         <div class="chat-who">
-                            <div class="chat-avatar" id="world-dm-avatar">🧠</div>
+                            <div class="chat-avatar world-header-avatar" id="world-dm-avatar">🌐</div>
                             <div>
-                                <div class="chat-name" id="world-dm-name">Dungeon Master</div>
-                                <div id="world-active-name" style="font-size:0.65rem; color:var(--red); font-weight:800; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;">World: None</div>
+                                <div class="chat-name" id="world-dm-name">Untitled World</div>
+                                <div id="world-active-name" style="font-size:0.65rem; color:var(--red); font-weight:800; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;">Living World</div>
                                 <div id="world-model-name" class="chat-model-badge" style="opacity:0.7;">Model: None</div>
                             </div>
                         </div>
@@ -432,6 +436,7 @@
                     </div>
                     <div class="studio-nav-actions">
                         <button id="save-world-btn" class="btn btn-success btn-full">Save World</button>
+                        <button id="save-play-world-btn" class="btn btn-primary btn-full">Save &amp; Enter World</button>
                         <button id="open-scheduler-btn" class="btn btn-ghost btn-full" style="color:var(--accent);">🕒 NPC Schedules</button>
                         <button id="run-world-audit-btn" class="btn btn-ghost btn-full" style="color:var(--red);">🔍 World Audit</button>
                         <button id="export-world-btn" class="btn btn-ghost btn-full">Export .horde_world</button>
@@ -444,19 +449,19 @@
                     <!-- World Basics -->
                     <div id="tab-w-basics" class="studio-panel">
                         <div class="panel-header">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div class="world-basics-header-row">
                                 <div>
-                                    <h2>World Identity & DM</h2>
-                                    <p>Set the overarching rules and the personality of the Dungeon Master.</p>
+                                    <h2>World Identity & Narrator</h2>
+                                    <p>Set the world's identity, overarching rules and narrative voice.</p>
                                 </div>
-                                <div class="studio-token-counter" style="background:var(--surface2); padding:8px 12px; border-radius:10px; border:1px solid var(--border); font-size:0.8rem;">
+                                <div class="studio-token-counter">
                                     <span id="w-studio-token-count" style="font-weight:bold; color:var(--accent);">0</span> tokens
                                 </div>
                             </div>
                         </div>
                         <div class="form-body">
-                            <div class="form-row">
-                                <div class="form-col">
+                            <div class="world-identity-grid">
+                                <div class="form-col world-banner-column">
                                     <label class="form-label">World Banner</label>
                                     <div class="img-uploader" id="w-banner-upload-area">
                                         <input type="file" id="w-banner-input" hidden accept="image/*">
@@ -466,11 +471,15 @@
                                     </div>
                                     <p class="form-hint image-upload-hint">JPEG, PNG or WebP up to 25 MB. Automatically resized and normalized for the world card and play background.</p>
                                 </div>
-                                <div class="form-col form-col-grow">
-                                    <label class="form-label">World Name</label>
-                                    <input type="text" id="w-studio-name" class="form-input" placeholder="e.g. Neo-Tokyo 2099">
-                                    <label class="form-label">Short Description</label>
-                                    <textarea id="w-studio-desc" class="form-textarea" rows="2" placeholder="A brief summary for the library..."></textarea>
+                                <div class="form-col world-identity-fields">
+                                    <div class="form-section">
+                                        <label class="form-label" for="w-studio-name">World Name</label>
+                                        <input type="text" id="w-studio-name" class="form-input" placeholder="e.g. Neo-Tokyo 2099">
+                                    </div>
+                                    <div class="form-section">
+                                        <label class="form-label" for="w-studio-desc">Short Description</label>
+                                        <textarea id="w-studio-desc" class="form-textarea" rows="3" placeholder="A brief summary for the library..."></textarea>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -1226,7 +1235,9 @@
                     </div>
                     <div class="studio-nav-actions">
                         <button id="save-studio-btn" class="btn btn-success btn-full" title="Save all changes">Save Changes</button>
+                        <button id="save-chat-studio-btn" class="btn btn-primary btn-full" title="Save this character and open its conversation">Save &amp; Start Chat</button>
                         <button id="export-nexus-btn" class="btn btn-ghost btn-full" title="Export character as .horde file">Export .horde</button>
+                        <button id="close-chat-studio-btn" class="btn btn-ghost btn-full">← Chat Library</button>
                         <button id="delete-char-btn" class="btn btn-danger btn-full" title="Permanently delete this character">Delete Character</button>
                     </div>
                 </div>
@@ -1248,8 +1259,8 @@
                             </div>
                         </div>
                         <div class="form-body">
-                            <div class="form-row">
-                                <div class="form-col">
+                            <div class="chat-identity-grid">
+                                <div class="form-col chat-profile-column">
                                     <label class="form-label">Profile Image</label>
                                     <div class="img-uploader" id="profile-upload-area">
                                         <input type="file" id="profile-input" hidden accept="image/*">
@@ -1259,7 +1270,7 @@
                                     </div>
                                     <p class="form-hint image-upload-hint">JPEG, PNG or WebP up to 25 MB. Automatically resized, rotated and normalized.</p>
                                 </div>
-                                <div class="form-col form-col-grow">
+                                <div class="form-col form-col-grow chat-identity-fields">
                                     <label class="form-label">Name</label>
                                     <input type="text" id="studio-name" class="form-input" placeholder="e.g. Elena the Brave">
                                     <label class="form-label">Short Description</label>
@@ -1267,7 +1278,11 @@
                                     <label class="form-label">Tags (comma separated)</label>
                                     <input type="text" id="studio-tags" class="form-input" placeholder="fantasy, grumpy, magic...">
                                     <label class="form-label">Background Image (optional)</label>
-                                    <input type="file" id="bg-input" class="form-input-file" accept="image/*">
+                                    <label class="media-file-field" for="bg-input">
+                                        <input type="file" id="bg-input" accept="image/*" hidden>
+                                        <span class="media-file-button">Choose background</span>
+                                        <span id="bg-file-status" class="media-file-status">No image selected</span>
+                                    </label>
                                 </div>
                             </div>
                             <div class="form-section">
@@ -2508,6 +2523,10 @@
                             <label class="companion-immersion-option">
                                 <input id="cc-allow-no-reply" type="checkbox" checked>
                                 <span><strong>Allow no reply</strong><small>Mood and relationship can make them read a message without answering.</small></span>
+                            </label>
+                            <label class="companion-immersion-option">
+                                <input id="cc-silence-consequences" type="checkbox" checked>
+                                <span><strong>Silence consequences</strong><small>They remember long gaps and may worry, feel hurt or become distant. Exact sent/read times still work when disabled.</small></span>
                             </label>
                             <div class="companion-immersion-presets">
                                 <button type="button" data-companion-immersion-preset="full">Full immersion</button>
