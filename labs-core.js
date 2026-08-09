@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 1;
+    const VERSION = 2;
     const TASKS = new Map();
     const queue = [];
     let running = false;
@@ -9,6 +9,7 @@
     let diagnosticSink = null;
     const callTimes = [];
     const cache = new Map();
+    const diagnosticOnce = new Set();
 
     const DEFAULT_CONFIG = Object.freeze({
         enabled: false,
@@ -114,11 +115,13 @@
             minimumTier: ['micro', 'small', 'extended'].includes(definition.minimumTier)
                 ? definition.minimumTier : 'micro',
             system: String(definition.system || '').slice(0, 12000),
+            embeddedSystem: String(definition.embeddedSystem || definition.system || '').slice(0, 12000),
             schema: definition.schema,
             maxInputChars: Math.round(clamp(definition.maxInputChars || 5000, 500, 20000)),
             maxOutputTokens: Math.round(clamp(definition.maxOutputTokens || 120, 24, 300)),
             cacheMs: Math.round(clamp(definition.cacheMs || 0, 0, 86400000)),
             background: definition.background === true,
+            parseOutput: typeof definition.parseOutput === 'function' ? definition.parseOutput : null,
             validate: typeof definition.validate === 'function'
                 ? definition.validate : (() => ({ ok: true, value: null }))
         }));
@@ -209,16 +212,19 @@
     async function requestStructured(task, envelope, signal) {
         const settings = currentConfig();
         const budget = BUDGETS[settings.budget] || BUDGETS.balanced;
-        const input = stableStringify(envelope).slice(0, task.maxInputChars);
+        // Preserve envelope insertion order for inference. Stable sorting is
+        // useful for cache hashes, but could push the actual player text behind
+        // a large allowlist and then truncate the most important field.
+        const input = JSON.stringify(envelope).slice(0, Math.min(task.maxInputChars, budget.promptTokens * 4));
         if (settings.runtime === 'embedded') {
             if (!window.HordeLabsEmbedded) throw new Error('Embedded Tiny Brain runtime is unavailable.');
             const result = await window.HordeLabsEmbedded.completeStructured({
                 model: settings.embeddedModel,
                 device: settings.embeddedDevice === 'auto' ? (navigator.gpu ? 'webgpu' : 'wasm') : settings.embeddedDevice,
-                dtype: 'q4', system: task.system, input,
+                dtype: 'q4', system: task.embeddedSystem, input,
                 maxTokens: Math.min(task.maxOutputTokens, budget.outputTokens)
             }, signal);
-            return parseJSON(result.text);
+            return task.parseOutput ? task.parseOutput(result.text, envelope) : parseJSON(result.text);
         }
         const request = {
             model: settings.model,
@@ -249,7 +255,12 @@
         let data = {};
         try { data = raw ? JSON.parse(raw) : {}; } catch (error) { data = {}; }
         if (!response.ok) throw new Error(data?.error?.message || data?.message || `Local cognition failed (${response.status}).`);
-        return parseJSON(contentFromResponse(data));
+        const content = contentFromResponse(data);
+        try { return parseJSON(content); }
+        catch (error) {
+            if (task.parseOutput) return task.parseOutput(content, envelope);
+            throw error;
+        }
     }
 
     function executeQueued(job) {
@@ -342,7 +353,11 @@
         const tier = capabilityTier(effectiveModel);
         if (ranks[tier] < ranks[task.minimumTier]) {
             const reason = `${task.id} needs a ${task.minimumTier}-tier model; ${effectiveModel} was detected as ${tier}.`;
-            recordDiagnostic({ mode, task: task.id, policy, accepted: false, valid: false, skipped: true, reason, latencyMs: 0 });
+            const diagnosticKey = `${mode}|${task.id}|${policy}|${effectiveModel}|${reason}`;
+            if (!diagnosticOnce.has(diagnosticKey)) {
+                diagnosticOnce.add(diagnosticKey);
+                recordDiagnostic({ mode, task: task.id, policy, accepted: false, valid: false, skipped: true, reason, latencyMs: 0 });
+            }
             return { ok: false, skipped: true, reason };
         }
         if (!canSpendCall(task.background || options?.background)) {
@@ -397,6 +412,57 @@
         return results.filter(result => result.ok);
     }
 
+    async function completeText(options = {}) {
+        const settings = normalizeConfig(options.config || currentConfig());
+        if (settings.runtime === 'connected' && (!settings.model || !settings.baseUrl)) {
+            throw new Error('Choose a local model before opening Tiny Guide.');
+        }
+        const system = String(options.system || '').slice(0, 10000);
+        const input = String(options.input || '').slice(0, 6000);
+        const maxTokens = Math.round(clamp(options.maxTokens || 160, 40, 240));
+        const temperature = clamp(options.temperature ?? 0.35, 0, 1);
+        const startedAt = Date.now();
+        const controller = new AbortController();
+        const timeoutMs = settings.runtime === 'embedded' ? 60000 : 15000;
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            let text = '';
+            if (settings.runtime === 'embedded') {
+                if (!window.HordeLabsEmbedded) throw new Error('Embedded Tiny Brain runtime is unavailable.');
+                const result = await window.HordeLabsEmbedded.completeStructured({
+                    model: settings.embeddedModel,
+                    device: settings.embeddedDevice === 'auto' ? (navigator.gpu ? 'webgpu' : 'wasm') : settings.embeddedDevice,
+                    dtype: 'q4', system, input, maxTokens, temperature
+                }, controller.signal);
+                text = String(result.text || '').trim();
+            } else {
+                const response = await fetch(settings.baseUrl.replace(/\/+$/, '') + '/chat/completions', {
+                    method: 'POST', signal: controller.signal,
+                    headers: { 'Content-Type': 'application/json', ...(settings.apiKey.trim() ? { Authorization: `Bearer ${settings.apiKey.trim()}` } : {}) },
+                    body: JSON.stringify({
+                        model: settings.model,
+                        messages: [{ role: 'system', content: system }, { role: 'user', content: input }],
+                        temperature, max_tokens: maxTokens, stream: false
+                    })
+                });
+                const raw = await response.text();
+                let data = {};
+                try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
+                if (!response.ok) throw new Error(data?.error?.message || data?.message || `Tiny Guide failed (${response.status}).`);
+                text = contentFromResponse(data).trim();
+            }
+            if (!text) throw new Error('Tiny Guide returned an empty reply.');
+            recordDiagnostic({ mode: 'universal', task: 'tiny_guide', policy: 'manual', accepted: true,
+                valid: true, reason: 'Manual guide reply completed.', latencyMs: Date.now() - startedAt });
+            return { text: text.slice(0, 4000), latencyMs: Date.now() - startedAt };
+        } catch (error) {
+            const reason = controller.signal.aborted ? `Timed out after ${timeoutMs} ms.` : (error.message || String(error));
+            recordDiagnostic({ mode: 'universal', task: 'tiny_guide', policy: 'manual', accepted: false,
+                valid: false, reason, latencyMs: Date.now() - startedAt });
+            throw new Error(reason);
+        } finally { clearTimeout(timer); }
+    }
+
     function capabilityTier(model) {
         const id = String(model || '').toLowerCase();
         if (/135m|150m|160m|270m|350m|360m|0\.1b|0\.13b|0\.15b|0\.16b|0\.2b|0\.27b|0\.3b|0\.35b|0\.36b|0\.4b/.test(id)) return 'micro';
@@ -405,9 +471,20 @@
         return 'unknown';
     }
 
+    function taskCapabilities(rawConfig) {
+        const settings = normalizeConfig(rawConfig || currentConfig());
+        const model = settings.runtime === 'embedded' ? 'smollm2-135m' : settings.model;
+        const tier = capabilityTier(model);
+        const ranks = { unknown: 1, micro: 1, small: 2, extended: 3 };
+        return [...TASKS.values()].map(task => ({
+            id: task.id, mode: task.mode, minimumTier: task.minimumTier,
+            available: ranks[tier] >= ranks[task.minimumTier], tier
+        }));
+    }
+
     window.HordeLabs = Object.freeze({
         VERSION, BUDGETS, normalizeConfig, configure, currentConfig,
-        registerTask, propose, health, discover, policyFor, capabilityTier,
+        registerTask, propose, health, discover, completeText, policyFor, capabilityTier, taskCapabilities,
         tasks: () => [...TASKS.values()].map(task => ({
             id: task.id, mode: task.mode, minimumTier: task.minimumTier, background: task.background
         }))

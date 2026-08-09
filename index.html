@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- connect-src: OpenRouter/GPTProto (cloud) + local model servers (Ollama/LM Studio/KoboldCpp/llama.cpp) on loopback for offline use. CSP has no CIDR/octet-wildcard support, so LAN-hosted models on another machine need their specific IP added here. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src https://openrouter.ai https://gptproto.com https://api.github.com https://geocoding-api.open-meteo.com https://api.open-meteo.com https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* http://[::1]:*; object-src 'none'; base-uri 'none'; form-action 'self'">
+    <!-- connect-src: cloud AI providers + local model servers on loopback. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src https://openrouter.ai https://gptproto.com https://nano-gpt.com https://integrate.api.nvidia.com https://*.api.aws https://api.github.com https://geocoding-api.open-meteo.com https://api.open-meteo.com https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* http://[::1]:*; object-src 'none'; base-uri 'none'; form-action 'self'">
     <title>Horde Studio | Elite AI Roleplay</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260809-v12">
+    <link rel="stylesheet" href="style.css?v=20260810-pip-providers-v2">
 </head>
 <body>
 <div id="app">
@@ -30,6 +30,10 @@
             <button class="nav-item" data-view="worlds" id="nav-worlds-btn">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                 Worlds
+            </button>
+            <button class="nav-item pip-nav-item" data-view="pip" id="pip-sidebar-btn" type="button" title="Open Pip, Horde Studio's private local guide">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 001.7 3h10.6a2 2 0 001.7-3l-5-9V3"/><path d="M7.5 16h9"/></svg>
+                <span>Pip</span><span class="pip-nav-badge">LOCAL</span>
             </button>
         </nav>
         <button class="settings-btn" id="personas-modal-btn" style="margin-bottom: 5px;">
@@ -135,6 +139,43 @@
             <div id="world-grid" class="char-grid">
                 <!-- Worlds rendered here -->
             </div>
+            </div>
+        </section>
+
+        <!-- ────────── PIP LOCAL GUIDE ────────── -->
+        <section id="pip-view" class="view hidden pip-view">
+            <div class="pip-shell">
+                <header class="pip-header">
+                    <div class="pip-identity">
+                        <div class="pip-avatar" aria-hidden="true">🧠</div>
+                        <div>
+                            <span class="vh-eyebrow">Private, grounded product help</span>
+                            <h1 class="page-title">Pip</h1>
+                            <p class="page-subtitle">Your tiny local Horde Studio guide. Ask how something works, where a setting lives, or which provider controls what.</p>
+                        </div>
+                    </div>
+                    <div class="pip-header-actions">
+                        <span id="pip-runtime-state" class="labs-tier-badge pip-runtime-state">BUILT-IN ONLY</span>
+                        <button id="pip-clear-chat-btn" class="btn btn-ghost" type="button">Clear chat</button>
+                        <button id="pip-configure-btn" class="btn btn-ghost" type="button">Configure Tiny Brain</button>
+                    </div>
+                </header>
+
+                <div class="pip-chat-card">
+                    <div id="labs-guide-messages" class="labs-guide-messages pip-messages" aria-live="polite"></div>
+                    <div class="labs-guide-prompts pip-prompts" aria-label="Suggested questions">
+                        <button type="button" data-guide-question="What can you do, Pip?">What can you do?</button>
+                        <button type="button" data-guide-question="How are you today?">Just chat</button>
+                        <button type="button" data-guide-question="What is the difference between Shadow, Assist and Audit?">Labs modes</button>
+                        <button type="button" data-guide-question="Can I use OpenRouter for text and GPTProto for images?">Provider setup</button>
+                        <button type="button" data-guide-question="How do World movement and travel time work?">World movement</button>
+                    </div>
+                    <div class="labs-guide-composer pip-composer">
+                        <textarea id="labs-guide-input" class="form-textarea" rows="2" maxlength="1200" placeholder="Ask Pip about Horde Studio…" aria-label="Ask Pip about Horde Studio"></textarea>
+                        <button id="labs-guide-send-btn" class="btn btn-primary" type="button">Ask Pip</button>
+                    </div>
+                    <p id="labs-guide-status" class="form-hint">Horde Studio questions use Pip’s verified built-in handbook. The Tiny Brain is reserved for ordinary conversation.</p>
+                </div>
             </div>
         </section>
 
@@ -582,6 +623,7 @@
                                         <option value="inherit">Use provider from Settings</option>
                                         <option value="openrouter">OpenRouter</option>
                                         <option value="gptproto">GPTProto</option>
+                                        <option value="nanogpt">NanoGPT</option>
                                     </select>
                                 </div>
                                 <div class="form-col form-col-grow">
@@ -2071,6 +2113,9 @@
                                     <option value="provider">Use default text provider from Settings</option>
                                     <option value="openrouter">OpenRouter</option>
                                     <option value="gptproto">GPTProto</option>
+                                    <option value="nanogpt">NanoGPT</option>
+                                    <option value="nvidia">NVIDIA NIM</option>
+                                    <option value="bedrock">AWS Bedrock</option>
                                     <option value="local">Local / self-hosted</option>
                                 </select>
                             </section>
@@ -2296,6 +2341,7 @@
                                             <option value="provider">Same provider as conversation default</option>
                                             <option value="openrouter">OpenRouter</option>
                                             <option value="gptproto">GPTProto</option>
+                                            <option value="nanogpt">NanoGPT</option>
                                             <option value="local">Local / self-hosted</option>
                                             <option value="local_image">Local image server (OpenAI-compatible)</option>
                                             <option value="comfyui">ComfyUI workflow</option>
@@ -2657,9 +2703,12 @@
             <select id="global-api-provider" class="form-select">
                 <option value="openrouter">☁️ OpenRouter (cloud)</option>
                 <option value="gptproto">☁️ GPTProto (cloud · text, images &amp; speech)</option>
+                <option value="nanogpt">☁️ NanoGPT (cloud · text, images &amp; speech)</option>
+                <option value="nvidia">☁️ NVIDIA NIM (cloud · text)</option>
+                <option value="bedrock">☁️ AWS Bedrock (cloud · text)</option>
                 <option value="local">💻 Local / Self-hosted (offline, OpenAI-compatible)</option>
             </select>
-            <p class="form-hint">This is the default for Chat, Worlds and Virtual Humans set to <strong>Use default</strong>. It does not lock image generation to the same company: each Virtual Human and World can use GPTProto for images while text remains on OpenRouter.</p>
+            <p class="form-hint">This is the default for Chat, Worlds and Virtual Humans set to <strong>Use default</strong>. It does not lock image generation to the same company: each Virtual Human and World can use GPTProto or NanoGPT for images while text remains on OpenRouter.</p>
             <div id="local-provider-fields" style="display:none; margin-top:12px; padding:12px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
                 <label class="form-label">Local Server URL</label>
                 <input type="text" id="global-local-url" class="form-input" placeholder="http://localhost:11434/v1">
@@ -2685,6 +2734,29 @@
                 <p class="form-hint">Used for GPTProto chat completions, image generation, model discovery and neural speech through <code>https://gptproto.com/v1</code>.</p>
                 <button id="test-gptproto-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test GPTProto Connection</button>
                 <div id="gptproto-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
+            </div>
+            <div id="nanogpt-key-block">
+                <label class="form-label" style="margin-top:20px">NanoGPT API Key</label>
+                <input type="password" id="global-nanogpt-key" class="form-input" placeholder="NanoGPT API key">
+                <p class="form-hint">Used independently for NanoGPT text, image-model discovery, base64 image generation and neural speech through <code>https://nano-gpt.com/api/v1</code>.</p>
+                <button id="test-nanogpt-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test NanoGPT Connection</button>
+                <div id="nanogpt-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
+            </div>
+            <div id="nvidia-key-block">
+                <label class="form-label" style="margin-top:20px">NVIDIA NIM API Key</label>
+                <input type="password" id="global-nvidia-key" class="form-input" placeholder="nvapi-...">
+                <p class="form-hint">Uses NVIDIA's OpenAI-compatible hosted NIM endpoint at <code>https://integrate.api.nvidia.com/v1</code>. This is a text provider; keep your preferred image provider selected separately.</p>
+                <button id="test-nvidia-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test NVIDIA NIM Connection</button>
+                <div id="nvidia-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
+            </div>
+            <div id="bedrock-key-block">
+                <label class="form-label" style="margin-top:20px">Amazon Bedrock API Key</label>
+                <input type="password" id="global-bedrock-key" class="form-input" placeholder="Bedrock API key">
+                <label class="form-label" style="margin-top:10px">AWS Region</label>
+                <input type="text" id="global-bedrock-region" class="form-input" placeholder="us-east-1">
+                <p class="form-hint">Uses the OpenAI-compatible Bedrock Mantle endpoint with a Bedrock API key. Do not paste an IAM access-key/secret-key pair here. Bedrock remains independent from image generation.</p>
+                <button id="test-bedrock-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test AWS Bedrock Connection</button>
+                <div id="bedrock-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
             </div>
             <div id="cloud-key-storage-block">
                 <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.8rem; color:var(--text-2); cursor:pointer;">
@@ -3759,14 +3831,15 @@
                     <div class="labs-install-progress"><div id="labs-install-progress-fill"></div></div>
                     <p id="labs-install-status" class="form-hint">Nothing downloads until you press Install. The model runs only narrow Labs tasks; it does not replace your main chat model.</p>
                 </div>
+                <div id="labs-capability-summary" class="labs-capability-summary" aria-live="polite"></div>
             </section>
 
             <section class="labs-section">
                 <div class="labs-section-title"><div><h3>2. Choose where it may help</h3><p>Start in Shadow. Assist may add validated private hints; it never writes canonical state directly.</p></div></div>
                 <div class="labs-policy-grid">
-                    <article><div><strong>Chat Library</strong><span>Social cues and memory salience</span></div><select id="labs-policy-chat" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option></select></article>
-                    <article><div><strong>Worlds</strong><span>Actor-scoped intent and continuity</span></div><select id="labs-policy-worlds" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option><option value="audit">Audit</option></select></article>
-                    <article><div><strong>Virtual Humans</strong><span>Subtext and grounded life beats</span></div><select id="labs-policy-humans" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option></select></article>
+                    <article><div><strong>Chat Library</strong><span>Social cues and memory salience</span></div><select id="labs-policy-chat" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option></select><p id="labs-policy-chat-help" class="labs-policy-help"></p></article>
+                    <article><div><strong>Worlds</strong><span>Actor-scoped intent and continuity</span></div><select id="labs-policy-worlds" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option><option value="audit">Audit</option></select><p id="labs-policy-worlds-help" class="labs-policy-help"></p></article>
+                    <article><div><strong>Virtual Humans</strong><span>Subtext and grounded life beats</span></div><select id="labs-policy-humans" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option></select><p id="labs-policy-humans-help" class="labs-policy-help"></p></article>
                 </div>
                 <div class="labs-budget-row"><label><span>Compute budget</span><select id="labs-budget" class="form-select"><option value="eco">Eco · up to 6 calls/hour</option><option value="balanced">Balanced · up to 18 calls/hour</option><option value="responsive">Responsive · up to 40 calls/hour</option></select></label><label class="labs-check"><input id="labs-diagnostics-enabled" type="checkbox" checked><span>Keep private diagnostics (no prompt text)</span></label></div>
             </section>
@@ -3784,10 +3857,12 @@
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
-<script src="labs-embedded.js?v=20260809-worker-origin-fix"></script>
-<script src="labs-core.js?v=20260809-v12"></script>
-<script src="labs-tasks.js?v=20260809-v12"></script>
-<script src="labs-ui.js?v=20260809-worker-origin-fix"></script>
-<script src="app.js?v=20260809-v12-0-1"></script>
+<script src="labs-embedded.js?v=20260810-pip-conversation-v2"></script>
+<script src="labs-core.js?v=20260810-pip-conversation-v2"></script>
+<script src="labs-tasks.js?v=20260810-compact-micro-v2"></script>
+<script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
+<script src="help-system.js?v=20260810-pip-providers-v2"></script>
+<script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
+<script src="app.js?v=20260810-cloud-providers-v2"></script>
 </body>
 </html>

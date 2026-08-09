@@ -16,7 +16,7 @@
     function ensureWorker() {
         if (worker) return worker;
         if (location.protocol === 'file:') throw directFileError();
-        const workerUrl = new URL('labs-embedded-worker.js?v=20260809-worker-origin-fix', document.baseURI);
+        const workerUrl = new URL('labs-embedded-worker.js?v=20260810-pip-conversation-v2', document.baseURI);
         worker = new Worker(workerUrl, { type: 'module', name: 'horde-tiny-brain' });
         worker.onmessage = event => {
             const message = event.data || {};

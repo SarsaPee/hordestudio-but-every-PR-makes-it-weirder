@@ -71,7 +71,20 @@ test('library artwork has a deliberate text fallback and release assets are cach
     assert(app.includes("char-card-avatar${char.avatar ? ' has-image' : ''}"));
     assert(app.includes("message-avatar${avatarUrl ? ' has-image' : ''}"));
     assert(css.includes('.char-card-avatar.has-image'));
-    assert(html.includes('20260809-v12'));
+    assert(html.includes('20260810-pip-providers-v2'));
+});
+
+test('World Studio navigation fits laptop heights with a safe short-window fallback', () => {
+    assert(css.includes('#world-studio-view .studio-nav {'));
+    assert(css.includes('padding: clamp(8px, 1.25vh, 12px) 10px'));
+    assert(css.includes('#world-studio-view .world-studio-tab {'));
+    assert(css.includes('overflow-y: auto'));
+});
+
+test('message composers use one rounded focus treatment instead of nested outlines', () => {
+    assert(css.includes('.input-row:focus-within { border-color: var(--red); }'));
+    assert(css.includes('.input-row > .msg-input:focus-visible'));
+    assert(css.includes('outline: none !important'));
 });
 
 console.log(`\n${passed} cross-mode UX checks passed.`);

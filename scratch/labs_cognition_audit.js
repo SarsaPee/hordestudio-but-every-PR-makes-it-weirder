@@ -31,7 +31,7 @@ async function run() {
     assert.match(appSource, /setupHordeLabs\(\)/, 'Labs is mounted during application startup');
     assert.match(appSource, /labsProposal\('social_signal'[\s\S]+?'chat'/, 'Chat has an opt-in social-signal hook');
     assert.match(appSource, /labsProposal\('social_signal'[\s\S]+?'humans'/, 'Virtual Humans have an opt-in social-signal hook');
-    assert.match(appSource, /labsProposal\('event_lens'[\s\S]+?'worlds'/, 'Worlds has an opt-in actor-scoped event hook');
+    assert.match(appSource, /requestWorldMicroFrame[\s\S]+?world_micro_frame/, 'Worlds has a Micro-capable semantic preflight');
     assert.match(appSource, /updateChatHudFromTurn/, 'Traditional and Labs chat HUD controllers are wired into completed turns');
     assert.match(appSource, /rerollHudBefore[\s\S]+?chatHudState/, 'Reroll restores the prior timeline HUD state');
     assert.match(htmlSource, /id="tab-hud"[\s\S]+?id="chat-status-col"|id="chat-status-col"[\s\S]+?id="tab-hud"/, 'Chat HUD authoring and right sidebar are present');
@@ -40,7 +40,7 @@ async function run() {
     assert.match(cssSource, /@media \(max-width: 760px\)[\s\S]+?labs-policy-grid/, 'Labs has a narrow-screen layout');
 
     const Labs = context.HordeLabs;
-    assert.equal(Labs.tasks().length, 6, 'all bounded tasks register');
+    assert.equal(Labs.tasks().length, 7, 'all bounded tasks register');
     assert.equal(Labs.normalizeConfig({ baseUrl: 'https://evil.example/v1' }).baseUrl, 'http://127.0.0.1:11434/v1', 'remote cognition endpoints are blocked');
 
     Labs.configure({ enabled: false, model: 'smollm2:360m', policies: { chat: 'assist' } }, { onDiagnostic: row => diagnostics.push(row) });
@@ -81,6 +81,38 @@ async function run() {
     assert.equal(result.ok, false, 'a HUD meter cannot change without exact exchange evidence');
 
     nextContent = JSON.stringify({
+        actorId: 'player', intent: 'move', destinationId: 'bathroom', targetId: '',
+        phase: 'completed', outfitOperation: 'none', outfitText: '', durationMinutes: 0,
+        evidence: 'I enter the bathroom', confidence: .94
+    });
+    Labs.configure({ enabled: true, model: 'smollm2:135m', policies: { worlds: 'assist' } });
+    result = await Labs.propose('world_micro_frame', {
+        text: 'I cross her "wait" I enter the bathroom',
+        allowedActorIds: ['player'], allowedTargetIds: ['player'], allowedLocationIds: ['house', 'bathroom']
+    }, { mode: 'worlds' });
+    assert.equal(result.accepted, true, 'Micro tier can run the bounded World Sensor');
+    assert.equal(result.candidate.destinationId, 'bathroom');
+    assert.equal(Labs.taskCapabilities().find(task => task.id === 'world_micro_frame').available, true);
+    assert.equal(Labs.taskCapabilities().find(task => task.id === 'event_lens').available, false);
+
+    nextContent = 'MWF|player|move|bathroom|-|completed|none|0|94|I enter the bathroom';
+    result = await Labs.propose('world_micro_frame', {
+        text: 'I enter the bathroom now', allowedActorIds: ['player'], allowedTargetIds: ['player'],
+        allowedLocationIds: ['house', 'bathroom'], locations: [{ id: 'bathroom', name: 'Bathroom' }]
+    }, { mode: 'worlds' });
+    assert.equal(result.accepted, true, 'Micro World Sensor accepts the compact embedded protocol');
+    assert.equal(result.candidate.destinationId, 'bathroom');
+
+    nextContent = 'I am a tiny model and forgot the format.';
+    result = await Labs.propose('world_micro_frame', {
+        text: 'I smile without moving', allowedActorIds: ['player'], allowedTargetIds: ['player'],
+        allowedLocationIds: ['house'], locations: [{ id: 'house', name: 'House' }]
+    }, { mode: 'worlds' });
+    assert.equal(result.accepted, true, 'unparseable Micro output degrades to a validated no-op');
+    assert.equal(result.candidate.intent, 'other');
+    assert.equal(result.candidate.confidence, 0);
+
+    nextContent = JSON.stringify({
         events: [{ actorId: 'npc_unknown', kind: 'move', targetId: '', locationId: 'hall', phase: 'completed', evidence: 'walk out', confidence: .9 }],
         ambiguous: false, confidence: .9
     });
@@ -97,6 +129,12 @@ async function run() {
     }, { mode: 'worlds' });
     assert.equal(result.skipped, true, 'an unknown model cannot bypass a Small-tier task gate');
     assert.equal(Labs.capabilityTier('HuggingFaceTB/SmolLM2-135M-Instruct'), 'micro', 'the embedded 135M model is explicitly Micro-tier');
+
+    const diagnosticCountAfterFirstTierSkip = diagnostics.length;
+    await Labs.propose('event_lens', {
+        text: 'I walk out', allowedActorIds: ['player'], allowedTargetIds: ['player'], allowedLocationIds: ['room', 'hall']
+    }, { mode: 'worlds' });
+    assert.equal(diagnostics.length, diagnosticCountAfterFirstTierSkip, 'identical tier mismatch diagnostics are deduplicated');
 
     nextContent = 'not json';
     Labs.configure({ enabled: true, model: 'smollm2:360m', policies: { chat: 'assist' } });
@@ -115,6 +153,8 @@ async function run() {
     result = await Labs.propose('social_signal', { message: 'hello embedded', text: 'hello embedded' }, { mode: 'chat' });
     assert.equal(result.accepted, true, 'embedded runtime uses the same schema and validator path');
     assert.equal(result.candidate.messageKind, 'casual');
+    const guideReply = await Labs.completeText({ config: { runtime: 'embedded' }, system: 'Be brief.', input: 'What is Labs?' });
+    assert.match(guideReply.text, /signals/, 'manual Tiny Guide can use the embedded text path');
 
     const hudContext = buildContext(vm, ['extractChatHudDirective'], {});
     let extracted = hudContext.extractChatHudDirective('Visible reply\n<horde_status>{"meters":[');
@@ -156,6 +196,17 @@ async function run() {
     const fileError = await fileContext.HordeLabsEmbedded.status({}).catch(error => error);
     assert.equal(fileError.code, 'HORDE_FILE_WORKER_BLOCKED', 'direct-file mode reports the worker-origin restriction');
     assert.match(fileError.message, /Start Horde Studio/, 'direct-file recovery points to the launcher');
+
+    const embeddedUiSource = fs.readFileSync('labs-ui.js', 'utf8');
+    const embeddedWorkerSource = fs.readFileSync('labs-embedded-worker.js', 'utf8');
+    assert.match(embeddedUiSource, /EMBEDDED_MARKER_KEY[\s\S]+?setEmbeddedMarker\(true\)/,
+        'a completed embedded install leaves a persistent same-origin marker');
+    assert.match(embeddedUiSource, /result\.cached === true \|\| embeddedMarker\(\)/,
+        'refresh accepts the persistent marker while verifying the model cache');
+    assert.match(embeddedWorkerSource, /browserCacheContainsModel[\s\S]+?self\.caches\.keys/,
+        'v3 embedded runtime checks persistent Cache Storage without relying on a newer ModelRegistry');
+    assert.match(embeddedWorkerSource, /removeModelFromBrowserCache/,
+        'Remove downloaded model also clears the v3 browser-cache fallback');
 
     const health = await Labs.health({ baseUrl: 'http://127.0.0.1:11434/v1' });
     assert.deepEqual(health.models, ['smollm2:360m']);

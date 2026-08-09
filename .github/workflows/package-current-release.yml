@@ -1,13 +1,7 @@
 name: Attach Portable Build
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/package-current-release.yml'
-      - '.github/workflows/release.yml'
-      - 'scripts/build-portable.sh'
+  workflow_dispatch:
 
 permissions:
   contents: write

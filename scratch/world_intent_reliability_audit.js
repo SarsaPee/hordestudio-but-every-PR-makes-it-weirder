@@ -67,6 +67,24 @@ test('movement after a first-person action still updates the canonical room', ()
     assert.equal(context.extractUserMovementTarget('I watch as Emily leaves the room'), '');
 });
 
+test('a pronoun cannot fuzzy-teleport the player past a later explicit destination', () => {
+    const home = {
+        locations: [
+            { id: 'house', name: 'Willowbrook House', mapType: 'building',
+                exits: ['to Bathroom', "to Sheriff's office"] },
+            { id: 'bathroom', name: 'Bathroom', mapType: 'room', parentLocationId: 'house',
+                exits: ['to Willowbrook House'] },
+            { id: 'sheriff', name: "Sheriff's office", mapType: 'building',
+                exits: ['to Willowbrook House'] }
+        ]
+    };
+    const input = 'I cross her "you take too long, leme brush my teeth first" I enter the bathroom leaving the door open';
+    const result = resolveMovement(home, input, 'house');
+    assert.equal(result.phrase.toLowerCase(), 'the bathroom');
+    assert.equal(result.target?.id, 'bathroom');
+    assert.equal(context.findFuzzyLocation('her', home.locations), null);
+});
+
 test('a generic building never guesses between two plausible doors', () => {
     assert.equal(resolveMovement(movementWorld(true), 'I enter the building').target, null);
 });

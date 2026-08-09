@@ -1,0 +1,50 @@
+const fs = require('fs');
+const vm = require('vm');
+const assert = require('assert');
+
+const context = { window: {} };
+context.window = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync('labs-guide.js', 'utf8'), context, { filename: 'labs-guide.js' });
+
+const provider = context.HordeLabsGuide.retrieve('Can OpenRouter do text while GPTProto makes images?', 2);
+assert(provider.some(note => /independent/.test(note.text)), 'provider separation note is retrieved');
+const movement = context.HordeLabsGuide.retrieve('Why did world movement add travel time?', 2);
+assert(movement.some(note => /canonical location graph/.test(note.text)), 'World Kernel movement note is retrieved');
+const prompt = context.HordeLabsGuide.prompt('What is Shadow mode?', [{ role: 'user', text: 'hello' }]);
+assert.match(prompt.system, /grounded in GUIDE NOTES/);
+assert.match(prompt.input, /Shadow records private classifier results/);
+assert.equal(context.HordeLabsGuide.entryCount >= 45, true, 'guide has broad built-in product coverage');
+assert.equal(context.HordeLabsGuide.handbookVersion, 3, 'Pip uses the expanded versioned handbook');
+assert.match(context.HordeLabsGuide.answer('hey, tell me horde studio'), /local-first frontend/);
+assert.match(context.HordeLabsGuide.answer('Why did going to the bathroom move me to another building?'), /canonical location graph|Movement and travel/);
+assert.match(context.HordeLabsGuide.answer('How do I install the embedded tiny brain?'), /127\.0\.0\.1|Embedded Tiny Brain/);
+
+const html = fs.readFileSync('index.html', 'utf8');
+const ui = fs.readFileSync('labs-ui.js', 'utf8');
+const app = fs.readFileSync('app.js', 'utf8');
+assert(html.includes('id="labs-guide-messages"'));
+assert(html.includes('id="pip-sidebar-btn"'), 'Pip is permanently visible in the primary sidebar');
+assert(html.includes('id="pip-view"'), 'Pip has a dedicated primary workspace');
+assert(!html.includes('<h3>3. Chat with Tiny Guide</h3>'), 'Pip is not embedded inside Labs settings');
+assert(html.includes('labs-guide.js?v=20260810-pip-providers-v2'));
+assert(html.includes('id="pip-clear-chat-btn"'), 'Pip has a visible clear-chat action');
+assert(ui.includes('window.HordeLabs.completeText'));
+assert(app.includes("pip: document.getElementById('pip-view')"), 'primary navigation owns the Pip workspace');
+assert(ui.includes('Grounded answer shown instantly'), 'Pip never waits silently for local inference');
+assert(ui.includes('function guidePrompt('), 'local inference survives a missing or stale guide index');
+assert(ui.includes('const CORE_GUIDE = Object.freeze'), 'Pip carries an emergency core manual inside its runtime');
+assert(ui.includes('function coreGuideAnswer('), 'missing handbook scripts degrade to core answers');
+assert(!ui.includes('I do not have a reliable built-in note for that yet'), 'obsolete dead-end fallback is gone');
+assert(ui.includes('Verified Horde Studio handbook answer'), 'product answers bypass tiny-model rewriting');
+assert(ui.includes('function clearGuideChat()'), 'Pip chat can be cleared without touching app data');
+assert(html.includes('id="pip-runtime-state"'), 'Pip exposes whether a local model actually answered');
+assert(ui.includes('function cleanLocalReply('), 'echoed and repeated tiny-model output is rejected');
+assert(ui.includes('conversation mode'), 'Pip supports ordinary conversation outside product retrieval');
+assert(ui.includes("Number(row.version) >= 2 && !row.skipped"), 'legacy and expected tier skips do not clutter the trust dashboard');
+assert(app.includes("task.id === 'continuity_sentinel'"), 'World audit checks capability before requesting the sentinel');
+const bridge = fs.readFileSync('horde_mcp_bridge.py', 'utf8');
+assert(bridge.includes('"/labs-guide.js": ("labs-guide.js", "text/javascript")'), 'launcher serves Pip handbook');
+assert(bridge.includes('"/help-system.js": ("help-system.js", "text/javascript")'), 'launcher serves contextual help');
+
+console.log(`PASS Tiny Guide audit (${context.HordeLabsGuide.entryCount} grounded product notes)`);

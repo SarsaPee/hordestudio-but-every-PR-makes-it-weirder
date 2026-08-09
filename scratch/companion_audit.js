@@ -1644,7 +1644,7 @@ test('studio photo and voice diagnostics reuse the production generation paths',
     assert(app.includes("speakCompanionLine(companion, sampleText, finish)"));
 });
 
-test('GPTProto media endpoints and CSP are wired into the production paths', () => {
+test('cloud media endpoints and CSP are wired into the production paths', () => {
     const photoSource = functionSource('requestCompanionPhoto');
     assert(photoSource.includes("'/images/generations'"));
     assert(photoSource.includes("response_format: body.response_format || 'b64_json'"));
@@ -1652,7 +1652,8 @@ test('GPTProto media endpoints and CSP are wired into the production paths', () 
     assert(functionSource('stabilizeGeneratedImageSource').includes("'/media/fetch'"));
     assert(functionSource('generateOpenRouterSpeech').includes("'/audio/speech'"));
     assert(app.includes('https://gptproto.com'));
-    assert(app.includes("['openrouter', 'gptproto', 'local']"));
+    assert(app.includes('https://nano-gpt.com'));
+    assert(app.includes("['openrouter', 'gptproto', 'nanogpt', 'local']"));
 });
 
 test('ComfyUI generation uses the active named workflow profile', () => {

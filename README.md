@@ -105,7 +105,7 @@ Create an AI person designed to feel like they have a life beyond the current me
 
 | Mode | Examples |
 |---|---|
-| Cloud | OpenRouter, GPTProto |
+| Cloud | OpenRouter, GPTProto, NanoGPT, NVIDIA NIM, Amazon Bedrock |
 | Local / self-hosted | Ollama, LM Studio, KoboldCpp, llama.cpp, vLLM, text-generation-webui, and other OpenAI-compatible servers |
 
 ### Images and creative tools

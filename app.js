@@ -6,7 +6,7 @@ const DB_VERSION = 1;
 const STORE_NAME = 'state';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '12.0.1';
+const HORDE_STUDIO_VERSION = '12.5.0';
 const HORDE_STUDIO_RELEASED_AT = '2026-08-09T13:30:00Z';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
@@ -214,7 +214,7 @@ let worldTurnInProgress = false; // re-entry guard for executeWorldTurn
 let lastPresetContextWarningKey = '';
 
 // --- API Provider Abstraction ---
-// Cloud: OpenRouter or GPTProto. Local: any OpenAI-compatible server —
+// Cloud: OpenRouter, GPTProto, NanoGPT, NVIDIA NIM or AWS Bedrock. Local: any OpenAI-compatible server —
 // Ollama, LM Studio, KoboldCpp, llama.cpp, vLLM, text-generation-webui.
 function isLocalProvider() {
     return state.globalSettings.apiProvider === 'local';
@@ -222,11 +222,23 @@ function isLocalProvider() {
 function isGPTProtoProvider() {
     return state.globalSettings.apiProvider === 'gptproto';
 }
+function isNanoGPTProvider() {
+    return state.globalSettings.apiProvider === 'nanogpt';
+}
+function isNvidiaProvider() {
+    return state.globalSettings.apiProvider === 'nvidia';
+}
+function isBedrockProvider() {
+    return state.globalSettings.apiProvider === 'bedrock';
+}
 function isOpenRouterProvider() {
-    return !isLocalProvider() && !isGPTProtoProvider();
+    return state.globalSettings.apiProvider === 'openrouter';
 }
 function cloudProviderName() {
-    return isGPTProtoProvider() ? 'GPTProto' : 'OpenRouter';
+    return isGPTProtoProvider() ? 'GPTProto'
+        : isNanoGPTProvider() ? 'NanoGPT'
+            : isNvidiaProvider() ? 'NVIDIA NIM'
+                : isBedrockProvider() ? 'AWS Bedrock' : 'OpenRouter';
 }
 
 const HORDE_MCP_BRIDGE_DEFAULT = 'http://127.0.0.1:43127';
@@ -430,11 +442,25 @@ function apiBase() {
         return base;
     }
     if (isGPTProtoProvider()) return 'https://gptproto.com/v1';
+    if (isNanoGPTProvider()) return 'https://nano-gpt.com/api/v1';
+    if (isNvidiaProvider()) return 'https://integrate.api.nvidia.com/v1';
+    if (isBedrockProvider()) return bedrockApiBase();
     return 'https://openrouter.ai/api/v1';
 }
 
+const TEXT_PROVIDER_IDS = Object.freeze(['openrouter', 'gptproto', 'nanogpt', 'nvidia', 'bedrock', 'local']);
+
+function normalizedBedrockRegion(value) {
+    const region = String(value || 'us-east-1').trim().toLowerCase();
+    return /^[a-z]{2}(?:-gov)?-[a-z]+-\d$/.test(region) ? region : 'us-east-1';
+}
+
+function bedrockApiBase() {
+    return `https://bedrock-mantle.${normalizedBedrockRegion(state.globalSettings?.bedrockRegion)}.api.aws/v1`;
+}
+
 function normalizedProviderId(value) {
-    return ['openrouter', 'gptproto', 'local'].includes(value)
+    return TEXT_PROVIDER_IDS.includes(value)
         ? value : (state.globalSettings.apiProvider || 'openrouter');
 }
 
@@ -445,7 +471,11 @@ function providerApiBase(providerId) {
         if (/^https?:\/\/[^\/]+$/.test(base)) base += '/v1';
         return base;
     }
-    return provider === 'gptproto' ? 'https://gptproto.com/v1' : 'https://openrouter.ai/api/v1';
+    if (provider === 'gptproto') return 'https://gptproto.com/v1';
+    if (provider === 'nanogpt') return 'https://nano-gpt.com/api/v1';
+    if (provider === 'nvidia') return 'https://integrate.api.nvidia.com/v1';
+    if (provider === 'bedrock') return bedrockApiBase();
+    return 'https://openrouter.ai/api/v1';
 }
 
 function providerAuthHeaders(providerId) {
@@ -454,7 +484,10 @@ function providerAuthHeaders(providerId) {
         const key = String(state.globalSettings.localApiKey || '').trim();
         return key ? { Authorization: `Bearer ${key}` } : {};
     }
-    const key = provider === 'gptproto' ? state.gptprotoApiKey : state.apiKey;
+    const key = provider === 'gptproto' ? state.gptprotoApiKey
+        : provider === 'nanogpt' ? state.nanogptApiKey
+            : provider === 'nvidia' ? state.nvidiaApiKey
+                : provider === 'bedrock' ? state.bedrockApiKey : state.apiKey;
     return { Authorization: `Bearer ${key || ''}` };
 }
 
@@ -465,11 +498,14 @@ function providerAttributionHeaders(providerId) {
 function providerHasCredentials(providerId) {
     const provider = normalizedProviderId(providerId);
     if (provider === 'local') return true;
-    return !!(provider === 'gptproto' ? state.gptprotoApiKey : state.apiKey);
+    return !!(provider === 'gptproto' ? state.gptprotoApiKey
+        : provider === 'nanogpt' ? state.nanogptApiKey
+            : provider === 'nvidia' ? state.nvidiaApiKey
+                : provider === 'bedrock' ? state.bedrockApiKey : state.apiKey);
 }
 
 function providerDisplayName(providerId) {
-    return ({ openrouter: 'OpenRouter', gptproto: 'GPTProto', local: 'Local provider' })[
+    return ({ openrouter: 'OpenRouter', gptproto: 'GPTProto', nanogpt: 'NanoGPT', nvidia: 'NVIDIA NIM', bedrock: 'AWS Bedrock', local: 'Local provider' })[
         normalizedProviderId(providerId)
     ];
 }
@@ -479,8 +515,9 @@ function companionTextProviderId(companion) {
 }
 
 function companionImageProviderId(companion) {
-    return ['openrouter', 'gptproto', 'local'].includes(companion?.imageSource)
+    const requested = ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(companion?.imageSource)
         ? companion.imageSource : normalizedProviderId();
+    return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(requested) ? requested : 'openrouter';
 }
 
 /** Turn opaque fetch failures into actionable guidance (esp. local CORS/PNA). */
@@ -496,7 +533,10 @@ function humanizeApiError(err) {
 }
 function apiAuthKey() {
     if (isLocalProvider()) return state.globalSettings.localApiKey || 'local';
-    return isGPTProtoProvider() ? state.gptprotoApiKey : state.apiKey;
+    return isGPTProtoProvider() ? state.gptprotoApiKey
+        : isNanoGPTProvider() ? state.nanogptApiKey
+            : isNvidiaProvider() ? state.nvidiaApiKey
+                : isBedrockProvider() ? state.bedrockApiKey : state.apiKey;
 }
 /**
  * Authorization header — as an object to spread into `headers`. Critically, for
@@ -602,8 +642,12 @@ let state = {
     view: 'library',
     apiKey: '',
     gptprotoApiKey: '',
+    nanogptApiKey: '',
+    nvidiaApiKey: '',
+    bedrockApiKey: '',
     globalSettings: {
         defaultModel: 'deepseek/deepseek-v4-flash',
+        bedrockRegion: 'us-east-1',
         editFontSize: 15,
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
@@ -1283,6 +1327,9 @@ async function loadState() {
         state.apiKey = localStorage.getItem('horde_api_key') || '';
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || '';
+        state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || '';
+        state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || '';
+        state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || '';
         let oldSettings = {};
         try { oldSettings = JSON.parse(localStorage.getItem('horde_global_settings')) || {}; }
         catch (err) { console.warn('Ignoring corrupt legacy settings:', err); }
@@ -1308,10 +1355,19 @@ async function loadState() {
     } else {
         const legacyStoredApiKey = await HordeDB.get('apiKey') || '';
         const storedGPTProtoApiKey = await HordeDB.get('gptprotoApiKey') || '';
+        const storedNanoGPTApiKey = await HordeDB.get('nanogptApiKey') || '';
+        const storedNvidiaApiKey = await HordeDB.get('nvidiaApiKey') || '';
+        const storedBedrockApiKey = await HordeDB.get('bedrockApiKey') || '';
         state.apiKey = sessionStorage.getItem('horde_api_key') || legacyStoredApiKey;
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || storedGPTProtoApiKey;
         if (state.gptprotoApiKey) sessionStorage.setItem('horde_gptproto_api_key', state.gptprotoApiKey);
+        state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || storedNanoGPTApiKey;
+        if (state.nanogptApiKey) sessionStorage.setItem('horde_nanogpt_api_key', state.nanogptApiKey);
+        state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || storedNvidiaApiKey;
+        if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
+        state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || storedBedrockApiKey;
+        if (state.bedrockApiKey) sessionStorage.setItem('horde_bedrock_api_key', state.bedrockApiKey);
         state.globalSettings = await HordeDB.get('globalSettings') || state.globalSettings;
         state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
@@ -1323,6 +1379,7 @@ async function loadState() {
         if (state.globalSettings.immersionMode === undefined) state.globalSettings.immersionMode = true;
         // API provider defaults (cloud unless the user opted into local)
         if (state.globalSettings.apiProvider === undefined) state.globalSettings.apiProvider = 'openrouter';
+        if (state.globalSettings.bedrockRegion === undefined) state.globalSettings.bedrockRegion = 'us-east-1';
         if (state.globalSettings.localBaseUrl === undefined) state.globalSettings.localBaseUrl = '';
         if (state.globalSettings.localApiKey === undefined) state.globalSettings.localApiKey = '';
         if (state.globalSettings.embeddingModel === undefined) state.globalSettings.embeddingModel = '';
@@ -1589,6 +1646,9 @@ async function saveState() {
             // "Remember key on this device". Persisting '' erases stored copies.
             apiKey: state.globalSettings.rememberApiKey ? (state.apiKey || '') : '',
             gptprotoApiKey: state.globalSettings.rememberApiKey ? (state.gptprotoApiKey || '') : '',
+            nanogptApiKey: state.globalSettings.rememberApiKey ? (state.nanogptApiKey || '') : '',
+            nvidiaApiKey: state.globalSettings.rememberApiKey ? (state.nvidiaApiKey || '') : '',
+            bedrockApiKey: state.globalSettings.rememberApiKey ? (state.bedrockApiKey || '') : '',
             globalSettings: state.globalSettings,
             characters: state.characters,
             chats: state.chats,
@@ -2332,7 +2392,7 @@ function normalizeWorldPresentation(world) {
         panelOpacity: livingClamp(raw.panelOpacity == null ? 88 : raw.panelOpacity, 35, 100),
         backgroundDim: livingClamp(raw.backgroundDim == null ? 68 : raw.backgroundDim, 0, 95),
         mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),
-        imageProvider: ['inherit', 'openrouter', 'gptproto'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
+        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
         imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500)
     });
     world.presentation = raw;
@@ -2433,6 +2493,7 @@ function formatByteSize(bytes) {
 // --- DOM References ---
 const views = {
     library: document.getElementById('library-view'),
+    pip: document.getElementById('pip-view'),
     chat: document.getElementById('chat-view'),
     studio: document.getElementById('studio-view'),
     worlds: document.getElementById('worlds-view'),
@@ -3569,6 +3630,7 @@ function setupHordeLabs() {
         toast: showToast
     });
     document.getElementById('labs-modal-btn').onclick = () => window.HordeLabsUI.open();
+    document.getElementById('pip-configure-btn').onclick = () => window.HordeLabsUI.open();
 }
 
 async function labsProposal(task, envelope, mode, options = {}) {
@@ -3859,7 +3921,7 @@ function setupLibraryFilters() {
 // --- Navigation ---
 function setupNavigation() {
     navBtns.forEach(btn => {
-        btn.onclick = () => switchView(btn.dataset.view);
+        if (btn.dataset.view) btn.onclick = () => switchView(btn.dataset.view);
     });
 
     const homeButton = document.getElementById('sidebar-home-btn');
@@ -3906,6 +3968,7 @@ function switchView(viewName) {
 
     // View specific logic
     if (viewName === 'library') renderLibrary();
+    if (viewName === 'pip') requestAnimationFrame(() => document.getElementById('labs-guide-input')?.focus());
     
     if (viewName === 'chat') {
         if (!state.activeCharId && !state.activeRoomId && state.characters.length > 0) {
@@ -8661,6 +8724,15 @@ function setupGlobalSettings() {
         state.gptprotoApiKey = document.getElementById('global-gptproto-key').value.trim();
         if (state.gptprotoApiKey) sessionStorage.setItem('horde_gptproto_api_key', state.gptprotoApiKey);
         else sessionStorage.removeItem('horde_gptproto_api_key');
+        state.nanogptApiKey = document.getElementById('global-nanogpt-key').value.trim();
+        if (state.nanogptApiKey) sessionStorage.setItem('horde_nanogpt_api_key', state.nanogptApiKey);
+        else sessionStorage.removeItem('horde_nanogpt_api_key');
+        state.nvidiaApiKey = document.getElementById('global-nvidia-key').value.trim();
+        if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
+        else sessionStorage.removeItem('horde_nvidia_api_key');
+        state.bedrockApiKey = document.getElementById('global-bedrock-key').value.trim();
+        if (state.bedrockApiKey) sessionStorage.setItem('horde_bedrock_api_key', state.bedrockApiKey);
+        else sessionStorage.removeItem('horde_bedrock_api_key');
         state.globalSettings.defaultModel = document.getElementById('global-default-model').value.trim().slice(0, 500);
         state.globalSettings.editFontSize = Math.max(10, Math.min(32, parseInt(document.getElementById('edit-font-size').value) || 15));
         state.globalSettings.editFontColor = cssColor(document.getElementById('edit-font-color').value, '#ffffff');
@@ -8673,8 +8745,11 @@ function setupGlobalSettings() {
         state.globalSettings.slopStripper = document.getElementById('global-slop-stripper').checked;
         state.globalSettings.immersionMode = document.getElementById('global-immersion-mode').checked;
         const selectedProvider = document.getElementById('global-api-provider').value;
-        state.globalSettings.apiProvider = ['openrouter', 'gptproto', 'local'].includes(selectedProvider)
+        state.globalSettings.apiProvider = TEXT_PROVIDER_IDS.includes(selectedProvider)
             ? selectedProvider : 'openrouter';
+        state.globalSettings.bedrockRegion = normalizedBedrockRegion(
+            document.getElementById('global-bedrock-region').value
+        );
         state.globalSettings.localBaseUrl = document.getElementById('global-local-url').value.trim().slice(0, 500);
         state.globalSettings.localApiKey = document.getElementById('global-local-key').value.trim().slice(0, 500);
         state.globalSettings.embeddingModel = document.getElementById('global-embedding-model').value.trim().slice(0, 200);
@@ -8754,6 +8829,9 @@ function setupGlobalSettings() {
             document.getElementById('local-provider-fields').style.display = local ? 'block' : 'none';
             document.getElementById('openrouter-key-block').style.display = 'block';
             document.getElementById('gptproto-key-block').style.display = 'block';
+            document.getElementById('nanogpt-key-block').style.display = 'block';
+            document.getElementById('nvidia-key-block').style.display = 'block';
+            document.getElementById('bedrock-key-block').style.display = 'block';
             document.getElementById('cloud-key-storage-block').style.display = 'block';
             const fpWarn = document.getElementById('file-protocol-warning');
             if (fpWarn) fpWarn.style.display = (local && location.protocol === 'file:') ? 'block' : 'none';
@@ -8788,6 +8866,69 @@ function setupGlobalSettings() {
             testGPTProtoBtn.disabled = false;
         }
     };
+    const testNanoGPTBtn = document.getElementById('test-nanogpt-conn-btn');
+    if (testNanoGPTBtn) testNanoGPTBtn.onclick = async () => {
+        const result = document.getElementById('nanogpt-conn-result');
+        const key = document.getElementById('global-nanogpt-key').value.trim();
+        if (!key) {
+            if (result) result.textContent = 'Enter a NanoGPT API key first.';
+            return;
+        }
+        testNanoGPTBtn.disabled = true;
+        if (result) result.textContent = 'Checking the NanoGPT text-model catalog…';
+        try {
+            const response = await fetch('https://nano-gpt.com/api/v1/models', {
+                headers: { Authorization: `Bearer ${key}` }
+            });
+            const text = await response.text();
+            let data = {};
+            try { data = text ? JSON.parse(text) : {}; } catch (error) { data = {}; }
+            if (!response.ok) throw new Error(data?.error?.message || data?.message || `Connection failed (${response.status})`);
+            const count = Array.isArray(data?.data) ? data.data.length : 0;
+            if (result) result.textContent = `Connected to NanoGPT${count ? ` · ${count} text models visible` : ''}.`;
+        } catch (error) {
+            if (result) result.textContent = `NanoGPT connection failed: ${humanizeApiError(error)}`;
+        } finally {
+            testNanoGPTBtn.disabled = false;
+        }
+    };
+    const setupOpenAICompatibleCloudTest = ({ buttonId, resultId, keyId, label, baseUrl }) => {
+        const button = document.getElementById(buttonId);
+        if (!button) return;
+        button.onclick = async () => {
+            const result = document.getElementById(resultId);
+            const key = document.getElementById(keyId).value.trim();
+            if (!key) {
+                if (result) result.textContent = `Enter a ${label} API key first.`;
+                return;
+            }
+            button.disabled = true;
+            if (result) result.textContent = `Checking the ${label} model catalog…`;
+            try {
+                const response = await fetch(baseUrl() + '/models', {
+                    headers: { Authorization: `Bearer ${key}` }
+                });
+                const responseText = await response.text();
+                let data = {};
+                try { data = responseText ? JSON.parse(responseText) : {}; } catch (error) { data = {}; }
+                if (!response.ok) throw new Error(data?.error?.message || data?.message || `Connection failed (${response.status})`);
+                const count = Array.isArray(data?.data) ? data.data.length : 0;
+                if (result) result.textContent = `Connected to ${label}${count ? ` · ${count} models visible` : ''}.`;
+            } catch (error) {
+                if (result) result.textContent = `${label} connection failed: ${humanizeApiError(error)}`;
+            } finally {
+                button.disabled = false;
+            }
+        };
+    };
+    setupOpenAICompatibleCloudTest({
+        buttonId: 'test-nvidia-conn-btn', resultId: 'nvidia-conn-result', keyId: 'global-nvidia-key',
+        label: 'NVIDIA NIM', baseUrl: () => 'https://integrate.api.nvidia.com/v1'
+    });
+    setupOpenAICompatibleCloudTest({
+        buttonId: 'test-bedrock-conn-btn', resultId: 'bedrock-conn-result', keyId: 'global-bedrock-key',
+        label: 'AWS Bedrock', baseUrl: () => `https://bedrock-mantle.${normalizedBedrockRegion(document.getElementById('global-bedrock-region').value)}.api.aws/v1`
+    });
     const testLocalImages = document.getElementById('test-local-image-engines-btn');
     if (testLocalImages) testLocalImages.onclick = async () => {
         const result = document.getElementById('local-image-engines-result');
@@ -9010,11 +9151,15 @@ function showGlobalSettings() {
         modal.classList.remove('hidden');
         document.getElementById('global-api-key').value = state.apiKey;
         document.getElementById('global-gptproto-key').value = state.gptprotoApiKey;
+        document.getElementById('global-nanogpt-key').value = state.nanogptApiKey;
+        document.getElementById('global-nvidia-key').value = state.nvidiaApiKey;
+        document.getElementById('global-bedrock-key').value = state.bedrockApiKey;
+        document.getElementById('global-bedrock-region').value = normalizedBedrockRegion(state.globalSettings.bedrockRegion);
         document.getElementById('remember-api-key').checked = !!state.globalSettings.rememberApiKey;
         document.getElementById('global-slop-stripper').checked = !!state.globalSettings.slopStripper;
         document.getElementById('global-immersion-mode').checked = state.globalSettings.immersionMode !== false;
         document.getElementById('global-default-model').value = state.globalSettings.defaultModel;
-        const provider = ['openrouter', 'gptproto', 'local'].includes(state.globalSettings.apiProvider)
+        const provider = TEXT_PROVIDER_IDS.includes(state.globalSettings.apiProvider)
             ? state.globalSettings.apiProvider : 'openrouter';
         document.getElementById('global-api-provider').value = provider;
         document.getElementById('global-local-url').value = state.globalSettings.localBaseUrl || '';
@@ -9040,6 +9185,9 @@ function showGlobalSettings() {
         document.getElementById('local-provider-fields').style.display = isLocal ? 'block' : 'none';
         document.getElementById('openrouter-key-block').style.display = 'block';
         document.getElementById('gptproto-key-block').style.display = 'block';
+        document.getElementById('nanogpt-key-block').style.display = 'block';
+        document.getElementById('nvidia-key-block').style.display = 'block';
+        document.getElementById('bedrock-key-block').style.display = 'block';
         document.getElementById('cloud-key-storage-block').style.display = 'block';
         // file:// pages can't reach localhost in Chromium (Private Network
         // Access) — warn before the user wastes time on server-side CORS
@@ -10516,8 +10664,13 @@ function findFuzzyLocation(query, locations) {
         const paddedQuery = ` ${q} `;
         if (name && paddedQuery.includes(` ${name} `)) score = Math.max(score, 800 + name.length);
         if (id && paddedQuery.includes(` ${id} `)) score = Math.max(score, 760 + id.length);
-        if (q.length >= 3 && name.includes(q)) score = Math.max(score, 520 + q.length);
-        if (q.length >= 3 && id.includes(q)) score = Math.max(score, 500 + q.length);
+        // Partial lookup must begin at a word boundary. Arbitrary interior
+        // substrings made ordinary pronouns dangerous: "her" matched the
+        // middle of "Sheriff's office" and could become a destination.
+        const prefixMatch = value => q.length >= 4 && (value.startsWith(q)
+            || value.split(/\s+/).some(word => word.startsWith(q)));
+        if (name && prefixMatch(name)) score = Math.max(score, 520 + q.length);
+        if (id && prefixMatch(id)) score = Math.max(score, 500 + q.length);
         const locationKeywords = getKeywords(name);
         const overlap = queryKeywords.filter(word => locationKeywords.includes(word)).length;
         const coverage = overlap / Math.max(1, Math.min(queryKeywords.length, locationKeywords.length));
@@ -11068,8 +11221,8 @@ async function renderWorldVisualModelSearch(world, force = false) {
     if (!world || !input || !results || !status) return;
     const renderId = ++worldVisualModelSearchRenderId;
     const provider = worldVisualProvider(world);
-    if (!['openrouter', 'gptproto'].includes(provider)) {
-        status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter or GPTProto, or enter the exact model ID used by your provider.';
+    if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
+        status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter, GPTProto or NanoGPT, or enter the exact model ID used by your provider.';
         results.innerHTML = '<div class="smart-input-empty">Choose a catalog-backed image provider to browse compatible models.</div>';
         setCompanionSearchOpen(input, results, true);
         return;
@@ -11192,6 +11345,8 @@ function renderWorldVisuals() {
             presentation.imageModel = 'gemini-3.1-flash-lite-image';
         } else if (previous === 'gptproto' && presentation.imageModel === 'gemini-3.1-flash-lite-image') {
             presentation.imageModel = 'google/gemini-3.1-flash-lite-image';
+        } else if (previous !== presentation.imageProvider) {
+            presentation.imageModel = companionImageModelFallback(worldVisualProvider(world));
         }
         byId('w-visual-image-model').value = presentation.imageModel;
         renderWorldVisualModelSearch(world);
@@ -11211,8 +11366,8 @@ function renderWorldVisuals() {
     byId('w-visual-refresh-models').onclick = async event => {
         const button = event.currentTarget;
         const provider = worldVisualProvider(world);
-        if (!['openrouter', 'gptproto'].includes(provider)) {
-            return showToast('Choose OpenRouter or GPTProto to browse cloud image models.', 'info');
+        if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
+            return showToast('Choose OpenRouter, GPTProto or NanoGPT to browse cloud image models.', 'info');
         }
         button.disabled = true;
         button.textContent = '↻ Loading…';
@@ -17705,6 +17860,13 @@ function extractUserMovementTarget(userInput) {
     const original = String(userInput || '').trim();
     if (!original) return '';
     const text = original.replace(/[*_~]/g, ' ').replace(/\s+/g, ' ').trim();
+    // Dialogue between action clauses is not part of the movement grammar.
+    // Replace it with a sentence boundary so a later explicit player action
+    // (… "wait" I enter the bathroom) can still be examined.
+    const actionText = text
+        .replace(/[“"][^”"]*[”"]/g, '. ')
+        .replace(/\s+/g, ' ')
+        .trim();
     // Players narrate movement in past tense as often as present ("I stepped
     // outside", "we went to the docks"), so both forms are locomotion verbs.
     // The trailing \b keeps "stepped" from matching as "step" + garbage.
@@ -17735,13 +17897,16 @@ function extractUserMovementTarget(userInput) {
         if (!target && /\b(?:inside|indoors?|in)\s*$/i.test(whole)) return 'inside';
         if (!target && /\bthrough\s+(?:the\s+)?(?:door|doorway|entrance|gate)\s*$/i.test(whole)) return 'inside';
         if (verb && /^(?:the\s+)?(?:room|place|area|building|house|here)?$/i.test(target)) return verb;
+        // A person/object pronoun is never a place. Keep scanning: prose often
+        // contains a non-destination verb first ("I cross her") followed by
+        // the real move ("I enter the bathroom").
+        if (/^(?:(?:right|straight)\s+)?(?:past\s+)?(?:him|her|them|you|me|us|it|someone|somebody)$/i.test(target)) return '';
         if (target) return target;
         if (verb) return verb;
         return '';
     };
-    const actorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:(?:i|we)\s+|let'?s\s+)(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|moved?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|ma[dk]e\s+(?:my|our)\s+way|sleep|slept)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/i;
-    const actorMatch = text.match(actorMovement);
-    if (actorMatch) {
+    const actorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:(?:i|we)\s+|let'?s\s+)(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|moved?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|ma[dk]e\s+(?:my|our)\s+way|sleep|slept)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/ig;
+    for (const actorMatch of actionText.matchAll(actorMovement)) {
         const resolved = resolveMatch(actorMatch);
         if (resolved) return resolved;
     }
@@ -17753,9 +17918,8 @@ function extractUserMovementTarget(userInput) {
     // state stayed behind. Keep this actor-safe by requiring a coordinator
     // immediately before the movement verb; "I tell Emily to step out" and
     // "I watch as Emily leaves" therefore remain somebody else's movement.
-    const continuedActorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:i|we)\b[^.!?]{0,100}?(?:,\s*(?:and\s+|then\s+)?|\s+(?:and|then|so|before|after|as|while)\s+)(?:(?:i|we)\s+)?(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|moved?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|ma[dk]e\s+(?:my|our)\s+way)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/i;
-    const continuedMatch = text.match(continuedActorMovement);
-    if (continuedMatch) {
+    const continuedActorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:i|we)\b[^.!?]{0,100}?(?:,\s*(?:and\s+|then\s+)?|\s+(?:and|then|so|before|after|as|while)\s+)(?:(?:i|we)\s+)?(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|moved?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|ma[dk]e\s+(?:my|our)\s+way)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/ig;
+    for (const continuedMatch of actionText.matchAll(continuedActorMovement)) {
         const resolved = resolveMatch(continuedMatch);
         if (resolved) return resolved;
     }
@@ -17764,7 +17928,7 @@ function extractUserMovementTarget(userInput) {
     // `"Go to the tower," I tell Rowan` must move Rowan, not the player.
     if (!/^["'“‘]/.test(original)) {
         const commandMovement = /^(?:(?:then|so)\s+)?(?:go|walk|head|travel|move|run|ride|climb|return|enter|exit|leave|step|cross)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/i;
-        const commandMatch = text.match(commandMovement);
+        const commandMatch = actionText.match(commandMovement);
         if (commandMatch) {
             const resolved = resolveMatch(commandMatch);
             if (resolved) return resolved;
@@ -17773,9 +17937,72 @@ function extractUserMovementTarget(userInput) {
     return '';
 }
 
-function applyUserDirectedMovement(world, sess, userInput) {
-    const targetPhrase = extractUserMovementTarget(userInput);
-    if (!targetPhrase) return '';
+function buildWorldMicroFrameEnvelope(world, sess, userInput) {
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const locations = Array.isArray(view?.locations) ? view.locations : [];
+    const current = locations.find(location => location.id === sess.playerLocation);
+    const selectedLocations = new Map();
+    const addLocation = location => {
+        if (location?.id && !selectedLocations.has(location.id) && selectedLocations.size < 16) {
+            selectedLocations.set(location.id, location);
+        }
+    };
+    addLocation(current);
+    (current?.exits || []).forEach(exit => addLocation(resolveWorldExitTarget(view, exit)));
+    addLocation(resolveWorldContainmentParent(view, current));
+    locations.forEach(location => {
+        if (resolveWorldContainmentParent(view, location)?.id === current?.id) addLocation(location);
+    });
+    const normalizedInput = normalizeLocationSearchText(userInput);
+    locations.forEach(location => {
+        const name = normalizeLocationSearchText(location.name);
+        if (name && ` ${normalizedInput} `.includes(` ${name} `)) addLocation(location);
+    });
+
+    const actors = new Map([['player', { id: 'player', name: 'Player' }]]);
+    sessionNpcs(view, sess).filter(npc => sess.entityStates?.[npc.id]?.location === sess.playerLocation)
+        .slice(0, 10).forEach(npc => actors.set(npc.id, { id: npc.id, name: npc.name }));
+    findReferencedWorldNpcs(view, sess, userInput).slice(0, 6)
+        .forEach(npc => actors.set(npc.id, { id: npc.id, name: npc.name }));
+    const actorList = [...actors.values()];
+    const locationList = [...selectedLocations.values()].map(location => ({
+        id: location.id, name: location.name,
+        kind: String(location.mapType || '').slice(0, 40)
+    }));
+    return {
+        text: String(userInput || '').slice(0, 1400),
+        currentLocationId: String(sess.playerLocation || ''),
+        currentOutfit: String(sess.outfit || '').slice(0, 220),
+        locations: locationList, actors: actorList,
+        allowedActorIds: actorList.map(actor => actor.id),
+        allowedTargetIds: actorList.map(actor => actor.id),
+        allowedLocationIds: locationList.map(location => location.id)
+    };
+}
+
+async function requestWorldMicroFrame(world, sess, userInput) {
+    if (!userInput || !window.HordeLabs) return null;
+    return labsProposal('world_micro_frame', buildWorldMicroFrameEnvelope(world, sess, userInput),
+        'worlds', { priority: 135 });
+}
+
+function trustedWorldMicroMove(world, sess, userInput, candidate) {
+    if (!candidate || candidate.actorId !== 'player' || candidate.intent !== 'move'
+        || candidate.phase !== 'completed' || Number(candidate.confidence) < 0.72
+        || !candidate.destinationId || !candidate.evidence) return null;
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const destination = view.locations.find(location => location.id === candidate.destinationId);
+    if (!destination || !findWorldTravelPath(view, sess.playerLocation, destination.id)) return null;
+    const evidencePhrase = extractUserMovementTarget(candidate.evidence);
+    const evidenceTarget = evidencePhrase
+        ? resolveWorldMovementTarget(view, sess.playerLocation, evidencePhrase) : null;
+    const namedInEvidence = ` ${normalizeLocationSearchText(candidate.evidence)} `
+        .includes(` ${normalizeLocationSearchText(destination.name)} `);
+    return evidenceTarget?.id === destination.id || namedInEvidence ? destination : null;
+}
+
+function applyUserDirectedMovement(world, sess, userInput, microCandidate = null) {
+    let targetPhrase = extractUserMovementTarget(userInput);
     const playerState = normalizePlayerRulesState(world, sess);
     if (playerState?.status !== 'active') {
         showToast(playerState.status === 'dead'
@@ -17783,7 +18010,17 @@ function applyUserDirectedMovement(world, sess, userInput) {
             : 'You are incapacitated and cannot travel until you recover.', 'info');
         return '';
     }
-    const targetLoc = resolveWorldMovementTarget(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, targetPhrase);
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    let targetLoc = targetPhrase ? resolveWorldMovementTarget(view, sess.playerLocation, targetPhrase) : null;
+    const exactDeterministicTarget = targetLoc && [targetLoc.id, targetLoc.name]
+        .some(value => normalizeLocationSearchText(value) === normalizeLocationSearchText(targetPhrase));
+    const microTarget = trustedWorldMicroMove(world, sess, userInput, microCandidate);
+    if (microTarget && (!targetLoc || (!exactDeterministicTarget && microTarget.id !== targetLoc.id))) {
+        console.log(`Horde Labs: Micro World Sensor resolved movement to ${microTarget.name}.`);
+        targetLoc = microTarget;
+        targetPhrase = candidateEvidenceMovementPhrase(microCandidate) || targetPhrase || microTarget.name;
+    }
+    if (!targetPhrase && !targetLoc) return '';
     if (!targetLoc) {
         const knownButBlocked = findFuzzyLocation(targetPhrase, world.locations);
         if (knownButBlocked) {
@@ -17823,6 +18060,10 @@ function applyUserDirectedMovement(world, sess, userInput) {
     return `\n[SYSTEM: The player has just arrived at ${targetLoc.name}${routeNames.length > 2 ? ` by the valid route ${routeNames.join(' → ')}` : ''}. Narrate the arrival and describe who they see there immediately.]`;
 }
 
+function candidateEvidenceMovementPhrase(candidate) {
+    return extractUserMovementTarget(candidate?.evidence || '');
+}
+
 async function executeWorldTurn(commandOrReroll = null) {
     // Re-entry guard: a world turn mutates sess.history, the clock, and NPC
     // spawns — running two concurrently corrupts state. Block until the
@@ -17854,6 +18095,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     let committedMovement = null;
     let committedOutfit = null;
     let turnCallAudit = null;
+    let labsWorldFrame = null;
 
     try {
         world = state.worlds.find(w => w.id === state.activeWorldId);
@@ -17953,18 +18195,23 @@ async function executeWorldTurn(commandOrReroll = null) {
         }
 
         if (command !== "init" && command !== "look" && command !== "continue") {
+            labsWorldFrame = await requestWorldMicroFrame(world, sess, userInput);
             const movementOrigin = sess.playerLocation;
             const originWitnesses = sessionNpcs(world, sess)
                 .filter(npc => sess.entityStates?.[npc.id]?.location === movementOrigin && isNpcActive(sess.entityStates[npc.id]))
                 .map(npc => npc.id);
-            arrivalContext = applyUserDirectedMovement(world, sess, userInput);
+            arrivalContext = applyUserDirectedMovement(world, sess, userInput, labsWorldFrame?.candidate);
             if (sess.playerLocation !== movementOrigin) {
                 committedMovement = {
                     originId: movementOrigin,
                     destinationId: sess.playerLocation
                 };
             }
-            const outfitResult = applyPlayerOutfitIntent(sess, userInput);
+            const outfitResult = applyPlayerOutfitIntent(sess, userInput)
+                || (labsWorldFrame?.candidate?.intent === 'outfit'
+                    && labsWorldFrame.candidate.phase === 'completed'
+                    && Number(labsWorldFrame.candidate.confidence) >= 0.72
+                    ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null);
             if (outfitResult) committedOutfit = outfitResult;
             addWorldMessage('user', userInput, {
                 location: movementOrigin,
@@ -17977,8 +18224,13 @@ async function executeWorldTurn(commandOrReroll = null) {
     }
 
     if (isReroll && command !== "init" && command !== "look" && command !== "continue") {
-        arrivalContext = applyUserDirectedMovement(world, sess, userInput);
-        applyPlayerOutfitIntent(sess, userInput);
+        labsWorldFrame = await requestWorldMicroFrame(world, sess, userInput);
+        arrivalContext = applyUserDirectedMovement(world, sess, userInput, labsWorldFrame?.candidate);
+        applyPlayerOutfitIntent(sess, userInput)
+            || (labsWorldFrame?.candidate?.intent === 'outfit'
+                && labsWorldFrame.candidate.phase === 'completed'
+                && Number(labsWorldFrame.candidate.confidence) >= 0.72
+                ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null);
     }
 
     // A turn-based living world advances exactly once per genuine player turn.
@@ -18000,16 +18252,10 @@ async function executeWorldTurn(commandOrReroll = null) {
         const allPresentNPCs = sessionNpcs(world, sess).filter(ent =>
             sess.entityStates[ent.id]?.location === sess.playerLocation && isNpcActive(sess.entityStates[ent.id]));
         const presentNPCs = selectForegroundNpcs(world, sess, allPresentNPCs, userInput, 16);
-        const labsWorldLens = !['init', 'look', 'continue'].includes(command) && userInput
-            ? await labsProposal('event_lens', {
-                text: String(userInput).slice(0, 2600),
-                narrative: String(userInput).slice(0, 2600),
-                currentPlayerLocationId: sess.playerLocation,
-                allowedActorIds: ['player', ...sessionNpcs(world, sess).map(npc => npc.id)],
-                allowedTargetIds: ['player', ...sessionNpcs(world, sess).map(npc => npc.id)],
-                allowedLocationIds: visibleLocations.map(location => location.id),
-                nearbyCharacterIds: presentNPCs.map(npc => npc.id)
-            }, 'worlds', { priority: 125 }) : null;
+        // One compact, Micro-capable preflight replaces the old automatic
+        // Small-only Event Lens. Rich continuity auditing remains available to
+        // stronger local models without spamming Tiny Brain diagnostics.
+        const labsWorldLens = labsWorldFrame;
 
         // KNOWLEDGE GRAPH: stamp the just-submitted player message with who
         // witnessed it. Every message's witness list is the ground truth for
@@ -18260,7 +18506,7 @@ Characters in this world are NOT omniscient. They only know what they have perso
         }));
 
     const labsWorldHint = labsWorldLens?.candidate && Number(labsWorldLens.candidate.confidence) >= 0.55
-        ? `\n\n[PRIVATE LOCAL EVENT LENS — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor and completion scope only. It cannot move anyone, create facts, replace commit_world_turn, or override deterministic state. If it conflicts with the player's words or canonical frame, ignore it.`
+        ? `\n\n[PRIVATE MICRO WORLD SENSOR — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor, intent, destination, outfit, explicit time and completion scope only. The graph still owns routes and travel time. It cannot create facts, replace commit_world_turn, or override canonical state. If it conflicts with the player's words or canonical frame, ignore it.`
         : '';
 
     let systemPrompt = `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
@@ -19777,7 +20023,9 @@ ${modularMandate}
             // identical postSnapshot beside it doubled every ordinary turn in
             // persisted timelines, especially painfully in large worlds.
             delete dmMsg.postSnapshot;
-            if (window.HordeLabs?.policyFor('worlds') === 'audit') {
+            const continuityCapability = window.HordeLabs?.taskCapabilities?.()
+                .find(task => task.id === 'continuity_sentinel');
+            if (window.HordeLabs?.policyFor('worlds') === 'audit' && continuityCapability?.available) {
                 void window.HordeLabs.propose('continuity_sentinel', {
                     narrative: cleanText.slice(0, 6500),
                     preFrame: {
@@ -27487,13 +27735,14 @@ function normalizeCompanion(raw) {
         ttsMode: ['openrouter', 'browser'].includes(c.ttsMode) ? c.ttsMode : 'browser',
         ttsModel: ttsModelMigrations[storedTtsModel] || storedTtsModel,
         ttsVoice: typeof c.ttsVoice === 'string' ? c.ttsVoice : 'alloy',
-        ttsResponseFormat: ['auto', 'mp3', 'pcm'].includes(c.ttsResponseFormat) ? c.ttsResponseFormat : 'auto',
+        ttsResponseFormat: ['auto', 'mp3', 'pcm', 'wav', 'ogg', 'opus', 'aac', 'flac'].includes(c.ttsResponseFormat)
+            ? c.ttsResponseFormat : 'auto',
         ttsSpeed: Number.isFinite(Number(c.ttsSpeed)) ? livingClamp(Number(c.ttsSpeed), 0.5, 2) : 1,
         ttsProviderOptions: normalizeCompanionTTSProviderOptions(c.ttsProviderOptions),
         sleepArchetype: COMPANION_SLEEP_ARCHETYPES.includes(c.sleepArchetype) ? c.sleepArchetype : 'normal',
-        textProvider: ['provider', 'openrouter', 'gptproto', 'local'].includes(c.textProvider)
+        textProvider: ['provider', ...TEXT_PROVIDER_IDS].includes(c.textProvider)
             ? c.textProvider : 'provider',
-        imageSource: ['provider', 'openrouter', 'gptproto', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(c.imageSource)
+        imageSource: ['provider', 'openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(c.imageSource)
             ? c.imageSource : 'provider',
         imageModel: typeof c.imageModel === 'string' ? c.imageModel : '',
         mcpImageTool: typeof c.mcpImageTool === 'string' ? c.mcpImageTool.trim().slice(0, 300) : '',
@@ -29891,7 +30140,53 @@ function gptProtoImageEndpoint(modelId, usedReference = false) {
 }
 
 function companionImageModelFallback(providerId = state.globalSettings.apiProvider) {
-    return normalizedProviderId(providerId) === 'gptproto' ? GPTPROTO_IMAGE_MODELS[0].id : COMPANION_IMAGE_MODEL_FALLBACK;
+    const provider = normalizedProviderId(providerId);
+    if (provider === 'gptproto') return GPTPROTO_IMAGE_MODELS[0].id;
+    if (provider === 'nanogpt') return 'hidream';
+    return COMPANION_IMAGE_MODEL_FALLBACK;
+}
+
+const NANOGPT_SINGLE_REFERENCE_MODELS = new Set([
+    'flux-dev-image-to-image', 'ghiblify', 'gemini-flash-edit', 'hidream-edit',
+    'bagel', 'sdxl-arlimix-v1', 'upscaler'
+]);
+const NANOGPT_MULTI_REFERENCE_MODELS = new Set([
+    'flux-kontext', 'flux-kontext/dev', 'gpt-4o-image', 'gpt-image-1'
+]);
+
+function nanoGPTImageReferenceMode(modelId) {
+    const id = String(modelId || '').toLowerCase();
+    if (NANOGPT_MULTI_REFERENCE_MODELS.has(id)) return 'multiple';
+    if (NANOGPT_SINGLE_REFERENCE_MODELS.has(id)) return 'single';
+    return '';
+}
+
+function enrichNanoGPTImageModel(model) {
+    const raw = isPlainObject(model?.supported_parameters) ? model.supported_parameters : {};
+    const resolutions = Array.isArray(raw.resolutions) ? raw.resolutions
+        : Array.isArray(raw.size) ? raw.size : [];
+    const evidence = JSON.stringify({ raw, capabilities: model?.capabilities, task: model?.task }).toLowerCase();
+    const referenceMode = nanoGPTImageReferenceMode(model?.id);
+    const supportsReference = !!referenceMode
+        || /im(?:age)?2im(?:age)?|image[-_ ]to[-_ ]image|imageDataUrl|input.image|reference/i.test(evidence)
+        || (Array.isArray(model?.architecture?.input_modalities)
+            && model.architecture.input_modalities.map(value => String(value).toLowerCase()).includes('image'));
+    return {
+        ...model,
+        architecture: {
+            ...(isPlainObject(model?.architecture) ? model.architecture : {}),
+            input_modalities: supportsReference ? ['text', 'image'] : ['text'],
+            output_modalities: ['image']
+        },
+        supported_parameters: {
+            ...(resolutions.length ? { size: { type: 'enum', values: resolutions } } : {}),
+            ...(supportsReference ? { input_references: { type: 'range', min: 0, max: 1 } } : {}),
+            seed: { type: 'range', min: 0, max: 2147483647 },
+            ...(Array.isArray(raw.output_formats) ? { output_format: { type: 'enum', values: raw.output_formats } } : {})
+        },
+        nanogpt_reference_capable: supportsReference,
+        nanogpt_reference_mode: referenceMode || (supportsReference ? 'single' : '')
+    };
 }
 
 const companionOutputModelCache = new Map();
@@ -30007,8 +30302,9 @@ async function getCompanionOutputModels(modality, force = false, providerId = st
     let models = [];
     try {
         const queryModality = modality === 'audio' ? 'speech' : modality;
-        const catalogPath = modality === 'text'
-            ? '/models'
+        const catalogPath = provider === 'nanogpt'
+            ? (modality === 'text' ? '/models' : modality === 'image' ? '/image-models?detailed=true' : '/audio-models?detailed=true')
+            : modality === 'text' ? '/models'
             : (modality === 'image' && provider === 'openrouter'
                 ? '/images/models'
                 : (provider === 'gptproto' ? '/models' : `/models?output_modalities=${encodeURIComponent(queryModality)}`));
@@ -30017,7 +30313,10 @@ async function getCompanionOutputModels(modality, force = false, providerId = st
         });
         if (!response.ok) throw new Error(`Model catalog request failed (${response.status})`);
         const data = await response.json();
-        models = (Array.isArray(data?.data) ? data.data : [])
+        const catalogEntries = Array.isArray(data) ? data
+            : Array.isArray(data?.data) ? data.data
+            : Array.isArray(data?.models) ? data.models : [];
+        models = catalogEntries
             .filter(model => isPlainObject(model) && typeof model.id === 'string')
             .map(model => ({ ...model, name: typeof model.name === 'string' ? model.name : model.id }));
         if (provider === 'gptproto' && modality === 'image') {
@@ -30035,6 +30334,29 @@ async function getCompanionOutputModels(modality, force = false, providerId = st
                 });
             });
             models = [...byId.values()].map(enrichGptProtoImageModel);
+        }
+        if (provider === 'nanogpt' && modality === 'image') {
+            models = models.map(enrichNanoGPTImageModel);
+        }
+        if (provider === 'nanogpt' && modality === 'audio') {
+            // Every entry came from NanoGPT's audio-only catalog. Normalize
+            // the varied catalog shapes into the same descriptors used by the
+            // voice picker instead of guessing from model-name substrings.
+            models = models.filter(model => {
+                const evidence = `${model.id || ''} ${model.name || ''} ${model.description || ''} ${model.task || ''}`.toLowerCase();
+                return !/\b(?:music|transcrib|transcription|speech[-_ ]to[-_ ]text|stt|whisper)\b/.test(evidence);
+            }).map(model => ({
+                ...model,
+                architecture: {
+                    ...(isPlainObject(model.architecture) ? model.architecture : {}),
+                    input_modalities: ['text'],
+                    output_modalities: ['speech']
+                },
+                supported_voices: Array.isArray(model.supported_voices) ? model.supported_voices
+                    : Array.isArray(model.voices) ? model.voices : [],
+                supported_parameters: Array.isArray(model.supported_parameters) ? model.supported_parameters
+                    : Object.keys(isPlainObject(model.supported_parameters) ? model.supported_parameters : {})
+            }));
         }
         if (provider === 'gptproto' && modality === 'audio') {
             const existing = models.find(model => model.id === 'gpt-4o-mini-tts') || {};
@@ -30078,10 +30400,15 @@ function rankCompanionImageModels(models, providerId = state.globalSettings.apiP
     const provider = normalizedProviderId(providerId);
     const source = provider === 'gptproto'
         ? (Array.isArray(models) ? models : []).map(enrichGptProtoImageModel)
+        : provider === 'nanogpt'
+            ? (Array.isArray(models) ? models : []).map(enrichNanoGPTImageModel)
         : (Array.isArray(models) ? models : []);
     const list = source.filter(isImageCapableModel);
     if (!list.length) {
-        const fallbacks = normalizedProviderId(providerId) === 'gptproto' ? GPTPROTO_IMAGE_MODELS : COMPANION_IMAGE_MODEL_FALLBACKS;
+        const fallbacks = provider === 'gptproto' ? GPTPROTO_IMAGE_MODELS
+            : provider === 'nanogpt'
+                ? [{ id: 'hidream', name: 'HiDream', architecture: { output_modalities: ['image'] } }]
+                : COMPANION_IMAGE_MODEL_FALLBACKS;
         fallbacks.forEach(fb =>
             list.push({ ...fb, architecture: fb.architecture || { output_modalities: ['image'] }, pricing: {} }));
     }
@@ -30351,7 +30678,13 @@ function buildCompanionImageRequest(companion, sceneDescription, options = {}) {
         prompt: buildCompanionPhotoPrompt(companion, sceneDescription, { ...options, hasReference: includeReference })
     };
     if (includeReference) {
-        if (provider === 'gptproto') {
+        if (provider === 'nanogpt') {
+            // NanoGPT accepts browser-local identity references directly as a
+            // data URL. This avoids a public image host and keeps the photo on
+            // the user's device until the generation request is submitted.
+            if (nanoGPTImageReferenceMode(model) === 'multiple') body.imageDataUrls = [companion.basePhoto];
+            else body.imageDataUrl = companion.basePhoto;
+        } else if (provider === 'gptproto') {
             // GPTProto's OpenAI-compatible image endpoint accepts the identity
             // reference as a base64 data string or public URL in `image`.
             body.image = companion.basePhoto;
@@ -30548,7 +30881,8 @@ async function pollGptProtoImagePrediction(data, headers, signal, requestedMedia
 async function requestCompanionPhoto(body, providerId = state.globalSettings.apiProvider) {
     const provider = normalizedProviderId(providerId);
     const catalogModel = companionImageModelCatalog.find(item => item.id === body.model);
-    const usedReference = !!body.input_references?.length || !!body.image;
+    const usedReference = !!body.input_references?.length || !!body.image
+        || !!body.imageDataUrl || !!body.imageDataUrls?.length;
     if (usedReference && catalogModel?.supportsReference === false) {
         throw new Error(`${catalogModel.name} does not advertise reference-image input. Choose a model marked “reference ready” in Virtual Human Studio.`);
     }
@@ -30576,7 +30910,20 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
         error.referenceTransportRejected = true;
         throw error;
     }
-    if (provider === 'gptproto' && gptprotoProfile?.transport === 'seedream-async') {
+    if (provider === 'nanogpt') {
+        // NanoGPT's OpenAI-compatible image route deliberately lives outside
+        // /api/v1. Prefer inline base64 so expiring signed URLs and browser
+        // cross-origin image policies cannot turn a paid result into a blank.
+        absoluteImageUrl = 'https://nano-gpt.com/v1/images/generations';
+        const nanoBody = {
+            ...body,
+            n: Number.isFinite(Number(body.n)) ? Number(body.n) : 1,
+            response_format: 'b64_json'
+        };
+        delete nanoBody.input_references;
+        requestBody = JSON.stringify(nanoBody);
+        headers = { 'Content-Type': 'application/json', ...providerAuthHeaders(provider) };
+    } else if (provider === 'gptproto' && gptprotoProfile?.transport === 'seedream-async') {
         absoluteImageUrl = gptProtoImageEndpoint(body.model, usedReference);
         requestBody = JSON.stringify({
             prompt: body.prompt,
@@ -30880,7 +31227,8 @@ function worldVisualProvider(world) {
     const presentation = normalizeWorldPresentation(world);
     const requested = presentation.imageProvider === 'inherit'
         ? normalizedProviderId(state.globalSettings.apiProvider) : presentation.imageProvider;
-    return normalizedProviderId(requested);
+    const provider = normalizedProviderId(requested);
+    return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(provider) ? provider : 'openrouter';
 }
 
 function worldVisualModel(world, provider) {
@@ -30926,8 +31274,8 @@ async function makeWorldVisualPortable(source, maxDimension, quality) {
 async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label } = {}) {
     const presentation = normalizeWorldPresentation(world);
     const provider = worldVisualProvider(world);
-    if (!['openrouter', 'gptproto'].includes(provider)) {
-        throw new Error('Choose OpenRouter or GPTProto under World Studio → Visuals, or upload an image manually.');
+    if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
+        throw new Error('Choose OpenRouter, GPTProto or NanoGPT under World Studio → Visuals, or upload an image manually.');
     }
     if (!providerHasCredentials(provider)) {
         throw new Error(`Add a ${providerDisplayName(provider)} API key in Settings before generating world visuals.`);
@@ -31008,9 +31356,18 @@ const GPTPROTO_TTS_MODEL_FALLBACK = Object.freeze({
     supported_voices: ['alloy'],
     supported_parameters: ['voice']
 });
+const NANOGPT_TTS_MODEL_FALLBACK = Object.freeze({
+    id: 'Kokoro-82m',
+    name: 'Kokoro 82M',
+    architecture: { input_modalities: ['text'], output_modalities: ['speech'] },
+    supported_voices: ['af_bella'],
+    supported_parameters: ['voice', 'response_format', 'speed']
+});
 
 function companionTTSModelFallback() {
-    return isGPTProtoProvider() ? GPTPROTO_TTS_MODEL_FALLBACK.id : COMPANION_TTS_MODEL_FALLBACK;
+    if (isGPTProtoProvider()) return GPTPROTO_TTS_MODEL_FALLBACK.id;
+    if (isNanoGPTProvider()) return NANOGPT_TTS_MODEL_FALLBACK.id;
+    return COMPANION_TTS_MODEL_FALLBACK;
 }
 
 function isTTSCapableModel(model) {
@@ -31026,7 +31383,9 @@ function isTTSCapableModel(model) {
 function rankCompanionTTSModels(models) {
     const list = (Array.isArray(models) ? models : []).filter(isTTSCapableModel);
     if (!list.length) {
-        const fallbacks = isGPTProtoProvider() ? [GPTPROTO_TTS_MODEL_FALLBACK] : COMPANION_TTS_MODEL_FALLBACKS;
+        const fallbacks = isGPTProtoProvider() ? [GPTPROTO_TTS_MODEL_FALLBACK]
+            : isNanoGPTProvider() ? [NANOGPT_TTS_MODEL_FALLBACK]
+            : COMPANION_TTS_MODEL_FALLBACKS;
         fallbacks.forEach(fb =>
             list.push({ ...fb, architecture: fb.architecture || { output_modalities: ['speech'] } }));
     }
@@ -31070,8 +31429,11 @@ function companionTTSCapabilities(modelId, modelInfo = null) {
     const description = String(modelInfo?.description || '').toLowerCase();
     const supportedParameters = new Set(modelInfo?.supportedParameters || []);
     const gptprotoSpeech = isGPTProtoProvider();
+    const nanoGPTSpeech = isNanoGPTProvider();
     const googlePCMOnly = id.startsWith('google/') && /tts|speech/.test(id);
-    const formats = gptprotoSpeech ? ['mp3'] : (googlePCMOnly ? ['pcm'] : ['mp3', 'pcm']);
+    const formats = gptprotoSpeech ? ['mp3']
+        : nanoGPTSpeech ? ['mp3', 'wav', 'ogg', 'opus', 'aac', 'flac']
+        : (googlePCMOnly ? ['pcm'] : ['mp3', 'pcm']);
     let providerSlug = '';
     if (id.startsWith('openai/')) providerSlug = 'openai';
     else if (id.startsWith('microsoft/')) providerSlug = 'azure';
@@ -31079,7 +31441,7 @@ function companionTTSCapabilities(modelId, modelInfo = null) {
     else if (id.startsWith('mistralai/')) providerSlug = 'mistral';
     else if (id.startsWith('hexgrad/')) providerSlug = 'deepinfra';
     else if (id.startsWith('google/')) providerSlug = 'google';
-    const supportsSpeed = !gptprotoSpeech && (supportedParameters.has('speed')
+    const supportsSpeed = !gptprotoSpeech && (nanoGPTSpeech || supportedParameters.has('speed')
         || id.startsWith('openai/')
         || id.startsWith('microsoft/')
         || /\bspeed (?:control|multiplier)\b/.test(description));
@@ -31098,6 +31460,10 @@ function companionTTSCapabilities(modelId, modelInfo = null) {
 
 function fallbackTTSVoicesForModel(modelId) {
     const id = String(modelId || '').toLowerCase();
+    if (isNanoGPTProvider() && id === 'kokoro-82m') return ['af_bella'];
+    if (isNanoGPTProvider() && ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'].includes(id)) {
+        return ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer'];
+    }
     if (id.startsWith('x-ai/')) return ['eve', 'ara', 'rex', 'sal', 'leo'];
     if (id.startsWith('microsoft/mai-voice')) return ['en-US-Harper:MAI-Voice-2'];
     if (id.startsWith('google/') && /tts|speech/.test(id)) {
@@ -31333,6 +31699,9 @@ function sniffTTSAudioFormat(audioBuffer, contentType = '', requestedFormat = ''
     if (bytes.length >= 12 && ascii(4, 4) === 'ftyp') {
         return { format: 'mp4', mime: 'audio/mp4', container: true };
     }
+    if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0) {
+        return { format: 'aac', mime: 'audio/aac', container: true };
+    }
     if (bytes.length >= 3 && ascii(0, 3) === 'ID3') {
         return { format: 'mp3', mime: 'audio/mpeg', container: true };
     }
@@ -31427,7 +31796,11 @@ async function generateOpenRouterSpeech(companion, text, options = {}) {
         const request = buildCompanionTTSRequest(companion, text, modelInfo, responseFormat);
         const response = await fetch(apiBase() + '/audio/speech', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
+            headers: {
+                'Content-Type': 'application/json',
+                ...authHeaders(),
+                ...providerAttributionHeaders(state.globalSettings.apiProvider)
+            },
             body: JSON.stringify(request.body)
         });
         if (!response.ok) {
@@ -33217,7 +33590,7 @@ function companionMcpTool(companion) {
 }
 
 function updateCompanionImageSourceUI(companion) {
-    const source = ['provider', 'openrouter', 'gptproto', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(companion.imageSource)
+    const source = ['provider', 'openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(companion.imageSource)
         ? companion.imageSource : 'provider';
     const isMcp = ['higgsfield', 'magnific'].includes(source);
     const isComfy = source === 'comfyui';
@@ -33233,6 +33606,7 @@ function updateCompanionImageSourceUI(companion) {
         ? providerDisplayName(companionImageProviderId(companion))
         : source === 'openrouter' ? 'OpenRouter'
         : source === 'gptproto' ? 'GPTProto'
+        : source === 'nanogpt' ? 'NanoGPT'
         : source === 'local' ? providerDisplayName(companionImageProviderId(companion))
         : source === 'local_image' ? 'local image server'
         : source === 'comfyui' ? `ComfyUI · ${activeComfyWorkflowProfile()?.name || 'active workflow'}`
@@ -33631,10 +34005,10 @@ async function populateCompanionTTSModelPicker(companion, force) {
     catch (error) { console.error('Could not read TTS models from catalog', error); }
     companionTTSModelCatalog = ranked;
     let chosen = companion.ttsModel || companionTTSModelFallback();
-    if (isGPTProtoProvider() && chosen.includes('/') && !ranked.some(model => model.id === chosen)) {
+    if ((isGPTProtoProvider() || isNanoGPTProvider()) && !ranked.some(model => model.id === chosen)) {
         chosen = ranked[0]?.id || companionTTSModelFallback();
         companion.ttsModel = chosen;
-        companion.ttsVoice = 'alloy';
+        companion.ttsVoice = fallbackTTSVoicesForModel(chosen)[0] || 'alloy';
     }
     select.innerHTML = ranked.map(model =>
         `<option value="${escapeHTML(model.id)}" ${chosen === model.id ? 'selected' : ''}>${escapeHTML(model.name)}</option>`).join('')
@@ -34365,7 +34739,7 @@ function setupCompanionsLogic() {
     document.getElementById('cs-text-provider').onchange = (event) => {
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
-        companion.textProvider = ['openrouter', 'gptproto', 'local'].includes(event.target.value)
+        companion.textProvider = TEXT_PROVIDER_IDS.includes(event.target.value)
             ? event.target.value : 'provider';
         companion.model = '';
         companion.supportedParams = [];
@@ -34376,7 +34750,7 @@ function setupCompanionsLogic() {
     document.getElementById('cs-image-source').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
-        companion.imageSource = ['openrouter', 'gptproto', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(e.target.value)
+        companion.imageSource = ['openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(e.target.value)
             ? e.target.value : 'provider';
         companion.imageModel = '';
         companion.imageProviderTag = '';

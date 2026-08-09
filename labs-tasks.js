@@ -25,6 +25,65 @@
             .map(key => [key, Math.max(-3, Math.min(3, Math.round(Number(source[key]) || 0)))]));
     }
 
+    function parseJsonCandidate(text) {
+        const source = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        try { return JSON.parse(source); } catch (_) {}
+        const start = source.indexOf('{');
+        const end = source.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            try { return JSON.parse(source.slice(start, end + 1)); } catch (_) {}
+        }
+        return null;
+    }
+
+    function compactWorldFrame(text, envelope) {
+        const json = parseJsonCandidate(text);
+        if (plainObject(json)) return json;
+        const source = String(text || '').trim().replace(/```[^\n]*\n?/g, '').replace(/```/g, '');
+        const positional = source.match(/MWF\s*[|:]\s*([^|\n]*)\|([^|\n]*)\|([^|\n]*)\|([^|\n]*)\|([^|\n]*)\|([^|\n]*)\|([^|\n]*)\|([^|\n]*)\|([\s\S]*)/i);
+        const fields = {};
+        if (positional) {
+            ['actorId', 'intent', 'destinationId', 'targetId', 'phase', 'outfitOperation', 'durationMinutes', 'confidence', 'evidence']
+                .forEach((key, index) => { fields[key] = positional[index + 1].trim(); });
+        } else {
+            const aliases = {
+                actor: 'actorId', actorid: 'actorId', intent: 'intent', destination: 'destinationId', destinationid: 'destinationId',
+                target: 'targetId', targetid: 'targetId', phase: 'phase', outfit: 'outfitOperation', outfitoperation: 'outfitOperation',
+                outfittext: 'outfitText', minutes: 'durationMinutes', duration: 'durationMinutes', durationminutes: 'durationMinutes',
+                confidence: 'confidence', evidence: 'evidence'
+            };
+            const pattern = /(?:^|[;|\n,{}])\s*["']?([a-z_]+)["']?\s*[:=]\s*["']?([^;|\n,}]*?)["']?\s*(?=$|[;|\n,}])/gi;
+            for (const match of source.matchAll(pattern)) {
+                const key = aliases[match[1].toLowerCase().replaceAll('_', '')];
+                if (key) fields[key] = match[2].trim();
+            }
+        }
+        const allowed = (value, list, fallback = '') => {
+            const raw = String(value || '').trim().replace(/^[-–—]$/, '');
+            return unique(list).find(id => id.toLowerCase() === raw.toLowerCase()) || fallback;
+        };
+        const actorId = allowed(fields.actorId, envelope.allowedActorIds, 'player');
+        const destinationId = allowed(fields.destinationId, envelope.allowedLocationIds);
+        const targetId = allowed(fields.targetId, envelope.allowedTargetIds);
+        let evidence = String(fields.evidence || '').trim().replace(/^['"]|['"]$/g, '').slice(0, 220);
+        const original = String(envelope.text || '');
+        if (evidence && !original.toLowerCase().includes(evidence.toLowerCase())) evidence = '';
+        if (!evidence && destinationId) {
+            const location = (Array.isArray(envelope.locations) ? envelope.locations : []).find(item => item.id === destinationId);
+            if (location && original.toLowerCase().includes(String(location.name || '').toLowerCase())) evidence = original.slice(0, 220);
+        }
+        let confidence = Number(fields.confidence) || 0;
+        if (confidence > 1) confidence /= 100;
+        return {
+            actorId, intent: String(fields.intent || 'other').toLowerCase(), destinationId, targetId,
+            phase: String(fields.phase || 'intended').toLowerCase(),
+            outfitOperation: String(fields.outfitOperation || 'none').toLowerCase(),
+            outfitText: String(fields.outfitText || '').slice(0, 160),
+            durationMinutes: Number(fields.durationMinutes) || 0,
+            evidence, confidence: Math.max(0, Math.min(1, confidence))
+        };
+    }
+
     HordeLabs.registerTask('social_signal', {
         mode: 'universal', minimumTier: 'micro', maxInputChars: 3500, maxOutputTokens: 100, cacheMs: 300000,
         system: `You are a tiny private classifier inside a simulation engine. Analyze only the supplied message and relationship context. Return the required JSON. Scores are evidence signals from -3 to 3, not state changes. Do not answer the message, roleplay, invent context, or diagnose the person. Evidence must be a short exact excerpt from the message or blank.`,
@@ -115,6 +174,51 @@
                 novelty: Math.max(0, Math.min(3, Math.round(Number(candidate.novelty) || 0))),
                 emotionalWeight: Math.max(0, Math.min(3, Math.round(Number(candidate.emotionalWeight) || 0))),
                 confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
+            } };
+        }
+    });
+
+    HordeLabs.registerTask('world_micro_frame', {
+        mode: 'worlds', minimumTier: 'micro', maxInputChars: 3600, maxOutputTokens: 96,
+        system: `You are a tiny semantic sensor inside a deterministic world engine. Read only the supplied player text and candidate lists. Identify the player's own completed or attempted action; quoted speech is not a physical action. Select IDs only from the supplied allowlists. Prefer an explicit later action over an ambiguous earlier phrase. Return exact evidence copied from the player text. Never narrate, invent facts, calculate routes, calculate travel time, or assume an arrival. Use blank IDs and intent "other" rather than guess.`,
+        embeddedSystem: `Classify one player action. Output exactly one short pipe-separated line and nothing else:\nMWF|actorId|intent|destinationId|-|phase|outfitOperation|durationMinutes|confidencePercent|exact evidence\nUse IDs copied from the input lists. actorId is usually player. intent is move, look, speak, interact, outfit, wait, inspect, combat, ooc, or other. phase is intended, attempted, in_progress, or completed. Use - for blank IDs. Confidence is 0 to 100. Evidence must be copied exactly from text. Quoted speech is not movement. Never explain.`,
+        parseOutput: compactWorldFrame,
+        schema: object({
+            actorId: string(),
+            intent: string(['move', 'look', 'speak', 'interact', 'outfit', 'wait', 'inspect', 'combat', 'ooc', 'other']),
+            destinationId: string(), targetId: string(),
+            phase: string(['intended', 'attempted', 'in_progress', 'completed']),
+            outfitOperation: string(['none', 'add', 'remove', 'replace', 'clear']),
+            outfitText: string(), durationMinutes: number(0, 14400),
+            evidence: string(), confidence: number(0, 1)
+        }),
+        validate(candidate, envelope) {
+            if (!plainObject(candidate)) return { ok: false, reason: 'Missing Micro World frame.' };
+            if (!idAllowed(candidate.actorId, envelope.allowedActorIds, false)) return { ok: false, reason: 'Micro World frame used an unknown actor.' };
+            if (!idAllowed(candidate.destinationId, envelope.allowedLocationIds)) return { ok: false, reason: 'Micro World frame used an unknown destination.' };
+            if (!idAllowed(candidate.targetId, envelope.allowedTargetIds)) return { ok: false, reason: 'Micro World frame used an unknown target.' };
+            if (!evidenceExists(candidate.evidence, envelope)) return { ok: false, reason: 'Micro World evidence was not present in player text.' };
+            const intents = ['move', 'look', 'speak', 'interact', 'outfit', 'wait', 'inspect', 'combat', 'ooc', 'other'];
+            const phases = ['intended', 'attempted', 'in_progress', 'completed'];
+            const outfitOperations = ['none', 'add', 'remove', 'replace', 'clear'];
+            const intent = intents.includes(candidate.intent) ? candidate.intent : 'other';
+            const evidence = String(candidate.evidence || '').trim().slice(0, 220);
+            if (intent !== 'other' && !evidence) return { ok: false, reason: 'A classified World action needs exact evidence.' };
+            const outfitOperation = outfitOperations.includes(candidate.outfitOperation) ? candidate.outfitOperation : 'none';
+            const outfitText = String(candidate.outfitText || '').trim().slice(0, 160);
+            if (outfitText && !evidence.toLowerCase().includes(outfitText.toLowerCase())) {
+                return { ok: false, reason: 'Outfit text was not grounded in the evidence span.' };
+            }
+            const noOp = intent === 'other' && Number(candidate.confidence) === 0;
+            return { ok: true, reason: noOp
+                ? 'Tiny output reduced to a safe no-op; deterministic parsing retained control.'
+                : 'Micro World frame is allowlisted and evidence-grounded.', value: {
+                actorId: String(candidate.actorId), intent,
+                destinationId: String(candidate.destinationId || ''), targetId: String(candidate.targetId || ''),
+                phase: phases.includes(candidate.phase) ? candidate.phase : 'intended',
+                outfitOperation, outfitText,
+                durationMinutes: Math.max(0, Math.min(14400, Math.round(Number(candidate.durationMinutes) || 0))),
+                evidence, confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
             } };
         }
     });

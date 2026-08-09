@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${1:-12.0.1}"
+VERSION="${1:-12.5.0}"
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 APP_DIR="$BUILD_DIR/Horde Studio"
@@ -25,7 +25,9 @@ for file in \
   labs-embedded-worker.js \
   labs-core.js \
   labs-tasks.js \
+  labs-guide.js \
   labs-ui.js \
+  help-system.js \
   policy-panic-world.js \
   favicon.svg \
   horde_mcp_bridge.py \

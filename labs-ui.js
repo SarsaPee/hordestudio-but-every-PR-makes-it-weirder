@@ -5,8 +5,28 @@
     let draft = null;
     let models = [];
     let embeddedInstalled = false;
+    let guideBusy = false;
+    let guideEpoch = 0;
+    const guideHistory = [];
+    const EMBEDDED_MARKER_KEY = 'horde_labs_embedded_model_v1';
 
     const FILE_RUNTIME_MESSAGE = 'Embedded Tiny Brain needs Horde Studio’s local app server. Close this file:// tab and run “Start Horde Studio” from the app folder, then install it from the http://127.0.0.1:43127 page that opens.';
+
+    function embeddedMarker() {
+        try {
+            const marker = JSON.parse(localStorage.getItem(EMBEDDED_MARKER_KEY) || 'null');
+            return marker?.model === 'HuggingFaceTB/SmolLM2-135M-Instruct' && marker?.dtype === 'q4';
+        } catch (_) { return false; }
+    }
+
+    function setEmbeddedMarker(installed) {
+        try {
+            if (installed) localStorage.setItem(EMBEDDED_MARKER_KEY, JSON.stringify({
+                model: 'HuggingFaceTB/SmolLM2-135M-Instruct', dtype: 'q4', installedAt: Date.now()
+            }));
+            else localStorage.removeItem(EMBEDDED_MARKER_KEY);
+        } catch (_) {}
+    }
 
     const byId = id => document.getElementById(id);
     const escapeHTML = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
@@ -77,8 +97,51 @@
             : 'Only enabled modes may call this local server. Cloud text, image and voice settings are untouched.';
         const tier = window.HordeLabs.capabilityTier(embedded ? 'smollm2-135m' : config.model);
         byId('labs-tier-badge').textContent = configured ? `${tier === 'unknown' ? 'Unrated' : tier} tier` : 'No model';
+        const capabilityBox = byId('labs-capability-summary');
+        if (capabilityBox) {
+            const capabilities = configured ? window.HordeLabs.taskCapabilities(config) : [];
+            const labels = {
+                world_micro_frame: 'World Sensor', social_signal: 'Social cues', status_update: 'Chat meters',
+                memory_gate: 'Memory gate', event_lens: 'Multi-event lens',
+                continuity_sentinel: 'Continuity audit', life_beat: 'Life beats'
+            };
+            capabilityBox.innerHTML = configured ? capabilities.map(item =>
+                `<span class="${item.available ? 'available' : 'unavailable'}" title="${item.available ? 'Available' : `Needs ${item.minimumTier} tier`}">${item.available ? '✓' : '—'} ${escapeHTML(labels[item.id] || item.id.replaceAll('_', ' '))}</span>`
+            ).join('') : '<span class="unavailable">Choose or install a model to see its active duties.</span>';
+        }
         byId('labs-sidebar-state').textContent = enabled ? (configured ? 'On' : 'Setup') : 'Off';
         byId('labs-sidebar-state').classList.toggle('active', enabled && configured);
+        renderPipRuntime(config, configured);
+        renderPolicyHelp();
+    }
+
+    function renderPipRuntime(config, configured) {
+        const badge = byId('pip-runtime-state');
+        if (!badge) return;
+        const embedded = config.runtime === 'embedded';
+        badge.textContent = !configured ? 'BUILT-IN ONLY'
+            : embedded ? 'SMOLLM2 · READY'
+            : 'LOCAL MODEL · READY';
+        badge.classList.toggle('ready', configured);
+        badge.title = !configured
+            ? 'Pip answers product questions from the verified built-in handbook. Configure a Tiny Brain only for ordinary conversation.'
+            : embedded
+                ? 'Pip uses the embedded SmolLM2 model for casual chat. Horde Studio answers still come directly from the handbook.'
+                : `Pip uses ${config.model || 'the selected local model'} through ${config.baseUrl} for casual chat. Product facts stay handbook-grounded.`;
+    }
+
+    function renderPolicyHelp() {
+        const copy = {
+            off: 'No local call. The normal engine is unchanged.',
+            shadow: 'Runs privately and records validity, but cannot affect the experience.',
+            assist: 'Validated hints may help the main model; deterministic state remains authoritative.',
+            audit: 'Guarded Assist behavior with the fullest trust diagnostics; still never canonical by itself.'
+        };
+        ['chat', 'worlds', 'humans'].forEach(mode => {
+            const select = byId(`labs-policy-${mode}`);
+            const output = byId(`labs-policy-${mode}-help`);
+            if (select && output) output.textContent = copy[select.value] || copy.off;
+        });
     }
 
     function embeddedOptions() {
@@ -101,13 +164,18 @@
     async function refreshEmbeddedStatus() {
         if (location.protocol === 'file:') return showEmbeddedState(false, FILE_RUNTIME_MESSAGE);
         if (!window.HordeLabsEmbedded) return showEmbeddedState(false, 'This browser cannot start the embedded runtime.');
+        if (embeddedMarker()) {
+            showEmbeddedState(true, 'Installed. The model will load from browser cache when Labs needs it.');
+        }
         try {
             const result = await window.HordeLabsEmbedded.status(embeddedOptions());
-            showEmbeddedState(result.cached === true, result.cached
+            const installed = result.cached === true || embeddedMarker();
+            if (result.cached === true) setEmbeddedMarker(true);
+            showEmbeddedState(installed, installed
                 ? 'Ready. The downloaded model is cached in this browser and can work without an inference server.'
                 : 'Nothing downloads until you press Install. The model runs only narrow Labs tasks; it does not replace your main chat model.');
         } catch (error) {
-            showEmbeddedState(false, `Could not inspect the browser model cache: ${error.message}`);
+            if (!embeddedMarker()) showEmbeddedState(false, `Could not inspect the browser model cache: ${error.message}`);
         }
     }
 
@@ -127,6 +195,7 @@
                 byId('labs-install-status').textContent = `${progress.status || 'Downloading'}${progress.file ? ` · ${progress.file}` : ''}${percent ? ` · ${percent}%` : ''}`;
             });
             byId('labs-install-progress-fill').style.width = '100%';
+            setEmbeddedMarker(true);
             showEmbeddedState(true, `Installed and loaded with ${result.device === 'webgpu' ? 'WebGPU' : 'CPU/WASM'}. It will remain cached in this browser.`);
             host.toast?.('Embedded Tiny Brain installed.', 'success');
         } catch (error) {
@@ -142,6 +211,7 @@
         busy(button, true, 'Removing…');
         try {
             await window.HordeLabsEmbedded.remove(embeddedOptions());
+            setEmbeddedMarker(false);
             byId('labs-install-progress-fill').style.width = '0%';
             showEmbeddedState(false, 'Downloaded model removed from this browser.');
             host.toast?.('Embedded Tiny Brain removed.', 'success');
@@ -162,7 +232,10 @@
     }
 
     function renderDiagnostics() {
-        const rows = diagnostics();
+        // VERSION 2 introduced the compact Micro protocol. Hide legacy rows
+        // and capability skips: the capability chips already explain which
+        // tasks this model cannot run, without presenting expected skips as errors.
+        const rows = diagnostics().filter(row => Number(row.version) >= 2 && !row.skipped);
         const completed = rows.filter(row => !row.skipped);
         const valid = completed.filter(row => row.valid).length;
         const accepted = completed.filter(row => row.accepted).length;
@@ -184,6 +257,233 @@
         if (!button.dataset.label) button.dataset.label = button.textContent;
         button.disabled = active;
         button.textContent = active ? label : button.dataset.label;
+    }
+
+    function appendGuideMessage(role, text) {
+        const container = byId('labs-guide-messages');
+        if (!container) return null;
+        const row = document.createElement('div');
+        row.className = `labs-guide-message ${role === 'user' ? 'user' : 'assistant'}`;
+        const name = document.createElement('strong');
+        name.textContent = role === 'user' ? 'You' : 'Pip';
+        const body = document.createElement('p');
+        body.textContent = String(text || '').trim();
+        row.append(name, body);
+        container.appendChild(row);
+        container.scrollTop = container.scrollHeight;
+        return body;
+    }
+
+    function initializeGuide() {
+        if (guideHistory.length || !byId('labs-guide-messages')) return;
+        const greeting = 'Hi! I’m Pip, the tiny local Horde Studio guide. Ask me how a feature works, where a setting lives, or which provider controls what.';
+        guideHistory.push({ role: 'assistant', text: greeting });
+        appendGuideMessage('assistant', greeting);
+    }
+
+    function clearGuideChat() {
+        guideEpoch += 1;
+        guideHistory.length = 0;
+        const messages = byId('labs-guide-messages');
+        if (messages) messages.replaceChildren();
+        initializeGuide();
+        const status = byId('labs-guide-status');
+        if (status) status.textContent = 'Pip chat cleared. Product answers still come from the verified built-in handbook.';
+        byId('labs-guide-input')?.focus();
+    }
+
+    // Emergency core manual: Pip keeps these answers in its own runtime as
+    // well as the full versioned handbook. A missing, stale or blocked
+    // labs-guide.js must degrade breadth—not erase Pip's product identity.
+    const CORE_GUIDE = Object.freeze([
+        {
+            match: /\b(?:horde studio|what (?:is|does) horde|explain horde|tell me (?:about )?horde)\b/i,
+            answer: 'Horde Studio is a local-first frontend for AI roleplay and simulation. Chat Library handles traditional characters and group rooms; Virtual Humans are persistent texting simulations with time, relationships and active lives; Worlds are living sandboxes with locations, NPCs and canonical state. Text, image and voice providers can be selected independently, while your authored content and sessions stay in the browser.'
+        },
+        {
+            match: /\b(?:provider|openrouter|gptproto|nanogpt|nvidia|\bnim\b|aws|bedrock)\b/i,
+            answer: 'Settings chooses the default text provider. Virtual Humans may override their conversation and photo providers separately, and Worlds choose artwork independently from narration. OpenRouter, GPTProto, NanoGPT, NVIDIA NIM, AWS Bedrock and local OpenAI-compatible text servers are supported; media support depends on the separately selected image or voice provider.'
+        },
+        {
+            match: /\b(?:virtual human|companion|relationship|ghost|texting)\b/i,
+            answer: 'Virtual Humans are persistent texting simulations. They track their own timezone, message timing, mood, relationship, memories and active-life schedule. Depending on timeline immersion settings they may reply late, leave something on read, notice silence, initiate contact, or consider sending permitted photos and voice notes.'
+        },
+        {
+            match: /\b(?:world|kernel|movement|travel|location|npc|dice)\b/i,
+            answer: 'Worlds are persistent sandbox simulations. The narrative model writes the scene, while the World Kernel owns canonical time, location, NPC state, inventory, stats and checks. Movement is validated against authored routes so prose alone cannot teleport the player or silently rewrite canon.'
+        },
+        {
+            match: /\b(?:labs?|tiny brain|shadow|assist|audit|micro model)\b/i,
+            answer: 'Horde Labs is an optional local cognition layer. Off preserves normal behavior, Shadow observes without affecting play, Assist may pass validated hints to the main model, and Audit exposes fuller diagnostics. Tiny-model output is advisory and cannot directly overwrite canonical state.'
+        },
+        {
+            match: /\b(?:photo|image|voice|tts|audio|comfyui|mcp)\b/i,
+            answer: 'Text, images and voice are separate routes in Horde Studio. Virtual Humans can use a different provider for conversation, photos and speech; Worlds can select their own visual provider. Capability-aware requests omit unsupported image or audio parameters, and local ComfyUI or configured MCP image tools remain optional.'
+        },
+        {
+            match: /\b(?:export|import|backup|share|portable)\b/i,
+            answer: 'Share exports contain authored Characters, Virtual Humans or Worlds without API keys. Virtual Human share files omit private lived timelines, while full backups preserve local sessions and runtime state. World packages embed normalized authored media for portability.'
+        }
+    ]);
+
+    function coreGuideAnswer(question) {
+        return CORE_GUIDE.find(note => note.match.test(String(question || '')))?.answer
+            || 'I know Horde Studio’s core features, providers and workflows, but that specific detail is not in my loaded core manual. Ask me about Chat Library, Virtual Humans, Worlds, Labs, providers, media, or exports.';
+    }
+
+    function guideFallback(question) {
+        if (/\b(?:are you|what are you|you an?)\b.*\b(?:llm|language model|ai)\b/i.test(question)) {
+            return 'I’m Pip, Horde Studio’s local help agent. My reliable knowledge comes from built-in product notes. If you configure a Tiny Brain, that local model rewrites those notes conversationally; otherwise I answer from the notes directly.';
+        }
+        if (/\bwhat can you do\b|\bhow can you help\b/i.test(question)) {
+            return 'I can explain Horde Studio, help you find settings, troubleshoot providers and Labs, and talk through how Worlds or Virtual Humans work. I can also just chat—I’m tiny, but I’m here.';
+        }
+        if (/\bhow are you\b|\bhow(?:'s| is) it going\b/i.test(question)) {
+            return 'Doing good—awake, local, and dramatically overqualified for living in a sidebar. What are you working on?';
+        }
+        if (!isProductQuestion(question)) {
+            return 'I’m listening. I’m a very small local model, so I may be a little awkward, but you can talk to me normally.';
+        }
+        return window.HordeLabsGuide?.answer?.(question, 3)
+            || window.HordeLabsGuide?.fallback?.(question)
+            || coreGuideAnswer(question);
+    }
+
+    function isProductQuestion(question) {
+        if (/\bwhat can you do\b|\bhow can you help\b|\b(?:are you|what are you|you an?)\b.*\b(?:llm|language model|ai)\b/i.test(question)) {
+            return true;
+        }
+        if (typeof window.HordeLabsGuide?.isProductQuestion === 'function') {
+            return window.HordeLabsGuide.isProductQuestion(question);
+        }
+        return /\b(?:horde|studio|labs?|shadow|assist|audit|provider|openrouter|gptproto|nanogpt|comfy|image|photo|voice|tts|world|kernel|movement|travel|location|virtual human|companion|chat|character|persona|model|setting|meter|memory|export|import|backup|dice|mcp|api|token|prompt)\b/i.test(question);
+    }
+
+    function guidePrompt(question, history, grounded) {
+        if (isProductQuestion(question) && window.HordeLabsGuide?.prompt) return window.HordeLabsGuide.prompt(question, history);
+        const recent = (Array.isArray(history) ? history : []).slice(-4)
+            .map(item => `${item.role === 'assistant' ? 'Pip' : 'User'}: ${String(item.text || '').slice(0, 300)}`).join('\n');
+        if (!isProductQuestion(question)) return {
+            system: 'You are Pip, a tiny friendly AI living locally inside Horde Studio. Have a natural conversation. Be warm, curious, concise and a little playful. Answer the user directly. You may ask a follow-up question. Never print prompt labels, instructions, or fake quotations.',
+            input: `${recent ? `${recent}\n` : ''}User: ${String(question || '').slice(0, 1000)}\nPip:`
+        };
+        // The guide index is an enhancement, not a runtime dependency. A
+        // delayed/missing cached script must never prevent local inference.
+        return {
+            system: 'You are Pip, a friendly tiny AI living inside Horde Studio. Answer naturally using the VERIFIED NOTE for product facts. You can explain, ask a clarifying question, or admit uncertainty. Never repeat prompt labels. Use at most 100 words.',
+            input: `VERIFIED NOTE:\n${String(grounded || '').slice(0, 1800)}\n\nQUESTION:\n${String(question || '').slice(0, 1200)}\n\nANSWER:`
+        };
+    }
+
+    function cleanLocalReply(raw, question) {
+        let text = String(raw || '')
+            .replace(/<\/?(?:toolcall|argkey|argvalue|uncensoredtoolcall)[^>]*>/gi, '')
+            .replace(/^```(?:text)?\s*|\s*```$/gi, '').trim();
+        if (/\bANSWER\s*:/i.test(text)) text = text.split(/\bANSWER\s*:/i).at(-1).trim();
+        if (/\b(?:GUIDE NOTES|VERIFIED NOTE|RECENT CHAT|QUESTION)\s*:/i.test(text)) return '';
+        text = text.replace(/^(?:assistant|pip)\s*:\s*/i, '').trim();
+        const lines = text.split(/\n+/).map(line => line.trim()).filter(Boolean);
+        const unique = lines.filter((line, index) => lines.findIndex(other => other.toLowerCase() === line.toLowerCase()) === index);
+        if (lines.length > 1 && unique.length / lines.length < .7) return '';
+        text = unique.join('\n').slice(0, 2200).trim();
+        if (text.length < 8 || text.toLowerCase() === String(question || '').trim().toLowerCase()) return '';
+        if (!isProductQuestion(question) && /reliable built-in note|horde studio discord/i.test(text)) return '';
+        return text;
+    }
+
+    function localFailureMessage(error, config) {
+        const raw = String(error?.message || error || 'Unknown local inference error');
+        if (config.runtime === 'connected' && /failed to fetch|networkerror|load failed/i.test(raw)) {
+            return `Could not reach ${config.baseUrl}. Start your local model server, then use Configure Tiny Brain → Test connection.`;
+        }
+        if (config.runtime === 'connected' && /timed out/i.test(raw)) {
+            return `The local model at ${config.baseUrl} did not answer in time. Confirm the server and selected model are loaded.`;
+        }
+        if (config.runtime === 'embedded' && location.protocol === 'file:') return FILE_RUNTIME_MESSAGE;
+        return raw;
+    }
+
+    async function askGuide(questionOverride = '') {
+        const input = byId('labs-guide-input');
+        const question = String(questionOverride || input?.value || '').trim();
+        if (!question) return;
+        const config = configFromForm();
+        if (input) input.value = '';
+        guideHistory.push({ role: 'user', text: question });
+        appendGuideMessage('user', question);
+        const button = byId('labs-guide-send-btn');
+        const status = byId('labs-guide-status');
+
+        const greeting = /^(?:(?:hey|hi|hello|yo|sup)(?:\s+pip)?|(?:are you|you) there)[\s!?.,]*$/i.test(question);
+        const productQuestion = !greeting && isProductQuestion(question);
+        const grounded = greeting
+            ? 'I’m here 👋 Ask me anything about Horde Studio—features, providers, Labs, Virtual Humans, Worlds, or where a setting lives.'
+            : guideFallback(question);
+        const assistantRecord = { role: 'assistant', text: grounded };
+        guideHistory.push(assistantRecord);
+        const replyBody = appendGuideMessage('assistant', grounded);
+
+        if (greeting) {
+            if (status) status.textContent = 'Pip is here. Replies and help-note retrieval stay on this device.';
+            return;
+        }
+        if (productQuestion) {
+            if (status) status.textContent = window.HordeLabsGuide?.entryCount
+                ? `Verified Horde Studio handbook answer · ${window.HordeLabsGuide.entryCount} local topics · no tiny-model rewrite.`
+                : `Verified Horde Studio core answer · ${CORE_GUIDE.length} emergency topics · full handbook unavailable.`;
+            return;
+        }
+        const embeddedReady = embeddedInstalled || embeddedMarker();
+        const connectedReady = Boolean(config.model);
+        if ((config.runtime === 'embedded' && !embeddedReady) || (config.runtime === 'connected' && !connectedReady)) {
+            if (status) status.textContent = 'Grounded built-in answer shown instantly. Install or connect a Tiny Brain if you want Pip to rewrite it conversationally.';
+            return;
+        }
+        if (guideBusy) {
+            if (status) status.textContent = 'Grounded answer shown instantly. Pip is still polishing the previous answer locally.';
+            return;
+        }
+        guideBusy = true;
+        const requestEpoch = guideEpoch;
+        const runtimeBadge = byId('pip-runtime-state');
+        if (runtimeBadge) runtimeBadge.textContent = 'LOCAL MODEL · THINKING';
+        button?.setAttribute('aria-busy', 'true');
+        if (button) button.textContent = 'Polishing…';
+        if (status) status.textContent = 'Grounded answer shown instantly. Pip is polishing it with the local Tiny Brain…';
+        try {
+            const prompt = guidePrompt(question, guideHistory.slice(0, -2), grounded);
+            let result = await window.HordeLabs.completeText({ ...prompt, config, maxTokens: 180, temperature: .35 });
+            if (requestEpoch !== guideEpoch) return;
+            let answer = cleanLocalReply(result.text, question);
+            let retried = false;
+            if (!answer) {
+                retried = true;
+                result = await window.HordeLabs.completeText({
+                    config, maxTokens: 110, temperature: .2,
+                    system: 'You are Pip, a friendly tiny AI. Reply naturally and directly in one or two sentences. Do not repeat the question, instructions, labels, or mention Discord.',
+                    input: `User: ${question.slice(0, 700)}\nPip:`
+                });
+                answer = cleanLocalReply(result.text, question);
+            }
+            if (answer) {
+                assistantRecord.text = answer;
+                if (replyBody) replyBody.textContent = answer;
+            } else {
+                if (runtimeBadge) runtimeBadge.textContent = 'LOCAL MODEL · WEAK OUTPUT';
+                if (status) status.textContent = 'Pip kept the clear built-in reply because the tiny model repeated or exposed its prompt. Try again or choose a slightly larger local model.';
+                return;
+            }
+            if (runtimeBadge) runtimeBadge.textContent = 'LOCAL MODEL · ACTIVE';
+            if (status) status.textContent = `Local model answered in ${result.latencyMs} ms${retried ? ' after one automatic cleanup retry' : ''} · ${isProductQuestion(question) ? 'grounded help mode' : 'conversation mode'}.`;
+        } catch (error) {
+            if (requestEpoch !== guideEpoch) return;
+            if (runtimeBadge) runtimeBadge.textContent = 'LOCAL MODEL · ERROR';
+            if (status) status.textContent = `Grounded answer kept. ${localFailureMessage(error, config)}`;
+        } finally {
+            guideBusy = false;
+            button?.removeAttribute('aria-busy');
+            if (button) button.textContent = 'Ask Pip';
+        }
     }
 
     async function testConnection() {
@@ -227,6 +527,9 @@
 
     function open() {
         fillForm(host.getConfig());
+        if (draft.runtime === 'embedded' && embeddedMarker()) {
+            showEmbeddedState(true, 'Installed. Checking the browser model cache…');
+        }
         renderDiagnostics();
         byId('labs-overlay').classList.remove('hidden');
         byId('labs-overlay').setAttribute('aria-hidden', 'false');
@@ -235,13 +538,30 @@
 
     function mount(options) {
         host = options;
-        fillForm(host.getConfig());
+        const savedConfig = window.HordeLabs.normalizeConfig(host.getConfig());
+        // Migration for installs completed before the persistent marker
+        // existed: an enabled saved Embedded configuration could only have
+        // passed the previous install guard after a successful load.
+        if (savedConfig.enabled && savedConfig.runtime === 'embedded') setEmbeddedMarker(true);
+        fillForm(savedConfig);
+        initializeGuide();
         byId('labs-close-btn').onclick = close;
         byId('labs-cancel-btn').onclick = close;
         byId('labs-test-btn').onclick = testConnection;
         byId('labs-discover-btn').onclick = discover;
         byId('labs-embedded-install-btn').onclick = installEmbedded;
         byId('labs-embedded-remove-btn').onclick = removeEmbedded;
+        byId('labs-guide-send-btn').onclick = () => askGuide();
+        byId('pip-clear-chat-btn').onclick = clearGuideChat;
+        byId('labs-guide-input').addEventListener('keydown', event => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                void askGuide();
+            }
+        });
+        document.querySelectorAll('[data-guide-question]').forEach(button => {
+            button.onclick = () => void askGuide(button.dataset.guideQuestion || '');
+        });
         document.querySelectorAll('input[name="labs-runtime"]').forEach(input => input.onchange = renderRuntime);
         byId('labs-clear-diagnostics-btn').onclick = async () => {
             await host.clearDiagnostics?.();
@@ -258,6 +578,7 @@
         };
         ['labs-enabled', 'labs-model-search', 'labs-policy-chat', 'labs-policy-worlds', 'labs-policy-humans']
             .forEach(id => byId(id).addEventListener('change', () => renderStatus(configFromForm())));
+        byId('labs-model-search').addEventListener('input', () => renderStatus(configFromForm()));
         byId('labs-overlay').addEventListener('mousedown', event => {
             if (event.target === byId('labs-overlay')) close();
         });
