@@ -12,7 +12,7 @@
  *
  * Run with: node scratch/society_audit.js
  */
-const assert = require('node:assert/strict');
+const assert = require('node:assert');
 const vm = require('node:vm');
 const { app, functionSource, constSource, buildContext } = require('./app_source.js');
 

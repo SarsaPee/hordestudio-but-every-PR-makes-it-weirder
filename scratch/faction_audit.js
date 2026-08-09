@@ -9,7 +9,7 @@
  *
  * Run with: node scratch/faction_audit.js
  */
-const assert = require('node:assert/strict');
+const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -210,8 +210,9 @@ test('the whole editor is present and reachable', () => {
     assert(/id="w-factions-list"/.test(html), 'the tab has nowhere to render factions');
     assert(/id="add-faction-btn"/.test(html) && /id="add-faction-btn-bottom"/.test(html),
         'a faction cannot be created');
-    assert(/renderWorldFactions\(\);/.test(functionSource('renderWorldStudio')),
-        'the panel is never drawn when the studio refreshes');
+    assert(/'w-factions': renderWorldFactions/.test(functionSource('renderWorldStudioPanel'))
+        && /renderWorldStudioPanel\(activeTab\)/.test(functionSource('renderWorldStudio')),
+        'the lazily rendered faction panel is unreachable when the studio refreshes');
     assert(/add-faction-btn'\)\.onclick/.test(app), 'the create button is never wired');
 });
 

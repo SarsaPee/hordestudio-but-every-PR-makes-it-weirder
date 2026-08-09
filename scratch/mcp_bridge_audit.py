@@ -48,6 +48,24 @@ class McpBridgeAudit(unittest.TestCase):
         with self.assertRaises(ValueError):
             bridge.loopback_base_url("https://example.com/v1", 7860)
 
+    @mock.patch.object(bridge.socket, "getaddrinfo")
+    def test_generated_media_proxy_is_https_global_and_provider_scoped(self, lookup):
+        lookup.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+        self.assertEqual(
+            bridge.safe_remote_image_url("https://cdn.gptproto.com/jobs/output.png?sig=1"),
+            "https://cdn.gptproto.com/jobs/output.png?sig=1",
+        )
+        with self.assertRaises(ValueError):
+            bridge.safe_remote_image_url("https://untrusted.example/output.png")
+        with self.assertRaises(ValueError):
+            bridge.safe_remote_image_url("http://gptproto.com/output.png")
+
+    @mock.patch.object(bridge.socket, "getaddrinfo")
+    def test_generated_media_proxy_rejects_private_dns_results(self, lookup):
+        lookup.return_value = [(2, 1, 6, "", ("127.0.0.1", 443))]
+        with self.assertRaises(ValueError):
+            bridge.safe_remote_image_url("https://gptproto.com/output.png")
+
     def test_workflow_mapping_prefers_positive_prompt(self):
         workflow = {
             "1": {

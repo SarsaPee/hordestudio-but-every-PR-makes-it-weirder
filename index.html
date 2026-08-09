@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- connect-src: OpenRouter/GPTProto (cloud) + local model servers (Ollama/LM Studio/KoboldCpp/llama.cpp) on loopback for offline use. CSP has no CIDR/octet-wildcard support, so LAN-hosted models on another machine need their specific IP added here. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src https://openrouter.ai https://gptproto.com https://api.github.com https://geocoding-api.open-meteo.com https://api.open-meteo.com http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* http://[::1]:*; object-src 'none'; base-uri 'none'; form-action 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src https://openrouter.ai https://gptproto.com https://api.github.com https://geocoding-api.open-meteo.com https://api.open-meteo.com https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* http://[::1]:*; object-src 'none'; base-uri 'none'; form-action 'self'">
     <title>Horde Studio | Elite AI Roleplay</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260803-update-check-v48">
+    <link rel="stylesheet" href="style.css?v=20260809-v12">
 </head>
 <body>
 <div id="app">
@@ -39,6 +39,10 @@
         <button class="settings-btn" id="customize-modal-btn" style="margin-bottom: 5px;">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 000 20"/><path d="M12 7v5l3 3"/></svg>
             Customize
+        </button>
+        <button class="settings-btn labs-sidebar-btn" id="labs-modal-btn" style="margin-bottom: 5px;" title="Optional private cognition powered by a tiny local model">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 001.7 3h10.6a2 2 0 001.7-3l-5-9V3"/><path d="M7.5 16h9"/></svg>
+            Labs <span id="labs-sidebar-state" class="labs-sidebar-state">Off</span>
         </button>
         <a class="settings-btn sidebar-external-link" href="https://discord.gg/9eyjcMbsST" target="_blank" rel="noopener noreferrer" title="Join the official Horde Studio Discord">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 8.5c2.3-1.1 4.7-1.1 7 0M7 17c3.4 1.6 6.6 1.6 10 0M8 18l-2 2-1.5-5.5C4 10.4 5.7 6.8 9 5.5l.8 1.5M16 18l2 2 1.5-5.5C20 10.4 18.3 6.8 15 5.5l-.8 1.5"/><circle cx="9" cy="13" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1" fill="currentColor" stroke="none"/></svg>
@@ -136,6 +140,7 @@
 
         <!-- ────────── CHAT VIEW ────────── -->
         <section id="chat-view" class="view hidden">
+            <div class="chat-experience-layout">
             <div class="chat-wrap">
                 <header class="chat-header">
                     <div class="chat-who">
@@ -159,6 +164,7 @@
                         <button class="tool-btn" id="summarize-chat-btn" title="Auto-Summarize Story">✨ Summarize</button>
                         <button class="tool-btn" id="open-vector-memory-btn" title="Inspect Vector Memories">🧠 Memory</button>
                         <button class="tool-btn" id="reroll-chat-btn" title="Reroll last AI response">🔄 Reroll</button>
+                        <button class="tool-btn hidden" id="toggle-chat-hud-btn" title="Show or hide chat status">◫ HUD</button>
                         <button class="tool-btn" id="download-chat-btn" title="Download Transcript">💾 Save</button>
                         <button class="tool-btn tool-btn-danger" id="clear-history-btn" title="Clear conversation">🗑️ Clear</button>
                         <button class="tool-btn" id="open-in-studio-btn" title="Open character in Studio">⚙️ Studio</button>
@@ -167,7 +173,7 @@
                 <div id="vector-fallback-banner" class="fallback-banner hidden">
                     <span class="banner-icon">⚠️</span>
                     <span class="banner-text">OpenRouter Embeddings API failed (or credit exhausted). Using primitive keyword-matching fallback for long-term character memory.</span>
-                    <button class="banner-close" data-dismiss-fallback="vector-fallback-banner" type="button">✕</button>
+                    <button class="banner-close" data-dismiss-fallback="vector-fallback-banner" type="button" aria-label="Dismiss notice">✕</button>
                 </div>
                 <div class="messages-wrap" id="messages-container">
                     <div class="chat-empty">
@@ -187,11 +193,18 @@
 
                     <div class="input-row">
                         <textarea id="user-input" class="msg-input" placeholder="Type your message..." rows="1"></textarea>
-                        <button id="send-btn" class="send-btn" disabled title="Send (Enter)">
+                        <button id="send-btn" class="send-btn" type="button" disabled title="Send (Enter)" aria-label="Send message">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                         </button>
                     </div>
                 </div>
+            </div>
+            <aside id="chat-status-col" class="chat-status-col hidden" aria-label="Chat status">
+                <div class="chat-hud-head"><div><span class="vh-eyebrow">LIVE STATUS</span><h3 id="chat-hud-title">Status</h3></div><span id="chat-hud-controller" class="mini-tag">Manual</span></div>
+                <div id="chat-hud-summary" class="chat-hud-summary hidden"></div>
+                <div id="chat-hud-meters" class="chat-hud-meters"></div>
+                <p id="chat-hud-note" class="chat-hud-note"></p>
+            </aside>
             </div>
         </section>
 
@@ -216,7 +229,7 @@
                                     <select id="world-session-select" class="tool-select"></select>
                                     <button class="tool-btn" id="world-new-session-btn" title="New World Session">➕ New</button>
                                     <button class="tool-btn" id="world-rename-session-btn" title="Rename Current Session">✏️ Rename</button>
-                                    <button class="tool-btn tool-btn-danger" id="world-del-session-btn" title="Delete Current Session">🗑️</button>
+                                    <button class="tool-btn tool-btn-danger" id="world-del-session-btn" type="button" title="Delete Current Session" aria-label="Delete current session">🗑️</button>
                                 </div>
                                 <div class="toolbar-divider"></div>
                                 
@@ -256,7 +269,7 @@
                     <div id="world-vector-fallback-banner" class="fallback-banner hidden">
                         <span class="banner-icon">⚠️</span>
                         <span class="banner-text">OpenRouter Embeddings API failed (or credit exhausted). Using primitive keyword-matching fallback for world narrative memory.</span>
-                        <button class="banner-close" data-dismiss-fallback="world-vector-fallback-banner" type="button">✕</button>
+                        <button class="banner-close" data-dismiss-fallback="world-vector-fallback-banner" type="button" aria-label="Dismiss notice">✕</button>
                     </div>
                     <div class="messages-wrap" id="world-messages-container">
                         <!-- Narrative and Dialogue -->
@@ -273,7 +286,7 @@
                     <div class="input-wrap">
                         <div class="input-row">
                             <textarea id="world-user-input" class="msg-input" placeholder="What do you do?..." rows="1"></textarea>
-                            <button id="world-send-btn" class="send-btn">
+                            <button id="world-send-btn" class="send-btn" type="button" aria-label="Send message">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                             </button>
                         </div>
@@ -385,7 +398,7 @@
             <div class="modal world-check-modal" role="dialog" aria-labelledby="world-check-title">
                 <div class="modal-hd">
                     <div><span class="vh-eyebrow">AUTHORITATIVE CHECK</span><h2 id="world-check-title">Roll the dice</h2></div>
-                    <button class="tool-btn" id="close-world-check-modal" type="button">✕</button>
+                    <button class="tool-btn" id="close-world-check-modal" type="button" aria-label="Close check dialog">✕</button>
                 </div>
                 <div class="modal-body">
                     <div id="world-check-pending-note" class="world-check-pending-note hidden"></div>
@@ -408,7 +421,7 @@
             <div class="modal modal-xl world-map-modal">
                 <div class="modal-hd">
                     <h2>World Map Visualization</h2>
-                    <button class="tool-btn" id="close-map-modal">✕</button>
+                    <button class="tool-btn" id="close-map-modal" type="button" aria-label="Close map">✕</button>
                 </div>
                 <div id="map-container" class="world-map-container">
                     <!-- Semantic world map is rendered here -->
@@ -1230,6 +1243,7 @@
                         <button class="studio-tab" data-tab="ai">AI Config</button>
                         <button class="studio-tab" data-tab="lore">Lore Book</button>
                         <button class="studio-tab" data-tab="memory">Memory</button>
+                        <button class="studio-tab" data-tab="hud">HUD &amp; Meters</button>
                         <button class="studio-tab" data-tab="note">Author's Note</button>
                         <button class="studio-tab" data-tab="builder" style="color:var(--accent); font-weight:700;">✨ AI Builder</button>
                     </div>
@@ -1489,6 +1503,24 @@
                                         <input type="number" id="studio-hide-bottom" class="form-input" min="0" value="0">
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Optional Chat HUD -->
+                    <div id="tab-hud" class="studio-panel hidden">
+                        <div class="panel-header"><h2>Chat HUD &amp; Status</h2><p>Add an optional right-hand status panel to this character’s ordinary chats. Every timeline keeps its own values.</p></div>
+                        <div class="form-body">
+                            <label class="world-visual-toggle-card chat-hud-enable-card"><input id="studio-chat-hud-enabled" type="checkbox"><span><strong>Enable chat HUD</strong><small>Disabled characters retain the classic full-width chat.</small></span></label>
+                            <div id="studio-chat-hud-settings">
+                                <div class="form-row form-row-2">
+                                    <div><label class="form-label">Panel title</label><input id="studio-chat-hud-title" class="form-input" value="Status" placeholder="Relationship, Investigation, Survival…"></div>
+                                    <div><label class="form-label">Update controller</label><select id="studio-chat-hud-controller" class="form-select"><option value="manual">Manual only</option><option value="main">Main chat model · traditional</option><option value="labs">Horde Labs · local cognition</option></select></div>
+                                </div>
+                                <div class="form-section"><label class="form-label">Status brief</label><textarea id="studio-chat-hud-brief" class="form-textarea" rows="3" placeholder="What should the short status update track? e.g. current relationship tone and immediate situation. Never invent facts."></textarea><p class="form-hint">The status sentence and meters are private engine data and are never shown as raw model markup.</p></div>
+                                <label class="vh-test-check"><input id="studio-chat-hud-manual" type="checkbox" checked> Let players manually adjust meter values in chat</label>
+                                <div class="chat-hud-builder-head"><div><h3>Meters</h3><p class="form-hint">Up to eight. Use clear, bounded scales such as Trust 0–100 or Suspicion 0–10.</p></div><button id="studio-add-chat-meter" class="btn btn-ghost" type="button">+ Add meter</button></div>
+                                <div id="studio-chat-hud-meter-list" class="chat-hud-meter-editor"></div>
                             </div>
                         </div>
                     </div>
@@ -2036,7 +2068,7 @@
                                     <p class="form-hint">Choose independently from photos. Credentials still come from Settings.</p>
                                 </div>
                                 <select id="cs-text-provider" class="form-select">
-                                    <option value="provider">Use provider selected in Settings</option>
+                                    <option value="provider">Use default text provider from Settings</option>
                                     <option value="openrouter">OpenRouter</option>
                                     <option value="gptproto">GPTProto</option>
                                     <option value="local">Local / self-hosted</option>
@@ -2261,7 +2293,7 @@
                                     <div>
                                         <label class="form-label" for="cs-image-source">🧩 Photo source</label>
                                         <select id="cs-image-source" class="form-select">
-                                            <option value="provider">Use provider selected in Settings</option>
+                                            <option value="provider">Same provider as conversation default</option>
                                             <option value="openrouter">OpenRouter</option>
                                             <option value="gptproto">GPTProto</option>
                                             <option value="local">Local / self-hosted</option>
@@ -2528,6 +2560,10 @@
                                 <input id="cc-silence-consequences" type="checkbox" checked>
                                 <span><strong>Silence consequences</strong><small>They remember long gaps and may worry, feel hurt or become distant. Exact sent/read times still work when disabled.</small></span>
                             </label>
+                            <label class="companion-immersion-option">
+                                <input id="cc-reply-bursts" type="checkbox" checked>
+                                <span><strong>Text-message bursts</strong><small>Split genuinely long replies into natural consecutive bubbles. Turn this off for one complete reply.</small></span>
+                            </label>
                             <div class="companion-immersion-presets">
                                 <button type="button" data-companion-immersion-preset="full">Full immersion</button>
                                 <button type="button" data-companion-immersion-preset="responsive">Always replies</button>
@@ -2541,6 +2577,7 @@
             </div>
             <div class="companion-timeline-bar">
                 <select id="companion-timeline-select" class="tool-select" aria-label="Virtual Human timeline"></select>
+                <span id="companion-timeline-meta" class="companion-timeline-meta" aria-live="polite"></span>
                 <button id="companion-new-timeline-btn" class="tool-btn" type="button" title="Start a fresh timeline">＋ New</button>
                 <button id="companion-fork-timeline-btn" class="tool-btn" type="button" title="Fork this timeline from its current state">⑂ Fork</button>
                 <button id="companion-reroll-btn" class="tool-btn" type="button" title="Regenerate the last reply and roll back its consequences">↻ Reroll</button>
@@ -2569,7 +2606,7 @@
                 <button id="companion-photo-request-btn" class="companion-icon-btn" title="Ask for a photo" aria-label="Ask for a photo">▧</button>
                 <button id="companion-voice-request-btn" class="companion-icon-btn" title="Ask for a voice note" aria-label="Ask for a voice note">🎙</button>
                 <textarea id="companion-composer-input" class="companion-composer-input" rows="1" placeholder="Text message..."></textarea>
-                <button id="companion-send-btn" class="companion-icon-btn companion-send-btn" title="Send" aria-label="Send">↑</button>
+                <button id="companion-send-btn" class="companion-icon-btn companion-send-btn" type="button" title="Send" aria-label="Send">↑</button>
             </div>
             <div class="companion-emoji-picker hidden" id="companion-emoji-picker"></div>
         </section>
@@ -2597,7 +2634,7 @@
             <div class="companion-call-transcript" id="call-transcript"></div>
             <div id="call-live-controls" class="companion-call-live-controls">
                 <input type="text" id="call-user-input" class="form-input" placeholder="Type what you say aloud…">
-                <button id="call-user-send-btn" class="btn btn-primary">Speak</button>
+                <button id="call-user-send-btn" class="btn btn-primary" type="button">Speak</button>
             </div>
             <button id="companion-call-hangup-btn" class="companion-call-hangup" type="button" aria-label="End call">☎</button>
             <span class="companion-call-end-label">End call</span>
@@ -2613,15 +2650,16 @@
     <div class="modal">
         <div class="modal-hd">
             <h2>Settings</h2>
-            <button id="close-modal-btn" class="modal-close">✕</button>
+            <button id="close-modal-btn" class="modal-close" type="button" aria-label="Close settings">✕</button>
         </div>
         <div class="modal-body">
-            <label class="form-label">AI Provider</label>
+            <label class="form-label">Default Text Provider</label>
             <select id="global-api-provider" class="form-select">
                 <option value="openrouter">☁️ OpenRouter (cloud)</option>
                 <option value="gptproto">☁️ GPTProto (cloud · text, images &amp; speech)</option>
                 <option value="local">💻 Local / Self-hosted (offline, OpenAI-compatible)</option>
             </select>
+            <p class="form-hint">This is the default for Chat, Worlds and Virtual Humans set to <strong>Use default</strong>. It does not lock image generation to the same company: each Virtual Human and World can use GPTProto for images while text remains on OpenRouter.</p>
             <div id="local-provider-fields" style="display:none; margin-top:12px; padding:12px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
                 <label class="form-label">Local Server URL</label>
                 <input type="text" id="global-local-url" class="form-input" placeholder="http://localhost:11434/v1">
@@ -2641,7 +2679,7 @@
                 <label class="form-label" style="margin-top:20px">OpenRouter API Key</label>
                 <input type="password" id="global-api-key" class="form-input" placeholder="sk-or-v1-...">
             </div>
-            <div id="gptproto-key-block" style="display:none;">
+            <div id="gptproto-key-block">
                 <label class="form-label" style="margin-top:20px">GPTProto API Key</label>
                 <input type="password" id="global-gptproto-key" class="form-input" placeholder="sk-...">
                 <p class="form-hint">Used for GPTProto chat completions, image generation, model discovery and neural speech through <code>https://gptproto.com/v1</code>.</p>
@@ -2710,6 +2748,17 @@
                 </div>
                 <label class="form-label" for="global-comfy-url" style="margin-top:14px;">ComfyUI server</label>
                 <input id="global-comfy-url" class="form-input" value="http://127.0.0.1:8188" spellcheck="false">
+                <div class="comfy-profile-head" style="margin-top:12px;">
+                    <div>
+                        <label class="form-label" for="global-comfy-profile">Workflow profile</label>
+                        <select id="global-comfy-profile" class="form-select"></select>
+                    </div>
+                    <div class="comfy-profile-actions">
+                        <button id="global-comfy-new-profile" class="btn btn-ghost" type="button">＋ New</button>
+                        <button id="global-comfy-duplicate-profile" class="btn btn-ghost" type="button">Duplicate</button>
+                        <button id="global-comfy-delete-profile" class="btn btn-ghost" type="button">Delete</button>
+                    </div>
+                </div>
                 <label class="form-label" for="global-comfy-workflow" style="margin-top:12px;">Workflow — API format JSON</label>
                 <textarea id="global-comfy-workflow" class="form-textarea" rows="5" placeholder="In ComfyUI, save/export the workflow in API format and paste it here."></textarea>
                 <div class="form-row" style="margin-top:8px;">
@@ -2726,7 +2775,7 @@
                         <input id="global-comfy-reference-node" class="form-input" placeholder="optional node ID">
                     </div>
                 </div>
-                <p class="form-hint">Horde Studio auto-detects standard CLIP prompt and KSampler seed nodes. Set a LoadImage node ID only when the workflow accepts the human’s identity reference.</p>
+                <p class="form-hint">Profiles keep several workflows and node mappings ready to switch without replacing JSON. Horde Studio auto-detects standard CLIP prompt and KSampler seed nodes. Set a LoadImage node ID only when the workflow accepts the human’s identity reference.</p>
                 <button id="test-local-image-engines-btn" class="btn btn-ghost" type="button" style="margin-top:10px;">Test local endpoints</button>
                 <div id="local-image-engines-result" class="form-hint" aria-live="polite"></div>
             </section>
@@ -2873,7 +2922,7 @@
             <!-- Header -->
             <div style="display:flex; justify-content:space-between; align-items:center; padding:20px 24px 16px; border-bottom:1px solid var(--border); flex-shrink:0;">
                 <h2 style="margin:0; font-family:'Outfit',sans-serif; font-size:1.2rem;">Edit Persona</h2>
-                <button id="close-personas-btn" class="modal-close">✕</button>
+                <button id="close-personas-btn" class="modal-close" type="button" aria-label="Close personas">✕</button>
             </div>
 
             <!-- Empty state -->
@@ -2934,7 +2983,7 @@
     <div class="modal modal-xl" style="height: 80vh; max-height: 850px; display:flex; flex-direction:column;">
         <div class="modal-hd">
             <h2>🎨 Customize Theme</h2>
-            <button id="close-customize-btn" class="modal-close">✕</button>
+            <button id="close-customize-btn" class="modal-close" type="button" aria-label="Close customization">✕</button>
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto; gap:0;">
 
@@ -3087,7 +3136,7 @@
     <div class="modal modal-lg" style="height: 80vh; max-height: 800px; display:flex; flex-direction:column;">
         <div class="modal-hd">
             <h2>Room Configuration</h2>
-            <button id="close-room-studio-btn" class="modal-close">✕</button>
+            <button id="close-room-studio-btn" class="modal-close" type="button" aria-label="Close room studio">✕</button>
         </div>
         <div class="modal-body" style="flex: 1; overflow-y: auto;">
             <div class="form-row">
@@ -3255,7 +3304,7 @@
     <div class="modal modal-md">
         <div class="modal-hd">
             <h2>🖥️ Inject System Instruction</h2>
-            <button id="close-system-inject-btn" class="modal-close">✕</button>
+            <button id="close-system-inject-btn" class="modal-close" type="button" aria-label="Close system message dialog">✕</button>
         </div>
         <div class="modal-body" style="padding-top: 0;">
             <p style="font-size: 0.9rem; color: var(--text-2); margin-bottom: 16px; line-height: 1.4;">
@@ -3281,7 +3330,7 @@
     <div class="modal modal-md">
         <div class="modal-hd">
             <h2>🎭 Character Status</h2>
-            <button id="close-world-stats-btn" class="modal-close">✕</button>
+            <button id="close-world-stats-btn" class="modal-close" type="button" aria-label="Close character stats">✕</button>
         </div>
         <div class="modal-body">
             <div id="m-stats-guide" style="background:rgba(var(--accent-rgb),0.1); padding:12px; border-radius:8px; border-left:4px solid var(--accent); margin-bottom:16px;">
@@ -3305,7 +3354,7 @@
     <div class="modal modal-lg">
         <div class="modal-hd">
             <h2>🧭 Quest Ledger</h2>
-            <button id="close-world-quest-btn" class="modal-close" type="button">✕</button>
+            <button id="close-world-quest-btn" class="modal-close" type="button" aria-label="Close quest log">✕</button>
         </div>
         <div class="modal-body">
             <input id="m-quest-id" type="hidden">
@@ -3370,7 +3419,7 @@
     <div class="modal modal-md">
         <div class="modal-hd">
             <h2>👕 Update Outfit</h2>
-            <button id="close-world-outfit-btn" class="modal-close">✕</button>
+            <button id="close-world-outfit-btn" class="modal-close" type="button" aria-label="Close outfit editor">✕</button>
         </div>
         <div class="modal-body">
             <p style="font-size:0.85rem; color:var(--text-2); margin-bottom:12px;">Describe what your character is currently wearing. The DM will use this for descriptions.</p>
@@ -3388,7 +3437,7 @@
     <div class="modal modal-lg">
         <div class="modal-hd">
             <h2>📜 World Ledger (Chronicles)</h2>
-            <button id="close-world-ledger-btn" class="modal-close">✕</button>
+            <button id="close-world-ledger-btn" class="modal-close" type="button" aria-label="Close world ledger">✕</button>
         </div>
         <div class="modal-body">
             <div style="background:rgba(255,140,66,0.1); padding:12px; border-radius:8px; border-left:4px solid #FF8C42; margin-bottom:16px;">
@@ -3410,7 +3459,7 @@
     <div class="modal modal-lg" style="height: 80vh; max-height: 800px; display:flex; flex-direction:column;">
         <div class="modal-hd">
             <h2>🧠 Vector Memory Inspector</h2>
-            <button id="close-vector-memory-btn" class="modal-close">✕</button>
+            <button id="close-vector-memory-btn" class="modal-close" type="button" aria-label="Close memory search">✕</button>
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px;">
             <p class="form-hint" style="margin-top:0;">Inspect, search, and test similarity matching against the active session's vector memory blocks.</p>
@@ -3450,7 +3499,7 @@
     <div class="modal modal-lg" style="height: 85vh; max-height: 900px; display:flex; flex-direction:column;">
         <div class="modal-hd">
             <h2 id="preset-editor-title">Fine-Tune Preset</h2>
-            <button id="close-preset-editor-btn" class="modal-close">✕</button>
+            <button id="close-preset-editor-btn" class="modal-close" type="button" aria-label="Close preset editor">✕</button>
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px; gap:20px;">
             <p class="form-hint">Toggle individual prompt blocks or edit their content to customize how this preset behaves for this character.</p>
@@ -3469,7 +3518,7 @@
     <div class="modal modal-lg" style="height: 85vh; display:flex; flex-direction:column;">
         <div class="modal-hd">
             <h2>NPC Schedule Architect</h2>
-            <button id="close-scheduler-btn" class="modal-close">✕</button>
+            <button id="close-scheduler-btn" class="modal-close" type="button" aria-label="Close scheduler">✕</button>
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px;">
             <p class="form-hint" style="margin-bottom:12px;">Define where your NPCs should be at specific times. The engine uses "Clock Step" to calculate the current time based on turn count. <b>Typos are prevented</b> by selecting from your existing location list.</p>
@@ -3489,7 +3538,7 @@
     <div class="modal modal-lg" style="max-height:88vh; display:flex; flex-direction:column;">
         <div class="modal-hd">
             <h2>🔧 Regex Scripts</h2>
-            <button id="close-regex-btn" class="modal-close">✕</button>
+            <button id="close-regex-btn" class="modal-close" type="button" aria-label="Close regex tools">✕</button>
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto;">
             <p class="form-hint" style="margin-bottom:12px;">Rules run top-to-bottom on each message. <b>Find</b> is a regex (plain, or <code>/pattern/flags</code>). <b>Replace</b> supports <code>$1</code>…<code>$9</code> capture groups and <code>{{match}}</code>. Target picks what the rule touches.</p>
@@ -3507,7 +3556,7 @@
     <div class="modal modal-md" style="max-height:85vh; display:flex; flex-direction:column;">
         <div class="modal-hd">
             <h2 id="npc-dossier-title">Dossier</h2>
-            <button id="close-npc-dossier-btn" class="modal-close">✕</button>
+            <button id="close-npc-dossier-btn" class="modal-close" type="button" aria-label="Close NPC dossier">✕</button>
         </div>
         <div class="modal-body" id="npc-dossier-content" style="flex:1; overflow-y:auto;">
             <!-- Injected by JS -->
@@ -3520,7 +3569,7 @@
     <div class="modal modal-md session-zero-modal" style="max-width:900px;">
         <div class="modal-hd">
             <h2>🎬 New Session Setup</h2>
-            <button id="close-session-zero-btn" class="modal-close" title="Close without saving">✕</button>
+            <button id="close-session-zero-btn" class="modal-close" type="button" title="Close without saving" aria-label="Close new session setup without saving">✕</button>
         </div>
         <div class="modal-body">
             <p class="form-hint" style="margin-bottom:16px;">Choose exactly who you are before the world is initialized. The selected Persona and Starting Life become the source for your home, household, routine and initial social circle.</p>
@@ -3594,7 +3643,7 @@
     <div class="modal modal-md">
         <div class="modal-hd">
             <h2>World Health Check</h2>
-            <button id="close-audit-btn" class="modal-close">✕</button>
+            <button id="close-audit-btn" class="modal-close" type="button" aria-label="Close world audit">✕</button>
         </div>
         <div class="modal-body" style="padding:20px;">
             <div id="audit-results-container">
@@ -3609,7 +3658,7 @@
     <div class="modal modal-md">
         <div class="modal-hd">
             <h2>⏰ Adjust World Clock</h2>
-            <button id="close-world-clock-btn" class="modal-close">✕</button>
+            <button id="close-world-clock-btn" class="modal-close" type="button" aria-label="Close world clock">✕</button>
         </div>
         <div class="modal-body">
             <!-- Part 1: Shift Time (Minutes Offset) -->
@@ -3662,9 +3711,83 @@
     </div>
 </div>
 
+<!-- Horde Labs is a shared optional layer, not a fourth play mode. -->
+<div id="labs-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal labs-modal" role="dialog" aria-modal="true" aria-labelledby="labs-title">
+        <div class="labs-head">
+            <div>
+                <div class="labs-kicker">EXPERIMENTAL · PRIVATE · LOCAL</div>
+                <h2 id="labs-title">Horde Labs</h2>
+                <p>Give Chat, Worlds and Virtual Humans a small local cognition layer. The tiny model proposes; Horde Studio validates; your existing engine stays in control.</p>
+            </div>
+            <button id="labs-close-btn" class="labs-close-btn" type="button" aria-label="Close Horde Labs">✕</button>
+        </div>
+        <div class="labs-scroll">
+            <section class="labs-hero-card">
+                <div>
+                    <div class="labs-status-line"><span id="labs-status-dot" class="labs-status-dot"></span><strong id="labs-status-label">Local cognition is off</strong></div>
+                    <p id="labs-status-copy">Normal Horde Studio behavior is unchanged.</p>
+                </div>
+                <label class="labs-master-toggle"><input id="labs-enabled" type="checkbox"><span>Enable Labs</span></label>
+            </section>
+
+            <section class="labs-section">
+                <div class="labs-section-title"><div><h3>1. Connect a tiny brain</h3><p>Runs only against this device. Your main text, image and voice providers remain separate.</p></div><span id="labs-tier-badge" class="labs-tier-badge">No model</span></div>
+                <div class="labs-runtime-grid">
+                    <label class="labs-runtime-card selected"><input type="radio" name="labs-runtime" value="connected" checked><strong>Connected local server</strong><span>Ollama, LM Studio, llama.cpp, KoboldCpp or OpenAI-compatible localhost.</span></label>
+                    <label class="labs-runtime-card"><input type="radio" name="labs-runtime" value="embedded"><strong>Embedded Tiny Brain</strong><span>Install once inside Horde Studio. Runs privately with WebGPU or CPU/WASM and remains cached in this browser.</span></label>
+                </div>
+                <div id="labs-connected-setup" class="labs-connection-grid">
+                    <label><span>Local server URL</span><input id="labs-base-url" class="form-input" value="http://127.0.0.1:11434/v1" spellcheck="false"></label>
+                    <label><span>Optional local API key</span><input id="labs-api-key" class="form-input" type="password" autocomplete="off" placeholder="Usually blank"></label>
+                </div>
+                <div id="labs-connected-actions" class="labs-connection-actions">
+                    <button id="labs-discover-btn" class="btn btn-ghost" type="button">Discover local servers</button>
+                    <button id="labs-test-btn" class="btn btn-ghost" type="button">Test connection</button>
+                </div>
+                <label id="labs-connected-model" class="labs-model-field"><span>Tiny cognition model</span><input id="labs-model-search" class="form-input" list="labs-model-list" placeholder="Connect, then search or select a model" autocomplete="off"><datalist id="labs-model-list"></datalist><small id="labs-model-help">Recommended: a 270M–700M instruct model. Larger models work, but are not required.</small></label>
+                <div id="labs-embedded-setup" class="labs-embedded-setup hidden">
+                    <div class="labs-embedded-model-card">
+                        <div><span class="labs-embedded-icon">🧠</span></div>
+                        <div><strong>SmolLM2 135M Instruct</strong><span>Apache-2.0 · approximately 180 MB quantized download · stored in browser cache, never included in Horde backups.</span></div>
+                        <span id="labs-embedded-state" class="labs-tier-badge">Not installed</span>
+                    </div>
+                    <div class="labs-embedded-controls">
+                        <label><span>Compute backend</span><select id="labs-embedded-device" class="form-select"><option value="auto">Automatic · WebGPU when available</option><option value="webgpu">Prefer WebGPU</option><option value="wasm">CPU / WASM compatibility</option></select></label>
+                        <div><button id="labs-embedded-install-btn" class="btn btn-primary" type="button">Download &amp; install</button><button id="labs-embedded-remove-btn" class="btn btn-ghost hidden" type="button">Remove downloaded model</button></div>
+                    </div>
+                    <div class="labs-install-progress"><div id="labs-install-progress-fill"></div></div>
+                    <p id="labs-install-status" class="form-hint">Nothing downloads until you press Install. The model runs only narrow Labs tasks; it does not replace your main chat model.</p>
+                </div>
+            </section>
+
+            <section class="labs-section">
+                <div class="labs-section-title"><div><h3>2. Choose where it may help</h3><p>Start in Shadow. Assist may add validated private hints; it never writes canonical state directly.</p></div></div>
+                <div class="labs-policy-grid">
+                    <article><div><strong>Chat Library</strong><span>Social cues and memory salience</span></div><select id="labs-policy-chat" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option></select></article>
+                    <article><div><strong>Worlds</strong><span>Actor-scoped intent and continuity</span></div><select id="labs-policy-worlds" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option><option value="audit">Audit</option></select></article>
+                    <article><div><strong>Virtual Humans</strong><span>Subtext and grounded life beats</span></div><select id="labs-policy-humans" class="form-select"><option value="off">Off</option><option value="shadow">Shadow</option><option value="assist">Assist</option></select></article>
+                </div>
+                <div class="labs-budget-row"><label><span>Compute budget</span><select id="labs-budget" class="form-select"><option value="eco">Eco · up to 6 calls/hour</option><option value="balanced">Balanced · up to 18 calls/hour</option><option value="responsive">Responsive · up to 40 calls/hour</option></select></label><label class="labs-check"><input id="labs-diagnostics-enabled" type="checkbox" checked><span>Keep private diagnostics (no prompt text)</span></label></div>
+            </section>
+
+            <section class="labs-section labs-diagnostics-section">
+                <div class="labs-section-title"><div><h3>3. Trust dashboard</h3><p>See whether the tiny model is fast and valid before moving from Shadow to Assist.</p></div><button id="labs-clear-diagnostics-btn" class="btn btn-ghost btn-small" type="button">Clear</button></div>
+                <div id="labs-diagnostic-stats" class="labs-diagnostic-stats"></div>
+                <div id="labs-diagnostic-list" class="labs-diagnostic-list"></div>
+            </section>
+        </div>
+        <div class="labs-footer"><span>Failure, timeout or malformed JSON silently falls back to the normal engine.</span><div><button id="labs-cancel-btn" class="btn btn-ghost" type="button">Cancel</button><button id="labs-save-btn" class="btn btn-primary" type="button">Save Labs setup</button></div></div>
+    </div>
+</div>
+
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
-    <script src="app.js?v=20260803-update-check-v48"></script>
+<script src="labs-embedded.js?v=20260809-v12"></script>
+<script src="labs-core.js?v=20260809-v12"></script>
+<script src="labs-tasks.js?v=20260809-v12"></script>
+<script src="labs-ui.js?v=20260809-v12"></script>
+<script src="app.js?v=20260809-v12"></script>
 </body>
 </html>

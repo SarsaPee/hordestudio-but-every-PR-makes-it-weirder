@@ -9,7 +9,7 @@
  *
  * Run with: node scratch/living_world_audit.js
  */
-const assert = require('node:assert/strict');
+const assert = require('node:assert');
 const vm = require('node:vm');
 
 // The extractor follows the call graph itself: name the functions this suite

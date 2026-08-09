@@ -833,7 +833,8 @@ test('chat immersion defaults preserve the full simulation for existing timeline
         realTimeLife: true,
         replyDelays: true,
         allowNoReply: true,
-        silenceConsequences: true
+        silenceConsequences: true,
+        replyBursts: true
     });
     assert.equal(context.companionExperienceLevel(experience), 'Full');
 });
@@ -1048,10 +1049,17 @@ test('paragraph breaks become separate bubbles, the way a real burst of texts ar
 });
 
 test('a long single paragraph is still split, on sentence boundaries', () => {
-    const long = 'a'.repeat(90) + '. ' + 'b'.repeat(90) + '. ' + 'c'.repeat(90) + '.';
+    const long = 'a'.repeat(150) + '. ' + 'b'.repeat(150) + '. ' + 'c'.repeat(150) + '.';
     const bubbles = context.splitCompanionReplyIntoBubbles(long);
-    assert(bubbles.length > 1, 'a 270-character single bubble was sent as one wall of text');
-    bubbles.forEach(bubble => assert(bubble.length <= 210, `a bubble ran to ${bubble.length} characters`));
+    assert(bubbles.length > 1, 'a 450-character single bubble was sent as one wall of text');
+    bubbles.forEach(bubble => assert(bubble.length <= 350, `a bubble ran to ${bubble.length} characters`));
+});
+
+test('text-message bursts can be disabled per timeline', () => {
+    const text = 'first paragraph\n\nsecond paragraph\n\nthird paragraph';
+    assert.deepEqual(Array.from(context.splitCompanionReplyIntoBubbles(text, false)), [
+        'first paragraph second paragraph third paragraph'
+    ]);
 });
 
 test('empty or whitespace-only content produces no phantom bubbles', () => {
@@ -1637,10 +1645,20 @@ test('studio photo and voice diagnostics reuse the production generation paths',
 });
 
 test('GPTProto media endpoints and CSP are wired into the production paths', () => {
-    assert(functionSource('requestCompanionPhoto').includes("'/images/generations'"));
+    const photoSource = functionSource('requestCompanionPhoto');
+    assert(photoSource.includes("'/images/generations'"));
+    assert(photoSource.includes("response_format: body.response_format || 'b64_json'"));
+    assert(photoSource.includes('stabilizeGeneratedImageSource(url)'));
+    assert(functionSource('stabilizeGeneratedImageSource').includes("'/media/fetch'"));
     assert(functionSource('generateOpenRouterSpeech').includes("'/audio/speech'"));
     assert(app.includes('https://gptproto.com'));
     assert(app.includes("['openrouter', 'gptproto', 'local']"));
+});
+
+test('ComfyUI generation uses the active named workflow profile', () => {
+    const source = functionSource('generateCompanionLocalPhoto');
+    assert(source.includes('activeComfyWorkflowProfile(settings)'));
+    assert(source.includes('workflow: comfyProfile.workflow'));
 });
 
 test('the person builder demands causal, non-generic adults and strict JSON', () => {

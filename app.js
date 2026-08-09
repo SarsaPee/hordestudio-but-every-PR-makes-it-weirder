@@ -6,8 +6,8 @@ const DB_VERSION = 1;
 const STORE_NAME = 'state';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '11.5.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-03T00:00:00Z';
+const HORDE_STUDIO_VERSION = '12.0.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-09T13:30:00Z';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -245,6 +245,150 @@ function normalizeMcpBridgeUrl(value) {
     return normalizeLoopbackUrl(value, HORDE_MCP_BRIDGE_DEFAULT);
 }
 
+function normalizeComfyWorkflowProfile(raw, index = 0) {
+    const source = isPlainObject(raw) ? raw : {};
+    return {
+        id: String(source.id || `comfy_profile_${index + 1}`).replace(/[^a-z0-9_-]/gi, '_').slice(0, 80),
+        name: String(source.name || `Workflow ${index + 1}`).trim().slice(0, 100) || `Workflow ${index + 1}`,
+        workflow: isPlainObject(source.workflow) ? source.workflow : {},
+        promptNode: String(source.promptNode || '').slice(0, 100),
+        promptInput: String(source.promptInput || 'text').slice(0, 100) || 'text',
+        referenceNode: String(source.referenceNode || '').slice(0, 100)
+    };
+}
+
+function ensureComfyWorkflowProfiles(settings = state.globalSettings) {
+    let profiles = (Array.isArray(settings.comfyWorkflowProfiles) ? settings.comfyWorkflowProfiles : [])
+        .map(normalizeComfyWorkflowProfile).slice(0, 50);
+    if (!profiles.length) {
+        profiles = [normalizeComfyWorkflowProfile({
+            id: 'comfy_default', name: 'Default workflow', workflow: settings.comfyWorkflow,
+            promptNode: settings.comfyPromptNode, promptInput: settings.comfyPromptInput,
+            referenceNode: settings.comfyReferenceNode
+        })];
+    }
+    const ids = new Set();
+    profiles.forEach((profile, index) => {
+        if (!profile.id || ids.has(profile.id)) profile.id = `comfy_profile_${index + 1}_${Date.now().toString(36)}`;
+        ids.add(profile.id);
+    });
+    settings.comfyWorkflowProfiles = profiles;
+    if (!profiles.some(profile => profile.id === settings.activeComfyWorkflowId)) {
+        settings.activeComfyWorkflowId = profiles[0].id;
+    }
+    const active = profiles.find(profile => profile.id === settings.activeComfyWorkflowId) || profiles[0];
+    settings.comfyWorkflow = active.workflow;
+    settings.comfyPromptNode = active.promptNode;
+    settings.comfyPromptInput = active.promptInput;
+    settings.comfyReferenceNode = active.referenceNode;
+    return profiles;
+}
+
+function activeComfyWorkflowProfile(settings = state.globalSettings) {
+    const profiles = ensureComfyWorkflowProfiles(settings);
+    return profiles.find(profile => profile.id === settings.activeComfyWorkflowId) || profiles[0];
+}
+
+function loadComfyWorkflowProfileForm(profile) {
+    const value = normalizeComfyWorkflowProfile(profile || {});
+    const workflow = document.getElementById('global-comfy-workflow');
+    if (workflow) workflow.value = Object.keys(value.workflow).length
+        ? JSON.stringify(value.workflow, null, 2) : '';
+    const promptNode = document.getElementById('global-comfy-prompt-node');
+    const promptInput = document.getElementById('global-comfy-prompt-input');
+    const referenceNode = document.getElementById('global-comfy-reference-node');
+    if (promptNode) promptNode.value = value.promptNode;
+    if (promptInput) promptInput.value = value.promptInput || 'text';
+    if (referenceNode) referenceNode.value = value.referenceNode;
+}
+
+function captureActiveComfyWorkflowForm() {
+    const settings = state.globalSettings;
+    const profile = activeComfyWorkflowProfile(settings);
+    const rawWorkflow = document.getElementById('global-comfy-workflow')?.value.trim() || '';
+    let workflow = {};
+    if (rawWorkflow) {
+        workflow = JSON.parse(rawWorkflow);
+        if (!isPlainObject(workflow)) throw new Error('ComfyUI workflow must be a JSON object.');
+    }
+    profile.workflow = workflow;
+    profile.promptNode = String(document.getElementById('global-comfy-prompt-node')?.value || '').trim().slice(0, 100);
+    profile.promptInput = String(document.getElementById('global-comfy-prompt-input')?.value || 'text').trim().slice(0, 100) || 'text';
+    profile.referenceNode = String(document.getElementById('global-comfy-reference-node')?.value || '').trim().slice(0, 100);
+    settings.comfyWorkflow = profile.workflow;
+    settings.comfyPromptNode = profile.promptNode;
+    settings.comfyPromptInput = profile.promptInput;
+    settings.comfyReferenceNode = profile.referenceNode;
+    return profile;
+}
+
+function renderComfyWorkflowProfileControls() {
+    const settings = state.globalSettings;
+    const profiles = ensureComfyWorkflowProfiles(settings);
+    const select = document.getElementById('global-comfy-profile');
+    if (!select) return;
+    select.innerHTML = profiles.map(profile =>
+        `<option value="${escapeHTML(profile.id)}"${profile.id === settings.activeComfyWorkflowId ? ' selected' : ''}>${escapeHTML(profile.name)}</option>`
+    ).join('');
+    document.getElementById('global-comfy-delete-profile').disabled = profiles.length <= 1;
+    loadComfyWorkflowProfileForm(activeComfyWorkflowProfile(settings));
+}
+
+function setupComfyWorkflowProfileControls() {
+    const select = document.getElementById('global-comfy-profile');
+    if (!select || select.dataset.ready === 'true') return;
+    select.dataset.ready = 'true';
+    const changeProfile = nextId => {
+        try { captureActiveComfyWorkflowForm(); }
+        catch (error) {
+            select.value = state.globalSettings.activeComfyWorkflowId;
+            showToast('Fix the current workflow JSON before switching profiles.', 'error');
+            return false;
+        }
+        if (ensureComfyWorkflowProfiles().some(profile => profile.id === nextId)) {
+            state.globalSettings.activeComfyWorkflowId = nextId;
+        }
+        renderComfyWorkflowProfileControls();
+        return true;
+    };
+    select.onchange = event => changeProfile(event.target.value);
+    document.getElementById('global-comfy-new-profile').onclick = () => {
+        try { captureActiveComfyWorkflowForm(); }
+        catch (error) { return showToast('Fix the current workflow JSON before adding a profile.', 'error'); }
+        const name = prompt('Name this ComfyUI workflow:', `Workflow ${ensureComfyWorkflowProfiles().length + 1}`);
+        if (name === null) return;
+        const profile = normalizeComfyWorkflowProfile({
+            id: `comfy_${Date.now().toString(36)}`, name: name.trim() || 'Untitled workflow'
+        });
+        state.globalSettings.comfyWorkflowProfiles.push(profile);
+        state.globalSettings.activeComfyWorkflowId = profile.id;
+        renderComfyWorkflowProfileControls();
+    };
+    document.getElementById('global-comfy-duplicate-profile').onclick = () => {
+        let source;
+        try { source = captureActiveComfyWorkflowForm(); }
+        catch (error) { return showToast('Fix the current workflow JSON before duplicating it.', 'error'); }
+        const name = prompt('Name this workflow copy:', `${source.name} copy`);
+        if (name === null) return;
+        const profile = normalizeComfyWorkflowProfile({
+            ...safeJsonClone(source), id: `comfy_${Date.now().toString(36)}`,
+            name: name.trim() || `${source.name} copy`
+        });
+        state.globalSettings.comfyWorkflowProfiles.push(profile);
+        state.globalSettings.activeComfyWorkflowId = profile.id;
+        renderComfyWorkflowProfileControls();
+    };
+    document.getElementById('global-comfy-delete-profile').onclick = () => {
+        const profiles = ensureComfyWorkflowProfiles();
+        const active = activeComfyWorkflowProfile();
+        if (profiles.length <= 1) return showToast('Keep at least one ComfyUI workflow profile.', 'error');
+        if (!confirm(`Delete the ComfyUI workflow “${active.name}”?`)) return;
+        state.globalSettings.comfyWorkflowProfiles = profiles.filter(profile => profile.id !== active.id);
+        state.globalSettings.activeComfyWorkflowId = state.globalSettings.comfyWorkflowProfiles[0].id;
+        renderComfyWorkflowProfileControls();
+    };
+}
+
 function mcpBridgeBase() {
     return normalizeMcpBridgeUrl(state.globalSettings?.mcpBridgeUrl);
 }
@@ -470,10 +614,13 @@ let state = {
         localImagePath: '/images/generations',
         localImageApiKey: '',
         comfyUiBaseUrl: 'http://127.0.0.1:8188',
+        comfyWorkflowProfiles: [],
+        activeComfyWorkflowId: '',
         comfyWorkflow: {},
         comfyPromptNode: '',
         comfyPromptInput: 'text',
-        comfyReferenceNode: ''
+        comfyReferenceNode: '',
+        labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } }
         // userPersona moved to personas
     },
     theme: {
@@ -518,7 +665,8 @@ let state = {
     companionThreads: {}, // legacy companionId -> message array; migrated on load
     companionTimelines: {}, // companionId -> { activeSessionId, sessions[] }
     activeCompanionId: null,
-    editingCompanionId: null
+    editingCompanionId: null,
+    labsDiagnostics: []
 };
 
 function getAllPresets() {
@@ -658,6 +806,15 @@ function validateCharacterData(value, label = 'Character') {
         });
     });
     validateLorebook(value.lorebook, `${label} lorebook`);
+    if (value.chatHud !== undefined) {
+        requirePlainObject(value.chatHud, `${label} chat HUD`);
+        ['title', 'controller', 'brief'].forEach(key => requireString(value.chatHud[key], `${label} chat HUD ${key}`, { optional: true, max: 2000 }));
+        requireArray(value.chatHud.meters, `${label} chat HUD meters`, { optional: true, max: 8 });
+        (value.chatHud.meters || []).forEach((meter, index) => {
+            requirePlainObject(meter, `${label} chat HUD meter ${index + 1}`);
+            ['id', 'label', 'color', 'guidance'].forEach(key => requireString(meter[key], `${label} chat HUD meter ${index + 1} ${key}`, { optional: true, max: 500 }));
+        });
+    }
     return safeJsonClone(value);
 }
 
@@ -1008,10 +1165,13 @@ function repairLoadedState() {
         localImagePath: '/images/generations',
         localImageApiKey: '',
         comfyUiBaseUrl: 'http://127.0.0.1:8188',
+        comfyWorkflowProfiles: [],
+        activeComfyWorkflowId: '',
         comfyWorkflow: {},
         comfyPromptNode: '',
         comfyPromptInput: 'text',
         comfyReferenceNode: '',
+        labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } },
         ...(isPlainObject(state.globalSettings) ? state.globalSettings : {})
     };
     state.globalSettings.defaultModel = typeof state.globalSettings.defaultModel === 'string' ? state.globalSettings.defaultModel.slice(0, 500) : 'deepseek/deepseek-v4-flash';
@@ -1037,6 +1197,8 @@ function repairLoadedState() {
     ['comfyPromptNode', 'comfyPromptInput', 'comfyReferenceNode'].forEach(key => {
         state.globalSettings[key] = String(state.globalSettings[key] || '').slice(0, 100);
     });
+    ensureComfyWorkflowProfiles(state.globalSettings);
+    if (window.HordeLabs) state.globalSettings.labs = window.HordeLabs.normalizeConfig(state.globalSettings.labs);
 
     const loadedTheme = isPlainObject(state.theme) ? state.theme : {};
     state.theme = Object.fromEntries(Object.entries(THEME_DEFAULTS).map(([key, fallback]) => {
@@ -1053,6 +1215,7 @@ function repairLoadedState() {
         character.tags = character.tags || [];
         character.lorebook = character.lorebook || [];
         character.memory = (character.memory || []).map(memory => typeof memory === 'string' ? { text: memory, embedding: null } : memory);
+        character.chatHud = normalizeChatHudConfig(character.chatHud);
     });
     state.personas = Array.isArray(state.personas) ? state.personas.filter(p => isPlainObject(p) && typeof p.name === 'string' && typeof (p.text || '') === 'string') : [];
     state.personas.forEach(persona => {
@@ -1150,6 +1313,7 @@ async function loadState() {
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || storedGPTProtoApiKey;
         if (state.gptprotoApiKey) sessionStorage.setItem('horde_gptproto_api_key', state.gptprotoApiKey);
         state.globalSettings = await HordeDB.get('globalSettings') || state.globalSettings;
+        state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
         if (state.globalSettings.memoryTopK === undefined) state.globalSettings.memoryTopK = 4;
         // Remember-key opt-in: default ON for users who already had a stored key
@@ -1441,7 +1605,8 @@ async function saveState() {
             companions: state.companions,
             companionThreads: state.companionThreads,
             companionTimelines: state.companionTimelines,
-            activeCompanionId: state.activeCompanionId
+            activeCompanionId: state.activeCompanionId,
+            labsDiagnostics: (state.labsDiagnostics || []).slice(-100)
         };
         if (worldMediaDirty) {
             records.worldMediaAssets = Object.fromEntries((state.worlds || []).map(world => [
@@ -3372,6 +3537,65 @@ Respond ONLY with a valid JSON block.`;
     }
 }
 
+// --- Horde Labs: optional local cognition fabric --------------------------
+
+function recordLabsDiagnostic(record) {
+    if (!record || typeof record !== 'object') return;
+    state.labsDiagnostics = [...(state.labsDiagnostics || []), record].slice(-100);
+    // The ledger deliberately lives outside story state and shared exports.
+    HordeDB.set('labsDiagnostics', state.labsDiagnostics).catch(() => {});
+    window.HordeLabsUI?.renderDiagnostics?.();
+}
+
+function setupHordeLabs() {
+    if (!window.HordeLabs || !window.HordeLabsUI) return;
+    state.globalSettings.labs = window.HordeLabs.normalizeConfig(state.globalSettings.labs);
+    window.HordeLabs.configure(state.globalSettings.labs, { onDiagnostic: recordLabsDiagnostic });
+    window.HordeLabsUI.mount({
+        getConfig: () => state.globalSettings.labs,
+        getDiagnostics: () => state.labsDiagnostics || [],
+        clearDiagnostics: async () => {
+            state.labsDiagnostics = [];
+            await HordeDB.set('labsDiagnostics', []);
+        },
+        setConfig: async next => {
+            state.globalSettings.labs = window.HordeLabs.normalizeConfig(next);
+            window.HordeLabs.configure(state.globalSettings.labs, { onDiagnostic: recordLabsDiagnostic });
+            await saveState();
+            showToast(state.globalSettings.labs.enabled
+                ? 'Horde Labs saved. Start in Shadow to calibrate your local model.'
+                : 'Horde Labs is off. Normal engine behavior is unchanged.', 'success');
+        },
+        toast: showToast
+    });
+    document.getElementById('labs-modal-btn').onclick = () => window.HordeLabsUI.open();
+}
+
+async function labsProposal(task, envelope, mode, options = {}) {
+    if (!window.HordeLabs) return null;
+    const policy = window.HordeLabs.policyFor(mode);
+    if (policy === 'off') return null;
+    if (policy === 'shadow') {
+        void window.HordeLabs.propose(task, envelope, { mode, ...options }).catch(() => {});
+        return null;
+    }
+    try {
+        const result = await window.HordeLabs.propose(task, envelope, { mode, ...options });
+        return result?.accepted ? result : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function labsSocialContext(result) {
+    const candidate = result?.candidate;
+    if (!candidate || Number(candidate.confidence) < 0.55) return '';
+    const signals = candidate.signals || {};
+    const notable = Object.entries(signals).filter(([, value]) => Math.abs(Number(value)) >= 2)
+        .map(([key, value]) => `${key} ${Number(value) > 0 ? '+' : ''}${value}`).slice(0, 3);
+    return `[PRIVATE LOCAL COGNITION — validated message classification, not canon]\nMessage kind: ${candidate.messageKind || 'other'}${notable.length ? `; notable signals: ${notable.join(', ')}` : ''}${candidate.evidence ? `; exact evidence: “${candidate.evidence}”` : ''}. Use this only as a subtle reading aid. Do not mention scores, classification, Labs, or infer facts beyond the actual message.`;
+}
+
 // --- Initialization ---
 async function init() {
     // Ask the browser to protect our IndexedDB from storage-pressure eviction
@@ -3385,6 +3609,7 @@ async function init() {
     setupStudioLogic();
     setupChatLogic();
     setupGlobalSettings();
+    setupHordeLabs();
     setupPersonasLogic();
     setupRoomsLogic();
     setupWorldsLogic();
@@ -3783,12 +4008,13 @@ function renderLibrary() {
         const isFav = !!char.isFavorite;
         const model = (char.model || 'No Model').split('/').pop();
         const tagsHtml = (char.tags || []).map(t => `<div class="mini-tag">${escapeHTML(t)}</div>`).join('');
+        const avatarInitials = displayInitials(char.name);
 
         card.innerHTML = `
             <div class="char-card-banner" style="${char.bg ? `background-image:url('${cssUrl(char.bg)}')` : ''}">
-                <button class="char-card-fav-btn ${isFav ? 'active' : ''}" data-id="${escapeHTML(char.id)}">${isFav ? '❤️' : '🤍'}</button>
+                <button class="char-card-fav-btn ${isFav ? 'active' : ''}" type="button" data-id="${escapeHTML(char.id)}" aria-label="${isFav ? 'Remove from favorites' : 'Add to favorites'}" aria-pressed="${isFav}">${isFav ? '❤️' : '🤍'}</button>
                 <div class="char-card-avatar-wrap">
-                    <div class="char-card-avatar" style="${char.avatar ? `background-image:url('${cssUrl(char.avatar)}')` : ''}"></div>
+                    <div class="char-card-avatar${char.avatar ? ' has-image' : ''}" style="${char.avatar ? `background-image:url('${cssUrl(char.avatar)}')` : ''}" aria-hidden="true">${char.avatar ? '' : escapeHTML(avatarInitials)}</div>
                 </div>
             </div>
             <div class="char-card-body">
@@ -3854,6 +4080,173 @@ function renderLibrary() {
     }
 }
 
+// --- Optional Chat HUD ------------------------------------------------------
+
+function chatHudId(value, fallback = 'meter') {
+    const id = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48);
+    return id || fallback;
+}
+
+function normalizeChatHudConfig(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const seen = new Set();
+    const meters = (Array.isArray(source.meters) ? source.meters : []).slice(0, 8).map((rawMeter, index) => {
+        const meter = isPlainObject(rawMeter) ? rawMeter : {};
+        let id = chatHudId(meter.id || meter.label, `meter_${index + 1}`);
+        while (seen.has(id)) id = `${id}_${index + 1}`;
+        seen.add(id);
+        let min = Number.isFinite(Number(meter.min)) ? Number(meter.min) : 0;
+        let max = Number.isFinite(Number(meter.max)) ? Number(meter.max) : 100;
+        if (max <= min) max = min + 1;
+        const initial = Math.max(min, Math.min(max, Number.isFinite(Number(meter.initial)) ? Number(meter.initial) : min));
+        return { id, label: String(meter.label || `Meter ${index + 1}`).trim().slice(0, 60), min, max, initial,
+            color: cssColor(meter.color, '#E63946'), guidance: String(meter.guidance || '').trim().slice(0, 300) };
+    });
+    return {
+        enabled: source.enabled === true,
+        title: String(source.title || 'Status').trim().slice(0, 80) || 'Status',
+        controller: ['manual', 'main', 'labs'].includes(source.controller) ? source.controller : 'manual',
+        brief: String(source.brief || '').trim().slice(0, 1200),
+        allowManual: source.allowManual !== false,
+        meters
+    };
+}
+
+function ensureChatHudState(character, session) {
+    const config = normalizeChatHudConfig(character?.chatHud);
+    if (!session) return { config, state: null };
+    const stored = isPlainObject(session.chatHudState) ? session.chatHudState : {};
+    const previous = isPlainObject(stored.values) ? stored.values : {};
+    session.chatHudState = {
+        values: Object.fromEntries(config.meters.map(meter => [meter.id,
+            Math.max(meter.min, Math.min(meter.max, Number.isFinite(Number(previous[meter.id])) ? Number(previous[meter.id]) : meter.initial))])),
+        status: String(stored.status || '').slice(0, 280),
+        updatedAt: Number(stored.updatedAt) || 0,
+        source: ['manual', 'main', 'labs'].includes(stored.source) ? stored.source : 'manual'
+    };
+    return { config, state: session.chatHudState };
+}
+
+function applyChatHudUpdate(character, session, proposal, source) {
+    const { config, state: hudState } = ensureChatHudState(character, session);
+    if (!hudState || !isPlainObject(proposal)) return false;
+    let changed = false;
+    const definitions = new Map(config.meters.map(meter => [meter.id, meter]));
+    (Array.isArray(proposal.meters) ? proposal.meters : []).slice(0, 8).forEach(raw => {
+        const definition = definitions.get(String(raw?.id || ''));
+        if (!definition || !Number.isFinite(Number(raw.value))) return;
+        const value = Math.max(definition.min, Math.min(definition.max, Number(raw.value)));
+        if (hudState.values[definition.id] !== value) changed = true;
+        hudState.values[definition.id] = value;
+    });
+    const status = String(proposal.status || '').trim().slice(0, 280);
+    if (status && status !== hudState.status) { hudState.status = status; changed = true; }
+    if (changed) { hudState.updatedAt = Date.now(); hudState.source = source; }
+    return changed;
+}
+
+function extractChatHudDirective(text) {
+    const source = String(text || '');
+    let update = null;
+    let cleaned = source.replace(/<horde_status>\s*([\s\S]*?)\s*<\/horde_status>/gi, (whole, payload) => {
+        const parsed = safeParseJSONRepair(payload);
+        if (isPlainObject(parsed)) update = parsed;
+        return '';
+    }).replace(/\[\[HUD_UPDATE\]\]\s*([\s\S]*?)\s*\[\[\/HUD_UPDATE\]\]/gi, (whole, payload) => {
+        const parsed = safeParseJSONRepair(payload);
+        if (isPlainObject(parsed)) update = parsed;
+        return '';
+    });
+    // Quarantine incomplete or orphaned private protocol as well. It is safer
+    // to lose a malformed footer than display engine JSON as character speech.
+    cleaned = cleaned.replace(/<horde_status\b[^>]*>[\s\S]*$/i, '')
+        .replace(/\[\[HUD_UPDATE\]\][\s\S]*$/i, '')
+        .replace(/<\/?horde_status\b[^>]*>/gi, '')
+        .replace(/\[\[\/?HUD_UPDATE\]\]/gi, '')
+        .trim();
+    return { text: cleaned, update };
+}
+
+function chatHudPrompt(character, session) {
+    const { config, state: hudState } = ensureChatHudState(character, session);
+    if (!config.enabled || config.controller !== 'main' || !config.meters.length) return '';
+    return `[OPTIONAL PRIVATE CHAT HUD — MANDATORY FOOTER]\nAfter the visible reply, output exactly one private footer: <horde_status>{"meters":[{"id":"exact_id","value":number,"evidence":"short exact excerpt from this exchange, required when changed"}],"status":"one short factual current-status sentence","statusEvidence":"short exact excerpt supporting the status"}</horde_status>. It is stripped before display. Preserve a value unless this exchange clearly changes it. Evidence must appear verbatim in the player message or your visible reply. Never invent off-screen facts or reveal hidden thoughts.\nStatus brief: ${config.brief || 'Summarize only the explicit current conversational situation.'}\nMeters: ${config.meters.map(meter => `${meter.label} [${meter.id}] ${meter.min}..${meter.max}, current ${hudState.values[meter.id]}${meter.guidance ? ` — ${meter.guidance}` : ''}`).join(' | ')}`;
+}
+
+function groundChatHudProposal(proposal, config, hudState, exchange) {
+    if (!isPlainObject(proposal)) return {};
+    const source = String(exchange || '').toLocaleLowerCase();
+    const definitions = new Map(config.meters.map(meter => [meter.id, meter]));
+    const meters = (Array.isArray(proposal.meters) ? proposal.meters : []).slice(0, 8).filter(raw => {
+        const definition = definitions.get(String(raw?.id || ''));
+        if (!definition || !Number.isFinite(Number(raw?.value))) return false;
+        const value = Math.max(definition.min, Math.min(definition.max, Number(raw.value)));
+        if (value === hudState.values[definition.id]) return true;
+        const evidence = String(raw?.evidence || '').trim().toLocaleLowerCase();
+        return !!evidence && source.includes(evidence);
+    });
+    const status = String(proposal.status || '').trim().slice(0, 280);
+    const statusEvidence = String(proposal.statusEvidence || '').trim().toLocaleLowerCase();
+    return {
+        meters,
+        status: status && statusEvidence && source.includes(statusEvidence) ? status : ''
+    };
+}
+
+async function updateChatHudFromTurn(character, session, userText, replyText, embeddedUpdate = null) {
+    const { config, state: hudState } = ensureChatHudState(character, session);
+    if (!config.enabled || !config.meters.length) return false;
+    const exchange = `PLAYER: ${String(userText || '').slice(0, 1800)}\nREPLY: ${String(replyText || '').slice(0, 2600)}`;
+    if (config.controller === 'main') {
+        return applyChatHudUpdate(character, session,
+            groundChatHudProposal(embeddedUpdate || {}, config, hudState, exchange), 'main');
+    }
+    if (config.controller !== 'labs' || !window.HordeLabs) return false;
+    try {
+        const result = await window.HordeLabs.propose('status_update', {
+            text: exchange,
+            message: exchange,
+            brief: config.brief,
+            meters: config.meters.map(meter => ({ ...meter, current: hudState.values[meter.id] }))
+        }, { mode: 'chat', priority: 105 });
+        return result?.accepted ? applyChatHudUpdate(character, session, result.candidate, 'labs') : false;
+    } catch (error) { return false; }
+}
+
+function renderChatHudEditor() {
+    if (!state.editingChar) return;
+    state.editingChar.chatHud = normalizeChatHudConfig(state.editingChar.chatHud);
+    const config = state.editingChar.chatHud;
+    document.getElementById('studio-chat-hud-enabled').checked = config.enabled;
+    document.getElementById('studio-chat-hud-title').value = config.title;
+    document.getElementById('studio-chat-hud-controller').value = config.controller;
+    document.getElementById('studio-chat-hud-brief').value = config.brief;
+    document.getElementById('studio-chat-hud-manual').checked = config.allowManual;
+    document.getElementById('studio-chat-hud-settings').classList.toggle('chat-hud-settings-disabled', !config.enabled);
+    const list = document.getElementById('studio-chat-hud-meter-list');
+    list.innerHTML = config.meters.length ? config.meters.map((meter, index) => `
+        <div class="chat-hud-meter-edit" data-index="${index}">
+            <label>Name<input class="form-input" data-field="label" value="${escapeHTML(meter.label)}"></label>
+            <label>ID<input class="form-input" data-field="id" value="${escapeHTML(meter.id)}"></label>
+            <label>Min<input class="form-input" data-field="min" type="number" value="${meter.min}"></label>
+            <label>Max<input class="form-input" data-field="max" type="number" value="${meter.max}"></label>
+            <label>Start<input class="form-input" data-field="initial" type="number" value="${meter.initial}"></label>
+            <label>Color<input data-field="color" type="color" value="${escapeHTML(meter.color)}"></label>
+            <button class="btn btn-ghost chat-hud-meter-remove" data-remove="${index}" type="button" title="Remove meter">✕</button>
+            <label style="grid-column:1/-1">Update guidance<input class="form-input" data-field="guidance" value="${escapeHTML(meter.guidance)}" placeholder="What causes this meter to change?"></label>
+        </div>`).join('') : '<div class="labs-empty">No meters yet. Add one to build the sidebar.</div>';
+    list.querySelectorAll('[data-field]').forEach(input => input.onchange = () => {
+        const row = input.closest('[data-index]');
+        const meter = state.editingChar.chatHud.meters[Number(row.dataset.index)];
+        meter[input.dataset.field] = ['min', 'max', 'initial'].includes(input.dataset.field) ? Number(input.value) : input.value;
+        state.editingChar.chatHud = normalizeChatHudConfig(state.editingChar.chatHud);
+        renderChatHudEditor();
+    });
+    list.querySelectorAll('[data-remove]').forEach(button => button.onclick = () => {
+        state.editingChar.chatHud.meters.splice(Number(button.dataset.remove), 1); renderChatHudEditor();
+    });
+}
+
 // --- Studio View (Advanced Creator) ---
 function setupStudioTabs() {
     const tabs = document.querySelectorAll('#studio-view .studio-tab');
@@ -3911,6 +4304,23 @@ function setupStudioLogic() {
     document.getElementById('studio-system-prompt').oninput = updateTokenCount;
     document.getElementById('studio-personality').oninput = updateTokenCount;
     document.getElementById('studio-scenario').oninput = updateTokenCount;
+    document.getElementById('studio-chat-hud-enabled').onchange = event => {
+        state.editingChar.chatHud = normalizeChatHudConfig({ ...state.editingChar.chatHud, enabled: event.target.checked });
+        renderChatHudEditor();
+    };
+    ['title', 'controller', 'brief'].forEach(field => {
+        document.getElementById(`studio-chat-hud-${field}`).onchange = event => {
+            state.editingChar.chatHud[field] = event.target.value;
+        };
+    });
+    document.getElementById('studio-chat-hud-manual').onchange = event => { state.editingChar.chatHud.allowManual = event.target.checked; };
+    document.getElementById('studio-add-chat-meter').onclick = () => {
+        state.editingChar.chatHud = normalizeChatHudConfig(state.editingChar.chatHud);
+        if (state.editingChar.chatHud.meters.length >= 8) return showToast('A chat HUD supports up to eight meters.', 'info');
+        const index = state.editingChar.chatHud.meters.length + 1;
+        state.editingChar.chatHud.meters.push({ id: `meter_${index}`, label: `Meter ${index}`, min: 0, max: 100, initial: 50, color: '#E63946', guidance: '' });
+        renderChatHudEditor();
+    };
 
     document.querySelectorAll('input[name="studio_mode"]').forEach(radio => {
         radio.addEventListener('change', (e) => {
@@ -4280,7 +4690,8 @@ function createNewCharacter() {
         memory: [],
         authorsNote: '',
         authorsNoteDepth: 4,
-        authorsNoteFreq: 1
+        authorsNoteFreq: 1,
+        chatHud: normalizeChatHudConfig({})
     };
     loadStudioData();
 }
@@ -4303,6 +4714,7 @@ async function autoSaveStudioChanges() {
 
 function loadStudioData() {
     const c = state.editingChar;
+    c.chatHud = normalizeChatHudConfig(c.chatHud);
     document.getElementById('studio-name').value = c.name;
     document.getElementById('studio-desc').value = c.desc;
     document.getElementById('studio-prompt').value = c.prompt;
@@ -4364,6 +4776,7 @@ function loadStudioData() {
     if (anField) anField.value = c.authorsNote || '';
     if (anDepth) anDepth.value = c.authorsNoteDepth !== undefined ? c.authorsNoteDepth : 4;
     if (anFreq) anFreq.value = c.authorsNoteFreq !== undefined ? c.authorsNoteFreq : 1;
+    renderChatHudEditor();
     
     // Populate Presets Dropdown
     const presetLabel = document.querySelector('label[for="studio-system-preset"]');
@@ -4637,6 +5050,14 @@ async function saveStudioCharacter() {
     if (anField) c.authorsNote = anField.value.trim();
     if (anDepth) c.authorsNoteDepth = parseInt(anDepth.value) || 4;
     if (anFreq) c.authorsNoteFreq = parseInt(anFreq.value) || 1;
+    c.chatHud = normalizeChatHudConfig({
+        ...c.chatHud,
+        enabled: document.getElementById('studio-chat-hud-enabled').checked,
+        title: document.getElementById('studio-chat-hud-title').value,
+        controller: document.getElementById('studio-chat-hud-controller').value,
+        brief: document.getElementById('studio-chat-hud-brief').value,
+        allowManual: document.getElementById('studio-chat-hud-manual').checked
+    });
 
     const index = state.characters.findIndex(char => char.id === c.id);
     if (index !== -1) {
@@ -4787,6 +5208,13 @@ function setupChatLogic() {
             if (msgCont) msgCont.classList.toggle('show-headers');
         };
     }
+    document.getElementById('toggle-chat-hud-btn').onclick = async () => {
+        const session = getCurrentSession();
+        if (!session) return;
+        session.chatHudCollapsed = session.chatHudCollapsed !== true;
+        await saveState();
+        renderChat();
+    };
 }
 
 function getCurrentSession() {
@@ -4861,6 +5289,41 @@ async function renameCurrentSession() {
     }
 }
 
+function renderChatHud(character, session) {
+    const aside = document.getElementById('chat-status-col');
+    const toggle = document.getElementById('toggle-chat-hud-btn');
+    const { config, state: hudState } = ensureChatHudState(character, session);
+    const visible = !!character && config.enabled && config.meters.length > 0;
+    toggle.classList.toggle('hidden', !visible);
+    aside.classList.toggle('hidden', !visible || session?.chatHudCollapsed === true);
+    if (!visible) return;
+    document.getElementById('chat-hud-title').textContent = config.title;
+    document.getElementById('chat-hud-controller').textContent = ({ manual: 'Manual', main: 'Main model', labs: 'Labs' })[config.controller];
+    const summary = document.getElementById('chat-hud-summary');
+    summary.textContent = hudState.status;
+    summary.classList.toggle('hidden', !hudState.status);
+    document.getElementById('chat-hud-note').textContent = config.controller === 'labs'
+        ? 'Local cognition proposes updates; validation and meter bounds remain deterministic.'
+        : config.controller === 'main' ? 'The main chat model updates this private HUD after its reply.'
+        : 'Values change only when you adjust them.';
+    document.getElementById('chat-hud-meters').innerHTML = config.meters.map(meter => {
+        const value = hudState.values[meter.id];
+        const percent = Math.max(0, Math.min(100, (value - meter.min) / (meter.max - meter.min) * 100));
+        return `<article class="chat-hud-meter" style="--hud-meter-color:${escapeHTML(meter.color)};--hud-fill:${percent}%">
+            <div class="chat-hud-meter-top"><span>${escapeHTML(meter.label)}</span><span class="chat-hud-meter-value">${value} / ${meter.max}</span></div>
+            <div class="chat-hud-track"><div class="chat-hud-fill"></div></div>
+            ${config.allowManual ? `<div class="chat-hud-meter-controls"><button data-hud-adjust="${escapeHTML(meter.id)}" data-delta="-1" type="button">−</button><button data-hud-adjust="${escapeHTML(meter.id)}" data-delta="1" type="button">+</button></div>` : ''}
+        </article>`;
+    }).join('');
+    aside.querySelectorAll('[data-hud-adjust]').forEach(button => button.onclick = async () => {
+        const definition = config.meters.find(meter => meter.id === button.dataset.hudAdjust);
+        if (!definition) return;
+        const step = Math.max(1, Math.round((definition.max - definition.min) / 20));
+        applyChatHudUpdate(character, session, { meters: [{ id: definition.id, value: hudState.values[definition.id] + Number(button.dataset.delta) * step }] }, 'manual');
+        await saveState(); renderChatHud(character, session);
+    });
+}
+
 function renderChat() {
     const sessionId = state.activeRoomId || state.activeCharId;
     let name = '';
@@ -4904,8 +5367,11 @@ function renderChat() {
         document.getElementById('open-in-studio-btn').innerHTML = 'Studio →';
     }
 
-    document.getElementById('chat-avatar').style.backgroundImage = avatar ? `url('${cssUrl(avatar)}')` : 'none';
-    document.getElementById('chat-avatar').style.display = avatar ? 'block' : 'none';
+    const chatAvatar = document.getElementById('chat-avatar');
+    chatAvatar.style.backgroundImage = avatar ? `url('${cssUrl(avatar)}')` : 'none';
+    chatAvatar.textContent = avatar ? '' : displayInitials(name);
+    chatAvatar.classList.toggle('has-image', !!avatar);
+    chatAvatar.style.display = 'grid';
     document.getElementById('chat-char-name').textContent = name;
     document.getElementById('chat-char-model').textContent = modelName;
     
@@ -4920,6 +5386,7 @@ function renderChat() {
     
     const session = getCurrentSession();
     const messages = session ? session.messages : [];
+    renderChatHud(state.activeRoomId ? null : state.characters.find(c => c.id === state.activeCharId), session);
     
     // Update Session Selector
     const sessSelect = document.getElementById('session-select');
@@ -4976,6 +5443,11 @@ function cssColor(value, fallback = 'var(--accent)') {
     return fallback;
 }
 
+function displayInitials(name, fallback = '?') {
+    return (String(name || fallback).trim().match(/\b[\p{L}\p{N}]/gu) || [fallback])
+        .slice(0, 2).join('').toUpperCase();
+}
+
 let accessibilityObserver = null;
 let focusBeforeModal = null;
 
@@ -4986,7 +5458,17 @@ function enhanceAccessibility(root = document) {
     const assignLabel = (label, control) => {
         if (!label || !control) return;
         if (!control.id) control.id = `labeled-control-${Math.random().toString(36).slice(2, 10)}`;
-        label.htmlFor = control.id;
+        if (label.tagName === 'LABEL') {
+            label.htmlFor = control.id;
+            return;
+        }
+        // Legacy studio markup often uses a visual .form-label div. The htmlFor
+        // property has no accessibility meaning on a div, so connect it with
+        // aria-labelledby instead of leaving the control unnamed.
+        if (!label.id) label.id = `${control.id}-label`;
+        if (!control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby')) {
+            control.setAttribute('aria-labelledby', label.id);
+        }
     };
 
     [...includeRoot('label'), ...(scope.querySelectorAll?.('label') || [])].forEach(label => {
@@ -5186,12 +5668,15 @@ function appendMessageUI(role, content, index = null, charId = null, isStreaming
     div.className = `message ${role}`;
     
     let avatarUrl = '';
+    let avatarName = role === 'user' ? 'You' : 'AI';
     if (role === 'user') {
         const persona = state.personas.find(p => p.id === state.activePersonaId);
+        if (persona?.name) avatarName = persona.name;
         if (persona && persona.avatar) avatarUrl = persona.avatar;
     } else {
         const cId = charId || state.activeCharId;
         const char = state.characters.find(c => c.id === cId);
+        if (char?.name) avatarName = char.name;
         if (char && char.avatar) avatarUrl = char.avatar;
     }
     
@@ -5202,7 +5687,7 @@ function appendMessageUI(role, content, index = null, charId = null, isStreaming
     const verIdx = hasVersions ? (msgRef.currentVersion ?? msgRef.versions.length - 1) : 0;
 
     div.innerHTML = `
-        <div class="message-avatar" style="${avatarUrl ? `background-image:url('${cssUrl(avatarUrl)}')` : ''}"></div>
+        <div class="message-avatar${avatarUrl ? ' has-image' : ''}" style="${avatarUrl ? `background-image:url('${cssUrl(avatarUrl)}')` : ''}" aria-hidden="true">${avatarUrl ? '' : escapeHTML(displayInitials(avatarName))}</div>
         <div class="message-body">
             <div class="message-content">${formatMessageContent(content, role, isStreaming)}</div>
             <textarea class="message-edit-area hidden"></textarea>
@@ -5622,6 +6107,11 @@ async function buildContext(config, targetChar, messages, userText) {
     let worldTruths = '';
     let charKnowledge = '';
     let relevantMemory = '';
+    const labsSocial = userText ? await labsProposal('social_signal', {
+        message: String(userText).slice(0, 1800),
+        text: String(userText).slice(0, 1800),
+        relationshipContext: `Mode: ${state.activeRoomId ? 'group room' : 'one-to-one chat'}; character: ${targetChar.name || 'unknown'}; recent turns: ${messages.slice(-4).length}`
+    }, 'chat', { priority: 110 }) : null;
     
     let combinedLore = [];
     if (isRoom && config.lorebook) combinedLore = combinedLore.concat(config.lorebook);
@@ -5697,6 +6187,10 @@ async function buildContext(config, targetChar, messages, userText) {
     if (activePersona && activePersona.text) {
         baseSystemParts.push(`### USER PERSONA\n${activePersona.text}`);
     }
+    const labsHint = labsSocialContext(labsSocial);
+    if (labsHint) baseSystemParts.push(labsHint);
+    const hudInstruction = !isRoom ? chatHudPrompt(targetChar, getCurrentSession()) : '';
+    if (hudInstruction) baseSystemParts.push(hudInstruction);
     if (worldTruths) {
         baseSystemParts.push(`### WORLD TRUTHS (ABSOLUTE FACTS)\n${worldTruths}`);
     }
@@ -5997,6 +6491,8 @@ async function handleChat(isReroll = false, specificCharId = null) {
     let text = '';
     let rerollVersions = null; // prior response versions to preserve across a reroll
     let rerollLedgerEntries = null; // per-take chronicle entries, parallel to versions
+    let rerollHudBefore = null;
+    let rerollHudAfter = null;
 
     if (isReroll) {
         const lastMsg = session.messages[session.messages.length - 1];
@@ -6010,6 +6506,9 @@ async function handleChat(isReroll = false, specificCharId = null) {
         const popped = session.messages.pop();
         rerollVersions = popped.versions || [popped.content];
         rerollLedgerEntries = popped.versionLedgerEntries || rerollVersions.map((v, i) => (i === rerollVersions.length - 1 ? (popped.ledgerEntry || null) : null));
+        rerollHudBefore = popped.hudBefore ? safeJsonClone(popped.hudBefore) : null;
+        rerollHudAfter = popped.hudAfter ? safeJsonClone(popped.hudAfter) : null;
+        if (!isRoom && rerollHudBefore) session.chatHudState = safeJsonClone(rerollHudBefore);
         stripChatLedgerEntry(session, popped); // ghost-cleanup: rerolled events must leave the chronicle
         renderChat();
         const lastUser = [...session.messages].reverse().find(m => m.role === 'user');
@@ -6049,6 +6548,11 @@ async function handleChat(isReroll = false, specificCharId = null) {
     }
 
     if (!config || !targetChar) return;
+
+    // A chat HUD belongs to the timeline, not the character template. Keeping a
+    // pre-turn snapshot makes rerolls transactional instead of double-applying
+    // a meter change when a user asks for a different take.
+    const hudBeforeTurn = !isRoom ? safeJsonClone(ensureChatHudState(targetChar, session).state) : null;
 
     let pre_ai_prefix = '';
     if (isRoom) { pre_ai_prefix = `[${targetChar.name}]: `; }
@@ -6195,7 +6699,10 @@ async function handleChat(isReroll = false, specificCharId = null) {
                             displayHtml += `<div style="font-style:italic; color:var(--text-2); font-size:0.8rem; margin-bottom:8px;">🧠 AI is thinking...</div>`;
                         }
 
-                        displayHtml += formatMessageContent(fullContent, 'ai', true);
+                        // Do not flash the private HUD footer into the visible
+                        // transcript while a main model is still streaming it.
+                        const visibleStream = fullContent.replace(/<horde_status>[\s\S]*$/i, '').replace(/\[\[HUD_UPDATE\]\][\s\S]*$/i, '');
+                        displayHtml += formatMessageContent(visibleStream, 'ai', true);
                         aiMsgDiv.innerHTML = displayHtml;
                         
                         const container = document.getElementById('messages-container');
@@ -6226,6 +6733,13 @@ async function handleChat(isReroll = false, specificCharId = null) {
             fullContent = fullContent.replace(/\[MEMORY\].*$/is, '').trim();
         }
 
+        let hudDirective = null;
+        if (!isRoom) {
+            const extractedHud = extractChatHudDirective(fullContent);
+            fullContent = extractedHud.text;
+            hudDirective = extractedHud.update;
+        }
+
         // Scrub tool/engine artifacts models emit as plain text
         fullContent = scrubNarrativeArtifacts(fullContent);
         if (state.globalSettings.slopStripper) fullContent = stripSlop(fullContent);
@@ -6238,7 +6752,11 @@ async function handleChat(isReroll = false, specificCharId = null) {
             aiMsgDiv.innerHTML = formatMessageContent(fullContent, 'ai');
         }
 
-        const newAiMsg = { role: 'assistant', content: fullContent, charId: targetChar.id };
+        if (!isRoom) await updateChatHudFromTurn(targetChar, session, text, fullContent, hudDirective);
+        const hudAfterTurn = !isRoom ? safeJsonClone(ensureChatHudState(targetChar, session).state) : null;
+
+        const newAiMsg = { role: 'assistant', content: fullContent, charId: targetChar.id,
+            hudBefore: hudBeforeTurn || undefined, hudAfter: hudAfterTurn || undefined };
         if (extractedChronicle) newAiMsg.ledgerEntry = extractedChronicle; // for ghost-cleanup on reroll/delete
         if (rerollVersions) {
             // Preserve prior takes: invariant is content === versions[currentVersion]
@@ -6270,13 +6788,16 @@ async function handleChat(isReroll = false, specificCharId = null) {
                 renderChat();
             } else if (rerollVersions) {
                 // Aborted reroll with nothing streamed — restore the previous response
+                if (!isRoom && rerollHudAfter) session.chatHudState = safeJsonClone(rerollHudAfter);
                 const restoredMsg = {
                     role: 'assistant',
                     content: rerollVersions[rerollVersions.length - 1],
                     charId: targetChar.id,
                     versions: rerollVersions.length > 1 ? rerollVersions : undefined,
                     currentVersion: rerollVersions.length > 1 ? rerollVersions.length - 1 : undefined,
-                    versionLedgerEntries: rerollVersions.length > 1 ? rerollLedgerEntries : undefined
+                    versionLedgerEntries: rerollVersions.length > 1 ? rerollLedgerEntries : undefined,
+                    hudBefore: rerollHudBefore || undefined,
+                    hudAfter: rerollHudAfter || undefined
                 };
                 // Re-add the restored take's chronicle line (stripped at reroll start)
                 const restoredEntry = rerollLedgerEntries ? rerollLedgerEntries[rerollLedgerEntries.length - 1] : null;
@@ -6297,13 +6818,16 @@ async function handleChat(isReroll = false, specificCharId = null) {
 
         // Failed reroll: restore the previous response instead of losing it
         if (isReroll && rerollVersions) {
+            if (!isRoom && rerollHudAfter) session.chatHudState = safeJsonClone(rerollHudAfter);
             const restoredMsg = {
                 role: 'assistant',
                 content: rerollVersions[rerollVersions.length - 1],
                 charId: targetChar.id,
                 versions: rerollVersions.length > 1 ? rerollVersions : undefined,
                 currentVersion: rerollVersions.length > 1 ? rerollVersions.length - 1 : undefined,
-                versionLedgerEntries: rerollVersions.length > 1 ? rerollLedgerEntries : undefined
+                versionLedgerEntries: rerollVersions.length > 1 ? rerollLedgerEntries : undefined,
+                hudBefore: rerollHudBefore || undefined,
+                hudAfter: rerollHudAfter || undefined
             };
             // Re-add the restored take's chronicle line (stripped at reroll start)
             const restoredEntry = rerollLedgerEntries ? rerollLedgerEntries[rerollLedgerEntries.length - 1] : null;
@@ -8164,15 +8688,11 @@ function setupGlobalSettings() {
         state.globalSettings.localImageApiKey = document.getElementById('global-local-image-key').value.trim().slice(0, 500);
         state.globalSettings.comfyUiBaseUrl = normalizeLoopbackUrl(
             document.getElementById('global-comfy-url').value, 'http://127.0.0.1:8188');
-        const workflowText = document.getElementById('global-comfy-workflow').value.trim();
         try {
-            state.globalSettings.comfyWorkflow = workflowText ? JSON.parse(workflowText) : {};
+            captureActiveComfyWorkflowForm();
         } catch (error) {
             return showToast('ComfyUI workflow is not valid JSON. Export it in API format and try again.', 'error');
         }
-        state.globalSettings.comfyPromptNode = document.getElementById('global-comfy-prompt-node').value.trim().slice(0, 100);
-        state.globalSettings.comfyPromptInput = document.getElementById('global-comfy-prompt-input').value.trim().slice(0, 100) || 'text';
-        state.globalSettings.comfyReferenceNode = document.getElementById('global-comfy-reference-node').value.trim().slice(0, 100);
         await saveState(); // persists or erases the stored key per the checkbox
         applyGlobalStyles();
         hideGlobalSettings();
@@ -8224,16 +8744,17 @@ function setupGlobalSettings() {
     };
     updateRegexCount();
 
-    // Provider switch: reveal/hide local-server fields live
+    setupComfyWorkflowProfileControls();
+
+    // Default text-provider switch: local fields change, cloud credentials stay independently available.
     const providerSel = document.getElementById('global-api-provider');
     if (providerSel) {
         providerSel.onchange = () => {
             const local = providerSel.value === 'local';
-            const gptproto = providerSel.value === 'gptproto';
             document.getElementById('local-provider-fields').style.display = local ? 'block' : 'none';
-            document.getElementById('openrouter-key-block').style.display = !local && !gptproto ? 'block' : 'none';
-            document.getElementById('gptproto-key-block').style.display = gptproto ? 'block' : 'none';
-            document.getElementById('cloud-key-storage-block').style.display = local ? 'none' : 'block';
+            document.getElementById('openrouter-key-block').style.display = 'block';
+            document.getElementById('gptproto-key-block').style.display = 'block';
+            document.getElementById('cloud-key-storage-block').style.display = 'block';
             const fpWarn = document.getElementById('file-protocol-warning');
             if (fpWarn) fpWarn.style.display = (local && location.protocol === 'file:') ? 'block' : 'none';
         };
@@ -8382,6 +8903,16 @@ function setupGlobalSettings() {
 }
 
 /** Export the entire app state (characters, chats, worlds, sessions, settings) as one file. */
+function redactGlobalSettingsCredentials(settings) {
+    const copy = safeJsonClone(isPlainObject(settings) ? settings : {});
+    // Loopback credentials are still credentials. Keep URLs, model choices and
+    // policies portable, but never put secrets into a shareable backup.
+    delete copy.localApiKey;
+    delete copy.localImageApiKey;
+    if (isPlainObject(copy.labs)) delete copy.labs.apiKey;
+    return copy;
+}
+
 function exportFullBackup() {
     (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
     const payload = {
@@ -8390,7 +8921,7 @@ function exportFullBackup() {
         _exportedAt: new Date().toISOString(),
         // API keys are credentials, not application data. They are intentionally
         // excluded so a shared backup cannot leak account access.
-        globalSettings: state.globalSettings,
+        globalSettings: redactGlobalSettingsCredentials(state.globalSettings),
         characters: state.characters,
         chats: state.chats,
         activeSessionId: state.activeSessionId,
@@ -8436,6 +8967,7 @@ function importFullBackup(file) {
                     if (data.companionThreads === undefined) data.companionThreads = {};
                     if (data.companionTimelines === undefined) data.companionTimelines = {};
                     if (data.activeCompanionId === undefined) data.activeCompanionId = null;
+                    if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
                     const keys = ['globalSettings', 'characters', 'chats', 'activeSessionId',
                         'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
                         'worlds', 'worldInstances', 'activeWorldId', 'companions',
@@ -8493,11 +9025,7 @@ function showGlobalSettings() {
         document.getElementById('global-local-image-path').value = state.globalSettings.localImagePath || '/images/generations';
         document.getElementById('global-local-image-key').value = state.globalSettings.localImageApiKey || '';
         document.getElementById('global-comfy-url').value = state.globalSettings.comfyUiBaseUrl || 'http://127.0.0.1:8188';
-        document.getElementById('global-comfy-workflow').value = Object.keys(state.globalSettings.comfyWorkflow || {}).length
-            ? JSON.stringify(state.globalSettings.comfyWorkflow, null, 2) : '';
-        document.getElementById('global-comfy-prompt-node').value = state.globalSettings.comfyPromptNode || '';
-        document.getElementById('global-comfy-prompt-input').value = state.globalSettings.comfyPromptInput || 'text';
-        document.getElementById('global-comfy-reference-node').value = state.globalSettings.comfyReferenceNode || '';
+        renderComfyWorkflowProfileControls();
         const platformBadge = document.getElementById('launcher-platform-badge');
         const launcherCommand = document.getElementById('launcher-command');
         const platform = String(navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
@@ -8509,11 +9037,10 @@ function showGlobalSettings() {
                 ? 'Start Horde Studio.command'
                 : './start-horde-studio.sh';
         const isLocal = provider === 'local';
-        const isGPTProto = provider === 'gptproto';
         document.getElementById('local-provider-fields').style.display = isLocal ? 'block' : 'none';
-        document.getElementById('openrouter-key-block').style.display = !isLocal && !isGPTProto ? 'block' : 'none';
-        document.getElementById('gptproto-key-block').style.display = isGPTProto ? 'block' : 'none';
-        document.getElementById('cloud-key-storage-block').style.display = isLocal ? 'none' : 'block';
+        document.getElementById('openrouter-key-block').style.display = 'block';
+        document.getElementById('gptproto-key-block').style.display = 'block';
+        document.getElementById('cloud-key-storage-block').style.display = 'block';
         // file:// pages can't reach localhost in Chromium (Private Network
         // Access) — warn before the user wastes time on server-side CORS
         const fpWarn = document.getElementById('file-protocol-warning');
@@ -17473,6 +18000,16 @@ async function executeWorldTurn(commandOrReroll = null) {
         const allPresentNPCs = sessionNpcs(world, sess).filter(ent =>
             sess.entityStates[ent.id]?.location === sess.playerLocation && isNpcActive(sess.entityStates[ent.id]));
         const presentNPCs = selectForegroundNpcs(world, sess, allPresentNPCs, userInput, 16);
+        const labsWorldLens = !['init', 'look', 'continue'].includes(command) && userInput
+            ? await labsProposal('event_lens', {
+                text: String(userInput).slice(0, 2600),
+                narrative: String(userInput).slice(0, 2600),
+                currentPlayerLocationId: sess.playerLocation,
+                allowedActorIds: ['player', ...sessionNpcs(world, sess).map(npc => npc.id)],
+                allowedTargetIds: ['player', ...sessionNpcs(world, sess).map(npc => npc.id)],
+                allowedLocationIds: visibleLocations.map(location => location.id),
+                nearbyCharacterIds: presentNPCs.map(npc => npc.id)
+            }, 'worlds', { priority: 125 }) : null;
 
         // KNOWLEDGE GRAPH: stamp the just-submitted player message with who
         // witnessed it. Every message's witness list is the ground truth for
@@ -17722,7 +18259,11 @@ Characters in this world are NOT omniscient. They only know what they have perso
             activity: event.activity, item: event.item, turn: event.turn
         }));
 
-    let systemPrompt = `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}
+    const labsWorldHint = labsWorldLens?.candidate && Number(labsWorldLens.candidate.confidence) >= 0.55
+        ? `\n\n[PRIVATE LOCAL EVENT LENS — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor and completion scope only. It cannot move anyone, create facts, replace commit_world_turn, or override deterministic state. If it conflicts with the player's words or canonical frame, ignore it.`
+        : '';
+
+    let systemPrompt = `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
 
 ${HORDE_NARRATIVE_RULES}
 ${state.globalSettings.immersionMode !== false ? '\n' + HORDE_IMMERSION_DIRECTIVE + '\n' : ''}
@@ -19236,6 +19777,19 @@ ${modularMandate}
             // identical postSnapshot beside it doubled every ordinary turn in
             // persisted timelines, especially painfully in large worlds.
             delete dmMsg.postSnapshot;
+            if (window.HordeLabs?.policyFor('worlds') === 'audit') {
+                void window.HordeLabs.propose('continuity_sentinel', {
+                    narrative: cleanText.slice(0, 6500),
+                    preFrame: {
+                        playerLocationId: startLocation || '',
+                        outfit: startOutfit || '',
+                        presentCharacterIds: turnSnapshot?.session?.presentCharacterIds || []
+                    },
+                    postFrame: buildWorldSceneFrame(world, sess),
+                    proposedReceipt: sess.lastTurnAudit || {},
+                    allowedEntityIds: ['player', ...sessionNpcs(world, sess).map(npc => npc.id)]
+                }, { mode: 'worlds', background: true, priority: 15 }).catch(() => {});
+            }
             await saveState();
         } else if (command === "init") {
             // INIT RESCUE: If the AI failed to introduce the world, provide a basic descriptive fallback
@@ -24960,7 +25514,10 @@ function calibrationFindingsFromSociety(world, payload, carriedFactions) {
     // Factions proposed in an earlier batch of the same run. Without these, a
     // member found in batch 6 could not be joined to a guild proposed in
     // batch 5, because nothing is applied to the world until the author says so.
-    const proposedFactions = carriedFactions instanceof Map ? carriedFactions : new Map();
+    const proposedFactions = carriedFactions instanceof Map
+        || (carriedFactions && typeof carriedFactions.get === 'function'
+            && typeof carriedFactions.set === 'function' && typeof carriedFactions.has === 'function')
+        ? carriedFactions : new Map();
     (Array.isArray(payload?.factions) ? payload.factions : []).forEach(entry => {
         const name = String(entry?.name || '').trim().slice(0, 120);
         if (!name || existingNames.has(name.toLowerCase())) return;
@@ -27970,7 +28527,9 @@ ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_
 
 /** The messages array sent to the model: system prompt + short-term buffer. */
 function buildCompanionMessages(companion, messages, nowMs, options = {}) {
-    const systemContent = buildCompanionSystemPrompt(companion, messages, nowMs, options);
+    const localCognition = labsSocialContext(options.localCognition);
+    const systemContent = buildCompanionSystemPrompt(companion, messages, nowMs, options)
+        + (localCognition ? `\n\n${localCognition}` : '');
     const experience = normalizeCompanionChatExperience(options.experience);
     const candidates = messages.slice(-COMPANION_SHORT_TERM_LIMIT);
     const contextChars = Math.max(2048, companion.contextSize || 8192) * 3.5;
@@ -28464,7 +29023,8 @@ function normalizeCompanionChatExperience(raw) {
         realTimeLife: source.realTimeLife !== false,
         replyDelays: source.replyDelays !== false,
         allowNoReply: source.allowNoReply !== false,
-        silenceConsequences: source.silenceConsequences !== false
+        silenceConsequences: source.silenceConsequences !== false,
+        replyBursts: source.replyBursts !== false
     };
 }
 
@@ -28485,8 +29045,8 @@ function companionChatExperience(companionId = state.activeCompanionId) {
 
 function companionExperienceLevel(experience) {
     const value = normalizeCompanionChatExperience(experience);
-    if (value.realTimeLife && value.replyDelays && value.allowNoReply && value.silenceConsequences) return 'Full';
-    if (!value.realTimeLife && !value.replyDelays && !value.allowNoReply && !value.silenceConsequences) return 'Instant';
+    if (value.realTimeLife && value.replyDelays && value.allowNoReply && value.silenceConsequences && value.replyBursts) return 'Full';
+    if (!value.realTimeLife && !value.replyDelays && !value.allowNoReply && !value.silenceConsequences && !value.replyBursts) return 'Instant';
     if (!value.replyDelays && !value.allowNoReply) return 'Responsive';
     return 'Custom';
 }
@@ -28779,20 +29339,29 @@ function importCompanionArchiveFile(file) {
  * texts rather than one long paragraph — on blank lines first (paragraph
  * breaks), and if a single paragraph still runs long, on sentence boundaries.
  */
-function splitCompanionReplyIntoBubbles(text) {
-    const paragraphs = String(text || '').split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+function splitCompanionReplyIntoBubbles(text, enabled = true) {
+    const normalized = String(text || '').trim();
+    if (!normalized) return [];
+    if (!enabled) return [normalized.replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim()];
+    const paragraphs = normalized.split(/\n{2,}/).map(p => p.replace(/\n+/g, ' ').trim()).filter(Boolean);
     const bubbles = [];
     paragraphs.forEach(paragraph => {
-        if (paragraph.length <= 200) { bubbles.push(paragraph); return; }
-        const sentences = paragraph.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [paragraph];
+        if (paragraph.length <= 340) {
+            const previous = bubbles[bubbles.length - 1];
+            if (previous && previous.length > 100 && paragraph.length < 25 && previous.length + paragraph.length < 340) {
+                bubbles[bubbles.length - 1] = `${previous}\n\n${paragraph}`;
+            } else bubbles.push(paragraph);
+            return;
+        }
+        const sentences = paragraph.match(/[^.!?]+(?:[.!?]+[”"']?)(?:\s+|$)|[^.!?]+$/g) || [paragraph];
         let current = '';
         sentences.forEach(sentence => {
-            if ((current + sentence).length > 200 && current) { bubbles.push(current.trim()); current = ''; }
+            if ((current + sentence).length > 340 && current) { bubbles.push(current.trim()); current = ''; }
             current += sentence;
         });
         if (current.trim()) bubbles.push(current.trim());
     });
-    return bubbles.length ? bubbles : [String(text || '').trim()].filter(Boolean);
+    return bubbles;
 }
 
 function sanitizeCompanionTextReply(text, companionName = '') {
@@ -28979,6 +29548,7 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn') {
  */
 async function sendCompanionMessage(companion, messages, userText, nowMs = Date.now(), options = {}) {
     const textProvider = companionTextProviderId(companion);
+    const experience = normalizeCompanionChatExperience(options.experience || companionChatExperience(companion.id));
     const userMessage = options.initiative
         ? null
         : (options.existingUserMessage || normalizeCompanionMessage({
@@ -28996,9 +29566,15 @@ async function sendCompanionMessage(companion, messages, userText, nowMs = Date.
     // contract used by GPTProto or local servers. All ordinary function tools
     // remain available everywhere.
     const tools = companionToolsFor(companion, textProvider !== 'openrouter');
+    const labsSocial = !options.initiative && userText ? await labsProposal('social_signal', {
+        message: String(userText).slice(0, 1800),
+        text: String(userText).slice(0, 1800),
+        relationshipContext: `Virtual Human: ${companion.name}; relationship ${companion.relationship?.score ?? companion.relationship ?? 'unspecified'}; mood ${companion.mood?.label || 'unspecified'}; channel ${options.channel || 'text'}`
+    }, 'humans', { priority: 120 }) : null;
     const promptMessages = buildCompanionMessages(companion, messages, nowMs, {
-        experience: options.experience || companionChatExperience(companion.id),
-        initiative: options.initiative === true
+        experience,
+        initiative: options.initiative === true,
+        localCognition: labsSocial
     });
     if (options.initiative) {
         const initiativeReason = String(options.initiativeReason || '').trim();
@@ -29126,7 +29702,7 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         committedAt: nowMs
     };
 
-    const newMessages = splitCompanionReplyIntoBubbles(replyText).map((bubble, index) =>
+    const newMessages = splitCompanionReplyIntoBubbles(replyText, experience.replyBursts).map((bubble, index) =>
         normalizeCompanionMessage({
             role: 'companion', type: 'text', text: bubble,
             timestamp: nowMs + (index + 1) * 400, moodLabel: companion.mood.label,
@@ -29881,9 +30457,7 @@ function gptProtoImageFromResponse(data, requestedMediaType = 'image/png') {
     return '';
 }
 
-function loadGeneratedImage(image, source, timeoutMs = 30000) {
-    const normalized = normalizeGeneratedImageSource(source);
-    if (!normalized) return Promise.reject(new Error('The provider returned an invalid image value instead of a URL or base64 image.'));
+function loadGeneratedImageOnce(image, source, timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
             cleanup();
@@ -29896,19 +30470,50 @@ function loadGeneratedImage(image, source, timeoutMs = 30000) {
         };
         image.onload = () => {
             cleanup();
-            if (image.naturalWidth > 0 && image.naturalHeight > 0) resolve(normalized);
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) resolve(source);
             else reject(new Error('The provider returned an empty image.'));
         };
         image.onerror = () => {
             cleanup();
             reject(new Error('The image was generated, but its returned URL or base64 data could not be loaded by this browser.'));
         };
-        image.src = normalized;
+        image.src = source;
         if (image.complete && image.naturalWidth > 0) {
             cleanup();
-            resolve(normalized);
+            resolve(source);
         }
     });
+}
+
+async function stabilizeGeneratedImageSource(source) {
+    const normalized = normalizeGeneratedImageSource(source);
+    if (!normalized) throw new Error('The provider returned an invalid image value instead of a URL or base64 image.');
+    if (!/^https:\/\//i.test(normalized)) return normalized;
+    try {
+        const result = await mcpBridgeRequest('/media/fetch', {
+            method: 'POST', body: { url: normalized }, timeoutMs: 135000
+        });
+        const embedded = normalizeGeneratedImageSource(result.image);
+        return embedded || normalized;
+    } catch (error) {
+        // The bridge is optional for cloud-only use. The caller still gets one
+        // direct browser attempt; GPTProto is also asked for b64_json first.
+        console.warn('Could not stabilize generated image through the local bridge:', error.message || error);
+        return normalized;
+    }
+}
+
+async function loadGeneratedImage(image, source, timeoutMs = 30000) {
+    const normalized = normalizeGeneratedImageSource(source);
+    if (!normalized) throw new Error('The provider returned an invalid image value instead of a URL or base64 image.');
+    try {
+        return await loadGeneratedImageOnce(image, normalized, timeoutMs);
+    } catch (directError) {
+        if (!/^https:\/\//i.test(normalized)) throw directError;
+        const stable = await stabilizeGeneratedImageSource(normalized);
+        if (stable === normalized) throw directError;
+        return loadGeneratedImageOnce(image, stable, timeoutMs);
+    }
 }
 
 async function pollGptProtoImagePrediction(data, headers, signal, requestedMediaType) {
@@ -30006,6 +30611,7 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
     } else if (gptprotoMultipartEdit) {
         imagePath = '/images/edits';
         const form = new FormData();
+        if (!body.response_format) body.response_format = 'b64_json';
         Object.entries(body).forEach(([key, value]) => {
             if (key === 'image' || value == null || typeof value === 'object') return;
             form.append(key, String(value));
@@ -30027,7 +30633,9 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
         headers = { ...providerAuthHeaders(provider), ...providerAttributionHeaders(provider) };
     } else {
         imagePath = provider === 'gptproto' ? '/images/generations' : '/images';
-        requestBody = JSON.stringify(body);
+        requestBody = JSON.stringify(provider === 'gptproto'
+            ? { ...body, response_format: body.response_format || 'b64_json' }
+            : body);
         headers = { 'Content-Type': 'application/json', ...providerAuthHeaders(provider), ...providerAttributionHeaders(provider) };
     }
     const controller = new AbortController();
@@ -30050,10 +30658,37 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
     } finally {
         clearTimeout(timeout);
     }
-    const rawResponse = await response.text();
+    let rawResponse = await response.text();
     let data = {};
     try { data = rawResponse ? JSON.parse(rawResponse) : {}; }
     catch (error) { data = {}; }
+    const firstFailure = data?.error?.message || data?.message || rawResponse;
+    if (!response.ok && provider === 'gptproto'
+        && /response[_ ]format/i.test(String(firstFailure || ''))
+        && /unsupported|not supported|unknown|unrecognized|invalid parameter/i.test(String(firstFailure || ''))) {
+        // GPTProto's model families are not uniform: prefer portable base64,
+        // but retry once without the hint when that exact route rejects it.
+        if (requestBody instanceof FormData) requestBody.delete('response_format');
+        else {
+            try {
+                const retryBody = JSON.parse(requestBody);
+                delete retryBody.response_format;
+                requestBody = JSON.stringify(retryBody);
+            } catch (error) { /* provider-native payload; nothing to remove */ }
+        }
+        const retryController = new AbortController();
+        const retryTimeout = setTimeout(() => retryController.abort(), 120000);
+        try {
+            response = await fetch(absoluteImageUrl || (providerApiBase(provider) + imagePath), {
+                method: 'POST', headers, body: requestBody, signal: retryController.signal
+            });
+            rawResponse = await response.text();
+            try { data = rawResponse ? JSON.parse(rawResponse) : {}; }
+            catch (error) { data = {}; }
+        } finally {
+            clearTimeout(retryTimeout);
+        }
+    }
     if (!response.ok) {
         const errorData = data;
         const message = errorData?.error?.message || errorData?.message || `Image request failed (${response.status})`;
@@ -30070,7 +30705,7 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
         ? await pollGptProtoImagePrediction(data, headers, controller.signal, requestedMediaType)
         : gptProtoImageFromResponse(data, requestedMediaType);
     if (!url) throw new Error('The model replied without an image. Try a different image model in Virtual Human Studio.');
-    return url;
+    return stabilizeGeneratedImageSource(url);
 }
 
 function companionMcpGenerationArguments(companion, sceneDescription, options = {}) {
@@ -30149,18 +30784,19 @@ async function generateCompanionLocalPhoto(companion, sceneDescription, options 
         ...options, hasReference: includeReference
     });
     const settings = state.globalSettings;
+    const comfyProfile = activeComfyWorkflowProfile(settings);
     const request = companion.imageSource === 'comfyui'
         ? {
             path: '/local-image/comfy/generate',
             body: {
                 baseUrl: settings.comfyUiBaseUrl,
-                workflow: settings.comfyWorkflow,
+                workflow: comfyProfile.workflow,
                 prompt,
                 reference: includeReference ? companion.basePhoto : '',
                 mapping: {
-                    promptNode: settings.comfyPromptNode,
-                    promptInput: settings.comfyPromptInput || 'text',
-                    referenceNode: settings.comfyReferenceNode,
+                    promptNode: comfyProfile.promptNode,
+                    promptInput: comfyProfile.promptInput || 'text',
+                    referenceNode: comfyProfile.referenceNode,
                     referenceInput: 'image'
                 }
             }
@@ -30272,10 +30908,17 @@ async function makeWorldVisualPortable(source, maxDimension, quality) {
     if (!data) throw new Error('The image provider returned no usable image.');
     if (!data.startsWith('data:image/')) {
         let response;
-        try { response = await fetch(data); }
-        catch (error) { throw new Error('The image was generated, but its temporary URL could not be downloaded into the portable world save.'); }
-        if (!response.ok) throw new Error(`The generated image URL could not be downloaded (${response.status}).`);
-        data = await blobAsDataUrl(await response.blob());
+        try {
+            response = await fetch(data);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            data = await blobAsDataUrl(await response.blob());
+        } catch (error) {
+            const stable = await stabilizeGeneratedImageSource(data);
+            if (!stable.startsWith('data:image/')) {
+                throw new Error('The image was generated, but its temporary URL could not be embedded. Run Horde Studio with its launcher so the secure local media bridge can stabilize provider URLs.');
+            }
+            data = stable;
+        }
     }
     return optimizeImage(data, maxDimension, quality);
 }
@@ -32585,13 +33228,22 @@ function updateCompanionImageSourceUI(companion) {
     if (select) select.value = source;
     providerControls?.classList.toggle('hidden', isMcp || isComfy);
     mcpControls?.classList.toggle('hidden', !isMcp);
+    const textProvider = providerDisplayName(companionTextProviderId(companion));
+    const photoProvider = source === 'provider'
+        ? providerDisplayName(companionImageProviderId(companion))
+        : source === 'openrouter' ? 'OpenRouter'
+        : source === 'gptproto' ? 'GPTProto'
+        : source === 'local' ? providerDisplayName(companionImageProviderId(companion))
+        : source === 'local_image' ? 'local image server'
+        : source === 'comfyui' ? `ComfyUI · ${activeComfyWorkflowProfile()?.name || 'active workflow'}`
+        : HORDE_MCP_PROVIDERS[source]?.label || source;
     if (description) description.textContent = source === 'comfyui'
-        ? 'Runs the saved ComfyUI API-format workflow through the localhost bridge.'
+        ? `Text: ${textProvider} · Photos: ${photoProvider}, through the localhost bridge.`
         : source === 'local_image'
-            ? 'Uses the separate OpenAI-compatible local image endpoint configured in Settings.'
+            ? `Text: ${textProvider} · Photos: the separate OpenAI-compatible local image endpoint.`
         : !isMcp
-            ? `Uses ${providerDisplayName(companionImageProviderId(companion))} independently from the conversation provider.`
-        : `Uses ${HORDE_MCP_PROVIDERS[source].label} through the localhost MCP bridge. The selected chat provider is unchanged.`;
+            ? `Text: ${textProvider} · Photos: ${photoProvider}. These routes are independent.`
+        : `Text: ${textProvider} · Photos: ${photoProvider} through the localhost MCP bridge.`;
     const label = document.getElementById('cs-mcp-image-provider-label');
     if (label && isMcp) {
         label.textContent = `${HORDE_MCP_PROVIDERS[source].label} · tool schemas are discovered live from the connected account.`;
@@ -33932,12 +34584,12 @@ function setupCompanionsLogic() {
 
 function companionExperiencePreset(name) {
     if (name === 'instant') {
-        return { realTimeLife: false, replyDelays: false, allowNoReply: false, silenceConsequences: false };
+        return { realTimeLife: false, replyDelays: false, allowNoReply: false, silenceConsequences: false, replyBursts: false };
     }
     if (name === 'responsive') {
-        return { realTimeLife: true, replyDelays: false, allowNoReply: false, silenceConsequences: true };
+        return { realTimeLife: true, replyDelays: false, allowNoReply: false, silenceConsequences: true, replyBursts: true };
     }
-    return { realTimeLife: true, replyDelays: true, allowNoReply: true, silenceConsequences: true };
+    return { realTimeLife: true, replyDelays: true, allowNoReply: true, silenceConsequences: true, replyBursts: true };
 }
 
 function reconcileCompanionExperienceMessages(timeline, previous, next, nowMs = Date.now()) {
@@ -34002,10 +34654,18 @@ function renderCompanionTimelineControls(companion) {
     const delayInput = document.getElementById('cc-reply-delays');
     const noReplyInput = document.getElementById('cc-allow-no-reply');
     const silenceInput = document.getElementById('cc-silence-consequences');
+    const burstsInput = document.getElementById('cc-reply-bursts');
     if (realTimeInput) realTimeInput.checked = experience.realTimeLife;
     if (delayInput) delayInput.checked = experience.replyDelays;
     if (noReplyInput) noReplyInput.checked = experience.allowNoReply;
     if (silenceInput) silenceInput.checked = experience.silenceConsequences;
+    if (burstsInput) burstsInput.checked = experience.replyBursts;
+    const timelineMeta = document.getElementById('companion-timeline-meta');
+    if (timelineMeta && timeline) {
+        const count = timeline.messages.length;
+        timelineMeta.textContent = `${count} ${count === 1 ? 'message' : 'messages'} · started ${new Date(timeline.createdAt).toLocaleDateString()}`;
+        timelineMeta.title = `Active timeline: ${timeline.name} (${timeline.id})`;
+    }
     if (silenceInput) {
         silenceInput.disabled = !experience.realTimeLife;
         silenceInput.title = experience.realTimeLife
@@ -34114,9 +34774,10 @@ function setupCompanionTimelineControls() {
         realTimeLife: document.getElementById('cc-real-time-life')?.checked !== false,
         replyDelays: document.getElementById('cc-reply-delays')?.checked !== false,
         allowNoReply: document.getElementById('cc-allow-no-reply')?.checked !== false,
-        silenceConsequences: document.getElementById('cc-silence-consequences')?.checked !== false
+        silenceConsequences: document.getElementById('cc-silence-consequences')?.checked !== false,
+        replyBursts: document.getElementById('cc-reply-bursts')?.checked !== false
     });
-    ['cc-real-time-life', 'cc-reply-delays', 'cc-allow-no-reply', 'cc-silence-consequences'].forEach(id => {
+    ['cc-real-time-life', 'cc-reply-delays', 'cc-allow-no-reply', 'cc-silence-consequences', 'cc-reply-bursts'].forEach(id => {
         document.getElementById(id).onchange = () => saveExperience(readExperienceControls());
     });
     document.querySelectorAll('[data-companion-immersion-preset]').forEach(button => {
@@ -34127,6 +34788,8 @@ function setupCompanionTimelineControls() {
         if (!companion || !activateCompanionTimeline(companion.id, event.target.value)) return;
         await saveState();
         renderCompanionThread();
+        const timeline = getActiveCompanionTimeline(companion.id);
+        showToast(`Switched to “${timeline.name}” · ${timeline.messages.length} messages`, 'success');
     };
     document.getElementById('companion-new-timeline-btn').onclick = async () => {
         const companion = getCompanion(state.activeCompanionId);

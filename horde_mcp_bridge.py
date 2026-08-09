@@ -11,11 +11,13 @@ from __future__ import annotations
 import base64
 import errno
 import hashlib
+import ipaddress
 import json
 import mimetypes
 import os
 import re
 import secrets
+import socket
 import stat
 import sys
 import threading
@@ -482,7 +484,10 @@ def result_image(result: dict[str, Any]) -> tuple[str, str]:
 
 
 def download_image(url: str) -> str:
-    status, headers, data = http_request(url, timeout=120)
+    status, headers, data = http_request(url, headers={
+        "Accept": "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.2",
+        "User-Agent": "Mozilla/5.0 HordeStudio/12.0",
+    }, timeout=120)
     if not 200 <= status < 300:
         raise RuntimeError(f"Could not download the generated image ({status}).")
     content_type = next((value for key, value in headers.items() if key.lower() == "content-type"), "")
@@ -493,6 +498,30 @@ def download_image(url: str) -> str:
             raise RuntimeError(f"The returned URL was not an image (content type: {mime or 'unknown'}).")
         mime = guessed
     return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+
+def safe_remote_image_url(value: Any) -> str:
+    """Validate browser-inaccessible provider media before proxying it.
+
+    This endpoint is deliberately narrower than a general URL fetcher. It only
+    accepts HTTPS assets from providers Horde Studio already talks to and
+    refuses credentials, fragments, localhost and private/reserved addresses.
+    """
+    url = str(value or "").strip()
+    parsed = urllib.parse.urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    trusted_suffixes = ("gptproto.com", "openrouter.ai")
+    if parsed.scheme != "https" or not hostname or parsed.username or parsed.password:
+        raise ValueError("Generated image URLs must be credential-free HTTPS URLs.")
+    if not any(hostname == suffix or hostname.endswith("." + suffix) for suffix in trusted_suffixes):
+        raise ValueError("That generated image host is not on Horde Studio's provider allowlist.")
+    try:
+        addresses = {entry[4][0] for entry in socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)}
+    except OSError as error:
+        raise ValueError("The generated image host could not be resolved.") from error
+    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+        raise ValueError("Generated image URLs may not resolve to a private or reserved address.")
+    return url
 
 
 def loopback_base_url(value: Any, default_port: int) -> str:
@@ -779,6 +808,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed_path == "/local-image/openai/generate":
                 body = self.read_json()
                 return self.respond(200, {"image": openai_local_generate(body)})
+            if parsed_path == "/media/fetch":
+                body = self.read_json()
+                return self.respond(200, {"image": download_image(safe_remote_image_url(body.get("url")))})
             if parsed_path == "/local-image/status":
                 body = self.read_json()
                 comfy_base = loopback_base_url(body.get("comfyBaseUrl"), 8188)

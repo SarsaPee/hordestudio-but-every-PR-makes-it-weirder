@@ -56,4 +56,22 @@ test('Virtual Human chat exposes per-timeline silence consequences', () => {
     assert(css.includes('.companion-gap-separator'));
 });
 
+test('release accessibility keeps icon controls named and keyboard focus visible', () => {
+    assert(app.includes("control.setAttribute('aria-labelledby', label.id)"));
+    assert(app.includes('aria-label="${isFav ? \'Remove from favorites\' : \'Add to favorites\'}"'));
+    assert(html.includes('aria-label="Send message"'));
+    assert(html.includes('aria-label="Close settings"'));
+    assert(css.includes('[role="button"], [tabindex]):focus-visible'));
+    assert(css.includes('@media (prefers-reduced-motion: reduce)'));
+});
+
+test('library artwork has a deliberate text fallback and release assets are cache-busted', () => {
+    assert(app.includes('function displayInitials('));
+    assert(app.includes('const avatarInitials = displayInitials(char.name)'));
+    assert(app.includes("char-card-avatar${char.avatar ? ' has-image' : ''}"));
+    assert(app.includes("message-avatar${avatarUrl ? ' has-image' : ''}"));
+    assert(css.includes('.char-card-avatar.has-image'));
+    assert(html.includes('20260809-v12'));
+});
+
 console.log(`\n${passed} cross-mode UX checks passed.`);
