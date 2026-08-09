@@ -2669,8 +2669,8 @@
                 <button id="test-local-conn-btn" class="btn btn-ghost" style="margin-top:10px; font-size:0.8rem;">🔌 Test Connection</button>
                 <div id="local-conn-result" style="margin-top:8px; font-size:0.78rem; line-height:1.5;"></div>
                 <div id="file-protocol-warning" style="display:none; margin-top:10px; padding:10px 12px; background:rgba(230,57,70,0.08); border:1px solid var(--red); border-radius:8px; font-size:0.78rem; line-height:1.5;">
-                    🛑 <b>Heads-up:</b> Horde Studio is open as a <code>file://</code> page. Chrome/Edge block such pages from reaching localhost servers entirely (Private Network Access) — <b>local models cannot connect this way, regardless of CORS settings.</b><br>
-                    Fix: run <code>python3 -m http.server 8000</code> in the app folder, then open <code>http://localhost:8000</code>.
+                    🛑 <b>Heads-up:</b> Horde Studio is open as a <code>file://</code> page. Chrome/Edge block these pages from reaching localhost servers and starting the Embedded Tiny Brain worker because the page has a null origin.<br>
+                    Fix: close this tab and run the included <code>Start Horde Studio</code> launcher for your OS. Use the <code>http://127.0.0.1:43127</code> page it opens.
                 </div>
                 <p class="form-hint" style="margin-top:8px;">Still failing? Hard-refresh (Cmd/Ctrl+Shift+R) — browsers cache the app aggressively.</p>
             </div>
@@ -3784,10 +3784,10 @@
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
-<script src="labs-embedded.js?v=20260809-v12"></script>
+<script src="labs-embedded.js?v=20260809-worker-origin-fix"></script>
 <script src="labs-core.js?v=20260809-v12"></script>
 <script src="labs-tasks.js?v=20260809-v12"></script>
-<script src="labs-ui.js?v=20260809-v12"></script>
-<script src="app.js?v=20260809-v12"></script>
+<script src="labs-ui.js?v=20260809-worker-origin-fix"></script>
+<script src="app.js?v=20260809-v12-0-1"></script>
 </body>
 </html>

@@ -6,6 +6,8 @@
     let models = [];
     let embeddedInstalled = false;
 
+    const FILE_RUNTIME_MESSAGE = 'Embedded Tiny Brain needs Horde Studio’s local app server. Close this file:// tab and run “Start Horde Studio” from the app folder, then install it from the http://127.0.0.1:43127 page that opens.';
+
     const byId = id => document.getElementById(id);
     const escapeHTML = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -97,6 +99,7 @@
     }
 
     async function refreshEmbeddedStatus() {
+        if (location.protocol === 'file:') return showEmbeddedState(false, FILE_RUNTIME_MESSAGE);
         if (!window.HordeLabsEmbedded) return showEmbeddedState(false, 'This browser cannot start the embedded runtime.');
         try {
             const result = await window.HordeLabsEmbedded.status(embeddedOptions());
@@ -110,6 +113,11 @@
 
     async function installEmbedded() {
         const button = byId('labs-embedded-install-btn');
+        if (location.protocol === 'file:') {
+            showEmbeddedState(false, FILE_RUNTIME_MESSAGE);
+            host.toast?.('Open Horde Studio with its launcher before installing the Tiny Brain.', 'error');
+            return;
+        }
         busy(button, true, 'Installing…');
         byId('labs-install-status').textContent = 'Starting the on-device model download… keep Horde Studio open.';
         try {
@@ -122,7 +130,9 @@
             showEmbeddedState(true, `Installed and loaded with ${result.device === 'webgpu' ? 'WebGPU' : 'CPU/WASM'}. It will remain cached in this browser.`);
             host.toast?.('Embedded Tiny Brain installed.', 'success');
         } catch (error) {
-            showEmbeddedState(false, `Install failed: ${error.message}. Check your connection, browser storage and WebGPU/WASM support.`);
+            const suffix = error?.code === 'HORDE_FILE_WORKER_BLOCKED' ? '' : ' Check your connection, browser storage and WebGPU/WASM support.';
+            const message = String(error?.message || error).replace(/[.\s]+$/, '');
+            showEmbeddedState(false, `Install failed: ${message}.${suffix}`);
             host.toast?.(`Tiny Brain install failed: ${error.message}`, 'error');
         } finally { busy(button, false); }
     }

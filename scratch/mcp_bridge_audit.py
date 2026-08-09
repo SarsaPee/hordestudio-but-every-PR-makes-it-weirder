@@ -15,6 +15,20 @@ import horde_mcp_bridge as bridge
 
 
 class McpBridgeAudit(unittest.TestCase):
+    def test_launcher_serves_every_labs_runtime_asset(self):
+        expected = {
+            "/labs-embedded.js",
+            "/labs-embedded-worker.js",
+            "/labs-core.js",
+            "/labs-tasks.js",
+            "/labs-ui.js",
+        }
+        self.assertTrue(expected.issubset(bridge.STATIC_FILES))
+        for path in expected:
+            filename, content_type = bridge.STATIC_FILES[path]
+            self.assertEqual(content_type, "text/javascript")
+            self.assertTrue((bridge.APP_DIR / filename).is_file())
+
     @mock.patch.object(bridge, "http_request")
     @mock.patch.object(bridge, "ThreadingHTTPServer")
     def test_relaunch_reuses_an_existing_horde_bridge(self, server, request):

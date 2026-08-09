@@ -10,4 +10,8 @@ scratch/verify_npc_parser.py
 
 # Generated source renders; optimized JPEGs and embedded world media are shipped.
 assets/worlds/**/*.png
+assets/marketing/**/*.png
+assets/marketing/*.zip
+assets/marketing/Horde-Studio-12-Reddit-Launch-Kit/
+assets/readme/horde-studio-v12-poster.png
 dist/

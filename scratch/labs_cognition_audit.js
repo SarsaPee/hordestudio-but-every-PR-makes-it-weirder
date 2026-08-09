@@ -129,7 +129,11 @@ async function run() {
         postMessage() {}
         terminate() { this.terminated = true; }
     }
-    const embeddedContext = { window: {}, Worker: SilentWorker, DOMException, console };
+    const embeddedContext = {
+        window: {}, Worker: SilentWorker, DOMException, console, URL,
+        document: { baseURI: 'http://127.0.0.1:43127/' },
+        location: { protocol: 'http:' }
+    };
     embeddedContext.window = embeddedContext;
     vm.createContext(embeddedContext);
     vm.runInContext(fs.readFileSync('labs-embedded.js', 'utf8'), embeddedContext, { filename: 'labs-embedded.js' });
@@ -140,6 +144,18 @@ async function run() {
     const [statusError, generationError] = await Promise.all([waitingStatus, waitingGeneration]);
     assert.equal(statusError.name, 'AbortError', 'terminating a worker rejects a concurrent status request');
     assert.equal(generationError.name, 'AbortError', 'timed-out embedded generation rejects cleanly');
+
+    const fileContext = {
+        window: {}, Worker: SilentWorker, DOMException, console, URL,
+        document: { baseURI: 'file:///tmp/horde-studio/index.html' },
+        location: { protocol: 'file:' }
+    };
+    fileContext.window = fileContext;
+    vm.createContext(fileContext);
+    vm.runInContext(fs.readFileSync('labs-embedded.js', 'utf8'), fileContext, { filename: 'labs-embedded.js' });
+    const fileError = await fileContext.HordeLabsEmbedded.status({}).catch(error => error);
+    assert.equal(fileError.code, 'HORDE_FILE_WORKER_BLOCKED', 'direct-file mode reports the worker-origin restriction');
+    assert.match(fileError.message, /Start Horde Studio/, 'direct-file recovery points to the launcher');
 
     const health = await Labs.health({ baseUrl: 'http://127.0.0.1:11434/v1' });
     assert.deepEqual(health.models, ['smollm2:360m']);

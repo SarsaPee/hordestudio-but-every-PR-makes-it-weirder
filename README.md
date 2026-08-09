@@ -1,4 +1,4 @@
-![Horde Studio — living worlds, characters, and virtual humans](assets/readme/horde-studio-hero.png)
+![Horde Studio 12 — living worlds, Virtual Humans, Horde Labs, chat HUDs, and creative workflows](assets/readme/horde-studio-v12-poster.jpg)
 
 <div align="center">
 

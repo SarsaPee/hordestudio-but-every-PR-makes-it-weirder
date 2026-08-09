@@ -4,9 +4,20 @@
     let sequence = 0;
     const pending = new Map();
 
+    function directFileError() {
+        const error = new Error(
+            'Embedded Tiny Brain cannot run from a file:// page because browsers block Web Workers from the null file origin. ' +
+            'Close this tab and run “Start Horde Studio” from the app folder, then use the http://127.0.0.1:43127 page it opens.'
+        );
+        error.code = 'HORDE_FILE_WORKER_BLOCKED';
+        return error;
+    }
+
     function ensureWorker() {
         if (worker) return worker;
-        worker = new Worker('labs-embedded-worker.js?v=20260809-embedded-hud-v2', { type: 'module', name: 'horde-tiny-brain' });
+        if (location.protocol === 'file:') throw directFileError();
+        const workerUrl = new URL('labs-embedded-worker.js?v=20260809-worker-origin-fix', document.baseURI);
+        worker = new Worker(workerUrl, { type: 'module', name: 'horde-tiny-brain' });
         worker.onmessage = event => {
             const message = event.data || {};
             const job = pending.get(message.id);
@@ -45,7 +56,13 @@
                 resolve: value => { signal?.removeEventListener('abort', abort); resolve(value); },
                 reject: error => { signal?.removeEventListener('abort', abort); reject(error); }
             });
-            ensureWorker().postMessage({ id, type, options });
+            try {
+                ensureWorker().postMessage({ id, type, options });
+            } catch (error) {
+                pending.delete(id);
+                signal?.removeEventListener('abort', abort);
+                reject(error);
+            }
         });
     }
 

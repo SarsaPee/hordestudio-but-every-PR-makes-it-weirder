@@ -6,7 +6,7 @@ const DB_VERSION = 1;
 const STORE_NAME = 'state';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '12.0.0';
+const HORDE_STUDIO_VERSION = '12.0.1';
 const HORDE_STUDIO_RELEASED_AT = '2026-08-09T13:30:00Z';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
