@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Local MCP client bridge for Horde Studio.
 
-The browser app never receives provider OAuth tokens. This process binds only
-to 127.0.0.1, performs MCP/OAuth on the user's behalf, discovers tool schemas,
-and converts returned image URLs/content into stable data URLs.
+The browser app never receives provider OAuth tokens. This process binds to a
+configurable interface, performs MCP/OAuth on the user's behalf, discovers tool
+schemas, and converts returned image URLs/content into stable data URLs.
+
+Environment variables (also loaded from .env if present):
+  HORDE_MCP_LISTEN_HOST — interface to bind (default: 127.0.0.1)
+  HORDE_MCP_HOST        — URL used by Horde Studio / OAuth (default: 127.0.0.1)
+  HORDE_MCP_PORT        — listening port (default: 43127)
 """
 
 from __future__ import annotations
@@ -29,16 +34,48 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-HOST = "127.0.0.1"
+# ── Load .env if present ────────────────────────────────────
+APP_DIR = Path(__file__).resolve().parent
+ENV_FILE = APP_DIR / ".env"
+
+
+def _load_env(path: Path) -> None:
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+
+
+_load_env(ENV_FILE)
+
+# ── Network configuration ───────────────────────────────────
+LISTEN_HOST = os.environ.get("HORDE_MCP_LISTEN_HOST", "127.0.0.1")
+HOST = os.environ.get("HORDE_MCP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HORDE_MCP_PORT", "43127"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
-APP_DIR = Path(__file__).resolve().parent
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
+
 ALLOWED_ORIGINS = {
     "http://localhost:4173", "http://127.0.0.1:4173",
     "http://localhost:8000", "http://127.0.0.1:8000",
+    f"http://{HOST}:{PORT}",
 }
+for net in ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+            "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
+            "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+            "192.168."):
+    ALLOWED_ORIGINS.add(f"http://{net}0.1:{PORT}")
+ALLOWED_ORIGINS.add(f"http://10.0.0.1:{PORT}")
 PROVIDERS = {
     "higgsfield": {
         "label": "Higgsfield",
@@ -221,7 +258,7 @@ def register_client(metadata: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("This provider does not support automatic MCP client registration.")
     status, _, result = json_request(endpoint, "POST", payload={
         "client_name": CLIENT_NAME,
-        "client_uri": f"http://{HOST}:{PORT}",
+        "client_uri": f"http://{LISTEN_HOST}:{PORT}",
         "redirect_uris": [CALLBACK_URL],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
@@ -710,7 +747,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return True
         try:
             parsed = urllib.parse.urlparse(origin)
-            return parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+            hostname = parsed.hostname or ""
+            if hostname in {"localhost", "127.0.0.1", "::1"}:
+                return True
+            if hostname.startswith("10.") or hostname.startswith("172.16.") or hostname.startswith("192.168."):
+                return True
+            return False
         except ValueError:
             return False
 
@@ -879,8 +921,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     app_url = f"http://{HOST}:{PORT}/"
+    listen_info = f"{LISTEN_HOST}:{PORT}" if LISTEN_HOST != HOST else str(PORT)
     try:
-        server = ThreadingHTTPServer((HOST, PORT), BridgeHandler)
+        server = ThreadingHTTPServer((LISTEN_HOST, PORT), BridgeHandler)
     except OSError as error:
         if error.errno not in {errno.EADDRINUSE, 48, 98, 10048}:
             raise
@@ -894,11 +937,13 @@ def main() -> None:
                 f"Port {PORT} is already used by another application. Close it, then start Horde Studio again."
             ) from error
         print(f"Horde Studio is already running on {app_url}")
+        print(f"Listen on: {listen_info}")
         if "--open" in sys.argv:
             import webbrowser
             webbrowser.open(app_url)
         return
-    print(f"Horde Studio listening on {app_url}")
+    print(f"Horde Studio listening on {listen_info}")
+    print(f"Open in browser: {app_url}")
     print(f"OAuth callback: {CALLBACK_URL}")
     print(f"Credentials: {AUTH_FILE} (owner-only)")
     if "--open" in sys.argv:
