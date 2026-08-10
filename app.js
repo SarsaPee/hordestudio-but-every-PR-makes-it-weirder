@@ -529,10 +529,27 @@ function providerAuthHeaders(providerId) {
         return { ...(key ? { Authorization: `Bearer ${key}` } : {}), ...parseCustomHeaders() };
     }
     const key = provider === 'gptproto' ? state.gptprotoApiKey
-        : provider === 'nanogpt' ? state.nanogptApiKey
+        : provider === 'nanogpt' ? normalizeNanoGPTApiKey(state.nanogptApiKey)
             : provider === 'nvidia' ? state.nvidiaApiKey
                 : provider === 'bedrock' ? state.bedrockApiKey : state.apiKey;
     return { Authorization: `Bearer ${key || ''}` };
+}
+
+function normalizeNanoGPTApiKey(value) {
+    // Be forgiving when somebody pastes the full value from an Authorization
+    // example. Sending `Bearer Bearer …` produces NanoGPT's opaque
+    // "Invalid Session" response even though the public model catalog works.
+    return String(value || '').trim().replace(/^Bearer\s+/i, '').trim();
+}
+
+function applyNanoGPTApiKeyForSession(value) {
+    const key = normalizeNanoGPTApiKey(value);
+    state.nanogptApiKey = key;
+    if (key) sessionStorage.setItem('horde_nanogpt_api_key', key);
+    else sessionStorage.removeItem('horde_nanogpt_api_key');
+    openRouterModels = [];
+    modelCatalogSource = null;
+    return key;
 }
 
 function providerAttributionHeaders(providerId) {
@@ -566,9 +583,13 @@ function companionImageProviderId(companion) {
 }
 
 /** Turn opaque fetch failures into actionable guidance (esp. local CORS/PNA). */
-function humanizeApiError(err) {
+function humanizeApiError(err, providerId = state.globalSettings.apiProvider) {
     const msg = err?.message || String(err);
-    if (isLocalProvider() && (err?.name === 'TypeError' || /NetworkError|Failed to fetch|load failed/i.test(msg))) {
+    const provider = normalizedProviderId(providerId);
+    if (provider === 'nanogpt' && /invalid session/i.test(msg)) {
+        return 'NanoGPT rejected the credential used for generation. Its model catalog is public, so a catalog-only test can still pass with a missing, stale or non-API credential. Create or copy an API key from NanoGPT (sk-nano-… or a legacy UUID), paste it in Settings → Connections, run the live connection test, then Save Settings.';
+    }
+    if (provider === 'local' && (err?.name === 'TypeError' || /NetworkError|Failed to fetch|load failed/i.test(msg))) {
         if (location.protocol === 'file:') {
             return 'Your browser blocks file:// pages from reaching localhost (Private Network Access) — the server settings are NOT the problem. Serve the app over http: run "python3 -m http.server 8000" in the app folder, then open http://localhost:8000. Details: Settings → 🔌 Test Connection.';
         }
@@ -580,7 +601,7 @@ function apiAuthKey() {
     if (isLocalProvider()) return state.globalSettings.localApiKey || 'local';
     if (isCustomProvider()) return state.customApiKey || (Object.keys(parseCustomHeaders()).length ? 'custom-headers' : '');
     return isGPTProtoProvider() ? state.gptprotoApiKey
-        : isNanoGPTProvider() ? state.nanogptApiKey
+        : isNanoGPTProvider() ? normalizeNanoGPTApiKey(state.nanogptApiKey)
             : isNvidiaProvider() ? state.nvidiaApiKey
                 : isBedrockProvider() ? state.bedrockApiKey : state.apiKey;
 }
@@ -8922,9 +8943,7 @@ function setupGlobalSettings() {
         state.gptprotoApiKey = document.getElementById('global-gptproto-key').value.trim();
         if (state.gptprotoApiKey) sessionStorage.setItem('horde_gptproto_api_key', state.gptprotoApiKey);
         else sessionStorage.removeItem('horde_gptproto_api_key');
-        state.nanogptApiKey = document.getElementById('global-nanogpt-key').value.trim();
-        if (state.nanogptApiKey) sessionStorage.setItem('horde_nanogpt_api_key', state.nanogptApiKey);
-        else sessionStorage.removeItem('horde_nanogpt_api_key');
+        applyNanoGPTApiKeyForSession(document.getElementById('global-nanogpt-key').value);
         state.nvidiaApiKey = document.getElementById('global-nvidia-key').value.trim();
         if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
         else sessionStorage.removeItem('horde_nvidia_api_key');
@@ -9096,25 +9115,70 @@ function setupGlobalSettings() {
     const testNanoGPTBtn = document.getElementById('test-nanogpt-conn-btn');
     if (testNanoGPTBtn) testNanoGPTBtn.onclick = async () => {
         const result = document.getElementById('nanogpt-conn-result');
-        const key = document.getElementById('global-nanogpt-key').value.trim();
+        const keyField = document.getElementById('global-nanogpt-key');
+        const key = normalizeNanoGPTApiKey(keyField.value);
         if (!key) {
             if (result) result.textContent = 'Enter a NanoGPT API key first.';
             return;
         }
         testNanoGPTBtn.disabled = true;
-        if (result) result.textContent = 'Checking the NanoGPT text-model catalog…';
+        if (result) result.textContent = 'Running a tiny authenticated NanoGPT generation…';
         try {
-            const response = await fetch('https://nano-gpt.com/api/v1/models', {
-                headers: { Authorization: `Bearer ${key}` }
+            // /models is intentionally public and returns 200 even for a bogus
+            // key. Only a generation proves that the credential real calls use
+            // is valid, so this probe deliberately follows the production path.
+            const catalogResponse = await fetch('https://nano-gpt.com/api/v1/models', {
+                credentials: 'omit',
+                headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }
+            });
+            const catalogText = await catalogResponse.text();
+            let catalogData = {};
+            try { catalogData = catalogText ? JSON.parse(catalogText) : {}; } catch (error) { catalogData = {}; }
+            if (!catalogResponse.ok) {
+                throw new Error(catalogData?.error?.message || catalogData?.message || `Catalog failed (${catalogResponse.status})`);
+            }
+            const models = Array.isArray(catalogData?.data) ? catalogData.data : [];
+            const modelIds = new Set(models.map(model => String(model?.id || '')).filter(Boolean));
+            const configuredModel = document.getElementById('global-default-model')?.value.trim();
+            const probeModel = (configuredModel && modelIds.has(configuredModel))
+                ? configuredModel
+                : modelIds.has('auto-model-basic') ? 'auto-model-basic'
+                    : modelIds.has('openai/gpt-4o-mini') ? 'openai/gpt-4o-mini'
+                        : models.find(model => typeof model?.id === 'string')?.id;
+            if (!probeModel) throw new Error('NanoGPT returned no usable text models.');
+
+            const response = await fetch('https://nano-gpt.com/api/v1/chat/completions', {
+                method: 'POST',
+                credentials: 'omit',
+                headers: {
+                    Authorization: `Bearer ${key}`,
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json'
+                },
+                body: JSON.stringify({
+                    model: probeModel,
+                    messages: [{ role: 'user', content: 'Reply with OK.' }],
+                    max_tokens: 2,
+                    temperature: 0,
+                    stream: false
+                })
             });
             const text = await response.text();
             let data = {};
             try { data = text ? JSON.parse(text) : {}; } catch (error) { data = {}; }
-            if (!response.ok) throw new Error(data?.error?.message || data?.message || `Connection failed (${response.status})`);
-            const count = Array.isArray(data?.data) ? data.data.length : 0;
-            if (result) result.textContent = `Connected to NanoGPT${count ? ` · ${count} text models visible` : ''}.`;
+            if (!response.ok || data?.error) {
+                const requestId = response.headers.get('x-request-id');
+                const message = data?.error?.message || data?.message || text || `Generation failed (${response.status})`;
+                throw new Error(`${message}${requestId ? ` · request ${requestId}` : ''}`);
+            }
+            if (!Array.isArray(data?.choices)) throw new Error('NanoGPT returned an unexpected completion response.');
+
+            applyNanoGPTApiKeyForSession(key);
+            keyField.value = key;
+            const count = models.length;
+            if (result) result.textContent = `NanoGPT generation verified with ${probeModel}${count ? ` · ${count} models visible` : ''}. This key is active for this browser session; press Save Settings to keep the selection.`;
         } catch (error) {
-            if (result) result.textContent = `NanoGPT connection failed: ${humanizeApiError(error)}`;
+            if (result) result.textContent = `NanoGPT generation test failed: ${humanizeApiError(error, 'nanogpt')}`;
         } finally {
             testNanoGPTBtn.disabled = false;
         }

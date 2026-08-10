@@ -2778,8 +2778,9 @@
             <div id="nanogpt-key-block">
                 <label class="form-label" style="margin-top:20px">NanoGPT API Key</label>
                 <input type="password" id="global-nanogpt-key" class="form-input" placeholder="NanoGPT API key">
-                <p class="form-hint">Used independently for NanoGPT text, image-model discovery, base64 image generation and neural speech through <code>https://nano-gpt.com/api/v1</code>.</p>
-                <button id="test-nanogpt-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test NanoGPT Connection</button>
+                <p class="form-hint">Used independently for NanoGPT text, image-model discovery, base64 image generation and neural speech through <code>https://nano-gpt.com/api/v1</code>. Use a NanoGPT API key (<code>sk-nano-…</code> or legacy UUID), not a browser-session token.</p>
+                <button id="test-nanogpt-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test NanoGPT with Live Call</button>
+                <p class="form-hint">Runs a two-token completion because NanoGPT's public model catalog cannot validate credentials. A successful test activates the typed key for this browser session.</p>
                 <div id="nanogpt-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
             </div>
             <div id="nvidia-key-block">
@@ -3944,6 +3945,6 @@
 <script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
 <script src="help-system.js?v=20260810-pip-providers-v2"></script>
 <script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
-<script src="app.js?v=20260810-v128"></script>
+<script src="app.js?v=20260811-nanogpt-auth-v1"></script>
 </body>
 </html>
