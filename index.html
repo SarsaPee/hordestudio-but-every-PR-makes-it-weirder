@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- connect-src: cloud AI providers + local model servers on loopback. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src https://openrouter.ai https://gptproto.com https://nano-gpt.com https://integrate.api.nvidia.com https://*.api.aws https://api.github.com https://geocoding-api.open-meteo.com https://api.open-meteo.com https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* http://[::1]:*; object-src 'none'; base-uri 'none'; form-action 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src https: http://localhost:* http://127.0.0.1:* http://[::1]:*; object-src 'none'; base-uri 'none'; form-action 'self'">
     <title>Horde Studio | Elite AI Roleplay</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2116,6 +2116,7 @@
                                     <option value="nanogpt">NanoGPT</option>
                                     <option value="nvidia">NVIDIA NIM</option>
                                     <option value="bedrock">AWS Bedrock</option>
+                                    <option value="custom">Custom API</option>
                                     <option value="local">Local / self-hosted</option>
                                 </select>
                             </section>
@@ -2706,9 +2707,16 @@
                 <option value="nanogpt">☁️ NanoGPT (cloud · text, images &amp; speech)</option>
                 <option value="nvidia">☁️ NVIDIA NIM (cloud · text)</option>
                 <option value="bedrock">☁️ AWS Bedrock (cloud · text)</option>
+                <option value="custom">🔧 Custom OpenAI-compatible API</option>
                 <option value="local">💻 Local / Self-hosted (offline, OpenAI-compatible)</option>
             </select>
             <p class="form-hint">This is the default for Chat, Worlds and Virtual Humans set to <strong>Use default</strong>. It does not lock image generation to the same company: each Virtual Human and World can use GPTProto or NanoGPT for images while text remains on OpenRouter.</p>
+            <label class="form-label" style="margin-top:16px">Default Text Model</label>
+            <div class="searchable-dropdown-wrap">
+                <input type="search" id="global-default-model" class="form-input" value="deepseek/deepseek-v4-flash" autocomplete="off" role="combobox" aria-controls="global-default-model-results" aria-expanded="false" placeholder="Click to browse or type an exact model ID">
+                <div id="global-default-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
+            </div>
+            <p class="form-hint">This catalog follows the provider selected above—even before you save. If the platform does not expose <code>/models</code>, type its exact model ID.</p>
             <div id="local-provider-fields" style="display:none; margin-top:12px; padding:12px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
                 <label class="form-label">Local Server URL</label>
                 <input type="text" id="global-local-url" class="form-input" placeholder="http://localhost:11434/v1">
@@ -2754,9 +2762,34 @@
                 <input type="password" id="global-bedrock-key" class="form-input" placeholder="Bedrock API key">
                 <label class="form-label" style="margin-top:10px">AWS Region</label>
                 <input type="text" id="global-bedrock-region" class="form-input" placeholder="us-east-1">
-                <p class="form-hint">Uses the OpenAI-compatible Bedrock Mantle endpoint with a Bedrock API key. Do not paste an IAM access-key/secret-key pair here. Bedrock remains independent from image generation.</p>
+                <label class="form-label" style="margin-top:10px">Mantle Base URL <span class="form-hint">(optional override)</span></label>
+                <input type="url" id="global-bedrock-base-url" class="form-input" placeholder="https://your-account-endpoint.example/v1" spellcheck="false">
+                <p class="form-hint">Paste the complete account-specific OpenAI-compatible base URL when AWS gives you one. Leave blank only to derive <code>https://bedrock-mantle.REGION.api.aws/v1</code>. Do not paste an IAM access-key/secret-key pair here.</p>
                 <button id="test-bedrock-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test AWS Bedrock Connection</button>
                 <div id="bedrock-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
+            </div>
+            <div id="custom-provider-block" class="mcp-settings-card" style="margin-top:20px;">
+                <div class="mcp-settings-head">
+                    <div><span class="vh-eyebrow">Bring any platform</span><h3>Custom OpenAI-compatible provider</h3></div>
+                    <span class="mcp-status-badge">Text API</span>
+                </div>
+                <div class="form-row">
+                    <div class="form-col">
+                        <label class="form-label" for="global-custom-provider-name">Display name</label>
+                        <input id="global-custom-provider-name" class="form-input" placeholder="My provider" maxlength="80">
+                    </div>
+                    <div class="form-col" style="flex:2;">
+                        <label class="form-label" for="global-custom-base-url">Base URL</label>
+                        <input type="url" id="global-custom-base-url" class="form-input" placeholder="https://api.example.com/v1" spellcheck="false">
+                    </div>
+                </div>
+                <label class="form-label" for="global-custom-api-key" style="margin-top:10px;">API key <span class="form-hint">(optional with custom authentication headers)</span></label>
+                <input type="password" id="global-custom-api-key" class="form-input" placeholder="Sent as Authorization: Bearer …">
+                <label class="form-label" for="global-custom-headers" style="margin-top:10px;">Additional headers <span class="form-hint">(optional JSON)</span></label>
+                <textarea id="global-custom-headers" class="form-textarea" rows="3" spellcheck="false" placeholder='{"X-API-Key":"…","X-Account-ID":"…"}'></textarea>
+                <p class="form-hint">Horde Studio calls <code>BASE_URL/models</code> and <code>BASE_URL/chat/completions</code>. HTTPS endpoints and localhost HTTP are allowed. Select or type the exact model in <strong>Default Model</strong> below; per-character and per-world selectors use this catalog too.</p>
+                <button id="test-custom-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test Custom Provider</button>
+                <div id="custom-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
             </div>
             <div id="cloud-key-storage-block">
                 <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.8rem; color:var(--text-2); cursor:pointer;">
@@ -2883,12 +2916,6 @@
                 <label class="form-label">Regex Scripts</label>
                 <p class="form-hint" style="margin-bottom:8px;">Custom find/replace rules applied to AI output or your input (SillyTavern-style). For cleanup, reformatting, or find-and-replace on the fly.</p>
                 <button id="open-regex-btn" class="btn btn-ghost btn-full">🔧 Manage Regex Scripts (<span id="regex-count">0</span>)</button>
-            </div>
-
-            <label class="form-label" style="margin-top:20px">Default Model</label>
-            <div class="searchable-dropdown-wrap">
-                <input type="search" id="global-default-model" class="form-input" value="deepseek/deepseek-v4-flash" autocomplete="off" role="combobox" aria-controls="global-default-model-results" aria-expanded="false">
-                <div id="global-default-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
             </div>
 
             <div style="margin-top:30px; padding-top:20px; border-top:1px solid var(--border);">

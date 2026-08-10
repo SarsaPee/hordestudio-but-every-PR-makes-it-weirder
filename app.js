@@ -6,8 +6,8 @@ const DB_VERSION = 1;
 const STORE_NAME = 'state';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '12.5.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-09T13:30:00Z';
+const HORDE_STUDIO_VERSION = '12.6.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-10T00:00:00Z';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -214,7 +214,8 @@ let worldTurnInProgress = false; // re-entry guard for executeWorldTurn
 let lastPresetContextWarningKey = '';
 
 // --- API Provider Abstraction ---
-// Cloud: OpenRouter, GPTProto, NanoGPT, NVIDIA NIM or AWS Bedrock. Local: any OpenAI-compatible server —
+// Cloud: OpenRouter, GPTProto, NanoGPT, NVIDIA NIM, AWS Bedrock or a user-defined
+// OpenAI-compatible endpoint. Local: any OpenAI-compatible server —
 // Ollama, LM Studio, KoboldCpp, llama.cpp, vLLM, text-generation-webui.
 function isLocalProvider() {
     return state.globalSettings.apiProvider === 'local';
@@ -231,6 +232,9 @@ function isNvidiaProvider() {
 function isBedrockProvider() {
     return state.globalSettings.apiProvider === 'bedrock';
 }
+function isCustomProvider() {
+    return state.globalSettings.apiProvider === 'custom';
+}
 function isOpenRouterProvider() {
     return state.globalSettings.apiProvider === 'openrouter';
 }
@@ -238,7 +242,8 @@ function cloudProviderName() {
     return isGPTProtoProvider() ? 'GPTProto'
         : isNanoGPTProvider() ? 'NanoGPT'
             : isNvidiaProvider() ? 'NVIDIA NIM'
-                : isBedrockProvider() ? 'AWS Bedrock' : 'OpenRouter';
+                : isBedrockProvider() ? 'AWS Bedrock'
+                    : isCustomProvider() ? customProviderName() : 'OpenRouter';
 }
 
 const HORDE_MCP_BRIDGE_DEFAULT = 'http://127.0.0.1:43127';
@@ -445,10 +450,26 @@ function apiBase() {
     if (isNanoGPTProvider()) return 'https://nano-gpt.com/api/v1';
     if (isNvidiaProvider()) return 'https://integrate.api.nvidia.com/v1';
     if (isBedrockProvider()) return bedrockApiBase();
+    if (isCustomProvider()) return customApiBase();
     return 'https://openrouter.ai/api/v1';
 }
 
-const TEXT_PROVIDER_IDS = Object.freeze(['openrouter', 'gptproto', 'nanogpt', 'nvidia', 'bedrock', 'local']);
+const TEXT_PROVIDER_IDS = Object.freeze(['openrouter', 'gptproto', 'nanogpt', 'nvidia', 'bedrock', 'custom', 'local']);
+
+function normalizeRemoteApiBase(value, fallback = '') {
+    const candidate = String(value || '').trim().replace(/\/+$/, '');
+    if (/^https:\/\/[^\s]+$/i.test(candidate)) return candidate;
+    if (/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s?#]*)?$/i.test(candidate)) return candidate;
+    return fallback;
+}
+
+function customProviderName() {
+    return String(state.globalSettings?.customProviderName || 'Custom API').trim().slice(0, 80) || 'Custom API';
+}
+
+function customApiBase() {
+    return normalizeRemoteApiBase(state.globalSettings?.customBaseUrl, 'https://example.invalid/v1');
+}
 
 function normalizedBedrockRegion(value) {
     const region = String(value || 'us-east-1').trim().toLowerCase();
@@ -456,6 +477,8 @@ function normalizedBedrockRegion(value) {
 }
 
 function bedrockApiBase() {
+    const override = normalizeRemoteApiBase(state.globalSettings?.bedrockBaseUrl);
+    if (override) return override;
     return `https://bedrock-mantle.${normalizedBedrockRegion(state.globalSettings?.bedrockRegion)}.api.aws/v1`;
 }
 
@@ -475,7 +498,24 @@ function providerApiBase(providerId) {
     if (provider === 'nanogpt') return 'https://nano-gpt.com/api/v1';
     if (provider === 'nvidia') return 'https://integrate.api.nvidia.com/v1';
     if (provider === 'bedrock') return bedrockApiBase();
+    if (provider === 'custom') return customApiBase();
     return 'https://openrouter.ai/api/v1';
+}
+
+function parseCustomHeaders(raw = state.customHeaders) {
+    if (!raw) return {};
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!isPlainObject(parsed)) return {};
+        const safe = {};
+        Object.entries(parsed).slice(0, 30).forEach(([name, value]) => {
+            const key = String(name).trim();
+            if (/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/.test(key) && typeof value === 'string') {
+                safe[key] = value.slice(0, 2000);
+            }
+        });
+        return safe;
+    } catch (error) { return {}; }
 }
 
 function providerAuthHeaders(providerId) {
@@ -483,6 +523,10 @@ function providerAuthHeaders(providerId) {
     if (provider === 'local') {
         const key = String(state.globalSettings.localApiKey || '').trim();
         return key ? { Authorization: `Bearer ${key}` } : {};
+    }
+    if (provider === 'custom') {
+        const key = String(state.customApiKey || '').trim();
+        return { ...(key ? { Authorization: `Bearer ${key}` } : {}), ...parseCustomHeaders() };
     }
     const key = provider === 'gptproto' ? state.gptprotoApiKey
         : provider === 'nanogpt' ? state.nanogptApiKey
@@ -498,6 +542,7 @@ function providerAttributionHeaders(providerId) {
 function providerHasCredentials(providerId) {
     const provider = normalizedProviderId(providerId);
     if (provider === 'local') return true;
+    if (provider === 'custom') return !!normalizeRemoteApiBase(state.globalSettings?.customBaseUrl);
     return !!(provider === 'gptproto' ? state.gptprotoApiKey
         : provider === 'nanogpt' ? state.nanogptApiKey
             : provider === 'nvidia' ? state.nvidiaApiKey
@@ -505,7 +550,7 @@ function providerHasCredentials(providerId) {
 }
 
 function providerDisplayName(providerId) {
-    return ({ openrouter: 'OpenRouter', gptproto: 'GPTProto', nanogpt: 'NanoGPT', nvidia: 'NVIDIA NIM', bedrock: 'AWS Bedrock', local: 'Local provider' })[
+    return ({ openrouter: 'OpenRouter', gptproto: 'GPTProto', nanogpt: 'NanoGPT', nvidia: 'NVIDIA NIM', bedrock: 'AWS Bedrock', custom: customProviderName(), local: 'Local provider' })[
         normalizedProviderId(providerId)
     ];
 }
@@ -533,6 +578,7 @@ function humanizeApiError(err) {
 }
 function apiAuthKey() {
     if (isLocalProvider()) return state.globalSettings.localApiKey || 'local';
+    if (isCustomProvider()) return state.customApiKey || (Object.keys(parseCustomHeaders()).length ? 'custom-headers' : '');
     return isGPTProtoProvider() ? state.gptprotoApiKey
         : isNanoGPTProvider() ? state.nanogptApiKey
             : isNvidiaProvider() ? state.nvidiaApiKey
@@ -551,10 +597,11 @@ function authHeaders() {
         const k = (state.globalSettings.localApiKey || '').trim();
         return k ? { 'Authorization': `Bearer ${k}` } : {};
     }
+    if (isCustomProvider()) return providerAuthHeaders('custom');
     return { 'Authorization': `Bearer ${apiAuthKey()}` };
 }
 function hasApiCredentials() {
-    return isLocalProvider() ? true : !!apiAuthKey();
+    return (isLocalProvider() || isCustomProvider()) ? true : !!apiAuthKey();
 }
 
 /**
@@ -645,9 +692,14 @@ let state = {
     nanogptApiKey: '',
     nvidiaApiKey: '',
     bedrockApiKey: '',
+    customApiKey: '',
+    customHeaders: '',
     globalSettings: {
         defaultModel: 'deepseek/deepseek-v4-flash',
         bedrockRegion: 'us-east-1',
+        bedrockBaseUrl: '',
+        customProviderName: 'Custom API',
+        customBaseUrl: '',
         editFontSize: 15,
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
@@ -1330,6 +1382,8 @@ async function loadState() {
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || '';
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || '';
         state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || '';
+        state.customApiKey = sessionStorage.getItem('horde_custom_api_key') || '';
+        state.customHeaders = sessionStorage.getItem('horde_custom_headers') || '';
         let oldSettings = {};
         try { oldSettings = JSON.parse(localStorage.getItem('horde_global_settings')) || {}; }
         catch (err) { console.warn('Ignoring corrupt legacy settings:', err); }
@@ -1358,6 +1412,8 @@ async function loadState() {
         const storedNanoGPTApiKey = await HordeDB.get('nanogptApiKey') || '';
         const storedNvidiaApiKey = await HordeDB.get('nvidiaApiKey') || '';
         const storedBedrockApiKey = await HordeDB.get('bedrockApiKey') || '';
+        const storedCustomApiKey = await HordeDB.get('customApiKey') || '';
+        const storedCustomHeaders = await HordeDB.get('customHeaders') || '';
         state.apiKey = sessionStorage.getItem('horde_api_key') || legacyStoredApiKey;
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || storedGPTProtoApiKey;
@@ -1368,6 +1424,10 @@ async function loadState() {
         if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
         state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || storedBedrockApiKey;
         if (state.bedrockApiKey) sessionStorage.setItem('horde_bedrock_api_key', state.bedrockApiKey);
+        state.customApiKey = sessionStorage.getItem('horde_custom_api_key') || storedCustomApiKey;
+        if (state.customApiKey) sessionStorage.setItem('horde_custom_api_key', state.customApiKey);
+        state.customHeaders = sessionStorage.getItem('horde_custom_headers') || storedCustomHeaders;
+        if (state.customHeaders) sessionStorage.setItem('horde_custom_headers', state.customHeaders);
         state.globalSettings = await HordeDB.get('globalSettings') || state.globalSettings;
         state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
@@ -1380,6 +1440,9 @@ async function loadState() {
         // API provider defaults (cloud unless the user opted into local)
         if (state.globalSettings.apiProvider === undefined) state.globalSettings.apiProvider = 'openrouter';
         if (state.globalSettings.bedrockRegion === undefined) state.globalSettings.bedrockRegion = 'us-east-1';
+        if (state.globalSettings.bedrockBaseUrl === undefined) state.globalSettings.bedrockBaseUrl = '';
+        if (state.globalSettings.customProviderName === undefined) state.globalSettings.customProviderName = 'Custom API';
+        if (state.globalSettings.customBaseUrl === undefined) state.globalSettings.customBaseUrl = '';
         if (state.globalSettings.localBaseUrl === undefined) state.globalSettings.localBaseUrl = '';
         if (state.globalSettings.localApiKey === undefined) state.globalSettings.localApiKey = '';
         if (state.globalSettings.embeddingModel === undefined) state.globalSettings.embeddingModel = '';
@@ -1649,6 +1712,8 @@ async function saveState() {
             nanogptApiKey: state.globalSettings.rememberApiKey ? (state.nanogptApiKey || '') : '',
             nvidiaApiKey: state.globalSettings.rememberApiKey ? (state.nvidiaApiKey || '') : '',
             bedrockApiKey: state.globalSettings.rememberApiKey ? (state.bedrockApiKey || '') : '',
+            customApiKey: state.globalSettings.rememberApiKey ? (state.customApiKey || '') : '',
+            customHeaders: state.globalSettings.rememberApiKey ? (state.customHeaders || '') : '',
             globalSettings: state.globalSettings,
             characters: state.characters,
             chats: state.chats,
@@ -2536,8 +2601,11 @@ async function getOpenRouterModels() {
         });
         if (!response.ok) throw new Error(`Model catalog request failed (${response.status})`);
         const data = await response.json();
-        if (data && Array.isArray(data.data)) {
-            openRouterModels = data.data.filter(model => isPlainObject(model) && typeof model.id === 'string')
+        const catalog = Array.isArray(data) ? data
+            : Array.isArray(data?.data) ? data.data
+                : Array.isArray(data?.models) ? data.models : [];
+        if (catalog.length) {
+            openRouterModels = catalog.filter(model => isPlainObject(model) && typeof model.id === 'string')
                 .map(model => ({ ...model, name: typeof model.name === 'string' ? model.name : model.id }));
         }
     } catch (e) {
@@ -8733,6 +8801,9 @@ function setupGlobalSettings() {
         state.bedrockApiKey = document.getElementById('global-bedrock-key').value.trim();
         if (state.bedrockApiKey) sessionStorage.setItem('horde_bedrock_api_key', state.bedrockApiKey);
         else sessionStorage.removeItem('horde_bedrock_api_key');
+        state.customApiKey = document.getElementById('global-custom-api-key').value.trim();
+        if (state.customApiKey) sessionStorage.setItem('horde_custom_api_key', state.customApiKey);
+        else sessionStorage.removeItem('horde_custom_api_key');
         state.globalSettings.defaultModel = document.getElementById('global-default-model').value.trim().slice(0, 500);
         state.globalSettings.editFontSize = Math.max(10, Math.min(32, parseInt(document.getElementById('edit-font-size').value) || 15));
         state.globalSettings.editFontColor = cssColor(document.getElementById('edit-font-color').value, '#ffffff');
@@ -8750,6 +8821,29 @@ function setupGlobalSettings() {
         state.globalSettings.bedrockRegion = normalizedBedrockRegion(
             document.getElementById('global-bedrock-region').value
         );
+        const rawBedrockBase = document.getElementById('global-bedrock-base-url').value.trim();
+        if (rawBedrockBase && !normalizeRemoteApiBase(rawBedrockBase)) {
+            return showToast('AWS Mantle Base URL must use HTTPS (or localhost HTTP).', 'error');
+        }
+        state.globalSettings.bedrockBaseUrl = normalizeRemoteApiBase(rawBedrockBase);
+        state.globalSettings.customProviderName = document.getElementById('global-custom-provider-name').value.trim().slice(0, 80) || 'Custom API';
+        const rawCustomBase = document.getElementById('global-custom-base-url').value.trim();
+        if (selectedProvider === 'custom' && !normalizeRemoteApiBase(rawCustomBase)) {
+            return showToast('Enter a valid HTTPS custom provider Base URL.', 'error');
+        }
+        state.globalSettings.customBaseUrl = normalizeRemoteApiBase(rawCustomBase);
+        const rawCustomHeaders = document.getElementById('global-custom-headers').value.trim();
+        if (rawCustomHeaders) {
+            try {
+                const parsed = JSON.parse(rawCustomHeaders);
+                if (!isPlainObject(parsed) || Object.values(parsed).some(value => typeof value !== 'string')) throw new Error();
+            } catch (error) {
+                return showToast('Additional headers must be a JSON object with string values.', 'error');
+            }
+        }
+        state.customHeaders = rawCustomHeaders;
+        if (state.customHeaders) sessionStorage.setItem('horde_custom_headers', state.customHeaders);
+        else sessionStorage.removeItem('horde_custom_headers');
         state.globalSettings.localBaseUrl = document.getElementById('global-local-url').value.trim().slice(0, 500);
         state.globalSettings.localApiKey = document.getElementById('global-local-key').value.trim().slice(0, 500);
         state.globalSettings.embeddingModel = document.getElementById('global-embedding-model').value.trim().slice(0, 200);
@@ -8769,6 +8863,8 @@ function setupGlobalSettings() {
             return showToast('ComfyUI workflow is not valid JSON. Export it in API format and try again.', 'error');
         }
         await saveState(); // persists or erases the stored key per the checkbox
+        openRouterModels = [];
+        modelCatalogSource = null;
         applyGlobalStyles();
         hideGlobalSettings();
         showToast('Settings Saved', 'success');
@@ -8832,6 +8928,7 @@ function setupGlobalSettings() {
             document.getElementById('nanogpt-key-block').style.display = 'block';
             document.getElementById('nvidia-key-block').style.display = 'block';
             document.getElementById('bedrock-key-block').style.display = 'block';
+            document.getElementById('custom-provider-block').style.display = 'block';
             document.getElementById('cloud-key-storage-block').style.display = 'block';
             const fpWarn = document.getElementById('file-protocol-warning');
             if (fpWarn) fpWarn.style.display = (local && location.protocol === 'file:') ? 'block' : 'none';
@@ -8927,8 +9024,43 @@ function setupGlobalSettings() {
     });
     setupOpenAICompatibleCloudTest({
         buttonId: 'test-bedrock-conn-btn', resultId: 'bedrock-conn-result', keyId: 'global-bedrock-key',
-        label: 'AWS Bedrock', baseUrl: () => `https://bedrock-mantle.${normalizedBedrockRegion(document.getElementById('global-bedrock-region').value)}.api.aws/v1`
+        label: 'AWS Bedrock', baseUrl: () => normalizeRemoteApiBase(document.getElementById('global-bedrock-base-url').value)
+            || `https://bedrock-mantle.${normalizedBedrockRegion(document.getElementById('global-bedrock-region').value)}.api.aws/v1`
     });
+    const customTest = document.getElementById('test-custom-conn-btn');
+    if (customTest) customTest.onclick = async () => {
+        const result = document.getElementById('custom-conn-result');
+        const base = normalizeRemoteApiBase(document.getElementById('global-custom-base-url').value);
+        if (!base) {
+            if (result) result.textContent = 'Enter a valid HTTPS Base URL first.';
+            return;
+        }
+        const key = document.getElementById('global-custom-api-key').value.trim();
+        let extraHeaders = {};
+        try {
+            const raw = document.getElementById('global-custom-headers').value.trim();
+            extraHeaders = raw ? JSON.parse(raw) : {};
+            if (!isPlainObject(extraHeaders) || Object.values(extraHeaders).some(value => typeof value !== 'string')) throw new Error();
+        } catch (error) {
+            if (result) result.textContent = 'Additional headers must be a JSON object with string values.';
+            return;
+        }
+        customTest.disabled = true;
+        if (result) result.textContent = 'Checking BASE_URL/models…';
+        try {
+            const response = await fetch(base + '/models', {
+                headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), ...extraHeaders }
+            });
+            const responseText = await response.text();
+            let data = {};
+            try { data = responseText ? JSON.parse(responseText) : {}; } catch (error) { data = {}; }
+            if (!response.ok) throw new Error(data?.error?.message || data?.message || `Connection failed (${response.status})`);
+            const count = Array.isArray(data?.data) ? data.data.length : Array.isArray(data?.models) ? data.models.length : 0;
+            if (result) result.textContent = `Connected${count ? ` · ${count} models visible` : ' · endpoint responded (type a model ID if no catalog is exposed)'}.`;
+        } catch (error) {
+            if (result) result.textContent = `Custom provider failed: ${humanizeApiError(error)}`;
+        } finally { customTest.disabled = false; }
+    };
     const testLocalImages = document.getElementById('test-local-image-engines-btn');
     if (testLocalImages) testLocalImages.onclick = async () => {
         const result = document.getElementById('local-image-engines-result');
@@ -9154,7 +9286,12 @@ function showGlobalSettings() {
         document.getElementById('global-nanogpt-key').value = state.nanogptApiKey;
         document.getElementById('global-nvidia-key').value = state.nvidiaApiKey;
         document.getElementById('global-bedrock-key').value = state.bedrockApiKey;
+        document.getElementById('global-custom-api-key').value = state.customApiKey;
         document.getElementById('global-bedrock-region').value = normalizedBedrockRegion(state.globalSettings.bedrockRegion);
+        document.getElementById('global-bedrock-base-url').value = state.globalSettings.bedrockBaseUrl || '';
+        document.getElementById('global-custom-provider-name').value = state.globalSettings.customProviderName || 'Custom API';
+        document.getElementById('global-custom-base-url').value = state.globalSettings.customBaseUrl || '';
+        document.getElementById('global-custom-headers').value = state.customHeaders || '';
         document.getElementById('remember-api-key').checked = !!state.globalSettings.rememberApiKey;
         document.getElementById('global-slop-stripper').checked = !!state.globalSettings.slopStripper;
         document.getElementById('global-immersion-mode').checked = state.globalSettings.immersionMode !== false;
@@ -9188,6 +9325,7 @@ function showGlobalSettings() {
         document.getElementById('nanogpt-key-block').style.display = 'block';
         document.getElementById('nvidia-key-block').style.display = 'block';
         document.getElementById('bedrock-key-block').style.display = 'block';
+        document.getElementById('custom-provider-block').style.display = 'block';
         document.getElementById('cloud-key-storage-block').style.display = 'block';
         // file:// pages can't reach localhost in Chromium (Private Network
         // Access) — warn before the user wastes time on server-side CORS
@@ -32566,6 +32704,41 @@ function setupCompanionSearchableFields() {
     updateCompanionLifeBuilderModelStatus(getCompanion(state.editingCompanionId));
 }
 
+async function getSettingsProviderCatalog() {
+    const provider = document.getElementById('global-api-provider')?.value || state.globalSettings.apiProvider;
+    const value = id => document.getElementById(id)?.value.trim() || '';
+    let base = '';
+    let headers = {};
+    if (provider === 'local') {
+        base = normalizeRemoteApiBase(value('global-local-url'), 'http://localhost:11434/v1');
+        if (value('global-local-key')) headers.Authorization = `Bearer ${value('global-local-key')}`;
+    } else if (provider === 'gptproto') {
+        base = 'https://gptproto.com/v1'; headers.Authorization = `Bearer ${value('global-gptproto-key')}`;
+    } else if (provider === 'nanogpt') {
+        base = 'https://nano-gpt.com/api/v1'; headers.Authorization = `Bearer ${value('global-nanogpt-key')}`;
+    } else if (provider === 'nvidia') {
+        base = 'https://integrate.api.nvidia.com/v1'; headers.Authorization = `Bearer ${value('global-nvidia-key')}`;
+    } else if (provider === 'bedrock') {
+        base = normalizeRemoteApiBase(value('global-bedrock-base-url'))
+            || `https://bedrock-mantle.${normalizedBedrockRegion(value('global-bedrock-region'))}.api.aws/v1`;
+        headers.Authorization = `Bearer ${value('global-bedrock-key')}`;
+    } else if (provider === 'custom') {
+        base = normalizeRemoteApiBase(value('global-custom-base-url'));
+        if (!base) return [];
+        if (value('global-custom-api-key')) headers.Authorization = `Bearer ${value('global-custom-api-key')}`;
+        headers = { ...headers, ...parseCustomHeaders(document.getElementById('global-custom-headers')?.value.trim()) };
+    } else {
+        base = 'https://openrouter.ai/api/v1';
+        headers = { Authorization: `Bearer ${value('global-api-key')}`, 'HTTP-Referer': 'https://horde-studio.ai', 'X-Title': 'Horde Studio' };
+    }
+    const response = await fetch(base.replace(/\/+$/, '') + '/models', { headers });
+    if (!response.ok) throw new Error(`Model catalog request failed (${response.status})`);
+    const data = await response.json();
+    const catalog = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+    return catalog.filter(model => isPlainObject(model) && typeof model.id === 'string')
+        .map(model => ({ ...model, name: typeof model.name === 'string' ? model.name : model.id }));
+}
+
 function setupCatalogModelSearchFields() {
     const definitions = [
         { inputId: 'w-agent-model', resultsId: 'w-agent-model-results', blankLabel: 'Use this world’s DM model', kind: 'text' },
@@ -32580,7 +32753,8 @@ function setupCatalogModelSearchFields() {
         if (!input || !results) return;
         const render = async () => {
             let rawModels = [];
-            try { rawModels = await getOpenRouterModels(); }
+            try { rawModels = definition.inputId === 'global-default-model'
+                ? await getSettingsProviderCatalog() : await getOpenRouterModels(); }
             catch (error) { console.warn(`Could not load models for ${definition.inputId}:`, error); }
             const models = definition.kind === 'embedding'
                 ? rawModels.filter(model => {
