@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260810-pip-providers-v2">
+    <link rel="stylesheet" href="style.css?v=20260810-v128">
 </head>
 <body>
 <div id="app">
@@ -794,11 +794,12 @@
                                 <label class="form-label">Model ID <span class="form-hint">(selected provider)</span></label>
                                 <div style="display:flex; gap:10px; position:relative;">
                                     <div class="searchable-dropdown-container" style="flex-grow:1; position:relative;">
-                                        <input type="text" id="w-studio-model" class="form-input search-dropdown-input" placeholder="🔍 Search provider models..." autocomplete="off">
+                                        <input type="text" id="w-studio-model" class="form-input search-dropdown-input" placeholder="Use the default model from Settings" autocomplete="off">
                                         <div id="w-studio-model-results" class="searchable-dropdown-results hidden"></div>
                                     </div>
                                     <button id="w-fetch-model-btn" class="btn btn-ghost" title="Fetch model info from the selected provider" style="white-space: nowrap; flex-shrink: 0;">Fetch Data</button>
                                 </div>
+                                <p class="form-hint">Leave blank to follow the default text provider and model from Settings. Choosing a model here deliberately pins only this World.</p>
                             </div>
 
                             <!-- World Agent: off-screen simulation with genuine invention -->
@@ -2694,12 +2695,38 @@
 
 <!-- Settings Modal -->
 <div id="modal-overlay" class="modal-bg hidden">
-    <div class="modal">
-        <div class="modal-hd">
-            <h2>Settings</h2>
-            <button id="close-modal-btn" class="modal-close" type="button" aria-label="Close settings">✕</button>
+    <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+        <div class="modal-hd settings-modal-head">
+            <div>
+                <span class="vh-eyebrow">Horde Studio</span>
+                <h2 id="settings-modal-title">Settings</h2>
+                <p>Providers, memory, appearance and local tools.</p>
+            </div>
+            <div class="settings-head-actions">
+                <label class="settings-search" for="settings-search-input">
+                    <span aria-hidden="true">⌕</span>
+                    <input id="settings-search-input" type="search" placeholder="Find a setting…" autocomplete="off">
+                    <kbd id="settings-search-shortcut">⌘ K</kbd>
+                </label>
+                <button id="close-modal-btn" class="modal-close" type="button" aria-label="Close settings">✕</button>
+            </div>
         </div>
-        <div class="modal-body">
+        <div class="settings-layout">
+            <aside class="settings-nav" aria-label="Settings sections">
+                <button class="settings-nav-item active" type="button" data-settings-target="models"><span class="settings-nav-icon">◈</span><span><strong>AI &amp; Models</strong><small>Default text setup</small></span></button>
+                <button class="settings-nav-item" type="button" data-settings-target="accounts"><span class="settings-nav-icon">⌁</span><span><strong>Connections</strong><small>Keys and cloud APIs</small></span></button>
+                <button class="settings-nav-item" type="button" data-settings-target="images"><span class="settings-nav-icon">▧</span><span><strong>Images</strong><small>MCP and ComfyUI</small></span></button>
+                <button class="settings-nav-item" type="button" data-settings-target="behavior"><span class="settings-nav-icon">✦</span><span><strong>Behavior</strong><small>Immersion and output</small></span></button>
+                <button class="settings-nav-item" type="button" data-settings-target="memory"><span class="settings-nav-icon">◎</span><span><strong>Memory</strong><small>Retrieval and archive</small></span></button>
+                <button class="settings-nav-item" type="button" data-settings-target="appearance"><span class="settings-nav-icon">◐</span><span><strong>Appearance</strong><small>Editor presentation</small></span></button>
+                <button class="settings-nav-item" type="button" data-settings-target="runtime"><span class="settings-nav-icon">⌘</span><span><strong>Local Runtime</strong><small>Launchers and bridge</small></span></button>
+                <button class="settings-nav-item" type="button" data-settings-target="data"><span class="settings-nav-icon">◇</span><span><strong>Data &amp; Backup</strong><small>Export and reset</small></span></button>
+            </aside>
+            <main class="modal-body settings-content" id="settings-content">
+            <div id="settings-search-empty" class="settings-search-empty hidden"><strong>No matching settings</strong><span>Try a provider name, “memory”, “backup” or “ComfyUI”.</span></div>
+            <section class="settings-section active" data-settings-section="models" data-settings-keywords="provider model text chat worlds virtual humans default local self hosted">
+                <div class="settings-section-head"><span class="settings-section-kicker">Core setup</span><h3>AI &amp; Models</h3><p>Choose the text provider and model inherited across Horde Studio.</p></div>
+                <div class="settings-card">
             <label class="form-label">Default Text Provider</label>
             <select id="global-api-provider" class="form-select">
                 <option value="openrouter">☁️ OpenRouter (cloud)</option>
@@ -2731,7 +2758,12 @@
                 </div>
                 <p class="form-hint" style="margin-top:8px;">Still failing? Hard-refresh (Cmd/Ctrl+Shift+R) — browsers cache the app aggressively.</p>
             </div>
+                </div>
+            </section>
 
+            <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember">
+                <div class="settings-section-head"><span class="settings-section-kicker">Cloud access</span><h3>Connections</h3><p>Add credentials once, test them here, then mix providers freely across modes.</p></div>
+                <div class="settings-provider-grid">
             <div id="openrouter-key-block">
                 <label class="form-label" style="margin-top:20px">OpenRouter API Key</label>
                 <input type="password" id="global-api-key" class="form-input" placeholder="sk-or-v1-...">
@@ -2797,7 +2829,11 @@
                 </label>
                 <p class="form-hint">Unchecked: keys live only in this browser tab and must be re-entered after a restart. Checked: they are stored in this browser's local database (anyone with access to this device profile could read them). Never included in backups either way.</p>
             </div>
+                </div>
+            </section>
 
+            <section class="settings-section" data-settings-section="images" data-settings-keywords="images generation mcp higgsfield magnific comfyui workflow local server visual photo">
+                <div class="settings-section-head"><span class="settings-section-kicker">Visual providers</span><h3>Images &amp; Workflows</h3><p>Connect optional creative services and reusable local image pipelines.</p></div>
             <section class="mcp-settings-card" aria-labelledby="mcp-settings-title">
                 <div class="mcp-settings-head">
                     <div>
@@ -2884,7 +2920,10 @@
                 <button id="test-local-image-engines-btn" class="btn btn-ghost" type="button" style="margin-top:10px;">Test local endpoints</button>
                 <div id="local-image-engines-result" class="form-hint" aria-live="polite"></div>
             </section>
+            </section>
 
+            <section class="settings-section" data-settings-section="runtime" data-settings-keywords="local runtime launcher start bridge mac windows linux chromebook python">
+                <div class="settings-section-head"><span class="settings-section-kicker">Desktop bridge</span><h3>Local Runtime</h3><p>Launch Horde Studio over localhost for local models, MCP and browser workers.</p></div>
             <section class="mcp-settings-card" aria-labelledby="launcher-settings-title">
                 <div class="mcp-settings-head">
                     <div>
@@ -2901,7 +2940,11 @@
                 </div>
                 <code id="launcher-command" class="vh-image-request-preview">python3 horde_mcp_bridge.py --open</code>
             </section>
+            </section>
 
+            <section class="settings-section" data-settings-section="behavior" data-settings-keywords="behavior immersion mature family friendly slop stripper regex scripts output cleanup">
+                <div class="settings-section-head"><span class="settings-section-kicker">Response controls</span><h3>Behavior &amp; Output</h3><p>Set global tone and optional post-processing rules.</p></div>
+                <div class="settings-card settings-toggle-stack">
             <label style="display:flex; align-items:center; gap:8px; margin-top:14px; font-size:0.8rem; color:var(--text-2); cursor:pointer;">
                 <input type="checkbox" id="global-immersion-mode" checked> Mature Immersion Mode
             </label>
@@ -2917,9 +2960,12 @@
                 <p class="form-hint" style="margin-bottom:8px;">Custom find/replace rules applied to AI output or your input (SillyTavern-style). For cleanup, reformatting, or find-and-replace on the fly.</p>
                 <button id="open-regex-btn" class="btn btn-ghost btn-full">🔧 Manage Regex Scripts (<span id="regex-count">0</span>)</button>
             </div>
+                </div>
+            </section>
 
-            <div style="margin-top:30px; padding-top:20px; border-top:1px solid var(--border);">
-                <h3>Vector Memory Settings</h3>
+            <section class="settings-section" data-settings-section="memory" data-settings-keywords="memory vector retrieval cosine similarity threshold top k consolidation embedding archive episodic">
+                <div class="settings-section-head"><span class="settings-section-kicker">Recall system</span><h3>Memory</h3><p>Control how past context is retrieved and consolidated.</p></div>
+                <div class="settings-card">
                 <div class="form-row" style="margin-top:12px;">
                     <div class="form-col" style="flex:1">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -2956,10 +3002,12 @@
                         <span class="form-hint">Powers vector memory search. Local: use an embedding model your server offers (Ollama: <code>nomic-embed-text</code>). If embeddings fail, memory automatically falls back to keyword matching.</span>
                     </div>
                 </div>
-            </div>
+                </div>
+            </section>
 
-            <div style="margin-top:30px; padding-top:20px; border-top:1px solid var(--border);">
-                <h3>Edit Text Window Settings</h3>
+            <section class="settings-section" data-settings-section="appearance" data-settings-keywords="appearance edit text window font size color background editor">
+                <div class="settings-section-head"><span class="settings-section-kicker">Reading comfort</span><h3>Editor Appearance</h3><p>Adjust the long-form text editor without changing chat themes.</p></div>
+                <div class="settings-card">
                 <div class="form-row" style="margin-top:12px;">
                     <div class="form-col">
                         <label class="form-label">Font Size</label>
@@ -2980,20 +3028,26 @@
                         </div>
                     </div>
                 </div>
-            </div>
+                </div>
+            </section>
 
-            <div style="margin-top:40px; border-top:1px solid var(--border); padding-top:20px;">
-                <label class="form-label">Data Safety</label>
-                <div style="display:flex; gap:10px; margin-bottom:14px;">
+            <section class="settings-section" data-settings-section="data" data-settings-keywords="data safety backup restore export import purge reset storage">
+                <div class="settings-section-head"><span class="settings-section-kicker">Your library</span><h3>Data &amp; Backup</h3><p>Move your complete installation or recover from a local backup.</p></div>
+                <div class="settings-card settings-data-card">
+                <div class="settings-action-row">
                     <button id="backup-all-btn" class="btn btn-ghost btn-full">💾 Export Full Backup</button>
                     <button id="restore-all-btn" class="btn btn-ghost btn-full">📂 Restore Backup</button>
                     <input type="file" id="restore-all-input" accept=".json,.hordebackup" style="display:none;">
                 </div>
+                <div class="settings-danger-zone"><div><strong>Hard reset</strong><span>Deletes every local character, World, conversation and setting.</span></div>
                 <button id="purge-data-btn" class="btn btn-danger btn-full">⚠️ Purge All Data (Hard Reset)</button>
-            </div>
+                </div></div>
+            </section>
+            </main>
         </div>
-        <div class="modal-ft">
-            <button id="save-global-settings" class="btn btn-primary btn-full">Save Settings</button>
+        <div class="modal-ft settings-modal-footer">
+            <span id="settings-footer-context">AI &amp; Models</span>
+            <div><button id="cancel-global-settings" class="btn btn-ghost" type="button">Cancel</button><button id="save-global-settings" class="btn btn-primary" type="button">Save changes</button></div>
         </div>
     </div>
 </div>
@@ -3885,11 +3939,11 @@
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
 <script src="labs-embedded.js?v=20260810-pip-conversation-v2"></script>
-<script src="labs-core.js?v=20260810-pip-conversation-v2"></script>
+<script src="labs-core.js?v=20260810-v128"></script>
 <script src="labs-tasks.js?v=20260810-compact-micro-v2"></script>
 <script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
 <script src="help-system.js?v=20260810-pip-providers-v2"></script>
 <script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
-<script src="app.js?v=20260810-cloud-providers-v2"></script>
+<script src="app.js?v=20260810-v128"></script>
 </body>
 </html>

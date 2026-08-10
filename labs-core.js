@@ -424,7 +424,7 @@
             'http://10.0.0.100:11434/v1',
             'http://10.0.0.100:4000/v1'
         ];
-        const results = await Promise.all(candidates.map(baseUrl => health({ ...currentConfig(), baseUrl }))));
+        const results = await Promise.all(candidates.map(baseUrl => health({ ...currentConfig(), baseUrl })));
         return results.filter(result => result.ok);
     }
 

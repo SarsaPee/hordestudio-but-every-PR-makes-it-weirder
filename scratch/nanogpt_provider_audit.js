@@ -11,7 +11,7 @@ const checks = [
     ['NanoGPT is selectable independently for Virtual Human photos', /id="cs-image-source"[\s\S]*?option value="nanogpt"/.test(html)],
     ['NanoGPT is selectable independently for Virtual Human text', /id="cs-text-provider"[\s\S]*?option value="nanogpt"/.test(html)],
     ['NanoGPT is selectable independently for World artwork', /id="w-visual-image-provider"[\s\S]*?option value="nanogpt"/.test(html)],
-    ['CSP permits NanoGPT and user-configured HTTPS API calls', /connect-src https:/.test(html) && /https:\/\/nano-gpt\.com/.test(app)],
+    ['CSP permits NanoGPT and user-configured HTTPS API calls', /connect-src[^">]*https:/.test(html) && /https:\/\/nano-gpt\.com/.test(app)],
     ['NanoGPT API key has dedicated storage and auth', /nanogptApiKey/.test(app) && /horde_nanogpt_api_key/.test(app)],
     ['Text catalog uses the documented API v1 route', /nano-gpt\.com\/api\/v1/.test(app) && /modality === 'text' \? '\/models'/.test(app)],
     ['Image catalog uses the detailed image-model route', /\/image-models\?detailed=true/.test(app)],

@@ -13,7 +13,7 @@ assert.match(html, /id="cs-text-provider"[\s\S]*option value="nvidia"[\s\S]*opti
 const imageSourceSelect = html.match(/<select id="cs-image-source"[\s\S]*?<\/select>/)?.[0] || '';
 assert.doesNotMatch(imageSourceSelect, /option value="nvidia"/);
 assert.doesNotMatch(imageSourceSelect, /option value="bedrock"/);
-assert.match(html, /connect-src https:/);
+assert.match(html, /connect-src[^">]*https:/);
 assert.match(html, /global-bedrock-base-url/);
 assert.match(html, /global-custom-base-url/);
 assert.match(html, /global-custom-headers/);

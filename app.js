@@ -6,7 +6,7 @@ const DB_VERSION = 1;
 const STORE_NAME = 'state';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '12.6.0';
+const HORDE_STUDIO_VERSION = '12.8.0';
 const HORDE_STUDIO_RELEASED_AT = '2026-08-10T00:00:00Z';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
@@ -1371,6 +1371,7 @@ function repairLoadedState() {
 async function loadState() {
     await HordeDB.init();
     await HordeVectorMemory.init();
+    let repairedCompanionIds = false;
     
     // Migration check
     const hasOldData = localStorage.getItem('horde_characters');
@@ -1467,7 +1468,7 @@ async function loadState() {
         });
         state.worldInstances = await HordeDB.get('worldInstances') || {};
         state.activeWorldId = await HordeDB.get('activeWorldId') || null;
-        await loadCompanionsState();
+        repairedCompanionIds = await loadCompanionsState();
         
         // --- MIGRATION: Convert chats to sessions if needed ---
         let migrated = false;
@@ -1517,16 +1518,10 @@ async function loadState() {
     // Apply the same shape checks after both IndexedDB loading and legacy migration.
     repairLoadedState();
     
-    // Sanitize any previously saved bad models from older starter versions
-    const badModels = ['openrouter/auto', 'aion-labs/aion-2.0', 'deepseek/deepseek-v4-pro'];
-    let stateCleaned = false;
-    state.characters.forEach(c => {
-        if (badModels.includes(c.model)) { c.model = ''; stateCleaned = true; }
-    });
-    state.worlds.forEach(w => {
-        if (badModels.includes(w.model)) { w.model = ''; stateCleaned = true; }
-    });
-    if (stateCleaned) await saveState();
+    // Duplicate IDs from the old "New Virtual Human" template caused two
+    // cards to share timelines and made deleting either card remove both.
+    // Persist the one-time repair only after the rest of state is loaded.
+    if (repairedCompanionIds) await saveState();
 
     if (state.characters.length === 0) {
         state.characters = JSON.parse(JSON.stringify(STARTER_CHARACTERS));
@@ -1550,6 +1545,15 @@ async function loadState() {
             state.globalSettings.seededWorldIds = [...new Set([...seeded, ...STARTER_WORLDS.map(w => w.id)])];
             await saveState();
         }
+    }
+
+    // Early bundled Worlds accidentally pinned an OpenRouter model. That made
+    // selecting GPTProto, NanoGPT, NIM, Bedrock, Custom API or local text fail
+    // because the chosen provider received somebody else's model ID. Migrate
+    // only the exact shipped values once; authored/custom model choices remain
+    // untouched. A blank model is deliberate inheritance of the global model.
+    if (migrateStarterModelInheritance(state.characters, state.worlds, state.globalSettings)) {
+        await saveState();
     }
 
     // Optional showcase worlds are shipped separately from STARTER_WORLDS so
@@ -2372,6 +2376,31 @@ const STARTER_WORLDS = [
         }
     }
 ];
+
+const LEGACY_PINNED_STARTER_CHARACTER_MODELS = Object.freeze({
+    char_aris_adv: 'aion-labs/aion-2.0'
+});
+
+const LEGACY_PINNED_STARTER_WORLD_MODELS = Object.freeze({
+    world_vaelora_living_realm: 'openrouter/auto',
+    world_bellwether_2005: 'openrouter/auto',
+    world_aldenmere: 'deepseek/deepseek-v4-pro'
+});
+
+function migrateStarterModelInheritance(characters, worlds, settings) {
+    if (!isPlainObject(settings) || settings.starterModelInheritanceV2 === true) return false;
+    (Array.isArray(characters) ? characters : []).forEach(character => {
+        const legacyModel = LEGACY_PINNED_STARTER_CHARACTER_MODELS[character?.id];
+        if (legacyModel && character.model === legacyModel) character.model = '';
+    });
+    (Array.isArray(worlds) ? worlds : []).forEach(world => {
+        const legacyModel = LEGACY_PINNED_STARTER_WORLD_MODELS[world?.id];
+        if (legacyModel && world.model === legacyModel) world.model = '';
+    });
+    settings.starterWorldModelInheritanceV1 = true;
+    settings.starterModelInheritanceV2 = true;
+    return true;
+}
 
 /** 
  * Resize and compress images to save space and improve performance.
@@ -8695,6 +8724,90 @@ async function importTavernPNG(file) {
 }
 
 // --- Global Settings ---
+const SETTINGS_SECTION_LABELS = Object.freeze({
+    models: 'AI & Models',
+    accounts: 'Connections',
+    images: 'Images & Workflows',
+    behavior: 'Behavior & Output',
+    memory: 'Memory',
+    appearance: 'Editor Appearance',
+    runtime: 'Local Runtime',
+    data: 'Data & Backup'
+});
+let activeSettingsSection = 'models';
+
+function activateSettingsSection(sectionId, options = {}) {
+    const content = document.getElementById('settings-content');
+    const search = document.getElementById('settings-search-input');
+    const validId = SETTINGS_SECTION_LABELS[sectionId] ? sectionId : 'models';
+    activeSettingsSection = validId;
+    if (options.clearSearch !== false && search) search.value = '';
+    if (content) content.classList.remove('is-searching');
+    document.querySelectorAll('[data-settings-section]').forEach(section => {
+        section.classList.toggle('active', section.dataset.settingsSection === validId);
+        section.classList.remove('search-match');
+    });
+    document.querySelectorAll('[data-settings-target]').forEach(button => {
+        const selected = button.dataset.settingsTarget === validId;
+        button.classList.toggle('active', selected);
+        button.setAttribute('aria-current', selected ? 'page' : 'false');
+    });
+    document.getElementById('settings-search-empty')?.classList.add('hidden');
+    const footer = document.getElementById('settings-footer-context');
+    if (footer) footer.textContent = SETTINGS_SECTION_LABELS[validId];
+    if (options.scroll !== false && content) content.scrollTop = 0;
+}
+
+function searchSettings(query) {
+    const content = document.getElementById('settings-content');
+    if (!content) return;
+    const normalized = String(query || '').trim().toLowerCase();
+    if (!normalized) {
+        activateSettingsSection(activeSettingsSection, { clearSearch: false });
+        return;
+    }
+    content.classList.add('is-searching');
+    document.querySelectorAll('[data-settings-target]').forEach(button => button.classList.remove('active'));
+    let matches = 0;
+    document.querySelectorAll('[data-settings-section]').forEach(section => {
+        const fieldWords = [...section.querySelectorAll('input, select, textarea, button')]
+            .map(field => `${field.getAttribute('placeholder') || ''} ${field.getAttribute('aria-label') || ''} ${field.name || ''}`)
+            .join(' ');
+        const haystack = `${section.dataset.settingsKeywords || ''} ${section.textContent || ''} ${fieldWords}`.toLowerCase();
+        const match = normalized.split(/\s+/).every(term => haystack.includes(term));
+        section.classList.toggle('search-match', match);
+        section.classList.remove('active');
+        if (match) matches += 1;
+    });
+    document.getElementById('settings-search-empty')?.classList.toggle('hidden', matches > 0);
+    const footer = document.getElementById('settings-footer-context');
+    if (footer) footer.textContent = matches ? `${matches} matching section${matches === 1 ? '' : 's'}` : 'No matches';
+    content.scrollTop = 0;
+}
+
+function setupSettingsNavigation() {
+    document.querySelectorAll('[data-settings-target]').forEach(button => {
+        button.onclick = () => activateSettingsSection(button.dataset.settingsTarget);
+    });
+    const search = document.getElementById('settings-search-input');
+    if (search) search.oninput = event => searchSettings(event.target.value);
+    const cancel = document.getElementById('cancel-global-settings');
+    if (cancel) cancel.onclick = hideGlobalSettings;
+    document.addEventListener('keydown', event => {
+        const modal = document.getElementById('modal-overlay');
+        if (!modal || modal.classList.contains('hidden')) return;
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+            event.preventDefault();
+            search?.focus();
+            search?.select();
+        } else if (event.key === 'Escape' && !document.getElementById('regex-modal-overlay')?.classList.contains('hidden')) {
+            return;
+        } else if (event.key === 'Escape') {
+            hideGlobalSettings();
+        }
+    });
+}
+
 async function refreshMcpSettingsStatus(options = {}) {
     const badge = document.getElementById('mcp-bridge-badge');
     const result = document.getElementById('mcp-settings-result');
@@ -8801,6 +8914,7 @@ async function connectMcpProvider(providerId, button) {
 function setupGlobalSettings() {
     document.getElementById('global-settings-btn').onclick = showGlobalSettings;
     document.getElementById('close-modal-btn').onclick = hideGlobalSettings;
+    setupSettingsNavigation();
     document.getElementById('save-global-settings').onclick = async () => {
         state.apiKey = document.getElementById('global-api-key').value.trim();
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
@@ -9297,6 +9411,11 @@ function showGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) {
         modal.classList.remove('hidden');
+        const settingsSearch = document.getElementById('settings-search-input');
+        if (settingsSearch) settingsSearch.value = '';
+        const settingsShortcut = document.getElementById('settings-search-shortcut');
+        if (settingsShortcut) settingsShortcut.textContent = /mac/i.test(navigator.platform || '') ? '⌘ K' : 'Ctrl K';
+        activateSettingsSection(activeSettingsSection, { clearSearch: false, scroll: false });
         document.getElementById('global-api-key').value = state.apiKey;
         document.getElementById('global-gptproto-key').value = state.gptprotoApiKey;
         document.getElementById('global-nanogpt-key').value = state.nanogptApiKey;
@@ -10086,7 +10205,9 @@ function createNewWorld() {
         entities: [],
         lorebook: [],
         authorNote: '',
-        model: state.globalSettings.defaultModel,
+        // Blank means "inherit Settings". A World pins a model only when its
+        // creator explicitly chooses one in AI Configuration.
+        model: '',
         temp: 0.9,
         minP: 0.0,
         topP: 1.0,
@@ -10547,7 +10668,11 @@ function openWorldStudio(worldId = null) {
     // Populate Presets
     populateWorldPresetDropdown(w.activePresetId);
 
-    document.getElementById('w-studio-model').value = w.model || state.globalSettings.defaultModel;
+    const worldModelInput = document.getElementById('w-studio-model');
+    worldModelInput.value = w.model || '';
+    worldModelInput.placeholder = w.model
+        ? 'Search provider models…'
+        : `Use Settings default · ${state.globalSettings.defaultModel || 'choose a model in Settings'}`;
 
     const agentConfig = normalizeWorldAgentConfig(w);
     document.getElementById('w-agent-enabled').checked = agentConfig.enabled;
@@ -29567,16 +29692,46 @@ function createCompanionTimeline(companion, options = {}) {
     return timeline;
 }
 
+function freshCompanionId(reservedIds = null) {
+    const occupied = reservedIds instanceof Set
+        ? reservedIds
+        : new Set((state.companions || []).map(companion => String(companion?.id || '')));
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+        const uuid = typeof globalThis.crypto?.randomUUID === 'function'
+            ? globalThis.crypto.randomUUID().replace(/-/g, '')
+            : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}${attempt.toString(36)}`;
+        const id = `companion_${uuid}`.slice(0, 80);
+        if (!occupied.has(id)) return id;
+    }
+    return `companion_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`.slice(0, 80);
+}
+
 async function loadCompanionsState() {
     const rawCompanions = await HordeDB.get('companions') || [];
     const rawThreads = await HordeDB.get('companionThreads') || {};
     const rawTimelines = await HordeDB.get('companionTimelines') || {};
-    state.companions = rawCompanions.map(normalizeCompanion);
+    const occupiedIds = new Set();
+    let repairedDuplicateIds = false;
+    const loadRecords = rawCompanions.map(raw => {
+        const companion = normalizeCompanion(raw);
+        const sourceId = companion.id;
+        const duplicate = occupiedIds.has(sourceId);
+        if (duplicate) {
+            companion.id = freshCompanionId(occupiedIds);
+            repairedDuplicateIds = true;
+        }
+        occupiedIds.add(companion.id);
+        return { companion, sourceId, duplicate };
+    });
+    state.companions = loadRecords.map(record => record.companion);
     state.companionThreads = {};
     state.companionTimelines = {};
-    state.companions.forEach(companion => {
-        const stored = isPlainObject(rawTimelines[companion.id]) ? rawTimelines[companion.id] : {};
-        const legacyMessages = (Array.isArray(rawThreads[companion.id]) ? rawThreads[companion.id] : [])
+    loadRecords.forEach(({ companion, sourceId, duplicate }) => {
+        // A duplicate record becomes a genuinely independent human. Copying
+        // the shared old timeline would preserve the very coupling this repair
+        // is meant to remove, so only the first owner keeps that history.
+        const stored = !duplicate && isPlainObject(rawTimelines[sourceId]) ? rawTimelines[sourceId] : {};
+        const legacyMessages = (!duplicate && Array.isArray(rawThreads[sourceId]) ? rawThreads[sourceId] : [])
             .map(normalizeCompanionMessage).slice(-5000);
         const sessions = (Array.isArray(stored.sessions) ? stored.sessions : []).map(session =>
             normalizeCompanionTimeline(session, companion));
@@ -29604,10 +29759,18 @@ async function loadCompanionsState() {
         state.companionThreads[companion.id] = active.messages;
     });
     state.activeCompanionId = await HordeDB.get('activeCompanionId') || null;
+    if (state.activeCompanionId && !state.companions.some(companion => companion.id === state.activeCompanionId)) {
+        state.activeCompanionId = null;
+        repairedDuplicateIds = true;
+    }
+    return repairedDuplicateIds;
 }
 
 function createCompanion() {
-    const companion = normalizeCompanion({ name: 'New Virtual Human' });
+    const companion = normalizeCompanion({
+        id: freshCompanionId(),
+        name: 'New Virtual Human'
+    });
     state.companions.unshift(companion);
     state.companionTimelines[companion.id] = { activeSessionId: '', sessions: [] };
     ensureCompanionTimelineStore(companion.id);
@@ -32905,6 +33068,37 @@ function openCompanionStudio(id) {
     activateCompanionStudioTab('cs-identity');
 }
 
+function resetNewCompanionStudioState() {
+    const builderInput = document.getElementById('cs-builder-input');
+    const builderStatus = document.getElementById('cs-builder-status');
+    const builderResult = document.getElementById('cs-builder-result');
+    const builderSummary = document.getElementById('cs-builder-summary');
+    const photoPrompt = document.getElementById('cs-photo-test-prompt');
+    const voiceSample = document.getElementById('cs-voice-sample-text');
+    const voiceStatus = document.getElementById('cs-voice-preview-status');
+    const voicePlayer = document.getElementById('cs-voice-preview-player');
+    const photoResult = document.getElementById('cs-photo-test-result');
+    const photoImage = document.getElementById('cs-photo-test-image');
+    if (builderInput) builderInput.value = '';
+    if (builderStatus) builderStatus.textContent = 'Nothing is sent until you press Build.';
+    if (builderResult) builderResult.classList.add('hidden');
+    if (builderSummary) builderSummary.textContent = '—';
+    if (photoPrompt) photoPrompt.value = '';
+    if (voiceSample) voiceSample.value = 'Hey, it’s me. This is what I sound like.';
+    if (voiceStatus) voiceStatus.textContent = 'Ready.';
+    if (voicePlayer) {
+        voicePlayer.pause();
+        voicePlayer.classList.add('hidden');
+        voicePlayer.removeAttribute('src');
+    }
+    if (photoResult) photoResult.classList.add('hidden');
+    if (photoImage) photoImage.removeAttribute('src');
+    ['cs-photo-input', 'cs-reference-input'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+}
+
 function setupCompanionStudioTabs() {
     document.querySelectorAll('.companion-studio-tab').forEach(tab => {
         tab.onclick = () => {
@@ -34574,6 +34768,7 @@ function setupCompanionsLogic() {
         saveState();
         switchView('companionStudio');
         openCompanionStudio(companion.id);
+        resetNewCompanionStudioState();
         activateCompanionStudioTab('cs-builder');
         document.getElementById('cs-builder-input')?.focus();
     };
