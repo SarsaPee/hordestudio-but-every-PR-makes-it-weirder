@@ -1453,6 +1453,17 @@ async function loadState() {
 
     // Apply the same shape checks after both IndexedDB loading and legacy migration.
     repairLoadedState();
+    
+    // Sanitize any previously saved bad models from older starter versions
+    const badModels = ['openrouter/auto', 'aion-labs/aion-2.0', 'deepseek/deepseek-v4-pro'];
+    let stateCleaned = false;
+    state.characters.forEach(c => {
+        if (badModels.includes(c.model)) { c.model = ''; stateCleaned = true; }
+    });
+    state.worlds.forEach(w => {
+        if (badModels.includes(w.model)) { w.model = ''; stateCleaned = true; }
+    });
+    if (stateCleaned) await saveState();
 
     if (state.characters.length === 0) {
         state.characters = JSON.parse(JSON.stringify(STARTER_CHARACTERS));
