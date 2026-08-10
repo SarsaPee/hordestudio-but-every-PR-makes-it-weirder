@@ -4506,7 +4506,7 @@ function setupStudioLogic() {
     document.getElementById('import-nexus-btn').onclick = () => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.nexus, .json';
+        input.accept = '.nexus, .json, .png, image/png';
         input.onchange = importNexus;
         input.click();
     };
@@ -8667,6 +8667,11 @@ async function importTavernPNG(file) {
     }
     
     if (!charData) throw new Error('No SillyTavern character data found in PNG');
+    
+    // V2/V3 cards wrap the real character data in a "data" envelope
+    if (charData.spec === 'chara_card_v2' || charData.spec === 'chara_card_v3' || charData.data) {
+        charData = charData.data || charData;
+    }
     
     // Map Tavern fields to Horde Studio
     const char = mapTavernDataToNexus(charData);
