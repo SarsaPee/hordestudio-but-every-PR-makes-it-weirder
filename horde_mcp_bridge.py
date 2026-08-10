@@ -6,9 +6,9 @@ configurable interface, performs MCP/OAuth on the user's behalf, discovers tool
 schemas, and converts returned image URLs/content into stable data URLs.
 
 Environment variables (also loaded from .env if present):
-  HORDE_MCP_LISTEN_HOST — interface to bind (default: 127.0.0.1)
-  HORDE_MCP_HOST        — URL used by Horde Studio / OAuth (default: 127.0.0.1)
-  HORDE_MCP_PORT        — listening port (default: 43127)
+  HORDE_SERVER_LISTEN_HOST — interface to bind (default: 127.0.0.1)
+  HORDE_SERVER_HOST        — URL used by Horde Studio / OAuth (default: 127.0.0.1)
+  HORDE_SERVER_PORT        — listening port (default: 43127)
 """
 
 from __future__ import annotations
@@ -58,9 +58,9 @@ def _load_env(path: Path) -> None:
 _load_env(ENV_FILE)
 
 # ── Network configuration ───────────────────────────────────
-LISTEN_HOST = os.environ.get("HORDE_MCP_LISTEN_HOST", "127.0.0.1")
-HOST = os.environ.get("HORDE_MCP_HOST", "127.0.0.1")
-PORT = int(os.environ.get("HORDE_MCP_PORT", "43127"))
+LISTEN_HOST = os.environ.get("HORDE_SERVER_LISTEN_HOST", "127.0.0.1")
+HOST = os.environ.get("HORDE_SERVER_HOST", "127.0.0.1")
+PORT = int(os.environ.get("HORDE_SERVER_PORT", "43127"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
@@ -942,7 +942,7 @@ def main() -> None:
             import webbrowser
             webbrowser.open(app_url)
         return
-    print(f"Horde Studio listening on {listen_info}")
+    print(f"Horde Studio bridge listening on {listen_info}")
     print(f"Open in browser: {app_url}")
     print(f"OAuth callback: {CALLBACK_URL}")
     print(f"Credentials: {AUTH_FILE} (owner-only)")
