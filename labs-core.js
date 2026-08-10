@@ -43,11 +43,20 @@
         return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : min;
     }
 
+    function isPrivateHost(hostname) {
+        if (!hostname) return false;
+        if (['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname)) return true;
+        if (/^10\.\d+\.\d+\.\d+$/.test(hostname)) return true;
+        if (/^172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(hostname)) return true;
+        if (/^192\.168\.\d+\.\d+$/.test(hostname)) return true;
+        return false;
+    }
+
     function normalizeLoopbackBase(value) {
         let candidate = String(value || DEFAULT_CONFIG.baseUrl).trim().replace(/\/+$/, '');
         try {
             const parsed = new URL(candidate);
-            if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname)) {
+            if (!isPrivateHost(parsed.hostname)) {
                 return DEFAULT_CONFIG.baseUrl;
             }
             if (!['http:', 'https:'].includes(parsed.protocol)) return DEFAULT_CONFIG.baseUrl;
@@ -406,9 +415,16 @@
             'http://127.0.0.1:11434/v1',
             'http://127.0.0.1:1234/v1',
             'http://127.0.0.1:8080/v1',
-            'http://127.0.0.1:5001/v1'
+            'http://127.0.0.1:5001/v1',
+            'http://192.168.1.100:11434/v1',
+            'http://192.168.1.100:4000/v1',
+            'http://192.168.2.16:11434/v1',
+            'http://192.168.2.16:4000/v1',
+            'http://192.168.10.65:4000/v1',
+            'http://10.0.0.100:11434/v1',
+            'http://10.0.0.100:4000/v1'
         ];
-        const results = await Promise.all(candidates.map(baseUrl => health({ ...currentConfig(), baseUrl })));
+        const results = await Promise.all(candidates.map(baseUrl => health({ ...currentConfig(), baseUrl }))));
         return results.filter(result => result.ok);
     }
 

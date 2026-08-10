@@ -254,7 +254,7 @@ const HORDE_MCP_PROVIDERS = Object.freeze({
 
 function normalizeLoopbackUrl(value, fallback) {
     const candidate = String(value || '').trim().replace(/\/+$/, '');
-    return /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s?#]*)?$/i.test(candidate)
+    return /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)(?::\d+)?(?:\/[^\s?#]*)?$/i.test(candidate)
         ? candidate : fallback;
 }
 
@@ -459,7 +459,7 @@ const TEXT_PROVIDER_IDS = Object.freeze(['openrouter', 'gptproto', 'nanogpt', 'n
 function normalizeRemoteApiBase(value, fallback = '') {
     const candidate = String(value || '').trim().replace(/\/+$/, '');
     if (/^https:\/\/[^\s]+$/i.test(candidate)) return candidate;
-    if (/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s?#]*)?$/i.test(candidate)) return candidate;
+    if (/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)(?::\d+)?(?:\/[^\s?#]*)?$/i.test(candidate)) return candidate;
     return fallback;
 }
 
