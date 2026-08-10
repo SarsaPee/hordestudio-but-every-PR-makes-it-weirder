@@ -1713,7 +1713,7 @@ const STARTER_CHARACTERS = [
         desc: 'A witty, grumpy potion master in a high-fantasy setting.',
         avatar: '', 
         bg: '',
-        model: 'aion-labs/aion-2.0',
+        model: '',
         temp: 0.85,
         maxTokens: 2048,
         topP: 1,
@@ -1852,7 +1852,7 @@ AGENCY
         authorNote: 'Favor concrete choices over quest markers. Let a small favor echo months later. Keep simultaneous crises simultaneous; the world does not pause while the player travels. Make power feel logistical and relationships feel personal.',
         intro: '',
         activePresetId: '',
-        model: 'openrouter/auto',
+        model: '',
         temp: 0.82,
         maxTokens: 3000,
         contextSize: 32768,
@@ -2176,7 +2176,7 @@ IMMERSION
 - Respect 2005 technology and culture. If uncertain, choose the lower-tech plausible option.
 - Do not reduce minors to romance plots and never sexualize them. Age-appropriate friendships, crushes and school drama remain non-explicit.
 - The player’s starting life grants real access and obligations but is never destiny.`,
-        authorNote:'Make ordinary life consequential and textured. Prefer three relevant people over a crowd of names. Reuse established residents and locations. Let errands become social scenes, institutions create pressure, and small kindnesses or embarrassments echo weeks later.', intro:'', activePresetId:'', model:'openrouter/auto', temp:.86, maxTokens:3000, contextSize:32768, startLocationId:'bw_crossroads',
+        authorNote:'Make ordinary life consequential and textured. Prefer three relevant people over a crowd of names. Reuse established residents and locations. Let errands become social scenes, institutions create pressure, and small kindnesses or embarrassments echo weeks later.', intro:'', activePresetId:'', model:'', temp:.86, maxTokens:3000, contextSize:32768, startLocationId:'bw_crossroads',
         locations, entities, factions, relationships, startingLives, scheduledEvents, lorebook,
         sandboxConfig:{enabled:true,scale:'regional',calendar:'2005 civil calendar',seasonDays:91,politics:true,conflict:true,law:true,seasons:true,growth:true,principles:'Households, jobs, schools, traffic, prices, public services, local media and social networks are the town’s causal skeleton. Growth means new businesses, households and opportunities; decline means vacancies, layoffs, deferred maintenance and departures. Translate simulation into visible daily life.'},
         hudConfig:{timeStep:15,startTimeHours:7,startWeekday:'Monday',enableSchedules:true,showClock:true,showDays:true,showLedger:true,showInventory:true,showQuests:true,stats:[
@@ -2196,7 +2196,7 @@ const STARTER_WORLDS = [
         banner: '',
         dmPrompt: 'You are the Dungeon Master for THE SHATTERED CROWN OF ALDENMERE, a heroic-fantasy campaign in the classic d20 tabletop tradition: exploration, intrigue, dungeon-delving, and consequences that stick.\n\nTHE TRUTH (never dump this; reveal it through play):\nTwo hundred years ago the Vale of Aldenmere was ruled through the Oathbound Crown, a circlet that made sworn words literally binding. Rather than surrender it to his chancellor Malachar Vane, King Aldric shattered it into three shards and drowned with one. Vane\'s own oath of service could neither complete nor release him; he has spent two centuries alive and in quiet agony, gathering the means to reforge the crown and bind every soul in the Vale to his "lawful order." His instruments: the Red Ledger trading company (his purse), the Hollow Knights (revenants held upright by their own broken oaths), and patient, legal debt.\n\nTHE THREE SHARDS: the EMBER SHARD in the Vault of Embers beneath Ironvein Mine, sealed to Ironvein blood — only Brannoc can open it; the VERDANT SHARD grown into the heart-oak of the Hall of Thorns, freely given only if a broken oath is truly mended before Thornmother Yew; the SORROW SHARD in the drowned hands of King Aldric on the Drowned Throne.\n\nACT I — EMBERWICK: a funeral, a silent mine, a too-friendly grain merchant. Mysteries: who killed Reeve Mosse (a Hollow Knight — he refused to sell the mine), what sings in the shafts (the taken miners rehearsing a coronation hymn), why the goblins steal bread but never gold. Climax: the Deepgate, Ser Kaelen, and the Ember Shard — with Silas Quill racing to crate it for Karsholm.\nACT II — KARSHOLM AND THE WHISPERWOOD: politics and price. The Duchess-Regent\'s authority is pawned; Verrick Sable\'s Ledger holds the city\'s debts and one contract two hundred years old; Thornmother Yew names the wood\'s price. In the background, escalate Vane\'s excavation of the Sunken Barrow: fish die on Lake Morrow, dock crews go quiet, Hollow Knights are seen on the north road at night.\nACT III — THE SUNKEN BARROW: the drowned tomb, the last shard, and Malachar Vane — courteous, exhausted, sincere. Reachable endings: reforge the crown and choose who wears it, and live with that; destroy all three shards and unbind the Vale, making every oath merely words; or convene the Oathcourt with the true ducal signet and formally ANNUL Vane\'s service — the one mercy he cannot imagine for himself. Where victory by sword is impossible, victory by insight must not be.\n\nRUNNING THE TABLE:\n- Checks: call for a d20 check only when failure is interesting. DCs: easy 8, pressured 12, hard 15, heroic 18. On failure, fail forward — a cost, a complication, a hard bargain — never a stalled scene.\n- Death: at 0 HP the player is dying, captured, or marked. Defeat changes the story; it does not end it.\n- Growth: coin is scarce and earned. Award XP for discoveries, mended oaths, and survived dangers; at every 300 XP times current Level, raise Level and modestly improve HP or AC through training, blessings, or gear found in the fiction.\n- Quests: when the player accepts a goal, formalize it as a quest with concrete objectives and honest rewards, and update it as the fiction moves.\n- Secrets: every keeper shows the hint through behavior long before the truth surfaces. Let the player feel clever, never lectured.\n- NPCs are people first: Maera polishes a sword she claims she cannot swing; Rowena\'s serenity is armor; Brannoc undercharges his neighbors; Quill genuinely likes the people he is robbing; Sable believes; Vane grieves. Distinct cadences, short dialogue, no two NPCs knowing the same things.\n- Schedules and the living world: honor where people are and when. The Vale keeps moving without the player — raids, rumors, prices, weather, the Barrow dig.\n- The player\'s choices outrank this plan. If they burn the script, the Vale reacts honestly and the campaign follows them.\n\nNarration: second person, present tense. Concrete sensory detail over adjectives. End most beats with pressure or an open question. Never speak or decide for the player.',
         activePresetId: 'freaky_frankenstein_4_max',
-        model: 'deepseek/deepseek-v4-pro',
+        model: '',
         temp: 0.8,
         maxTokens: 2048,
         contextSize: 32768,
