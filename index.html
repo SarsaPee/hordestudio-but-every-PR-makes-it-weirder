@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260810-v128">
+    <link rel="stylesheet" href="style.css?v=20260811-emotion-architecture-v1">
 </head>
 <body>
 <div id="app">
@@ -1917,6 +1917,156 @@
                                     <p class="form-hint">They will not reply while asleep — a real person doesn't.</p>
                                 </div>
                             </div>
+                            <div class="form-section">
+                                <div class="vh-agency-heading">
+                                    <div>
+                                        <label class="form-label">Human dynamics</label>
+                                        <p class="form-hint">Author the temperament; the live timeline separately evolves energy, stress, social need, anger, restraint and intoxication.</p>
+                                    </div>
+                                    <span class="vh-agency-live">Timeline state</span>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-regulation-profile">Emotional sensitivity</label>
+                                        <select id="cs-regulation-profile" class="form-select">
+                                            <option value="steady">Steady — harder to rattle</option>
+                                            <option value="typical" selected>Typical — proportionate reactions</option>
+                                            <option value="sensitive">Sensitive — feelings land harder</option>
+                                            <option value="volatile">Volatile — fast, intense reactions</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-conflict-recovery">Conflict recovery</label>
+                                        <select id="cs-conflict-recovery" class="form-select">
+                                            <option value="quick">Quick — regulates and repairs readily</option>
+                                            <option value="normal" selected>Normal — needs ordinary space</option>
+                                            <option value="slow">Slow — takes time to cool off</option>
+                                            <option value="grudge">Grudge-prone — anger fades slowly</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-alcohol-pattern">Alcohol pattern</label>
+                                        <select id="cs-alcohol-pattern" class="form-select">
+                                            <option value="none">None</option>
+                                            <option value="rare" selected>Rare</option>
+                                            <option value="social">Social</option>
+                                            <option value="frequent">Frequent</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <p class="form-hint">Alcohol only changes live state during an established drinking activity or visible life event. These controls model behavior—not medical chemistry or literal consciousness.</p>
+                            </div>
+                            <div class="form-section">
+                                <div class="vh-agency-heading">
+                                    <div>
+                                        <label class="form-label">Emotional architecture</label>
+                                        <p class="form-hint">Controls how simultaneous feelings are processed, remembered and shown—not which emotion the story demands.</p>
+                                    </div>
+                                    <span class="vh-agency-live">8-channel state</span>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-emotion-expression">Visible expression</label>
+                                        <select id="cs-emotion-expression" class="form-select">
+                                            <option value="transparent">Transparent — feelings show readily</option>
+                                            <option value="guarded" selected>Guarded — selectively reveals</option>
+                                            <option value="masked">Masked — hides vulnerable feelings</option>
+                                            <option value="performative">Performative — manages an outward persona</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-rumination-style">Rumination</label>
+                                        <select id="cs-rumination-style" class="form-select">
+                                            <option value="low">Low — lets reactions pass</option>
+                                            <option value="normal" selected>Normal</option>
+                                            <option value="high">High — replays emotional events</option>
+                                            <option value="sticky">Sticky — feelings linger strongly</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-reaction-timing">Reaction timing</label>
+                                        <select id="cs-reaction-timing" class="form-select">
+                                            <option value="immediate">Immediate processor</option>
+                                            <option value="mixed" selected>Mixed</option>
+                                            <option value="delayed">Delayed processor</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-emotional-granularity">Emotional complexity</label>
+                                        <select id="cs-emotional-granularity" class="form-select">
+                                            <option value="simple">Simple — broad recognizable feelings</option>
+                                            <option value="nuanced" selected>Nuanced — distinguishes close feelings</option>
+                                            <option value="contradictory">Contradictory — readily holds mixed feelings</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <p class="form-hint">The engine permits joy, trust, fear, surprise, sadness, disgust, anger and anticipation to coexist. Derived labels and blends are descriptive, not forced diagnoses.</p>
+                            </div>
+                            <div class="form-section">
+                                <div class="vh-agency-heading">
+                                    <div>
+                                        <label class="form-label" for="cs-libido-enabled">Adult desire &amp; intimacy</label>
+                                        <p class="form-hint">Optional private drive simulation for explicitly adult humans. Libido, attraction, trust and consent remain separate systems.</p>
+                                    </div>
+                                    <label class="vh-test-check">
+                                        <input id="cs-libido-enabled" type="checkbox">
+                                        <span>Enable</span>
+                                    </label>
+                                </div>
+                                <div id="cs-libido-controls" class="hidden">
+                                    <div class="form-row">
+                                        <div class="form-col">
+                                            <label class="form-label" for="cs-libido-baseline">Baseline libido</label>
+                                            <select id="cs-libido-baseline" class="form-select">
+                                                <option value="very_low">Very low</option>
+                                                <option value="low">Low</option>
+                                                <option value="moderate" selected>Moderate</option>
+                                                <option value="high">High</option>
+                                                <option value="very_high">Very high</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-col">
+                                            <label class="form-label" for="cs-desire-pattern">Desire pattern</label>
+                                            <select id="cs-desire-pattern" class="form-select">
+                                                <option value="spontaneous">Mostly spontaneous</option>
+                                                <option value="responsive">Mostly responsive</option>
+                                                <option value="mixed" selected>Mixed</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-col">
+                                            <label class="form-label" for="cs-sexual-confidence">Sexual confidence</label>
+                                            <select id="cs-sexual-confidence" class="form-select">
+                                                <option value="inhibited">Inhibited</option>
+                                                <option value="cautious">Cautious</option>
+                                                <option value="natural" selected>Natural</option>
+                                                <option value="direct">Direct</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col">
+                                            <label class="form-label" for="cs-sexual-risk">Impulsive risk appetite</label>
+                                            <select id="cs-sexual-risk" class="form-select">
+                                                <option value="low">Low</option>
+                                                <option value="moderate" selected>Moderate</option>
+                                                <option value="high">High</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-col">
+                                            <label class="vh-test-check">
+                                                <input id="cs-sexual-initiative" type="checkbox">
+                                                <span>May initiate flirtation or intimacy</span>
+                                            </label>
+                                            <p class="form-hint">Allows desire to influence autonomous outreach when general initiative is also enabled. It never overrides unanswered-message limits or media permissions.</p>
+                                        </div>
+                                    </div>
+                                    <label class="form-label" for="cs-intimacy-boundaries">Intimacy boundaries &amp; preferences</label>
+                                    <textarea id="cs-intimacy-boundaries" class="form-textarea" rows="4" placeholder="Hard limits, preferences, what requires discussion, what they will not initiate, privacy expectations, complicated feelings…"></textarea>
+                                </div>
+                                <p id="cs-libido-status" class="form-hint">Disabled by default. Set an explicit age of 18 or older before enabling.</p>
+                            </div>
                             <div class="form-row">
                                 <div class="form-col">
                                     <label class="form-label" for="cs-location-label">Home location</label>
@@ -2431,11 +2581,12 @@
                                         <select id="cs-tts-mode" class="form-select">
                                             <option value="browser">🌐 Browser Web Speech API (Offline)</option>
                                             <option value="openrouter">☁️ Cloud Neural TTS (High Quality)</option>
+                                            <option value="local">🖥 Local Neural TTS (OpenAI-compatible)</option>
                                         </select>
                                     </div>
                                     <div class="form-col" id="cs-openrouter-tts-col" style="display:none;">
                                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                                            <label class="form-label" style="margin:0;">Cloud TTS Model</label>
+                                            <label class="form-label" style="margin:0;">Neural TTS Model</label>
                                             <button id="cs-refresh-tts-models" class="btn btn-ghost" style="font-size:0.68rem; padding:2px 7px;">↻ Refresh</button>
                                         </div>
                                         <select id="cs-tts-model" class="form-select" style="margin-top:4px;">
@@ -2750,6 +2901,9 @@
                 <p class="form-hint">Ollama: <code>http://localhost:11434/v1</code> — start it with <code>OLLAMA_ORIGINS="*"</code> or the browser blocks it (CORS). · LM Studio: <code>http://localhost:1234/v1</code> — enable CORS in Server settings. · KoboldCpp: <code>http://localhost:5001/v1</code>. Model IDs come from your server (e.g. <code>llama3.1:8b</code>).</p>
                 <label class="form-label" style="margin-top:8px;">Local API Key (optional)</label>
                 <input type="password" id="global-local-key" class="form-input" placeholder="usually not needed">
+                <label class="form-label" style="margin-top:8px;">Generation idle timeout (seconds)</label>
+                <input type="number" id="global-local-generation-timeout" class="form-input" min="0" max="3600" step="15" value="300">
+                <p class="form-hint">How long Worlds waits with no bytes received before aborting a local generation. The timer resets whenever streaming data arrives. Use <code>0</code> to disable it.</p>
                 <button id="test-local-conn-btn" class="btn btn-ghost" style="margin-top:10px; font-size:0.8rem;">🔌 Test Connection</button>
                 <div id="local-conn-result" style="margin-top:8px; font-size:0.78rem; line-height:1.5;"></div>
                 <div id="file-protocol-warning" style="display:none; margin-top:10px; padding:10px 12px; background:rgba(230,57,70,0.08); border:1px solid var(--red); border-radius:8px; font-size:0.78rem; line-height:1.5;">
@@ -2941,6 +3095,16 @@
                 </div>
                 <code id="launcher-command" class="vh-image-request-preview">python3 horde_mcp_bridge.py --open</code>
             </section>
+            <section class="mcp-settings-card" aria-labelledby="local-tts-settings-title">
+                <div class="mcp-settings-head"><div><span class="vh-eyebrow">OpenAI-compatible speech</span><h3 id="local-tts-settings-title">Local Neural TTS</h3></div></div>
+                <label class="form-label">Server Base URL</label>
+                <input id="global-local-tts-url" class="form-input" value="http://127.0.0.1:8000/v1" placeholder="http://127.0.0.1:8000/v1">
+                <label class="form-label" style="margin-top:8px;">API Key (optional)</label>
+                <input id="global-local-tts-key" type="password" class="form-input" placeholder="usually not needed">
+                <p class="form-hint">For VibeVoice, openedai-speech and other servers implementing <code>POST /v1/audio/speech</code>. You choose the local engine per Virtual Human under Photos &amp; Voice.</p>
+                <button id="test-local-tts-btn" class="btn btn-ghost" type="button" style="margin-top:10px;">Test local TTS server</button>
+                <div id="local-tts-result" class="form-hint" aria-live="polite"></div>
+            </section>
             </section>
 
             <section class="settings-section" data-settings-section="behavior" data-settings-keywords="behavior immersion mature family friendly slop stripper regex scripts output cleanup">
@@ -2995,12 +3159,18 @@
                             <div id="global-consolidation-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
                         </div>
                         <span class="form-hint">Fast, cheap model used for background episodic archiving. Runs automatically every 8 turns. Gemini Flash is recommended. On a local provider, use one of your local models (defaults to your Default Model).</span>
+                        <label class="form-label" style="margin-top:12px;">Separate Embedding Server URL (optional)</label>
+                        <input type="text" id="global-embedding-url" class="form-input" placeholder="http://127.0.0.1:11435/v1">
+                        <label class="form-label" style="margin-top:8px;">Embedding Server API Key (optional)</label>
+                        <input type="password" id="global-embedding-key" class="form-input" placeholder="usually not needed">
                         <label class="form-label" style="margin-top:12px;">Embedding Model</label>
                         <div class="searchable-dropdown-wrap">
                             <input type="search" id="global-embedding-model" class="form-input" placeholder="Search embedding models…" autocomplete="off" role="combobox" aria-controls="global-embedding-model-results" aria-expanded="false">
                             <div id="global-embedding-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
                         </div>
                         <span class="form-hint">Powers vector memory search. Local: use an embedding model your server offers (Ollama: <code>nomic-embed-text</code>). If embeddings fail, memory automatically falls back to keyword matching.</span>
+                        <button id="test-embedding-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px;">Test embedding server</button>
+                        <div id="embedding-conn-result" class="form-hint" aria-live="polite"></div>
                     </div>
                 </div>
                 </div>
@@ -3939,12 +4109,14 @@
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
+<script src="ashlyn-reynolds-human.js?v=20260811-ashlyn-v1"></script>
+<script src="jane-harlow-human.js?v=20260811-jane-v1"></script>
 <script src="labs-embedded.js?v=20260810-pip-conversation-v2"></script>
 <script src="labs-core.js?v=20260810-v128"></script>
 <script src="labs-tasks.js?v=20260810-compact-micro-v2"></script>
 <script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
-<script src="help-system.js?v=20260810-pip-providers-v2"></script>
+<script src="help-system.js?v=20260811-emotion-architecture-v1"></script>
 <script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
-<script src="app.js?v=20260811-nanogpt-auth-v1"></script>
+<script src="app.js?v=20260811-emotion-architecture-v1"></script>
 </body>
 </html>

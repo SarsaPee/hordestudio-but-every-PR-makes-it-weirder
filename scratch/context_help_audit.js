@@ -11,8 +11,8 @@ const missing = registry.filter(id => !html.includes(`id="${id}"`));
 
 assert(registry.length >= 100, `expected broad help registry, found ${registry.length}`);
 assert.deepEqual(missing, [], `help registry points at missing controls: ${missing.join(', ')}`);
-assert(html.includes('help-system.js?v=20260810-pip-providers-v2'), 'help system is cache-busted and loaded');
-assert(html.includes('style.css?v=20260810-pip-providers-v2'), 'tooltip and Pip styles have a fresh cache key');
+assert(html.includes('help-system.js?v=20260811-emotion-architecture-v1'), 'help system is cache-busted and loaded');
+assert(html.includes('style.css?v=20260811-emotion-architecture-v1'), 'tooltip and Pip styles have a fresh cache key');
 assert(js.includes("document.addEventListener('mouseover', enter, true)"), 'mouse hover uses a capture-phase compatibility path');
 assert(js.includes("document.addEventListener('pointerover'"), 'mouse/pointer discovery is supported');
 assert(js.includes("document.addEventListener('focusin'"), 'keyboard discovery is supported');

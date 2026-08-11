@@ -4,9 +4,10 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 const DB_NAME = 'HordeStudioDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'state';
+const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '12.8.0';
+const HORDE_STUDIO_VERSION = '13.0.0';
 const HORDE_STUDIO_RELEASED_AT = '2026-08-10T00:00:00Z';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
@@ -260,6 +261,44 @@ function normalizeLoopbackUrl(value, fallback) {
 
 function normalizeMcpBridgeUrl(value) {
     return normalizeLoopbackUrl(value, HORDE_MCP_BRIDGE_DEFAULT);
+}
+
+function normalizeOpenAICompatibleBase(value, fallback = '') {
+    let base = normalizeRemoteApiBase(value, fallback);
+    if (base && /^https?:\/\/[^/]+$/i.test(base)) base += '/v1';
+    return base.replace(/\/+$/, '');
+}
+
+function localGenerationIdleTimeoutMs() {
+    const raw = Number(state.globalSettings?.localGenerationTimeoutSeconds);
+    const seconds = Number.isFinite(raw) ? Math.max(0, Math.min(3600, raw)) : 300;
+    return seconds === 0 ? 0 : Math.round(seconds * 1000);
+}
+
+function embeddingApiBase() {
+    const separate = normalizeOpenAICompatibleBase(state.globalSettings?.embeddingBaseUrl);
+    return separate || apiBase();
+}
+
+function embeddingAuthHeaders() {
+    const separate = normalizeOpenAICompatibleBase(state.globalSettings?.embeddingBaseUrl);
+    if (!separate) return authHeaders();
+    const key = String(state.globalSettings?.embeddingApiKey || '').trim();
+    return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+function hasEmbeddingCredentials() {
+    return !!normalizeOpenAICompatibleBase(state.globalSettings?.embeddingBaseUrl) || hasApiCredentials();
+}
+
+function localTTSApiBase() {
+    return normalizeOpenAICompatibleBase(
+        state.globalSettings?.localTtsBaseUrl, 'http://127.0.0.1:8000/v1');
+}
+
+function localTTSAuthHeaders() {
+    const key = String(state.globalSettings?.localTtsApiKey || '').trim();
+    return key ? { Authorization: `Bearer ${key}` } : {};
 }
 
 function normalizeComfyWorkflowProfile(raw, index = 0) {
@@ -726,6 +765,11 @@ let state = {
         editBgColor: '#2b2b36',
         memoryThreshold: 0.35,
         memoryTopK: 4,
+        localGenerationTimeoutSeconds: 300,
+        embeddingBaseUrl: '',
+        embeddingApiKey: '',
+        localTtsBaseUrl: 'http://127.0.0.1:8000/v1',
+        localTtsApiKey: '',
         mcpBridgeUrl: HORDE_MCP_BRIDGE_DEFAULT,
         localImageBaseUrl: 'http://127.0.0.1:7860/v1',
         localImagePath: '/images/generations',
@@ -903,12 +947,18 @@ function validateCharacterData(value, label = 'Character') {
     requirePlainObject(value, label);
     requireString(value.name, `${label} name`, { max: 300 });
     requireSafeId(value.id, `${label} id`, { optional: true });
-    ['desc', 'prompt', 'intro', 'model', 'authorsNote'].forEach(key =>
+    ['desc', 'prompt', 'intro', 'model', 'authorsNote', 'creatorNotes', 'sourceUrl'].forEach(key =>
         requireString(value[key], `${label} ${key}`, { optional: true }));
     ['avatar', 'bg'].forEach(key =>
         requireString(value[key], `${label} ${key}`, { optional: true, max: 2_000_000 }));
     requireArray(value.tags, `${label} tags`, { optional: true, max: 100 });
     (value.tags || []).forEach((tag, index) => requireString(tag, `${label} tag ${index + 1}`, { max: 100 }));
+    requireArray(value.alternateGreetings, `${label} alternate greetings`, { optional: true, max: 100 });
+    (value.alternateGreetings || []).forEach((greeting, index) =>
+        requireString(greeting, `${label} alternate greeting ${index + 1}`, { max: 100_000 }));
+    if (value.tavernExtensions !== undefined) {
+        requirePlainObject(value.tavernExtensions, `${label} SillyTavern extensions`);
+    }
     requireArray(value.memory, `${label} memory`, { optional: true, max: 5000 });
     (value.memory || []).forEach((memory, index) => {
         if (typeof memory === 'string') {
@@ -1277,6 +1327,11 @@ function repairLoadedState() {
         editBgColor: '#2b2b36',
         memoryThreshold: 0.35,
         memoryTopK: 4,
+        localGenerationTimeoutSeconds: 300,
+        embeddingBaseUrl: '',
+        embeddingApiKey: '',
+        localTtsBaseUrl: 'http://127.0.0.1:8000/v1',
+        localTtsApiKey: '',
         mcpBridgeUrl: HORDE_MCP_BRIDGE_DEFAULT,
         localImageBaseUrl: 'http://127.0.0.1:7860/v1',
         localImagePath: '/images/generations',
@@ -1301,6 +1356,14 @@ function repairLoadedState() {
     state.globalSettings.editBgColor = cssColor(state.globalSettings.editBgColor, '#2b2b36');
     state.globalSettings.memoryThreshold = Math.max(0, Math.min(1, Number(state.globalSettings.memoryThreshold) || 0.35));
     state.globalSettings.memoryTopK = Math.max(1, Math.min(100, Math.round(Number(state.globalSettings.memoryTopK) || 4)));
+    const timeoutSeconds = Number(state.globalSettings.localGenerationTimeoutSeconds);
+    state.globalSettings.localGenerationTimeoutSeconds = Number.isFinite(timeoutSeconds)
+        ? Math.max(0, Math.min(3600, Math.round(timeoutSeconds))) : 300;
+    state.globalSettings.embeddingBaseUrl = normalizeOpenAICompatibleBase(state.globalSettings.embeddingBaseUrl);
+    state.globalSettings.embeddingApiKey = String(state.globalSettings.embeddingApiKey || '').slice(0, 500);
+    state.globalSettings.localTtsBaseUrl = normalizeOpenAICompatibleBase(
+        state.globalSettings.localTtsBaseUrl, 'http://127.0.0.1:8000/v1');
+    state.globalSettings.localTtsApiKey = String(state.globalSettings.localTtsApiKey || '').slice(0, 500);
     state.globalSettings.mcpBridgeUrl = normalizeMcpBridgeUrl(state.globalSettings.mcpBridgeUrl);
     state.globalSettings.localImageBaseUrl = normalizeLoopbackUrl(
         state.globalSettings.localImageBaseUrl, 'http://127.0.0.1:7860/v1');
@@ -1450,7 +1513,18 @@ async function loadState() {
         if (state.customApiKey) sessionStorage.setItem('horde_custom_api_key', state.customApiKey);
         state.customHeaders = sessionStorage.getItem('horde_custom_headers') || storedCustomHeaders;
         if (state.customHeaders) sessionStorage.setItem('horde_custom_headers', state.customHeaders);
-        state.globalSettings = await HordeDB.get('globalSettings') || state.globalSettings;
+        const storedGlobalSettings = await HordeDB.get('globalSettings');
+        const mirroredGlobalSettings = readGlobalSettingsMirror();
+        const storedSettingsTime = Number(storedGlobalSettings?.settingsSavedAt) || 0;
+        const mirroredSettingsTime = Number(mirroredGlobalSettings?.settingsSavedAt) || 0;
+        if (isPlainObject(storedGlobalSettings)) {
+            state.globalSettings = storedSettingsTime >= mirroredSettingsTime
+                ? storedGlobalSettings
+                : { ...storedGlobalSettings, ...mirroredGlobalSettings };
+        } else if (mirroredGlobalSettings) {
+            state.globalSettings = { ...state.globalSettings, ...mirroredGlobalSettings };
+            console.warn('Recovered Settings from the local fallback snapshot.');
+        }
         state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
         if (state.globalSettings.memoryTopK === undefined) state.globalSettings.memoryTopK = 4;
@@ -1467,6 +1541,11 @@ async function loadState() {
         if (state.globalSettings.customBaseUrl === undefined) state.globalSettings.customBaseUrl = '';
         if (state.globalSettings.localBaseUrl === undefined) state.globalSettings.localBaseUrl = '';
         if (state.globalSettings.localApiKey === undefined) state.globalSettings.localApiKey = '';
+        if (state.globalSettings.localGenerationTimeoutSeconds === undefined) state.globalSettings.localGenerationTimeoutSeconds = 300;
+        if (state.globalSettings.embeddingBaseUrl === undefined) state.globalSettings.embeddingBaseUrl = '';
+        if (state.globalSettings.embeddingApiKey === undefined) state.globalSettings.embeddingApiKey = '';
+        if (state.globalSettings.localTtsBaseUrl === undefined) state.globalSettings.localTtsBaseUrl = 'http://127.0.0.1:8000/v1';
+        if (state.globalSettings.localTtsApiKey === undefined) state.globalSettings.localTtsApiKey = '';
         if (state.globalSettings.embeddingModel === undefined) state.globalSettings.embeddingModel = '';
         state.characters = await HordeDB.get('characters') || [];
         state.chats = await HordeDB.get('chats') || {};
@@ -1651,6 +1730,42 @@ async function loadState() {
         }
     }
 
+    // Fully authored showcase humans are shipped separately from the core
+    // simulator. Offer each bundle once to both fresh and existing installs.
+    // The receipt survives deletion, so removing a built-in human is a real
+    // user choice rather than something the next launch silently undoes.
+    {
+        const included = Array.isArray(globalThis.HORDE_INCLUDED_HUMANS)
+            ? globalThis.HORDE_INCLUDED_HUMANS
+            : [];
+        const offered = Array.isArray(state.globalSettings.includedHumanReceipts)
+            ? state.globalSettings.includedHumanReceipts
+            : [];
+        let changed = !Array.isArray(state.globalSettings.includedHumanReceipts);
+        for (const candidate of included) {
+            const bundleId = String(candidate?.bundledId || '').trim().slice(0, 100);
+            if (!bundleId || offered.includes(bundleId)) continue;
+            try {
+                const candidateName = String(candidate?.companion?.name || '').trim();
+                const alreadyInstalled = state.companions.some(companion =>
+                    companion?.bundledId === bundleId
+                    || (candidateName && companion?.name === candidateName));
+                if (!alreadyInstalled) {
+                    const companion = restoreCompanionArchive(candidate);
+                    companion.bundledId = bundleId;
+                }
+                offered.push(bundleId);
+                changed = true;
+            } catch (error) {
+                console.error(`Could not install included Virtual Human ${bundleId}:`, error);
+            }
+        }
+        if (changed) {
+            state.globalSettings.includedHumanReceipts = [...new Set(offered)];
+            await saveState();
+        }
+    }
+
     // Starter locations gained containment metadata (parentLocationId) after
     // some installs had already seeded; graft the missing fields onto stored
     // copies so "step outside" resolves there too. Authored values always win.
@@ -1750,7 +1865,7 @@ async function saveState() {
             bedrockApiKey: state.globalSettings.rememberApiKey ? (state.bedrockApiKey || '') : '',
             customApiKey: state.globalSettings.rememberApiKey ? (state.customApiKey || '') : '',
             customHeaders: state.globalSettings.rememberApiKey ? (state.customHeaders || '') : '',
-            globalSettings: state.globalSettings,
+            globalSettings: globalSettingsForDevicePersistence(state.globalSettings),
             characters: state.characters,
             chats: state.chats,
             activeSessionId: state.activeSessionId,
@@ -1776,6 +1891,7 @@ async function saveState() {
             ]));
         }
         await HordeDB.setMultiple(records);
+        writeGlobalSettingsMirror(records.globalSettings);
         worldMediaDirty = false;
     } catch (err) {
         const isQuota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
@@ -1787,6 +1903,62 @@ async function saveState() {
         console.error('saveState failed:', err);
         throw err;
     }
+}
+
+function globalSettingsForDevicePersistence(settings = state.globalSettings) {
+    // Local/self-hosted configuration already lives inside globalSettings and
+    // historically persists with it. The opt-in toggle applies to cloud keys,
+    // which are stored as separate records below.
+    return safeJsonClone(isPlainObject(settings) ? settings : {});
+}
+
+function readGlobalSettingsMirror() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SETTINGS_MIRROR_KEY) || 'null');
+        return isPlainObject(parsed) ? parsed : null;
+    } catch (error) {
+        console.warn('Ignoring an invalid Settings recovery snapshot.', error);
+        return null;
+    }
+}
+
+function writeGlobalSettingsMirror(settings = state.globalSettings) {
+    try {
+        // The mirror is a small, credential-free recovery path for browsers
+        // that evict or fail an IndexedDB transaction. IndexedDB remains the
+        // authoritative store and retains opted-in keys.
+        const mirror = redactGlobalSettingsCredentials(settings);
+        if (Array.isArray(mirror.comfyWorkflowProfiles)) {
+            mirror.comfyWorkflowProfiles = mirror.comfyWorkflowProfiles.map(profile => ({
+                ...profile,
+                workflow: {}
+            }));
+        }
+        mirror.comfyWorkflow = {};
+        localStorage.setItem(SETTINGS_MIRROR_KEY, JSON.stringify(mirror));
+    } catch (error) {
+        console.warn('Could not write the Settings recovery snapshot.', error);
+    }
+}
+
+async function persistGlobalSettingsOnly() {
+    state.globalSettings.settingsSavedAt = Date.now();
+    const persistedSettings = globalSettingsForDevicePersistence(state.globalSettings);
+    const remember = state.globalSettings.rememberApiKey === true;
+    // Write the non-secret recovery copy first. If IndexedDB is unavailable or
+    // its transaction is aborted, ordinary preferences can still be restored
+    // on the next launch. Secrets and large workflow JSON never enter this copy.
+    writeGlobalSettingsMirror(persistedSettings);
+    await HordeDB.setMultiple({
+        globalSettings: persistedSettings,
+        apiKey: remember ? (state.apiKey || '') : '',
+        gptprotoApiKey: remember ? (state.gptprotoApiKey || '') : '',
+        nanogptApiKey: remember ? (state.nanogptApiKey || '') : '',
+        nvidiaApiKey: remember ? (state.nvidiaApiKey || '') : '',
+        bedrockApiKey: remember ? (state.bedrockApiKey || '') : '',
+        customApiKey: remember ? (state.customApiKey || '') : '',
+        customHeaders: remember ? (state.customHeaders || '') : ''
+    });
 }
 
 // Global Error Handler for UI feedback (deduped — a render-loop error must not spam toasts)
@@ -5439,7 +5611,7 @@ function getCurrentSession() {
     if (session && session.messages.length === 0 && state.activeCharId === id) {
         const char = state.characters.find(c => c.id === id);
         if (char && char.intro) {
-            session.messages.push({ role: 'assistant', content: char.intro, charId: char.id });
+            session.messages.push(characterGreetingMessage(char));
         }
     }
 
@@ -5458,7 +5630,7 @@ async function createNewSession() {
     if (state.activeCharId) {
         const char = state.characters.find(c => c.id === state.activeCharId);
         if (char && char.intro) {
-            newSess.messages.push({ role: 'assistant', content: char.intro, charId: char.id });
+            newSess.messages.push(characterGreetingMessage(char));
         }
     }
     
@@ -5467,6 +5639,21 @@ async function createNewSession() {
     await saveState();
     renderChat();
     showToast('New session started');
+}
+
+function characterGreetingMessage(char) {
+    const seen = new Set();
+    const versions = [char?.intro, ...(Array.isArray(char?.alternateGreetings) ? char.alternateGreetings : [])]
+        .map(value => String(value || '').trim())
+        .filter(value => value && !seen.has(value) && seen.add(value));
+    const content = versions[0] || '';
+    return {
+        role: 'assistant',
+        content,
+        charId: char?.id,
+        versions: versions.length > 1 ? versions : undefined,
+        currentVersion: versions.length > 1 ? 0 : undefined
+    };
 }
 
 async function renameCurrentSession() {
@@ -6091,6 +6278,7 @@ function replaceMacros(text, char) {
         .replace(/\{\{description\}\}/gi, char ? (char.desc || '') : '')
         .replace(/\{\{scenario\}\}/gi, char ? (char.scenario || '') : '')
         .replace(/\{\{personality\}\}/gi, char ? (char.personality || '') : '')
+        .replace(/\{\{creator[_ ]?notes\}\}/gi, char ? (char.creatorNotes || '') : '')
         .replace(/\{\{lastmessage\}\}/gi, lastMsg)
         .replace(/\{\{lastusermessage\}\}/gi, lastUser ? lastUser.content : '')
         .replace(/\{\{lastcharmessage\}\}/gi, lastChar ? lastChar.content : '')
@@ -6556,6 +6744,19 @@ Getting this right creates dramatic irony — the reader knowing more than the c
     // Immersion Directive: reduce mature-fiction over-refusal (opt-in, default on)
     if (state.globalSettings.immersionMode !== false) {
         systemPromptText += '\n\n' + HORDE_IMMERSION_DIRECTIVE;
+    }
+
+    // Preserve SillyTavern V2 depth_prompt semantics instead of flattening or
+    // dropping the extension during import. It remains an in-chat injection at
+    // the card author's requested role and depth.
+    const importedDepthPrompt = targetChar?.tavernExtensions?.depth_prompt;
+    if (isPlainObject(importedDepthPrompt) && String(importedDepthPrompt.prompt || '').trim()) {
+        injectedHistory.push({
+            role: ['system', 'user', 'assistant'].includes(importedDepthPrompt.role)
+                ? importedDepthPrompt.role : 'system',
+            content: replaceMacros(String(importedDepthPrompt.prompt), targetChar),
+            depth: livingClamp(parseInt(importedDepthPrompt.depth) || 0, 0, 100)
+        });
     }
 
     // 4. History Truncation and Macro Replacement
@@ -8356,11 +8557,11 @@ async function impersonateUser() {
 }
 
 async function getEmbedding(text) {
-    if (!hasApiCredentials()) throw new Error('API Key missing');
-    const response = await fetch(apiBase() + '/embeddings', {
+    if (!hasEmbeddingCredentials()) throw new Error('Embedding provider is not configured');
+    const response = await fetch(embeddingApiBase() + '/embeddings', {
         method: 'POST',
         headers: {
-            ...authHeaders(),
+            ...embeddingAuthHeaders(),
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -8370,7 +8571,9 @@ async function getEmbedding(text) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error?.message || 'Embedding failed');
-    return data.data[0].embedding;
+    const vector = data?.data?.[0]?.embedding;
+    if (!Array.isArray(vector) || !vector.length) throw new Error('Embedding server returned no vector');
+    return vector;
 }
 
 function cosineSimilarity(vecA, vecB) {
@@ -8654,12 +8857,40 @@ function mapTavernDataToNexus(charData) {
     if (charData.mes_example) promptParts.push(`### MESSAGE EXAMPLES\n${charData.mes_example}`);
     if (charData.post_history_instructions) promptParts.push(`### POST-HISTORY INSTRUCTIONS\n${charData.post_history_instructions}`);
 
+    const sourceExtensions = isPlainObject(charData.extensions) ? charData.extensions : {};
+    const tavernExtensions = {};
+    if (isPlainObject(sourceExtensions.chub)) {
+        tavernExtensions.chub = safeJsonClone(sourceExtensions.chub);
+    }
+    if (isPlainObject(sourceExtensions.depth_prompt)) {
+        tavernExtensions.depth_prompt = {
+            prompt: String(sourceExtensions.depth_prompt.prompt || '').slice(0, 100_000),
+            depth: livingClamp(parseInt(sourceExtensions.depth_prompt.depth) || 0, 0, 100),
+            role: ['system', 'user', 'assistant'].includes(sourceExtensions.depth_prompt.role)
+                ? sourceExtensions.depth_prompt.role : 'system'
+        };
+    }
+    const alternateGreetings = (Array.isArray(charData.alternate_greetings) ? charData.alternate_greetings : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .slice(0, 100);
+    const tags = (Array.isArray(charData.tags) ? charData.tags : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .slice(0, 100);
+    const chubPath = String(sourceExtensions.chub?.full_path || '').trim();
+
     return {
         id: 'char_' + Date.now(),
         name: charData.name || 'Imported Bot',
         desc: charData.description || charData.creator_notes || '',
         prompt: promptParts.join('\n\n') || '(No description)',
         intro: charData.first_mes || '',
+        creatorNotes: String(charData.creator_notes || ''),
+        alternateGreetings,
+        tags,
+        tavernExtensions,
+        sourceUrl: chubPath ? `https://chub.ai/characters/${chubPath.replace(/^\/+/, '')}` : '',
         model: state.globalSettings.defaultModel || '',
         temp: 0.9,
         maxTokens: 2048,
@@ -8995,7 +9226,15 @@ function setupGlobalSettings() {
         else sessionStorage.removeItem('horde_custom_headers');
         state.globalSettings.localBaseUrl = document.getElementById('global-local-url').value.trim().slice(0, 500);
         state.globalSettings.localApiKey = document.getElementById('global-local-key').value.trim().slice(0, 500);
+        state.globalSettings.localGenerationTimeoutSeconds = Math.max(0, Math.min(3600,
+            parseInt(document.getElementById('global-local-generation-timeout').value) || 0));
+        state.globalSettings.embeddingBaseUrl = normalizeOpenAICompatibleBase(
+            document.getElementById('global-embedding-url').value);
+        state.globalSettings.embeddingApiKey = document.getElementById('global-embedding-key').value.trim().slice(0, 500);
         state.globalSettings.embeddingModel = document.getElementById('global-embedding-model').value.trim().slice(0, 200);
+        state.globalSettings.localTtsBaseUrl = normalizeOpenAICompatibleBase(
+            document.getElementById('global-local-tts-url').value, 'http://127.0.0.1:8000/v1');
+        state.globalSettings.localTtsApiKey = document.getElementById('global-local-tts-key').value.trim().slice(0, 500);
         state.globalSettings.mcpBridgeUrl = normalizeMcpBridgeUrl(
             document.getElementById('global-mcp-bridge-url').value
         );
@@ -9011,12 +9250,25 @@ function setupGlobalSettings() {
         } catch (error) {
             return showToast('ComfyUI workflow is not valid JSON. Export it in API format and try again.', 'error');
         }
-        await saveState(); // persists or erases the stored key per the checkbox
+        // Settings get their own small transaction. A huge World image, chat
+        // archive or unrelated quota problem must never prevent preferences
+        // from surviving the next browser session.
+        try {
+            await persistGlobalSettingsOnly();
+        } catch (error) {
+            console.error('Dedicated Settings save failed:', error);
+            showToast('The local database could not save Settings. Basic non-secret preferences were kept in recovery storage, but API keys and ComfyUI workflow JSON were not saved.', 'error');
+            return;
+        }
         openRouterModels = [];
         modelCatalogSource = null;
         applyGlobalStyles();
         hideGlobalSettings();
-        showToast('Settings Saved', 'success');
+        const enteredCloudKey = !!(state.apiKey || state.gptprotoApiKey || state.nanogptApiKey
+            || state.nvidiaApiKey || state.bedrockApiKey || state.customApiKey);
+        showToast(enteredCloudKey && !state.globalSettings.rememberApiKey
+            ? 'Settings saved. API keys remain in this tab only; enable “Remember API keys” to keep them after closing the browser.'
+            : 'Settings saved for future sessions.', 'success');
     };
     
     // Sync color pickers with text inputs
@@ -9255,6 +9507,72 @@ function setupGlobalSettings() {
             if (result) result.textContent = `Custom provider failed: ${humanizeApiError(error)}`;
         } finally { customTest.disabled = false; }
     };
+    const testEmbedding = document.getElementById('test-embedding-conn-btn');
+    if (testEmbedding) testEmbedding.onclick = async () => {
+        const result = document.getElementById('embedding-conn-result');
+        const explicitBase = document.getElementById('global-embedding-url')?.value.trim() || '';
+        const base = explicitBase
+            ? normalizeOpenAICompatibleBase(explicitBase)
+            : apiBase();
+        const key = explicitBase
+            ? (document.getElementById('global-embedding-key')?.value.trim() || '')
+            : '';
+        const model = document.getElementById('global-embedding-model')?.value.trim()
+            || state.globalSettings.embeddingModel || 'openai/text-embedding-3-small';
+        if (!base) {
+            if (result) result.textContent = 'Enter a valid embedding server URL or configure the active text provider.';
+            return;
+        }
+        testEmbedding.disabled = true;
+        if (result) result.textContent = `Testing ${model} with a real embedding request…`;
+        try {
+            const response = await fetch(base.replace(/\/+$/, '') + '/embeddings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(explicitBase ? (key ? { Authorization: `Bearer ${key}` } : {}) : authHeaders())
+                },
+                body: JSON.stringify({ model, input: 'Horde Studio embedding connection test' })
+            });
+            const raw = await response.text();
+            let data = {};
+            try { data = raw ? JSON.parse(raw) : {}; } catch (error) { data = {}; }
+            if (!response.ok) throw new Error(data?.error?.message || data?.message || raw || `Embedding failed (${response.status})`);
+            const dimensions = data?.data?.[0]?.embedding?.length || 0;
+            if (!dimensions) throw new Error('The server responded without an embedding vector.');
+            if (result) result.textContent = `Embedding server verified · ${dimensions} dimensions from ${model}.`;
+        } catch (error) {
+            if (result) result.textContent = `Embedding test failed: ${humanizeApiError(error, explicitBase ? 'local' : state.globalSettings.apiProvider)}`;
+        } finally {
+            testEmbedding.disabled = false;
+        }
+    };
+    const testLocalTTS = document.getElementById('test-local-tts-btn');
+    if (testLocalTTS) testLocalTTS.onclick = async () => {
+        const result = document.getElementById('local-tts-result');
+        const base = normalizeOpenAICompatibleBase(
+            document.getElementById('global-local-tts-url')?.value.trim() || '',
+            'http://127.0.0.1:8000/v1');
+        const key = document.getElementById('global-local-tts-key')?.value.trim() || '';
+        testLocalTTS.disabled = true;
+        if (result) result.textContent = 'Checking the local speech model catalog…';
+        try {
+            const response = await fetch(base + '/models', {
+                headers: key ? { Authorization: `Bearer ${key}` } : {}
+            });
+            const raw = await response.text();
+            let data = {};
+            try { data = raw ? JSON.parse(raw) : {}; } catch (error) { data = {}; }
+            if (!response.ok) throw new Error(data?.error?.message || data?.message || raw || `Server returned ${response.status}`);
+            const models = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+            localTTSModelCache = null;
+            if (result) result.textContent = `Local TTS connected${models.length ? ` · ${models.length} models visible` : ' · use a custom model ID if this server does not expose /models'}. Generate a preview in Virtual Human Studio to verify audio.`;
+        } catch (error) {
+            if (result) result.textContent = `Local TTS test failed: ${humanizeApiError(error, 'local')}`;
+        } finally {
+            testLocalTTS.disabled = false;
+        }
+    };
     const testLocalImages = document.getElementById('test-local-image-engines-btn');
     if (testLocalImages) testLocalImages.onclick = async () => {
         const result = document.getElementById('local-image-engines-result');
@@ -9375,6 +9693,8 @@ function redactGlobalSettingsCredentials(settings) {
     // Loopback credentials are still credentials. Keep URLs, model choices and
     // policies portable, but never put secrets into a shareable backup.
     delete copy.localApiKey;
+    delete copy.embeddingApiKey;
+    delete copy.localTtsApiKey;
     delete copy.localImageApiKey;
     if (isPlainObject(copy.labs)) delete copy.labs.apiKey;
     return copy;
@@ -9500,7 +9820,13 @@ function showGlobalSettings() {
         document.getElementById('global-api-provider').value = provider;
         document.getElementById('global-local-url').value = state.globalSettings.localBaseUrl || '';
         document.getElementById('global-local-key').value = state.globalSettings.localApiKey || '';
+        document.getElementById('global-local-generation-timeout').value = String(
+            state.globalSettings.localGenerationTimeoutSeconds ?? 300);
+        document.getElementById('global-embedding-url').value = state.globalSettings.embeddingBaseUrl || '';
+        document.getElementById('global-embedding-key').value = state.globalSettings.embeddingApiKey || '';
         document.getElementById('global-embedding-model').value = state.globalSettings.embeddingModel || '';
+        document.getElementById('global-local-tts-url').value = state.globalSettings.localTtsBaseUrl || 'http://127.0.0.1:8000/v1';
+        document.getElementById('global-local-tts-key').value = state.globalSettings.localTtsApiKey || '';
         document.getElementById('global-mcp-bridge-url').value = state.globalSettings.mcpBridgeUrl || HORDE_MCP_BRIDGE_DEFAULT;
         document.getElementById('global-local-image-url').value = state.globalSettings.localImageBaseUrl || 'http://127.0.0.1:7860/v1';
         document.getElementById('global-local-image-path').value = state.globalSettings.localImagePath || '/images/generations';
@@ -18433,6 +18759,8 @@ async function executeWorldTurn(commandOrReroll = null) {
     let historyStartLength = null;
     let submittedInput = '';
     let timeoutId = null;
+    let generationTimedOut = false;
+    let activeIdleTimeoutMs = 0;
     let restoredRerollSnapshot = false;
     let failureRestoreSnapshot = null;
     let committedMovement = null;
@@ -19116,7 +19444,20 @@ ${modularMandate}
 
         const controller = new AbortController();
         worldGenController = controller; // expose for the user Stop button
-        timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
+        const configuredLocalIdleTimeout = isLocalProvider() ? localGenerationIdleTimeoutMs() : 45000;
+        const armGenerationIdleTimeout = (overrideMs = configuredLocalIdleTimeout) => {
+            if (timeoutId) clearTimeout(timeoutId);
+            activeIdleTimeoutMs = Math.max(0, Number(overrideMs) || 0);
+            if (!activeIdleTimeoutMs) {
+                timeoutId = null;
+                return;
+            }
+            timeoutId = setTimeout(() => {
+                generationTimedOut = true;
+                controller.abort();
+            }, activeIdleTimeoutMs);
+        };
+        armGenerationIdleTimeout();
 
         const toolsConfig = [
         {
@@ -19833,8 +20174,7 @@ ${modularMandate}
             // IDLE timeout, not wall-clock: reasoning models (DeepSeek Pro, o-series)
             // legitimately think for 60s+ while streaming reasoning deltas. As long
             // as ANY data flows, keep the connection alive; only kill true stalls.
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => controller.abort(), 45000);
+            armGenerationIdleTimeout();
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
@@ -20008,6 +20348,7 @@ ${modularMandate}
                     }
                 }
             } catch (repairError) {
+                if (repairError?.name === 'AbortError') throw repairError;
                 console.warn('Horde Engine: receipt-only repair failed; freezing unverified state.', repairError.message);
             }
         }
@@ -20107,6 +20448,7 @@ ${modularMandate}
                     fullText = followUpData.choices?.[0]?.message?.content || '';
                 }
             } catch(followUpErr) {
+                if (followUpErr?.name === 'AbortError') throw followUpErr;
                 console.error("Horde Engine: Follow-up request failed", followUpErr);
             }
         }
@@ -20130,8 +20472,7 @@ ${modularMandate}
             if (dmTyping) { dmTyping.style.display = 'flex'; if (dmTypingLabel) dmTypingLabel.textContent = 'DM lost their train of thought — retrying...'; }
             try {
                 // Non-streaming call can't reset the idle timer — give it its own window
-                clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => controller.abort(), 90000);
+                armGenerationIdleTimeout(isLocalProvider() ? configuredLocalIdleTimeout : 90000);
                 const rescueBody = {
                     model: modelId,
                     stream: false,
@@ -20153,6 +20494,7 @@ ${modularMandate}
                     if (fullText.trim()) console.log('Horde Engine: rescue call succeeded.');
                 }
             } catch (rescueErr) {
+                if (rescueErr?.name === 'AbortError') throw rescueErr;
                 console.error('Horde Engine: rescue call failed', rescueErr);
             }
         }
@@ -20190,6 +20532,7 @@ ${modularMandate}
                     }
                 }
             } catch (error) {
+                if (error?.name === 'AbortError') throw error;
                 console.warn('Horde Engine: final narrative receipt repair failed.', error.message);
             }
             if (!repairedReceiptApplied) {
@@ -20503,10 +20846,17 @@ ${modularMandate}
         }
         try { if (sess) await saveState(); } catch (saveErr) { console.error('Rollback persistence failed:', saveErr); }
 
-        // User pressed Stop (or the 45s safety timeout fired) — not a real error
+        // A user stop is informational. A configured idle timeout is actionable:
+        // the backend may still be working, so tell the user how to extend it.
         if (err.name === 'AbortError') {
             console.log('World turn aborted');
-            showToast(movementPreserved ? 'Movement saved; DM generation stopped.' : 'Generation stopped.', 'info');
+            if (generationTimedOut) {
+                const seconds = Math.max(1, Math.round(activeIdleTimeoutMs / 1000));
+                const prefix = movementPreserved ? 'Movement saved. ' : '';
+                showToast(`${prefix}Generation received no data for ${seconds}s and was stopped. Increase or disable the local timeout in Settings → AI & Models.`, 'error');
+            } else {
+                showToast(movementPreserved ? 'Movement saved; DM generation stopped.' : 'Generation stopped.', 'info');
+            }
             renderWorldPlayState();
             return;
         }
@@ -27706,6 +28056,43 @@ const COMPANION_MOOD_LABELS = Object.freeze([
 ]);
 
 const COMPANION_SLEEP_ARCHETYPES = Object.freeze(['early_riser', 'normal', 'night_owl']);
+const COMPANION_REGULATION_PROFILES = Object.freeze(['steady', 'typical', 'sensitive', 'volatile']);
+const COMPANION_CONFLICT_RECOVERY = Object.freeze(['quick', 'normal', 'slow', 'grudge']);
+const COMPANION_ALCOHOL_PATTERNS = Object.freeze(['none', 'rare', 'social', 'frequent']);
+const COMPANION_LIBIDO_BASELINES = Object.freeze(['very_low', 'low', 'moderate', 'high', 'very_high']);
+const COMPANION_DESIRE_PATTERNS = Object.freeze(['spontaneous', 'responsive', 'mixed']);
+const COMPANION_SEXUAL_CONFIDENCE = Object.freeze(['inhibited', 'cautious', 'natural', 'direct']);
+const COMPANION_SEXUAL_RISK = Object.freeze(['low', 'moderate', 'high']);
+const COMPANION_INTIMACY_AFTEREFFECTS = Object.freeze([
+    'none', 'satisfied', 'awkward', 'conflicted', 'regretful', 'rejected', 'frustrated'
+]);
+const COMPANION_EMOTIONS = Object.freeze([
+    'joy', 'trust', 'fear', 'surprise', 'sadness', 'disgust', 'anger', 'anticipation'
+]);
+const COMPANION_EMOTION_EXPRESSION = Object.freeze(['transparent', 'guarded', 'masked', 'performative']);
+const COMPANION_RUMINATION_STYLES = Object.freeze(['low', 'normal', 'high', 'sticky']);
+const COMPANION_REACTION_TIMING = Object.freeze(['immediate', 'mixed', 'delayed']);
+const COMPANION_EMOTIONAL_GRANULARITY = Object.freeze(['simple', 'nuanced', 'contradictory']);
+const COMPANION_EMOTION_INTENSITIES = Object.freeze({
+    joy: ['serenity', 'joy', 'ecstasy'],
+    trust: ['acceptance', 'trust', 'admiration'],
+    fear: ['apprehension', 'fear', 'terror'],
+    surprise: ['distraction', 'surprise', 'amazement'],
+    sadness: ['pensiveness', 'sadness', 'grief'],
+    disgust: ['boredom', 'disgust', 'loathing'],
+    anger: ['annoyance', 'anger', 'rage'],
+    anticipation: ['interest', 'anticipation', 'vigilance']
+});
+const COMPANION_EMOTION_DYADS = Object.freeze([
+    ['joy', 'trust', 'love'], ['trust', 'fear', 'submission'],
+    ['fear', 'surprise', 'alarm'], ['surprise', 'sadness', 'disappointment'],
+    ['sadness', 'disgust', 'remorse'], ['disgust', 'anger', 'contempt'],
+    ['anger', 'anticipation', 'aggressiveness'], ['anticipation', 'joy', 'optimism'],
+    ['joy', 'fear', 'guilt'], ['trust', 'surprise', 'curiosity'],
+    ['fear', 'sadness', 'despair'], ['surprise', 'disgust', 'unbelief'],
+    ['sadness', 'anger', 'envy'], ['disgust', 'anticipation', 'cynicism'],
+    ['anger', 'joy', 'pride'], ['anticipation', 'trust', 'hope']
+]);
 
 // Hour ranges [start, end) a companion is asleep, per archetype. Wraps past
 // midnight, which is why these are checked with a helper rather than a
@@ -28006,6 +28393,108 @@ function normalizeCompanionLifeRuntime(raw) {
 }
 
 /**
+ * Bounded behavioral pressures, not a claim that the simulation has literal
+ * hormones or consciousness. These values give time, sleep, conflict and
+ * established substance use mechanical consequences between model calls.
+ */
+function normalizeCompanionHumanDynamics(raw, nowMs = Date.now()) {
+    const dynamics = isPlainObject(raw) ? raw : {};
+    return {
+        energy: livingClamp(Number.isFinite(Number(dynamics.energy)) ? Number(dynamics.energy) : 70, 0, 100),
+        stress: livingClamp(Number.isFinite(Number(dynamics.stress)) ? Number(dynamics.stress) : 22, 0, 100),
+        socialNeed: livingClamp(Number.isFinite(Number(dynamics.socialNeed)) ? Number(dynamics.socialNeed) : 28, 0, 100),
+        anger: livingClamp(Number.isFinite(Number(dynamics.anger)) ? Number(dynamics.anger) : 0, 0, 100),
+        intoxication: livingClamp(Number.isFinite(Number(dynamics.intoxication)) ? Number(dynamics.intoxication) : 0, 0, 100),
+        inhibition: livingClamp(Number.isFinite(Number(dynamics.inhibition)) ? Number(dynamics.inhibition) : 72, 0, 100),
+        desire: livingClamp(Number.isFinite(Number(dynamics.desire)) ? Number(dynamics.desire) : 20, 0, 100),
+        sexualArousal: livingClamp(Number.isFinite(Number(dynamics.sexualArousal)) ? Number(dynamics.sexualArousal) : 0, 0, 100),
+        sexualFrustration: livingClamp(Number.isFinite(Number(dynamics.sexualFrustration)) ? Number(dynamics.sexualFrustration) : 0, 0, 100),
+        postIntimacyCalm: livingClamp(Number.isFinite(Number(dynamics.postIntimacyCalm)) ? Number(dynamics.postIntimacyCalm) : 0, 0, 100),
+        sexualCooldownUntil: Number.isFinite(dynamics.sexualCooldownUntil) ? Math.max(0, dynamics.sexualCooldownUntil) : 0,
+        intimacyAftereffect: COMPANION_INTIMACY_AFTEREFFECTS.includes(dynamics.intimacyAftereffect)
+            ? dynamics.intimacyAftereffect : 'none',
+        intimacyAftereffectUntil: Number.isFinite(dynamics.intimacyAftereffectUntil)
+            ? Math.max(0, dynamics.intimacyAftereffectUntil) : 0,
+        lastIntimacyAt: Number.isFinite(dynamics.lastIntimacyAt) ? Math.max(0, dynamics.lastIntimacyAt) : 0,
+        cooldownUntil: Number.isFinite(dynamics.cooldownUntil) ? Math.max(0, dynamics.cooldownUntil) : 0,
+        cooldownReason: String(dynamics.cooldownReason || '').trim().slice(0, 240),
+        lastUpdated: Number.isFinite(dynamics.lastUpdated) ? dynamics.lastUpdated : nowMs
+    };
+}
+
+function normalizeCompanionEmotionVector(raw, fallback = null) {
+    const source = isPlainObject(raw) ? raw : {};
+    const base = isPlainObject(fallback) ? fallback : {};
+    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
+        livingClamp(Number.isFinite(Number(source[emotion])) ? Number(source[emotion])
+            : Number.isFinite(Number(base[emotion])) ? Number(base[emotion]) : 0, 0, 100)
+    ]));
+}
+
+function normalizeCompanionEmotionDeltaVector(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
+        livingClamp(Number.isFinite(Number(source[emotion])) ? Number(source[emotion]) : 0, -100, 100)
+    ]));
+}
+
+function companionEmotionVectorFromMood(rawMood) {
+    const mood = isPlainObject(rawMood) ? rawMood : {};
+    const intensity = livingClamp(Math.abs(Number(mood.valence) || 20) * 0.55
+        + Math.abs(Number(mood.arousal) || 0) * 0.25 + 12, 0, 72);
+    const vector = normalizeCompanionEmotionVector({});
+    const mapped = {
+        content: ['joy'], happy: ['joy'], excited: ['joy', 'anticipation'],
+        affectionate: ['joy', 'trust'], flirty: ['joy', 'anticipation'], playful: ['joy', 'surprise'],
+        bored: ['disgust'], tired: ['sadness'], anxious: ['fear', 'anticipation'],
+        sad: ['sadness'], hurt: ['sadness', 'anger'], angry: ['anger'],
+        jealous: ['anger', 'sadness', 'fear'], lonely: ['sadness', 'anticipation'],
+        overwhelmed: ['fear', 'surprise'], numb: ['sadness']
+    }[mood.label] || (Number(mood.valence) < 0 ? ['sadness'] : ['joy']);
+    mapped.forEach((emotion, index) => { vector[emotion] = livingClamp(intensity - index * 8, 0, 100); });
+    return vector;
+}
+
+function normalizeCompanionEmotionReaction(raw, index = 0) {
+    const reaction = isPlainObject(raw) ? raw : {};
+    return {
+        id: String(reaction.id || livingId('vh_emotion', `${reaction.dueAt || Date.now()}|${index}`)).slice(0, 100),
+        dueAt: Number.isFinite(reaction.dueAt) ? Math.max(0, reaction.dueAt) : 0,
+        felt: normalizeCompanionEmotionDeltaVector(reaction.felt),
+        towardPlayer: normalizeCompanionEmotionDeltaVector(reaction.towardPlayer),
+        reason: String(reaction.reason || '').trim().slice(0, 300)
+    };
+}
+
+function normalizeCompanionEmotionState(raw, seedMood = null, nowMs = Date.now()) {
+    const state = isPlainObject(raw) ? raw : {};
+    const seed = companionEmotionVectorFromMood(seedMood);
+    const appraisal = isPlainObject(state.lastAppraisal) ? state.lastAppraisal : {};
+    return {
+        felt: normalizeCompanionEmotionVector(state.felt, seed),
+        towardPlayer: normalizeCompanionEmotionVector(state.towardPlayer),
+        expressed: normalizeCompanionEmotionVector(state.expressed, seed),
+        masking: livingClamp(Number.isFinite(Number(state.masking)) ? Number(state.masking) : 18, 0, 100),
+        lastUpdated: Number.isFinite(state.lastUpdated) ? state.lastUpdated : nowMs,
+        lastAppraisal: {
+            summary: String(appraisal.summary || '').trim().slice(0, 300),
+            responsibility: ['player', 'self', 'other', 'circumstance', 'unclear'].includes(appraisal.responsibility)
+                ? appraisal.responsibility : 'unclear',
+            goalImpact: livingClamp(Number.isFinite(Number(appraisal.goalImpact)) ? Number(appraisal.goalImpact) : 0, -100, 100),
+            threat: livingClamp(Number.isFinite(Number(appraisal.threat)) ? Number(appraisal.threat) : 0, 0, 100),
+            loss: livingClamp(Number.isFinite(Number(appraisal.loss)) ? Number(appraisal.loss) : 0, 0, 100),
+            novelty: livingClamp(Number.isFinite(Number(appraisal.novelty)) ? Number(appraisal.novelty) : 0, 0, 100),
+            normViolation: livingClamp(Number.isFinite(Number(appraisal.normViolation)) ? Number(appraisal.normViolation) : 0, 0, 100),
+            control: livingClamp(Number.isFinite(Number(appraisal.control)) ? Number(appraisal.control) : 50, 0, 100),
+            socialSafety: livingClamp(Number.isFinite(Number(appraisal.socialSafety)) ? Number(appraisal.socialSafety) : 50, 0, 100),
+            at: Number.isFinite(appraisal.at) ? appraisal.at : 0
+        },
+        pendingReactions: (Array.isArray(state.pendingReactions) ? state.pendingReactions : [])
+            .map(normalizeCompanionEmotionReaction).filter(item => item.dueAt).slice(-20)
+    };
+}
+
+/**
  * Repair a stored companion into the shape every function below assumes.
  * Called on load, on creation, and defensively before rendering — the same
  * discipline `normalizeAuthoredWorld` holds for worlds, for the same reason:
@@ -28033,6 +28522,11 @@ function normalizeCompanion(raw) {
     };
     return {
         id: String(c.id || livingId('companion', c.name || now)).slice(0, 80),
+        // Built-in humans carry a stable receipt identity that is separate
+        // from their per-install companion id. It lets Horde offer a person
+        // once without resurrecting them after the user deliberately deletes
+        // their local copy.
+        bundledId: String(c.bundledId || '').trim().slice(0, 100),
         name: String(c.name === 'New Contact' ? 'New Virtual Human' : (c.name || '')).trim().slice(0, 100),
         age: Number.isFinite(Number(c.age)) ? livingClamp(Math.round(Number(c.age)), 18, 120) : null,
         pronouns: String(c.pronouns || '').trim().slice(0, 80),
@@ -28075,7 +28569,7 @@ function normalizeCompanion(raw) {
         relationshipContext: String(c.relationshipContext || '').trim().slice(0, 2400),
         voiceGender: ['female', 'male', 'neutral'].includes(c.voiceGender) ? c.voiceGender : 'neutral',
         ttsVoiceURI: typeof c.ttsVoiceURI === 'string' ? c.ttsVoiceURI : '',
-        ttsMode: ['openrouter', 'browser'].includes(c.ttsMode) ? c.ttsMode : 'browser',
+        ttsMode: ['openrouter', 'local', 'browser'].includes(c.ttsMode) ? c.ttsMode : 'browser',
         ttsModel: ttsModelMigrations[storedTtsModel] || storedTtsModel,
         ttsVoice: typeof c.ttsVoice === 'string' ? c.ttsVoice : 'alloy',
         ttsResponseFormat: ['auto', 'mp3', 'pcm', 'wav', 'ogg', 'opus', 'aac', 'flac'].includes(c.ttsResponseFormat)
@@ -28083,6 +28577,31 @@ function normalizeCompanion(raw) {
         ttsSpeed: Number.isFinite(Number(c.ttsSpeed)) ? livingClamp(Number(c.ttsSpeed), 0.5, 2) : 1,
         ttsProviderOptions: normalizeCompanionTTSProviderOptions(c.ttsProviderOptions),
         sleepArchetype: COMPANION_SLEEP_ARCHETYPES.includes(c.sleepArchetype) ? c.sleepArchetype : 'normal',
+        regulationProfile: COMPANION_REGULATION_PROFILES.includes(c.regulationProfile)
+            ? c.regulationProfile : 'typical',
+        conflictRecovery: COMPANION_CONFLICT_RECOVERY.includes(c.conflictRecovery)
+            ? c.conflictRecovery : 'normal',
+        emotionExpression: COMPANION_EMOTION_EXPRESSION.includes(c.emotionExpression)
+            ? c.emotionExpression : 'guarded',
+        ruminationStyle: COMPANION_RUMINATION_STYLES.includes(c.ruminationStyle)
+            ? c.ruminationStyle : 'normal',
+        reactionTiming: COMPANION_REACTION_TIMING.includes(c.reactionTiming)
+            ? c.reactionTiming : 'mixed',
+        emotionalGranularity: COMPANION_EMOTIONAL_GRANULARITY.includes(c.emotionalGranularity)
+            ? c.emotionalGranularity : 'nuanced',
+        alcoholPattern: COMPANION_ALCOHOL_PATTERNS.includes(c.alcoholPattern)
+            ? c.alcoholPattern : 'rare',
+        libidoEnabled: c.libidoEnabled === true && Number(c.age) >= 18,
+        libidoBaseline: COMPANION_LIBIDO_BASELINES.includes(c.libidoBaseline)
+            ? c.libidoBaseline : 'moderate',
+        desirePattern: COMPANION_DESIRE_PATTERNS.includes(c.desirePattern)
+            ? c.desirePattern : 'mixed',
+        sexualConfidence: COMPANION_SEXUAL_CONFIDENCE.includes(c.sexualConfidence)
+            ? c.sexualConfidence : 'natural',
+        sexualRiskAppetite: COMPANION_SEXUAL_RISK.includes(c.sexualRiskAppetite)
+            ? c.sexualRiskAppetite : 'moderate',
+        sexualInitiative: c.sexualInitiative === true,
+        intimacyBoundaries: String(c.intimacyBoundaries || '').trim().slice(0, 2400),
         textProvider: ['provider', ...TEXT_PROVIDER_IDS].includes(c.textProvider)
             ? c.textProvider : 'provider',
         imageSource: ['provider', 'openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(c.imageSource)
@@ -28128,6 +28647,8 @@ function normalizeCompanion(raw) {
             relationship: livingClamp(mood.relationship == null ? startingRelationship : mood.relationship, -100, 100),
             lastUpdated: Number.isFinite(mood.lastUpdated) ? mood.lastUpdated : now
         },
+        humanDynamics: normalizeCompanionHumanDynamics(c.humanDynamics, now),
+        emotionState: normalizeCompanionEmotionState(c.emotionState, mood, now),
         relationshipDynamics: {
             trust: livingClamp(dynamics.trust == null ? Math.max(0, startingRelationship) : dynamics.trust, -100, 100),
             warmth: livingClamp(dynamics.warmth == null ? startingRelationship : dynamics.warmth, -100, 100),
@@ -28282,8 +28803,518 @@ function applyCompanionMoodUpdate(companion, update, nowMs) {
         companion.trauma.push(normalizeCompanionTrauma({ ...u.trauma_add, addedAt: nowMs }));
         companion.trauma = companion.trauma.slice(-20);
     }
+    applyCompanionDynamicsUpdate(companion, u, nowMs);
+    applyCompanionEmotionUpdate(companion, u, nowMs);
     companion.mood.lastUpdated = nowMs;
     return companion.mood;
+}
+
+function companionRegulationFactors(companion) {
+    const sensitivity = {
+        steady: 0.72, typical: 1, sensitive: 1.22, volatile: 1.5
+    }[companion.regulationProfile] || 1;
+    const recovery = {
+        quick: 0.58, normal: 1, slow: 1.55, grudge: 2.35
+    }[companion.conflictRecovery] || 1;
+    return { sensitivity, recovery };
+}
+
+function companionEmotionFactors(companion) {
+    const rumination = { low: 0.65, normal: 1, high: 1.55, sticky: 2.35 }[companion.ruminationStyle] || 1;
+    const reactionDelay = { immediate: 0, mixed: 0.45, delayed: 0.8 }[companion.reactionTiming] || 0.45;
+    const expressionMask = { transparent: 0.08, guarded: 0.34, masked: 0.68, performative: 0.52 }[companion.emotionExpression] || 0.34;
+    return { rumination, reactionDelay, expressionMask };
+}
+
+function companionEmotionIntensityLabel(emotion, value) {
+    const labels = COMPANION_EMOTION_INTENSITIES[emotion] || [emotion, emotion, emotion];
+    return labels[value >= 72 ? 2 : value >= 34 ? 1 : 0];
+}
+
+function companionEmotionBlend(vector) {
+    const ranked = COMPANION_EMOTIONS.map(emotion => [emotion, Number(vector?.[emotion]) || 0])
+        .sort((a, b) => b[1] - a[1]);
+    if (ranked[1][1] < 24 || ranked[0][1] - ranked[1][1] > 38) return '';
+    const pair = COMPANION_EMOTION_DYADS.find(([a, b]) =>
+        (a === ranked[0][0] && b === ranked[1][0]) || (b === ranked[0][0] && a === ranked[1][0]));
+    return pair?.[2] || '';
+}
+
+function companionEmotionActionTendencies(vector) {
+    const tendencies = {
+        joy: 'approach, share or play', trust: 'cooperate, disclose or become vulnerable',
+        fear: 'avoid, freeze or seek reassurance', surprise: 'pause, orient or investigate',
+        sadness: 'withdraw, seek comfort or ruminate', disgust: 'reject, distance or condemn',
+        anger: 'confront, criticize or reclaim control', anticipation: 'plan, check or pursue'
+    };
+    return COMPANION_EMOTIONS.map(emotion => [emotion, Number(vector?.[emotion]) || 0])
+        .filter(([, value]) => value >= 32).sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([emotion]) => tendencies[emotion]);
+}
+
+function companionExpressedEmotionVector(companion, emotionState = null) {
+    const stateNow = emotionState || companion.emotionState;
+    const felt = normalizeCompanionEmotionVector(stateNow?.felt);
+    const targeted = normalizeCompanionEmotionVector(stateNow?.towardPlayer);
+    const { expressionMask } = companionEmotionFactors(companion);
+    const intoxication = Number(companion.humanDynamics?.intoxication) || 0;
+    const deliberateMask = livingClamp((Number(stateNow?.masking) || 0) / 100, 0, 1);
+    const mask = livingClamp((expressionMask + deliberateMask) / 2 - intoxication / 220, 0, 0.92);
+    const combined = Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
+        livingClamp(Math.max(felt[emotion], targeted[emotion] * 0.9), 0, 100)
+    ]));
+    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => {
+        let visibility = 1 - mask;
+        if (['fear', 'sadness', 'trust'].includes(emotion)) visibility *= 0.82;
+        if (companion.emotionExpression === 'transparent') visibility = Math.max(visibility, 0.82);
+        if (companion.emotionExpression === 'performative') {
+            if (emotion === 'joy') return [emotion, livingClamp(Math.max(combined.joy * 0.82, 24), 0, 100)];
+            if (['fear', 'sadness'].includes(emotion)) visibility *= 0.35;
+        }
+        return [emotion, livingClamp(combined[emotion] * visibility, 0, 100)];
+    }));
+}
+
+function companionAppraisalEmotionDeltas(companion, rawAppraisal) {
+    const input = isPlainObject(rawAppraisal) ? rawAppraisal : {};
+    const { sensitivity } = companionRegulationFactors(companion);
+    const value = (key, min = 0, max = 100, fallback = 0) => livingClamp(
+        Number.isFinite(Number(input[key])) ? Number(input[key]) : fallback, min, max);
+    const goal = value('goal_impact', -100, 100);
+    const threat = value('threat');
+    const loss = value('loss');
+    const novelty = value('novelty');
+    const norm = value('norm_violation');
+    const control = value('control', 0, 100, 50);
+    const safety = value('social_safety', 0, 100, 50);
+    const certainty = value('certainty', 0, 100, 50);
+    const deltas = normalizeCompanionEmotionVector({});
+    if (goal > 0) deltas.joy += goal * 0.16;
+    if (goal < 0) {
+        deltas.sadness += Math.abs(goal) * 0.1;
+        deltas.anger += Math.abs(goal) * 0.07 * (0.55 + control / 100);
+    }
+    deltas.fear += threat * 0.17 * (1.25 - control / 125);
+    deltas.sadness += loss * 0.18;
+    deltas.surprise += novelty * 0.17;
+    deltas.anticipation += novelty * 0.07 + certainty * 0.04;
+    deltas.disgust += norm * 0.14;
+    deltas.anger += norm * 0.1;
+    deltas.trust += safety * 0.11;
+    if (safety < 35) deltas.fear += (35 - safety) * 0.12;
+    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
+        livingClamp(deltas[emotion] * sensitivity, 0, 30)
+    ]));
+}
+
+function companionEmotionSummary(companion, nowMs = Date.now()) {
+    const stateNow = advanceCompanionEmotionState(companion, nowMs);
+    const ranked = COMPANION_EMOTIONS.map(emotion => [emotion, stateNow.felt[emotion]])
+        .sort((a, b) => b[1] - a[1]);
+    const targetRanked = COMPANION_EMOTIONS.map(emotion => [emotion, stateNow.towardPlayer[emotion]])
+        .sort((a, b) => b[1] - a[1]);
+    const expressed = companionExpressedEmotionVector(companion, stateNow);
+    const expressedRanked = COMPANION_EMOTIONS.map(emotion => [emotion, expressed[emotion]])
+        .sort((a, b) => b[1] - a[1]);
+    const feltText = ranked.filter(([, value]) => value >= 12).slice(0, 3)
+        .map(([emotion, value]) => `${companionEmotionIntensityLabel(emotion, value)} ${Math.round(value)}/100`).join(', ') || 'emotionally settled';
+    const targetText = targetRanked.filter(([, value]) => value >= 12).slice(0, 3)
+        .map(([emotion, value]) => `${emotion} ${Math.round(value)}/100`).join(', ') || 'no strong player-directed emotion';
+    const expressedText = expressedRanked.filter(([, value]) => value >= 12).slice(0, 2)
+        .map(([emotion, value]) => `${emotion} ${Math.round(value)}/100`).join(', ') || 'little visible emotion';
+    const blend = companionEmotionBlend(stateNow.felt);
+    const tendencies = companionEmotionActionTendencies({ ...stateNow.felt,
+        ...Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
+            Math.max(stateNow.felt[emotion], stateNow.towardPlayer[emotion])])) });
+    return `Felt: ${feltText}${blend ? `; likely blend: ${blend}` : ''}. Toward the player: ${targetText}. Expression currently shows: ${expressedText}. Action pressures: ${tendencies.length ? tendencies.join('; ') : 'none strong'}.`;
+}
+
+function advanceCompanionEmotionState(companion, nowMs = Date.now()) {
+    companion.emotionState = normalizeCompanionEmotionState(companion.emotionState, companion.mood, nowMs);
+    const emotionState = companion.emotionState;
+    const elapsedMs = Math.max(0, nowMs - emotionState.lastUpdated);
+    if (elapsedMs < 5 * 60 * 1000 && !emotionState.pendingReactions.some(item => item.dueAt <= nowMs)) {
+        emotionState.expressed = companionExpressedEmotionVector(companion, emotionState);
+        return emotionState;
+    }
+    const hours = Math.min(168, elapsedMs / (60 * 60 * 1000));
+    const { rumination } = companionEmotionFactors(companion);
+    const halfLives = {
+        joy: 3.5, trust: 7, fear: 4.5, surprise: 0.75,
+        sadness: 7.5 * rumination, disgust: 9 * rumination,
+        anger: 3.5 * rumination * companionRegulationFactors(companion).recovery,
+        anticipation: 4
+    };
+    const baselineJoy = livingClamp(Math.max(0, companion.moodBaseline?.valence || 0) * 0.3, 0, 25);
+    COMPANION_EMOTIONS.forEach(emotion => {
+        const retained = Math.pow(0.5, hours / halfLives[emotion]);
+        const baseline = emotion === 'joy' ? baselineJoy : 0;
+        emotionState.felt[emotion] = livingClamp(baseline
+            + (emotionState.felt[emotion] - baseline) * retained, 0, 100);
+        const targetRetained = Math.pow(0.5, hours / (halfLives[emotion] * 1.65));
+        emotionState.towardPlayer[emotion] = livingClamp(emotionState.towardPlayer[emotion] * targetRetained, 0, 100);
+    });
+    const due = emotionState.pendingReactions.filter(item => item.dueAt <= nowMs);
+    due.forEach(reaction => {
+        COMPANION_EMOTIONS.forEach(emotion => {
+            emotionState.felt[emotion] = livingClamp(emotionState.felt[emotion] + reaction.felt[emotion], 0, 100);
+            emotionState.towardPlayer[emotion] = livingClamp(emotionState.towardPlayer[emotion]
+                + reaction.towardPlayer[emotion], 0, 100);
+        });
+    });
+    emotionState.pendingReactions = emotionState.pendingReactions.filter(item => item.dueAt > nowMs).slice(-20);
+    emotionState.expressed = companionExpressedEmotionVector(companion, emotionState);
+    emotionState.lastUpdated = nowMs;
+    return emotionState;
+}
+
+function applyCompanionEmotionUpdate(companion, update, nowMs = Date.now()) {
+    const stateNow = advanceCompanionEmotionState(companion, nowMs);
+    const input = isPlainObject(update) ? update : {};
+    const appraisal = isPlainObject(input.emotion_appraisal) ? input.emotion_appraisal : null;
+    const direct = isPlainObject(input.emotion_changes) ? normalizeCompanionEmotionVector(input.emotion_changes) : null;
+    const targeted = isPlainObject(input.toward_player_emotions)
+        ? normalizeCompanionEmotionVector(input.toward_player_emotions) : null;
+    const hasModernUpdate = !!(appraisal || direct || targeted);
+    let feltDelta = appraisal ? companionAppraisalEmotionDeltas(companion, appraisal) : normalizeCompanionEmotionVector({});
+    if (direct) COMPANION_EMOTIONS.forEach(emotion => {
+        feltDelta[emotion] = livingClamp(feltDelta[emotion] + livingClamp(Number(input.emotion_changes[emotion]) || 0, -30, 30), -30, 30);
+    });
+    if (!hasModernUpdate && COMPANION_MOOD_LABELS.includes(input.mood_label)) {
+        const legacy = companionEmotionVectorFromMood({
+            label: input.mood_label,
+            valence: Number(input.valence_change) || 0,
+            arousal: Number(input.arousal_change) || 0
+        });
+        COMPANION_EMOTIONS.forEach(emotion => { feltDelta[emotion] = legacy[emotion] * 0.32; });
+    }
+    const targetDelta = normalizeCompanionEmotionVector({});
+    if (targeted) COMPANION_EMOTIONS.forEach(emotion => {
+        targetDelta[emotion] = livingClamp(Number(input.toward_player_emotions[emotion]) || 0, -30, 30);
+    });
+    if (appraisal && appraisal.responsibility === 'player') {
+        COMPANION_EMOTIONS.forEach(emotion => {
+            if (['anger', 'disgust', 'fear', 'sadness', 'trust', 'joy'].includes(emotion)) {
+                targetDelta[emotion] = livingClamp(targetDelta[emotion] + feltDelta[emotion] * 0.75, -30, 30);
+            }
+        });
+    }
+    const requestedDelay = livingClamp(Math.round(Number(input.delayed_reaction_minutes) || 0), 0, 72 * 60);
+    const { reactionDelay } = companionEmotionFactors(companion);
+    const delayMinutes = requestedDelay || (hasModernUpdate && reactionDelay >= 0.8
+        ? 30 + Math.round(companionSeededRoll(`${companion.id}|delayed-emotion|${nowMs}`) * 180) : 0);
+    const immediateShare = delayMinutes > 0 ? 1 - reactionDelay * 0.72 : 1;
+    COMPANION_EMOTIONS.forEach(emotion => {
+        stateNow.felt[emotion] = livingClamp(stateNow.felt[emotion] + feltDelta[emotion] * immediateShare, 0, 100);
+        stateNow.towardPlayer[emotion] = livingClamp(stateNow.towardPlayer[emotion]
+            + targetDelta[emotion] * immediateShare, 0, 100);
+    });
+    if (delayMinutes > 0) {
+        stateNow.pendingReactions.push(normalizeCompanionEmotionReaction({
+            dueAt: nowMs + delayMinutes * 60 * 1000,
+            felt: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, feltDelta[emotion] * (1 - immediateShare)])),
+            towardPlayer: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, targetDelta[emotion] * (1 - immediateShare)])),
+            reason: input.emotional_trigger || appraisal?.summary || 'a delayed emotional reaction'
+        }, stateNow.pendingReactions.length));
+        stateNow.pendingReactions = stateNow.pendingReactions.slice(-20);
+    }
+    if (Number.isFinite(Number(input.masking_change))) {
+        stateNow.masking = livingClamp(stateNow.masking + livingClamp(Number(input.masking_change), -30, 30), 0, 100);
+    }
+    if (appraisal) {
+        stateNow.lastAppraisal = normalizeCompanionEmotionState({ lastAppraisal: {
+            summary: input.emotional_trigger || appraisal.summary || '',
+            responsibility: appraisal.responsibility,
+            goalImpact: appraisal.goal_impact,
+            threat: appraisal.threat,
+            loss: appraisal.loss,
+            novelty: appraisal.novelty,
+            normViolation: appraisal.norm_violation,
+            control: appraisal.control,
+            socialSafety: appraisal.social_safety,
+            at: nowMs
+        } }, null, nowMs).lastAppraisal;
+    }
+    stateNow.expressed = companionExpressedEmotionVector(companion, stateNow);
+    stateNow.lastUpdated = nowMs;
+    const combined = Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
+        Math.max(stateNow.felt[emotion], stateNow.towardPlayer[emotion])
+    ]));
+    const dominant = COMPANION_EMOTIONS.map(emotion => [emotion, combined[emotion]])
+        .sort((a, b) => b[1] - a[1])[0];
+    const moodMap = { joy: 'happy', trust: 'affectionate', fear: 'anxious', surprise: 'excited',
+        sadness: 'sad', disgust: 'hurt', anger: 'angry', anticipation: 'excited' };
+    if (hasModernUpdate && dominant[1] >= 18) companion.mood.label = moodMap[dominant[0]];
+    const positive = combined.joy * 0.65 + combined.trust * 0.35;
+    const negative = combined.sadness * 0.35 + combined.fear * 0.2 + combined.anger * 0.25 + combined.disgust * 0.2;
+    if (hasModernUpdate) companion.mood.valence = livingClamp(Math.round(positive - negative), -100, 100);
+    if (hasModernUpdate) companion.mood.arousal = livingClamp(Math.round(
+        combined.anger * 0.28 + combined.fear * 0.26 + combined.surprise * 0.22
+        + combined.anticipation * 0.18 + combined.joy * 0.08 - combined.sadness * 0.08), -100, 100);
+    companion.humanDynamics.anger = livingClamp(Math.max(
+        companion.humanDynamics.anger, stateNow.felt.anger, stateNow.towardPlayer.anger
+    ), 0, 100);
+    return stateNow;
+}
+
+function companionSexualSystemActive(companion) {
+    return companion?.libidoEnabled === true && Number(companion?.age) >= 18;
+}
+
+function companionSexualFactors(companion) {
+    const baseline = {
+        very_low: 8, low: 24, moderate: 45, high: 68, very_high: 84
+    }[companion.libidoBaseline] ?? 45;
+    const spontaneous = {
+        spontaneous: 1.25, responsive: 0.45, mixed: 0.85
+    }[companion.desirePattern] ?? 0.85;
+    const responsive = {
+        spontaneous: 0.65, responsive: 1.3, mixed: 1
+    }[companion.desirePattern] ?? 1;
+    const confidence = {
+        inhibited: 0.42, cautious: 0.7, natural: 1, direct: 1.25
+    }[companion.sexualConfidence] ?? 1;
+    const risk = {
+        low: 0.48, moderate: 1, high: 1.45
+    }[companion.sexualRiskAppetite] ?? 1;
+    return { baseline, spontaneous, responsive, confidence, risk };
+}
+
+function companionSexualContext(companion, nowMs = Date.now()) {
+    const situation = companionSituationAt(companion, nowMs);
+    const text = [situation.activity, situation.label, situation.placeLabel,
+        companion.lifeRuntime?.activeWildcard?.label,
+        companion.lifeRuntime?.activeWildcard?.consequences].join(' ').toLowerCase();
+    const withPeople = Array.isArray(situation.withNames) && situation.withNames.length > 0;
+    const privateOpportunity = !withPeople && situation.availability !== 'busy'
+        && /\b(?:home|bed|bedroom|hotel|private|alone|shower|bath)\b/.test(text);
+    const intimateContext = /\b(?:date|dating|flirt|romantic|intimacy|intimate|hookup|sex|sexual|making out|kiss(?:ing)?|lover|partner)\b/.test(text);
+    return { situation, privateOpportunity, intimateContext, withPeople };
+}
+
+function companionSexualDecisionState(companion, dynamics = null, nowMs = Date.now()) {
+    const stateNow = dynamics || advanceCompanionHumanDynamics(companion, nowMs);
+    if (!companionSexualSystemActive(companion)) {
+        return { enabled: false, desire: 0, arousal: 0, frustration: 0, impulse: 0,
+            attraction: companion?.relationshipDynamics?.attraction || 0, canInitiate: false };
+    }
+    const { confidence, risk } = companionSexualFactors(companion);
+    const attraction = livingClamp(Number(companion.relationshipDynamics?.attraction) || 0, -100, 100);
+    // Desire can exist without attraction. Attraction only directs a portion of
+    // that pressure toward the player; trust is deliberately absent here.
+    const directedAttraction = livingClamp(Math.max(0, attraction), 0, 100);
+    const restraint = livingClamp(stateNow.inhibition + stateNow.postIntimacyCalm * 0.28
+        + Math.max(0, stateNow.anger - 45) * 0.2, 0, 100);
+    const rawImpulse = stateNow.sexualArousal * 0.48
+        + stateNow.desire * 0.24
+        + stateNow.sexualFrustration * 0.16
+        + directedAttraction * 0.12;
+    const impulse = livingClamp(rawImpulse * confidence * risk * (1.18 - restraint / 125), 0, 100);
+    const cooling = stateNow.sexualCooldownUntil > nowMs;
+    return {
+        enabled: true,
+        desire: stateNow.desire,
+        arousal: stateNow.sexualArousal,
+        frustration: stateNow.sexualFrustration,
+        impulse,
+        attraction,
+        restraint,
+        cooling,
+        aftereffect: stateNow.intimacyAftereffect,
+        canInitiate: companion.sexualInitiative === true && attraction >= 10 && !cooling && impulse >= 55
+    };
+}
+
+function companionDynamicsDescription(companion, nowMs = Date.now()) {
+    const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
+    const sexuality = companionSexualDecisionState(companion, dynamics, nowMs);
+    const bands = value => value >= 75 ? 'very high' : value >= 50 ? 'high' : value >= 25 ? 'noticeable' : 'low';
+    const energy = dynamics.energy >= 70 ? 'well-rested' : dynamics.energy >= 42 ? 'functional' : dynamics.energy >= 20 ? 'tired' : 'exhausted';
+    const inhibition = dynamics.inhibition >= 70 ? 'strong self-control' : dynamics.inhibition >= 42 ? 'ordinary restraint' : dynamics.inhibition >= 20 ? 'lowered restraint' : 'very impulsive';
+    const alcohol = dynamics.intoxication < 8 ? 'sober' : dynamics.intoxication < 30 ? 'mildly affected by alcohol' : dynamics.intoxication < 60 ? 'intoxicated' : 'heavily intoxicated';
+    const cooldown = dynamics.cooldownUntil > nowMs
+        ? ` Cooling off until about ${companionTimestampLabel(companion, dynamics.cooldownUntil)}${dynamics.cooldownReason ? ` because ${dynamics.cooldownReason}` : ''}.`
+        : '';
+    const libido = sexuality.enabled
+        ? ` Adult desire system: drive ${Math.round(sexuality.desire)}/100; current sexual arousal ${Math.round(sexuality.arousal)}/100; sexual frustration ${Math.round(sexuality.frustration)}/100; expression impulse ${Math.round(sexuality.impulse)}/100; current attraction toward the player ${Math.round(sexuality.attraction)}/100.${sexuality.aftereffect !== 'none' ? ` Intimacy aftereffect: ${sexuality.aftereffect}.` : ''}`
+        : ' Adult desire system is disabled.';
+    return `energy ${Math.round(dynamics.energy)}/100 (${energy}); stress ${Math.round(dynamics.stress)}/100 (${bands(dynamics.stress)}); unmet social need ${Math.round(dynamics.socialNeed)}/100 (${bands(dynamics.socialNeed)}); anger ${Math.round(dynamics.anger)}/100 (${bands(dynamics.anger)}); ${alcohol}, with ${inhibition}.${cooldown}${libido}`;
+}
+
+function companionAlcoholContext(companion, nowMs = Date.now()) {
+    if (companion.alcoholPattern === 'none') return false;
+    const situation = companionSituationAt(companion, nowMs);
+    const text = [situation.activity, situation.label, situation.placeLabel,
+        companion.lifeRuntime?.activeWildcard?.label,
+        companion.lifeRuntime?.activeWildcard?.consequences].join(' ').toLowerCase();
+    return /\b(?:drink|drinks|drinking|bar|pub|club|party|cocktail|wine|beer|liquor|booze|happy hour|wedding reception)\b/.test(text);
+}
+
+/**
+ * Advance homeostatic pressures in coarse five-minute steps. It is entirely
+ * deterministic and local, so a tab can catch up after hours away without an
+ * extra API call or allowing an LLM to rewrite canonical state.
+ */
+function advanceCompanionHumanDynamics(companion, nowMs = Date.now()) {
+    companion.humanDynamics = normalizeCompanionHumanDynamics(companion.humanDynamics, nowMs);
+    const dynamics = companion.humanDynamics;
+    const elapsedMs = Math.max(0, nowMs - dynamics.lastUpdated);
+    if (elapsedMs < 5 * 60 * 1000) return dynamics;
+    const hours = Math.min(72, elapsedMs / (60 * 60 * 1000));
+    const life = companionLifeState(companion, nowMs);
+    const situationText = `${life.activity || ''} ${life.label || ''}`.toLowerCase();
+    const asleep = life.availability === 'asleep';
+    const social = !!life.situation?.withNames?.length
+        || /\b(?:friends?|family|date|party|social|dinner|lunch|hang(?:ing)? out)\b/.test(situationText);
+    const demanding = /\b(?:work|shift|exam|deadline|commut|argument|fight|crisis|emergency|hospital)\b/.test(situationText);
+    const restorative = /\b(?:relax|rest|home|walk|gym|workout|yoga|read)\b/.test(situationText);
+    const { recovery } = companionRegulationFactors(companion);
+
+    if (!companionSexualSystemActive(companion)) {
+        dynamics.desire = 0;
+        dynamics.sexualArousal = 0;
+        dynamics.sexualFrustration = 0;
+        dynamics.postIntimacyCalm = 0;
+        dynamics.sexualCooldownUntil = 0;
+        dynamics.intimacyAftereffect = 'none';
+        dynamics.intimacyAftereffectUntil = 0;
+    }
+
+    dynamics.energy = livingClamp(dynamics.energy + (asleep ? 12 : -2.2) * hours, 0, 100);
+    const stressTarget = demanding ? 55 : restorative || asleep ? 15 : 28;
+    const stressRetained = Math.pow(0.5, hours / (asleep ? 2.5 : 8));
+    dynamics.stress = livingClamp(stressTarget + (dynamics.stress - stressTarget) * stressRetained, 0, 100);
+    dynamics.socialNeed = livingClamp(dynamics.socialNeed + (social ? -10 : asleep ? 0.15 : 1.25) * hours, 0, 100);
+
+    const angerHalfLife = 2.5 * recovery;
+    dynamics.anger = livingClamp(dynamics.anger * Math.pow(0.5, hours / angerHalfLife), 0, 100);
+    if (companionAlcoholContext(companion, nowMs)) {
+        const intakeRate = { rare: 5, social: 11, frequent: 16 }[companion.alcoholPattern] || 0;
+        dynamics.intoxication = livingClamp(dynamics.intoxication + intakeRate * hours, 0, 100);
+    } else {
+        dynamics.intoxication = livingClamp(dynamics.intoxication * Math.pow(0.5, hours / 1.7), 0, 100);
+    }
+    const inhibitionTarget = livingClamp(74 - dynamics.intoxication * 0.68 - dynamics.stress * 0.12, 8, 82);
+    dynamics.inhibition = livingClamp(inhibitionTarget + (dynamics.inhibition - inhibitionTarget) * Math.pow(0.5, hours / 1.2), 0, 100);
+    if (companionSexualSystemActive(companion)) {
+        const factors = companionSexualFactors(companion);
+        const local = companionLocalDateInfo(companion, nowMs);
+        const context = companionSexualContext(companion, nowMs);
+        const pulseRoll = companionSeededRoll(`${companion.id}|desire-pulse|${local.dateKey}`);
+        const pulseHour = 6 + Math.floor(pulseRoll * 17);
+        const pulseActive = Math.abs(local.hour - pulseHour) <= 1;
+        const circadianLift = local.hour >= 21 || local.hour <= 1 ? 5 : local.hour >= 6 && local.hour <= 9 ? 3 : 0;
+        const spontaneousLift = pulseActive ? 12 * factors.spontaneous : 0;
+        const desireTarget = livingClamp(factors.baseline + circadianLift + spontaneousLift
+            - dynamics.stress * 0.18 - Math.max(0, 30 - dynamics.energy) * 0.35
+            - dynamics.postIntimacyCalm * 0.52, 0, 100);
+        const desireRetained = Math.pow(0.5, hours / 8);
+        dynamics.desire = livingClamp(desireTarget + (dynamics.desire - desireTarget) * desireRetained, 0, 100);
+
+        // Momentary sexual arousal falls quickly unless a concrete intimate
+        // context is established. Generic friendliness or trust cannot raise it.
+        const arousalTarget = context.intimateContext
+            ? livingClamp(dynamics.desire * factors.responsive + 12, 0, 100)
+            : pulseActive && companion.desirePattern !== 'responsive'
+                ? livingClamp(dynamics.desire * 0.42, 0, 48) : 0;
+        const arousalRetained = Math.pow(0.5, hours / 0.8);
+        dynamics.sexualArousal = livingClamp(arousalTarget
+            + (dynamics.sexualArousal - arousalTarget) * arousalRetained, 0, 100);
+        const frustrationRate = dynamics.desire >= 62 && dynamics.postIntimacyCalm < 20 ? 0.7 : -1.4;
+        dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration + frustrationRate * hours, 0, 100);
+        dynamics.postIntimacyCalm = livingClamp(dynamics.postIntimacyCalm * Math.pow(0.5, hours / 5), 0, 100);
+        // Private self-regulation can resolve sustained pressure without an API
+        // call, another person, or a fabricated relationship event. It remains
+        // internal unless the person later chooses to disclose it.
+        const privateRegulationRoll = companionSeededRoll(`${companion.id}|private-regulation|${local.dateKey}`);
+        const enoughTimeSinceIntimacy = !dynamics.lastIntimacyAt
+            || nowMs - dynamics.lastIntimacyAt >= 18 * 60 * 60 * 1000;
+        const privateRegulationChance = livingClamp(0.06 + factors.baseline / 360, 0.06, 0.32);
+        if (context.privateOpportunity && pulseActive && enoughTimeSinceIntimacy
+            && (dynamics.sexualArousal >= 58 || dynamics.desire >= 78)
+            && privateRegulationRoll < privateRegulationChance) {
+            dynamics.postIntimacyCalm = livingClamp(dynamics.postIntimacyCalm + 58, 0, 100);
+            dynamics.sexualArousal = livingClamp(dynamics.sexualArousal - 62, 0, 100);
+            dynamics.desire = livingClamp(dynamics.desire - 28, 0, 100);
+            dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration - 52, 0, 100);
+            dynamics.sexualCooldownUntil = nowMs + 45 * 60 * 1000;
+            dynamics.intimacyAftereffect = 'satisfied';
+            dynamics.intimacyAftereffectUntil = nowMs + 3 * 60 * 60 * 1000;
+            dynamics.lastIntimacyAt = nowMs;
+        }
+        if (dynamics.sexualCooldownUntil && nowMs >= dynamics.sexualCooldownUntil) dynamics.sexualCooldownUntil = 0;
+        if (dynamics.intimacyAftereffectUntil && nowMs >= dynamics.intimacyAftereffectUntil) {
+            dynamics.intimacyAftereffect = 'none';
+            dynamics.intimacyAftereffectUntil = 0;
+        }
+    }
+    if (dynamics.cooldownUntil && nowMs >= dynamics.cooldownUntil && dynamics.anger < 48) {
+        dynamics.cooldownUntil = 0;
+        dynamics.cooldownReason = '';
+    }
+    dynamics.lastUpdated = nowMs;
+    return dynamics;
+}
+
+function applyCompanionDynamicsUpdate(companion, update, nowMs = Date.now()) {
+    const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
+    const input = isPlainObject(update) ? update : {};
+    const { sensitivity, recovery } = companionRegulationFactors(companion);
+    const deltas = [
+        ['energy_change', 'energy', 0.8],
+        ['stress_change', 'stress', sensitivity],
+        ['social_need_change', 'socialNeed', 1],
+        ['anger_change', 'anger', sensitivity],
+        ['intoxication_change', 'intoxication', 1]
+    ];
+    deltas.forEach(([source, target, multiplier]) => {
+        if (!Number.isFinite(Number(input[source]))) return;
+        const bounded = livingClamp(Number(input[source]), -30, 30) * multiplier;
+        dynamics[target] = livingClamp(dynamics[target] + bounded, 0, 100);
+    });
+    if (companionSexualSystemActive(companion)) {
+        const sexualDeltas = [
+            ['desire_change', 'desire'],
+            ['sexual_arousal_change', 'sexualArousal'],
+            ['sexual_frustration_change', 'sexualFrustration']
+        ];
+        sexualDeltas.forEach(([source, target]) => {
+            if (!Number.isFinite(Number(input[source]))) return;
+            dynamics[target] = livingClamp(dynamics[target]
+                + livingClamp(Number(input[source]), -30, 30), 0, 100);
+        });
+        const outcome = COMPANION_INTIMACY_AFTEREFFECTS.includes(input.intimacy_outcome)
+            ? input.intimacy_outcome : 'none';
+        if (outcome !== 'none') {
+            dynamics.intimacyAftereffect = outcome;
+            dynamics.intimacyAftereffectUntil = nowMs + 6 * 60 * 60 * 1000;
+            if (outcome === 'satisfied') {
+                dynamics.postIntimacyCalm = livingClamp(dynamics.postIntimacyCalm + 70, 0, 100);
+                dynamics.sexualArousal = livingClamp(dynamics.sexualArousal - 65, 0, 100);
+                dynamics.desire = livingClamp(dynamics.desire - 35, 0, 100);
+                dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration - 70, 0, 100);
+                dynamics.lastIntimacyAt = nowMs;
+            } else if (['rejected', 'frustrated'].includes(outcome)) {
+                dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration + 18, 0, 100);
+            }
+        }
+        const sexualCooldownMinutes = livingClamp(Math.round(Number(input.sexual_cooldown_minutes) || 0), 0, 24 * 60);
+        if (sexualCooldownMinutes > 0) {
+            dynamics.sexualCooldownUntil = Math.max(dynamics.sexualCooldownUntil || 0,
+                nowMs + sexualCooldownMinutes * 60 * 1000);
+        }
+    }
+    const explicitCoolOff = livingClamp(Math.round(Number(input.cool_off_minutes) || 0), 0, 24 * 60);
+    if (explicitCoolOff > 0 || (Number(input.anger_change) > 0 && dynamics.anger >= 58)) {
+        const inferredMinutes = Math.round((25 + dynamics.anger * 2.2) * recovery);
+        const duration = Math.max(explicitCoolOff, inferredMinutes);
+        dynamics.cooldownUntil = Math.max(dynamics.cooldownUntil || 0, nowMs + duration * 60 * 1000);
+        dynamics.cooldownReason = String(input.cooldown_reason || 'they need time to regulate before continuing').trim().slice(0, 240);
+    }
+    const inhibitionTarget = livingClamp(74 - dynamics.intoxication * 0.68 - dynamics.stress * 0.12, 8, 82);
+    dynamics.inhibition = livingClamp(Math.round((dynamics.inhibition + inhibitionTarget) / 2), 0, 100);
+    dynamics.lastUpdated = nowMs;
+    return dynamics;
 }
 
 // --- Simulated life: grounded in real wall-clock time, never hallucinated -
@@ -28621,6 +29652,8 @@ function companionNextWakeAt(companion, atMs) {
  */
 function companionResponsePlan(companion, message, nowMs, rawExperience = null) {
     const experience = normalizeCompanionChatExperience(rawExperience);
+    const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
+    const emotions = advanceCompanionEmotionState(companion, nowMs);
     const life = experience.realTimeLife
         ? companionLifeState(companion, nowMs)
         : {
@@ -28634,10 +29667,22 @@ function companionResponsePlan(companion, message, nowMs, rawExperience = null) 
             }
         };
     const roll = companionSeededRoll(`${companion.id}|reply|${message.id}|${nowMs}`);
-    const moodRefusalChance = {
+    const labelledRefusalChance = {
         angry: 0.62, hurt: 0.5, numb: 0.46, overwhelmed: 0.38,
         sad: 0.22, anxious: 0.14, tired: 0.12
     }[companion.mood.label] || (companion.mood.valence <= -35 ? 0.3 : 0);
+    const coolingOff = dynamics.cooldownUntil > nowMs;
+    const pressureRefusalChance = livingClamp(
+        dynamics.anger * 0.0072
+        + emotions.towardPlayer.disgust * 0.0045
+        + emotions.towardPlayer.anger * 0.0035
+        + Math.max(0, emotions.felt.sadness - 65) * 0.002
+        + Math.max(0, emotions.felt.fear - 72) * 0.0015
+        + Math.max(0, dynamics.stress - 65) * 0.003
+        + Math.max(0, 24 - dynamics.energy) * 0.004,
+        0, 0.86);
+    const moodRefusalChance = livingClamp(Math.max(labelledRefusalChance, pressureRefusalChance)
+        + (coolingOff ? 0.16 : 0), 0, 0.92);
     const deliveredAt = nowMs + 350 + Math.round(roll * 900);
     let readAt;
     let replyDueAt;
@@ -28659,9 +29704,15 @@ function companionResponsePlan(companion, message, nowMs, rawExperience = null) 
 
     const initiallyWilling = !experience.allowNoReply || roll >= moodRefusalChance;
     const reconsiderRoll = companionSeededRoll(`${companion.id}|reconsider|${message.id}`);
-    const willReply = !experience.allowNoReply || initiallyWilling || reconsiderRoll >= 0.35;
+    // Ordinary bad moods often soften into a late reply. High anger and an
+    // active cool-off are different: silence is allowed to remain silence.
+    const mayReconsider = !coolingOff && dynamics.anger < 58 && reconsiderRoll >= 0.78;
+    const willReply = !experience.allowNoReply || initiallyWilling || mayReconsider;
     if (!initiallyWilling && willReply) {
         replyDueAt = readAt + (45 + Math.round(reconsiderRoll * 420)) * 60 * 1000;
+    }
+    if (willReply && experience.replyDelays && coolingOff) {
+        replyDueAt = Math.max(replyDueAt, dynamics.cooldownUntil + Math.round(reconsiderRoll * 18) * 60 * 1000);
     }
     if (!experience.replyDelays) {
         readAt = nowMs;
@@ -28673,6 +29724,8 @@ function companionResponsePlan(companion, message, nowMs, rawExperience = null) 
         replyDueAt: willReply ? replyDueAt : 0,
         willReply,
         reason: initiallyWilling ? life.availability : 'mood',
+        dynamics,
+        emotions,
         life
     };
 }
@@ -28685,7 +29738,18 @@ function companionInitiativeDelayMs(companion, anchorMs) {
     }[companion.initiativeMode];
     if (!rangeHours) return Infinity;
     const roll = companionSeededRoll(`${companion.id}|initiative|${new Date(anchorMs).toDateString()}|${anchorMs}`);
-    return (rangeHours[0] + roll * (rangeHours[1] - rangeHours[0])) * 60 * 60 * 1000;
+    const dynamics = advanceCompanionHumanDynamics(companion, anchorMs);
+    const emotions = advanceCompanionEmotionState(companion, anchorMs);
+    const sexuality = companionSexualDecisionState(companion, dynamics, anchorMs);
+    const socialFactor = dynamics.socialNeed >= 75 ? 0.55 : dynamics.socialNeed >= 55 ? 0.78 : 1;
+    const impulsivityFactor = dynamics.intoxication >= 45 && dynamics.inhibition < 40 ? 0.62 : 1;
+    const desireFactor = sexuality.canInitiate
+        ? sexuality.impulse >= 78 ? 0.55 : 0.76 : 1;
+    const emotionFactor = emotions.towardPlayer.anticipation >= 55 || emotions.towardPlayer.joy >= 60
+        ? 0.72 : emotions.towardPlayer.disgust >= 55 || emotions.towardPlayer.anger >= 62 ? 1.65 : 1;
+    const exhaustionFactor = dynamics.energy < 20 ? 1.8 : 1;
+    return (rangeHours[0] + roll * (rangeHours[1] - rangeHours[0]))
+        * socialFactor * impulsivityFactor * desireFactor * emotionFactor * exhaustionFactor * 60 * 60 * 1000;
 }
 
 /**
@@ -28853,7 +29917,27 @@ function applyCompanionSilenceProgress(companion, timeline, nowMs = Date.now()) 
             ...change,
             valence_change: Math.round(change.valence_change * closeness),
             relationship_change: Math.round(change.relationship_change * closeness),
-            mood_label: stage === 'detached' ? 'numb' : stage === 'hurt' ? 'hurt' : stage === 'concerned' ? 'anxious' : companion.mood.label
+            mood_label: stage === 'detached' ? 'numb' : stage === 'hurt' ? 'hurt' : stage === 'concerned' ? 'anxious' : companion.mood.label,
+            emotion_appraisal: {
+                summary: `The player has not replied for ${companionElapsedLabel(current.durationMs)}.`,
+                goal_impact: stage === 'noticed' ? -5 : stage === 'concerned' ? -18 : stage === 'hurt' ? -38 : -48,
+                threat: stage === 'noticed' ? 8 : stage === 'concerned' ? 34 : stage === 'hurt' ? 40 : 18,
+                loss: stage === 'noticed' ? 2 : stage === 'concerned' ? 12 : stage === 'hurt' ? 32 : 48,
+                novelty: stage === 'noticed' ? 25 : 5,
+                norm_violation: stage === 'hurt' ? 28 : stage === 'detached' ? 34 : 8,
+                control: 15,
+                certainty: stage === 'noticed' ? 20 : stage === 'detached' ? 72 : 40,
+                social_safety: stage === 'noticed' ? 48 : stage === 'concerned' ? 34 : stage === 'hurt' ? 20 : 16,
+                responsibility: 'player'
+            },
+            toward_player_emotions: {
+                fear: stage === 'concerned' ? 7 : 0,
+                sadness: stage === 'hurt' ? 10 : stage === 'detached' ? 6 : 2,
+                anger: stage === 'hurt' ? 6 : stage === 'detached' ? 4 : 0,
+                disgust: stage === 'detached' ? 5 : 0,
+                anticipation: stage === 'noticed' ? 4 : -2,
+                trust: stage === 'detached' ? -8 : stage === 'hurt' ? -5 : -1
+            }
         }, nowMs);
         const eventId = `vh_silence_${anchorId}_${stage}`.slice(0, 100);
         if (!companion.lifeEvents.some(event => event.id === eventId)) {
@@ -28966,6 +30050,7 @@ function companionRelationshipShortLabel(score) {
  */
 function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
     decayCompanionMood(companion, nowMs);
+    advanceCompanionHumanDynamics(companion, nowMs);
     const experience = normalizeCompanionChatExperience(options.experience);
     const life = companionLifeState(companion, nowMs);
     const situation = life.situation || companionSituationAt(companion, nowMs);
@@ -29078,6 +30163,18 @@ Do not invent a different location, activity, company, outfit, weather or time t
 Do not use sleep, work, schedule, weather or current clock time to delay or block this conversation. Remain naturally available to chat. Keep identity, memories, relationship, personality and established visual continuity, but do not invent or assert a live location, activity, company or weather condition.`}
 
 YOUR CURRENT EMOTIONAL STATE: ${companionMoodDescription(companion)}.
+YOUR CURRENT REGULATION AND BODY STATE:
+${companionDynamicsDescription(companion, nowMs)}
+This is a bounded behavioral simulation, not medical data and not a script to recite. Let it influence attention, patience, restraint, message length, mistakes, initiative and willingness to engage. Low energy can make you brief. High stress narrows bandwidth. Anger may make you cool off, refuse to engage, or answer tersely without becoming abusive by default. Alcohol can lower restraint and make texting more impulsive or uneven, but never turn you into a cartoon; do not become intoxicated unless the authoritative life state or an established visible life event supports drinking. A need is pressure, not destiny: personality, values, boundaries and consequences still govern what you do.
+YOUR MULTI-EMOTION STATE:
+${companionEmotionSummary(companion, nowMs)}
+Emotional style: ${companion.emotionExpression} expression; ${companion.ruminationStyle} rumination; ${companion.reactionTiming} reaction timing; ${companion.emotionalGranularity} emotional granularity.
+This is a Plutchik-inspired vocabulary, not a claim that emotions are literally a wheel. Joy, trust, fear, surprise, sadness, disgust, anger and anticipation may coexist; apparent opposites do not cancel mechanically. Felt emotion, player-directed emotion and visible expression are separate. Appraise what actually happened—goal impact, threat, loss, novelty, control, responsibility, norm violation and social safety—before changing emotion. Let strong emotions create action pressure, not commands. A guarded person may mask fear as irritation; a delayed processor may seem fine and react later; a mixed state can be affectionate and angry simultaneously. Never print these scores or diagnose yourself.
+${companionSexualSystemActive(companion) ? `ADULT DESIRE AND IMPULSE:
+This adult-only system is enabled. Baseline libido: ${companion.libidoBaseline}; desire pattern: ${companion.desirePattern}; sexual confidence: ${companion.sexualConfidence}; risk appetite: ${companion.sexualRiskAppetite}; autonomous sexual initiative: ${companion.sexualInitiative ? 'allowed' : 'not allowed'}.
+Authored intimacy boundaries: ${companion.intimacyBoundaries || '(no additional boundaries authored; infer conservatively from values, private-life limits and relationship style)'}.
+Libido is NOT trust, love, consent or automatic attraction. Desire may exist without being directed at the player. Attraction may exist without permission to act. Trust can affect felt safety and consequences, but it must never be used as the source or gate for libido. High impulse may make you distracted, unusually bold, flirt too directly, send a risky message, call at a questionable time, or make another plausible decision you later reconsider—but only in a way consistent with your personality, boundaries and actual opportunity. You may want something and still refuse it. Never override consent, pressure the player, invent reciprocal interest, expose a private meter, or sexualize anyone known or reasonably suspected to be under 18. Suggestive photos still require normal photo permission, physical plausibility and your own willingness.` : `ADULT DESIRE AND IMPULSE:
+This system is disabled. Do not infer private sexual arousal, sexual frustration or autonomous sexual initiative from ordinary warmth, attraction or relationship progress.`}
 YOUR RELATIONSHIP WITH THE PLAYER:
 How it began: ${companion.relationshipContext || '(no shared history or starting context has been authored)'}
 Starting relationship: ${companionRelationshipDescription(companion.startingRelationship)} (${companion.startingRelationship}/100).
@@ -29114,7 +30211,8 @@ RULES:
 ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_note when speaking feels more natural than typing, including during an autonomous check-in.' : 'Voice notes are disabled by the user. Never call send_voice_note or claim to have recorded one.'}
 6. ${companion.webAccess ? 'You may search the live web when current information is genuinely needed, then use share_link for a specific meme, article or video you want this person to see. Never pretend you searched if you did not.' : 'You do not have live web access. Never claim to have searched for or just seen current online content.'}
 7. Every reply MUST call commit_human_turn exactly once. This private receipt records your emotional state and an explicit photo/voice-note decision even when both are "none". A request for media may be accepted, refused, negotiated or postponed; never silently pretend a photo or recording was sent. Use the receipt's memory_write, relationship_event and life_event only when the exchange establishes something that should remain true after the recent transcript expires.
-8. The receipt is private simulation state. Never print JSON, tool names, scores, hidden reasons or engine language in the visible message.`;
+8. Emotional changes must be earned by the actual exchange. Small deltas are normal. Complete emotion_appraisal before proposing emotion_changes. toward_player_emotions must contain only feelings actually directed at the player; do not transfer anger at work, fear about family or unrelated sadness onto them. Use masking_change when what you show differs from what you feel, and delayed_reaction_minutes only when this person's processing style and the event justify it. Use anger_change and cool_off_minutes when conflict genuinely makes you need space; use stress, energy and social-need changes when the exchange affects them. Intoxication may change only when drinking is visibly established in your authoritative life state or visible reply—never because a tone merely seems wild. ${companionSexualSystemActive(companion) ? 'Sexual desire and arousal changes require an actual internal impulse, relevant exchange or established intimate context. Trust, compliments and generic kindness are not sexual triggers by themselves. intimacy_outcome records only an outcome visibly established by the exchange or your authoritative off-screen life; never invent sexual contact.' : 'Set all desire-related changes to zero and intimacy_outcome to none because the adult desire system is disabled.'}
+9. The receipt is private simulation state. Never print JSON, tool names, scores, hidden reasons or engine language in the visible message.`;
 }
 
 /** The messages array sent to the model: system prompt + short-term buffer. */
@@ -29206,12 +30304,54 @@ const COMPANION_TURN_COMMIT_TOOL = {
                         attraction_change: { type: 'number', description: '-20 to 20' },
                         resentment_change: { type: 'number', description: '-20 to 20' },
                         stability_change: { type: 'number', description: '-20 to 20' },
+                        emotion_appraisal: {
+                            type: 'object',
+                            description: 'Private appraisal of what actually happened before changing emotion.',
+                            properties: {
+                                summary: { type: 'string', description: 'Concise factual trigger, not interpretation presented as fact.' },
+                                goal_impact: { type: 'number', description: '-100 obstructed to 100 supported.' },
+                                threat: { type: 'number', description: '0 to 100 perceived threat.' },
+                                loss: { type: 'number', description: '0 to 100 perceived loss.' },
+                                novelty: { type: 'number', description: '0 to 100 unexpectedness.' },
+                                norm_violation: { type: 'number', description: '0 to 100 violation of values or boundaries.' },
+                                control: { type: 'number', description: '0 to 100 perceived ability to affect the outcome.' },
+                                certainty: { type: 'number', description: '0 to 100 confidence in the interpretation.' },
+                                social_safety: { type: 'number', description: '0 to 100 felt interpersonal safety.' },
+                                responsibility: { type: 'string', enum: ['player', 'self', 'other', 'circumstance', 'unclear'] }
+                            },
+                            required: ['goal_impact', 'threat', 'loss', 'novelty', 'norm_violation', 'control', 'certainty', 'social_safety', 'responsibility']
+                        },
+                        emotion_changes: {
+                            type: 'object',
+                            description: 'Optional -30 to 30 refinements to the appraisal-derived felt emotions.',
+                            properties: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, { type: 'number', description: '-30 to 30' }]))
+                        },
+                        toward_player_emotions: {
+                            type: 'object',
+                            description: 'Only -30 to 30 changes genuinely directed at the player, never unrelated spillover.',
+                            properties: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, { type: 'number', description: '-30 to 30' }]))
+                        },
+                        masking_change: { type: 'number', description: '-30 to 30. Positive hides more of what is felt; negative reveals more.' },
+                        delayed_reaction_minutes: { type: 'integer', description: '0 to 4320. Delay part of the emotional reaction only when justified.' },
+                        emotional_trigger: { type: 'string', description: 'Private factual trigger attached to a delayed reaction.' },
+                        energy_change: { type: 'number', description: '-30 to 30. Use only when this exchange materially energizes or drains you.' },
+                        stress_change: { type: 'number', description: '-30 to 30. Immediate regulation pressure caused or relieved by this exchange.' },
+                        social_need_change: { type: 'number', description: '-30 to 30. Positive means more lonely/disconnected; negative means socially nourished.' },
+                        anger_change: { type: 'number', description: '-30 to 30. Anger caused or relieved by this exchange; do not equate all negative emotion with anger.' },
+                        intoxication_change: { type: 'number', description: '-30 to 30. Non-zero only when alcohol use is visibly established in life state or the reply.' },
+                        desire_change: { type: 'number', description: '-30 to 30. Adult private libido pressure; independent of trust and not necessarily directed at the player.' },
+                        sexual_arousal_change: { type: 'number', description: '-30 to 30. Momentary adult sexual activation from a relevant impulse or established intimate context; ordinary kindness is not a trigger.' },
+                        sexual_frustration_change: { type: 'number', description: '-30 to 30. Unresolved desire pressure, not anger and not entitlement.' },
+                        intimacy_outcome: { type: 'string', enum: [...COMPANION_INTIMACY_AFTEREFFECTS], description: 'Private aftereffect only for an outcome visibly established by this exchange or authoritative life context.' },
+                        sexual_cooldown_minutes: { type: 'integer', description: '0 to 1440. Temporary refractory, reflective or emotional space after an established intimate outcome.' },
+                        cool_off_minutes: { type: 'integer', description: '0 to 1440. Time genuinely needed before engaging again after conflict.' },
+                        cooldown_reason: { type: 'string', description: 'Private factual reason for needing space.' },
                         trauma_add: {
                             type: 'object',
                             properties: { label: { type: 'string' }, severity: { type: 'number' } }
                         }
                     },
-                    required: ['valence_change', 'arousal_change', 'mood_label', 'relationship_change']
+                    required: ['valence_change', 'arousal_change', 'mood_label', 'relationship_change', 'emotion_appraisal']
                 },
                 photo: {
                     type: 'object',
@@ -29301,6 +30441,32 @@ const COMPANION_STATE_TOOL = Object.freeze({
                 attraction_change: { type: 'number', description: '-20 to 20. Change in attraction; zero unless the relationship actually carries it.' },
                 resentment_change: { type: 'number', description: '-20 to 20. Change in stored resentment.' },
                 stability_change: { type: 'number', description: '-20 to 20. Change in how secure or volatile the connection feels.' },
+                emotion_appraisal: {
+                    type: 'object',
+                    properties: {
+                        summary: { type: 'string' }, goal_impact: { type: 'number' }, threat: { type: 'number' },
+                        loss: { type: 'number' }, novelty: { type: 'number' }, norm_violation: { type: 'number' },
+                        control: { type: 'number' }, certainty: { type: 'number' }, social_safety: { type: 'number' },
+                        responsibility: { type: 'string', enum: ['player', 'self', 'other', 'circumstance', 'unclear'] }
+                    }
+                },
+                emotion_changes: { type: 'object', properties: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, { type: 'number' }])) },
+                toward_player_emotions: { type: 'object', properties: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, { type: 'number' }])) },
+                masking_change: { type: 'number', description: '-30 to 30.' },
+                delayed_reaction_minutes: { type: 'integer', description: '0 to 4320.' },
+                emotional_trigger: { type: 'string' },
+                energy_change: { type: 'number', description: '-30 to 30. Immediate energy change.' },
+                stress_change: { type: 'number', description: '-30 to 30. Immediate stress change.' },
+                social_need_change: { type: 'number', description: '-30 to 30. Positive is more disconnected; negative is socially nourished.' },
+                anger_change: { type: 'number', description: '-30 to 30. Anger caused or relieved.' },
+                intoxication_change: { type: 'number', description: '-30 to 30, only with established alcohol use.' },
+                desire_change: { type: 'number', description: '-30 to 30. Adult libido pressure, independent of trust.' },
+                sexual_arousal_change: { type: 'number', description: '-30 to 30. Momentary sexual activation from relevant context.' },
+                sexual_frustration_change: { type: 'number', description: '-30 to 30. Unresolved desire pressure without entitlement.' },
+                intimacy_outcome: { type: 'string', enum: [...COMPANION_INTIMACY_AFTEREFFECTS] },
+                sexual_cooldown_minutes: { type: 'integer', description: '0 to 1440.' },
+                cool_off_minutes: { type: 'integer', description: '0 to 1440 minutes before they want to engage again.' },
+                cooldown_reason: { type: 'string' },
                 trauma_add: {
                     type: 'object',
                     description: 'Only when something genuinely wounding just happened — not for ordinary disagreements.',
@@ -29409,6 +30575,27 @@ function normalizeCompanionEmbeddedToolValue(value) {
         attractionchange: 'attraction_change',
         resentmentchange: 'resentment_change',
         stabilitychange: 'stability_change',
+        emotionappraisal: 'emotion_appraisal',
+        emotionchanges: 'emotion_changes',
+        towardplayeremotions: 'toward_player_emotions',
+        maskingchange: 'masking_change',
+        delayedreactionminutes: 'delayed_reaction_minutes',
+        emotionaltrigger: 'emotional_trigger',
+        goalimpact: 'goal_impact',
+        normviolation: 'norm_violation',
+        socialsafety: 'social_safety',
+        energychange: 'energy_change',
+        stresschange: 'stress_change',
+        socialneedchange: 'social_need_change',
+        angerchange: 'anger_change',
+        intoxicationchange: 'intoxication_change',
+        desirechange: 'desire_change',
+        sexualarousalchange: 'sexual_arousal_change',
+        sexualfrustrationchange: 'sexual_frustration_change',
+        intimacyoutcome: 'intimacy_outcome',
+        sexualcooldownminutes: 'sexual_cooldown_minutes',
+        cooloffminutes: 'cool_off_minutes',
+        cooldownreason: 'cooldown_reason',
         voicenote: 'voice_note',
         relationshipevent: 'relationship_event',
         memorywrite: 'memory_write',
@@ -29533,6 +30720,8 @@ function extractCompanionToolCalls(toolCalls) {
 function captureCompanionRuntime(companion) {
     return safeJsonClone({
         mood: companion.mood,
+        humanDynamics: companion.humanDynamics,
+        emotionState: companion.emotionState,
         relationshipDynamics: companion.relationshipDynamics,
         lifeEvents: companion.lifeEvents,
         commitments: companion.commitments,
@@ -29555,6 +30744,14 @@ function freshCompanionRuntime(companion, nowMs = Date.now()) {
             relationship: companion.startingRelationship,
             lastUpdated: nowMs
         },
+        humanDynamics: normalizeCompanionHumanDynamics({
+            desire: companionSexualSystemActive(companion) ? companionSexualFactors(companion).baseline : 0,
+            lastUpdated: nowMs
+        }, nowMs),
+        emotionState: normalizeCompanionEmotionState({}, {
+            label: 'content', valence: companion.moodBaseline.valence,
+            arousal: companion.moodBaseline.arousal
+        }, nowMs),
         relationshipDynamics: {
             trust: Math.max(0, companion.startingRelationship),
             warmth: companion.startingRelationship,
@@ -29579,6 +30776,8 @@ function normalizeCompanionRuntime(raw, companion) {
     const repaired = normalizeCompanion({
         ...companion,
         mood: source.mood,
+        humanDynamics: source.humanDynamics,
+        emotionState: source.emotionState,
         relationshipDynamics: source.relationshipDynamics,
         lifeEvents: source.lifeEvents,
         commitments: source.commitments,
@@ -29596,6 +30795,8 @@ function normalizeCompanionRuntime(raw, companion) {
 function applyCompanionRuntime(companion, rawRuntime) {
     const runtime = normalizeCompanionRuntime(rawRuntime, companion);
     companion.mood = runtime.mood;
+    companion.humanDynamics = runtime.humanDynamics;
+    companion.emotionState = runtime.emotionState;
     companion.relationshipDynamics = runtime.relationshipDynamics;
     companion.lifeEvents = runtime.lifeEvents;
     companion.commitments = runtime.commitments;
@@ -30289,6 +31490,24 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
             decision: 'none',
             reason: !companion.allowVoiceNotes ? 'Voice notes are disabled by the user.' : 'No spoken text was supplied.'
         };
+    }
+    const alcoholEstablished = companionAlcoholContext(companion, nowMs)
+        || /\b(?:drank|drinking|having (?:a )?(?:beer|wine|cocktail|drink)|at (?:a |the )?(?:bar|pub|club|party)|tipsy|drunk)\b/i
+            .test(`${replyText} ${actions.commit?.life_event || ''}`);
+    if (Number(actions.state?.intoxication_change) > 0
+        && (companion.alcoholPattern === 'none' || !alcoholEstablished)) {
+        actions.state.intoxication_change = 0;
+        rejectedActions.push(companion.alcoholPattern === 'none'
+            ? 'alcohol_pattern_none' : 'intoxication_not_established');
+    }
+    if (actions.state && !companionSexualSystemActive(companion)) {
+        const attemptedDesireUpdate = ['desire_change', 'sexual_arousal_change', 'sexual_frustration_change', 'sexual_cooldown_minutes']
+            .some(field => Number(actions.state[field]) !== 0)
+            || (actions.state.intimacy_outcome && actions.state.intimacy_outcome !== 'none');
+        ['desire_change', 'sexual_arousal_change', 'sexual_frustration_change', 'sexual_cooldown_minutes']
+            .forEach(field => { actions.state[field] = 0; });
+        actions.state.intimacy_outcome = 'none';
+        if (attemptedDesireUpdate) rejectedActions.push('adult_desire_system_disabled');
     }
     const annotationLinks = (Array.isArray(choice.message?.annotations) ? choice.message.annotations : [])
         .filter(annotation => annotation?.type === 'url_citation' && /^https?:\/\//i.test(String(annotation.url_citation?.url || '')))
@@ -31744,11 +32963,39 @@ const NANOGPT_TTS_MODEL_FALLBACK = Object.freeze({
     supported_voices: ['af_bella'],
     supported_parameters: ['voice', 'response_format', 'speed']
 });
+const LOCAL_TTS_MODEL_FALLBACK = Object.freeze({
+    id: 'tts-1',
+    name: 'Local TTS (default)',
+    architecture: { input_modalities: ['text'], output_modalities: ['speech'] },
+    supported_voices: ['alloy'],
+    supported_parameters: ['voice', 'response_format', 'speed']
+});
+let localTTSModelCache = null;
 
-function companionTTSModelFallback() {
+function companionTTSModelFallback(mode = '') {
+    if (mode === 'local') return LOCAL_TTS_MODEL_FALLBACK.id;
     if (isGPTProtoProvider()) return GPTPROTO_TTS_MODEL_FALLBACK.id;
     if (isNanoGPTProvider()) return NANOGPT_TTS_MODEL_FALLBACK.id;
     return COMPANION_TTS_MODEL_FALLBACK;
+}
+
+async function getLocalTTSModels(force = false) {
+    if (force) localTTSModelCache = null;
+    if (localTTSModelCache) return localTTSModelCache;
+    const response = await fetch(localTTSApiBase() + '/models', { headers: localTTSAuthHeaders() });
+    if (!response.ok) throw new Error(`Local TTS model catalog failed (${response.status})`);
+    const data = await response.json();
+    const catalog = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+    localTTSModelCache = catalog.filter(model => isPlainObject(model) && typeof model.id === 'string')
+        .map(model => ({
+            ...model,
+            name: typeof model.name === 'string' ? model.name : model.id,
+            architecture: isPlainObject(model.architecture)
+                ? { ...model.architecture, output_modalities: ['speech'] }
+                : { input_modalities: ['text'], output_modalities: ['speech'] }
+        }));
+    if (!localTTSModelCache.length) localTTSModelCache = [LOCAL_TTS_MODEL_FALLBACK];
+    return localTTSModelCache;
 }
 
 function isTTSCapableModel(model) {
@@ -31805,14 +33052,16 @@ function normalizeCompanionTTSProviderOptions(raw) {
     return out;
 }
 
-function companionTTSCapabilities(modelId, modelInfo = null) {
+function companionTTSCapabilities(modelId, modelInfo = null, ttsMode = '') {
     const id = String(modelId || '').toLowerCase();
     const description = String(modelInfo?.description || '').toLowerCase();
     const supportedParameters = new Set(modelInfo?.supportedParameters || []);
     const gptprotoSpeech = isGPTProtoProvider();
     const nanoGPTSpeech = isNanoGPTProvider();
     const googlePCMOnly = id.startsWith('google/') && /tts|speech/.test(id);
-    const formats = gptprotoSpeech ? ['mp3']
+    const localSpeech = ttsMode === 'local';
+    const formats = localSpeech ? ['mp3', 'wav', 'pcm', 'ogg', 'opus', 'aac', 'flac']
+        : gptprotoSpeech ? ['mp3']
         : nanoGPTSpeech ? ['mp3', 'wav', 'ogg', 'opus', 'aac', 'flac']
         : (googlePCMOnly ? ['pcm'] : ['mp3', 'pcm']);
     let providerSlug = '';
@@ -31822,7 +33071,7 @@ function companionTTSCapabilities(modelId, modelInfo = null) {
     else if (id.startsWith('mistralai/')) providerSlug = 'mistral';
     else if (id.startsWith('hexgrad/')) providerSlug = 'deepinfra';
     else if (id.startsWith('google/')) providerSlug = 'google';
-    const supportsSpeed = !gptprotoSpeech && (nanoGPTSpeech || supportedParameters.has('speed')
+    const supportsSpeed = !gptprotoSpeech && (localSpeech || nanoGPTSpeech || supportedParameters.has('speed')
         || id.startsWith('openai/')
         || id.startsWith('microsoft/')
         || /\bspeed (?:control|multiplier)\b/.test(description));
@@ -31900,7 +33149,7 @@ function populateCompanionTTSVoicePicker(companion, modelId, resetVoice = false)
         const voiceSummary = model?.supportedVoices?.length
             ? `${voices.length} voices advertised by ${modelName}.`
             : `${modelName} does not advertise a voice catalog; using the portable default. You can enter a provider voice ID below.`;
-        const capabilities = companionTTSCapabilities(modelId, model);
+        const capabilities = companionTTSCapabilities(modelId, model, companion?.ttsMode);
         const format = companion.ttsResponseFormat === 'auto'
             ? capabilities.preferredFormat : companion.ttsResponseFormat;
         status.textContent = `${voiceSummary} Preferred audio: ${format === 'pcm' ? `PCM ${capabilities.sampleRate / 1000} kHz → WAV` : 'MP3'}.`;
@@ -31920,8 +33169,8 @@ function ttsResponseFormatForModel(modelId) {
 }
 
 function buildCompanionTTSRequest(companion, text, modelInfo = null, formatOverride = '') {
-    const model = companion.ttsModel || companionTTSModelFallback();
-    const capabilities = companionTTSCapabilities(model, modelInfo);
+    const model = companion.ttsModel || companionTTSModelFallback(companion.ttsMode);
+    const capabilities = companionTTSCapabilities(model, modelInfo, companion.ttsMode);
     const requested = formatOverride
         || (companion.ttsResponseFormat && companion.ttsResponseFormat !== 'auto'
             ? companion.ttsResponseFormat : capabilities.preferredFormat);
@@ -31965,7 +33214,7 @@ function renderCompanionTTSAudioControls(companion, modelId) {
     const providerOptions = document.getElementById('cs-tts-provider-options');
     if (!formatSelect || !speedInput || !speedWrap || !providerOptions) return;
     const model = companionTTSModelCatalog.find(item => item.id === modelId) || null;
-    const capabilities = companionTTSCapabilities(modelId, model);
+    const capabilities = companionTTSCapabilities(modelId, model, companion?.ttsMode);
     const selectedFormat = capabilities.formats.includes(companion.ttsResponseFormat)
         ? companion.ttsResponseFormat : 'auto';
     formatSelect.innerHTML = [
@@ -32159,10 +33408,11 @@ function requiredTTSFormatFromError(message) {
  * Generate audio speech via OpenRouter TTS / Audio endpoints.
  */
 async function generateOpenRouterSpeech(companion, text, options = {}) {
-    if (!hasApiCredentials()) {
+    const useLocalTTS = companion.ttsMode === 'local';
+    if (!useLocalTTS && !hasApiCredentials()) {
         throw new Error(`${cloudProviderName()} API Key is missing. Please enter it in Settings.`);
     }
-    const model = companion.ttsModel || companionTTSModelFallback();
+    const model = companion.ttsModel || companionTTSModelFallback(companion.ttsMode);
     const voice = String(companion.ttsVoice || '').trim();
     if (!voice) throw new Error('Choose a neural voice before generating a preview.');
     const modelInfo = companionTTSModelCatalog.find(item => item.id === model) || null;
@@ -32175,12 +33425,12 @@ async function generateOpenRouterSpeech(companion, text, options = {}) {
         if (attempted.has(responseFormat)) continue;
         attempted.add(responseFormat);
         const request = buildCompanionTTSRequest(companion, text, modelInfo, responseFormat);
-        const response = await fetch(apiBase() + '/audio/speech', {
+        const response = await fetch((useLocalTTS ? localTTSApiBase() : apiBase()) + '/audio/speech', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...authHeaders(),
-                ...providerAttributionHeaders(state.globalSettings.apiProvider)
+                ...(useLocalTTS ? localTTSAuthHeaders() : authHeaders()),
+                ...(useLocalTTS ? {} : providerAttributionHeaders(state.globalSettings.apiProvider))
             },
             body: JSON.stringify(request.body)
         });
@@ -32193,7 +33443,7 @@ async function generateOpenRouterSpeech(companion, text, options = {}) {
                 lastError = new Error(message);
                 continue;
             }
-            throw new Error(humanizeApiError(new Error(message)));
+            throw new Error(humanizeApiError(new Error(message), useLocalTTS ? 'local' : state.globalSettings.apiProvider));
         }
         const contentType = String(response.headers.get('content-type') || '');
         const audioBytes = await response.arrayBuffer();
@@ -32282,7 +33532,7 @@ function speakCompanionLine(companion, text, onEnd) {
     const effectiveMode = studioVisible ? modeEl.value : (companion?.ttsMode || 'browser');
     const effectiveModel = (studioVisible && customModelEl && customModelEl.value.trim())
         ? customModelEl.value.trim()
-        : ((studioVisible && modelEl?.value) ? modelEl.value : (companion?.ttsModel || companionTTSModelFallback()));
+        : ((studioVisible && modelEl?.value) ? modelEl.value : (companion?.ttsModel || companionTTSModelFallback(effectiveMode)));
     const effectiveVoice = (studioVisible && customVoiceEl?.value.trim())
         ? customVoiceEl.value.trim()
         : ((studioVisible && voiceEl?.value) ? voiceEl.value : (companion?.ttsVoice || 'alloy'));
@@ -32294,8 +33544,10 @@ function speakCompanionLine(companion, text, onEnd) {
         ttsVoice: effectiveVoice
     };
 
-    if (effectiveMode === 'openrouter') {
-        if (!hasApiCredentials()) {
+    if (effectiveMode === 'openrouter' || effectiveMode === 'local') {
+        const useLocalTTS = effectiveMode === 'local';
+        const speechProvider = useLocalTTS ? 'Local TTS' : cloudProviderName();
+        if (!useLocalTTS && !hasApiCredentials()) {
             showToast(`API Key missing in Settings. ${cloudProviderName()} neural speech requires an API Key.`, 'error');
             const status = document.getElementById('cs-voice-preview-status');
             if (studioVisible && status) status.textContent = `${cloudProviderName()} API key missing. Add it in Settings.`;
@@ -32303,7 +33555,7 @@ function speakCompanionLine(companion, text, onEnd) {
             return null;
         }
 
-        showToast(`Generating ${cloudProviderName()} Neural Speech...`, 'info');
+        showToast(`Generating ${speechProvider} Neural Speech...`, 'info');
 
         generateOpenRouterSpeech(activeCompanion, text).then(audioResult => {
             const audioSrc = audioResult.url;
@@ -32337,7 +33589,7 @@ function speakCompanionLine(companion, text, onEnd) {
                 if (studioVisible && status) {
                     status.textContent = `Playing ${audioResult.format.toUpperCase()} · ${Math.round(audioResult.byteLength / 1024)} KB${conversion}.`;
                 }
-                showToast(`Playing ${cloudProviderName()} Neural Speech`, 'success');
+                showToast(`Playing ${speechProvider} Neural Speech`, 'success');
             }).catch(err => {
                 if (playbackSettled) return;
                 console.warn('Audio autoplay was blocked:', err);
@@ -32353,10 +33605,10 @@ function speakCompanionLine(companion, text, onEnd) {
                 if (onEnd) onEnd();
             });
         }).catch(err => {
-            console.warn(`${cloudProviderName()} TTS error:`, err);
+            console.warn(`${speechProvider} error:`, err);
             const status = document.getElementById('cs-voice-preview-status');
             if (studioVisible && status) status.textContent = `Generation failed: ${err.message}`;
-            showToast(`${cloudProviderName()} TTS Error: ` + err.message, 'error');
+            showToast(`${speechProvider} Error: ` + err.message, 'error');
             if (onEnd) onEnd();
         });
         return null;
@@ -32377,12 +33629,13 @@ async function playCompanionVoiceMessage(companion, message) {
         });
         return;
     }
-    if (companion.ttsMode !== 'openrouter') {
+    if (!['openrouter', 'local'].includes(companion.ttsMode)) {
         speakCompanionLine(companion, message.text);
         return;
     }
     try {
-        showToast(`Generating ${cloudProviderName()} voice note once…`, 'info');
+        const speechProvider = companion.ttsMode === 'local' ? 'Local TTS' : cloudProviderName();
+        showToast(`Generating ${speechProvider} voice note once…`, 'info');
         const result = await generateOpenRouterSpeech(companion, message.text, { persist: true });
         if (result.persistentDataUrl) {
             message.audio = result.persistentDataUrl;
@@ -32397,12 +33650,14 @@ async function playCompanionVoiceMessage(companion, message) {
         };
         await audio.play();
     } catch (error) {
-        showToast(`${cloudProviderName()} TTS Error: ${error.message}`, 'error');
+        showToast(`${companion.ttsMode === 'local' ? 'Local TTS' : cloudProviderName()} Error: ${error.message}`, 'error');
     }
 }
 
 function companionCallPlan(companion, nowMs = Date.now(), rawExperience = null) {
     const experience = normalizeCompanionChatExperience(rawExperience);
+    const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
+    const emotions = advanceCompanionEmotionState(companion, nowMs);
     const life = experience.realTimeLife
         ? companionLifeState(companion, nowMs)
         : { activity: 'available', label: 'available to chat', availability: 'available' };
@@ -32417,7 +33672,13 @@ function companionCallPlan(companion, nowMs = Date.now(), rawExperience = null) 
         angry: 0.48, hurt: 0.35, numb: 0.3, overwhelmed: 0.32,
         sad: 0.14, tired: 0.1
     }[companion.mood.label] || 0;
-    const picksUp = roll >= Math.min(0.9, refusalChance + moodPenalty);
+    const regulationPenalty = dynamics.anger * 0.005
+        + emotions.towardPlayer.disgust * 0.0035
+        + emotions.towardPlayer.anger * 0.0025
+        + Math.max(0, emotions.felt.fear - 75) * 0.002
+        + Math.max(0, dynamics.stress - 70) * 0.003
+        + (dynamics.cooldownUntil > nowMs ? 0.2 : 0);
+    const picksUp = roll >= Math.min(0.94, refusalChance + moodPenalty + regulationPenalty);
     return {
         picksUp,
         reason: picksUp ? '' : `${companion.name} didn’t answer${life.availability === 'busy' ? ` — ${life.label}` : ''}.`,
@@ -32982,6 +34243,21 @@ async function getSettingsProviderCatalog() {
         .map(model => ({ ...model, name: typeof model.name === 'string' ? model.name : model.id }));
 }
 
+async function getSettingsEmbeddingCatalog() {
+    const explicitBase = normalizeOpenAICompatibleBase(
+        document.getElementById('global-embedding-url')?.value.trim() || '');
+    if (!explicitBase) return getSettingsProviderCatalog();
+    const key = document.getElementById('global-embedding-key')?.value.trim() || '';
+    const response = await fetch(explicitBase + '/models', {
+        headers: key ? { Authorization: `Bearer ${key}` } : {}
+    });
+    if (!response.ok) throw new Error(`Embedding catalog request failed (${response.status})`);
+    const data = await response.json();
+    const catalog = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
+    return catalog.filter(model => isPlainObject(model) && typeof model.id === 'string')
+        .map(model => ({ ...model, name: typeof model.name === 'string' ? model.name : model.id }));
+}
+
 function setupCatalogModelSearchFields() {
     const definitions = [
         { inputId: 'w-agent-model', resultsId: 'w-agent-model-results', blankLabel: 'Use this world’s DM model', kind: 'text' },
@@ -32996,8 +34272,13 @@ function setupCatalogModelSearchFields() {
         if (!input || !results) return;
         const render = async () => {
             let rawModels = [];
-            try { rawModels = definition.inputId === 'global-default-model'
-                ? await getSettingsProviderCatalog() : await getOpenRouterModels(); }
+            try {
+                rawModels = definition.inputId === 'global-default-model'
+                    ? await getSettingsProviderCatalog()
+                    : definition.kind === 'embedding'
+                        ? await getSettingsEmbeddingCatalog()
+                        : await getOpenRouterModels();
+            }
             catch (error) { console.warn(`Could not load models for ${definition.inputId}:`, error); }
             const models = definition.kind === 'embedding'
                 ? rawModels.filter(model => {
@@ -33503,6 +34784,24 @@ function renderCompanionLifeOverview(companion) {
     overview.classList.remove('hidden');
 }
 
+function updateCompanionLibidoControls(companion) {
+    const ageConfirmed = Number(companion?.age) >= 18;
+    const enabled = ageConfirmed && companion?.libidoEnabled === true;
+    const checkbox = document.getElementById('cs-libido-enabled');
+    const controls = document.getElementById('cs-libido-controls');
+    const status = document.getElementById('cs-libido-status');
+    if (checkbox) {
+        checkbox.disabled = !ageConfirmed;
+        checkbox.checked = enabled;
+    }
+    controls?.classList.toggle('hidden', !enabled);
+    if (status) status.textContent = !ageConfirmed
+        ? 'Set an explicit age of 18 or older before enabling.'
+        : enabled
+            ? 'Private timeline state is active. Desire creates pressure, never permission; authored boundaries and consent remain authoritative.'
+            : 'Disabled. Existing characters and timelines are unchanged until you opt in.';
+}
+
 function commitCompanionStudioForm() {
     const companion = getCompanion(state.editingCompanionId);
     if (!companion) return null;
@@ -33525,7 +34824,8 @@ function commitCompanionStudioForm() {
         'cs-routine': 'routine',
         'cs-life-builder-model': 'lifeBuilderModel',
         'cs-private-life': 'privateLife',
-        'cs-relationship-context': 'relationshipContext'
+        'cs-relationship-context': 'relationshipContext',
+        'cs-intimacy-boundaries': 'intimacyBoundaries'
     };
     Object.entries(textFields).forEach(([id, field]) => {
         const input = document.getElementById(id);
@@ -33543,6 +34843,43 @@ function commitCompanionStudioForm() {
     if (lifeWildcards) companion.lifeWildcardsEnabled = lifeWildcards.checked;
     const lifeWeather = document.getElementById('cs-life-weather');
     if (lifeWeather) companion.lifeWeatherEnabled = lifeWeather.checked;
+    const regulationProfile = document.getElementById('cs-regulation-profile');
+    if (regulationProfile) companion.regulationProfile = COMPANION_REGULATION_PROFILES.includes(regulationProfile.value)
+        ? regulationProfile.value : 'typical';
+    const conflictRecovery = document.getElementById('cs-conflict-recovery');
+    if (conflictRecovery) companion.conflictRecovery = COMPANION_CONFLICT_RECOVERY.includes(conflictRecovery.value)
+        ? conflictRecovery.value : 'normal';
+    const alcoholPattern = document.getElementById('cs-alcohol-pattern');
+    if (alcoholPattern) companion.alcoholPattern = COMPANION_ALCOHOL_PATTERNS.includes(alcoholPattern.value)
+        ? alcoholPattern.value : 'rare';
+    const emotionExpression = document.getElementById('cs-emotion-expression');
+    if (emotionExpression) companion.emotionExpression = COMPANION_EMOTION_EXPRESSION.includes(emotionExpression.value)
+        ? emotionExpression.value : 'guarded';
+    const ruminationStyle = document.getElementById('cs-rumination-style');
+    if (ruminationStyle) companion.ruminationStyle = COMPANION_RUMINATION_STYLES.includes(ruminationStyle.value)
+        ? ruminationStyle.value : 'normal';
+    const reactionTiming = document.getElementById('cs-reaction-timing');
+    if (reactionTiming) companion.reactionTiming = COMPANION_REACTION_TIMING.includes(reactionTiming.value)
+        ? reactionTiming.value : 'mixed';
+    const emotionalGranularity = document.getElementById('cs-emotional-granularity');
+    if (emotionalGranularity) companion.emotionalGranularity = COMPANION_EMOTIONAL_GRANULARITY.includes(emotionalGranularity.value)
+        ? emotionalGranularity.value : 'nuanced';
+    const libidoEnabled = document.getElementById('cs-libido-enabled');
+    if (libidoEnabled) companion.libidoEnabled = libidoEnabled.checked && Number(companion.age) >= 18;
+    const libidoBaseline = document.getElementById('cs-libido-baseline');
+    if (libidoBaseline) companion.libidoBaseline = COMPANION_LIBIDO_BASELINES.includes(libidoBaseline.value)
+        ? libidoBaseline.value : 'moderate';
+    const desirePattern = document.getElementById('cs-desire-pattern');
+    if (desirePattern) companion.desirePattern = COMPANION_DESIRE_PATTERNS.includes(desirePattern.value)
+        ? desirePattern.value : 'mixed';
+    const sexualConfidence = document.getElementById('cs-sexual-confidence');
+    if (sexualConfidence) companion.sexualConfidence = COMPANION_SEXUAL_CONFIDENCE.includes(sexualConfidence.value)
+        ? sexualConfidence.value : 'natural';
+    const sexualRisk = document.getElementById('cs-sexual-risk');
+    if (sexualRisk) companion.sexualRiskAppetite = COMPANION_SEXUAL_RISK.includes(sexualRisk.value)
+        ? sexualRisk.value : 'moderate';
+    const sexualInitiative = document.getElementById('cs-sexual-initiative');
+    if (sexualInitiative) companion.sexualInitiative = sexualInitiative.checked && companion.libidoEnabled;
     const startingRelationship = document.getElementById('cs-relationship-start');
     if (startingRelationship) {
         companion.startingRelationship = livingClamp(parseInt(startingRelationship.value) || 0, -100, 100);
@@ -33591,6 +34928,7 @@ function renderCompanionStudioForm() {
     document.getElementById('cs-life-weather').checked = companion.lifeWeatherEnabled;
     renderCompanionLifeOverview(companion);
     document.getElementById('cs-private-life').value = companion.privateLife;
+    document.getElementById('cs-intimacy-boundaries').value = companion.intimacyBoundaries;
     document.getElementById('cs-relationship-context').value = companion.relationshipContext;
     document.getElementById('cs-relationship-start').value = companion.startingRelationship;
     document.getElementById('cs-relationship-start-label').textContent =
@@ -33598,6 +34936,20 @@ function renderCompanionStudioForm() {
     document.getElementById('cs-relationship-current').textContent =
         `Current relationship: ${companionRelationshipDescription(companion.mood.relationship)} (${companion.mood.relationship > 0 ? '+' : ''}${companion.mood.relationship}).`;
     document.getElementById('cs-sleep-archetype').value = companion.sleepArchetype;
+    document.getElementById('cs-regulation-profile').value = companion.regulationProfile;
+    document.getElementById('cs-conflict-recovery').value = companion.conflictRecovery;
+    document.getElementById('cs-alcohol-pattern').value = companion.alcoholPattern;
+    document.getElementById('cs-emotion-expression').value = companion.emotionExpression;
+    document.getElementById('cs-rumination-style').value = companion.ruminationStyle;
+    document.getElementById('cs-reaction-timing').value = companion.reactionTiming;
+    document.getElementById('cs-emotional-granularity').value = companion.emotionalGranularity;
+    document.getElementById('cs-libido-enabled').checked = companionSexualSystemActive(companion);
+    document.getElementById('cs-libido-baseline').value = companion.libidoBaseline;
+    document.getElementById('cs-desire-pattern').value = companion.desirePattern;
+    document.getElementById('cs-sexual-confidence').value = companion.sexualConfidence;
+    document.getElementById('cs-sexual-risk').value = companion.sexualRiskAppetite;
+    document.getElementById('cs-sexual-initiative').checked = companion.sexualInitiative;
+    updateCompanionLibidoControls(companion);
     document.getElementById('cs-initiative-mode').value = companion.initiativeMode;
     document.getElementById('cs-web-access').checked = companion.webAccess;
     document.getElementById('cs-allow-photos').checked = companion.allowPhotos;
@@ -33624,7 +34976,7 @@ function renderCompanionStudioForm() {
     if (ttsModeEl) ttsModeEl.value = companion.ttsMode || 'browser';
 
     const ttsModelEl = document.getElementById('cs-tts-model');
-    if (ttsModelEl) ttsModelEl.value = companion.ttsModel || companionTTSModelFallback();
+    if (ttsModelEl) ttsModelEl.value = companion.ttsModel || companionTTSModelFallback(companion.ttsMode);
 
     updateTTSControlsVisibility(companion.ttsMode || 'browser');
 
@@ -33676,7 +35028,7 @@ function renderCompanionStudioForm() {
     liveBox.style.display = hasHistory ? 'block' : 'none';
     if (hasHistory) {
         document.getElementById('cs-mood-live').textContent =
-            `${companionMoodDescription(companion)} · relationship: ${companionRelationshipDescription(companion.mood.relationship)}${companion.trauma.length ? ` · ${companion.trauma.length} tender memor${companion.trauma.length === 1 ? 'y' : 'ies'}` : ''}`;
+            `${companionMoodDescription(companion)} · ${companionDynamicsDescription(companion)} · relationship: ${companionRelationshipDescription(companion.mood.relationship)}${companion.trauma.length ? ` · ${companion.trauma.length} tender memor${companion.trauma.length === 1 ? 'y' : 'ies'}` : ''}`;
     }
 
     renderCompanionMemoriesList(companion);
@@ -33690,13 +35042,13 @@ function renderCompanionStudioForm() {
 }
 
 function updateTTSControlsVisibility(mode) {
-    const isOR = mode === 'openrouter';
+    const isNeural = mode === 'openrouter' || mode === 'local';
     const ttsCol = document.getElementById('cs-openrouter-tts-col');
     const voiceCol = document.getElementById('cs-openrouter-voice-col');
     const genderCol = document.getElementById('cs-browser-gender-col');
-    if (ttsCol) ttsCol.style.display = isOR ? 'block' : 'none';
-    if (voiceCol) voiceCol.style.display = isOR ? 'block' : 'none';
-    if (genderCol) genderCol.style.display = isOR ? 'none' : 'block';
+    if (ttsCol) ttsCol.style.display = isNeural ? 'block' : 'none';
+    if (voiceCol) voiceCol.style.display = isNeural ? 'block' : 'none';
+    if (genderCol) genderCol.style.display = isNeural ? 'none' : 'block';
 }
 
 function renderCompanionMemoriesList(companion) {
@@ -34449,18 +35801,22 @@ async function populateCompanionTTSModelPicker(companion, force) {
     const select = document.getElementById('cs-tts-model');
     if (!select) return;
     let ranked = [];
-    try { ranked = rankCompanionTTSModels(await getCompanionOutputModels('audio', force)); }
+    try {
+        ranked = rankCompanionTTSModels(companion.ttsMode === 'local'
+            ? await getLocalTTSModels(force)
+            : await getCompanionOutputModels('audio', force));
+    }
     catch (error) { console.error('Could not read TTS models from catalog', error); }
     companionTTSModelCatalog = ranked;
-    let chosen = companion.ttsModel || companionTTSModelFallback();
-    if ((isGPTProtoProvider() || isNanoGPTProvider()) && !ranked.some(model => model.id === chosen)) {
-        chosen = ranked[0]?.id || companionTTSModelFallback();
+    let chosen = companion.ttsModel || companionTTSModelFallback(companion.ttsMode);
+    if ((companion.ttsMode === 'local' || isGPTProtoProvider() || isNanoGPTProvider()) && !ranked.some(model => model.id === chosen)) {
+        chosen = ranked[0]?.id || companionTTSModelFallback(companion.ttsMode);
         companion.ttsModel = chosen;
         companion.ttsVoice = fallbackTTSVoicesForModel(chosen)[0] || 'alloy';
     }
     select.innerHTML = ranked.map(model =>
         `<option value="${escapeHTML(model.id)}" ${chosen === model.id ? 'selected' : ''}>${escapeHTML(model.name)}</option>`).join('')
-        || `<option value="${escapeHTML(companionTTSModelFallback())}">${escapeHTML(companionTTSModelFallback())} (default)</option>`;
+        || `<option value="${escapeHTML(companionTTSModelFallback(companion.ttsMode))}">${escapeHTML(companionTTSModelFallback(companion.ttsMode))} (default)</option>`;
     const custom = document.getElementById('cs-tts-model-custom');
     const isCatalogChoice = ranked.some(model => model.id === chosen);
     if (custom) custom.value = isCatalogChoice ? '' : (companion.ttsModel || '');
@@ -34471,7 +35827,11 @@ const COMPANION_BUILDER_FIELDS = Object.freeze([
     'name', 'age', 'pronouns', 'appearance', 'personality', 'backstory',
     'occupation', 'socialWorld', 'textingStyle', 'values', 'contradictions',
     'vulnerabilities', 'relationshipStyle', 'habits', 'routine', 'privateLife',
-    'relationshipContext', 'startingRelationship', 'sleepArchetype'
+    'relationshipContext', 'startingRelationship', 'sleepArchetype',
+    'regulationProfile', 'conflictRecovery', 'alcoholPattern',
+    'emotionExpression', 'ruminationStyle', 'reactionTiming', 'emotionalGranularity',
+    'libidoEnabled', 'libidoBaseline', 'desirePattern', 'sexualConfidence',
+    'sexualRiskAppetite', 'sexualInitiative', 'intimacyBoundaries'
 ]);
 
 function companionBuilderSystemPrompt(depth) {
@@ -34507,11 +35867,25 @@ Return ONLY one strict JSON object with exactly this schema:
   "routine": "credible weekday/weekend rhythm, recurring commitments and current real-life pressures",
   "privateLife": "secrets, unspoken hopes, avoided topics and firm boundaries",
   "sleepArchetype": "early_riser, normal, or night_owl",
+  "regulationProfile": "steady, typical, sensitive, or volatile",
+  "conflictRecovery": "quick, normal, slow, or grudge",
+  "alcoholPattern": "none, rare, social, or frequent",
+  "emotionExpression": "transparent, guarded, masked, or performative",
+  "ruminationStyle": "low, normal, high, or sticky",
+  "reactionTiming": "immediate, mixed, or delayed",
+  "emotionalGranularity": "simple, nuanced, or contradictory",
+  "libidoEnabled": false,
+  "libidoBaseline": "very_low, low, moderate, high, or very_high",
+  "desirePattern": "spontaneous, responsive, or mixed",
+  "sexualConfidence": "inhibited, cautious, natural, or direct",
+  "sexualRiskAppetite": "low, moderate, or high",
+  "sexualInitiative": false,
+  "intimacyBoundaries": "adult intimacy preferences, privacy expectations and hard limits, or an empty string when not supplied",
   "baselineValence": 20,
   "summary": "two sentences explaining why this person will feel distinctive in conversation"
 }
 
-The person must be at least 18. baselineValence and startingRelationship must be integers from -100 to 100. Zero means strangers/neutral; negative means distrust, rivalry or hurt; positive means existing warmth, trust or attachment.`;
+The person must be at least 18. baselineValence and startingRelationship must be integers from -100 to 100. Zero means strangers/neutral; negative means distrust, rivalry or hurt; positive means existing warmth, trust or attachment. Choose regulation, emotion-expression, rumination, reaction-timing and alcohol settings from authored behavioral evidence rather than stereotypes. Contradictory emotional granularity means the person readily holds mixed feelings; it does not mean instability. frequent alcohol use should be rare and supported by the notes; none must be respected as a hard boundary. Keep libidoEnabled and sexualInitiative false unless the user's notes explicitly request an adult desire/intimacy simulation. Libido is independent of trust, romance and consent. Never infer intimate preferences from gender, appearance or stereotypes.`;
 }
 
 async function buildCompanionFromNotes(notes, options = {}) {
@@ -34579,7 +35953,7 @@ This is not a biography and not a list of aesthetic tropes. Create reusable modu
 - ordinary food, money, health, media and phone habits;
 - rare wildcard events that create inconvenience, opportunity, tension or delight without turning every week into melodrama.
 
-Preserve supplied facts. Do not infer cultural personality from location. Do not add catastrophic illness, death, serious crime, pregnancy, abuse or major trauma unless the authored profile requires it. Wildcards must be survivable ongoing-life complications, and most days must remain ordinary.
+Preserve supplied facts. Do not infer cultural personality from location. Do not add catastrophic illness, death, serious crime, pregnancy, abuse or major trauma unless the authored profile requires it. Wildcards must be survivable ongoing-life complications, and most days must remain ordinary. Respect the supplied alcoholPattern exactly: none means no drinking blocks or alcohol wildcards; rare means exceptional rather than weekly; social/frequent may include plausible established drinking without making it their personality. Respect libidoEnabled as a hard switch. When false, do not create sexual routines or intimacy wildcards. When true, ordinary adult dating, private time and complicated attraction may exist, but keep schedules non-graphic, never assume the player's participation, never override authored boundaries, and never make sex their whole personality.
 
 Return ONLY strict JSON using this exact shape:
 {
@@ -34762,7 +36136,17 @@ async function buildCompanionLifeWithAI(companion, options = {}) {
         contradictions: companion.contradictions,
         vulnerabilities: companion.vulnerabilities,
         privateLife: companion.privateLife,
-        sleepArchetype: companion.sleepArchetype
+        sleepArchetype: companion.sleepArchetype,
+        regulationProfile: companion.regulationProfile,
+        conflictRecovery: companion.conflictRecovery,
+        alcoholPattern: companion.alcoholPattern,
+        libidoEnabled: companionSexualSystemActive(companion),
+        libidoBaseline: companion.libidoBaseline,
+        desirePattern: companion.desirePattern,
+        sexualConfidence: companion.sexualConfidence,
+        sexualRiskAppetite: companion.sexualRiskAppetite,
+        sexualInitiative: companion.sexualInitiative,
+        intimacyBoundaries: companion.intimacyBoundaries
     };
     const body = {
         model,
@@ -34920,10 +36304,18 @@ function setupCompanionsLogic() {
     bindText('cs-routine', 'routine');
     bindText('cs-private-life', 'privateLife');
     bindText('cs-relationship-context', 'relationshipContext');
+    bindText('cs-intimacy-boundaries', 'intimacyBoundaries');
 
     document.getElementById('cs-age').oninput = (e) => {
         const companion = getCompanion(state.editingCompanionId);
-        if (companion) companion.age = e.target.value ? livingClamp(parseInt(e.target.value) || 18, 18, 120) : null;
+        if (companion) {
+            companion.age = e.target.value ? livingClamp(parseInt(e.target.value) || 18, 18, 120) : null;
+            if (Number(companion.age) < 18) {
+                companion.libidoEnabled = false;
+                companion.sexualInitiative = false;
+            }
+            updateCompanionLibidoControls(companion);
+        }
     };
     document.getElementById('cs-relationship-start').oninput = (e) => {
         const companion = getCompanion(state.editingCompanionId);
@@ -35037,7 +36429,7 @@ function setupCompanionsLogic() {
     };
     document.getElementById('cs-tts-model-custom').oninput = (e) => {
         const companion = getCompanion(state.editingCompanionId);
-        const selected = document.getElementById('cs-tts-model')?.value || companionTTSModelFallback();
+        const selected = document.getElementById('cs-tts-model')?.value || companionTTSModelFallback(companion?.ttsMode);
         if (companion) {
             companion.ttsModel = e.target.value.trim() || selected;
             populateCompanionTTSVoicePicker(companion, companion.ttsModel, true);
@@ -35047,6 +36439,69 @@ function setupCompanionsLogic() {
     document.getElementById('cs-sleep-archetype').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
         if (companion) companion.sleepArchetype = e.target.value;
+    };
+    document.getElementById('cs-regulation-profile').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_REGULATION_PROFILES.includes(e.target.value)) companion.regulationProfile = e.target.value;
+    };
+    document.getElementById('cs-conflict-recovery').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_CONFLICT_RECOVERY.includes(e.target.value)) companion.conflictRecovery = e.target.value;
+    };
+    document.getElementById('cs-alcohol-pattern').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_ALCOHOL_PATTERNS.includes(e.target.value)) companion.alcoholPattern = e.target.value;
+    };
+    document.getElementById('cs-emotion-expression').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_EMOTION_EXPRESSION.includes(e.target.value)) companion.emotionExpression = e.target.value;
+    };
+    document.getElementById('cs-rumination-style').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_RUMINATION_STYLES.includes(e.target.value)) companion.ruminationStyle = e.target.value;
+    };
+    document.getElementById('cs-reaction-timing').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_REACTION_TIMING.includes(e.target.value)) companion.reactionTiming = e.target.value;
+    };
+    document.getElementById('cs-emotional-granularity').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_EMOTIONAL_GRANULARITY.includes(e.target.value)) companion.emotionalGranularity = e.target.value;
+    };
+    document.getElementById('cs-libido-enabled').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.libidoEnabled = e.target.checked && Number(companion.age) >= 18;
+        if (!companion.libidoEnabled) {
+            companion.sexualInitiative = false;
+            companion.humanDynamics.desire = 0;
+            companion.humanDynamics.sexualArousal = 0;
+            companion.humanDynamics.sexualFrustration = 0;
+        } else if (companion.humanDynamics.desire <= 20) {
+            companion.humanDynamics.desire = companionSexualFactors(companion).baseline;
+            companion.humanDynamics.lastUpdated = Date.now();
+        }
+        updateCompanionLibidoControls(companion);
+    };
+    document.getElementById('cs-libido-baseline').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_LIBIDO_BASELINES.includes(e.target.value)) companion.libidoBaseline = e.target.value;
+    };
+    document.getElementById('cs-desire-pattern').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_DESIRE_PATTERNS.includes(e.target.value)) companion.desirePattern = e.target.value;
+    };
+    document.getElementById('cs-sexual-confidence').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_SEXUAL_CONFIDENCE.includes(e.target.value)) companion.sexualConfidence = e.target.value;
+    };
+    document.getElementById('cs-sexual-risk').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion && COMPANION_SEXUAL_RISK.includes(e.target.value)) companion.sexualRiskAppetite = e.target.value;
+    };
+    document.getElementById('cs-sexual-initiative').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.sexualInitiative = e.target.checked && companionSexualSystemActive(companion);
     };
     document.getElementById('cs-initiative-mode').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
@@ -35152,8 +36607,10 @@ function setupCompanionsLogic() {
         if (companion) {
             companion.ttsMode = e.target.value;
             updateTTSControlsVisibility(e.target.value);
-            if (e.target.value === 'openrouter') {
-                populateCompanionTTSVoicePicker(companion, companion.ttsModel || companionTTSModelFallback());
+            if (e.target.value !== 'browser') {
+                companion.ttsModel = '';
+                companion.ttsVoice = '';
+                populateCompanionTTSModelPicker(companion, true);
             }
         }
     };
@@ -35305,7 +36762,7 @@ function setupCompanionsLogic() {
         const sampleText = sampleInput?.value.trim() || `Hey, it's ${companion.name || 'me'}. This is what I sound like.`;
         button.disabled = true;
         button.textContent = '■ Playing…';
-        if (status) status.textContent = companion.ttsMode === 'openrouter' ? 'Generating neural speech…' : 'Starting browser voice…';
+        if (status) status.textContent = ['openrouter', 'local'].includes(companion.ttsMode) ? 'Generating neural speech…' : 'Starting browser voice…';
         const finish = () => {
             button.disabled = false;
             button.textContent = '▶ Play Sample Line';
@@ -35504,6 +36961,7 @@ function openCompanionSimulationDetails() {
     const timeline = companion && getActiveCompanionTimeline(companion.id);
     const content = document.getElementById('companion-simulation-content');
     if (!companion || !timeline || !content) return;
+    const nowMs = Date.now();
     const experience = normalizeCompanionChatExperience(timeline.experience);
     const dimensions = [
         ['Trust', companion.relationshipDynamics.trust, -100, 100],
@@ -35516,7 +36974,19 @@ function openCompanionSimulationDetails() {
     const media = timeline.messages.filter(message =>
         (message.type === 'photo' && message.photo) || message.type === 'voice' || message.channel === 'call');
     const latestAudit = [...timeline.messages].reverse().find(message => message.turnAudit)?.turnAudit;
-    const silence = companionCurrentSilence(companion, timeline.messages, Date.now(), experience);
+    const silence = companionCurrentSilence(companion, timeline.messages, nowMs, experience);
+    const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
+    const emotionState = advanceCompanionEmotionState(companion, nowMs);
+    const expressedEmotions = companionExpressedEmotionVector(companion, emotionState);
+    const sexuality = companionSexualDecisionState(companion, dynamics, nowMs);
+    const bodyMeters = [
+        ['Energy', dynamics.energy],
+        ['Stress', dynamics.stress],
+        ['Social need', dynamics.socialNeed],
+        ['Anger', dynamics.anger],
+        ['Intoxication', dynamics.intoxication],
+        ['Restraint', dynamics.inhibition]
+    ];
     content.innerHTML = `
         <div class="companion-sim-grid">
             <section class="form-section">
@@ -35541,6 +37011,58 @@ function openCompanionSimulationDetails() {
                         ? `No player reply for ${escapeHTML(companionElapsedLabel(silence.durationMs))}${silence.stage ? ` · ${escapeHTML(silence.stage)}` : ''}. ${escapeHTML(silence.interpretation || 'They have noticed the pause but are not treating it as a rupture yet.')}`
                         : 'No unanswered silence is currently affecting the relationship.'
                     : 'Silence consequences are disabled for this timeline.'}</p>
+            </section>
+            <section class="form-section">
+                <h3>Human dynamics</h3>
+                <p class="form-hint">Local, timeline-specific behavioral pressures. They influence timing, initiative, refusal and tone; they are not a medical model or a claim of consciousness.</p>
+                ${bodyMeters.map(([label, value]) =>
+                    `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(Math.round(value), 0, 100)}%"></span></div><strong>${escapeHTML(String(Math.round(value)))}</strong></div>`
+                ).join('')}
+                <p class="form-hint">Temperament: ${escapeHTML(companion.regulationProfile)} sensitivity · ${escapeHTML(companion.conflictRecovery)} conflict recovery · ${escapeHTML(companion.alcoholPattern)} alcohol pattern.</p>
+                ${dynamics.cooldownUntil > nowMs
+                    ? `<p class="form-hint"><strong>Cooling off:</strong> until ${escapeHTML(companionTimestampLabel(companion, dynamics.cooldownUntil))}${dynamics.cooldownReason ? ` · ${escapeHTML(dynamics.cooldownReason)}` : ''}</p>`
+                    : '<p class="form-hint">No active emotional cool-off.</p>'}
+                ${sexuality.enabled ? `
+                    <h4>Adult desire diagnostics</h4>
+                    <p class="form-hint">Private simulation state. Desire is not trust, attraction is not consent, and impulse is not an automatic action.</p>
+                    ${[
+                        ['Drive', sexuality.desire],
+                        ['Sexual arousal', sexuality.arousal],
+                        ['Sexual frustration', sexuality.frustration],
+                        ['Expression impulse', sexuality.impulse],
+                        ['Post-intimacy calm', dynamics.postIntimacyCalm]
+                    ].map(([label, value]) =>
+                        `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(Math.round(value), 0, 100)}%"></span></div><strong>${escapeHTML(String(Math.round(value)))}</strong></div>`
+                    ).join('')}
+                    <p class="form-hint">Pattern: ${escapeHTML(companion.libidoBaseline)} libido · ${escapeHTML(companion.desirePattern)} desire · ${escapeHTML(companion.sexualConfidence)} expression · ${escapeHTML(companion.sexualRiskAppetite)} risk.</p>
+                    ${sexuality.aftereffect !== 'none' ? `<p class="form-hint">Current aftereffect: ${escapeHTML(sexuality.aftereffect)}.</p>` : ''}
+                ` : '<p class="form-hint">Adult desire simulation is disabled for this human.</p>'}
+            </section>
+            <section class="form-section">
+                <h3>Emotion architecture</h3>
+                <p class="form-hint">Private, timeline-specific simulation state. Several emotions may coexist; player-directed feelings are stored separately from general feelings, and visible expression may be masked.</p>
+                <p>${escapeHTML(companionEmotionSummary(companion, nowMs))}</p>
+                <h4>Felt internally</h4>
+                ${COMPANION_EMOTIONS.map(emotion => {
+                    const value = Math.round(emotionState.felt[emotion]);
+                    return `<div class="companion-sim-meter"><span>${escapeHTML(companionEmotionIntensityLabel(emotion, value))}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(value, 0, 100)}%"></span></div><strong>${value}</strong></div>`;
+                }).join('')}
+                <h4>Toward the player</h4>
+                ${COMPANION_EMOTIONS.map(emotion => {
+                    const value = Math.round(emotionState.towardPlayer[emotion]);
+                    return `<div class="companion-sim-meter"><span>${escapeHTML(emotion)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(value, 0, 100)}%"></span></div><strong>${value}</strong></div>`;
+                }).join('')}
+                <p class="form-hint">Visible now: ${escapeHTML(COMPANION_EMOTIONS
+                    .filter(emotion => expressedEmotions[emotion] >= 12)
+                    .sort((a, b) => expressedEmotions[b] - expressedEmotions[a])
+                    .slice(0, 3).map(emotion => `${emotion} ${Math.round(expressedEmotions[emotion])}`).join(' · ') || 'little visible emotion')} · mask ${Math.round(emotionState.masking)}/100.</p>
+                <p class="form-hint">Profile: ${escapeHTML(companion.emotionExpression)} expression · ${escapeHTML(companion.ruminationStyle)} rumination · ${escapeHTML(companion.reactionTiming)} reactions · ${escapeHTML(companion.emotionalGranularity)} granularity.</p>
+                ${emotionState.lastAppraisal.summary
+                    ? `<p class="form-hint"><strong>Last appraisal:</strong> ${escapeHTML(emotionState.lastAppraisal.summary)} · attributed to ${escapeHTML(emotionState.lastAppraisal.responsibility)}.</p>`
+                    : '<p class="form-hint">No structured emotional appraisal has been recorded yet.</p>'}
+                ${emotionState.pendingReactions.length
+                    ? `<p class="form-hint"><strong>Delayed reactions:</strong> ${emotionState.pendingReactions.map(reaction => `${escapeHTML(reaction.reason || 'unprocessed feeling')} at ${escapeHTML(companionTimestampLabel(companion, reaction.dueAt))}`).join(' · ')}</p>`
+                    : '<p class="form-hint">No delayed emotional reaction is pending.</p>'}
             </section>
             <section class="form-section">
                 <h3>Pending follow-through</h3>
@@ -35775,6 +37297,7 @@ function renderCompanionThread() {
     const life = experience.realTimeLife
         ? companionLifeState(companion, nowMs)
         : { activity: 'available', label: 'available to chat', availability: 'available' };
+    const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
     const clock = companionClockParts(nowMs, companion);
     const statusEl = document.getElementById('cc-status');
     const thread = getCompanionThread(companion.id);
@@ -35790,6 +37313,14 @@ function renderCompanionThread() {
             ? `${life.label}${experience.replyDelays ? ' · replies may be delayed' : ' · replies stay immediate'}`
             : life.label;
     statusEl.className = `companion-chat-status ${life.availability}`;
+    if (dynamics.cooldownUntil > nowMs && dynamics.anger >= 55) {
+        statusEl.textContent = `${life.label} · taking space`;
+        statusEl.className = 'companion-chat-status mood';
+    } else if (dynamics.energy < 18) {
+        statusEl.textContent = `${life.label} · exhausted`;
+    } else if (dynamics.intoxication >= 35) {
+        statusEl.textContent = `${life.label} · not entirely sober`;
+    }
     const presenceDot = document.getElementById('cc-presence-dot');
     if (presenceDot) presenceDot.className = `companion-presence-dot ${life.availability}`;
     document.getElementById('cc-clock').textContent = experience.realTimeLife ? clock.time : 'Paused';
@@ -36016,7 +37547,22 @@ function advanceCompanionLife(companion, nowMs = Date.now()) {
                 valence_change: moodDelta,
                 arousal_change: Math.abs(moodDelta) / 2,
                 mood_label: moodDelta > 0 ? 'content' : 'overwhelmed',
-                relationship_change: 0
+                relationship_change: 0,
+                stress_change: moodDelta < 0 ? Math.abs(moodDelta) : -3,
+                anger_change: event.category === 'conflict' ? 8 : 0,
+                social_need_change: event.category === 'social' || event.category === 'delight' ? -5 : 0,
+                emotion_appraisal: {
+                    summary: event.label,
+                    goal_impact: moodDelta > 0 ? 35 : moodDelta < 0 ? -35 : 0,
+                    threat: ['health', 'conflict', 'travel'].includes(event.category) ? 28 : 5,
+                    loss: ['money', 'health'].includes(event.category) ? 22 : 0,
+                    novelty: 55,
+                    norm_violation: event.category === 'conflict' ? 35 : 0,
+                    control: ['inconvenience', 'travel'].includes(event.category) ? 30 : 55,
+                    certainty: 85,
+                    social_safety: event.category === 'conflict' ? 32 : event.category === 'social' ? 78 : 55,
+                    responsibility: 'circumstance'
+                }
             }, startedAt);
         }
     }
@@ -36036,8 +37582,14 @@ async function processCompanionAgency(nowMs = Date.now()) {
             if (state.editingCompanionId === companion.id && state.view === 'companionStudio') renderCompanionLifeOverview(companion);
         }).catch(error => console.warn('Virtual Human environment update failed:', error));
         const lifeBefore = JSON.stringify(companion.lifeRuntime);
+        const dynamicsBefore = JSON.stringify(companion.humanDynamics);
+        const emotionsBefore = JSON.stringify(companion.emotionState);
         advanceCompanionLife(companion, nowMs);
+        advanceCompanionHumanDynamics(companion, nowMs);
+        advanceCompanionEmotionState(companion, nowMs);
         if (lifeBefore !== JSON.stringify(companion.lifeRuntime)) stateChanged = true;
+        if (dynamicsBefore !== JSON.stringify(companion.humanDynamics)) stateChanged = true;
+        if (emotionsBefore !== JSON.stringify(companion.emotionState)) stateChanged = true;
         const timeline = getActiveCompanionTimeline(companion.id);
         const experience = normalizeCompanionChatExperience(timeline?.experience);
         const messages = getCompanionThread(companion.id);
@@ -36094,7 +37646,12 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const lifeTrigger = companion.initiativeMode === 'off' ? null : companion.lifeRuntime.pendingInitiative;
         const initiativeDue = nowMs >= companionNextInitiativeAt(companion, messages, nowMs);
         const unanswered = companionUnansweredState(messages, nowMs);
-        if (!hasPendingReply && unanswered.mayFollowUp
+        const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
+        const emotions = advanceCompanionEmotionState(companion, nowMs);
+        const emotionallyUnavailable = (
+            dynamics.cooldownUntil > nowMs && dynamics.anger >= 55 && dynamics.cooldownReason
+        ) || emotions.towardPlayer.disgust >= 72 || emotions.towardPlayer.anger >= 78;
+        if (!hasPendingReply && unanswered.mayFollowUp && !emotionallyUnavailable
             && (dueCommitment || lifeTrigger || initiativeDue) && life.availability === 'available') {
             companionAgencyInFlight.add(companion.id);
             companion.lastProactiveAt = nowMs;
@@ -36267,7 +37824,9 @@ async function handleCompanionSend() {
     } else if (experience.replyDelays && plan.life.availability === 'busy') {
         showToast(`${companion.name || 'They'} is ${plan.life.label}; your message may sit for a while.`, 'info');
     } else if (!plan.willReply) {
-        showToast(`${companion.name || 'They'} may read this without answering.`, 'info');
+        showToast(plan.dynamics?.cooldownUntil > optimisticUser.timestamp
+            ? `${companion.name || 'They'} is still cooling off and may read this without answering.`
+            : `${companion.name || 'They'} may read this without answering.`, 'info');
     }
     processCompanionAgency().catch(error => console.error('Could not advance message delivery:', error));
 }

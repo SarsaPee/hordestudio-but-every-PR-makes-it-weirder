@@ -22,6 +22,10 @@ const context = {
         activeCompanionId: null, editingCompanionId: null
     },
     COMPANION_TURN_COMMIT_TOOL: { type: 'function', function: { name: 'commit_human_turn' } },
+    COMPANION_STATE_TOOL: { type: 'function', function: { name: 'companion_state' } },
+    COMPANION_SEND_PHOTO_TOOL: { type: 'function', function: { name: 'send_photo' } },
+    COMPANION_SEND_VOICE_TOOL: { type: 'function', function: { name: 'send_voice_note' } },
+    COMPANION_SHARE_LINK_TOOL: { type: 'function', function: { name: 'share_link' } },
     companionMcpToolCatalog: { higgsfield: [], magnific: [] }
 };
 buildContext(vm, [
@@ -33,6 +37,17 @@ buildContext(vm, [
     'normalizeCompanionTimeline', 'ensureCompanionTimelineStore', 'getActiveCompanionTimeline',
     'persistCompanionRuntime', 'getCompanion', 'applyCompanionTurnCommit',
     'companionSeededRoll', 'decayCompanionMood', 'applyCompanionMoodUpdate',
+    'normalizeCompanionHumanDynamics', 'companionRegulationFactors',
+    'normalizeCompanionEmotionVector', 'normalizeCompanionEmotionDeltaVector', 'companionEmotionVectorFromMood',
+    'normalizeCompanionEmotionReaction', 'normalizeCompanionEmotionState',
+    'companionEmotionFactors', 'companionEmotionIntensityLabel', 'companionEmotionBlend',
+    'companionEmotionActionTendencies', 'companionExpressedEmotionVector',
+    'companionAppraisalEmotionDeltas', 'companionEmotionSummary',
+    'advanceCompanionEmotionState', 'applyCompanionEmotionUpdate',
+    'companionDynamicsDescription', 'companionAlcoholContext',
+    'companionSexualSystemActive', 'companionSexualFactors', 'companionSexualContext',
+    'companionSexualDecisionState',
+    'advanceCompanionHumanDynamics', 'applyCompanionDynamicsUpdate',
     'isCompanionAsleep', 'companionActivityPool', 'companionLifeState', 'companionNextWakeAt',
     'normalizeCompanionLifeProfile', 'normalizeCompanionLifeRuntime',
     'buildProceduralCompanionLifeProfile', 'companionScheduleBlockAt',
@@ -116,8 +131,230 @@ test('a blank companion gets every field a downstream function assumes', () => {
     assert.equal(c.allowVoiceNotes, true);
     assert.equal(c.lifeBuilderModel, '');
     assert(c.relationshipDynamics && Array.isArray(c.lifeEvents) && Array.isArray(c.commitments));
+    assert(c.humanDynamics && c.humanDynamics.energy === 70 && c.humanDynamics.inhibition === 72);
+    assert.equal(c.regulationProfile, 'typical');
+    assert.equal(c.conflictRecovery, 'normal');
+    assert.equal(c.alcoholPattern, 'rare');
+    assert.equal(c.emotionExpression, 'guarded');
+    assert.equal(c.ruminationStyle, 'normal');
+    assert.equal(c.reactionTiming, 'mixed');
+    assert.equal(c.emotionalGranularity, 'nuanced');
+    assert(c.emotionState && c.emotionState.felt && c.emotionState.towardPlayer && c.emotionState.expressed);
+    assert.equal(c.libidoEnabled, false);
+    assert.equal(c.libidoBaseline, 'moderate');
+    assert.equal(c.desirePattern, 'mixed');
+    assert.equal(c.sexualInitiative, false);
     assert(c.lifeProfile && c.lifeRuntime && Array.isArray(c.lifeProfile.weeklySchedule));
     assert.deepEqual(Object.keys(c.usage).sort(), ['callsCompleted', 'photosGenerated', 'textTurns', 'voiceNotesGenerated']);
+});
+
+test('emotion appraisal supports mixed feelings without cancelling opposites', () => {
+    const now = Date.UTC(2026, 7, 11, 12, 0);
+    const c = freshCompanion({ id: 'mixed-emotions', emotionalGranularity: 'contradictory' });
+    context.applyCompanionEmotionUpdate(c, {
+        emotion_appraisal: {
+            summary: 'A risky reunion was welcome and frightening', goal_impact: 70,
+            threat: 65, loss: 0, novelty: 55, norm_violation: 0,
+            control: 30, certainty: 35, social_safety: 75, responsibility: 'circumstance'
+        },
+        emotion_changes: { joy: 18, fear: 16 }
+    }, now);
+    assert(c.emotionState.felt.joy > 20);
+    assert(c.emotionState.felt.fear > 20);
+    assert(c.emotionState.felt.trust > 0);
+    assert(c.emotionState.felt.surprise > 0);
+});
+
+test('player-directed feelings remain separate from circumstance feelings', () => {
+    const now = Date.UTC(2026, 7, 11, 13, 0);
+    const c = freshCompanion({ id: 'targeted-emotions' });
+    context.applyCompanionEmotionUpdate(c, {
+        emotion_appraisal: {
+            summary: 'Work threatened a deadline', goal_impact: -40, threat: 50,
+            loss: 0, novelty: 10, norm_violation: 0, control: 25,
+            certainty: 70, social_safety: 50, responsibility: 'circumstance'
+        }
+    }, now);
+    assert(c.emotionState.felt.fear > 0);
+    assert.equal(c.emotionState.towardPlayer.fear, 0);
+    context.applyCompanionEmotionUpdate(c, {
+        emotion_appraisal: {
+            summary: 'The player broke a promise', goal_impact: -55, threat: 20,
+            loss: 45, novelty: 20, norm_violation: 75, control: 65,
+            certainty: 90, social_safety: 20, responsibility: 'player'
+        }
+    }, now + 60_000);
+    assert(c.emotionState.towardPlayer.anger > 0);
+    assert(c.emotionState.towardPlayer.disgust > 0);
+    assert(c.emotionState.towardPlayer.sadness > 0);
+});
+
+test('masked expression can hide strong private emotion', () => {
+    const now = Date.UTC(2026, 7, 11, 14, 0);
+    const c = freshCompanion({ id: 'masked-emotions', emotionExpression: 'masked' });
+    c.emotionState = context.normalizeCompanionEmotionState({
+        felt: { fear: 84, sadness: 70, anger: 45 }, masking: 85, lastUpdated: now
+    }, c.mood, now);
+    const visible = context.companionExpressedEmotionVector(c, c.emotionState);
+    assert(visible.fear < c.emotionState.felt.fear / 2);
+    assert(visible.sadness < c.emotionState.felt.sadness / 2);
+});
+
+test('rumination makes anger and sadness decay more slowly', () => {
+    const start = Date.UTC(2026, 7, 11, 10, 0);
+    const low = freshCompanion({ id: 'low-rumination', ruminationStyle: 'low' });
+    const sticky = freshCompanion({ id: 'sticky-rumination', ruminationStyle: 'sticky' });
+    [low, sticky].forEach(c => {
+        c.emotionState = context.normalizeCompanionEmotionState({
+            felt: { anger: 80, sadness: 70 }, lastUpdated: start
+        }, c.mood, start);
+    });
+    context.advanceCompanionEmotionState(low, start + 8 * HOUR);
+    context.advanceCompanionEmotionState(sticky, start + 8 * HOUR);
+    assert(sticky.emotionState.felt.anger > low.emotionState.felt.anger);
+    assert(sticky.emotionState.felt.sadness > low.emotionState.felt.sadness);
+});
+
+test('delayed processors retain part of a reaction until its due time', () => {
+    const now = Date.UTC(2026, 7, 11, 15, 0);
+    const c = freshCompanion({ id: 'delayed-emotions', reactionTiming: 'delayed' });
+    context.applyCompanionEmotionUpdate(c, {
+        emotion_changes: { sadness: 30, anger: 20 },
+        toward_player_emotions: { sadness: 24 },
+        delayed_reaction_minutes: 60,
+        emotional_trigger: 'the player cancelled important plans'
+    }, now);
+    const immediateSadness = c.emotionState.felt.sadness;
+    assert.equal(c.emotionState.pendingReactions.length, 1);
+    context.advanceCompanionEmotionState(c, now + 61 * 60_000);
+    assert.equal(c.emotionState.pendingReactions.length, 0);
+    assert(c.emotionState.felt.sadness > immediateSadness);
+    assert(c.emotionState.towardPlayer.sadness > 0);
+});
+
+test('delayed emotional relief preserves negative deltas instead of turning them into no-ops', () => {
+    const now = Date.UTC(2026, 7, 11, 15, 0);
+    const c = freshCompanion({ id: 'delayed-relief', reactionTiming: 'delayed' });
+    c.emotionState = context.normalizeCompanionEmotionState({
+        felt: { fear: 75 }, lastUpdated: now
+    }, c.mood, now);
+    context.applyCompanionEmotionUpdate(c, {
+        emotion_changes: { fear: -30 }, delayed_reaction_minutes: 60,
+        emotional_trigger: 'the medical result finally came back clear'
+    }, now);
+    const immediateFear = c.emotionState.felt.fear;
+    assert(c.emotionState.pendingReactions[0].felt.fear < 0);
+    context.advanceCompanionEmotionState(c, now + 61 * 60_000);
+    assert(c.emotionState.felt.fear < immediateFear);
+});
+
+test('emotion blends are descriptive and legacy mood labels still bridge forward', () => {
+    assert.equal(context.companionEmotionBlend({ joy: 70, trust: 66 }), 'love');
+    const now = Date.UTC(2026, 7, 11, 16, 0);
+    const c = freshCompanion({ id: 'legacy-emotion-bridge' });
+    context.applyCompanionMoodUpdate(c, { mood_label: 'angry', valence_change: -4, arousal_change: 8 }, now);
+    assert(c.emotionState.felt.anger > 0);
+});
+
+test('anger creates a persistent cool-off and can mechanically suppress a reply', () => {
+    const now = Date.UTC(2026, 7, 11, 12, 0);
+    const c = freshCompanion({ id: 'angry-human', conflictRecovery: 'slow' });
+    c.humanDynamics.anger = 45;
+    context.applyCompanionMoodUpdate(c, {
+        valence_change: -12, arousal_change: 16, mood_label: 'angry', relationship_change: -3,
+        anger_change: 30, stress_change: 20, cool_off_minutes: 180,
+        cooldown_reason: 'the argument crossed a boundary'
+    }, now);
+    assert(c.humanDynamics.anger >= 70);
+    assert(c.humanDynamics.cooldownUntil >= now + 180 * 60_000);
+    let refused = null;
+    for (let index = 0; index < 100 && !refused; index += 1) {
+        const message = context.normalizeCompanionMessage({ id: `anger-${index}`, role: 'user', text: 'hello', timestamp: now });
+        const plan = context.companionResponsePlan(c, message, now, {
+            realTimeLife: false, replyDelays: true, allowNoReply: true
+        });
+        if (!plan.willReply) refused = plan;
+    }
+    assert(refused, 'high anger and active cooling-off should be capable of refusing a reply');
+    assert.equal(refused.reason, 'mood');
+});
+
+test('conflict recovery profile changes how long anger remains active', () => {
+    const start = Date.UTC(2026, 7, 11, 12, 0);
+    const quick = freshCompanion({ id: 'quick', conflictRecovery: 'quick' });
+    const grudge = freshCompanion({ id: 'grudge', conflictRecovery: 'grudge' });
+    [quick, grudge].forEach(c => {
+        c.humanDynamics = context.normalizeCompanionHumanDynamics({ anger: 80, lastUpdated: start }, start);
+    });
+    context.advanceCompanionHumanDynamics(quick, start + 4 * HOUR);
+    context.advanceCompanionHumanDynamics(grudge, start + 4 * HOUR);
+    assert(quick.humanDynamics.anger < grudge.humanDynamics.anger);
+});
+
+test('intoxication requires an authored pattern and established drinking context', () => {
+    const start = Date.UTC(2026, 7, 11, 20, 0);
+    const social = freshCompanion({ id: 'social-drinker', alcoholPattern: 'social' });
+    social.lifeRuntime.temporarySituation = {
+        activity: 'having drinks at a birthday party', placeLabel: 'neighborhood bar',
+        withNames: ['Maya'], availability: 'available', startedAt: start, endsAt: start + 4 * HOUR
+    };
+    social.humanDynamics.lastUpdated = start;
+    context.advanceCompanionHumanDynamics(social, start + 2 * HOUR);
+    assert(social.humanDynamics.intoxication > 0);
+    assert(social.humanDynamics.inhibition < 72);
+
+    const sober = freshCompanion({ id: 'non-drinker', alcoholPattern: 'none' });
+    sober.lifeRuntime.temporarySituation = { ...social.lifeRuntime.temporarySituation };
+    sober.humanDynamics.lastUpdated = start;
+    context.advanceCompanionHumanDynamics(sober, start + 2 * HOUR);
+    assert.equal(sober.humanDynamics.intoxication, 0);
+});
+
+test('adult desire is opt-in and cannot activate without an explicitly adult age', () => {
+    const unspecified = freshCompanion({ libidoEnabled: true });
+    assert.equal(context.companionSexualSystemActive(unspecified), false);
+    const repairedMinorInput = freshCompanion({ age: 17, libidoEnabled: true });
+    assert.equal(repairedMinorInput.age, 18);
+    assert.equal(repairedMinorInput.libidoEnabled, false);
+    const adult = freshCompanion({ age: 28, libidoEnabled: true });
+    assert.equal(context.companionSexualSystemActive(adult), true);
+});
+
+test('libido impulse is independent of trust and responds to attraction, restraint and risk', () => {
+    const now = Date.UTC(2026, 7, 11, 22, 0);
+    const base = {
+        age: 28, libidoEnabled: true, libidoBaseline: 'high', sexualConfidence: 'direct',
+        humanDynamics: {
+            desire: 82, sexualArousal: 76, sexualFrustration: 38,
+            inhibition: 28, energy: 70, stress: 20, lastUpdated: now
+        },
+        relationshipDynamics: { attraction: 65, trust: -80, warmth: 0, resentment: 0, stability: 50 }
+    };
+    const risky = freshCompanion({ ...base, sexualRiskAppetite: 'high' });
+    const sameDriveTrusted = freshCompanion({ ...base, id: 'trusted', sexualRiskAppetite: 'high',
+        relationshipDynamics: { ...base.relationshipDynamics, trust: 90 } });
+    const cautious = freshCompanion({ ...base, id: 'cautious', sexualRiskAppetite: 'low' });
+    const riskyState = context.companionSexualDecisionState(risky, risky.humanDynamics, now);
+    const trustedState = context.companionSexualDecisionState(sameDriveTrusted, sameDriveTrusted.humanDynamics, now);
+    const cautiousState = context.companionSexualDecisionState(cautious, cautious.humanDynamics, now);
+    assert.equal(riskyState.impulse, trustedState.impulse, 'trust must not generate or gate libido impulse');
+    assert(riskyState.impulse > cautiousState.impulse);
+});
+
+test('an established intimacy outcome creates calm, cooldown and a bounded aftereffect', () => {
+    const now = Date.UTC(2026, 7, 11, 23, 0);
+    const c = freshCompanion({ age: 31, libidoEnabled: true });
+    c.humanDynamics = context.normalizeCompanionHumanDynamics({
+        desire: 80, sexualArousal: 85, sexualFrustration: 60, lastUpdated: now
+    }, now);
+    context.applyCompanionDynamicsUpdate(c, {
+        intimacy_outcome: 'satisfied', sexual_cooldown_minutes: 90
+    }, now);
+    assert.equal(c.humanDynamics.intimacyAftereffect, 'satisfied');
+    assert(c.humanDynamics.postIntimacyCalm >= 70);
+    assert(c.humanDynamics.desire < 80);
+    assert(c.humanDynamics.sexualArousal < 85);
+    assert(c.humanDynamics.sexualCooldownUntil >= now + 90 * 60_000);
 });
 
 test('a photo while home alone resolves to a physically held front camera', () => {
@@ -190,12 +427,19 @@ test('self-capture policy prevents a present friend from becoming photographer',
 });
 
 test('timeline runtime snapshots isolate relationship, memories and private life', () => {
-    const c = freshCompanion({ startingRelationship: 12 });
+    const c = freshCompanion({ startingRelationship: 12, age: 29, libidoEnabled: true });
     c.mood.relationship = 44;
     c.relationshipDynamics.trust = 61;
     c.memory.longTerm.push(context.normalizeCompanionMemoryEntry({ text: 'shared secret', weight: 80 }));
     c.lifeEvents.push(context.normalizeCompanionLifeEvent({ text: 'started a new job' }));
     c.lifeRuntime.temporarySituation = { activity: 'waiting for a locksmith', startedAt: 1000, endsAt: 2000 };
+    c.humanDynamics.desire = 77;
+    c.humanDynamics.sexualArousal = 42;
+    c.emotionState.felt.joy = 64;
+    c.emotionState.towardPlayer.trust = 58;
+    c.emotionState.pendingReactions.push(context.normalizeCompanionEmotionReaction({
+        dueAt: Date.now() + HOUR, felt: { sadness: 20 }, reason: 'processing the goodbye'
+    }));
     const runtime = context.captureCompanionRuntime(c);
     const timeline = context.normalizeCompanionTimeline({
         id: 'timeline-a', name: 'A', messages: [{ role: 'user', text: 'hey' }], runtime
@@ -207,6 +451,11 @@ test('timeline runtime snapshots isolate relationship, memories and private life
     assert.equal(timeline.runtime.memory.longTerm[0].text, 'shared secret');
     assert.equal(timeline.runtime.lifeEvents[0].text, 'started a new job');
     assert.equal(timeline.runtime.lifeRuntime.temporarySituation.activity, 'waiting for a locksmith');
+    assert.equal(timeline.runtime.humanDynamics.desire, 77);
+    assert.equal(timeline.runtime.humanDynamics.sexualArousal, 42);
+    assert.equal(timeline.runtime.emotionState.felt.joy, 64);
+    assert.equal(timeline.runtime.emotionState.towardPlayer.trust, 58);
+    assert.equal(timeline.runtime.emotionState.pendingReactions[0].reason, 'processing the goodbye');
     assert.equal(timeline.messages[0].text, 'hey');
 });
 
@@ -915,7 +1164,7 @@ test('a message left on read can be reconsidered and answered hours later', () =
         const candidate = context.normalizeCompanionMessage({ id: `reconsider-${i}`, role: 'user', text: 'hello', timestamp: now });
         const roll = context.companionSeededRoll(`${c.id}|reply|${candidate.id}|${now}`);
         const reconsider = context.companionSeededRoll(`${c.id}|reconsider|${candidate.id}`);
-        if (roll < 0.62 && reconsider >= 0.35) { message = candidate; break; }
+        if (roll < 0.62 && reconsider >= 0.78) { message = candidate; break; }
     }
     const plan = context.companionResponsePlan(c, message, now);
     assert.equal(plan.willReply, true);
@@ -1003,6 +1252,37 @@ test('the no-hallucination rule is explicit, not a vague plea for realism', () =
     const prompt = context.buildCompanionSystemPrompt(freshCompanion(), [], Date.now());
     assert(/[Nn]ever invent a memory/.test(prompt), 'nothing forbids inventing facts about the player');
     assert(/commit_human_turn/.test(prompt), 'the model is never told the turn receipt is mandatory');
+});
+
+test('the adult desire prompt separates libido, attraction, trust and consent', () => {
+    const enabled = freshCompanion({
+        age: 30, libidoEnabled: true, libidoBaseline: 'high', desirePattern: 'responsive',
+        intimacyBoundaries: 'Does not send intimate photos and needs direct verbal agreement.'
+    });
+    const prompt = context.buildCompanionSystemPrompt(enabled, [], Date.UTC(2026, 7, 11, 20, 0));
+    assert.match(prompt, /Libido is NOT trust, love, consent or automatic attraction/);
+    assert.match(prompt, /Does not send intimate photos/);
+    assert.match(prompt, /Never override consent/);
+
+    const disabled = context.buildCompanionSystemPrompt(freshCompanion(), [], Date.now());
+    assert.match(disabled, /This system is disabled/);
+    assert.match(disabled, /Do not infer private sexual arousal/);
+});
+
+test('the emotional prompt requires appraisal, mixed feelings and private expression', () => {
+    const c = freshCompanion({
+        emotionExpression: 'masked', ruminationStyle: 'high',
+        reactionTiming: 'delayed', emotionalGranularity: 'contradictory'
+    });
+    c.emotionState.felt.joy = 55;
+    c.emotionState.felt.fear = 48;
+    c.emotionState.towardPlayer.trust = 62;
+    const prompt = context.buildCompanionSystemPrompt(c, [], Date.UTC(2026, 7, 11, 20, 0));
+    assert.match(prompt, /MULTI-EMOTION STATE/);
+    assert.match(prompt, /joy, trust, fear, surprise, sadness, disgust, anger and anticipation may coexist/i);
+    assert.match(prompt, /toward_player_emotions must contain only feelings actually directed at the player/);
+    assert.match(prompt, /mask/i);
+    assert.match(prompt, /delayed/i);
 });
 
 test('durable memories reach the prompt; a companion with none is told so honestly', () => {
@@ -1664,7 +1944,7 @@ test('ComfyUI generation uses the active named workflow profile', () => {
 
 test('the person builder demands causal, non-generic adults and strict JSON', () => {
     const prompt = context.companionBuilderSystemPrompt('deep');
-    ['Preserve every fact', 'at least 18', 'contradictions', 'routine', 'ONLY one strict JSON'].forEach(rule =>
+    ['Preserve every fact', 'at least 18', 'contradictions', 'routine', 'emotionExpression', 'ruminationStyle', 'ONLY one strict JSON'].forEach(rule =>
         assert(prompt.includes(rule), `builder rule "${rule}" is missing`));
 });
 

@@ -1,8 +1,8 @@
-![Horde Studio 12 — living worlds, Virtual Humans, Horde Labs, chat HUDs, and creative workflows](assets/readme/horde-studio-v12-poster.jpg)
+![Horde Studio — living worlds, Virtual Humans, Horde Labs, chat HUDs, and creative workflows](assets/readme/horde-studio-v12-poster.jpg)
 
 <div align="center">
 
-# Horde Studio 12
+# Horde Studio 13
 
 ### Build characters. Shape worlds. Simulate lives.
 
@@ -14,7 +14,7 @@ Characters & group rooms · Living sandbox worlds · Autonomous virtual humans �
 
 ## What is Horde Studio?
 
-**Horde Studio 12** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, and virtual-human simulation into one application.
+**Horde Studio 13** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, and virtual-human simulation into one application.
 
 It is designed for stories that need to **remember, react, and evolve**. Build a cast, create a world around them, carry consequences across sessions, or simulate an AI person with routines, relationships, moods, memories, and multiple timelines.
 
@@ -80,11 +80,14 @@ Build a playable setting instead of a disposable chat background.
 Create an AI person designed to feel like they have a life beyond the current message.
 
 - Identity, personality, inner life, mood, relationships, and private boundaries
+- Eight-channel mixed emotions, appraisal, masking, rumination and delayed reactions
+- Optional adult-only desire and intimacy dynamics kept separate from trust, attraction and consent
 - Workweeks, sleep cycles, routines, commitments, locations, and wardrobes
 - Evolving memory and relationship context
 - Autonomous messages, photos, voice notes, and live-call-style interaction
 - Real-location and Open-Meteo weather grounding
 - Fresh timelines, persistent timelines, and timeline forks
+- Jane Harlow and Ashlyn “Ash” Reynolds included as complete showcase humans
 
 ### Local-First Creative Control
 

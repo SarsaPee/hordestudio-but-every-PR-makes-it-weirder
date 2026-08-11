@@ -1,2 +1,12 @@
 node_modules/
 .env
+.DS_Store
+dist/
+.claude/
+assets/marketing/Horde-Studio-*-Reddit-Launch-Kit.zip
+assets/marketing/Horde-Studio-*-Reddit-Launch-Kit/
+assets/marketing/v12/*.png
+assets/readme/horde-studio-v12-poster.png
+scratch/debug_*.js
+scratch/simulate.py
+scratch/verify_*.py
