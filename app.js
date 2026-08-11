@@ -688,9 +688,12 @@ function sanitizeMessagesForProvider(messages, providerId = state.globalSettings
             content = `(performs: ${m.tool_calls.map(t => t.function?.name || 'action').join(', ')})`;
         }
         if (content === null || content === undefined) content = '';
-        if (typeof content !== 'string') content = JSON.stringify(content);
+        if (typeof content !== 'string' && !Array.isArray(content)) content = JSON.stringify(content);
         norm.push({ role, content });
     }
+    const contentText = content => Array.isArray(content)
+        ? content.filter(part => part?.type === 'text').map(part => String(part.text || '')).join('\n')
+        : String(content || '');
 
     // Pass 2: REMOVE the system role entirely. Local chat templates are wildly
     // inconsistent — some require system-first, some forbid system anywhere,
@@ -702,14 +705,14 @@ function sanitizeMessagesForProvider(messages, providerId = state.globalSettings
     //     text IN PLACE, preserving their recency near the latest turn.
     let firstDialogue = norm.findIndex(m => m.role !== 'system');
     if (firstDialogue === -1) firstDialogue = norm.length;
-    const leadingSystem = norm.slice(0, firstDialogue).filter(m => m.content.trim()).map(m => m.content.trim());
+    const leadingSystem = norm.slice(0, firstDialogue).filter(m => contentText(m.content).trim()).map(m => contentText(m.content).trim());
 
     let rest = [];
     for (let i = firstDialogue; i < norm.length; i++) {
         const m = norm[i];
         if (m.role === 'system') {
-            if (m.content.trim()) rest.push({ role: 'user', content: `[System note: ${m.content.trim()}]` });
-        } else if (m.content.trim() !== '' || m.role === 'assistant') {
+            if (contentText(m.content).trim()) rest.push({ role: 'user', content: `[System note: ${contentText(m.content).trim()}]` });
+        } else if (contentText(m.content).trim() !== '' || Array.isArray(m.content) || m.role === 'assistant') {
             rest.push(m);
         }
     }
@@ -718,7 +721,10 @@ function sanitizeMessagesForProvider(messages, providerId = state.globalSettings
         const sysText = leadingSystem.join('\n\n');
         const firstUser = rest.findIndex(m => m.role === 'user');
         if (firstUser !== -1) {
-            rest[firstUser] = { role: 'user', content: sysText + '\n\n' + rest[firstUser].content };
+            const existing = rest[firstUser].content;
+            rest[firstUser] = { role: 'user', content: Array.isArray(existing)
+                ? [{ type: 'text', text: sysText }, ...existing]
+                : sysText + '\n\n' + existing };
         } else {
             rest.unshift({ role: 'user', content: sysText }); // init: no user turn yet → system opens
         }
@@ -729,7 +735,12 @@ function sanitizeMessagesForProvider(messages, providerId = state.globalSettings
     const merged = [];
     for (const m of rest) {
         const prev = merged[merged.length - 1];
-        if (prev && prev.role === m.role) prev.content += '\n\n' + m.content;
+        if (prev && prev.role === m.role) {
+            if (Array.isArray(prev.content) || Array.isArray(m.content)) {
+                const asParts = value => Array.isArray(value) ? value : [{ type: 'text', text: String(value || '') }];
+                prev.content = [...asParts(prev.content), { type: 'text', text: '\n\n' }, ...asParts(m.content)];
+            } else prev.content += '\n\n' + m.content;
+        }
         else merged.push({ ...m });
     }
     return merged;
@@ -1759,6 +1770,112 @@ async function loadState() {
             } catch (error) {
                 console.error(`Could not install included Virtual Human ${bundleId}:`, error);
             }
+        }
+        if (state.globalSettings.ashlynSocialProfileBackfillV1 !== true) {
+            const ashlynBundle = included.find(candidate => candidate?.bundledId === 'ashlyn-reynolds-v1');
+            const ashlyn = state.companions.find(companion =>
+                companion?.bundledId === 'ashlyn-reynolds-v1' || /Ashlyn.+Reynolds/i.test(companion?.name || ''));
+            if (ashlynBundle?.companion && ashlyn) {
+                const authored = normalizeCompanion(ashlynBundle.companion);
+                if (!ashlyn.startingSocialPosts?.length) {
+                    ashlyn.startingSocialPosts = safeJsonClone(authored.startingSocialPosts);
+                }
+                ashlyn.socialFeedEnabled = true;
+                ashlyn.socialFeedImages = true;
+                ashlyn.priorContact = 'never_spoken';
+                ashlyn.knownBeforeDays = 0;
+                const timeline = getActiveCompanionTimeline(ashlyn.id);
+                if (timeline && !ashlyn.socialPosts?.length) {
+                    ashlyn.socialPosts = materializeCompanionStartingSocialPosts(ashlyn, Date.now());
+                    ashlyn.socialFeedRuntime.lastPostAt = ashlyn.socialPosts.length
+                        ? Math.max(...ashlyn.socialPosts.map(post => post.createdAt)) : 0;
+                    timeline.runtime = captureCompanionRuntime(ashlyn);
+                }
+            }
+            state.globalSettings.ashlynSocialProfileBackfillV1 = true;
+            changed = true;
+        }
+        if (state.globalSettings.ashlynSocialProfileBackfillV2 !== true) {
+            const ashlynBundle = included.find(candidate => candidate?.bundledId === 'ashlyn-reynolds-v1');
+            const ashlyn = state.companions.find(companion =>
+                companion?.bundledId === 'ashlyn-reynolds-v1' || /Ashlyn.+Reynolds/i.test(companion?.name || ''));
+            if (ashlynBundle?.companion && ashlyn) {
+                const authored = normalizeCompanion(ashlynBundle.companion);
+                const seedTexts = new Set((ashlyn.startingSocialPosts || []).map(post => post.text));
+                (authored.startingSocialPosts || []).forEach(post => {
+                    if (!seedTexts.has(post.text)) ashlyn.startingSocialPosts.push(safeJsonClone(post));
+                });
+                if (!ashlyn.socialWritingStyle && !ashlyn.socialPostingRules) {
+                    ashlyn.socialPostFrequency = authored.socialPostFrequency;
+                    ashlyn.socialAudience = authored.socialAudience;
+                    ashlyn.socialPhotoRatio = authored.socialPhotoRatio;
+                    ashlyn.socialThirstTrapLevel = authored.socialThirstTrapLevel;
+                    ashlyn.socialContentTypes = safeJsonClone(authored.socialContentTypes);
+                    ashlyn.socialWritingStyle = authored.socialWritingStyle;
+                    ashlyn.socialPostingRules = authored.socialPostingRules;
+                }
+                const existingTexts = new Set((ashlyn.socialPosts || []).map(post => post.text));
+                materializeCompanionStartingSocialPosts(authored, Date.now()).forEach(post => {
+                    if (!existingTexts.has(post.text)) ashlyn.socialPosts.push(post);
+                });
+                ashlyn.socialPosts = ashlyn.socialPosts.slice(-200);
+                const timeline = getActiveCompanionTimeline(ashlyn.id);
+                if (timeline) timeline.runtime = captureCompanionRuntime(ashlyn);
+            }
+            state.globalSettings.ashlynSocialProfileBackfillV2 = true;
+            changed = true;
+        }
+        if (state.globalSettings.ashlynSocialProfileBackfillV3 !== true) {
+            const ashlynBundle = included.find(candidate => candidate?.bundledId === 'ashlyn-reynolds-v1');
+            const ashlyn = state.companions.find(companion =>
+                companion?.bundledId === 'ashlyn-reynolds-v1' || /Ashlyn.+Reynolds/i.test(companion?.name || ''));
+            if (ashlynBundle?.companion && ashlyn) {
+                const authored = normalizeCompanion(ashlynBundle.companion);
+                const seedTexts = new Set((ashlyn.startingSocialPosts || []).map(post => post.text));
+                (authored.startingSocialPosts || []).forEach(post => {
+                    if (!seedTexts.has(post.text)) ashlyn.startingSocialPosts.push(safeJsonClone(post));
+                });
+                const existingTexts = new Set((ashlyn.socialPosts || []).map(post => post.text));
+                materializeCompanionStartingSocialPosts(authored, Date.now()).forEach(post => {
+                    if (!existingTexts.has(post.text)) ashlyn.socialPosts.push(post);
+                });
+                ashlyn.socialPosts = ashlyn.socialPosts.slice(-200);
+                if (!ashlyn.socialAccessRules) {
+                    ashlyn.socialPlatform = authored.socialPlatform;
+                    ashlyn.socialPlayerRole = authored.socialPlayerRole;
+                    ashlyn.socialContentTypes = safeJsonClone(authored.socialContentTypes);
+                    ashlyn.socialAdultLevel = authored.socialAdultLevel;
+                    ashlyn.socialAccessRules = authored.socialAccessRules;
+                }
+                const timeline = getActiveCompanionTimeline(ashlyn.id);
+                if (timeline) timeline.runtime = captureCompanionRuntime(ashlyn);
+            }
+            state.globalSettings.ashlynSocialProfileBackfillV3 = true;
+            changed = true;
+        }
+        if (state.globalSettings.ashlynSocialProfileBackfillV4 !== true) {
+            const ashlynBundle = included.find(candidate => candidate?.bundledId === 'ashlyn-reynolds-v1');
+            const ashlyn = state.companions.find(companion =>
+                companion?.bundledId === 'ashlyn-reynolds-v1' || /Ashlyn.+Reynolds/i.test(companion?.name || ''));
+            if (ashlynBundle?.companion && ashlyn) {
+                const authored = normalizeCompanion(ashlynBundle.companion);
+                const seedIds = new Set((ashlyn.startingSocialPosts || []).map(post => post.id));
+                const seedTexts = new Set((ashlyn.startingSocialPosts || []).map(post => post.text));
+                (authored.startingSocialPosts || []).forEach(post => {
+                    if (!seedIds.has(post.id) && !seedTexts.has(post.text)) ashlyn.startingSocialPosts.push(safeJsonClone(post));
+                });
+                const existingIds = new Set((ashlyn.socialPosts || []).map(post => post.id));
+                const existingTexts = new Set((ashlyn.socialPosts || []).map(post => post.text));
+                materializeCompanionStartingSocialPosts(authored, Date.now()).forEach(post => {
+                    if (!existingIds.has(post.id) && !existingTexts.has(post.text)) ashlyn.socialPosts.push(post);
+                });
+                ashlyn.socialPosts = ashlyn.socialPosts.slice(-200);
+                if (!ashlyn.socialContentTypes.includes('memes')) ashlyn.socialContentTypes.push('memes');
+                const timeline = getActiveCompanionTimeline(ashlyn.id);
+                if (timeline) timeline.runtime = captureCompanionRuntime(ashlyn);
+            }
+            state.globalSettings.ashlynSocialProfileBackfillV4 = true;
+            changed = true;
         }
         if (changed) {
             state.globalSettings.includedHumanReceipts = [...new Set(offered)];
@@ -4316,7 +4433,17 @@ function switchView(viewName) {
     }
 
     if (viewName === 'companionChat') {
-        if (state.activeCompanionId) renderCompanionThread();
+        if (state.activeCompanionId) {
+            renderCompanionThread();
+            const activeCompanion = getCompanion(state.activeCompanionId);
+            if (activeCompanion) {
+                refreshCompanionInputCapabilities(activeCompanion).then(changed => {
+                    if (changed && state.view === 'companionChat' && state.activeCompanionId === activeCompanion.id) {
+                        renderCompanionThread();
+                    }
+                });
+            }
+        }
         else { showToast('Pick a virtual human first.', 'info'); switchView('companions'); }
     }
 }
@@ -28199,7 +28326,7 @@ function normalizeCompanionLifeEvent(raw) {
         id: String(raw?.id || livingId('vh_life', raw?.text || Date.now())).slice(0, 100),
         text: String(raw?.text || '').trim().slice(0, 500),
         createdAt: Number.isFinite(raw?.createdAt) ? raw.createdAt : Date.now(),
-        source: ['turn', 'autonomy', 'call', 'manual'].includes(raw?.source) ? raw.source : 'turn'
+        source: ['turn', 'autonomy', 'call', 'manual', 'relationship'].includes(raw?.source) ? raw.source : 'turn'
     };
 }
 
@@ -28357,6 +28484,7 @@ function normalizeCompanionLifeRuntime(raw) {
     const temporary = isPlainObject(runtime.temporarySituation) ? runtime.temporarySituation : null;
     return {
         lastSimulatedAt: Number.isFinite(runtime.lastSimulatedAt) ? runtime.lastSimulatedAt : Date.now(),
+        lastLabsBeatAt: Number.isFinite(runtime.lastLabsBeatAt) ? runtime.lastLabsBeatAt : 0,
         lastWildcardAt: Number.isFinite(runtime.lastWildcardAt) ? runtime.lastWildcardAt : 0,
         processedWildcardDays: (Array.isArray(runtime.processedWildcardDays) ? runtime.processedWildcardDays : [])
             .map(value => String(value).slice(0, 20)).filter(Boolean).slice(-45),
@@ -28494,6 +28622,81 @@ function normalizeCompanionEmotionState(raw, seedMood = null, nowMs = Date.now()
     };
 }
 
+const COMPANION_SOCIAL_CONTENT_TYPES = Object.freeze([
+    'everyday', 'selfies', 'friends', 'parties', 'work_school', 'fashion', 'fitness',
+    'food', 'travel', 'pets', 'hobbies', 'thirst_traps', 'swimwear', 'boudoir',
+    'adult', 'thoughts', 'opinions', 'memes', 'music_media', 'promotions', 'locked_content'
+]);
+
+function normalizeCompanionSocialContentTypes(value) {
+    const source = Array.isArray(value) ? value : [
+        'everyday', 'selfies', 'friends', 'work_school', 'fashion', 'food', 'travel', 'thoughts'
+    ];
+    const expanded = source.flatMap(item => String(item) === 'food_travel' ? ['food', 'travel'] : [String(item)]);
+    const selected = expanded.filter(item => COMPANION_SOCIAL_CONTENT_TYPES.includes(item));
+    return selected.length ? [...new Set(selected)] : ['everyday'];
+}
+
+function normalizeCompanionSocialPost(raw) {
+    const post = isPlainObject(raw) ? raw : {};
+    return {
+        id: String(post.id || livingId('vh_post', `${post.createdAt || Date.now()}|${post.text || Math.random()}`)).slice(0, 100),
+        text: String(post.text || '').trim().slice(0, 1200),
+        kind: ['status', 'photo'].includes(post.kind) ? post.kind : (post.photo || post.scene ? 'photo' : 'status'),
+        category: COMPANION_SOCIAL_CONTENT_TYPES.includes(post.category) ? post.category : '',
+        visibility: ['public', 'followers', 'subscribers', 'paid'].includes(post.visibility) ? post.visibility : 'public',
+        unlockPrice: livingClamp(Number.isFinite(Number(post.unlockPrice)) ? Number(post.unlockPrice) : 0, 0, 1000000),
+        tipsFromPlayer: livingClamp(Number.isFinite(Number(post.tipsFromPlayer)) ? Number(post.tipsFromPlayer) : 0, 0, 100000000),
+        lastTipAt: Number.isFinite(post.lastTipAt) ? post.lastTipAt : 0,
+        unlockedByPlayer: post.unlockedByPlayer === true,
+        photo: normalizeGeneratedImageSource(post.photo),
+        scene: String(post.scene || '').trim().slice(0, 500),
+        pending: post.pending === true && !post.photo,
+        generationError: String(post.generationError || '').slice(0, 1000),
+        createdAt: Number.isFinite(post.createdAt) ? post.createdAt : Date.now(),
+        seedAgeDays: livingClamp(Number.isFinite(Number(post.seedAgeDays)) ? Number(post.seedAgeDays) : 0, 0, 3650),
+        likedByPlayer: post.likedByPlayer === true,
+        likedAt: Number.isFinite(post.likedAt) ? post.likedAt : 0,
+        comments: (Array.isArray(post.comments) ? post.comments : []).map(comment => ({
+            id: String(comment?.id || livingId('vh_social_comment', `${comment?.createdAt || Date.now()}|${comment?.text || Math.random()}`)).slice(0, 100),
+            text: String(comment?.text || '').trim().slice(0, 500),
+            createdAt: Number.isFinite(comment?.createdAt) ? comment.createdAt : Date.now()
+        })).filter(comment => comment.text).slice(-50),
+        lifeAnchor: String(post.lifeAnchor || '').trim().slice(0, 300),
+        source: ['autonomy', 'turn', 'manual'].includes(post.source) ? post.source : 'autonomy'
+    };
+}
+
+/**
+ * Normalize a social collection and guarantee that every interactive post has
+ * a unique identity. Older builds generated seed IDs from a long companion ID
+ * first; livingId's length cap could therefore trim away the seed-specific
+ * suffix and make an entire gallery resolve to its first post.
+ *
+ * Keep healthy IDs unchanged so likes, comments and paid unlocks remain
+ * attached to the same post. Only duplicate IDs are repaired, deterministically
+ * enough that a second normalization pass is a no-op.
+ */
+function normalizeCompanionSocialPosts(value, limit = 200) {
+    const seen = new Set();
+    return (Array.isArray(value) ? value : []).map(normalizeCompanionSocialPost)
+        .filter(post => post.text || post.photo || post.scene)
+        .map((post, index) => {
+            let id = post.id;
+            if (seen.has(id)) {
+                const original = id;
+                id = livingId('vh_post', `repair_${index}_${post.createdAt}_${original}`);
+                let collision = 1;
+                while (seen.has(id)) {
+                    id = livingId('vh_post', `repair_${index}_${collision++}_${post.createdAt}_${original}`);
+                }
+                post.id = id;
+            }
+            seen.add(id);
+            return post;
+        }).slice(-limit);
+}
+
 /**
  * Repair a stored companion into the shape every function below assumes.
  * Called on load, on creation, and defensively before rendering — the same
@@ -28514,6 +28717,9 @@ function normalizeCompanion(raw) {
             ? livingClamp(Math.round(Number(mood.relationship)), -100, 100)
             : 0);
     const storedTtsModel = typeof c.ttsModel === 'string' ? c.ttsModel : '';
+    const socialPlayerRole = ['stranger', 'follower', 'mutual', 'friend', 'subscriber', 'vip_subscriber']
+        .includes(c.socialPlayerRole) ? c.socialPlayerRole : 'stranger';
+    const storedSocialRelationship = isPlainObject(c.socialRelationship) ? c.socialRelationship : {};
     const ttsModelMigrations = {
         'openai/gpt-4o-audio-preview': 'mistralai/voxtral-mini-tts-2603',
         'openai/gpt-4o-mini-audio-preview': 'mistralai/voxtral-mini-tts-2603',
@@ -28566,6 +28772,8 @@ function normalizeCompanion(raw) {
         lifeProfile: normalizeCompanionLifeProfile(c.lifeProfile),
         lifeRuntime: normalizeCompanionLifeRuntime(c.lifeRuntime),
         startingRelationship,
+        priorContact: c.priorContact === 'spoken_before' ? 'spoken_before' : 'never_spoken',
+        knownBeforeDays: livingClamp(Number.isFinite(Number(c.knownBeforeDays)) ? Math.round(Number(c.knownBeforeDays)) : 0, 0, 36500),
         relationshipContext: String(c.relationshipContext || '').trim().slice(0, 2400),
         voiceGender: ['female', 'male', 'neutral'].includes(c.voiceGender) ? c.voiceGender : 'neutral',
         ttsVoiceURI: typeof c.ttsVoiceURI === 'string' ? c.ttsVoiceURI : '',
@@ -28617,6 +28825,49 @@ function normalizeCompanion(raw) {
         photoReferenceFallback: c.photoReferenceFallback !== false,
         allowPhotos: c.allowPhotos !== false,
         allowVoiceNotes: c.allowVoiceNotes !== false,
+        inputModalities: (Array.isArray(c.inputModalities) ? c.inputModalities : ['text'])
+            .map(value => String(value).toLowerCase()).filter(value => ['text', 'image', 'audio'].includes(value)),
+        personaVisualMemory: isPlainObject(c.personaVisualMemory) ? {
+            personaId: String(c.personaVisualMemory.personaId || '').slice(0, 100),
+            avatarFingerprint: String(c.personaVisualMemory.avatarFingerprint || '').slice(0, 120),
+            description: String(c.personaVisualMemory.description || '').trim().slice(0, 600),
+            seenAt: Number.isFinite(c.personaVisualMemory.seenAt) ? c.personaVisualMemory.seenAt : 0
+        } : { personaId: '', avatarFingerprint: '', description: '', seenAt: 0 },
+        socialFeedEnabled: c.socialFeedEnabled === true,
+        socialFeedImages: c.socialFeedImages !== false,
+        socialPlatform: ['instagram', 'microblog', 'facebook', 'subscriber', 'custom'].includes(c.socialPlatform)
+            ? c.socialPlatform : 'instagram',
+        socialPlayerRole,
+        socialPostFrequency: ['manual', 'rare', 'weekly', 'few_week', 'daily', 'active'].includes(c.socialPostFrequency)
+            ? c.socialPostFrequency : 'few_week',
+        socialAudience: ['public', 'friends', 'private'].includes(c.socialAudience) ? c.socialAudience : 'public',
+        socialPhotoRatio: livingClamp(Number.isFinite(Number(c.socialPhotoRatio)) ? Number(c.socialPhotoRatio) : 70, 0, 100),
+        socialThirstTrapLevel: livingClamp(Number.isFinite(Number(c.socialThirstTrapLevel)) ? Number(c.socialThirstTrapLevel) : 20, 0, 100),
+        socialContentTypes: normalizeCompanionSocialContentTypes(c.socialContentTypes),
+        socialWritingStyle: String(c.socialWritingStyle || '').trim().slice(0, 1600),
+        socialPostingRules: String(c.socialPostingRules || '').trim().slice(0, 2400),
+        socialMonetization: ['none', 'tips', 'subscription', 'tips_subscription'].includes(c.socialMonetization)
+            ? c.socialMonetization : 'none',
+        socialCurrency: String(c.socialCurrency || 'credits').trim().slice(0, 24) || 'credits',
+        socialSubscriptionPrice: livingClamp(Number.isFinite(Number(c.socialSubscriptionPrice)) ? Number(c.socialSubscriptionPrice) : 10, 0, 1000000),
+        socialAdultLevel: ['none', 'suggestive', 'mature', 'explicit'].includes(c.socialAdultLevel)
+            ? c.socialAdultLevel : 'none',
+        socialAccessRules: String(c.socialAccessRules || '').trim().slice(0, 2000),
+        startingSocialPosts: normalizeCompanionSocialPosts(c.startingSocialPosts, 100),
+        socialPosts: normalizeCompanionSocialPosts(c.socialPosts, 200),
+        socialFeedRuntime: isPlainObject(c.socialFeedRuntime) ? {
+            lastPostAt: Number.isFinite(c.socialFeedRuntime.lastPostAt) ? c.socialFeedRuntime.lastPostAt : 0,
+            nextPostAt: Number.isFinite(c.socialFeedRuntime.nextPostAt) ? c.socialFeedRuntime.nextPostAt : 0,
+            lastGateAt: Number.isFinite(c.socialFeedRuntime.lastGateAt) ? c.socialFeedRuntime.lastGateAt : 0
+        } : { lastPostAt: 0, nextPostAt: 0, lastGateAt: 0 },
+        socialRelationship: {
+            role: ['stranger', 'follower', 'mutual', 'friend', 'subscriber', 'vip_subscriber'].includes(storedSocialRelationship.role)
+                ? storedSocialRelationship.role : socialPlayerRole,
+            totalTips: livingClamp(Number.isFinite(Number(storedSocialRelationship.totalTips)) ? Number(storedSocialRelationship.totalTips) : 0, 0, 100000000),
+            lastTipAt: Number.isFinite(storedSocialRelationship.lastTipAt) ? storedSocialRelationship.lastTipAt : 0,
+            subscribedAt: Number.isFinite(storedSocialRelationship.subscribedAt) ? storedSocialRelationship.subscribedAt : 0,
+            engagement: livingClamp(Number.isFinite(Number(storedSocialRelationship.engagement)) ? Number(storedSocialRelationship.engagement) : 0, 0, 100)
+        },
         initiativeMode: ['off', 'low', 'balanced', 'high'].includes(c.initiativeMode) ? c.initiativeMode : 'off',
         webAccess: c.webAccess === true,
         lastProactiveAt: Number.isFinite(c.lastProactiveAt) ? c.lastProactiveAt : 0,
@@ -28692,6 +28943,8 @@ function normalizeCompanionMessage(raw) {
         text: String(m.text || '').slice(0, 4000),
         photo: normalizeGeneratedImageSource(m.photo),
         audio: typeof m.audio === 'string' ? m.audio : '',
+        audioFormat: String(m.audioFormat || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12),
+        mediaDescription: String(m.mediaDescription || '').trim().slice(0, 600),
         // A photo that was still generating when the tab closed is not lost —
         // it survives a reload as a scene description the author can retry.
         scene: typeof m.scene === 'string' ? m.scene.slice(0, 400) : '',
@@ -28747,6 +29000,32 @@ function companionSeededRoll(seed) {
         hash = Math.imul(hash, 0x01000193);
     }
     return ((hash >>> 0) % 1000000) / 1000000;
+}
+
+function companionMediaFingerprint(value) {
+    const source = String(value || '');
+    if (!source) return '';
+    let hash = 0x811c9dc5;
+    const stride = Math.max(1, Math.floor(source.length / 2048));
+    for (let index = 0; index < source.length; index += stride) {
+        hash ^= source.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `media_${(hash >>> 0).toString(16)}_${source.length}`;
+}
+
+function companionInputSupports(companion, modality) {
+    return (Array.isArray(companion?.inputModalities) ? companion.inputModalities : ['text'])
+        .map(value => String(value).toLowerCase()).includes(modality);
+}
+
+function companionPendingPersonaVision(companion) {
+    const persona = state.personas.find(item => item.id === state.activePersonaId) || null;
+    if (!persona?.avatar || !companionInputSupports(companion, 'image')) return null;
+    const fingerprint = companionMediaFingerprint(persona.avatar);
+    const remembered = companion.personaVisualMemory || {};
+    return remembered.personaId === persona.id && remembered.avatarFingerprint === fingerprint
+        ? null : { persona, fingerprint };
 }
 
 // --- Mood: evolves, and settles back toward baseline in real time ---------
@@ -29964,6 +30243,24 @@ function companionNextInitiativeAt(companion, messages, nowMs) {
     return anchor + companionInitiativeDelayMs(companion, anchor);
 }
 
+function companionNextSocialPostAt(companion, anchorMs = Date.now()) {
+    if (!companion.socialFeedEnabled || companion.socialPostFrequency === 'manual') return 0;
+    const baseHours = { rare: 336, weekly: 168, few_week: 72, daily: 24, active: 10 }[companion.socialPostFrequency] || 72;
+    const jitter = 0.76 + companionSeededRoll(`${companion.id}|social|${Math.floor(anchorMs / 3600000)}`) * 0.48;
+    return anchorMs + Math.round(baseHours * jitter * 60 * 60 * 1000);
+}
+
+function companionSocialMinimumGapMs(companion) {
+    const hours = { manual: Infinity, rare: 168, weekly: 72, few_week: 28, daily: 12, active: 4 }[companion.socialPostFrequency] ?? 28;
+    return hours === Infinity ? Infinity : hours * 60 * 60 * 1000;
+}
+
+function companionSocialBehaviorSummary(companion) {
+    const types = companion.socialContentTypes?.length ? companion.socialContentTypes : ['everyday'];
+    const social = companion.socialRelationship || { role: companion.socialPlayerRole || 'stranger', totalTips: 0 };
+    return `Format: ${companion.socialPlatform}. Audience: ${companion.socialAudience}. Posting: ${companion.socialFeedEnabled ? companion.socialPostFrequency : 'paused'}. Player social role: ${social.role}; engagement ${social.engagement || 0}/100; fictional tips received ${social.totalTips || 0} ${companion.socialCurrency}. Photo share: ${companion.socialPhotoRatio}%. Thirst-trap intensity: ${companion.socialThirstTrapLevel}%. Adult content: ${companion.socialAdultLevel}. Monetization: ${companion.socialMonetization}; subscription price ${companion.socialSubscriptionPrice} ${companion.socialCurrency}. Allowed content only: ${types.join(', ')}. Writing voice: ${companion.socialWritingStyle || companion.textingStyle || 'natural to this person'}. Access rules: ${companion.socialAccessRules || 'none authored'}. Custom rules: ${companion.socialPostingRules || 'none'}.`;
+}
+
 // --- Memory: a short-term buffer, and what survives past it ---------------
 
 const COMPANION_SHORT_TERM_LIMIT = 24;      // messages kept verbatim in the prompt
@@ -30010,6 +30307,38 @@ function consolidateCompanionMemory(companion, messages) {
     return added;
 }
 
+async function applyCompanionLabsMemoryGate(companion, userMessage, replyMessages, nowMs = Date.now()) {
+    const exchange = [userMessage, ...(Array.isArray(replyMessages) ? replyMessages : [])]
+        .filter(Boolean).map(message => `${message.role === 'companion' ? companion.name : 'Player'}: ${message.type === 'photo'
+            ? `[photo] ${message.text || message.mediaDescription || ''}`
+            : message.type === 'voice' ? `[voice note] ${message.text || message.mediaDescription || ''}`
+            : message.text || ''}`).join('\n').slice(0, 4200);
+    if (!exchange.trim()) return null;
+    const result = await labsProposal('memory_gate', {
+        text: exchange,
+        message: exchange,
+        allowedSubjectIds: ['player', companion.id],
+        allowedWitnessIds: ['player', companion.id]
+    }, 'humans', { priority: 70 });
+    const candidate = result?.candidate;
+    if (!candidate || candidate.memoryClass === 'discard' || !String(candidate.factualSentence || '').trim()) return result;
+    const text = String(candidate.factualSentence).trim().slice(0, 500);
+    const duplicate = companion.memory.longTerm.some(memory => memory.text.toLowerCase() === text.toLowerCase());
+    if (!duplicate) {
+        companion.memory.longTerm.push(normalizeCompanionMemoryEntry({
+            text,
+            kind: ['preference', 'milestone'].includes(candidate.kind) ? candidate.kind : 'fact',
+            weight: candidate.memoryClass === 'durable'
+                ? 55 + (Number(candidate.emotionalWeight) || 0) * 10
+                : 35 + (Number(candidate.novelty) || 0) * 6,
+            createdAt: nowMs
+        }));
+        companion.memory.longTerm.sort((left, right) => right.weight - left.weight);
+        companion.memory.longTerm = companion.memory.longTerm.slice(0, 200);
+    }
+    return result;
+}
+
 // --- The brain: assembling what the model actually sees --------------------
 
 function companionMoodDescription(companion) {
@@ -30040,6 +30369,26 @@ function companionRelationshipShortLabel(score) {
     if (score >= -30) return 'guarded';
     if (score >= -60) return 'strained';
     return 'estranged';
+}
+
+function companionContactHistory(companion, messages, nowMs = Date.now()) {
+    const conversation = (Array.isArray(messages) ? messages : []).filter(message =>
+        !message.invalidated && message.type !== 'system' && ['user', 'companion'].includes(message.role));
+    const playerMessages = conversation.filter(message => message.role === 'user');
+    const firstPlayerAt = playerMessages.length ? Math.min(...playerMessages.map(message => message.timestamp)) : 0;
+    const priorContact = companion?.priorContact === 'spoken_before';
+    const hasSpoken = priorContact || playerMessages.length > 0;
+    const elapsedDays = firstPlayerAt ? Math.floor(Math.max(0, nowMs - firstPlayerAt) / 86400000) : 0;
+    const knownDays = hasSpoken ? Math.max(1, (Number(companion?.knownBeforeDays) || 0) + elapsedDays + 1) : 0;
+    return {
+        hasSpoken,
+        priorContact,
+        firstPlayerAt,
+        knownDays,
+        playerMessages: playerMessages.length,
+        companionMessages: conversation.filter(message => message.role === 'companion').length,
+        label: hasSpoken ? `known ${knownDays} day${knownDays === 1 ? '' : 's'}` : 'never spoken'
+    };
 }
 
 /**
@@ -30086,7 +30435,15 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
         }
     }
     const activePersona = state.personas.find(persona => persona.id === state.activePersonaId) || null;
+    const personaVisual = companion.personaVisualMemory?.personaId === activePersona?.id
+        ? String(companion.personaVisualMemory.description || '').trim() : '';
+    const recentSocialPosts = companion.socialPosts.slice(-12).map(post => {
+        const comments = (post.comments || []).slice(-4)
+            .map(comment => ` The player commented “${comment.text}” on ${companionTimestampLabel(companion, comment.createdAt)}.`).join('');
+        return `- [${post.id}] ${companionTimestampLabel(companion, post.createdAt)}: ${post.text || '(photo post)'}${post.scene ? ` Photo: ${post.scene}.` : ''}${post.likedByPlayer ? ' The player liked this post.' : ''}${comments}${post.tipsFromPlayer ? ` The player tipped ${post.tipsFromPlayer} ${companion.socialCurrency} on it.` : ''}`;
+    }).join('\n');
     const currentSilence = companionCurrentSilence(companion, messages, nowMs, experience);
+    const contactHistory = companionContactHistory(companion, messages, nowMs);
     const latestUser = [...messages].reverse().find(message => message.role === 'user' && !message.invalidated) || null;
     const latestConversationalMessage = [...messages].reverse().find(message =>
         ['user', 'companion'].includes(message?.role) && !message.invalidated) || null;
@@ -30147,8 +30504,17 @@ ${companion.textingStyle || 'Natural, casual texting — contractions, occasiona
 
 WHO YOU ARE TEXTING:
 ${activePersona
-        ? `${activePersona.name || 'The player'}: ${activePersona.text || '(no additional self-description provided)'}`
+        ? `${activePersona.name || 'The player'}: ${activePersona.text || '(no additional self-description provided)'}${personaVisual ? `\nYou have seen their current profile picture and remember: ${personaVisual}` : ''}`
         : 'The player has not selected a persona. Know only what they have told you in this timeline and in the authored starting relationship context.'}
+
+${companion.socialFeedEnabled ? `YOUR SOCIAL FEED:
+This is your own persistent simulated profile, not a narration channel. Recent posts:
+${recentSocialPosts || '(you have not posted yet)'}
+You remember these posts and whether the player liked them. They can refer to a post naturally without repeating its contents. ${companion.socialFeedRuntime.lastPostAt ? `Your last post was ${companionElapsedLabel(Math.max(0, nowMs - companion.socialFeedRuntime.lastPostAt))} ago. ` : ''}
+Authored social behavior: ${companionSocialBehaviorSummary(companion)}
+Treat these controls as authoritative. If only one content category is enabled, every post must fit it. Likes, comments and tips above are real social interactions. You noticed them, but you may mention them, react indirectly, or leave them unmentioned according to your personality and the current conversation. Never mechanically thank every interaction. Intensity controls presentation, not consent or nudity; keep photo scenes suitable for the configured image provider. Never expose private engine state, private memories, exact hidden relationship scores, the player's private messages, or facts the authoritative life state does not support.` : `SOCIAL FEED IS PAUSED. Do not create new statuses, stories or feed photos. Existing gallery history and its interactions still happened:
+${recentSocialPosts || '(no existing posts)'}
+If the player liked, commented on or tipped an existing post, you know it happened. You may react naturally or not mention it; never claim the interaction did not exist.`}
 
 CONVERSATION CONTINUITY:
 ${silenceContext}
@@ -30177,6 +30543,9 @@ Libido is NOT trust, love, consent or automatic attraction. Desire may exist wit
 This system is disabled. Do not infer private sexual arousal, sexual frustration or autonomous sexual initiative from ordinary warmth, attraction or relationship progress.`}
 YOUR RELATIONSHIP WITH THE PLAYER:
 How it began: ${companion.relationshipContext || '(no shared history or starting context has been authored)'}
+Contact history: ${contactHistory.hasSpoken
+        ? `${contactHistory.label}; ${contactHistory.playerMessages} player message${contactHistory.playerMessages === 1 ? '' : 's'} in this timeline${contactHistory.priorContact ? '; the author explicitly established earlier contact' : ''}.`
+        : 'You and the player have NEVER spoken. This is not an old friendship, an ongoing chat, or a resumed conversation. Do not greet them as if you know them, mention a shared night, check in on them, or independently direct-message them before they make first contact.'}
 Starting relationship: ${companionRelationshipDescription(companion.startingRelationship)} (${companion.startingRelationship}/100).
 Relationship now: ${companionRelationshipDescription(companion.mood.relationship)} (${companion.mood.relationship}/100).
 Current relationship dimensions: trust ${companion.relationshipDynamics.trust}/100; warmth ${companion.relationshipDynamics.warmth}/100; attraction ${companion.relationshipDynamics.attraction}/100; resentment ${companion.relationshipDynamics.resentment}/100; stability ${companion.relationshipDynamics.stability}/100.
@@ -30210,7 +30579,9 @@ RULES:
 5. MEDIA PERMISSIONS: ${companion.allowPhotos ? `Photos are enabled. If asked for a selfie/photo, decide freely based on your mood, boundaries, relationship, trust, current activity and what was requested. You may comply with send_photo, postpone, negotiate, or refuse; a request never compels you. If you agree, actually call send_photo—never claim an unseen image was sent. Make the capture physically possible: while alone use a front-camera selfie, a nearby mirror, or a timer/propped phone; only say another person took it when that person is actually present. Name that person in photographer when known. Current author capture policy: ${COMPANION_PHOTO_CAPTURE_POLICIES[normalizeCompanionPhotoCapturePolicy(companion.photoCapturePolicy)].label}.` : 'Photos are disabled by the user to avoid image-generation charges. Never call send_photo or claim to have sent an image; naturally say you cannot send one if asked.'}
 ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_note when speaking feels more natural than typing, including during an autonomous check-in.' : 'Voice notes are disabled by the user. Never call send_voice_note or claim to have recorded one.'}
 6. ${companion.webAccess ? 'You may search the live web when current information is genuinely needed, then use share_link for a specific meme, article or video you want this person to see. Never pretend you searched if you did not.' : 'You do not have live web access. Never claim to have searched for or just seen current online content.'}
-7. Every reply MUST call commit_human_turn exactly once. This private receipt records your emotional state and an explicit photo/voice-note decision even when both are "none". A request for media may be accepted, refused, negotiated or postponed; never silently pretend a photo or recording was sent. Use the receipt's memory_write, relationship_event and life_event only when the exchange establishes something that should remain true after the recent transcript expires.
+7. Every reply MUST call commit_human_turn exactly once. This private receipt records your emotional state and an explicit photo/voice-note decision even when both are "none". A request for media may be accepted, refused, negotiated or postponed; never silently pretend a photo or recording was sent. Use the receipt's memory_write, relationship_event and life_event only when the exchange establishes something that should remain true after the recent transcript expires.${companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual' ? ` You may set social_post to post when the current moment genuinely belongs on your profile and fits the authored social controls; ${companion.socialFeedImages && companion.allowPhotos ? 'photo posts are allowed according to the configured photo ratio' : 'use status posts only because feed images are disabled'}.` : ' Set social_post to none; the feed is disabled or set to manual-only.'}
+${!options.suppressPersonaVision && companionPendingPersonaVision(companion) ? 'The player’s profile picture is attached to the latest message for the first time or has changed. Look at it once, respond naturally without making appearance the topic unless relevant, and write a neutral visual summary into persona_visual_memory so it does not need to be sent again.' : ''}
+${latestUser && ['photo', 'voice'].includes(latestUser.type) ? 'The latest player message contains media. Actually inspect/listen to it. Put a concise grounded description or transcript in player_media_memory so later turns can remember it without resending the file.' : ''}
 8. Emotional changes must be earned by the actual exchange. Small deltas are normal. Complete emotion_appraisal before proposing emotion_changes. toward_player_emotions must contain only feelings actually directed at the player; do not transfer anger at work, fear about family or unrelated sadness onto them. Use masking_change when what you show differs from what you feel, and delayed_reaction_minutes only when this person's processing style and the event justify it. Use anger_change and cool_off_minutes when conflict genuinely makes you need space; use stress, energy and social-need changes when the exchange affects them. Intoxication may change only when drinking is visibly established in your authoritative life state or visible reply—never because a tone merely seems wild. ${companionSexualSystemActive(companion) ? 'Sexual desire and arousal changes require an actual internal impulse, relevant exchange or established intimate context. Trust, compliments and generic kindness are not sexual triggers by themselves. intimacy_outcome records only an outcome visibly established by the exchange or your authoritative off-screen life; never invent sexual contact.' : 'Set all desire-related changes to zero and intimacy_outcome to none because the adult desire system is disabled.'}
 9. The receipt is private simulation state. Never print JSON, tool names, scores, hidden reasons or engine language in the visible message.`;
 }
@@ -30233,6 +30604,8 @@ function buildCompanionMessages(companion, messages, nowMs, options = {}) {
         recent.unshift(message);
         remainingChars -= estimatedChars;
     }
+    const pendingPersona = companionPendingPersonaVision(companion);
+    const latestUser = [...recent].reverse().find(message => message.role === 'user' && !message.invalidated) || null;
     return [
         { role: 'system', content: systemContent },
         ...recent.map(m => {
@@ -30241,13 +30614,29 @@ function buildCompanionMessages(companion, messages, nowMs, options = {}) {
                     ? `[player sent this ${companionTimestampLabel(companion, m.timestamp)}${m.readAt > m.timestamp + 1000 ? `; you read it ${companionTimestampLabel(companion, m.readAt)}` : ''}]\n`
                     : `[you sent this ${companionTimestampLabel(companion, m.timestamp)}]\n`
                 : '';
+            const plainText = timing + (m.channel === 'call' ? `[spoken on a phone call: ${m.text}]`
+                : m.type === 'system' ? `[conversation event: ${m.text}]`
+                : m.type === 'photo' ? `[sent a photo: ${m.text || m.mediaDescription || 'no caption'}]`
+                : m.type === 'voice' ? `[voice note: "${m.text || m.mediaDescription || 'audio attached'}"]`
+                : m.text);
+            let content = plainText;
+            if (m === latestUser && m.role === 'user') {
+                const parts = [{ type: 'text', text: plainText || 'Respond naturally to the attached media.' }];
+                if (m.type === 'photo' && m.photo && companionInputSupports(companion, 'image')) {
+                    parts.push({ type: 'image_url', image_url: { url: m.photo } });
+                }
+                if (m.type === 'voice' && m.audio && companionInputSupports(companion, 'audio')) {
+                    const match = String(m.audio).match(/^data:audio\/[^;]+;base64,(.+)$/s);
+                    if (match) parts.push({ type: 'input_audio', input_audio: { data: match[1], format: m.audioFormat || 'webm' } });
+                }
+                if (pendingPersona?.persona?.avatar && companionInputSupports(companion, 'image')) {
+                    parts.push({ type: 'image_url', image_url: { url: pendingPersona.persona.avatar } });
+                }
+                if (parts.length > 1) content = parts;
+            }
             return {
                 role: m.role === 'companion' ? 'assistant' : 'user',
-                content: timing + (m.channel === 'call' ? `[spoken on a phone call: ${m.text}]`
-                    : m.type === 'system' ? `[conversation event: ${m.text}]`
-                    : m.type === 'photo' ? `[sent a photo: ${m.text || 'no caption'}]`
-                    : m.type === 'voice' ? `[voice note: "${m.text}"]`
-                    : m.text)
+                content
             };
         })
     ];
@@ -30381,6 +30770,23 @@ const COMPANION_TURN_COMMIT_TOOL = {
                 },
                 relationship_event: { type: 'string', description: 'Optional factual relationship milestone or rupture established by this exchange.' },
                 memory_write: { type: 'string', description: 'Optional durable fact worth remembering after the short-term transcript expires.' },
+                persona_visual_memory: { type: 'string', description: 'When the player profile image is newly supplied, a neutral concise visual description of only what is visibly present. Blank otherwise.' },
+                player_media_memory: { type: 'string', description: 'When the player sends a photo or voice note, a concise factual description/transcript worth retaining for this message. Never invent unseen details.' },
+                social_post: {
+                    type: 'object',
+                    description: 'Optional post to the simulated social feed. Obey the authored frequency, content categories, photo ratio, audience, writing voice and custom rules.',
+                    properties: {
+                        decision: { type: 'string', enum: ['none', 'post'] },
+                        kind: { type: 'string', enum: ['status', 'photo'] },
+                        category: { type: 'string', enum: COMPANION_SOCIAL_CONTENT_TYPES },
+                        visibility: { type: 'string', enum: ['public', 'followers', 'subscribers', 'paid'] },
+                        unlock_price: { type: 'number', description: 'Fictional roleplay price only when visibility is paid.' },
+                        text: { type: 'string' },
+                        scene: { type: 'string', description: 'Grounded photo-generation scene for a photo post.' },
+                        reason: { type: 'string', description: 'Private grounding reason.' }
+                    },
+                    required: ['decision']
+                },
                 life_event: { type: 'string', description: 'Optional concrete event in your own life that became canon in this exchange.' }
                 ,
                 commitments: {
@@ -30530,6 +30936,27 @@ const COMPANION_SHARE_LINK_TOOL = Object.freeze({
     }
 });
 
+const COMPANION_SOCIAL_POST_TOOL = Object.freeze({
+    type: 'function',
+    function: {
+        name: 'publish_social_post',
+        description: 'Publish one grounded post to your persistent simulated social profile.',
+        parameters: {
+            type: 'object',
+            properties: {
+                kind: { type: 'string', enum: ['status', 'photo'] },
+                category: { type: 'string', enum: COMPANION_SOCIAL_CONTENT_TYPES },
+                visibility: { type: 'string', enum: ['public', 'followers', 'subscribers', 'paid'] },
+                unlock_price: { type: 'number', description: 'Fictional roleplay price only when visibility is paid.' },
+                text: { type: 'string', description: 'The post in your authentic voice. Concise and natural.' },
+                scene: { type: 'string', description: 'For photo only: a physically plausible image-generation scene grounded in current life.' },
+                reason: { type: 'string', description: 'Private factual life anchor for posting now.' }
+            },
+            required: ['kind', 'category', 'text', 'reason']
+        }
+    }
+});
+
 const COMPANION_WEB_SEARCH_TOOL = Object.freeze({
     type: 'openrouter:web_search',
     parameters: {
@@ -30599,6 +31026,9 @@ function normalizeCompanionEmbeddedToolValue(value) {
         voicenote: 'voice_note',
         relationshipevent: 'relationship_event',
         memorywrite: 'memory_write',
+        personavisualmemory: 'persona_visual_memory',
+        playermediamemory: 'player_media_memory',
+        socialpost: 'social_post',
         lifeevent: 'life_event',
         lifestate: 'life_state',
         locationdetail: 'location_detail',
@@ -30649,7 +31079,8 @@ function extractCompanionEmbeddedToolCalls(rawText) {
             companionstate: 'companion_state',
             sendphoto: 'send_photo',
             sendvoicenote: 'send_voice_note',
-            sharelink: 'share_link'
+            sharelink: 'share_link',
+            publishsocialpost: 'publish_social_post'
         };
         const name = toolNames[compactName];
         if (!name) continue;
@@ -30664,6 +31095,9 @@ function extractCompanionEmbeddedToolCalls(rawText) {
                 voicenote: 'voice_note',
                 relationshipevent: 'relationship_event',
                 memorywrite: 'memory_write',
+                personavisualmemory: 'persona_visual_memory',
+                playermediamemory: 'player_media_memory',
+                socialpost: 'social_post',
                 lifeevent: 'life_event',
                 lifestate: 'life_state',
                 dueinminutes: 'due_in_minutes',
@@ -30731,11 +31165,34 @@ function captureCompanionRuntime(companion) {
         usage: companion.usage,
         trauma: companion.trauma,
         memory: companion.memory,
+        personaVisualMemory: companion.personaVisualMemory,
+        socialPosts: companion.socialPosts,
+        socialFeedRuntime: companion.socialFeedRuntime,
+        socialRelationship: companion.socialRelationship,
         lastProactiveAt: companion.lastProactiveAt || 0
     });
 }
 
+function materializeCompanionStartingSocialPosts(companion, nowMs = Date.now()) {
+    const seeds = Array.isArray(companion?.startingSocialPosts) ? companion.startingSocialPosts : [];
+    return seeds.map((seed, index) => normalizeCompanionSocialPost({
+        ...safeJsonClone(seed),
+        // Put the unique seed identity before the companion identity. livingId
+        // intentionally caps slugs, so a long companion ID must never be able
+        // to trim off the only distinguishing part of a post ID.
+        id: livingId('vh_post', `seed_${seed.id || index}_${index}_${nowMs}_${companion.id}`),
+        createdAt: nowMs - (Number(seed.seedAgeDays) || (seeds.length - index)) * 86400000
+            - ((index * 73) % 600) * 60000,
+        pending: false,
+        generationError: '',
+        likedByPlayer: false,
+        likedAt: 0,
+        source: 'manual'
+    }));
+}
+
 function freshCompanionRuntime(companion, nowMs = Date.now()) {
+    const startingSocialPosts = materializeCompanionStartingSocialPosts(companion, nowMs);
     return {
         mood: {
             valence: companion.moodBaseline.valence,
@@ -30767,6 +31224,20 @@ function freshCompanionRuntime(companion, nowMs = Date.now()) {
         usage: { textTurns: 0, photosGenerated: 0, voiceNotesGenerated: 0, callsCompleted: 0 },
         trauma: [],
         memory: { longTerm: [], consolidatedThroughIndex: 0 },
+        personaVisualMemory: { personaId: '', avatarFingerprint: '', description: '', seenAt: 0 },
+        socialPosts: startingSocialPosts,
+        socialFeedRuntime: {
+            lastPostAt: startingSocialPosts.length ? Math.max(...startingSocialPosts.map(post => post.createdAt)) : 0,
+            nextPostAt: 0,
+            lastGateAt: 0
+        },
+        socialRelationship: {
+            role: companion.socialPlayerRole || 'stranger',
+            totalTips: 0,
+            lastTipAt: 0,
+            subscribedAt: ['subscriber', 'vip_subscriber'].includes(companion.socialPlayerRole) ? nowMs : 0,
+            engagement: 0
+        },
         lastProactiveAt: 0
     };
 }
@@ -30787,6 +31258,10 @@ function normalizeCompanionRuntime(raw, companion) {
         usage: source.usage,
         trauma: source.trauma,
         memory: source.memory,
+        personaVisualMemory: source.personaVisualMemory,
+        socialPosts: source.socialPosts,
+        socialFeedRuntime: source.socialFeedRuntime,
+        socialRelationship: source.socialRelationship,
         lastProactiveAt: source.lastProactiveAt
     });
     return captureCompanionRuntime(repaired);
@@ -30806,6 +31281,10 @@ function applyCompanionRuntime(companion, rawRuntime) {
     companion.usage = runtime.usage;
     companion.trauma = runtime.trauma;
     companion.memory = runtime.memory;
+    companion.personaVisualMemory = runtime.personaVisualMemory;
+    companion.socialPosts = runtime.socialPosts;
+    companion.socialFeedRuntime = runtime.socialFeedRuntime;
+    companion.socialRelationship = runtime.socialRelationship;
     companion.lastProactiveAt = runtime.lastProactiveAt;
     return runtime;
 }
@@ -31009,6 +31488,19 @@ async function loadCompanionsState() {
         }
         sessions.forEach(session => {
             session.messages = repairCompanionProtocolLeaks(session.messages, companion.name);
+            // Older builds could fire initiative immediately after installing a
+            // never-met human. Remove only that unmistakable cold-open shape:
+            // no player turn at all, and every conversational reply marked as
+            // autonomous. Authored intros and real conversations are untouched.
+            const conversational = session.messages.filter(message =>
+                message.type !== 'system' && ['user', 'companion'].includes(message.role));
+            if (companion.priorContact !== 'spoken_before'
+                && !conversational.some(message => message.role === 'user')
+                && conversational.length
+                && conversational.every(message => message.role === 'companion' && message.autonomous)) {
+                const removedIds = new Set(conversational.map(message => message.id));
+                session.messages = session.messages.filter(message => !removedIds.has(message.id));
+            }
             session.messages.forEach(message => {
                 if (message.type !== 'photo' || !message.pending || message.photo) return;
                 message.pending = false;
@@ -31369,6 +31861,54 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn') {
     if (commit.photo?.decision === 'send') fulfillOldest('photo');
     if (commit.voice_note?.decision === 'send') fulfillOldest('voice');
     companion.commitments = companion.commitments.slice(-100);
+    if (String(commit.persona_visual_memory || '').trim()) {
+        const activePersona = state.personas.find(persona => persona.id === state.activePersonaId);
+        if (activePersona?.avatar) {
+            companion.personaVisualMemory = {
+                personaId: activePersona.id,
+                avatarFingerprint: companionMediaFingerprint(activePersona.avatar),
+                description: String(commit.persona_visual_memory).trim().slice(0, 600),
+                seenAt: nowMs
+            };
+        }
+    }
+}
+
+function applyCompanionSocialPostCommit(companion, commit, nowMs, source = 'turn') {
+    const raw = commit?.social_post;
+    if (!companion.socialFeedEnabled || raw?.decision !== 'post') return null;
+    if (companion.socialPostFrequency === 'manual' && source !== 'manual') return null;
+    // The feed is a life surface, not a second transcript. Even if a model
+    // eagerly proposes a post on every turn, keep public activity human-scale.
+    const lastPostAt = Number(companion.socialFeedRuntime?.lastPostAt) || 0;
+    if (lastPostAt && nowMs - lastPostAt < companionSocialMinimumGapMs(companion)) return null;
+    const allowedTypes = companion.socialContentTypes?.length ? companion.socialContentTypes : ['everyday'];
+    const category = allowedTypes.includes(raw.category) ? raw.category : allowedTypes[0];
+    const monetized = companion.socialMonetization !== 'none';
+    const visibility = monetized && ['public', 'followers', 'subscribers', 'paid'].includes(raw.visibility)
+        ? raw.visibility : 'public';
+    const text = String(raw.text || '').trim().slice(0, 1200);
+    const wantsPhoto = raw.kind === 'photo' && companion.socialFeedImages && companion.allowPhotos
+        && String(raw.scene || '').trim();
+    if (!text && !wantsPhoto) return null;
+    const post = normalizeCompanionSocialPost({
+        text,
+        kind: wantsPhoto ? 'photo' : 'status',
+        scene: wantsPhoto ? String(raw.scene).trim() : '',
+        category,
+        visibility,
+        unlockPrice: visibility === 'paid'
+            ? livingClamp(Number(raw.unlock_price) || companion.socialSubscriptionPrice || 10, 0, 1000000) : 0,
+        pending: wantsPhoto,
+        createdAt: nowMs,
+        lifeAnchor: String(raw.reason || '').trim(),
+        source
+    });
+    companion.socialPosts.push(post);
+    companion.socialPosts = companion.socialPosts.slice(-200);
+    companion.socialFeedRuntime.lastPostAt = nowMs;
+    companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
+    return wantsPhoto ? post : null;
 }
 
 /**
@@ -31397,6 +31937,7 @@ async function sendCompanionMessage(companion, messages, userText, nowMs = Date.
     // contract used by GPTProto or local servers. All ordinary function tools
     // remain available everywhere.
     const tools = companionToolsFor(companion, textProvider !== 'openrouter');
+    const pendingPersonaVision = !options.initiative ? companionPendingPersonaVision(companion) : null;
     const labsSocial = !options.initiative && userText ? await labsProposal('social_signal', {
         message: String(userText).slice(0, 1800),
         text: String(userText).slice(0, 1800),
@@ -31528,6 +32069,20 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
 
     if (actions.state) applyCompanionMoodUpdate(companion, actions.state, nowMs);
     applyCompanionTurnCommit(companion, actions.commit, nowMs, options.initiative ? 'autonomy' : 'turn');
+    if (pendingPersonaVision && companion.personaVisualMemory?.avatarFingerprint !== pendingPersonaVision.fingerprint) {
+        companion.personaVisualMemory = {
+            personaId: pendingPersonaVision.persona.id,
+            avatarFingerprint: pendingPersonaVision.fingerprint,
+            description: 'Their current profile picture was shared and seen; no reliable visual summary was returned.',
+            seenAt: nowMs
+        };
+    }
+    const pendingSocialPhoto = applyCompanionSocialPostCommit(
+        companion, actions.commit, nowMs, options.initiative ? 'autonomy' : 'turn');
+    if (userMessage && ['photo', 'voice'].includes(userMessage.type)) {
+        userMessage.mediaDescription = String(actions.commit?.player_media_memory || '').trim().slice(0, 600)
+            || (userMessage.type === 'photo' ? 'A photo the player shared.' : 'A voice note the player shared.');
+    }
     [
         ['memory_write', 'fact'],
         ['relationship_event', 'milestone'],
@@ -31601,7 +32156,8 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
     newMessages.forEach(m => messages.push(m));
     companion.usage.textTurns += 1;
     consolidateCompanionMemory(companion, messages);
-    return { userMessage, replyMessages: newMessages, mood: companion.mood, pendingPhoto };
+    await applyCompanionLabsMemoryGate(companion, userMessage, newMessages, nowMs);
+    return { userMessage, replyMessages: newMessages, mood: companion.mood, pendingPhoto, pendingSocialPhoto };
 }
 
 /** Tolerant JSON parse for a tool-call payload that came back slightly malformed. */
@@ -32359,6 +32915,9 @@ function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', 
         } catch (error) { /* continue with the literal */ }
     }
     if (/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(source) || /^blob:/i.test(source)) return source;
+    // Bundled showcase media is deliberately kept as small project assets
+    // instead of duplicating megabytes of base64 in every installed record.
+    if (/^(?:\.\/)?assets\/bundled\/[a-z0-9_./-]+$/i.test(source)) return source;
     if (/^\/\//.test(source)) return `https:${source}`;
     if (/^http:\/\//i.test(source)) return source.replace(/^http:/i, 'https:');
     if (/^https:\/\//i.test(source)) return source;
@@ -34462,6 +35021,7 @@ function activateCompanionStudioTab(tabName) {
     if (tabName === 'cs-life') {
         updateCompanionLifeBuilderModelStatus(getCompanion(state.editingCompanionId));
     }
+    if (tabName === 'cs-social') renderCompanionSocialStudio(getCompanion(state.editingCompanionId));
     const content = document.querySelector('#companion-studio-view .studio-content-wrap');
     if (content) content.scrollTop = 0;
 }
@@ -34843,6 +35403,45 @@ function commitCompanionStudioForm() {
     if (lifeWildcards) companion.lifeWildcardsEnabled = lifeWildcards.checked;
     const lifeWeather = document.getElementById('cs-life-weather');
     if (lifeWeather) companion.lifeWeatherEnabled = lifeWeather.checked;
+    const socialFeedEnabled = document.getElementById('cs-social-feed-enabled');
+    if (socialFeedEnabled) companion.socialFeedEnabled = socialFeedEnabled.getAttribute('aria-pressed') === 'true';
+    const socialFeedImages = document.getElementById('cs-social-feed-images');
+    if (socialFeedImages) companion.socialFeedImages = socialFeedImages.checked;
+    const socialFrequency = document.getElementById('cs-social-frequency');
+    if (socialFrequency) companion.socialPostFrequency = socialFrequency.value;
+    const socialPlatform = document.getElementById('cs-social-platform');
+    if (socialPlatform) companion.socialPlatform = socialPlatform.value;
+    const socialAudience = document.getElementById('cs-social-audience');
+    if (socialAudience) companion.socialAudience = socialAudience.value;
+    const socialPlayerRole = document.getElementById('cs-social-player-role');
+    if (socialPlayerRole) companion.socialPlayerRole = socialPlayerRole.value;
+    const socialPhotoRatio = document.getElementById('cs-social-photo-ratio');
+    if (socialPhotoRatio) companion.socialPhotoRatio = livingClamp(Number(socialPhotoRatio.value), 0, 100);
+    const socialThirst = document.getElementById('cs-social-thirst');
+    if (socialThirst) companion.socialThirstTrapLevel = livingClamp(Number(socialThirst.value), 0, 100);
+    const socialWritingStyle = document.getElementById('cs-social-writing-style');
+    if (socialWritingStyle) companion.socialWritingStyle = socialWritingStyle.value.slice(0, 1600);
+    const socialPostingRules = document.getElementById('cs-social-posting-rules');
+    if (socialPostingRules) companion.socialPostingRules = socialPostingRules.value.slice(0, 2400);
+    const socialMonetization = document.getElementById('cs-social-monetization');
+    if (socialMonetization) companion.socialMonetization = socialMonetization.value;
+    const socialCurrency = document.getElementById('cs-social-currency');
+    if (socialCurrency) companion.socialCurrency = socialCurrency.value.trim().slice(0, 24) || 'credits';
+    const socialSubscriptionPrice = document.getElementById('cs-social-subscription-price');
+    if (socialSubscriptionPrice) companion.socialSubscriptionPrice = livingClamp(Number(socialSubscriptionPrice.value) || 0, 0, 1000000);
+    const socialAdultLevel = document.getElementById('cs-social-adult-level');
+    if (socialAdultLevel) companion.socialAdultLevel = socialAdultLevel.value;
+    const socialAccessRules = document.getElementById('cs-social-access-rules');
+    if (socialAccessRules) companion.socialAccessRules = socialAccessRules.value.slice(0, 2000);
+    const socialTypes = [...document.querySelectorAll('[data-social-content-type]:checked')].map(input => input.value);
+    if (document.querySelector('[data-social-content-type]')) companion.socialContentTypes = socialTypes.length ? socialTypes : ['everyday'];
+    const modelImageInput = document.getElementById('cs-model-input-image');
+    const modelAudioInput = document.getElementById('cs-model-input-audio');
+    if ((modelImageInput && !modelImageInput.disabled) || (modelAudioInput && !modelAudioInput.disabled)) {
+        companion.inputModalities = ['text'];
+        if (modelImageInput?.checked) companion.inputModalities.push('image');
+        if (modelAudioInput?.checked) companion.inputModalities.push('audio');
+    }
     const regulationProfile = document.getElementById('cs-regulation-profile');
     if (regulationProfile) companion.regulationProfile = COMPANION_REGULATION_PROFILES.includes(regulationProfile.value)
         ? regulationProfile.value : 'typical';
@@ -34887,6 +35486,10 @@ function commitCompanionStudioForm() {
             companion.mood.relationship = companion.startingRelationship;
         }
     }
+    const priorContact = document.getElementById('cs-prior-contact');
+    if (priorContact) companion.priorContact = priorContact.value === 'spoken_before' ? 'spoken_before' : 'never_spoken';
+    const knownBeforeDays = document.getElementById('cs-known-before-days');
+    if (knownBeforeDays) companion.knownBeforeDays = livingClamp(parseInt(knownBeforeDays.value) || 0, 0, 36500);
     return companion;
 }
 
@@ -34926,10 +35529,37 @@ function renderCompanionStudioForm() {
     updateCompanionLifeBuilderModelStatus(companion);
     document.getElementById('cs-life-wildcards').checked = companion.lifeWildcardsEnabled;
     document.getElementById('cs-life-weather').checked = companion.lifeWeatherEnabled;
+    const socialFeedEnabledButton = document.getElementById('cs-social-feed-enabled');
+    socialFeedEnabledButton.setAttribute('aria-pressed', String(companion.socialFeedEnabled));
+    socialFeedEnabledButton.classList.toggle('active', companion.socialFeedEnabled);
+    document.getElementById('cs-social-feed-enabled-label').textContent = companion.socialFeedEnabled ? 'Feed active' : 'Feed paused';
+    document.getElementById('cs-social-feed-images').checked = companion.socialFeedImages;
+    document.getElementById('cs-social-feed-images').disabled = !companion.socialFeedEnabled || !companion.allowPhotos;
+    document.getElementById('cs-social-frequency').value = companion.socialPostFrequency;
+    document.getElementById('cs-social-platform').value = companion.socialPlatform;
+    document.getElementById('cs-social-audience').value = companion.socialAudience;
+    document.getElementById('cs-social-player-role').value = companion.socialPlayerRole;
+    document.getElementById('cs-social-photo-ratio').value = companion.socialPhotoRatio;
+    document.getElementById('cs-social-thirst').value = companion.socialThirstTrapLevel;
+    document.getElementById('cs-social-photo-ratio-label').textContent = `${companion.socialPhotoRatio}%`;
+    document.getElementById('cs-social-thirst-label').textContent = `${companion.socialThirstTrapLevel}%`;
+    document.getElementById('cs-social-writing-style').value = companion.socialWritingStyle;
+    document.getElementById('cs-social-posting-rules').value = companion.socialPostingRules;
+    document.getElementById('cs-social-monetization').value = companion.socialMonetization;
+    document.getElementById('cs-social-currency').value = companion.socialCurrency;
+    document.getElementById('cs-social-subscription-price').value = companion.socialSubscriptionPrice;
+    document.getElementById('cs-social-adult-level').value = companion.socialAdultLevel;
+    document.getElementById('cs-social-access-rules').value = companion.socialAccessRules;
+    document.querySelectorAll('[data-social-content-type]').forEach(input => {
+        input.checked = companion.socialContentTypes.includes(input.value);
+    });
+    renderCompanionSocialStudio(companion);
     renderCompanionLifeOverview(companion);
     document.getElementById('cs-private-life').value = companion.privateLife;
     document.getElementById('cs-intimacy-boundaries').value = companion.intimacyBoundaries;
     document.getElementById('cs-relationship-context').value = companion.relationshipContext;
+    document.getElementById('cs-prior-contact').value = companion.priorContact;
+    document.getElementById('cs-known-before-days').value = companion.knownBeforeDays;
     document.getElementById('cs-relationship-start').value = companion.startingRelationship;
     document.getElementById('cs-relationship-start-label').textContent =
         `${companion.startingRelationship > 0 ? '+' : ''}${companion.startingRelationship}`;
@@ -35197,6 +35827,9 @@ function rankCompanionTextModels(models) {
             const tools = parameters.includes('tools') || parameters.includes('tool_choice');
             const json = parameters.includes('response_format') || parameters.includes('structured_outputs');
             const promptPrice = Number(model?.pricing?.prompt);
+            const inputModalities = Array.isArray(model?.architecture?.input_modalities)
+                ? model.architecture.input_modalities.map(value => String(value).toLowerCase())
+                : ['text'];
             return {
                 id: model.id,
                 name: model.name || model.id,
@@ -35205,6 +35838,7 @@ function rankCompanionTextModels(models) {
                 supportsJSON: json,
                 capabilitiesKnown: parameters.length > 0,
                 supportedParams: parameters,
+                inputModalities,
                 promptPrice: Number.isFinite(promptPrice) && promptPrice >= 0 ? promptPrice : null,
                 description: String(model.description || ''),
                 maxOutput: Number(model?.top_provider?.max_completion_tokens) || 0
@@ -35223,6 +35857,23 @@ function companionTextModelPriceLabel(price) {
     const perMillion = price * 1000000;
     if (perMillion === 0) return 'Free input';
     return `$${perMillion < 0.01 ? perMillion.toFixed(4) : perMillion.toFixed(2)}/M input`;
+}
+
+function updateCompanionInputCapabilityControls(companion, catalog = companionTextModelCatalog) {
+    const image = document.getElementById('cs-model-input-image');
+    const audio = document.getElementById('cs-model-input-audio');
+    const hint = document.getElementById('cs-model-input-hint');
+    if (!image || !audio) return;
+    const effective = String(companion?.model || state.globalSettings.defaultModel || '').trim();
+    const info = catalog.find(model => model.id === effective);
+    const modalities = info?.inputModalities || companion?.inputModalities || ['text'];
+    image.checked = modalities.includes('image');
+    audio.checked = modalities.includes('audio');
+    image.disabled = !!info;
+    audio.disabled = !!info;
+    if (hint) hint.textContent = info
+        ? `Locked to capabilities reported by ${info.name || info.id}.`
+        : 'This model is not in the live catalog. Declare its media inputs manually only when its API supports them.';
 }
 
 function updateCompanionTextModelPresentation(companion, catalog = companionTextModelCatalog) {
@@ -35246,12 +35897,15 @@ function updateCompanionTextModelPresentation(companion, catalog = companionText
                 ? '<span class="vh-model-badge good">Tools supported</span>'
                 : (info?.capabilitiesKnown ? '<span class="vh-model-badge warn">No tool support listed</span>' : ''),
             info?.supportsJSON ? '<span class="vh-model-badge good">Structured output</span>' : '',
+            info?.inputModalities?.includes('image') ? '<span class="vh-model-badge good">Player photos</span>' : '',
+            info?.inputModalities?.includes('audio') ? '<span class="vh-model-badge good">Player voice notes</span>' : '',
             info?.contextLength ? `<span class="vh-model-badge">${Math.round(info.contextLength / 1000)}k context</span>` : '',
             companionTextModelPriceLabel(info?.promptPrice)
                 ? `<span class="vh-model-badge">${escapeHTML(companionTextModelPriceLabel(info.promptPrice))}</span>` : ''
         ].filter(Boolean);
         badges.innerHTML = items.join('');
     }
+    updateCompanionInputCapabilityControls(companion, catalog);
 }
 
 function updateCompanionTextModelStatus(companion, catalog = []) {
@@ -35296,6 +35950,8 @@ function renderCompanionTextModelResults(companion) {
                 <span class="vh-model-option-meta">
                     ${model.supportsTools ? '<span>Tools</span>' : ''}
                     ${model.supportsJSON ? '<span>JSON</span>' : ''}
+                    ${model.inputModalities.includes('image') ? '<span>Vision</span>' : ''}
+                    ${model.inputModalities.includes('audio') ? '<span>Audio input</span>' : ''}
                     ${model.contextLength ? `<span>${Math.round(model.contextLength / 1000)}k context</span>` : ''}
                     ${price ? `<span>${escapeHTML(price)}</span>` : ''}
                 </span>
@@ -35308,6 +35964,7 @@ function renderCompanionTextModelResults(companion) {
                 const selectedModel = companionTextModelCatalog.find(model => model.id === button.dataset.companionTextModel);
                 liveCompanion.model = selectedModel?.id || button.dataset.companionTextModel || '';
                 liveCompanion.supportedParams = selectedModel?.supportedParams || [];
+                liveCompanion.inputModalities = selectedModel?.inputModalities || ['text'];
                 if (selectedModel?.contextLength) {
                     liveCompanion.contextSize = Math.min(liveCompanion.contextSize, selectedModel.contextLength);
                 }
@@ -35348,12 +36005,55 @@ async function populateCompanionTextModelPicker(companion, force = false) {
     }
     const catalogChoice = ranked.some(model => model.id === chosen);
     const effectiveCatalogModel = ranked.find(model => model.id === (chosen || state.globalSettings.defaultModel));
-    if (effectiveCatalogModel) companion.supportedParams = effectiveCatalogModel.supportedParams || [];
+    if (effectiveCatalogModel) {
+        companion.supportedParams = effectiveCatalogModel.supportedParams || [];
+        companion.inputModalities = effectiveCatalogModel.inputModalities || ['text'];
+    }
     selectedInput.value = catalogChoice ? chosen : '';
     custom.value = chosen && !catalogChoice ? chosen : '';
     if (search) search.value = '';
     renderCompanionTextModelResults(companion);
     updateCompanionTextModelStatus(companion, ranked);
+}
+
+const companionCapabilityRefreshes = new Map();
+
+/**
+ * Refresh input capability metadata when a conversation opens. Older saved
+ * humans predate modality persistence and should not require a trip through
+ * Studio before their photo or voice-note controls become available.
+ */
+async function refreshCompanionInputCapabilities(companion, force = false) {
+    if (!companion?.id) return false;
+    const provider = companionTextProviderId(companion);
+    const effectiveModel = String(companion.model || state.globalSettings.defaultModel || '').trim();
+    if (!effectiveModel) return false;
+    const refreshKey = `${provider}|${effectiveModel}|${force ? 'force' : 'cached'}`;
+    if (companionCapabilityRefreshes.has(refreshKey)) {
+        return companionCapabilityRefreshes.get(refreshKey);
+    }
+    const request = (async () => {
+        try {
+            const catalog = rankCompanionTextModels(await getCompanionOutputModels('text', force, provider));
+            const match = catalog.find(model => model.id === effectiveModel);
+            if (!match) return false;
+            const nextModalities = Array.isArray(match.inputModalities) && match.inputModalities.length
+                ? [...new Set(match.inputModalities)] : ['text'];
+            const changed = JSON.stringify(nextModalities) !== JSON.stringify(companion.inputModalities || ['text'])
+                || JSON.stringify(match.supportedParams || []) !== JSON.stringify(companion.supportedParams || []);
+            companion.inputModalities = nextModalities;
+            companion.supportedParams = match.supportedParams || [];
+            if (changed) await saveState();
+            return changed;
+        } catch (error) {
+            console.warn('Could not refresh Virtual Human input capabilities:', error);
+            return false;
+        } finally {
+            companionCapabilityRefreshes.delete(refreshKey);
+        }
+    })();
+    companionCapabilityRefreshes.set(refreshKey, request);
+    return request;
 }
 
 const companionMcpToolCatalog = { higgsfield: [], magnific: [] };
@@ -36357,16 +37057,30 @@ function setupCompanionsLogic() {
         if (custom) {
             companion.model = custom;
             companion.supportedParams = [];
+            companion.inputModalities = ['text'];
         }
         renderCompanionTextModelResults(companion);
         updateCompanionTextModelStatus(companion, companionTextModelCatalog);
     };
+    ['cs-model-input-image', 'cs-model-input-audio'].forEach(inputId => {
+        document.getElementById(inputId).onchange = () => {
+            const companion = getCompanion(state.editingCompanionId);
+            const image = document.getElementById('cs-model-input-image');
+            const audio = document.getElementById('cs-model-input-audio');
+            if (!companion || image.disabled || audio.disabled) return;
+            companion.inputModalities = ['text'];
+            if (image.checked) companion.inputModalities.push('image');
+            if (audio.checked) companion.inputModalities.push('audio');
+            updateCompanionTextModelPresentation(companion, companionTextModelCatalog);
+        };
+    });
     document.getElementById('cs-use-global-model').onclick = () => {
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
         companion.model = '';
         const globalModel = companionTextModelCatalog.find(model => model.id === state.globalSettings.defaultModel);
         companion.supportedParams = globalModel?.supportedParams || [];
+        companion.inputModalities = globalModel?.inputModalities || ['text'];
         const custom = document.getElementById('cs-text-model-custom');
         if (custom) custom.value = '';
         renderCompanionTextModelResults(companion);
@@ -36523,6 +37237,159 @@ function setupCompanionsLogic() {
         renderCompanionLifeOverview(companion);
         await saveState();
     };
+    document.getElementById('cs-social-feed-enabled').onclick = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.socialFeedEnabled = !companion.socialFeedEnabled;
+        e.currentTarget.setAttribute('aria-pressed', String(companion.socialFeedEnabled));
+        e.currentTarget.classList.toggle('active', companion.socialFeedEnabled);
+        document.getElementById('cs-social-feed-enabled-label').textContent = companion.socialFeedEnabled ? 'Feed active' : 'Feed paused';
+        companion.socialFeedRuntime.nextPostAt = companion.socialFeedEnabled
+            ? companionNextSocialPostAt(companion, Date.now()) : 0;
+        const images = document.getElementById('cs-social-feed-images');
+        if (images) images.disabled = !companion.socialFeedEnabled || !companion.allowPhotos;
+    };
+    document.getElementById('cs-social-feed-images').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.socialFeedImages = e.target.checked;
+    };
+    document.getElementById('cs-social-frequency').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.socialPostFrequency = e.target.value;
+        companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, Date.now());
+    };
+    document.getElementById('cs-social-platform').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.socialPlatform = e.target.value;
+    };
+    document.getElementById('cs-social-audience').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.socialAudience = e.target.value;
+    };
+    document.getElementById('cs-social-player-role').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.socialPlayerRole = e.target.value;
+    };
+    document.getElementById('cs-social-photo-ratio').oninput = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        const value = livingClamp(Number(e.target.value), 0, 100);
+        document.getElementById('cs-social-photo-ratio-label').textContent = `${value}%`;
+        if (companion) companion.socialPhotoRatio = value;
+    };
+    document.getElementById('cs-social-thirst').oninput = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        const value = livingClamp(Number(e.target.value), 0, 100);
+        document.getElementById('cs-social-thirst-label').textContent = `${value}%`;
+        if (companion) companion.socialThirstTrapLevel = value;
+    };
+    document.querySelectorAll('[data-social-content-type]').forEach(input => {
+        input.onchange = () => {
+            const companion = getCompanion(state.editingCompanionId);
+            if (!companion) return;
+            const selected = [...document.querySelectorAll('[data-social-content-type]:checked')].map(item => item.value);
+            if (!selected.length) {
+                input.checked = true;
+                return showToast('Keep at least one social content category enabled.', 'info');
+            }
+            companion.socialContentTypes = selected;
+        };
+    });
+    const socialBlueprints = {
+        balanced: { platform: 'instagram', audience: 'public', frequency: 'few_week', photoRatio: 70, thirst: 20, monetization: 'none', adult: 'none', types: ['everyday', 'selfies', 'friends', 'work_school', 'fashion', 'food', 'travel', 'thoughts'] },
+        everyday: { platform: 'facebook', audience: 'friends', frequency: 'weekly', photoRatio: 50, thirst: 0, monetization: 'none', adult: 'none', types: ['everyday', 'friends', 'work_school', 'food', 'pets', 'hobbies', 'thoughts'] },
+        instagram_creator: { platform: 'instagram', audience: 'public', frequency: 'daily', photoRatio: 90, thirst: 35, monetization: 'tips', adult: 'suggestive', types: ['selfies', 'fashion', 'fitness', 'food', 'travel', 'thirst_traps', 'promotions'] },
+        microblogger: { platform: 'microblog', audience: 'public', frequency: 'active', photoRatio: 25, thirst: 10, monetization: 'none', adult: 'none', types: ['everyday', 'thoughts', 'opinions', 'memes', 'music_media'] },
+        facebook_social: { platform: 'facebook', audience: 'friends', frequency: 'weekly', photoRatio: 60, thirst: 0, monetization: 'none', adult: 'none', types: ['everyday', 'friends', 'parties', 'food', 'travel', 'pets', 'hobbies'] },
+        thirst_traps: { platform: 'instagram', audience: 'public', frequency: 'few_week', photoRatio: 100, thirst: 90, monetization: 'tips', adult: 'suggestive', types: ['selfies', 'fashion', 'fitness', 'thirst_traps', 'swimwear'] },
+        subscriber_creator: { platform: 'subscriber', audience: 'private', frequency: 'daily', photoRatio: 100, thirst: 90, monetization: 'tips_subscription', adult: 'mature', types: ['selfies', 'fashion', 'thirst_traps', 'swimwear', 'boudoir', 'locked_content'] }
+    };
+    document.getElementById('cs-social-apply-blueprint').onclick = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        const select = document.getElementById('cs-social-blueprint');
+        const blueprint = socialBlueprints[select.value];
+        if (!companion || !blueprint) return showToast('Custom mode keeps your current settings.', 'info');
+        companion.socialPlatform = blueprint.platform;
+        companion.socialAudience = blueprint.audience;
+        companion.socialPostFrequency = blueprint.frequency;
+        companion.socialPhotoRatio = blueprint.photoRatio;
+        companion.socialThirstTrapLevel = blueprint.thirst;
+        companion.socialMonetization = blueprint.monetization;
+        companion.socialAdultLevel = blueprint.adult;
+        companion.socialContentTypes = blueprint.types.slice();
+        companion.socialFeedImages = blueprint.photoRatio > 0 && companion.allowPhotos;
+        renderCompanionStudioForm();
+        activateCompanionStudioTab('cs-social');
+        document.getElementById('cs-social-blueprint').value = select.value;
+        showToast('Account blueprint applied. Every field remains editable.', 'success');
+    };
+    document.getElementById('cs-social-add-status').onclick = () => {
+        const companion = commitCompanionStudioForm();
+        if (companion) addCompanionStartingSocialPost(companion, 'status');
+    };
+    document.getElementById('cs-social-add-photo').onclick = () => {
+        const companion = commitCompanionStudioForm();
+        if (companion) addCompanionStartingSocialPost(companion, 'photo');
+    };
+    document.getElementById('cs-social-generate-seed').onclick = async () => {
+        const companion = commitCompanionStudioForm();
+        const button = document.getElementById('cs-social-generate-seed');
+        const status = document.getElementById('cs-social-seed-status');
+        if (!companion) return;
+        button.disabled = true;
+        button.textContent = 'Drafting profile…';
+        if (status) status.textContent = 'The conversation model is drafting ten editable posts. No images are generated yet.';
+        try {
+            await generateCompanionStartingSocialPosts(companion);
+            await saveState();
+            renderCompanionSocialStudio(companion);
+            if (status) status.textContent = 'Ten posts drafted. Review the writing and photo scenes, then generate or upload the images you want.';
+        } catch (error) {
+            if (status) status.textContent = error.message;
+            showToast(`Social profile generation failed: ${error.message}`, 'error');
+        } finally {
+            button.disabled = false;
+            button.textContent = '✦ Generate 10 posts';
+        }
+    };
+    document.getElementById('cs-social-generate-photos').onclick = async () => {
+        const companion = commitCompanionStudioForm();
+        const button = document.getElementById('cs-social-generate-photos');
+        const status = document.getElementById('cs-social-seed-status');
+        if (!companion) return;
+        const missing = companion.startingSocialPosts.filter(post => post.kind === 'photo' && post.scene && !post.photo);
+        if (!missing.length) return showToast('There are no described starter photos to generate.', 'info');
+        button.disabled = true;
+        try {
+            for (let index = 0; index < missing.length; index += 1) {
+                const post = missing[index];
+                if (status) status.textContent = `Generating starter photo ${index + 1} of ${missing.length}…`;
+                post.pending = true;
+                await resolveCompanionSocialPhoto(companion, post);
+                renderCompanionSocialStudio(companion);
+            }
+            if (status) status.textContent = 'Starter photos finished. Any provider failures remain editable and can be retried.';
+        } finally { button.disabled = false; }
+    };
+    document.getElementById('cs-social-apply-current').onclick = async () => {
+        const companion = commitCompanionStudioForm();
+        if (!companion) return;
+        companion.socialPosts = materializeCompanionStartingSocialPosts(companion, Date.now());
+        companion.socialFeedRuntime.lastPostAt = companion.socialPosts.length
+            ? Math.max(...companion.socialPosts.map(post => post.createdAt)) : 0;
+        companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, Date.now());
+        companion.socialRelationship = {
+            role: companion.socialPlayerRole,
+            totalTips: 0,
+            lastTipAt: 0,
+            subscribedAt: ['subscriber', 'vip_subscriber'].includes(companion.socialPlayerRole) ? Date.now() : 0,
+            engagement: 0
+        };
+        persistCompanionRuntime(companion);
+        await saveState();
+        renderCompanionSocialStudio(companion);
+        showToast('Starter social profile applied to the current timeline.', 'success');
+    };
     document.getElementById('cs-edit-life-btn').onclick = () => {
         const companion = commitCompanionStudioForm();
         if (companion?.lifeProfile?.initializedAt) renderCompanionLifeEditor(companion);
@@ -36592,7 +37459,11 @@ function setupCompanionsLogic() {
     };
     document.getElementById('cs-allow-photos').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
-        if (companion) companion.allowPhotos = e.target.checked;
+        if (companion) {
+            companion.allowPhotos = e.target.checked;
+            const feedImages = document.getElementById('cs-social-feed-images');
+            if (feedImages) feedImages.disabled = !companion.socialFeedEnabled || !e.target.checked;
+        }
     };
     document.getElementById('cs-allow-voice-notes').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
@@ -36649,6 +37520,7 @@ function setupCompanionsLogic() {
             ? event.target.value : 'provider';
         companion.model = '';
         companion.supportedParams = [];
+        companion.inputModalities = ['text'];
         const custom = document.getElementById('cs-text-model-custom');
         if (custom) custom.value = '';
         populateCompanionTextModelPicker(companion, true);
@@ -36857,6 +37729,7 @@ function setupCompanionsLogic() {
 
     setupCompanionTimelineControls();
     setupCompanionComposer();
+    setupCompanionSocialPanel();
     setupCompanionCall();
 }
 
@@ -37252,7 +38125,7 @@ function companionBubbleHTML(companion, message) {
     if (message.type === 'photo') {
         return `<div class="companion-bubble companion-bubble-photo">
             ${message.pending ? `<div class="form-hint">📷 sending a photo…</div>`
-                : message.photo ? `<img src="${escapeHTML(message.photo)}" data-companion-photo="${escapeHTML(message.id)}" alt="Photo from ${escapeHTML(companion.name || 'virtual human')}">${message.text ? `<div class="companion-photo-caption">${escapeHTML(message.text)}</div>` : ''}`
+                : message.photo ? `<img src="${escapeHTML(message.photo)}" data-companion-photo="${escapeHTML(message.id)}" alt="${message.role === 'user' ? 'Photo sent by the player' : `Photo from ${escapeHTML(companion.name || 'virtual human')}`}">${message.text ? `<div class="companion-photo-caption">${escapeHTML(message.text)}</div>` : ''}`
                 : `<div class="form-hint">⚠ photo failed to send${message.generationError ? ` · ${escapeHTML(message.generationError)}` : ''}</div>
                    <button class="tool-btn" type="button" data-retry-photo="${escapeHTML(message.id)}">Retry photo</button>`}
             ${links}
@@ -37265,6 +38138,480 @@ function companionBubbleHTML(companion, message) {
         </div>`;
     }
     return `<div class="companion-bubble">${message.text ? escapeHTML(message.text) : ''}${links}</div>`;
+}
+
+let companionSocialTab = 'feed';
+const companionSocialPanelVisibility = new Map();
+
+function companionSocialPanelKey(companion) {
+    const timeline = getActiveCompanionTimeline(companion?.id);
+    return `${companion?.id || ''}:${timeline?.id || ''}`;
+}
+
+function renderCompanionSocialStudio(companion) {
+    const list = document.getElementById('cs-social-seed-list');
+    const count = document.getElementById('cs-social-seed-count');
+    if (!list || !companion) return;
+    const posts = companion.startingSocialPosts || [];
+    if (count) count.textContent = `${posts.length} starter post${posts.length === 1 ? '' : 's'}`;
+    if (!posts.length) {
+        list.innerHTML = `<div class="vh-social-seed-empty"><strong>No starting profile yet</strong><span>Add posts yourself or draft ten from this human’s identity, life and online voice.</span></div>`;
+        return;
+    }
+    list.innerHTML = posts.map((post, index) => `<article class="vh-social-seed-card" data-social-seed-id="${escapeHTML(post.id)}">
+        <div class="vh-social-seed-preview">${post.photo
+            ? `<img src="${escapeHTML(post.photo)}" alt="Starter post preview">`
+            : `<span>${post.kind === 'photo' ? 'Photo not generated' : 'Status'}</span>`}</div>
+        <div class="vh-social-seed-fields">
+            <div class="vh-social-seed-row">
+                <select class="form-select" data-social-seed-kind aria-label="Post type"><option value="status" ${post.kind === 'status' ? 'selected' : ''}>Status</option><option value="photo" ${post.kind === 'photo' ? 'selected' : ''}>Photo post</option></select>
+                <select class="form-select" data-social-seed-category aria-label="Post category">${COMPANION_SOCIAL_CONTENT_TYPES.map(type => `<option value="${type}" ${post.category === type ? 'selected' : ''}>${type.replaceAll('_', ' ')}</option>`).join('')}</select>
+                <select class="form-select" data-social-seed-visibility aria-label="Post visibility"><option value="public" ${post.visibility === 'public' ? 'selected' : ''}>Public</option><option value="followers" ${post.visibility === 'followers' ? 'selected' : ''}>Followers</option><option value="subscribers" ${post.visibility === 'subscribers' ? 'selected' : ''}>Subscribers</option><option value="paid" ${post.visibility === 'paid' ? 'selected' : ''}>Paid unlock</option></select>
+                <label>Days ago <input class="form-input" data-social-seed-age type="number" min="0" max="3650" value="${Number(post.seedAgeDays) || Math.max(1, posts.length - index)}"></label>
+                <button class="btn btn-ghost" type="button" data-social-seed-upload>Upload image</button>
+                <input type="file" hidden data-social-seed-file accept="image/*">
+                <button class="btn btn-ghost danger" type="button" data-social-seed-delete>Delete</button>
+            </div>
+            <label class="vh-social-seed-price ${post.visibility === 'paid' ? '' : 'hidden'}" data-social-seed-price-row>Unlock price <input class="form-input" data-social-seed-price type="number" min="0" max="1000000" value="${post.unlockPrice || companion.socialSubscriptionPrice || 10}"> ${escapeHTML(companion.socialCurrency)}</label>
+            <textarea class="form-textarea" rows="2" data-social-seed-text placeholder="What did they post?">${escapeHTML(post.text)}</textarea>
+            <textarea class="form-textarea ${post.kind === 'photo' ? '' : 'hidden'}" rows="2" data-social-seed-scene placeholder="Describe the photo for generation: camera, place, outfit, people present…">${escapeHTML(post.scene)}</textarea>
+        </div>
+    </article>`).join('');
+
+    list.querySelectorAll('[data-social-seed-id]').forEach(card => {
+        const post = posts.find(item => item.id === card.dataset.socialSeedId);
+        if (!post) return;
+        const kind = card.querySelector('[data-social-seed-kind]');
+        const category = card.querySelector('[data-social-seed-category]');
+        const visibility = card.querySelector('[data-social-seed-visibility]');
+        const priceRow = card.querySelector('[data-social-seed-price-row]');
+        const scene = card.querySelector('[data-social-seed-scene]');
+        kind.onchange = () => {
+            post.kind = kind.value === 'photo' ? 'photo' : 'status';
+            scene.classList.toggle('hidden', post.kind !== 'photo');
+        };
+        category.onchange = () => { post.category = category.value; };
+        visibility.onchange = () => {
+            post.visibility = visibility.value;
+            priceRow.classList.toggle('hidden', post.visibility !== 'paid');
+        };
+        card.querySelector('[data-social-seed-price]').oninput = event => {
+            post.unlockPrice = livingClamp(Number(event.target.value) || 0, 0, 1000000);
+        };
+        card.querySelector('[data-social-seed-age]').oninput = event => {
+            post.seedAgeDays = livingClamp(parseInt(event.target.value) || 0, 0, 3650);
+        };
+        card.querySelector('[data-social-seed-text]').oninput = event => { post.text = event.target.value.slice(0, 1200); };
+        scene.oninput = event => { post.scene = event.target.value.slice(0, 500); };
+        card.querySelector('[data-social-seed-delete]').onclick = async () => {
+            companion.startingSocialPosts = posts.filter(item => item.id !== post.id);
+            await saveState();
+            renderCompanionSocialStudio(companion);
+        };
+        const fileInput = card.querySelector('[data-social-seed-file]');
+        card.querySelector('[data-social-seed-upload]').onclick = () => fileInput.click();
+        fileInput.onchange = async event => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            try {
+                post.photo = await normalizeUploadedImage(file, 1280, 0.84);
+                post.kind = 'photo';
+                await saveState();
+                renderCompanionSocialStudio(companion);
+            } catch (error) { showToast(`Social image upload failed: ${error.message}`, 'error'); }
+        };
+    });
+}
+
+function addCompanionStartingSocialPost(companion, kind = 'status') {
+    const post = normalizeCompanionSocialPost({
+        id: livingId('vh_seed_post', `${Date.now()}_${Math.random()}_${companion.id}`),
+        kind: kind === 'photo' ? 'photo' : 'status',
+        category: companion.socialContentTypes?.[0] || 'everyday',
+        text: '', scene: '', seedAgeDays: Math.max(1, (companion.startingSocialPosts?.length || 0) + 1),
+        createdAt: Date.now(), source: 'manual'
+    });
+    companion.startingSocialPosts.push(post);
+    renderCompanionSocialStudio(companion);
+}
+
+async function generateCompanionStartingSocialPosts(companion) {
+    const textProvider = companionTextProviderId(companion);
+    if (!providerHasCredentials(textProvider)) throw new Error(`Add a ${providerDisplayName(textProvider)} API key in Settings first.`);
+    const model = String(companion.model || state.globalSettings.defaultModel || '').trim();
+    if (!model) throw new Error('Choose a conversation model first.');
+    const photoCount = companion.socialFeedImages && companion.allowPhotos
+        ? Math.round(10 * companion.socialPhotoRatio / 100) : 0;
+    const allowedTypes = companion.socialContentTypes?.length ? companion.socialContentTypes : ['everyday'];
+    const body = {
+        model,
+        messages: [{ role: 'system', content: `Create an editable pre-existing social profile for one fictional adult. Return JSON only: {"posts":[{"kind":"status|photo","category":"one allowed category","visibility":"public|followers|subscribers|paid","unlockPrice":0,"text":"concise post in their exact online voice","scene":"photo-generation description or blank","daysAgo":1}]}. Create exactly 10 posts across the last 90 days with exactly ${photoCount} photo posts and ${10 - photoCount} status posts. Allowed categories only: ${allowedTypes.join(', ')}. Thirst-trap intensity is ${companion.socialThirstTrapLevel}/100. Adult-content level is ${companion.socialAdultLevel}; all depicted people are adults, and explicit scenes are permitted only when that setting is explicit and the selected image provider supports them. Social format is ${companion.socialPlatform}; monetization is ${companion.socialMonetization}. Use subscriber or paid visibility only when the account supports it. These posts happened before the player contacted them. Never mention or imply shared history with the player. Obey the supplied social writing style, access rules and custom rules precisely. Ground every post in the supplied identity, social circle, tastes, location and routine. No hashtags unless the authored style calls for them.` }, {
+            role: 'user', content: JSON.stringify({
+                name: companion.name, age: companion.age, appearance: companion.appearance,
+                personality: companion.personality, backstory: companion.backstory,
+                occupation: companion.occupation, socialWorld: companion.socialWorld,
+                location: companion.locationLabel, textingStyle: companion.textingStyle,
+                habits: companion.habits, routine: companion.routine,
+                socialBehavior: companionSocialBehaviorSummary(companion),
+                activeLife: companion.lifeProfile?.initializedAt ? companion.lifeProfile : undefined
+            })
+        }],
+        temperature: 0.86,
+        max_tokens: 3000
+    };
+    const modelInfo = openRouterModels.find(item => item.id === model);
+    if (textProvider !== 'local' && modelInfo?.supported_parameters?.includes('response_format')) {
+        body.response_format = { type: 'json_object' };
+    }
+    const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
+        body: JSON.stringify(body)
+    });
+    if (!response.ok) throw new Error(humanizeApiError(new Error((await response.json().catch(() => ({})))?.error?.message || `Request failed (${response.status})`)));
+    const payload = await response.json();
+    const content = payload?.choices?.[0]?.message?.content;
+    const text = Array.isArray(content) ? content.map(part => part?.text || '').join('\n') : String(content || payload?.output_text || '');
+    const parsed = safeParseJSONRepair(text) || extractJSON(text);
+    if (!Array.isArray(parsed?.posts) || parsed.posts.length < 4) throw new Error('The model returned no usable social posts.');
+    const generatedAt = Date.now();
+    companion.startingSocialPosts = parsed.posts.slice(0, 12).map((raw, index) => normalizeCompanionSocialPost({
+        id: livingId('vh_seed_post', `ai_${index}_${generatedAt}_${companion.id}`),
+        kind: raw.kind === 'photo' ? 'photo' : 'status', category: raw.category,
+        visibility: raw.visibility, unlockPrice: raw.unlockPrice,
+        text: raw.text, scene: raw.scene,
+        seedAgeDays: livingClamp(Number(raw.daysAgo) || index + 1, 1, 3650), createdAt: Date.now(), source: 'manual'
+    })).filter(post => post.text || post.scene);
+    return companion.startingSocialPosts;
+}
+
+function companionSocialQuickControlsHTML(companion) {
+    return `<details class="companion-social-quick-settings">
+        <summary>Quick feed settings</summary>
+        <label class="vh-test-check">
+            <input type="checkbox" data-social-photo-posts ${companion.socialFeedImages && companion.allowPhotos ? 'checked' : ''} ${companion.allowPhotos ? '' : 'disabled'}>
+            <span>Generated photo posts${companion.allowPhotos ? '' : ' (photos disabled in Studio)'}</span>
+        </label>
+        <button type="button" class="btn btn-ghost danger" data-disable-social-feed>Turn feed off</button>
+        <small>Pauses new posts and hides the chronological feed. The gallery and profile remain available.</small>
+    </details>`;
+}
+
+function bindCompanionSocialQuickControls(companion, content) {
+    const photoPosts = content.querySelector('[data-social-photo-posts]');
+    if (photoPosts) photoPosts.onchange = async () => {
+        companion.socialFeedImages = photoPosts.checked && companion.allowPhotos;
+        await saveState();
+    };
+    const disable = content.querySelector('[data-disable-social-feed]');
+    if (disable) disable.onclick = async () => {
+        companion.socialFeedEnabled = false;
+        companion.socialFeedRuntime.nextPostAt = 0;
+        await saveState();
+        renderCompanionSocialPanel(companion);
+        showToast('Feed paused. Gallery and profile history remain available.', 'info');
+    };
+}
+
+function companionSocialPlatformName(companion) {
+    return { instagram: 'Photo profile', microblog: 'Microblog', facebook: 'Social profile', subscriber: 'Subscriber page', custom: 'Social profile' }[companion.socialPlatform] || 'Social profile';
+}
+
+function companionSocialRelationshipHTML(companion) {
+    const relation = companion.socialRelationship || { role: companion.socialPlayerRole || 'stranger', totalTips: 0 };
+    const labels = { stranger: 'Not following', follower: 'Follower', mutual: 'Mutual', friend: 'Friend', subscriber: 'Subscriber', vip_subscriber: 'VIP subscriber' };
+    const canSubscribe = ['subscription', 'tips_subscription'].includes(companion.socialMonetization);
+    return `<section class="companion-social-relationship-card">
+        <div><span>${escapeHTML(companionSocialPlatformName(companion))}</span><strong>${escapeHTML(labels[relation.role] || relation.role)}</strong></div>
+        <div class="companion-social-relationship-actions">
+            ${relation.role === 'stranger' ? '<button type="button" data-social-follow>Follow</button>' : relation.role === 'follower' ? '<button type="button" data-social-unfollow>Following</button>' : ''}
+            ${canSubscribe && !['subscriber', 'vip_subscriber'].includes(relation.role) ? `<button type="button" class="primary" data-social-subscribe>Subscribe · ${escapeHTML(String(companion.socialSubscriptionPrice))} ${escapeHTML(companion.socialCurrency)}</button>` : ''}
+        </div>
+        ${relation.totalTips > 0 ? `<small>You have tipped ${escapeHTML(String(relation.totalTips))} ${escapeHTML(companion.socialCurrency)} in this timeline.</small>` : ''}
+    </section>`;
+}
+
+function bindCompanionSocialRelationshipControls(companion, content) {
+    const relation = companion.socialRelationship;
+    const follow = content.querySelector('[data-social-follow]');
+    if (follow) follow.onclick = async () => {
+        relation.role = 'follower'; relation.engagement = Math.max(relation.engagement, 4);
+        await saveState(); renderCompanionSocialPanel(companion);
+    };
+    const unfollow = content.querySelector('[data-social-unfollow]');
+    if (unfollow) unfollow.onclick = async () => {
+        relation.role = 'stranger'; await saveState(); renderCompanionSocialPanel(companion);
+    };
+    const subscribe = content.querySelector('[data-social-subscribe]');
+    if (subscribe) subscribe.onclick = async () => {
+        relation.role = 'subscriber'; relation.subscribedAt = Date.now(); relation.engagement = Math.max(relation.engagement, 12);
+        companion.lifeEvents.push(normalizeCompanionLifeEvent({
+            text: `The player subscribed to ${companion.name}'s social page for ${companion.socialSubscriptionPrice} ${companion.socialCurrency}.`,
+            createdAt: Date.now(), source: 'relationship'
+        }));
+        companion.lifeEvents = companion.lifeEvents.slice(-200);
+        persistCompanionRuntime(companion); await saveState(); renderCompanionSocialPanel(companion);
+        showToast(`${companion.name} can notice that you subscribed.`, 'success');
+    };
+}
+
+function companionSocialPostAccessible(companion, post) {
+    const role = companion.socialRelationship?.role || 'stranger';
+    if (post.visibility === 'followers') return role !== 'stranger';
+    if (post.visibility === 'subscribers') return ['subscriber', 'vip_subscriber'].includes(role);
+    if (post.visibility === 'paid') return post.unlockedByPlayer || role === 'vip_subscriber';
+    return true;
+}
+
+function companionSocialCommentsHTML(post) {
+    const comments = (post.comments || []).slice(-3);
+    return `${comments.length ? `<div class="companion-social-comments">${comments.map(comment =>
+        `<div><strong>You</strong><span>${escapeHTML(comment.text)}</span></div>`).join('')}</div>` : ''}
+        <form class="companion-social-comment-form" data-comment-social-post="${escapeHTML(post.id)}">
+            <input type="text" maxlength="500" placeholder="Comment on this post…" aria-label="Comment on this post">
+            <button type="submit">Comment</button>
+        </form>`;
+}
+
+async function addCompanionSocialComment(companion, post, text) {
+    const commentText = String(text || '').trim().slice(0, 500);
+    if (!commentText) return false;
+    post.comments ||= [];
+    post.comments.push({
+        id: livingId('vh_social_comment', `${post.id}|${Date.now()}|${commentText}`),
+        text: commentText,
+        createdAt: Date.now()
+    });
+    post.comments = post.comments.slice(-50);
+    companion.socialRelationship.engagement = livingClamp(companion.socialRelationship.engagement + 2, 0, 100);
+    companion.lifeEvents.push(normalizeCompanionLifeEvent({
+        text: `The player commented “${commentText}” on ${companion.name}'s social post “${post.text || post.category || 'photo'}”.`,
+        createdAt: Date.now(), source: 'relationship'
+    }));
+    companion.lifeEvents = companion.lifeEvents.slice(-200);
+    persistCompanionRuntime(companion);
+    await saveState();
+    return true;
+}
+
+function bindCompanionSocialCommentForms(companion, root, options = {}) {
+    root.querySelectorAll('[data-comment-social-post]').forEach(form => {
+        form.onsubmit = async event => {
+            event.preventDefault();
+            const post = companion.socialPosts.find(item => item.id === form.dataset.commentSocialPost);
+            const input = form.querySelector('input');
+            if (!post || !input || !input.value.trim()) return;
+            if (await addCompanionSocialComment(companion, post, input.value)) {
+                options.onComment?.();
+                renderCompanionSocialPanel(companion);
+                showToast(`${companion.name} will see your comment and may—or may not—bring it up.`, 'success');
+            }
+        };
+    });
+}
+
+function openCompanionSocialImage(companion, post) {
+    if (!post?.photo || !companionSocialPostAccessible(companion, post)) return;
+    document.querySelector('.companion-social-lightbox')?.remove();
+    const lightbox = document.createElement('div');
+    lightbox.className = 'companion-social-lightbox';
+    lightbox.setAttribute('role', 'dialog');
+    lightbox.setAttribute('aria-modal', 'true');
+    lightbox.setAttribute('aria-label', `Photo post from ${companion.name || 'Virtual Human'}`);
+    lightbox.innerHTML = `<div class="companion-social-lightbox-card">
+        <button type="button" class="companion-social-lightbox-close" aria-label="Close full-size image">×</button>
+        <img src="${escapeHTML(post.photo)}" alt="Full-size social post from ${escapeHTML(companion.name || 'Virtual Human')}">
+        <div class="companion-social-lightbox-meta">
+            <strong>${escapeHTML(companion.name || 'Virtual Human')}</strong>
+            ${post.text ? `<p>${escapeHTML(post.text)}</p>` : ''}
+            ${companionSocialCommentsHTML(post)}
+        </div>
+    </div>`;
+    const close = () => {
+        document.removeEventListener('keydown', onKeydown);
+        lightbox.remove();
+    };
+    const onKeydown = event => { if (event.key === 'Escape') close(); };
+    lightbox.onclick = event => { if (event.target === lightbox) close(); };
+    lightbox.querySelector('.companion-social-lightbox-close').onclick = close;
+    bindCompanionSocialCommentForms(companion, lightbox, { onComment: close });
+    document.addEventListener('keydown', onKeydown);
+    document.body.appendChild(lightbox);
+    lightbox.querySelector('.companion-social-lightbox-close').focus();
+}
+
+function bindCompanionSocialImageOpeners(companion, root) {
+    root.querySelectorAll('[data-open-social-photo]').forEach(button => {
+        button.onclick = () => {
+            const post = companion.socialPosts.find(item => item.id === button.dataset.openSocialPhoto);
+            if (post) openCompanionSocialImage(companion, post);
+        };
+    });
+}
+
+function renderCompanionSocialPanel(companion) {
+    const button = document.getElementById('companion-social-btn');
+    const panel = document.getElementById('companion-social-panel');
+    const content = document.getElementById('companion-social-content');
+    if (!button || !panel || !content) return;
+    const panelKey = companionSocialPanelKey(companion);
+    const open = companionSocialPanelVisibility.has(panelKey)
+        ? companionSocialPanelVisibility.get(panelKey) : false;
+    panel.classList.toggle('hidden', !open);
+    button.classList.remove('hidden');
+    button.classList.toggle('active', open);
+    button.innerHTML = `<span aria-hidden="true">▦</span> Social Media <span class="companion-social-state ${companion.socialFeedEnabled ? 'on' : 'off'}">${companion.socialFeedEnabled ? 'On' : 'Off'}</span>`;
+    button.title = companion.socialFeedEnabled
+        ? 'Social feed and gallery' : 'Set up social feed and gallery';
+    const masterToggle = document.getElementById('cc-social-enabled-toggle');
+    if (masterToggle) {
+        masterToggle.setAttribute('aria-pressed', String(companion.socialFeedEnabled));
+        masterToggle.classList.toggle('active', companion.socialFeedEnabled);
+        masterToggle.textContent = companion.socialFeedEnabled ? 'Feed active' : 'Feed paused';
+    }
+    document.getElementById('cc-social-title').textContent = `${companion.name || 'Their'} social`;
+    const tabLabels = companion.socialPlatform === 'subscriber'
+        ? { feed: 'Posts', gallery: 'Media vault' }
+        : companion.socialPlatform === 'microblog' ? { feed: 'Timeline', gallery: 'Media' }
+        : { feed: 'Feed', gallery: 'Gallery' };
+    document.querySelectorAll('[data-companion-social-tab]').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.companionSocialTab === companionSocialTab);
+        tab.textContent = tabLabels[tab.dataset.companionSocialTab];
+    });
+    const posts = companion.socialPosts.slice().sort((left, right) => right.createdAt - left.createdAt);
+    posts.filter(post => post.pending && post.scene).forEach(post => resolveCompanionSocialPhoto(companion, post));
+    const relationshipCard = companionSocialRelationshipHTML(companion);
+    const pausedBanner = !companion.socialFeedEnabled
+        ? '<div class="companion-social-paused-banner"><strong>Feed paused</strong><span>No new posts will be created. Your gallery and social relationship are still available.</span><button type="button" data-social-resume>Resume feed</button></div>' : '';
+    const quickControls = companion.socialFeedEnabled ? companionSocialQuickControlsHTML(companion) : '';
+    if (companionSocialTab === 'gallery') {
+        const photos = posts.filter(post => post.photo);
+        content.innerHTML = relationshipCard + pausedBanner + (photos.length
+            ? `<div class="companion-social-gallery">${photos.map(post => companionSocialPostAccessible(companion, post)
+                ? `<button type="button" data-open-social-photo="${escapeHTML(post.id)}" aria-label="Open photo: ${escapeHTML(post.text || 'social post')}"><img src="${escapeHTML(post.photo)}" alt="Gallery post from ${escapeHTML(companion.name || 'virtual human')}" title="${escapeHTML(post.text || post.scene || '')}"></button>`
+                : `<div class="companion-social-gallery-lock"><span>🔒</span><small>${post.visibility === 'paid' ? `${post.unlockPrice || companion.socialSubscriptionPrice} ${escapeHTML(companion.socialCurrency)}` : post.visibility}</small></div>`).join('')}</div>`
+            : '<div class="companion-social-empty">No gallery photos yet. Photo posts appear here automatically.</div>');
+        bindCompanionSocialRelationshipControls(companion, content);
+        bindCompanionSocialImageOpeners(companion, content);
+        const resume = content.querySelector('[data-social-resume]');
+        if (resume) resume.onclick = () => document.getElementById('cc-social-enabled-toggle').click();
+        return;
+    }
+    if (!companion.socialFeedEnabled) {
+        content.innerHTML = relationshipCard + pausedBanner;
+        bindCompanionSocialRelationshipControls(companion, content);
+        content.querySelector('[data-social-resume]').onclick = () => document.getElementById('cc-social-enabled-toggle').click();
+        return;
+    }
+    content.innerHTML = relationshipCard + quickControls + (posts.length ? posts.map(post => {
+        const avatarStyle = companion.profilePhoto
+            ? `background-image:url(&quot;${escapeHTML(companion.profilePhoto)}&quot;)` : '';
+        const accessible = companionSocialPostAccessible(companion, post);
+        const photo = post.pending
+            ? '<div class="companion-social-photo-state">Generating photo…</div>'
+            : post.photo && accessible ? `<button type="button" class="companion-social-photo-open" data-open-social-photo="${escapeHTML(post.id)}" aria-label="Open full-size photo"><img src="${escapeHTML(post.photo)}" alt="Social post from ${escapeHTML(companion.name || 'virtual human')}"></button>`
+            : post.generationError ? `<div class="companion-social-photo-state">Photo failed · ${escapeHTML(post.generationError)}</div>` : '';
+        const locked = !accessible ? `<div class="companion-social-locked"><strong>Locked post</strong><span>${post.visibility === 'paid' ? `${post.unlockPrice || companion.socialSubscriptionPrice} ${escapeHTML(companion.socialCurrency)} to unlock` : 'Available to followers or subscribers'}</span>${post.visibility === 'paid' ? `<button type="button" data-unlock-social-post="${escapeHTML(post.id)}">Unlock</button>` : ''}</div>` : '';
+        const canTip = ['tips', 'tips_subscription'].includes(companion.socialMonetization);
+        return `<article class="companion-social-post">
+            <div class="companion-social-post-head"><span class="companion-social-post-avatar" style="${avatarStyle}">${companion.profilePhoto ? '' : escapeHTML(companionInitials(companion.name))}</span><div><strong>${escapeHTML(companion.name || 'Virtual human')}</strong><time>${escapeHTML(companionTimestampLabel(companion, post.createdAt))}</time></div></div>
+            ${accessible && post.text ? `<div class="companion-social-post-copy">${escapeHTML(post.text)}</div>` : ''}${photo}${locked}
+            <div class="companion-social-post-actions"><button type="button" class="companion-social-like${post.likedByPlayer ? ' liked' : ''}" data-like-social-post="${escapeHTML(post.id)}">${post.likedByPlayer ? '♥ Liked' : '♡ Like'}</button>${canTip ? `<button type="button" class="companion-social-tip" data-tip-social-post="${escapeHTML(post.id)}">Tip${post.tipsFromPlayer ? ` · ${post.tipsFromPlayer}` : ''}</button>` : ''}</div>
+            ${canTip ? `<div class="companion-social-tip-menu hidden" data-tip-menu="${escapeHTML(post.id)}">${[5, 10, 25, 50].map(amount => `<button type="button" data-tip-amount="${amount}">${amount} ${escapeHTML(companion.socialCurrency)}</button>`).join('')}</div>` : ''}
+            ${accessible ? companionSocialCommentsHTML(post) : ''}
+        </article>`;
+    }).join('') : '<div class="companion-social-empty">Nothing posted yet. This feed grows from their active life rather than filling itself with random content.</div>');
+    bindCompanionSocialQuickControls(companion, content);
+    bindCompanionSocialRelationshipControls(companion, content);
+    bindCompanionSocialImageOpeners(companion, content);
+    bindCompanionSocialCommentForms(companion, content);
+    content.querySelectorAll('[data-like-social-post]').forEach(like => {
+        like.onclick = async () => {
+            const post = companion.socialPosts.find(item => item.id === like.dataset.likeSocialPost);
+            if (!post) return;
+            post.likedByPlayer = !post.likedByPlayer;
+            post.likedAt = post.likedByPlayer ? Date.now() : 0;
+            companion.socialRelationship.engagement = livingClamp(companion.socialRelationship.engagement + (post.likedByPlayer ? 1 : -1), 0, 100);
+            await saveState();
+            renderCompanionSocialPanel(companion);
+        };
+    });
+    content.querySelectorAll('[data-tip-social-post]').forEach(button => {
+        button.onclick = () => content.querySelector(`[data-tip-menu="${CSS.escape(button.dataset.tipSocialPost)}"]`)?.classList.toggle('hidden');
+    });
+    content.querySelectorAll('[data-unlock-social-post]').forEach(button => {
+        button.onclick = async () => {
+            const post = companion.socialPosts.find(item => item.id === button.dataset.unlockSocialPost);
+            if (!post) return;
+            const amount = livingClamp(Number(post.unlockPrice || companion.socialSubscriptionPrice) || 0, 0, 1000000);
+            post.unlockedByPlayer = true;
+            post.tipsFromPlayer += amount;
+            post.lastTipAt = Date.now();
+            companion.socialRelationship.totalTips += amount;
+            companion.socialRelationship.lastTipAt = Date.now();
+            companion.socialRelationship.engagement = livingClamp(companion.socialRelationship.engagement + Math.max(2, Math.round(amount / 10)), 0, 100);
+            companion.lifeEvents.push(normalizeCompanionLifeEvent({
+                text: `The player unlocked a paid social post for ${amount} ${companion.socialCurrency}.`,
+                createdAt: Date.now(), source: 'relationship'
+            }));
+            companion.lifeEvents = companion.lifeEvents.slice(-200);
+            persistCompanionRuntime(companion); await saveState(); renderCompanionSocialPanel(companion);
+            showToast(`Unlocked for ${amount} ${companion.socialCurrency}. This is fictional roleplay currency.`, 'success');
+        };
+    });
+    content.querySelectorAll('[data-tip-amount]').forEach(button => {
+        button.onclick = async () => {
+            const menu = button.closest('[data-tip-menu]');
+            const post = companion.socialPosts.find(item => item.id === menu?.dataset.tipMenu);
+            if (!post) return;
+            const amount = livingClamp(Number(button.dataset.tipAmount) || 0, 0, 1000000);
+            post.tipsFromPlayer += amount; post.lastTipAt = Date.now();
+            companion.socialRelationship.totalTips += amount;
+            companion.socialRelationship.lastTipAt = Date.now();
+            companion.socialRelationship.engagement = livingClamp(companion.socialRelationship.engagement + Math.max(2, Math.round(amount / 10)), 0, 100);
+            companion.lifeEvents.push(normalizeCompanionLifeEvent({
+                text: `The player tipped ${amount} ${companion.socialCurrency} on the social post “${post.text || post.category || 'photo'}”.`,
+                createdAt: Date.now(), source: 'relationship'
+            }));
+            companion.lifeEvents = companion.lifeEvents.slice(-200);
+            persistCompanionRuntime(companion); await saveState(); renderCompanionSocialPanel(companion);
+            showToast(`${companion.name} can notice your ${amount} ${companion.socialCurrency} tip.`, 'success');
+        };
+    });
+}
+
+function setupCompanionSocialPanel() {
+    const panel = document.getElementById('companion-social-panel');
+    document.getElementById('companion-social-btn').onclick = () => {
+        const companion = getCompanion(state.activeCompanionId);
+        if (!companion) return;
+        const key = companionSocialPanelKey(companion);
+        companionSocialPanelVisibility.set(key, panel?.classList.contains('hidden'));
+        renderCompanionSocialPanel(companion);
+    };
+    document.getElementById('companion-social-close-btn').onclick = () => {
+        const companion = getCompanion(state.activeCompanionId);
+        if (!companion) return;
+        companionSocialPanelVisibility.set(companionSocialPanelKey(companion), false);
+        renderCompanionSocialPanel(companion);
+    };
+    document.getElementById('cc-social-enabled-toggle').onclick = async event => {
+        const companion = getCompanion(state.activeCompanionId);
+        if (!companion) return;
+        companion.socialFeedEnabled = !companion.socialFeedEnabled;
+        companion.socialFeedRuntime.nextPostAt = companion.socialFeedEnabled
+            ? companionNextSocialPostAt(companion, Date.now()) : 0;
+        await saveState();
+        renderCompanionSocialPanel(companion);
+        showToast(companion.socialFeedEnabled ? 'Social feed resumed.' : 'Feed paused. Gallery remains available.', 'info');
+    };
+    document.querySelectorAll('[data-companion-social-tab]').forEach(button => {
+        button.onclick = () => {
+            companionSocialTab = button.dataset.companionSocialTab;
+            const companion = getCompanion(state.activeCompanionId);
+            if (companion) renderCompanionSocialPanel(companion);
+        };
+    });
 }
 
 function companionDeliveryHTML(message, companion) {
@@ -37325,12 +38672,35 @@ function renderCompanionThread() {
     if (presenceDot) presenceDot.className = `companion-presence-dot ${life.availability}`;
     document.getElementById('cc-clock').textContent = experience.realTimeLife ? clock.time : 'Paused';
     document.getElementById('cc-date').textContent = experience.realTimeLife ? clock.day : 'real-time off';
+    renderCompanionSocialPanel(companion);
+    const playerPhotoButton = document.getElementById('companion-photo-request-btn');
+    const playerVoiceButton = document.getElementById('companion-voice-request-btn');
+    if (playerPhotoButton) {
+        playerPhotoButton.disabled = !companionInputSupports(companion, 'image');
+        playerPhotoButton.title = playerPhotoButton.disabled
+            ? 'Selected conversation model does not advertise image input' : 'Send a photo';
+    }
+    if (playerVoiceButton) {
+        playerVoiceButton.disabled = !companionInputSupports(companion, 'audio');
+        playerVoiceButton.title = playerVoiceButton.disabled
+            ? 'Selected conversation model does not advertise audio input' : 'Send a voice note';
+    }
 
     const moodBadge = document.getElementById('cc-mood-badge');
-    if (moodBadge) moodBadge.textContent = companionRelationshipShortLabel(companion.mood.relationship);
+    const contactHistory = companionContactHistory(companion, thread, nowMs);
+    if (!contactHistory.hasSpoken) {
+        statusEl.textContent = 'away · you haven’t spoken yet';
+        statusEl.className = 'companion-chat-status away';
+        if (presenceDot) presenceDot.className = 'companion-presence-dot busy';
+    }
+    if (moodBadge) moodBadge.textContent = contactHistory.hasSpoken
+        ? `${companionRelationshipShortLabel(companion.mood.relationship)} · ${contactHistory.label}`
+        : 'never spoken';
     const agencyStatus = document.getElementById('cc-agency-status');
     if (agencyStatus) {
-        const initiative = companion.initiativeMode === 'off'
+        const initiative = !contactHistory.hasSpoken
+            ? 'waiting for first contact'
+            : companion.initiativeMode === 'off'
             ? 'responds when messaged'
             : 'may message you first';
         const responseMode = !experience.replyDelays
@@ -37571,6 +38941,83 @@ function advanceCompanionLife(companion, nowMs = Date.now()) {
     return newestActive;
 }
 
+async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now()) {
+    if (!companion.socialFeedEnabled || companion.socialPostFrequency === 'manual'
+        || !providerHasCredentials(companionTextProviderId(companion))) return null;
+    const life = companionLifeState(companion, nowMs);
+    const situation = life.situation || companionSituationAt(companion, nowMs);
+    const currentContext = `${situation.label || life.label}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}${situation.withNames?.length ? ` with ${situation.withNames.join(', ')}` : ''}. Current clothing: ${situation.outfit || companion.currentOutfit || 'not established'}. Recent life event: ${companion.lifeEvents.at(-1)?.text || 'none'}`.slice(0, 1800);
+    const gate = await labsProposal('human_social_gate', { currentContext }, 'humans', { background: true, priority: 20 });
+    if (gate?.candidate && (gate.candidate.shouldPost !== true || Number(gate.candidate.confidence) < 0.55)) return null;
+    const photoEligible = companion.socialFeedImages && companion.allowPhotos;
+    const requestedFormat = photoEligible
+        && companionSeededRoll(`${companion.id}|post-format|${Math.floor(nowMs / 3600000)}`) * 100 < companion.socialPhotoRatio
+        ? 'photo' : 'status';
+    const allowedTypes = companion.socialContentTypes?.length ? companion.socialContentTypes : ['everyday'];
+    const recent = getCompanionThread(companion.id);
+    const textProvider = companionTextProviderId(companion);
+    const messages = [{ role: 'system', content: buildCompanionSystemPrompt(companion, recent, nowMs, {
+        experience: companionChatExperience(companion.id), suppressPersonaVision: true
+    }) }, {
+        role: 'user',
+        content: `[PRIVATE AUTONOMOUS SOCIAL EVENT — NOT A PLAYER MESSAGE]\nYour social profile is due for consideration. Current authoritative context: ${currentContext}\nAuthored controls: ${companionSocialBehaviorSummary(companion)}\nPublish exactly one ${requestedFormat} post only if this moment is something you would authentically share. The category MUST be one of: ${allowedTypes.join(', ')}. Keep it in the authored social writing voice and obey every custom posting rule. Thirst-trap intensity is ${companion.socialThirstTrapLevel}/100; this controls flirtatious public presentation, not nudity or invented circumstances. Do not address the player, mention the simulation, expose private relationship state, or invent a new event. Call publish_social_post.`
+    }];
+    const body = applyCompanionGenerationConfig({
+        model: companion.model || state.globalSettings.defaultModel,
+        messages: sanitizeMessagesForProvider(messages, textProvider),
+        tools: [COMPANION_SOCIAL_POST_TOOL],
+        tool_choice: { type: 'function', function: { name: 'publish_social_post' } }
+    }, companion, { maxTokens: Math.min(420, companion.maxTokens || 420) });
+    const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
+        body: JSON.stringify(body)
+    });
+    if (!response.ok) throw new Error(humanizeApiError(new Error(await response.text().catch(() => `Request failed (${response.status})`))));
+    const message = (await response.json())?.choices?.[0]?.message || {};
+    const embedded = extractCompanionEmbeddedToolCalls(message.content);
+    const call = [...(Array.isArray(message.tool_calls) ? message.tool_calls : []), ...embedded.toolCalls]
+        .find(item => item.function?.name === 'publish_social_post');
+    const args = call ? safeParseJSONRepair(call.function.arguments) : null;
+    if (!isPlainObject(args) || !String(args.text || '').trim()) return null;
+    return applyCompanionSocialPostCommit(companion, { social_post: {
+        decision: 'post', kind: requestedFormat, category: args.category, text: args.text,
+        visibility: args.visibility, unlock_price: args.unlock_price,
+        scene: args.scene, reason: args.reason || currentContext
+    } }, nowMs, 'autonomy');
+}
+
+async function processCompanionLabsLifeBeat(companion, nowMs = Date.now()) {
+    if (!companion.lifeProfile?.initializedAt || !window.HordeLabs) return null;
+    if (nowMs - (companion.lifeRuntime.lastLabsBeatAt || 0) < 12 * 60 * 60 * 1000) return null;
+    const capability = window.HordeLabs.taskCapabilities?.().find(task => task.id === 'life_beat');
+    if (!capability?.available) return null;
+    companion.lifeRuntime.lastLabsBeatAt = nowMs;
+    const life = companion.lifeProfile;
+    const situation = companionSituationAt(companion, nowMs);
+    const result = await labsProposal('life_beat', {
+        text: `${situation.label}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}`,
+        currentSituation: situation,
+        recentLifeEvents: companion.lifeEvents.slice(-8).map(event => event.text),
+        allowedAnchorIds: life.weeklySchedule.map(block => block.id),
+        allowedPlaceIds: life.places.map(place => place.id),
+        allowedPersonIds: life.socialCircle.map(person => person.id)
+    }, 'humans', { background: true, priority: 15 });
+    const beats = Array.isArray(result?.candidate?.beats) ? result.candidate.beats : [];
+    beats.forEach((beat, index) => {
+        const text = String(beat.summary || '').trim();
+        if (!text) return;
+        companion.lifeEvents.push(normalizeCompanionLifeEvent({
+            id: livingId('vh_labs_beat', `${companion.id}|${nowMs}|${beat.anchorId}|${index}`),
+            text,
+            createdAt: nowMs,
+            source: 'autonomy'
+        }));
+    });
+    companion.lifeEvents = companion.lifeEvents.slice(-200);
+    return beats;
+}
+
 async function processCompanionAgency(nowMs = Date.now()) {
     let stateChanged = false;
     for (const companion of state.companions) {
@@ -37585,6 +39032,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const dynamicsBefore = JSON.stringify(companion.humanDynamics);
         const emotionsBefore = JSON.stringify(companion.emotionState);
         advanceCompanionLife(companion, nowMs);
+        await processCompanionLabsLifeBeat(companion, nowMs);
         advanceCompanionHumanDynamics(companion, nowMs);
         advanceCompanionEmotionState(companion, nowMs);
         if (lifeBefore !== JSON.stringify(companion.lifeRuntime)) stateChanged = true;
@@ -37624,6 +39072,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
                     existingUserMessage: due
                 });
                 if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
+                if (result.pendingSocialPhoto) resolveCompanionSocialPhoto(companion, result.pendingSocialPhoto);
             } catch (error) {
                 due.awaitingReply = true;
                 due.replyDueAt = nowMs + 2 * 60 * 1000;
@@ -37637,10 +39086,36 @@ async function processCompanionAgency(nowMs = Date.now()) {
             continue;
         }
 
+        if (companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual'
+            && !companion.socialFeedRuntime.nextPostAt) {
+            companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
+            stateChanged = true;
+        }
+        if (companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual'
+            && companion.socialFeedRuntime.nextPostAt > 0 && companion.socialFeedRuntime.nextPostAt <= nowMs) {
+            companionAgencyInFlight.add(companion.id);
+            companion.socialFeedRuntime.lastGateAt = nowMs;
+            try {
+                const pendingSocialPhoto = await generateCompanionAutonomousSocialPost(companion, nowMs);
+                if (pendingSocialPhoto) resolveCompanionSocialPhoto(companion, pendingSocialPhoto);
+                if (!pendingSocialPhoto && companion.socialFeedRuntime.lastPostAt !== nowMs) {
+                    companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
+                }
+            } catch (error) {
+                console.warn('Autonomous social post failed:', error);
+                companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
+            } finally {
+                companionAgencyInFlight.delete(companion.id);
+                stateChanged = true;
+            }
+            continue;
+        }
+
         const life = experience.realTimeLife
             ? companionLifeState(companion, nowMs)
             : { activity: 'available', label: 'available to chat', availability: 'available' };
         const hasPendingReply = messages.some(message => message.role === 'user' && message.awaitingReply);
+        const contactHistory = companionContactHistory(companion, messages, nowMs);
         const dueCommitment = companion.commitments.find(commitment =>
             commitment.status === 'pending' && commitment.dueAt > 0 && commitment.dueAt <= nowMs);
         const lifeTrigger = companion.initiativeMode === 'off' ? null : companion.lifeRuntime.pendingInitiative;
@@ -37651,7 +39126,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const emotionallyUnavailable = (
             dynamics.cooldownUntil > nowMs && dynamics.anger >= 55 && dynamics.cooldownReason
         ) || emotions.towardPlayer.disgust >= 72 || emotions.towardPlayer.anger >= 78;
-        if (!hasPendingReply && unanswered.mayFollowUp && !emotionallyUnavailable
+        if (contactHistory.hasSpoken && !hasPendingReply && unanswered.mayFollowUp && !emotionallyUnavailable
             && (dueCommitment || lifeTrigger || initiativeDue) && life.availability === 'available') {
             companionAgencyInFlight.add(companion.id);
             companion.lastProactiveAt = nowMs;
@@ -37666,6 +39141,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
                         : lifeTrigger?.text || ''
                 });
                 if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
+                if (result.pendingSocialPhoto) resolveCompanionSocialPhoto(companion, result.pendingSocialPhoto);
                 if (result.replyMessages.length && state.activeCompanionId !== companion.id) {
                     showToast(`${companion.name || 'A virtual human'} messaged you.`, 'info');
                 }
@@ -37693,6 +39169,28 @@ function startCompanionAgencyEngine() {
 }
 
 const companionPhotoInFlight = new Set();
+const companionSocialPhotoInFlight = new Set();
+
+async function resolveCompanionSocialPhoto(companion, post) {
+    if (!post?.pending || !post.scene) return;
+    const flightId = `${companion.id}|social|${post.id}`;
+    if (companionSocialPhotoInFlight.has(flightId)) return;
+    companionSocialPhotoInFlight.add(flightId);
+    try {
+        const generated = await generateCompanionPhoto(companion, post.scene, { atMs: post.createdAt });
+        post.photo = await loadGeneratedImage(new Image(), generated);
+        post.generationError = '';
+        companion.usage.photosGenerated += 1;
+    } catch (error) {
+        post.generationError = String(error.message || error).slice(0, 1000);
+        console.warn('Social feed photo generation failed:', error);
+    } finally {
+        post.pending = false;
+        companionSocialPhotoInFlight.delete(flightId);
+        await saveState();
+        if (state.activeCompanionId === companion.id) renderCompanionSocialPanel(companion);
+    }
+}
 
 /** After a send resolves, generate any pending photo and re-render once ready. */
 async function resolveCompanionPendingPhoto(companion, pendingPhoto) {
@@ -37771,6 +39269,7 @@ async function rerollLastCompanionReply() {
             turnSnapshot: snapshot
         });
         if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
+        if (result.pendingSocialPhoto) resolveCompanionSocialPhoto(companion, result.pendingSocialPhoto);
         await saveState();
         renderCompanionThread();
         showToast(`Reply regenerated (${removed.length} bubble${removed.length === 1 ? '' : 's'} replaced); only that reply's consequences were rolled back.`, 'success');
@@ -37785,17 +39284,14 @@ async function rerollLastCompanionReply() {
     }
 }
 
-async function handleCompanionSend() {
+async function queueCompanionUserMessage(payload) {
     const companion = getCompanion(state.activeCompanionId);
-    const input = document.getElementById('companion-composer-input');
-    const text = input.value.trim();
-    if (!companion || !text) return;
+    const text = String(payload?.text || '').trim();
+    const type = ['text', 'photo', 'voice'].includes(payload?.type) ? payload.type : 'text';
+    if (!companion || (!text && type === 'text')) return;
     if (!providerHasCredentials(companionTextProviderId(companion))) {
         return showToast(`${providerDisplayName(companionTextProviderId(companion))} API key missing (Settings).`, 'error');
     }
-
-    input.value = '';
-    input.style.height = 'auto';
     const messages = getCompanionThread(companion.id);
     const activeTimeline = getActiveCompanionTimeline(companion.id);
     if (activeTimeline) applyCompanionSilenceProgress(companion, activeTimeline, Date.now());
@@ -37803,7 +39299,8 @@ async function handleCompanionSend() {
     const returnSilence = companionCurrentSilence(companion, messages, Date.now(), experience);
 
     const optimisticUser = normalizeCompanionMessage({
-        role: 'user', type: 'text', text, timestamp: Date.now(),
+        role: 'user', type, text, photo: payload?.photo || '', audio: payload?.audio || '',
+        audioFormat: payload?.audioFormat || '', timestamp: Date.now(),
         deliveryState: 'sent', awaitingReply: true,
         returnGapMs: returnSilence.unanswered.shouldAcknowledgeSilence ? returnSilence.durationMs : 0,
         returnSilenceStage: returnSilence.stage,
@@ -37831,7 +39328,46 @@ async function handleCompanionSend() {
     processCompanionAgency().catch(error => console.error('Could not advance message delivery:', error));
 }
 
+async function handleCompanionSend() {
+    const input = document.getElementById('companion-composer-input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    input.style.height = 'auto';
+    await queueCompanionUserMessage({ type: 'text', text });
+}
+
+function companionAudioFormatFromFile(file) {
+    const type = String(file?.type || '').toLowerCase();
+    const name = String(file?.name || '').toLowerCase();
+    if (/wav/.test(type + name)) return 'wav';
+    if (/mpeg|mp3/.test(type + name)) return 'mp3';
+    if (/flac/.test(type + name)) return 'flac';
+    if (/ogg|opus/.test(type + name)) return 'ogg';
+    if (/aac/.test(type + name)) return 'aac';
+    if (/mp4|m4a/.test(type + name)) return 'm4a';
+    return 'webm';
+}
+
+function fileAsDataUrl(file, maxBytes) {
+    return new Promise((resolve, reject) => {
+        if (!file) return reject(new Error('No file selected.'));
+        if (file.size > maxBytes) return reject(new Error(`File is larger than ${Math.round(maxBytes / 1048576)} MB.`));
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Could not read the selected file.'));
+        reader.readAsDataURL(file);
+    });
+}
+
 const COMPANION_EMOJI = ['😀','😂','🥹','😍','😘','😢','😭','😡','🥺','😳','😏','🙄','😴','🤔','😅','🔥','❤️','💀','👀','🙈','✨','😩','🥰','😤'];
+let companionPlayerRecorder = null;
+let companionPlayerRecordingStream = null;
+let companionPlayerRecordingTimer = null;
+
+function stopCompanionPlayerRecording() {
+    if (companionPlayerRecorder?.state === 'recording') companionPlayerRecorder.stop();
+}
 
 function setupCompanionComposer() {
     const input = document.getElementById('companion-composer-input');
@@ -37840,6 +39376,8 @@ function setupCompanionComposer() {
     const photoRequestBtn = document.getElementById('companion-photo-request-btn');
     const voiceRequestBtn = document.getElementById('companion-voice-request-btn');
     const emojiPicker = document.getElementById('companion-emoji-picker');
+    const photoInput = document.getElementById('companion-player-photo-input');
+    const voiceInput = document.getElementById('companion-player-voice-input');
 
     input.addEventListener('input', () => {
         input.style.height = 'auto';
@@ -37851,17 +39389,92 @@ function setupCompanionComposer() {
     sendBtn.onclick = handleCompanionSend;
     photoRequestBtn.onclick = () => {
         const companion = getCompanion(state.activeCompanionId);
-        if (!companion?.allowPhotos) return showToast('Photos are disabled for this virtual human.', 'info');
-        input.value = input.value || 'Can I see what you’re up to right now? Send me a photo if you feel like it.';
-        input.dispatchEvent(new Event('input'));
-        input.focus();
+        if (!companionInputSupports(companion, 'image')) return showToast('The selected conversation model does not advertise image input. Choose a vision-capable text model.', 'info');
+        photoInput?.click();
     };
-    voiceRequestBtn.onclick = () => {
+    voiceRequestBtn.onclick = async () => {
         const companion = getCompanion(state.activeCompanionId);
-        if (!companion?.allowVoiceNotes) return showToast('Voice notes are disabled for this virtual human.', 'info');
-        input.value = input.value || 'Send me a voice note if you feel like talking out loud.';
-        input.dispatchEvent(new Event('input'));
-        input.focus();
+        if (!companionInputSupports(companion, 'audio')) return showToast('The selected conversation model does not advertise audio input. Choose an audio-capable text model.', 'info');
+        if (companionPlayerRecorder?.state === 'recording') {
+            stopCompanionPlayerRecording();
+            return;
+        }
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            voiceInput?.click();
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const preferredMime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm']
+                .find(type => !MediaRecorder.isTypeSupported || MediaRecorder.isTypeSupported(type));
+            const recorder = preferredMime ? new MediaRecorder(stream, { mimeType: preferredMime }) : new MediaRecorder(stream);
+            const chunks = [];
+            companionPlayerRecorder = recorder;
+            companionPlayerRecordingStream = stream;
+            recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data); };
+            recorder.onerror = event => showToast('Voice recording failed: ' + (event.error?.message || 'unknown recorder error'), 'error');
+            recorder.onstop = async () => {
+                clearTimeout(companionPlayerRecordingTimer);
+                companionPlayerRecordingTimer = null;
+                companionPlayerRecordingStream?.getTracks().forEach(track => track.stop());
+                companionPlayerRecordingStream = null;
+                companionPlayerRecorder = null;
+                voiceRequestBtn.classList.remove('recording');
+                voiceRequestBtn.textContent = '🎙';
+                voiceRequestBtn.title = 'Send a voice note';
+                if (!chunks.length) return;
+                try {
+                    const audioBlob = new Blob(chunks, { type: recorder.mimeType || preferredMime || 'audio/webm' });
+                    const audio = await fileAsDataUrl(audioBlob, 12 * 1024 * 1024);
+                    const caption = input.value.trim();
+                    input.value = '';
+                    input.style.height = 'auto';
+                    await queueCompanionUserMessage({
+                        type: 'voice', text: caption, audio,
+                        audioFormat: companionAudioFormatFromFile(audioBlob)
+                    });
+                } catch (error) {
+                    showToast('Could not send voice note: ' + error.message, 'error');
+                }
+            };
+            recorder.start(250);
+            voiceRequestBtn.classList.add('recording');
+            voiceRequestBtn.textContent = '■';
+            voiceRequestBtn.title = 'Stop and send voice note';
+            showToast('Recording voice note… tap the stop button when finished.', 'info');
+            companionPlayerRecordingTimer = setTimeout(stopCompanionPlayerRecording, 5 * 60 * 1000);
+        } catch (error) {
+            console.warn('Microphone capture unavailable; opening audio picker instead:', error);
+            voiceInput?.click();
+        }
+    };
+    if (photoInput) photoInput.onchange = async event => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+        try {
+            const photo = await normalizeUploadedImage(file, 1536, 0.86);
+            const caption = input.value.trim();
+            input.value = '';
+            input.style.height = 'auto';
+            await queueCompanionUserMessage({ type: 'photo', text: caption, photo });
+        } catch (error) {
+            showToast('Could not send photo: ' + error.message, 'error');
+        }
+    };
+    if (voiceInput) voiceInput.onchange = async event => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+        try {
+            const audio = await fileAsDataUrl(file, 12 * 1024 * 1024);
+            const caption = input.value.trim();
+            input.value = '';
+            input.style.height = 'auto';
+            await queueCompanionUserMessage({ type: 'voice', text: caption, audio, audioFormat: companionAudioFormatFromFile(file) });
+        } catch (error) {
+            showToast('Could not send voice note: ' + error.message, 'error');
+        }
     };
 
     emojiPicker.innerHTML = COMPANION_EMOJI.map(e => `<button type="button">${e}</button>`).join('');

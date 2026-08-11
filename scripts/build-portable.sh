@@ -42,6 +42,14 @@ do
   cp "$ROOT_DIR/$file" "$APP_DIR/"
 done
 
+# Bundled Virtual Humans and Worlds can reference normalized media by relative
+# path. Keep those runtime assets portable without shipping heavy marketing or
+# development artwork in the application archive.
+if [ -d "$ROOT_DIR/assets/bundled" ]; then
+  mkdir -p "$APP_DIR/assets"
+  cp -R "$ROOT_DIR/assets/bundled" "$APP_DIR/assets/"
+fi
+
 chmod +x "$APP_DIR/Start Horde Studio.command" "$APP_DIR/start-horde-studio.sh"
 rm -f "$OUTPUT_FILE"
 

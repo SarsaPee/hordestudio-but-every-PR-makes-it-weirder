@@ -178,6 +178,31 @@
         }
     });
 
+    HordeLabs.registerTask('human_social_gate', {
+        mode: 'humans', minimumTier: 'micro', maxInputChars: 3000, maxOutputTokens: 72, cacheMs: 900000,
+        system: `You are a tiny private posting gate. Decide whether the supplied authoritative current-life facts contain an ordinary, plausible reason for this person to post now. Do not write the post, invent an event, infer hidden thoughts, or reward frequency. Return false when nothing is worth sharing. Evidence must be an exact excerpt from currentContext.`,
+        schema: object({
+            shouldPost: boolean,
+            format: string(['status', 'photo', 'none']),
+            evidence: string(),
+            confidence: number(0, 1)
+        }),
+        validate(candidate, envelope) {
+            if (!plainObject(candidate)) return { ok: false, reason: 'Missing social-post decision.' };
+            if (!evidenceExists(candidate.evidence, { text: envelope.currentContext })) {
+                return { ok: false, reason: 'Post evidence was not present in current life.' };
+            }
+            const shouldPost = candidate.shouldPost === true;
+            const format = shouldPost && ['status', 'photo'].includes(candidate.format) ? candidate.format : 'none';
+            return { ok: true, reason: shouldPost ? 'Grounded post opportunity found.' : 'No grounded post opportunity.', value: {
+                shouldPost,
+                format,
+                evidence: String(candidate.evidence || '').slice(0, 180),
+                confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
+            } };
+        }
+    });
+
     HordeLabs.registerTask('world_micro_frame', {
         mode: 'worlds', minimumTier: 'micro', maxInputChars: 3600, maxOutputTokens: 96,
         system: `You are a tiny semantic sensor inside a deterministic world engine. Read only the supplied player text and candidate lists. Identify the player's own completed or attempted action; quoted speech is not a physical action. Select IDs only from the supplied allowlists. Prefer an explicit later action over an ambiguous earlier phrase. Return exact evidence copied from the player text. Never narrate, invent facts, calculate routes, calculate travel time, or assume an arrival. Use blank IDs and intent "other" rather than guess.`,

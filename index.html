@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260811-emotion-architecture-v1">
+    <link rel="stylesheet" href="style.css?v=20260812-vh-social-interactions-v7">
 </head>
 <body>
 <div id="app">
@@ -1803,6 +1803,7 @@
                         <button class="companion-studio-tab active" data-tab="cs-identity">Identity</button>
                         <button class="companion-studio-tab" data-tab="cs-mind">Inner Life</button>
                         <button class="companion-studio-tab" data-tab="cs-life">Active Life</button>
+                        <button class="companion-studio-tab" data-tab="cs-social">Social Media</button>
                         <button class="companion-studio-tab" data-tab="cs-models">AI &amp; Models</button>
                         <button class="companion-studio-tab" data-tab="cs-voice">Photos &amp; Voice</button>
                     </div>
@@ -2109,6 +2110,20 @@
                                 </div>
                                 <input type="range" id="cs-relationship-start" min="-100" max="100" value="0" style="width:100%;">
                                 <div class="vh-relationship-scale"><span>hostile</span><span>strangers</span><span>deeply attached</span></div>
+                                <div class="form-row vh-contact-history-fields">
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-prior-contact">Have they spoken before?</label>
+                                        <select id="cs-prior-contact" class="form-select">
+                                            <option value="never_spoken">No — first contact has not happened</option>
+                                            <option value="spoken_before">Yes — they already know each other</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-known-before-days">Known before this timeline</label>
+                                        <input id="cs-known-before-days" class="form-input" type="number" min="0" max="36500" value="0" inputmode="numeric">
+                                        <p class="form-hint">Days. Use 0 for a brand-new match or introduction.</p>
+                                    </div>
+                                </div>
                                 <textarea id="cs-relationship-context" class="form-textarea" rows="4" aria-label="Starting relationship context" placeholder="How did they meet? What already happened between them? Are they strangers, coworkers, childhood friends, exes, rivals, partners, or something complicated? What does each person currently believe this relationship is?"></textarea>
                                 <p class="form-hint" id="cs-relationship-current">Current relationship: neutral.</p>
                             </div>
@@ -2231,6 +2246,210 @@
                         </div>
                     </div>
 
+                    <!-- Social Media -->
+                    <div id="tab-cs-social" class="studio-panel hidden">
+                        <div class="panel-header vh-social-studio-header">
+                            <div>
+                                <span class="vh-eyebrow">Public continuity</span>
+                                <h2>Social Media</h2>
+                                <p>Author the profile they had before the first message, then let it evolve with their life.</p>
+                            </div>
+                            <span id="cs-social-seed-count" class="vh-social-seed-count">0 starter posts</span>
+                        </div>
+                        <div class="form-body vh-social-studio-body">
+                            <section class="vh-social-feed-settings vh-social-studio-settings">
+                                <div>
+                                    <h3>Feed availability</h3>
+                                    <p class="form-hint">The panel starts closed in chat and opens only when the player chooses Social Media. Pausing stops new posts and hides the chronological feed; Gallery and relationship history stay available.</p>
+                                </div>
+                                <button id="cs-social-feed-enabled" class="vh-social-feed-toggle" type="button" aria-pressed="false">
+                                    <span class="vh-social-feed-toggle-dot" aria-hidden="true"></span>
+                                    <span id="cs-social-feed-enabled-label">Feed paused</span>
+                                </button>
+                                <label class="vh-test-check" id="cs-social-feed-images-row">
+                                    <input id="cs-social-feed-images" type="checkbox" checked>
+                                    <span>Allow generated feed photos and selfies</span>
+                                </label>
+                                <details class="vh-social-autonomy-note">
+                                    <summary>How autonomous posting works</summary>
+                                    <p>Posting frequency schedules a due window. When Horde Studio is open—or when it catches up after reopening—the current life, location, company, outfit and recent events are checked. Labs can privately veto an uninteresting moment. The Virtual Human’s selected text model drafts a permitted status or photo plan; photo posts then use their selected image provider. They may skip a due window, and minimum gaps prevent posting after every chat message.</p>
+                                </details>
+                            </section>
+
+                            <section class="vh-social-behavior-editor">
+                                <div class="vh-social-behavior-head">
+                                    <div>
+                                        <span class="vh-eyebrow">Behavior</span>
+                                        <h3>Posting personality</h3>
+                                        <p class="form-hint">Shape the account as precisely as the human. Selecting only one content category makes that their entire posting niche.</p>
+                                    </div>
+                                    <div class="vh-social-blueprint-picker">
+                                        <label class="form-field">
+                                            <span>Account blueprint</span>
+                                            <select id="cs-social-blueprint" class="form-select">
+                                                <option value="balanced">Balanced personal account</option>
+                                                <option value="everyday">Private everyday account</option>
+                                                <option value="instagram_creator">Instagram creator</option>
+                                                <option value="microblogger">Text-first microblogger</option>
+                                                <option value="facebook_social">Friends-and-family profile</option>
+                                                <option value="thirst_traps">Thirst-trap account</option>
+                                                <option value="subscriber_creator">Subscriber creator</option>
+                                                <option value="custom">Custom</option>
+                                            </select>
+                                        </label>
+                                        <button id="cs-social-apply-blueprint" type="button" class="btn btn-ghost">Apply blueprint</button>
+                                    </div>
+                                </div>
+                                <div class="vh-social-behavior-grid">
+                                    <label class="form-field">
+                                        <span>Social format</span>
+                                        <select id="cs-social-platform" class="form-select">
+                                            <option value="instagram">Instagram-like · visual profile</option>
+                                            <option value="microblog">X/Twitter-like · text first</option>
+                                            <option value="facebook">Facebook-like · social updates</option>
+                                            <option value="subscriber">Subscriber page · free and locked posts</option>
+                                            <option value="custom">Custom hybrid</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Posting frequency</span>
+                                        <select id="cs-social-frequency" class="form-select">
+                                            <option value="manual">Manual only</option>
+                                            <option value="rare">Rare · about twice a month</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="few_week">A few times a week</option>
+                                            <option value="daily">Daily</option>
+                                            <option value="active">Very active · multiple times a day</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Audience</span>
+                                        <select id="cs-social-audience" class="form-select">
+                                            <option value="public">Public profile</option>
+                                            <option value="friends">Friends / followers</option>
+                                            <option value="private">Private account</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Player starts as</span>
+                                        <select id="cs-social-player-role" class="form-select">
+                                            <option value="stranger">Stranger · not following</option>
+                                            <option value="follower">Follower</option>
+                                            <option value="mutual">Mutual follower</option>
+                                            <option value="friend">Real-life friend</option>
+                                            <option value="subscriber">Subscriber</option>
+                                            <option value="vip_subscriber">VIP subscriber</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-field vh-social-range-field">
+                                        <span>Photo posts <strong id="cs-social-photo-ratio-label">70%</strong></span>
+                                        <input id="cs-social-photo-ratio" type="range" min="0" max="100" step="5" value="70">
+                                    </label>
+                                    <label class="form-field vh-social-range-field">
+                                        <span>Thirst-trap intensity <strong id="cs-social-thirst-label">20%</strong></span>
+                                        <input id="cs-social-thirst" type="range" min="0" max="100" step="5" value="20">
+                                    </label>
+                                </div>
+                                <fieldset class="vh-social-content-fieldset">
+                                    <legend>What they post</legend>
+                                    <div class="vh-social-content-types">
+                                        <label><input type="checkbox" value="everyday" data-social-content-type> Everyday life</label>
+                                        <label><input type="checkbox" value="selfies" data-social-content-type> Selfies</label>
+                                        <label><input type="checkbox" value="friends" data-social-content-type> Friends &amp; nights out</label>
+                                        <label><input type="checkbox" value="parties" data-social-content-type> Parties &amp; nightlife</label>
+                                        <label><input type="checkbox" value="work_school" data-social-content-type> Work / school</label>
+                                        <label><input type="checkbox" value="fashion" data-social-content-type> Fashion &amp; outfits</label>
+                                        <label><input type="checkbox" value="fitness" data-social-content-type> Fitness</label>
+                                        <label><input type="checkbox" value="food" data-social-content-type> Food</label>
+                                        <label><input type="checkbox" value="travel" data-social-content-type> Travel &amp; places</label>
+                                        <label><input type="checkbox" value="pets" data-social-content-type> Pets</label>
+                                        <label><input type="checkbox" value="hobbies" data-social-content-type> Hobbies</label>
+                                        <label><input type="checkbox" value="thirst_traps" data-social-content-type> Thirst traps</label>
+                                        <label><input type="checkbox" value="swimwear" data-social-content-type> Swimwear</label>
+                                        <label><input type="checkbox" value="boudoir" data-social-content-type> Boudoir / lingerie</label>
+                                        <label><input type="checkbox" value="adult" data-social-content-type> Adult / explicit</label>
+                                        <label><input type="checkbox" value="thoughts" data-social-content-type> Thoughts &amp; updates</label>
+                                        <label><input type="checkbox" value="opinions" data-social-content-type> Opinions &amp; rants</label>
+                                        <label><input type="checkbox" value="memes" data-social-content-type> Memes &amp; reposts</label>
+                                        <label><input type="checkbox" value="music_media" data-social-content-type> Music &amp; media</label>
+                                        <label><input type="checkbox" value="promotions" data-social-content-type> Sponsored / promotional</label>
+                                        <label><input type="checkbox" value="locked_content" data-social-content-type> Locked subscriber posts</label>
+                                    </div>
+                                </fieldset>
+                                <section class="vh-social-commerce-editor">
+                                    <div>
+                                        <span class="vh-eyebrow">Creator economy</span>
+                                        <h4>Subscriptions, tips &amp; adult posts</h4>
+                                        <p class="form-hint">Entirely fictional roleplay currency. No payment processing occurs. Adult generation remains subject to the selected model and provider.</p>
+                                    </div>
+                                    <div class="vh-social-behavior-grid">
+                                        <label class="form-field">
+                                            <span>Monetization</span>
+                                            <select id="cs-social-monetization" class="form-select">
+                                                <option value="none">None</option>
+                                                <option value="tips">Tips enabled</option>
+                                                <option value="subscription">Subscriptions enabled</option>
+                                                <option value="tips_subscription">Tips + subscriptions</option>
+                                            </select>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Roleplay currency</span>
+                                            <input id="cs-social-currency" class="form-input" maxlength="24" placeholder="credits" value="credits">
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Subscription price</span>
+                                            <input id="cs-social-subscription-price" class="form-input" type="number" min="0" max="1000000" step="1" value="10">
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Adult content level</span>
+                                            <select id="cs-social-adult-level" class="form-select">
+                                                <option value="none">None</option>
+                                                <option value="suggestive">Suggestive / thirst traps</option>
+                                                <option value="mature">Mature / boudoir</option>
+                                                <option value="explicit">Explicit if provider supports it</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                    <label class="form-field">
+                                        <span>Subscriber tiers and access rules</span>
+                                        <textarea id="cs-social-access-rules" class="form-textarea" rows="3" placeholder="What followers, free subscribers, paid subscribers and VIPs can see. Define paywalled content and boundaries."></textarea>
+                                    </label>
+                                </section>
+                                <div class="vh-social-copy-grid">
+                                    <label class="form-field">
+                                        <span>Social writing style</span>
+                                        <textarea id="cs-social-writing-style" class="form-textarea" rows="4" placeholder="lowercase captions, dry jokes, occasional double posts, never hashtags…"></textarea>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Custom posting rules</span>
+                                        <textarea id="cs-social-posting-rules" class="form-textarea" rows="4" placeholder="What they show, hide, exaggerate or never post. These rules override the presets."></textarea>
+                                    </label>
+                                </div>
+                            </section>
+
+                            <section class="vh-social-seed-builder">
+                                <div class="vh-social-seed-builder-head">
+                                    <div>
+                                        <span class="vh-eyebrow">Before the player</span>
+                                        <h3>Starting profile</h3>
+                                        <p class="form-hint">These are authored history, not shared history. New timelines receive a dated copy, while the human never pretends the player was part of it.</p>
+                                    </div>
+                                    <div class="vh-social-seed-actions">
+                                        <button id="cs-social-generate-seed" class="btn btn-primary" type="button">✦ Generate 10 posts</button>
+                                        <button id="cs-social-add-status" class="btn btn-ghost" type="button">＋ Status</button>
+                                        <button id="cs-social-add-photo" class="btn btn-ghost" type="button">＋ Photo post</button>
+                                    </div>
+                                </div>
+                                <div class="vh-social-seed-tools">
+                                    <button id="cs-social-generate-photos" class="btn btn-ghost" type="button">Generate missing photos</button>
+                                    <button id="cs-social-apply-current" class="btn btn-ghost" type="button">Apply starter profile to current timeline</button>
+                                    <span id="cs-social-seed-status" class="form-hint" aria-live="polite">Add posts manually, or use the conversation model to draft an editable profile.</span>
+                                </div>
+                                <div id="cs-social-seed-list" class="vh-social-seed-list"></div>
+                            </section>
+                        </div>
+                    </div>
+
                     <!-- AI & Models -->
                     <div id="tab-cs-models" class="studio-panel hidden">
                         <div class="panel-header vh-models-header">
@@ -2295,6 +2514,27 @@
                                     <p class="form-hint">For models the provider catalog does not list yet. The ID is sent exactly as entered.</p>
                                 </div>
                                 <input id="cs-text-model-custom" class="form-input" type="text" placeholder="provider/model-id">
+                            </section>
+
+                            <section class="vh-ai-config-section">
+                                <div class="vh-ai-config-heading">
+                                    <div>
+                                        <span class="vh-model-kicker">What the human can receive</span>
+                                        <h3>Player media input</h3>
+                                        <p id="cs-model-input-hint" class="form-hint">Read from the selected conversation model. Unsupported chat controls are disabled automatically.</p>
+                                    </div>
+                                </div>
+                                <div class="vh-check-grid">
+                                    <label class="vh-test-check">
+                                        <input id="cs-model-input-image" type="checkbox">
+                                        <span>Model accepts player photos</span>
+                                    </label>
+                                    <label class="vh-test-check">
+                                        <input id="cs-model-input-audio" type="checkbox">
+                                        <span>Model accepts player voice notes</span>
+                                    </label>
+                                </div>
+                                <p class="form-hint">Catalog models are locked to reported capabilities. For an unlisted custom model, declare these manually only if its API accepts OpenAI-compatible image or audio message parts.</p>
                             </section>
 
                             <section class="vh-ai-config-section">
@@ -2771,6 +3011,7 @@
                         </div>
                     </details>
                     <button id="companion-simulation-btn" class="companion-header-btn" title="Connection, memories and shared media" aria-label="Connection details">◎</button>
+                    <button id="companion-social-btn" class="companion-social-launch" title="Open social feed and gallery" aria-label="Open social media"><span aria-hidden="true">▦</span> Social Media</button>
                     <button id="companion-chat-edit-btn" class="companion-header-btn" title="Virtual Human details" aria-label="Virtual Human details">ⓘ</button>
                 </div>
             </div>
@@ -2795,18 +3036,36 @@
                 <span class="companion-context-separator">•</span>
                 <span id="cc-agency-status">responds when messaged</span>
             </div>
-            <div class="companion-chat-body" id="companion-messages"></div>
+            <div class="companion-chat-main">
+                <div class="companion-chat-body" id="companion-messages"></div>
+                <aside id="companion-social-panel" class="companion-social-panel hidden" aria-label="Social feed">
+                    <div class="companion-social-head">
+                        <div><span class="vh-eyebrow">Their public life</span><strong id="cc-social-title">Social</strong></div>
+                        <div class="companion-social-head-actions">
+                            <button id="cc-social-enabled-toggle" class="companion-social-toggle-button" type="button" aria-pressed="false">Feed off</button>
+                            <button id="companion-social-close-btn" class="companion-header-btn" type="button" aria-label="Close social feed">✕</button>
+                        </div>
+                    </div>
+                    <div class="companion-social-tabs" role="tablist">
+                        <button type="button" class="active" data-companion-social-tab="feed">Feed</button>
+                        <button type="button" data-companion-social-tab="gallery">Gallery</button>
+                    </div>
+                    <div id="companion-social-content" class="companion-social-content"></div>
+                </aside>
+            </div>
             <div class="companion-typing-indicator hidden" id="companion-typing-indicator">
                 <div class="companion-typing-bubble"><span></span><span></span><span></span></div>
                 <small id="companion-typing-label">typing…</small>
             </div>
             <div class="companion-composer">
                 <button id="companion-emoji-btn" class="companion-icon-btn" title="Emoji">＋</button>
-                <button id="companion-photo-request-btn" class="companion-icon-btn" title="Ask for a photo" aria-label="Ask for a photo">▧</button>
-                <button id="companion-voice-request-btn" class="companion-icon-btn" title="Ask for a voice note" aria-label="Ask for a voice note">🎙</button>
+                <button id="companion-photo-request-btn" class="companion-icon-btn" title="Send a photo" aria-label="Send a photo">▧</button>
+                <button id="companion-voice-request-btn" class="companion-icon-btn" title="Send a voice note" aria-label="Send a voice note">🎙</button>
                 <textarea id="companion-composer-input" class="companion-composer-input" rows="1" placeholder="Text message..."></textarea>
                 <button id="companion-send-btn" class="companion-icon-btn companion-send-btn" type="button" title="Send" aria-label="Send">↑</button>
             </div>
+            <input id="companion-player-photo-input" class="hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif">
+            <input id="companion-player-voice-input" class="hidden" type="file" accept="audio/wav,audio/mpeg,audio/mp4,audio/aac,audio/ogg,audio/webm,audio/flac" capture>
             <div class="companion-emoji-picker hidden" id="companion-emoji-picker"></div>
         </section>
 
@@ -4109,14 +4368,14 @@
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
-<script src="ashlyn-reynolds-human.js?v=20260811-ashlyn-v1"></script>
+    <script src="ashlyn-reynolds-human.js?v=20260812-ashlyn-social-v5"></script>
 <script src="jane-harlow-human.js?v=20260811-jane-v1"></script>
 <script src="labs-embedded.js?v=20260810-pip-conversation-v2"></script>
 <script src="labs-core.js?v=20260810-v128"></script>
-<script src="labs-tasks.js?v=20260810-compact-micro-v2"></script>
+<script src="labs-tasks.js?v=20260812-vh-media-social-v1"></script>
 <script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
 <script src="help-system.js?v=20260811-emotion-architecture-v1"></script>
 <script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
-<script src="app.js?v=20260811-emotion-architecture-v1"></script>
+    <script src="app.js?v=20260812-vh-social-interactions-v7"></script>
 </body>
 </html>
