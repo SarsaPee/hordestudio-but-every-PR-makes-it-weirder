@@ -54,12 +54,15 @@ assert.deepEqual(Array.from(jane.lifeEvents), []);
 assert.equal(jane.usage.textTurns, 0);
 
 const html = fs.readFileSync('index.html', 'utf8');
-assert.match(html, /ashlyn-reynolds-human\.js\?v=20260811-ashlyn-v1/);
-assert.match(html, /jane-harlow-human\.js\?v=20260811-jane-v1/);
+assert.match(html, /ashlyn-reynolds-human\.js\?v=20260814-bundled-humans-v1/);
+assert.match(html, /jane-harlow-human\.js\?v=20260814-bundled-humans-v1/);
 assert(html.indexOf('ashlyn-reynolds-human.js') < html.indexOf('app.js?v='));
 assert(html.indexOf('jane-harlow-human.js') < html.indexOf('app.js?v='));
 
 const source = fs.readFileSync('app.js', 'utf8');
+const portableBuilder = fs.readFileSync('scripts/build-portable.sh', 'utf8');
+assert.match(source, /const HORDE_STUDIO_VERSION = '15\.7\.0'/);
+assert.match(portableBuilder, /VERSION="\$\{1:-15\.7\.0\}"/);
 assert.match(source, /includedHumanReceipts/);
 assert.match(source, /companion\.bundledId = bundleId/);
 assert.match(source, /companion\?\.name === candidateName/);

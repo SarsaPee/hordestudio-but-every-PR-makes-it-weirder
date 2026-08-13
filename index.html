@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260812-vh-social-interactions-v7">
+    <link rel="stylesheet" href="style.css?v=20260814-v157-ui-overhaul-v2">
 </head>
 <body>
 <div id="app">
@@ -1804,6 +1804,7 @@
                         <button class="companion-studio-tab" data-tab="cs-mind">Inner Life</button>
                         <button class="companion-studio-tab" data-tab="cs-life">Active Life</button>
                         <button class="companion-studio-tab" data-tab="cs-social">Social Media</button>
+                        <button class="companion-studio-tab" data-tab="cs-video">Video &amp; Clips</button>
                         <button class="companion-studio-tab" data-tab="cs-models">AI &amp; Models</button>
                         <button class="companion-studio-tab" data-tab="cs-voice">Photos &amp; Voice</button>
                     </div>
@@ -2450,6 +2451,29 @@
                         </div>
                     </div>
 
+                    <!-- Video & Clips -->
+                    <div id="tab-cs-video" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div><span class="vh-eyebrow">Short-form video</span><h2>Video &amp; Clips</h2><p>A provider-independent 9:16 clip pipeline. The human approves the concept first; generation only starts when the player confirms it.</p></div>
+                        </div>
+                        <div class="form-body vh-video-studio">
+                            <section class="vh-video-hero-card">
+                                <div><h3>Clips permission</h3><p class="form-hint">Clips are never autonomous and never silently billed. Requests become an in-character proposal, then wait for a separate Generate click.</p></div>
+                                <button id="cs-video-enabled" class="vh-social-feed-toggle" type="button" aria-pressed="false"><span class="vh-social-feed-toggle-dot"></span><span id="cs-video-enabled-label">Clips off</span></button>
+                            </section>
+                            <div class="vh-social-behavior-grid">
+                                <label class="form-field"><span>Video provider</span><select id="cs-video-provider" class="form-select"><option value="openrouter">OpenRouter</option><option value="evolink">EvoLink</option><option value="wavespeed">WaveSpeed</option></select></label>
+                                <label class="form-field"><span>Reference-capable model</span><select id="cs-video-model" class="form-select"></select><small id="cs-video-model-status" class="form-hint">Choose a provider to load its video catalog.</small></label>
+                                <label class="form-field"><span>Default quality</span><select id="cs-video-resolution" class="form-select"><option value="480p">480p · fast / recommended</option><option value="720p">720p</option><option value="1080p">1080p</option></select></label>
+                                <label class="form-field"><span>Default duration</span><select id="cs-video-duration" class="form-select"><option value="5">5 seconds</option><option value="8">8 seconds</option><option value="10">10 seconds</option></select></label>
+                                <label class="form-field"><span>Identity reference</span><select id="cs-video-reference" class="form-select"><option value="auto">Smart · generation image, profile, then gallery</option><option value="generation">Generation reference only</option><option value="profile">Profile image only</option><option value="gallery">Most recent gallery photo</option></select></label>
+                                <label class="vh-test-check"><input id="cs-video-audio" type="checkbox" checked><span>Request native audio when supported</span></label>
+                            </div>
+                            <label class="form-field"><span>Clip style &amp; boundaries</span><textarea id="cs-video-style-rules" class="form-textarea" rows="5" placeholder="What they will film, refuse, wear, say, reveal, and how polished or casual their videos feel..."></textarea></label>
+                            <div class="vh-video-safety-note"><strong>Hard format contract</strong><span>Every clip is vertical 9:16, phone-native, one coherent scene, with a physically plausible selfie, handheld or fixed camera. The model can refine the idea, but cannot bypass the human’s authored boundaries.</span></div>
+                        </div>
+                    </div>
+
                     <!-- AI & Models -->
                     <div id="tab-cs-models" class="studio-panel hidden">
                         <div class="panel-header vh-models-header">
@@ -3040,15 +3064,16 @@
                 <div class="companion-chat-body" id="companion-messages"></div>
                 <aside id="companion-social-panel" class="companion-social-panel hidden" aria-label="Social feed">
                     <div class="companion-social-head">
-                        <div><span class="vh-eyebrow">Their public life</span><strong id="cc-social-title">Social</strong></div>
+                        <div class="companion-social-head-copy"><span class="vh-eyebrow">Public profile</span><strong id="cc-social-title">Social</strong></div>
                         <div class="companion-social-head-actions">
                             <button id="cc-social-enabled-toggle" class="companion-social-toggle-button" type="button" aria-pressed="false">Feed off</button>
-                            <button id="companion-social-close-btn" class="companion-header-btn" type="button" aria-label="Close social feed">✕</button>
+                            <button id="companion-social-close-btn" class="companion-social-close-btn" type="button" aria-label="Close social feed">×</button>
                         </div>
                     </div>
                     <div class="companion-social-tabs" role="tablist">
-                        <button type="button" class="active" data-companion-social-tab="feed">Feed</button>
-                        <button type="button" data-companion-social-tab="gallery">Gallery</button>
+                        <button type="button" class="active" role="tab" aria-selected="true" data-companion-social-tab="feed">Feed</button>
+                        <button type="button" role="tab" aria-selected="false" data-companion-social-tab="gallery">Gallery</button>
+                        <button type="button" role="tab" aria-selected="false" data-companion-social-tab="clips">Clips</button>
                     </div>
                     <div id="companion-social-content" class="companion-social-content"></div>
                 </aside>
@@ -3059,7 +3084,7 @@
             </div>
             <div class="companion-composer">
                 <button id="companion-emoji-btn" class="companion-icon-btn" title="Emoji">＋</button>
-                <button id="companion-photo-request-btn" class="companion-icon-btn" title="Send a photo" aria-label="Send a photo">▧</button>
+                <button id="companion-photo-request-btn" class="companion-icon-btn" title="Send your photo to this virtual human" aria-label="Send your photo to this virtual human">▧</button>
                 <button id="companion-voice-request-btn" class="companion-icon-btn" title="Send a voice note" aria-label="Send a voice note">🎙</button>
                 <textarea id="companion-composer-input" class="companion-composer-input" rows="1" placeholder="Text message..."></textarea>
                 <button id="companion-send-btn" class="companion-icon-btn companion-send-btn" type="button" title="Send" aria-label="Send">↑</button>
@@ -3069,14 +3094,15 @@
             <div class="companion-emoji-picker hidden" id="companion-emoji-picker"></div>
         </section>
 
-        <div id="companion-simulation-overlay" class="modal-bg hidden">
-            <div class="modal modal-lg">
+        <div id="companion-simulation-overlay" class="modal-bg companion-simulation-overlay hidden">
+            <div class="modal modal-xl companion-simulation-modal" role="dialog" aria-modal="true" aria-labelledby="companion-simulation-title">
                 <div class="modal-hd">
                     <div>
                         <span class="vh-eyebrow">Current timeline</span>
-                        <h2>Connection &amp; Life</h2>
+                        <h2 id="companion-simulation-title">Connection &amp; Life</h2>
+                        <p>What is changing between you, and what is happening in their life.</p>
                     </div>
-                    <button id="close-companion-simulation-btn" class="modal-close" aria-label="Close">✕</button>
+                    <button id="close-companion-simulation-btn" class="modal-close" aria-label="Close">×</button>
                 </div>
                 <div id="companion-simulation-content" class="modal-body"></div>
             </div>
@@ -3175,50 +3201,67 @@
             </section>
 
             <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember">
-                <div class="settings-section-head"><span class="settings-section-kicker">Cloud access</span><h3>Connections</h3><p>Add credentials once, test them here, then mix providers freely across modes.</p></div>
+                <div class="settings-section-head"><span class="settings-section-kicker">Cloud access</span><h3>Connections</h3><p>Connect only what you use. Your active text provider opens first; image providers stay independent.</p></div>
                 <div class="settings-provider-grid">
-            <div id="openrouter-key-block">
-                <label class="form-label" style="margin-top:20px">OpenRouter API Key</label>
+            <details id="openrouter-key-block" class="settings-provider-card" data-provider="openrouter">
+                <summary><span class="settings-provider-mark">OR</span><span><strong>OpenRouter</strong><small>Text · broad model catalog</small></span><span class="settings-provider-state">Configure</span></summary>
+                <label class="form-label">API key</label>
                 <input type="password" id="global-api-key" class="form-input" placeholder="sk-or-v1-...">
-            </div>
-            <div id="gptproto-key-block">
-                <label class="form-label" style="margin-top:20px">GPTProto API Key</label>
+            </details>
+            <details id="gptproto-key-block" class="settings-provider-card" data-provider="gptproto">
+                <summary><span class="settings-provider-mark">GP</span><span><strong>GPTProto</strong><small>Text · images · speech</small></span><span class="settings-provider-state">Configure</span></summary>
+                <label class="form-label">API key</label>
                 <input type="password" id="global-gptproto-key" class="form-input" placeholder="sk-...">
-                <p class="form-hint">Used for GPTProto chat completions, image generation, model discovery and neural speech through <code>https://gptproto.com/v1</code>.</p>
-                <button id="test-gptproto-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test GPTProto Connection</button>
+                <p class="form-hint">One key for chat, model discovery, images and neural speech.</p>
+                <button id="test-gptproto-conn-btn" class="btn btn-ghost" type="button">Test connection</button>
                 <div id="gptproto-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
-            </div>
-            <div id="nanogpt-key-block">
-                <label class="form-label" style="margin-top:20px">NanoGPT API Key</label>
+            </details>
+            <details class="settings-provider-card" data-provider="evolink">
+                <summary><span class="settings-provider-mark">EV</span><span><strong>EvoLink</strong><small>Video · Seedance gateway</small></span><span class="settings-provider-state">Clips</span></summary>
+                <label class="form-label" for="global-evolink-key">API key</label>
+                <input type="password" id="global-evolink-key" class="form-input" placeholder="EvoLink API key">
+                <label class="form-label" for="global-evolink-url" style="margin-top:10px;">Base URL</label>
+                <input type="url" id="global-evolink-url" class="form-input" value="https://api.evolink.ai/v1" spellcheck="false">
+                <p class="form-hint">Used only for Virtual Human Clips. It never changes your text or photo provider.</p>
+            </details>
+            <details class="settings-provider-card" data-provider="wavespeed">
+                <summary><span class="settings-provider-mark">WS</span><span><strong>WaveSpeed</strong><small>Video · model-specific endpoints</small></span><span class="settings-provider-state">Clips</span></summary>
+                <label class="form-label" for="global-wavespeed-key">API key</label>
+                <input type="password" id="global-wavespeed-key" class="form-input" placeholder="WaveSpeed API key">
+                <label class="form-label" for="global-wavespeed-url" style="margin-top:10px;">Base URL</label>
+                <input type="url" id="global-wavespeed-url" class="form-input" value="https://api.wavespeed.ai/api/v3" spellcheck="false">
+                <p class="form-hint">Used only for Virtual Human Clips. Output is downloaded into browser storage before temporary provider links expire.</p>
+            </details>
+            <details id="nanogpt-key-block" class="settings-provider-card" data-provider="nanogpt">
+                <summary><span class="settings-provider-mark">NG</span><span><strong>NanoGPT</strong><small>Text · images · speech</small></span><span class="settings-provider-state">Configure</span></summary>
+                <label class="form-label">API key</label>
                 <input type="password" id="global-nanogpt-key" class="form-input" placeholder="NanoGPT API key">
-                <p class="form-hint">Used independently for NanoGPT text, image-model discovery, base64 image generation and neural speech through <code>https://nano-gpt.com/api/v1</code>. Use a NanoGPT API key (<code>sk-nano-…</code> or legacy UUID), not a browser-session token.</p>
-                <button id="test-nanogpt-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test NanoGPT with Live Call</button>
-                <p class="form-hint">Runs a two-token completion because NanoGPT's public model catalog cannot validate credentials. A successful test activates the typed key for this browser session.</p>
+                <p class="form-hint">Use an API key (<code>sk-nano-…</code> or legacy UUID), not a browser session token.</p>
+                <button id="test-nanogpt-conn-btn" class="btn btn-ghost" type="button">Run live test</button>
                 <div id="nanogpt-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
-            </div>
-            <div id="nvidia-key-block">
-                <label class="form-label" style="margin-top:20px">NVIDIA NIM API Key</label>
+            </details>
+            <details id="nvidia-key-block" class="settings-provider-card" data-provider="nvidia">
+                <summary><span class="settings-provider-mark">NV</span><span><strong>NVIDIA NIM</strong><small>Hosted text models</small></span><span class="settings-provider-state">Configure</span></summary>
+                <label class="form-label">API key</label>
                 <input type="password" id="global-nvidia-key" class="form-input" placeholder="nvapi-...">
-                <p class="form-hint">Uses NVIDIA's OpenAI-compatible hosted NIM endpoint at <code>https://integrate.api.nvidia.com/v1</code>. This is a text provider; keep your preferred image provider selected separately.</p>
-                <button id="test-nvidia-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test NVIDIA NIM Connection</button>
+                <p class="form-hint">Text only. Your image provider remains separate.</p>
+                <button id="test-nvidia-conn-btn" class="btn btn-ghost" type="button">Test connection</button>
                 <div id="nvidia-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
-            </div>
-            <div id="bedrock-key-block">
-                <label class="form-label" style="margin-top:20px">Amazon Bedrock API Key</label>
+            </details>
+            <details id="bedrock-key-block" class="settings-provider-card" data-provider="bedrock">
+                <summary><span class="settings-provider-mark">AWS</span><span><strong>Amazon Bedrock</strong><small>Account-specific text endpoint</small></span><span class="settings-provider-state">Configure</span></summary>
+                <label class="form-label">API key</label>
                 <input type="password" id="global-bedrock-key" class="form-input" placeholder="Bedrock API key">
                 <label class="form-label" style="margin-top:10px">AWS Region</label>
                 <input type="text" id="global-bedrock-region" class="form-input" placeholder="us-east-1">
                 <label class="form-label" style="margin-top:10px">Mantle Base URL <span class="form-hint">(optional override)</span></label>
                 <input type="url" id="global-bedrock-base-url" class="form-input" placeholder="https://your-account-endpoint.example/v1" spellcheck="false">
                 <p class="form-hint">Paste the complete account-specific OpenAI-compatible base URL when AWS gives you one. Leave blank only to derive <code>https://bedrock-mantle.REGION.api.aws/v1</code>. Do not paste an IAM access-key/secret-key pair here.</p>
-                <button id="test-bedrock-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test AWS Bedrock Connection</button>
+                <button id="test-bedrock-conn-btn" class="btn btn-ghost" type="button">Test connection</button>
                 <div id="bedrock-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
-            </div>
-            <div id="custom-provider-block" class="mcp-settings-card" style="margin-top:20px;">
-                <div class="mcp-settings-head">
-                    <div><span class="vh-eyebrow">Bring any platform</span><h3>Custom OpenAI-compatible provider</h3></div>
-                    <span class="mcp-status-badge">Text API</span>
-                </div>
+            </details>
+            <details id="custom-provider-block" class="settings-provider-card settings-provider-card-wide" data-provider="custom">
+                <summary><span class="settings-provider-mark">＋</span><span><strong>Custom API</strong><small>Any OpenAI-compatible text provider</small></span><span class="settings-provider-state">Advanced</span></summary>
                 <div class="form-row">
                     <div class="form-col">
                         <label class="form-label" for="global-custom-provider-name">Display name</label>
@@ -3234,27 +3277,25 @@
                 <label class="form-label" for="global-custom-headers" style="margin-top:10px;">Additional headers <span class="form-hint">(optional JSON)</span></label>
                 <textarea id="global-custom-headers" class="form-textarea" rows="3" spellcheck="false" placeholder='{"X-API-Key":"…","X-Account-ID":"…"}'></textarea>
                 <p class="form-hint">Horde Studio calls <code>BASE_URL/models</code> and <code>BASE_URL/chat/completions</code>. HTTPS endpoints and localhost HTTP are allowed. Select or type the exact model in <strong>Default Model</strong> below; per-character and per-world selectors use this catalog too.</p>
-                <button id="test-custom-conn-btn" class="btn btn-ghost" type="button" style="margin-top:10px; font-size:0.8rem;">🔌 Test Custom Provider</button>
+                <button id="test-custom-conn-btn" class="btn btn-ghost" type="button">Test connection</button>
                 <div id="custom-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
-            </div>
-            <div id="cloud-key-storage-block">
+            </details>
+            <div id="cloud-key-storage-block" class="settings-security-row">
                 <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.8rem; color:var(--text-2); cursor:pointer;">
                     <input type="checkbox" id="remember-api-key"> Remember cloud API keys on this device
                 </label>
-                <p class="form-hint">Unchecked: keys live only in this browser tab and must be re-entered after a restart. Checked: they are stored in this browser's local database (anyone with access to this device profile could read them). Never included in backups either way.</p>
+                <p class="form-hint">Off keeps keys in this tab only. On stores them in this browser profile. Keys are never included in backups.</p>
             </div>
                 </div>
             </section>
 
             <section class="settings-section" data-settings-section="images" data-settings-keywords="images generation mcp higgsfield magnific comfyui workflow local server visual photo">
                 <div class="settings-section-head"><span class="settings-section-kicker">Visual providers</span><h3>Images &amp; Workflows</h3><p>Connect optional creative services and reusable local image pipelines.</p></div>
-            <section class="mcp-settings-card" aria-labelledby="mcp-settings-title">
+            <details class="mcp-settings-card settings-disclosure-card" open aria-labelledby="mcp-settings-title">
+                <summary class="settings-disclosure-summary"><span><small>Creative providers</small><strong id="mcp-settings-title">MCP image generation</strong></span><span id="mcp-bridge-badge" class="mcp-status-badge">Bridge offline</span></summary>
+                <div class="settings-disclosure-body">
                 <div class="mcp-settings-head">
-                    <div>
-                        <span class="vh-eyebrow">Creative providers</span>
-                        <h3 id="mcp-settings-title">MCP image generation</h3>
-                    </div>
-                    <span id="mcp-bridge-badge" class="mcp-status-badge">Bridge offline</span>
+                    <p>Connect creative tools through the local Horde bridge.</p>
                 </div>
                 <label class="form-label" for="global-mcp-bridge-url">Local bridge</label>
                 <div class="mcp-bridge-row">
@@ -3279,15 +3320,14 @@
                     </article>
                 </div>
                 <div id="mcp-settings-result" class="form-hint" aria-live="polite">Connect a provider here, then select it per human under Photos &amp; Voice.</div>
-            </section>
+                </div>
+            </details>
 
-            <section class="mcp-settings-card" aria-labelledby="local-image-settings-title">
+            <details class="mcp-settings-card settings-disclosure-card" aria-labelledby="local-image-settings-title">
+                <summary class="settings-disclosure-summary"><span><small>Local generation</small><strong id="local-image-settings-title">ComfyUI &amp; local servers</strong></span><span class="mcp-status-badge">Loopback</span></summary>
+                <div class="settings-disclosure-body">
                 <div class="mcp-settings-head">
-                    <div>
-                        <span class="vh-eyebrow">Local generation</span>
-                        <h3 id="local-image-settings-title">ComfyUI &amp; local image servers</h3>
-                    </div>
-                    <span class="mcp-status-badge">Loopback only</span>
+                    <p>Optional advanced endpoints and reusable workflow profiles.</p>
                 </div>
                 <label class="form-label" for="global-local-image-url">OpenAI-compatible image server</label>
                 <input id="global-local-image-url" class="form-input" value="http://127.0.0.1:7860/v1" spellcheck="false">
@@ -3333,7 +3373,8 @@
                 <p class="form-hint">Profiles keep several workflows and node mappings ready to switch without replacing JSON. Horde Studio auto-detects standard CLIP prompt and KSampler seed nodes. Set a LoadImage node ID only when the workflow accepts the human’s identity reference.</p>
                 <button id="test-local-image-engines-btn" class="btn btn-ghost" type="button" style="margin-top:10px;">Test local endpoints</button>
                 <div id="local-image-engines-result" class="form-hint" aria-live="polite"></div>
-            </section>
+                </div>
+            </details>
             </section>
 
             <section class="settings-section" data-settings-section="runtime" data-settings-keywords="local runtime launcher start bridge mac windows linux chromebook python">
@@ -4368,14 +4409,14 @@
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
-    <script src="ashlyn-reynolds-human.js?v=20260812-ashlyn-social-v5"></script>
-<script src="jane-harlow-human.js?v=20260811-jane-v1"></script>
+<script src="ashlyn-reynolds-human.js?v=20260814-bundled-humans-v1"></script>
+<script src="jane-harlow-human.js?v=20260814-bundled-humans-v1"></script>
 <script src="labs-embedded.js?v=20260810-pip-conversation-v2"></script>
 <script src="labs-core.js?v=20260810-v128"></script>
 <script src="labs-tasks.js?v=20260812-vh-media-social-v1"></script>
 <script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
 <script src="help-system.js?v=20260811-emotion-architecture-v1"></script>
 <script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
-    <script src="app.js?v=20260812-vh-social-interactions-v7"></script>
+    <script src="app.js?v=20260814-v157-ui-overhaul-v2"></script>
 </body>
 </html>

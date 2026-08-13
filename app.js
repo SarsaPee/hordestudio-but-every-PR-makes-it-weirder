@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '13.0.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-10T00:00:00Z';
+const HORDE_STUDIO_VERSION = '15.7.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-14T03:31:00+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -48,6 +48,16 @@ const HordeDB = {
             transaction.oncomplete = () => resolve();
             transaction.onerror = () => reject(transaction.error || request.error || new Error(`Unable to save ${key}`));
             transaction.onabort = () => reject(transaction.error || new Error(`Saving ${key} was aborted`));
+        });
+    },
+    async delete(key) {
+        if (!this.db) throw new Error('Database is not initialized');
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+            const request = transaction.objectStore(STORE_NAME).delete(key);
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error || request.error || new Error(`Unable to delete ${key}`));
+            transaction.onabort = () => reject(transaction.error || new Error(`Deleting ${key} was aborted`));
         });
     },
     async setMultiple(kvMap) {
@@ -611,6 +621,172 @@ function providerDisplayName(providerId) {
     ];
 }
 
+// --- Provider-independent short-form video ---------------------------------
+// Video stays deliberately separate from the text and image selectors. A
+// Virtual Human can talk through OpenRouter, make photos through GPTProto and
+// render clips through WaveSpeed without any provider silently replacing the
+// others.
+const VIDEO_PROVIDER_IDS = Object.freeze(['openrouter', 'evolink', 'wavespeed']);
+const VIDEO_MODEL_FALLBACKS = Object.freeze({
+    openrouter: [
+        { id: 'bytedance/seedance-2.0-fast', name: 'Seedance 2.0 Fast', reference: true },
+        { id: 'bytedance/seedance-2.0', name: 'Seedance 2.0', reference: true },
+        { id: 'minimax/hailuo-2.3', name: 'MiniMax Hailuo 2.3', reference: true },
+        { id: 'klingai/kling-v3', name: 'Kling 3', reference: true }
+    ],
+    evolink: [
+        { id: 'seedance-2.0-fast', name: 'Seedance 2.0 Fast', reference: true },
+        { id: 'seedance-2.0', name: 'Seedance 2.0', reference: true },
+        { id: 'seedance-1.5-pro', name: 'Seedance 1.5 Pro', reference: true }
+    ],
+    wavespeed: [
+        { id: 'bytedance/seedance-v2.0-fast/image-to-video', name: 'Seedance 2.0 Fast · image to video', reference: true },
+        { id: 'bytedance/seedance-v2.0/image-to-video', name: 'Seedance 2.0 · image to video', reference: true },
+        { id: 'minimax/hailuo-2.3/image-to-video', name: 'MiniMax Hailuo 2.3 · image to video', reference: true }
+    ]
+});
+const videoModelCatalogCache = new Map();
+const companionVideoObjectUrls = new Map();
+
+function normalizedVideoProviderId(value) {
+    return VIDEO_PROVIDER_IDS.includes(value) ? value : 'openrouter';
+}
+
+function videoProviderDisplayName(value) {
+    return ({ openrouter: 'OpenRouter', evolink: 'EvoLink', wavespeed: 'WaveSpeed' })[normalizedVideoProviderId(value)];
+}
+
+function videoProviderApiBase(value) {
+    const provider = normalizedVideoProviderId(value);
+    if (provider === 'evolink') return String(state.globalSettings.evolinkBaseUrl || 'https://api.evolink.ai/v1').replace(/\/+$/, '');
+    if (provider === 'wavespeed') return String(state.globalSettings.wavespeedBaseUrl || 'https://api.wavespeed.ai/api/v3').replace(/\/+$/, '');
+    return 'https://openrouter.ai/api/v1';
+}
+
+function videoProviderApiKey(value) {
+    const provider = normalizedVideoProviderId(value);
+    return provider === 'evolink' ? state.evolinkApiKey
+        : provider === 'wavespeed' ? state.wavespeedApiKey : state.apiKey;
+}
+
+function videoProviderHasCredentials(value) {
+    return !!String(videoProviderApiKey(value) || '').trim();
+}
+
+function videoProviderHeaders(value) {
+    const provider = normalizedVideoProviderId(value);
+    return {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${String(videoProviderApiKey(provider) || '').trim()}`,
+        ...(provider === 'openrouter' ? { 'HTTP-Referer': 'https://horde-studio.ai', 'X-Title': 'Horde Studio' } : {})
+    };
+}
+
+function normalizeVideoModel(raw, provider) {
+    const model = isPlainObject(raw) ? raw : {};
+    const capabilities = isPlainObject(model.capabilities) ? model.capabilities : {};
+    const modalities = Array.isArray(model.input_modalities) ? model.input_modalities
+        : Array.isArray(capabilities.input_modalities) ? capabilities.input_modalities : [];
+    return {
+        id: String(model.id || model.model || '').trim().slice(0, 300),
+        name: String(model.name || model.display_name || model.id || '').trim().slice(0, 200),
+        provider,
+        reference: model.reference !== false && (model.reference === true || modalities.some(item => /image|video/i.test(String(item)))
+            || capabilities.frame_images || capabilities.input_references || /image-to-video|seedance|hailuo|kling|veo/i.test(String(model.id || model.model || ''))),
+        durations: Array.isArray(capabilities.durations) ? capabilities.durations : [],
+        resolutions: Array.isArray(capabilities.resolutions) ? capabilities.resolutions : [],
+        aspectRatios: Array.isArray(capabilities.aspect_ratios) ? capabilities.aspect_ratios : [],
+        audio: capabilities.audio === true || capabilities.supports_audio === true
+    };
+}
+
+async function fetchVideoModels(providerValue, force = false) {
+    const provider = normalizedVideoProviderId(providerValue);
+    const cached = videoModelCatalogCache.get(provider);
+    if (!force && cached?.at > Date.now() - 10 * 60 * 1000) return cached.models;
+    let models = [];
+    if (provider === 'openrouter' && videoProviderHasCredentials(provider)) {
+        try {
+            const response = await fetch(`${videoProviderApiBase(provider)}/videos/models`, { headers: videoProviderHeaders(provider) });
+            if (!response.ok) throw new Error(await response.text());
+            const payload = await response.json();
+            models = (Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [])
+                .map(item => normalizeVideoModel(item, provider)).filter(item => item.id && item.reference);
+        } catch (error) {
+            console.warn('OpenRouter video model discovery failed; using the editable fallback catalog.', error);
+        }
+    }
+    if (!models.length) models = (VIDEO_MODEL_FALLBACKS[provider] || []).map(item => normalizeVideoModel(item, provider));
+    videoModelCatalogCache.set(provider, { at: Date.now(), models });
+    return models;
+}
+
+function normalizeCompanionVideoJob(raw) {
+    const job = isPlainObject(raw) ? raw : {};
+    return {
+        id: String(job.id || livingId('vh_clip', `${Date.now()}|${Math.random()}`)).slice(0, 100),
+        providerJobId: String(job.providerJobId || '').slice(0, 300),
+        provider: normalizedVideoProviderId(job.provider),
+        model: String(job.model || '').slice(0, 300),
+        status: ['requested', 'accepted', 'refused', 'queued', 'generating', 'downloading', 'ready', 'failed', 'cancelled'].includes(job.status)
+            ? job.status : 'requested',
+        progress: livingClamp(Number(job.progress) || 0, 0, 100),
+        requestText: String(job.requestText || '').trim().slice(0, 1200),
+        clipType: ['selfie', 'dance', 'outfit', 'storytime', 'day_in_life', 'comedy', 'trend', 'custom'].includes(job.clipType) ? job.clipType : 'custom',
+        cameraRig: ['selfie', 'handheld', 'fixed'].includes(job.cameraRig) ? job.cameraRig : 'selfie',
+        concept: String(job.concept || '').trim().slice(0, 1800),
+        prompt: String(job.prompt || '').trim().slice(0, 5000),
+        caption: String(job.caption || '').trim().slice(0, 1200),
+        reason: String(job.reason || '').trim().slice(0, 1000),
+        assetId: String(job.assetId || '').slice(0, 120),
+        outputUrl: /^https?:\/\//i.test(String(job.outputUrl || '')) ? String(job.outputUrl).slice(0, 4000) : '',
+        poster: normalizeGeneratedImageSource(job.poster),
+        duration: livingClamp(Number(job.duration) || 5, 2, 30),
+        resolution: ['480p', '720p', '1080p'].includes(job.resolution) ? job.resolution : '480p',
+        error: String(job.error || '').slice(0, 1600),
+        createdAt: Number.isFinite(job.createdAt) ? job.createdAt : Date.now(),
+        updatedAt: Number.isFinite(job.updatedAt) ? job.updatedAt : Date.now()
+    };
+}
+
+async function companionVideoAssetUrl(assetId) {
+    if (!assetId) return '';
+    if (companionVideoObjectUrls.has(assetId)) return companionVideoObjectUrls.get(assetId);
+    try {
+        const blob = await HordeDB.get(`companionVideoAsset:${assetId}`);
+        if (!(blob instanceof Blob)) return '';
+        const url = URL.createObjectURL(blob);
+        companionVideoObjectUrls.set(assetId, url);
+        return url;
+    } catch (error) { return ''; }
+}
+
+async function persistCompanionVideoAsset(job, url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Video download failed (${response.status}).`);
+    const blob = await response.blob();
+    return persistCompanionVideoBlob(job, blob);
+}
+
+async function persistCompanionVideoBlob(job, blob) {
+    if (!blob.type.startsWith('video/')) throw new Error('The provider output was not a playable video file.');
+    const assetId = job.assetId || livingId('vh_video_asset', `${job.id}|${Date.now()}`);
+    await HordeDB.set(`companionVideoAsset:${assetId}`, blob);
+    job.assetId = assetId;
+    return companionVideoAssetUrl(assetId);
+}
+
+function videoOutputFromPayload(payload) {
+    const data = payload?.data || payload || {};
+    const outputs = data.outputs || data.output || data.videos || data.video || payload?.outputs;
+    if (typeof outputs === 'string') return outputs;
+    if (Array.isArray(outputs)) {
+        const first = outputs.find(Boolean);
+        return typeof first === 'string' ? first : String(first?.url || first?.video_url || '');
+    }
+    return String(data.output_url || data.video_url || data.url || data.result?.url || '');
+}
+
 function companionTextProviderId(companion) {
     return normalizedProviderId(companion?.textProvider);
 }
@@ -760,6 +936,8 @@ let state = {
     view: 'library',
     apiKey: '',
     gptprotoApiKey: '',
+    evolinkApiKey: '',
+    wavespeedApiKey: '',
     nanogptApiKey: '',
     nvidiaApiKey: '',
     bedrockApiKey: '',
@@ -771,6 +949,8 @@ let state = {
         bedrockBaseUrl: '',
         customProviderName: 'Custom API',
         customBaseUrl: '',
+        evolinkBaseUrl: 'https://api.evolink.ai/v1',
+        wavespeedBaseUrl: 'https://api.wavespeed.ai/api/v3',
         editFontSize: 15,
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
@@ -781,6 +961,8 @@ let state = {
         embeddingApiKey: '',
         localTtsBaseUrl: 'http://127.0.0.1:8000/v1',
         localTtsApiKey: '',
+        evolinkBaseUrl: 'https://api.evolink.ai/v1',
+        wavespeedBaseUrl: 'https://api.wavespeed.ai/api/v3',
         mcpBridgeUrl: HORDE_MCP_BRIDGE_DEFAULT,
         localImageBaseUrl: 'http://127.0.0.1:7860/v1',
         localImagePath: '/images/generations',
@@ -1244,6 +1426,19 @@ function validateBackupData(value) {
     if (value.companionThreads !== undefined) {
         requirePlainObject(value.companionThreads, 'Backup legacy Virtual Human threads');
     }
+    if (value.companionVideoAssets !== undefined) {
+        requirePlainObject(value.companionVideoAssets, 'Backup Virtual Human video assets');
+        if (Object.keys(value.companionVideoAssets).length > 1000) {
+            throw new Error('Backup has too many Virtual Human video assets');
+        }
+        Object.entries(value.companionVideoAssets).forEach(([assetId, source]) => {
+            requireSafeId(assetId, 'Backup Virtual Human video asset id');
+            requireString(source, `Backup Virtual Human video asset ${assetId}`, { max: 512 * 1024 * 1024 });
+            if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) {
+                throw new Error(`Backup Virtual Human video asset ${assetId} is invalid`);
+            }
+        });
+    }
     (value.systemPresets || []).forEach((item, index) => {
         requirePlainObject(item, `Backup preset ${index + 1}`);
         requireString(item.name, `Backup preset ${index + 1} name`, { max: 300 });
@@ -1475,6 +1670,8 @@ async function loadState() {
         state.apiKey = localStorage.getItem('horde_api_key') || '';
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || '';
+        state.evolinkApiKey = sessionStorage.getItem('horde_evolink_api_key') || '';
+        state.wavespeedApiKey = sessionStorage.getItem('horde_wavespeed_api_key') || '';
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || '';
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || '';
         state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || '';
@@ -1505,6 +1702,8 @@ async function loadState() {
     } else {
         const legacyStoredApiKey = await HordeDB.get('apiKey') || '';
         const storedGPTProtoApiKey = await HordeDB.get('gptprotoApiKey') || '';
+        const storedEvolinkApiKey = await HordeDB.get('evolinkApiKey') || '';
+        const storedWaveSpeedApiKey = await HordeDB.get('wavespeedApiKey') || '';
         const storedNanoGPTApiKey = await HordeDB.get('nanogptApiKey') || '';
         const storedNvidiaApiKey = await HordeDB.get('nvidiaApiKey') || '';
         const storedBedrockApiKey = await HordeDB.get('bedrockApiKey') || '';
@@ -1514,6 +1713,10 @@ async function loadState() {
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || storedGPTProtoApiKey;
         if (state.gptprotoApiKey) sessionStorage.setItem('horde_gptproto_api_key', state.gptprotoApiKey);
+        state.evolinkApiKey = sessionStorage.getItem('horde_evolink_api_key') || storedEvolinkApiKey;
+        if (state.evolinkApiKey) sessionStorage.setItem('horde_evolink_api_key', state.evolinkApiKey);
+        state.wavespeedApiKey = sessionStorage.getItem('horde_wavespeed_api_key') || storedWaveSpeedApiKey;
+        if (state.wavespeedApiKey) sessionStorage.setItem('horde_wavespeed_api_key', state.wavespeedApiKey);
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || storedNanoGPTApiKey;
         if (state.nanogptApiKey) sessionStorage.setItem('horde_nanogpt_api_key', state.nanogptApiKey);
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || storedNvidiaApiKey;
@@ -1550,6 +1753,8 @@ async function loadState() {
         if (state.globalSettings.bedrockBaseUrl === undefined) state.globalSettings.bedrockBaseUrl = '';
         if (state.globalSettings.customProviderName === undefined) state.globalSettings.customProviderName = 'Custom API';
         if (state.globalSettings.customBaseUrl === undefined) state.globalSettings.customBaseUrl = '';
+        if (state.globalSettings.evolinkBaseUrl === undefined) state.globalSettings.evolinkBaseUrl = 'https://api.evolink.ai/v1';
+        if (state.globalSettings.wavespeedBaseUrl === undefined) state.globalSettings.wavespeedBaseUrl = 'https://api.wavespeed.ai/api/v3';
         if (state.globalSettings.localBaseUrl === undefined) state.globalSettings.localBaseUrl = '';
         if (state.globalSettings.localApiKey === undefined) state.globalSettings.localApiKey = '';
         if (state.globalSettings.localGenerationTimeoutSeconds === undefined) state.globalSettings.localGenerationTimeoutSeconds = 300;
@@ -1977,6 +2182,8 @@ async function saveState() {
             // "Remember key on this device". Persisting '' erases stored copies.
             apiKey: state.globalSettings.rememberApiKey ? (state.apiKey || '') : '',
             gptprotoApiKey: state.globalSettings.rememberApiKey ? (state.gptprotoApiKey || '') : '',
+            evolinkApiKey: state.globalSettings.rememberApiKey ? (state.evolinkApiKey || '') : '',
+            wavespeedApiKey: state.globalSettings.rememberApiKey ? (state.wavespeedApiKey || '') : '',
             nanogptApiKey: state.globalSettings.rememberApiKey ? (state.nanogptApiKey || '') : '',
             nvidiaApiKey: state.globalSettings.rememberApiKey ? (state.nvidiaApiKey || '') : '',
             bedrockApiKey: state.globalSettings.rememberApiKey ? (state.bedrockApiKey || '') : '',
@@ -2070,6 +2277,8 @@ async function persistGlobalSettingsOnly() {
         globalSettings: persistedSettings,
         apiKey: remember ? (state.apiKey || '') : '',
         gptprotoApiKey: remember ? (state.gptprotoApiKey || '') : '',
+        evolinkApiKey: remember ? (state.evolinkApiKey || '') : '',
+        wavespeedApiKey: remember ? (state.wavespeedApiKey || '') : '',
         nanogptApiKey: remember ? (state.nanogptApiKey || '') : '',
         nvidiaApiKey: remember ? (state.nvidiaApiKey || '') : '',
         bedrockApiKey: remember ? (state.bedrockApiKey || '') : '',
@@ -9187,6 +9396,27 @@ function setupSettingsNavigation() {
     });
 }
 
+function refreshSettingsProviderCards(activeProvider = state.globalSettings.apiProvider) {
+    const keys = {
+        openrouter: document.getElementById('global-api-key')?.value || state.apiKey,
+        gptproto: document.getElementById('global-gptproto-key')?.value || state.gptprotoApiKey,
+        nanogpt: document.getElementById('global-nanogpt-key')?.value || state.nanogptApiKey,
+        nvidia: document.getElementById('global-nvidia-key')?.value || state.nvidiaApiKey,
+        bedrock: document.getElementById('global-bedrock-key')?.value || state.bedrockApiKey,
+        custom: document.getElementById('global-custom-api-key')?.value || state.customApiKey
+    };
+    document.querySelectorAll('.settings-provider-card[data-provider]').forEach(card => {
+        const providerId = card.dataset.provider;
+        const configured = !!String(keys[providerId] || '').trim();
+        const selected = providerId === activeProvider;
+        card.classList.toggle('has-key', configured);
+        card.classList.toggle('is-active', selected);
+        if (selected) card.open = true;
+        const status = card.querySelector('.settings-provider-state');
+        if (status) status.textContent = selected ? 'Active' : configured ? 'Connected' : providerId === 'custom' ? 'Advanced' : 'Configure';
+    });
+}
+
 async function refreshMcpSettingsStatus(options = {}) {
     const badge = document.getElementById('mcp-bridge-badge');
     const result = document.getElementById('mcp-settings-result');
@@ -9301,6 +9531,12 @@ function setupGlobalSettings() {
         state.gptprotoApiKey = document.getElementById('global-gptproto-key').value.trim();
         if (state.gptprotoApiKey) sessionStorage.setItem('horde_gptproto_api_key', state.gptprotoApiKey);
         else sessionStorage.removeItem('horde_gptproto_api_key');
+        state.evolinkApiKey = document.getElementById('global-evolink-key')?.value.trim() || '';
+        if (state.evolinkApiKey) sessionStorage.setItem('horde_evolink_api_key', state.evolinkApiKey);
+        else sessionStorage.removeItem('horde_evolink_api_key');
+        state.wavespeedApiKey = document.getElementById('global-wavespeed-key')?.value.trim() || '';
+        if (state.wavespeedApiKey) sessionStorage.setItem('horde_wavespeed_api_key', state.wavespeedApiKey);
+        else sessionStorage.removeItem('horde_wavespeed_api_key');
         applyNanoGPTApiKeyForSession(document.getElementById('global-nanogpt-key').value);
         state.nvidiaApiKey = document.getElementById('global-nvidia-key').value.trim();
         if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
@@ -9339,6 +9575,10 @@ function setupGlobalSettings() {
             return showToast('Enter a valid HTTPS custom provider Base URL.', 'error');
         }
         state.globalSettings.customBaseUrl = normalizeRemoteApiBase(rawCustomBase);
+        state.globalSettings.evolinkBaseUrl = normalizeRemoteApiBase(document.getElementById('global-evolink-url')?.value)
+            || 'https://api.evolink.ai/v1';
+        state.globalSettings.wavespeedBaseUrl = normalizeRemoteApiBase(document.getElementById('global-wavespeed-url')?.value)
+            || 'https://api.wavespeed.ai/api/v3';
         const rawCustomHeaders = document.getElementById('global-custom-headers').value.trim();
         if (rawCustomHeaders) {
             try {
@@ -9392,7 +9632,8 @@ function setupGlobalSettings() {
         applyGlobalStyles();
         hideGlobalSettings();
         const enteredCloudKey = !!(state.apiKey || state.gptprotoApiKey || state.nanogptApiKey
-            || state.nvidiaApiKey || state.bedrockApiKey || state.customApiKey);
+            || state.nvidiaApiKey || state.bedrockApiKey || state.customApiKey
+            || state.evolinkApiKey || state.wavespeedApiKey);
         showToast(enteredCloudKey && !state.globalSettings.rememberApiKey
             ? 'Settings saved. API keys remain in this tab only; enable “Remember API keys” to keep them after closing the browser.'
             : 'Settings saved for future sessions.', 'success');
@@ -9450,6 +9691,7 @@ function setupGlobalSettings() {
     if (providerSel) {
         providerSel.onchange = () => {
             const local = providerSel.value === 'local';
+            refreshSettingsProviderCards(providerSel.value);
             document.getElementById('local-provider-fields').style.display = local ? 'block' : 'none';
             document.getElementById('openrouter-key-block').style.display = 'block';
             document.getElementById('gptproto-key-block').style.display = 'block';
@@ -9462,6 +9704,10 @@ function setupGlobalSettings() {
             if (fpWarn) fpWarn.style.display = (local && location.protocol === 'file:') ? 'block' : 'none';
         };
     }
+    ['global-api-key', 'global-gptproto-key', 'global-nanogpt-key', 'global-nvidia-key',
+        'global-bedrock-key', 'global-custom-api-key'].forEach(inputId => {
+        document.getElementById(inputId)?.addEventListener('input', () => refreshSettingsProviderCards(providerSel?.value));
+    });
 
     const testGPTProtoBtn = document.getElementById('test-gptproto-conn-btn');
     if (testGPTProtoBtn) testGPTProtoBtn.onclick = async () => {
@@ -9827,8 +10073,15 @@ function redactGlobalSettingsCredentials(settings) {
     return copy;
 }
 
-function exportFullBackup() {
+async function exportFullBackup() {
     (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
+    const companionVideoAssets = {};
+    const assetIds = new Set((state.companions || []).flatMap(companion =>
+        (companion.videoJobs || []).map(job => String(job.assetId || '')).filter(Boolean)));
+    for (const assetId of assetIds) {
+        const blob = await HordeDB.get(`companionVideoAsset:${assetId}`).catch(() => null);
+        if (blob instanceof Blob) companionVideoAssets[assetId] = await blobAsDataUrl(blob);
+    }
     const payload = {
         _format: 'horde-studio-backup',
         _version: 1,
@@ -9851,7 +10104,8 @@ function exportFullBackup() {
         companions: state.companions,
         companionThreads: state.companionThreads,
         companionTimelines: state.companionTimelines,
-        activeCompanionId: state.activeCompanionId
+        activeCompanionId: state.activeCompanionId,
+        companionVideoAssets
     };
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -9887,6 +10141,11 @@ function importFullBackup(file) {
                         'worlds', 'worldInstances', 'activeWorldId', 'companions',
                         'companionThreads', 'companionTimelines', 'activeCompanionId'];
                     keys.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
+                    for (const [assetId, source] of Object.entries(data.companionVideoAssets || {})) {
+                        if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
+                        const blob = await fetch(source).then(response => response.blob());
+                        await HordeDB.set(`companionVideoAsset:${assetId}`, blob);
+                    }
                     worldMediaDirty = true;
                     await saveState();
                     showToast('Backup restored! Reloading...', 'success');
@@ -9929,6 +10188,10 @@ function showGlobalSettings() {
         activateSettingsSection(activeSettingsSection, { clearSearch: false, scroll: false });
         document.getElementById('global-api-key').value = state.apiKey;
         document.getElementById('global-gptproto-key').value = state.gptprotoApiKey;
+        document.getElementById('global-evolink-key').value = state.evolinkApiKey;
+        document.getElementById('global-wavespeed-key').value = state.wavespeedApiKey;
+        document.getElementById('global-evolink-url').value = state.globalSettings.evolinkBaseUrl || 'https://api.evolink.ai/v1';
+        document.getElementById('global-wavespeed-url').value = state.globalSettings.wavespeedBaseUrl || 'https://api.wavespeed.ai/api/v3';
         document.getElementById('global-nanogpt-key').value = state.nanogptApiKey;
         document.getElementById('global-nvidia-key').value = state.nvidiaApiKey;
         document.getElementById('global-bedrock-key').value = state.bedrockApiKey;
@@ -9945,6 +10208,7 @@ function showGlobalSettings() {
         const provider = TEXT_PROVIDER_IDS.includes(state.globalSettings.apiProvider)
             ? state.globalSettings.apiProvider : 'openrouter';
         document.getElementById('global-api-provider').value = provider;
+        refreshSettingsProviderCards(provider);
         document.getElementById('global-local-url').value = state.globalSettings.localBaseUrl || '';
         document.getElementById('global-local-key').value = state.globalSettings.localApiKey || '';
         document.getElementById('global-local-generation-timeout').value = String(
@@ -28825,6 +29089,16 @@ function normalizeCompanion(raw) {
         photoReferenceFallback: c.photoReferenceFallback !== false,
         allowPhotos: c.allowPhotos !== false,
         allowVoiceNotes: c.allowVoiceNotes !== false,
+        allowVideoClips: c.allowVideoClips === true,
+        videoProvider: normalizedVideoProviderId(c.videoProvider),
+        videoModel: String(c.videoModel || '').trim().slice(0, 300),
+        videoResolution: ['480p', '720p', '1080p'].includes(c.videoResolution) ? c.videoResolution : '480p',
+        videoDuration: livingClamp(Number(c.videoDuration) || 5, 2, 30),
+        videoAudio: c.videoAudio !== false,
+        videoReferencePolicy: ['profile', 'generation', 'gallery', 'auto'].includes(c.videoReferencePolicy)
+            ? c.videoReferencePolicy : 'auto',
+        videoStyleRules: String(c.videoStyleRules || '').trim().slice(0, 2400),
+        videoJobs: (Array.isArray(c.videoJobs) ? c.videoJobs : []).map(normalizeCompanionVideoJob).slice(-100),
         inputModalities: (Array.isArray(c.inputModalities) ? c.inputModalities : ['text'])
             .map(value => String(value).toLowerCase()).filter(value => ['text', 'image', 'audio'].includes(value)),
         personaVisualMemory: isPlainObject(c.personaVisualMemory) ? {
@@ -28858,8 +29132,12 @@ function normalizeCompanion(raw) {
         socialFeedRuntime: isPlainObject(c.socialFeedRuntime) ? {
             lastPostAt: Number.isFinite(c.socialFeedRuntime.lastPostAt) ? c.socialFeedRuntime.lastPostAt : 0,
             nextPostAt: Number.isFinite(c.socialFeedRuntime.nextPostAt) ? c.socialFeedRuntime.nextPostAt : 0,
-            lastGateAt: Number.isFinite(c.socialFeedRuntime.lastGateAt) ? c.socialFeedRuntime.lastGateAt : 0
-        } : { lastPostAt: 0, nextPostAt: 0, lastGateAt: 0 },
+            lastGateAt: Number.isFinite(c.socialFeedRuntime.lastGateAt) ? c.socialFeedRuntime.lastGateAt : 0,
+            lastAttemptAt: Number.isFinite(c.socialFeedRuntime.lastAttemptAt) ? c.socialFeedRuntime.lastAttemptAt : 0,
+            lastErrorAt: Number.isFinite(c.socialFeedRuntime.lastErrorAt) ? c.socialFeedRuntime.lastErrorAt : 0,
+            lastError: String(c.socialFeedRuntime.lastError || '').trim().slice(0, 500),
+            consecutiveFailures: livingClamp(Number(c.socialFeedRuntime.consecutiveFailures) || 0, 0, 20)
+        } : { lastPostAt: 0, nextPostAt: 0, lastGateAt: 0, lastAttemptAt: 0, lastErrorAt: 0, lastError: '', consecutiveFailures: 0 },
         socialRelationship: {
             role: ['stranger', 'follower', 'mutual', 'friend', 'subscriber', 'vip_subscriber'].includes(storedSocialRelationship.role)
                 ? storedSocialRelationship.role : socialPlayerRole,
@@ -28917,7 +29195,8 @@ function normalizeCompanion(raw) {
             textTurns: Math.max(0, parseInt(usage.textTurns) || 0),
             photosGenerated: Math.max(0, parseInt(usage.photosGenerated) || 0),
             voiceNotesGenerated: Math.max(0, parseInt(usage.voiceNotesGenerated) || 0),
-            callsCompleted: Math.max(0, parseInt(usage.callsCompleted) || 0)
+            callsCompleted: Math.max(0, parseInt(usage.callsCompleted) || 0),
+            videosGenerated: Math.max(0, parseInt(usage.videosGenerated) || 0)
         },
         trauma: (Array.isArray(c.trauma) ? c.trauma : []).map(normalizeCompanionTrauma)
             .filter(t => t.label).slice(-20),
@@ -28938,13 +29217,17 @@ function normalizeCompanionMessage(raw) {
     return {
         id: String(m.id || livingId('cmsg', m.text || Math.random())).slice(0, 80),
         role: m.role === 'companion' ? 'companion' : m.role === 'system' ? 'system' : 'user',
-        type: ['text', 'photo', 'voice', 'system'].includes(m.type) ? m.type : 'text',
+        type: ['text', 'photo', 'voice', 'clip_request', 'system'].includes(m.type) ? m.type : 'text',
         channel: ['text', 'call'].includes(m.channel) ? m.channel : 'text',
         text: String(m.text || '').slice(0, 4000),
         photo: normalizeGeneratedImageSource(m.photo),
         audio: typeof m.audio === 'string' ? m.audio : '',
         audioFormat: String(m.audioFormat || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12),
         mediaDescription: String(m.mediaDescription || '').trim().slice(0, 600),
+        videoRequestId: String(m.videoRequestId || '').trim().slice(0, 100),
+        clipType: ['selfie', 'dance', 'outfit', 'storytime', 'day_in_life', 'comedy', 'trend', 'custom'].includes(m.clipType)
+            ? m.clipType : 'custom',
+        cameraRig: ['selfie', 'handheld', 'fixed'].includes(m.cameraRig) ? m.cameraRig : 'selfie',
         // A photo that was still generating when the tab closed is not lost —
         // it survives a reload as a scene description the author can retry.
         scene: typeof m.scene === 'string' ? m.scene.slice(0, 400) : '',
@@ -29993,6 +30276,13 @@ function companionResponsePlan(companion, message, nowMs, rawExperience = null) 
     if (willReply && experience.replyDelays && coolingOff) {
         replyDueAt = Math.max(replyDueAt, dynamics.cooldownUntil + Math.round(reconsiderRoll * 18) * 60 * 1000);
     }
+    // A willing reply is generated only when they actually open the
+    // conversation to answer. Until then the message remains delivered but
+    // unread, which lets any additional player texts join the same inbox
+    // batch instead of producing several pre-written replies. A deliberate
+    // no-reply still has an independent read time so "seen" can remain a real
+    // outcome without spending an LLM call.
+    if (willReply && experience.replyDelays) readAt = replyDueAt;
     if (!experience.replyDelays) {
         readAt = nowMs;
         replyDueAt = nowMs;
@@ -30248,6 +30538,41 @@ function companionNextSocialPostAt(companion, anchorMs = Date.now()) {
     const baseHours = { rare: 336, weekly: 168, few_week: 72, daily: 24, active: 10 }[companion.socialPostFrequency] || 72;
     const jitter = 0.76 + companionSeededRoll(`${companion.id}|social|${Math.floor(anchorMs / 3600000)}`) * 0.48;
     return anchorMs + Math.round(baseHours * jitter * 60 * 60 * 1000);
+}
+
+function reconcileCompanionSocialSchedule(companion, nowMs = Date.now()) {
+    const runtime = companion.socialFeedRuntime;
+    if (!companion.socialFeedEnabled || companion.socialPostFrequency === 'manual') {
+        if (runtime.nextPostAt !== 0) runtime.nextPostAt = 0;
+        return runtime.nextPostAt;
+    }
+    // Base a repaired schedule on the last real activity, not on app startup.
+    // This lets an overdue feed catch up once after the browser was closed
+    // instead of postponing the first post every time Horde Studio reopens.
+    const latestPostAt = companion.socialPosts.reduce((latest, post) =>
+        Math.max(latest, Number(post.createdAt) || 0), 0);
+    const anchor = Math.max(
+        Number(runtime.lastPostAt) || 0,
+        latestPostAt,
+        Number(companion.createdAt) || 0
+    ) || nowMs;
+    const anchoredNextPostAt = companionNextSocialPostAt(companion, anchor);
+    // v13.5 initialized an empty schedule from the moment the app opened.
+    // Repair that one-time false future date when no posting attempt has ever
+    // occurred, while preserving every genuine retry or authored schedule.
+    if (Number(runtime.nextPostAt) > 0) {
+        if (!runtime.lastAttemptAt && !runtime.lastGateAt && anchoredNextPostAt < runtime.nextPostAt) {
+            runtime.nextPostAt = anchoredNextPostAt;
+        }
+        return runtime.nextPostAt;
+    }
+    runtime.nextPostAt = anchoredNextPostAt;
+    return runtime.nextPostAt;
+}
+
+function companionSocialRetryAt(companion, nowMs = Date.now()) {
+    const failures = livingClamp(Number(companion.socialFeedRuntime?.consecutiveFailures) || 1, 1, 6);
+    return nowMs + Math.min(6 * 60 * 60 * 1000, 30 * 60 * 1000 * (2 ** (failures - 1)));
 }
 
 function companionSocialMinimumGapMs(companion) {
@@ -30579,7 +30904,7 @@ RULES:
 5. MEDIA PERMISSIONS: ${companion.allowPhotos ? `Photos are enabled. If asked for a selfie/photo, decide freely based on your mood, boundaries, relationship, trust, current activity and what was requested. You may comply with send_photo, postpone, negotiate, or refuse; a request never compels you. If you agree, actually call send_photo—never claim an unseen image was sent. Make the capture physically possible: while alone use a front-camera selfie, a nearby mirror, or a timer/propped phone; only say another person took it when that person is actually present. Name that person in photographer when known. Current author capture policy: ${COMPANION_PHOTO_CAPTURE_POLICIES[normalizeCompanionPhotoCapturePolicy(companion.photoCapturePolicy)].label}.` : 'Photos are disabled by the user to avoid image-generation charges. Never call send_photo or claim to have sent an image; naturally say you cannot send one if asked.'}
 ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_note when speaking feels more natural than typing, including during an autonomous check-in.' : 'Voice notes are disabled by the user. Never call send_voice_note or claim to have recorded one.'}
 6. ${companion.webAccess ? 'You may search the live web when current information is genuinely needed, then use share_link for a specific meme, article or video you want this person to see. Never pretend you searched if you did not.' : 'You do not have live web access. Never claim to have searched for or just seen current online content.'}
-7. Every reply MUST call commit_human_turn exactly once. This private receipt records your emotional state and an explicit photo/voice-note decision even when both are "none". A request for media may be accepted, refused, negotiated or postponed; never silently pretend a photo or recording was sent. Use the receipt's memory_write, relationship_event and life_event only when the exchange establishes something that should remain true after the recent transcript expires.${companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual' ? ` You may set social_post to post when the current moment genuinely belongs on your profile and fits the authored social controls; ${companion.socialFeedImages && companion.allowPhotos ? 'photo posts are allowed according to the configured photo ratio' : 'use status posts only because feed images are disabled'}.` : ' Set social_post to none; the feed is disabled or set to manual-only.'}
+7. Every reply MUST call commit_human_turn exactly once. This private receipt records your emotional state and an explicit photo/voice-note/video-clip decision even when all are "none". A request for media may be accepted, refused, negotiated or postponed; never silently pretend media was sent. Video clips are uniquely player-triggered: only consider video_clip when the latest player message includes a [CLIP REQUEST id], preserve that request_id, and never generate or publish a video yourself. Accept or counter only when it fits your personality, authored boundaries and current physical situation; the player separately approves and pays for generation. Use the receipt's memory_write, relationship_event and life_event only when the exchange establishes something that should remain true after the recent transcript expires.${companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual' ? ` You may set social_post to post when the current moment genuinely belongs on your profile and fits the authored social controls; ${companion.socialFeedImages && companion.allowPhotos ? 'photo posts are allowed according to the configured photo ratio' : 'use status posts only because feed images are disabled'}.` : ' Set social_post to none; the feed is disabled or set to manual-only.'}
 ${!options.suppressPersonaVision && companionPendingPersonaVision(companion) ? 'The player’s profile picture is attached to the latest message for the first time or has changed. Look at it once, respond naturally without making appearance the topic unless relevant, and write a neutral visual summary into persona_visual_memory so it does not need to be sent again.' : ''}
 ${latestUser && ['photo', 'voice'].includes(latestUser.type) ? 'The latest player message contains media. Actually inspect/listen to it. Put a concise grounded description or transcript in player_media_memory so later turns can remember it without resending the file.' : ''}
 8. Emotional changes must be earned by the actual exchange. Small deltas are normal. Complete emotion_appraisal before proposing emotion_changes. toward_player_emotions must contain only feelings actually directed at the player; do not transfer anger at work, fear about family or unrelated sadness onto them. Use masking_change when what you show differs from what you feel, and delayed_reaction_minutes only when this person's processing style and the event justify it. Use anger_change and cool_off_minutes when conflict genuinely makes you need space; use stress, energy and social-need changes when the exchange affects them. Intoxication may change only when drinking is visibly established in your authoritative life state or visible reply—never because a tone merely seems wild. ${companionSexualSystemActive(companion) ? 'Sexual desire and arousal changes require an actual internal impulse, relevant exchange or established intimate context. Trust, compliments and generic kindness are not sexual triggers by themselves. intimacy_outcome records only an outcome visibly established by the exchange or your authoritative off-screen life; never invent sexual contact.' : 'Set all desire-related changes to zero and intimacy_outcome to none because the adult desire system is disabled.'}
@@ -30589,10 +30914,22 @@ ${latestUser && ['photo', 'voice'].includes(latestUser.type) ? 'The latest playe
 /** The messages array sent to the model: system prompt + short-term buffer. */
 function buildCompanionMessages(companion, messages, nowMs, options = {}) {
     const localCognition = labsSocialContext(options.localCognition);
-    const systemContent = buildCompanionSystemPrompt(companion, messages, nowMs, options)
-        + (localCognition ? `\n\n${localCognition}` : '');
     const experience = normalizeCompanionChatExperience(options.experience);
-    const candidates = messages.slice(-COMPANION_SHORT_TERM_LIMIT);
+    // Never disclose a queued message to the model before the simulated
+    // person has read it. This matters when the player double-texts while a
+    // delayed reply is pending: only the messages present when the thread is
+    // opened may influence that reply.
+    const visibleMessages = messages.filter(message =>
+        message?.role !== 'user'
+        || !experience.realTimeLife
+        || !message.awaitingReply
+        || (Number(message.readAt) > 0 && Number(message.readAt) <= nowMs)
+    ).map((message, index) => ({ message, index }))
+        .sort((a, b) => (Number(a.message.timestamp) - Number(b.message.timestamp)) || (a.index - b.index))
+        .map(item => item.message);
+    const systemContent = buildCompanionSystemPrompt(companion, visibleMessages, nowMs, options)
+        + (localCognition ? `\n\n${localCognition}` : '');
+    const candidates = visibleMessages.slice(-COMPANION_SHORT_TERM_LIMIT);
     const contextChars = Math.max(2048, companion.contextSize || 8192) * 3.5;
     const outputReserveChars = Math.max(128, companion.maxTokens || 1000) * 3.5;
     let remainingChars = Math.max(1000, contextChars - systemContent.length - outputReserveChars);
@@ -30618,6 +30955,7 @@ function buildCompanionMessages(companion, messages, nowMs, options = {}) {
                 : m.type === 'system' ? `[conversation event: ${m.text}]`
                 : m.type === 'photo' ? `[sent a photo: ${m.text || m.mediaDescription || 'no caption'}]`
                 : m.type === 'voice' ? `[voice note: "${m.text || m.mediaDescription || 'audio attached'}"]`
+                : m.type === 'clip_request' ? `[CLIP REQUEST ${m.videoRequestId}] The player asks: "${m.text}". Requested format: ${m.clipType.replace('_', ' ')}. Camera: ${m.cameraRig}. Decide privately in video_clip whether to accept, refuse, postpone, or counter. Preserve request_id. No video is generated until the player separately approves the final concept.`
                 : m.text);
             let content = plainText;
             if (m === latestUser && m.role === 'user') {
@@ -30768,6 +31106,21 @@ const COMPANION_TURN_COMMIT_TOOL = {
                     },
                     required: ['decision']
                 },
+                video_clip: {
+                    type: 'object',
+                    description: 'Respond to an explicit player clip request. Never propose or generate a clip autonomously. Accept only when the request fits your personality, boundaries, present situation and configured video permission; otherwise refuse, postpone or counter with a more plausible version.',
+                    properties: {
+                        decision: { type: 'string', enum: ['none', 'accept', 'refuse', 'postpone', 'counter'] },
+                        request_id: { type: 'string' },
+                        concept: { type: 'string', description: 'The final agreed visual concept, grounded in current place, outfit and company.' },
+                        caption: { type: 'string' },
+                        clip_type: { type: 'string', enum: ['selfie', 'dance', 'outfit', 'storytime', 'day_in_life', 'comedy', 'trend', 'custom'] },
+                        camera_rig: { type: 'string', enum: ['selfie', 'handheld', 'fixed'] },
+                        dialogue: { type: 'string', description: 'Optional short spoken line when native audio is enabled.' },
+                        reason: { type: 'string', description: 'Private grounded reason for the decision.' }
+                    },
+                    required: ['decision']
+                },
                 relationship_event: { type: 'string', description: 'Optional factual relationship milestone or rupture established by this exchange.' },
                 memory_write: { type: 'string', description: 'Optional durable fact worth remembering after the short-term transcript expires.' },
                 persona_visual_memory: { type: 'string', description: 'When the player profile image is newly supplied, a neutral concise visual description of only what is visibly present. Blank otherwise.' },
@@ -30825,7 +31178,7 @@ const COMPANION_TURN_COMMIT_TOOL = {
                     }
                 }
             },
-            required: ['state', 'photo', 'voice_note']
+            required: ['state', 'photo', 'voice_note', 'video_clip']
         }
     }
 };
@@ -31169,6 +31522,7 @@ function captureCompanionRuntime(companion) {
         socialPosts: companion.socialPosts,
         socialFeedRuntime: companion.socialFeedRuntime,
         socialRelationship: companion.socialRelationship,
+        videoJobs: companion.videoJobs,
         lastProactiveAt: companion.lastProactiveAt || 0
     });
 }
@@ -31221,7 +31575,7 @@ function freshCompanionRuntime(companion, nowMs = Date.now()) {
         lifeRuntime: normalizeCompanionLifeRuntime({ lastSimulatedAt: nowMs }),
         currentOutfit: '',
         currentLocationDetail: '',
-        usage: { textTurns: 0, photosGenerated: 0, voiceNotesGenerated: 0, callsCompleted: 0 },
+        usage: { textTurns: 0, photosGenerated: 0, voiceNotesGenerated: 0, callsCompleted: 0, videosGenerated: 0 },
         trauma: [],
         memory: { longTerm: [], consolidatedThroughIndex: 0 },
         personaVisualMemory: { personaId: '', avatarFingerprint: '', description: '', seenAt: 0 },
@@ -31238,6 +31592,7 @@ function freshCompanionRuntime(companion, nowMs = Date.now()) {
             subscribedAt: ['subscriber', 'vip_subscriber'].includes(companion.socialPlayerRole) ? nowMs : 0,
             engagement: 0
         },
+        videoJobs: [],
         lastProactiveAt: 0
     };
 }
@@ -31262,6 +31617,7 @@ function normalizeCompanionRuntime(raw, companion) {
         socialPosts: source.socialPosts,
         socialFeedRuntime: source.socialFeedRuntime,
         socialRelationship: source.socialRelationship,
+        videoJobs: source.videoJobs,
         lastProactiveAt: source.lastProactiveAt
     });
     return captureCompanionRuntime(repaired);
@@ -31285,6 +31641,7 @@ function applyCompanionRuntime(companion, rawRuntime) {
     companion.socialPosts = runtime.socialPosts;
     companion.socialFeedRuntime = runtime.socialFeedRuntime;
     companion.socialRelationship = runtime.socialRelationship;
+    companion.videoJobs = runtime.videoJobs;
     companion.lastProactiveAt = runtime.lastProactiveAt;
     return runtime;
 }
@@ -31756,7 +32113,7 @@ async function repairCompanionTurnCommit(companion, promptMessages, visibleReply
             {
                 role: 'user',
                 content: `[PRIVATE SIMULATION RECEIPT REPAIR — DO NOT WRITE ANOTHER VISIBLE MESSAGE]
-Call commit_human_turn once for the response immediately above. Preserve what it actually did. Explicitly decide photo and voice_note as none/send/refuse/postpone/negotiated, and report the emotional state change. Do not invent media that the visible response did not agree to send.`
+Call commit_human_turn once for the response immediately above. Preserve what it actually did. Explicitly decide photo, voice_note and video_clip; use video_clip=none unless the player explicitly sent a [CLIP REQUEST id]. Report the emotional state change. Do not invent media that the visible response did not agree to send.`
             }
         ];
         const body = applyCompanionGenerationConfig({
@@ -31872,6 +32229,23 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn') {
             };
         }
     }
+    const video = commit.video_clip;
+    if (isPlainObject(video) && video.decision && video.decision !== 'none') {
+        const existing = [...companion.videoJobs].reverse().find(job =>
+            job.status === 'requested' && (!video.request_id || job.id === video.request_id));
+        if (existing) {
+            existing.status = video.decision === 'accept' || video.decision === 'counter'
+                ? 'accepted' : video.decision === 'refuse' ? 'refused' : 'requested';
+            existing.concept = String(video.concept || existing.requestText).trim().slice(0, 1800);
+            existing.caption = String(video.caption || '').trim().slice(0, 1200);
+            existing.clipType = ['selfie', 'dance', 'outfit', 'storytime', 'day_in_life', 'comedy', 'trend', 'custom'].includes(video.clip_type)
+                ? video.clip_type : existing.clipType;
+            existing.cameraRig = ['selfie', 'handheld', 'fixed'].includes(video.camera_rig)
+                ? video.camera_rig : existing.cameraRig;
+            existing.reason = String(video.reason || '').trim().slice(0, 1000);
+            existing.updatedAt = nowMs;
+        }
+    }
 }
 
 function applyCompanionSocialPostCommit(companion, commit, nowMs, source = 'turn') {
@@ -31881,7 +32255,7 @@ function applyCompanionSocialPostCommit(companion, commit, nowMs, source = 'turn
     // The feed is a life surface, not a second transcript. Even if a model
     // eagerly proposes a post on every turn, keep public activity human-scale.
     const lastPostAt = Number(companion.socialFeedRuntime?.lastPostAt) || 0;
-    if (lastPostAt && nowMs - lastPostAt < companionSocialMinimumGapMs(companion)) return null;
+    if (source !== 'manual' && lastPostAt && nowMs - lastPostAt < companionSocialMinimumGapMs(companion)) return null;
     const allowedTypes = companion.socialContentTypes?.length ? companion.socialContentTypes : ['everyday'];
     const category = allowedTypes.includes(raw.category) ? raw.category : allowedTypes[0];
     const monetized = companion.socialMonetization !== 'none';
@@ -31908,7 +32282,204 @@ function applyCompanionSocialPostCommit(companion, commit, nowMs, source = 'turn
     companion.socialPosts = companion.socialPosts.slice(-200);
     companion.socialFeedRuntime.lastPostAt = nowMs;
     companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
+    companion.socialFeedRuntime.lastError = '';
+    companion.socialFeedRuntime.lastErrorAt = 0;
+    companion.socialFeedRuntime.consecutiveFailures = 0;
     return wantsPhoto ? post : null;
+}
+
+function companionVideoReference(companion) {
+    const latestGallery = [...(companion.socialPosts || [])].reverse().find(post => post.photo)?.photo || '';
+    const choices = {
+        generation: companion.basePhoto,
+        profile: companion.profilePhoto,
+        gallery: latestGallery,
+        auto: companion.basePhoto || companion.profilePhoto || latestGallery
+    };
+    return normalizeGeneratedImageSource(choices[companion.videoReferencePolicy] || choices.auto);
+}
+
+function companionVideoPrompt(companion, job) {
+    const life = companionLifeState(companion, Date.now());
+    return [
+        'Vertical 9:16 short-form social video recorded on a phone.',
+        `Camera operation: ${job.cameraRig}; physically plausible framing and hand movement.`,
+        'One continuous coherent scene, natural temporal motion, stable identity, realistic phone exposure and compression.',
+        `Person: ${companion.appearance || companion.name}.`,
+        `Current grounded situation: ${life.label || 'available'}; location: ${companion.currentLocationDetail || life.situation?.placeLabel || companion.locationLabel || 'not specified'}; outfit: ${companion.currentOutfit || life.situation?.outfit || 'use the reference image clothing'}.`,
+        `Requested clip: ${job.concept || job.requestText}.`,
+        companion.videoAudio ? 'Native audio may include only short natural room sound or the agreed spoken line.' : 'No dialogue; visual-only clip.',
+        companion.videoStyleRules ? `Creator rules and boundaries: ${companion.videoStyleRules}` : '',
+        'No cinematic crane shots, cuts to impossible viewpoints, captions, logos, watermarks or third-person camera unless fixed/handheld was explicitly selected.'
+    ].filter(Boolean).join('\n');
+}
+
+async function submitCompanionVideoJob(companion, job) {
+    const provider = normalizedVideoProviderId(job.provider || companion.videoProvider);
+    if (!companion.allowVideoClips) throw new Error('Clips are disabled for this Virtual Human.');
+    if (!videoProviderHasCredentials(provider)) throw new Error(`${videoProviderDisplayName(provider)} is not connected in Settings → Connections.`);
+    const reference = companionVideoReference(companion);
+    if (!reference) throw new Error('This reference-video model needs an identity image. Add a generation reference, profile image or gallery photo.');
+    job.provider = provider;
+    job.model = job.model || companion.videoModel || (await fetchVideoModels(provider))[0]?.id || '';
+    job.prompt = companionVideoPrompt(companion, job);
+    job.status = 'queued'; job.progress = 3; job.updatedAt = Date.now(); job.error = '';
+    renderCompanionSocialPanel(companion); await saveState();
+    let endpoint = '';
+    let body = {};
+    if (provider === 'openrouter') {
+        endpoint = `${videoProviderApiBase(provider)}/videos`;
+        body = {
+            model: job.model, prompt: job.prompt, duration: job.duration,
+            resolution: job.resolution, aspect_ratio: '9:16', audio: companion.videoAudio,
+            input_references: [{ type: 'image_url', image_url: { url: reference } }]
+        };
+    } else if (provider === 'evolink') {
+        endpoint = `${videoProviderApiBase(provider)}/videos/generations`;
+        body = {
+            model: job.model, prompt: job.prompt, aspect_ratio: '9:16', duration: job.duration,
+            quality: job.resolution, audio: companion.videoAudio, image_urls: [reference], reference_images: [reference]
+        };
+    } else {
+        endpoint = `${videoProviderApiBase(provider)}/${String(job.model).replace(/^\/+/, '')}`;
+        body = {
+            prompt: job.prompt, image: reference, reference_images: [reference],
+            aspect_ratio: '9:16', duration: job.duration, resolution: job.resolution,
+            generate_audio: companion.videoAudio
+        };
+    }
+    const response = await fetch(endpoint, { method: 'POST', headers: videoProviderHeaders(provider), body: JSON.stringify(body) });
+    const payload = await response.json().catch(async () => ({ error: await response.text().catch(() => '') }));
+    if (!response.ok) throw new Error(String(payload?.error?.message || payload?.error || payload?.message || `Video request failed (${response.status})`));
+    const data = payload?.data || payload;
+    job.providerJobId = String(data?.id || data?.task_id || data?.prediction_id || payload?.id || '').trim();
+    const immediate = videoOutputFromPayload(payload);
+    if (immediate) return completeCompanionVideoJob(companion, job, immediate);
+    if (!job.providerJobId) throw new Error('The video provider accepted the request but returned no job ID.');
+    job.status = 'generating'; job.progress = Math.max(5, Number(data?.progress) || 5); job.updatedAt = Date.now();
+    await saveState(); renderCompanionSocialPanel(companion);
+    return pollCompanionVideoJob(companion, job);
+}
+
+async function completeCompanionVideoJob(companion, job, outputUrl) {
+    job.status = 'downloading'; job.progress = 96; job.outputUrl = outputUrl; job.updatedAt = Date.now();
+    renderCompanionSocialPanel(companion);
+    await persistCompanionVideoAsset(job, outputUrl);
+    job.status = 'ready'; job.progress = 100; job.updatedAt = Date.now(); job.error = '';
+    companion.usage.videosGenerated = (Number(companion.usage.videosGenerated) || 0) + 1;
+    await saveState(); renderCompanionSocialPanel(companion);
+    return job;
+}
+
+async function completeCompanionVideoJobFromResponse(companion, job, response) {
+    const blob = await response.blob();
+    job.status = 'downloading'; job.progress = 96; job.updatedAt = Date.now();
+    renderCompanionSocialPanel(companion);
+    await persistCompanionVideoBlob(job, blob);
+    job.status = 'ready'; job.progress = 100; job.updatedAt = Date.now(); job.error = '';
+    companion.usage.videosGenerated = (Number(companion.usage.videosGenerated) || 0) + 1;
+    await saveState(); renderCompanionSocialPanel(companion);
+    return job;
+}
+
+async function pollCompanionVideoJob(companion, job) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20 * 60 * 1000 && ['queued', 'generating'].includes(job.status)) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        const provider = job.provider;
+        const endpoint = provider === 'openrouter'
+            ? `${videoProviderApiBase(provider)}/videos/${encodeURIComponent(job.providerJobId)}`
+            : provider === 'evolink'
+                ? `${videoProviderApiBase(provider)}/tasks/${encodeURIComponent(job.providerJobId)}`
+                : `${videoProviderApiBase(provider)}/predictions/${encodeURIComponent(job.providerJobId)}/result`;
+        const response = await fetch(endpoint, { headers: videoProviderHeaders(provider) });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(String(payload?.error?.message || payload?.error || payload?.message || `Video status failed (${response.status})`));
+        const data = payload?.data || payload;
+        const status = String(data?.status || data?.state || '').toLowerCase();
+        const progress = Number(data?.progress ?? data?.percentage);
+        job.progress = Number.isFinite(progress) ? livingClamp(progress <= 1 ? progress * 100 : progress, 5, 95)
+            : Math.min(92, job.progress + 3);
+        job.updatedAt = Date.now();
+        const output = videoOutputFromPayload(payload);
+        if (output) return completeCompanionVideoJob(companion, job, output);
+        if (provider === 'openrouter' && /complete|succeed|ready/.test(status)) {
+            const contentResponse = await fetch(
+                `${videoProviderApiBase(provider)}/videos/${encodeURIComponent(job.providerJobId)}/content`,
+                { headers: videoProviderHeaders(provider) }
+            );
+            if (!contentResponse.ok) throw new Error(`OpenRouter finished the clip, but download failed (${contentResponse.status}).`);
+            return completeCompanionVideoJobFromResponse(companion, job, contentResponse);
+        }
+        if (/fail|error|cancel/.test(status)) throw new Error(String(data?.error?.message || data?.error || data?.message || `Video generation ${status}.`));
+        renderCompanionSocialPanel(companion);
+    }
+    throw new Error('Video generation timed out. The provider job ID was preserved so a later build can resume it.');
+}
+
+async function runCompanionVideoJob(companion, job) {
+    if (!job || !['accepted', 'failed'].includes(job.status)) return;
+    try { await submitCompanionVideoJob(companion, job); }
+    catch (error) {
+        console.error('Virtual Human clip failed:', error);
+        job.status = 'failed'; job.error = String(error.message || error).slice(0, 1600); job.updatedAt = Date.now();
+        await saveState(); renderCompanionSocialPanel(companion);
+        showToast('Clip failed: ' + job.error, 'error');
+    }
+}
+
+async function requestCompanionClip(companion) {
+    if (!companion.allowVideoClips) return showToast('Clips are off for this Virtual Human. Enable them in Studio → Video & Clips.', 'info');
+    const request = await showCompanionClipRequestModal(companion);
+    if (!request) return;
+    const { concept, clipType, cameraRig } = request;
+    const job = normalizeCompanionVideoJob({
+        provider: companion.videoProvider, model: companion.videoModel, status: 'requested',
+        requestText: String(concept).trim(), concept: '', clipType,
+        cameraRig,
+        duration: companion.videoDuration, resolution: companion.videoResolution
+    });
+    companion.videoJobs.push(job); companion.videoJobs = companion.videoJobs.slice(-100);
+    companionSocialTab = 'clips';
+    const requestText = `Could you make a ${clipType.replace('_', ' ')} video: ${job.requestText}?`;
+    renderCompanionSocialPanel(companion);
+    await queueCompanionUserMessage({
+        type: 'clip_request', text: requestText, videoRequestId: job.id, clipType, cameraRig
+    });
+}
+
+function showCompanionClipRequestModal(companion) {
+    return new Promise(resolve => {
+        document.querySelector('.companion-clip-request-overlay')?.remove();
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-bg companion-clip-request-overlay';
+        overlay.innerHTML = `<form class="modal companion-clip-request-modal">
+            <div class="modal-hd"><div><span class="vh-eyebrow">Ask first</span><h2>Request a clip</h2><p>${escapeHTML(companion.name || 'They')} can accept, refuse, postpone or change the concept.</p></div><button type="button" class="modal-close" data-clip-cancel>×</button></div>
+            <div class="companion-clip-request-body">
+                <label class="form-field"><span>What do you want them to film?</span><textarea class="form-textarea" name="concept" required rows="4" maxlength="1200" placeholder="A quick outfit check before going out, saying hi to the camera…"></textarea></label>
+                <fieldset class="companion-clip-type-picker"><legend>Format</legend>${[
+                    ['selfie','Selfie','Front camera, direct and personal'],['dance','Dance','A short dance or trend'],['outfit','Outfit','Fit check or styling'],['storytime','Storytime','Talk directly to camera'],['day_in_life','Day in life','A grounded life moment'],['comedy','Comedy','Bit, reaction or situational joke'],['trend','Trend','A social trend in their own style'],['custom','Custom','Describe something else']
+                ].map(([id,label,detail], index) => `<label><input type="radio" name="clipType" value="${id}" ${index === 0 ? 'checked' : ''}><span><strong>${label}</strong><small>${detail}</small></span></label>`).join('')}</fieldset>
+                <label class="form-field"><span>Camera</span><select class="form-select" name="cameraRig"><option value="selfie">Selfie · they hold the phone</option><option value="fixed">Fixed · propped phone / tripod</option><option value="handheld">Handheld · someone present films</option></select></label>
+                <div class="vh-video-safety-note"><strong>No charge yet</strong><span>This only sends a request through chat. Generation begins later, after they agree and you press Generate.</span></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-ghost" data-clip-cancel>Cancel</button><button type="submit" class="btn btn-primary">Send request</button></div>
+        </form>`;
+        const close = value => { document.removeEventListener('keydown', keydown); overlay.remove(); resolve(value); };
+        const keydown = event => { if (event.key === 'Escape') close(null); };
+        overlay.querySelectorAll('[data-clip-cancel]').forEach(button => button.onclick = () => close(null));
+        overlay.onclick = event => { if (event.target === overlay) close(null); };
+        overlay.querySelector('form').onsubmit = event => {
+            event.preventDefault();
+            const data = new FormData(event.currentTarget);
+            const concept = String(data.get('concept') || '').trim();
+            if (!concept) return;
+            close({ concept, clipType: String(data.get('clipType') || 'custom'), cameraRig: String(data.get('cameraRig') || 'selfie') });
+        };
+        document.addEventListener('keydown', keydown);
+        document.body.appendChild(overlay);
+        overlay.querySelector('textarea').focus();
+    });
 }
 
 /**
@@ -31988,7 +32559,8 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
                 mood_label: companion.mood.label, relationship_change: 0
             },
             photo: actions.photo ? { decision: 'send', ...actions.photo } : { decision: 'none' },
-            voice_note: actions.voice ? { decision: 'send', ...actions.voice } : { decision: 'none' }
+            voice_note: actions.voice ? { decision: 'send', ...actions.voice } : { decision: 'none' },
+            video_clip: { decision: 'none' }
         };
         commitSource = 'legacy_tools';
     }
@@ -32006,7 +32578,8 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
                 mood_label: companion.mood.label, relationship_change: 0
             },
             photo: { decision: 'none' },
-            voice_note: { decision: 'none' }
+            voice_note: { decision: 'none' },
+            video_clip: { decision: 'none' }
         };
         actions.state = actions.commit.state;
         commitSource = 'frozen_no_receipt';
@@ -32014,6 +32587,16 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
     if (actions.photo) actions.commit.photo = { ...actions.commit.photo, ...actions.photo, decision: 'send' };
     if (actions.voice) actions.commit.voice_note = { ...actions.commit.voice_note, ...actions.voice, decision: 'send' };
     const rejectedActions = [];
+    if (!isPlainObject(actions.commit.video_clip)) actions.commit.video_clip = { decision: 'none' };
+    const pendingClipRequest = [...(companion.videoJobs || [])].reverse().find(job => job.status === 'requested');
+    if (actions.commit.video_clip.decision !== 'none') {
+        if (!companion.allowVideoClips || !pendingClipRequest) {
+            rejectedActions.push(!companion.allowVideoClips ? 'video_permission_disabled' : 'video_request_missing');
+            actions.commit.video_clip = { decision: 'none', reason: 'No permitted explicit player clip request is pending.' };
+        } else if (!actions.commit.video_clip.request_id) {
+            actions.commit.video_clip.request_id = pendingClipRequest.id;
+        }
+    }
     if (actions.commit.photo?.decision === 'send'
         && (!companion.allowPhotos || !String(actions.commit.photo.scene || '').trim())) {
         rejectedActions.push(!companion.allowPhotos ? 'photo_permission_disabled' : 'photo_scene_missing');
@@ -32102,6 +32685,8 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         photoReason: String(actions.commit?.photo?.reason || '').slice(0, 240),
         voiceDecision: actions.commit?.voice_note?.decision || (actions.voice ? 'send' : 'none'),
         voiceReason: String(actions.commit?.voice_note?.reason || '').slice(0, 240),
+        videoDecision: actions.commit?.video_clip?.decision || 'none',
+        videoReason: String(actions.commit?.video_clip?.reason || '').slice(0, 240),
         rejectedActions,
         committedAt: nowMs
     };
@@ -32880,6 +33465,18 @@ function generatedImageMimeFromBase64(encoded, fallback = 'image/png') {
     return fallback;
 }
 
+function isRecognizableImageBase64(value) {
+    const encoded = String(value || '').replace(/\s+/g, '');
+    // JPEG is especially important here: its base64 signature begins with a
+    // slash (`/9j/`). It must be identified before root-relative URL handling
+    // or the browser will request a bogus https://gptproto.com/9j/... asset.
+    return encoded.startsWith('/9j/')
+        || encoded.startsWith('iVBORw0KGgo')
+        || encoded.startsWith('UklGR')
+        || encoded.startsWith('R0lGOD')
+        || encoded.startsWith('PHN2Zy');
+}
+
 function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', depth = 0) {
     if (depth > 4 || value == null) return '';
     if (Array.isArray(value)) {
@@ -32891,6 +33488,17 @@ function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', 
     }
     if (isPlainObject(value)) {
         const mime = value.media_type || value.mime_type || value.mimeType || requestedMediaType;
+        // Prefer an inline result when the provider supplies both inline data
+        // and a temporary URL. The embedded result cannot expire, reject a
+        // file:// origin, or be blocked by a CDN hotlink policy.
+        for (const key of ['b64_json', 'base64', 'base64_data']) {
+            const encoded = String(value[key] || '').trim();
+            if (!encoded) continue;
+            const normalized = normalizeGeneratedImageSource(encoded, mime, depth + 1);
+            if (normalized) return normalized;
+            const compact = encoded.replace(/\s+/g, '');
+            return `data:${generatedImageMimeFromBase64(compact, mime)};base64,${compact}`;
+        }
         // Dedicated image endpoints commonly return data[].b64_json, while
         // multimodal/chat routes may nest images under message.images,
         // content parts, output arrays or inlineData. Walk all documented
@@ -32899,10 +33507,6 @@ function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', 
             'output', 'outputs', 'content', 'parts', 'inlineData', 'inline_data']) {
             const normalized = normalizeGeneratedImageSource(value[key], mime, depth + 1);
             if (normalized) return normalized;
-        }
-        for (const key of ['b64_json', 'base64', 'base64_data']) {
-            const encoded = String(value[key] || '').replace(/\s+/g, '');
-            if (encoded) return `data:${generatedImageMimeFromBase64(encoded, mime)};base64,${encoded}`;
         }
         return '';
     }
@@ -32915,6 +33519,11 @@ function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', 
         } catch (error) { /* continue with the literal */ }
     }
     if (/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(source) || /^blob:/i.test(source)) return source;
+    const compact = source.replace(/\s+/g, '');
+    if (isRecognizableImageBase64(compact) && /^[a-z0-9+/]+={0,2}$/i.test(compact)) {
+        const padded = compact.padEnd(Math.ceil(compact.length / 4) * 4, '=');
+        return `data:${generatedImageMimeFromBase64(compact, requestedMediaType)};base64,${padded}`;
+    }
     // Bundled showcase media is deliberately kept as small project assets
     // instead of duplicating megabytes of base64 in every installed record.
     if (/^(?:\.\/)?assets\/bundled\/[a-z0-9_./-]+$/i.test(source)) return source;
@@ -32923,7 +33532,6 @@ function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', 
     if (/^https:\/\//i.test(source)) return source;
     if (/^\//.test(source)) return `https://gptproto.com${source}`;
     if (/^[a-z0-9.-]+\.[a-z]{2,}\/\S+$/i.test(source)) return `https://${source}`;
-    const compact = source.replace(/\s+/g, '');
     if (compact.length >= 64 && /^[a-z0-9+/]+={0,2}$/i.test(compact) && compact.length % 4 !== 1) {
         return `data:${generatedImageMimeFromBase64(compact, requestedMediaType)};base64,${compact.padEnd(Math.ceil(compact.length / 4) * 4, '=')}`;
     }
@@ -32942,7 +33550,7 @@ function gptProtoImageFromResponse(data, requestedMediaType = 'image/png') {
     const markdown = String(message?.content || '')
         .match(/!\[[^\]]*\]\((data:image\/[^)]+|https?:\/\/[^)]+)\)/i)?.[1] || '';
     const normalized = normalizeGeneratedImageSource(
-        [output, item, message?.images, message?.content, data?.images,
+        [output, direct, item, message?.images, message?.content, data?.images,
             data?.output, data?.result, markdown], requestedMediaType);
     if (normalized) return normalized;
     if (inline?.data) return `data:${inline.mimeType || inline.mime_type || requestedMediaType};base64,${inline.data}`;
@@ -35010,6 +35618,26 @@ function setupCompanionStudioTabs() {
             activateCompanionStudioTab(tab.dataset.tab);
         };
     });
+    const videoToggle = document.getElementById('cs-video-enabled');
+    if (videoToggle) videoToggle.onclick = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.allowVideoClips = !companion.allowVideoClips;
+        renderCompanionVideoStudio(companion);
+    };
+    const videoProvider = document.getElementById('cs-video-provider');
+    if (videoProvider) videoProvider.onchange = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.videoProvider = normalizedVideoProviderId(videoProvider.value);
+        companion.videoModel = '';
+        renderCompanionVideoStudio(companion, true);
+    };
+    const videoModel = document.getElementById('cs-video-model');
+    if (videoModel) videoModel.onchange = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.videoModel = videoModel.value;
+    };
 }
 
 function activateCompanionStudioTab(tabName) {
@@ -35022,8 +35650,38 @@ function activateCompanionStudioTab(tabName) {
         updateCompanionLifeBuilderModelStatus(getCompanion(state.editingCompanionId));
     }
     if (tabName === 'cs-social') renderCompanionSocialStudio(getCompanion(state.editingCompanionId));
+    if (tabName === 'cs-video') renderCompanionVideoStudio(getCompanion(state.editingCompanionId), true);
     const content = document.querySelector('#companion-studio-view .studio-content-wrap');
     if (content) content.scrollTop = 0;
+}
+
+async function renderCompanionVideoStudio(companion, refreshModels = false) {
+    if (!companion) return;
+    const toggle = document.getElementById('cs-video-enabled');
+    const provider = document.getElementById('cs-video-provider');
+    const model = document.getElementById('cs-video-model');
+    const status = document.getElementById('cs-video-model-status');
+    if (!toggle || !provider || !model) return;
+    toggle.setAttribute('aria-pressed', String(companion.allowVideoClips));
+    toggle.classList.toggle('active', companion.allowVideoClips);
+    document.getElementById('cs-video-enabled-label').textContent = companion.allowVideoClips ? 'Clips on' : 'Clips off';
+    provider.value = normalizedVideoProviderId(companion.videoProvider);
+    document.getElementById('cs-video-resolution').value = companion.videoResolution;
+    document.getElementById('cs-video-duration').value = String(companion.videoDuration);
+    document.getElementById('cs-video-reference').value = companion.videoReferencePolicy;
+    document.getElementById('cs-video-audio').checked = companion.videoAudio;
+    document.getElementById('cs-video-style-rules').value = companion.videoStyleRules;
+    status.textContent = videoProviderHasCredentials(provider.value)
+        ? `Loading ${videoProviderDisplayName(provider.value)} reference-video models…`
+        : `${videoProviderDisplayName(provider.value)} is not connected in Settings → Connections.`;
+    const models = await fetchVideoModels(provider.value, refreshModels);
+    model.innerHTML = models.map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || item.id)}</option>`).join('');
+    if (companion.videoModel && !models.some(item => item.id === companion.videoModel)) {
+        model.insertAdjacentHTML('afterbegin', `<option value="${escapeHTML(companion.videoModel)}">${escapeHTML(companion.videoModel)} · custom</option>`);
+    }
+    model.value = companion.videoModel || models[0]?.id || '';
+    if (!companion.videoModel && model.value) companion.videoModel = model.value;
+    status.textContent = `${models.length} reference-capable model${models.length === 1 ? '' : 's'} · ${videoProviderDisplayName(provider.value)}${videoProviderHasCredentials(provider.value) ? ' connected' : ' key required before generation'}.`;
 }
 
 function updateCompanionPhotoStyleDescription(styleId) {
@@ -35435,6 +36093,22 @@ function commitCompanionStudioForm() {
     if (socialAccessRules) companion.socialAccessRules = socialAccessRules.value.slice(0, 2000);
     const socialTypes = [...document.querySelectorAll('[data-social-content-type]:checked')].map(input => input.value);
     if (document.querySelector('[data-social-content-type]')) companion.socialContentTypes = socialTypes.length ? socialTypes : ['everyday'];
+    const videoEnabled = document.getElementById('cs-video-enabled');
+    if (videoEnabled) companion.allowVideoClips = videoEnabled.getAttribute('aria-pressed') === 'true';
+    const videoProvider = document.getElementById('cs-video-provider');
+    if (videoProvider) companion.videoProvider = normalizedVideoProviderId(videoProvider.value);
+    const videoModel = document.getElementById('cs-video-model');
+    if (videoModel) companion.videoModel = videoModel.value.trim().slice(0, 300);
+    const videoResolution = document.getElementById('cs-video-resolution');
+    if (videoResolution) companion.videoResolution = videoResolution.value;
+    const videoDuration = document.getElementById('cs-video-duration');
+    if (videoDuration) companion.videoDuration = livingClamp(Number(videoDuration.value) || 5, 2, 30);
+    const videoReference = document.getElementById('cs-video-reference');
+    if (videoReference) companion.videoReferencePolicy = videoReference.value;
+    const videoAudio = document.getElementById('cs-video-audio');
+    if (videoAudio) companion.videoAudio = videoAudio.checked;
+    const videoRules = document.getElementById('cs-video-style-rules');
+    if (videoRules) companion.videoStyleRules = videoRules.value.slice(0, 2400);
     const modelImageInput = document.getElementById('cs-model-input-image');
     const modelAudioInput = document.getElementById('cs-model-input-audio');
     if ((modelImageInput && !modelImageInput.disabled) || (modelAudioInput && !modelAudioInput.disabled)) {
@@ -35554,6 +36228,7 @@ function renderCompanionStudioForm() {
         input.checked = companion.socialContentTypes.includes(input.value);
     });
     renderCompanionSocialStudio(companion);
+    renderCompanionVideoStudio(companion);
     renderCompanionLifeOverview(companion);
     document.getElementById('cs-private-life').value = companion.privateLife;
     document.getElementById('cs-intimacy-boundaries').value = companion.intimacyBoundaries;
@@ -37860,113 +38535,87 @@ function openCompanionSimulationDetails() {
         ['Intoxication', dynamics.intoxication],
         ['Restraint', dynamics.inhibition]
     ];
+    const life = companionLifeState(companion, nowMs);
+    const meter = (label, value, min = 0, max = 100) => {
+        const percent = livingClamp(Math.round((value - min) / (max - min) * 100), 0, 100);
+        return `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${percent}%"></span></div><strong>${escapeHTML(String(Math.round(value)))}</strong></div>`;
+    };
+    const empty = text => `<div class="companion-sim-empty">${escapeHTML(text)}</div>`;
+    const visibleFeelings = COMPANION_EMOTIONS
+        .filter(emotion => expressedEmotions[emotion] >= 12)
+        .sort((a, b) => expressedEmotions[b] - expressedEmotions[a])
+        .slice(0, 3).map(emotion => `${emotion} ${Math.round(expressedEmotions[emotion])}`).join(' · ') || 'little visible emotion';
     content.innerHTML = `
-        <div class="companion-sim-grid">
-            <section class="form-section">
-                <h3>Relationship</h3>
-                <p class="form-hint">${escapeHTML(companionRelationshipDescription(companion.mood.relationship))}</p>
-                ${dimensions.map(([label, value, min, max]) => {
-                    const percent = Math.round((value - min) / (max - min) * 100);
-                    return `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(percent, 0, 100)}%"></span></div><strong>${escapeHTML(String(value))}</strong></div>`;
-                }).join('')}
+        <nav class="companion-sim-tabs" aria-label="Connection and life sections">
+            <button type="button" class="active" data-sim-tab="overview">Overview</button>
+            <button type="button" data-sim-tab="feelings">Feelings</button>
+            <button type="button" data-sim-tab="history">History &amp; media</button>
+        </nav>
+        <div class="companion-sim-panel active" data-sim-panel="overview">
+            <section class="companion-sim-hero">
+                <div><span>Right now</span><strong>${experience.realTimeLife ? escapeHTML(life.label) : 'Real-time life paused'}</strong><small>${escapeHTML(companion.currentLocationDetail || companion.locationLabel || 'Location not established')}</small></div>
+                <div><span>Connection</span><strong>${escapeHTML(companionRelationshipDescription(companion.mood.relationship))}</strong><small>${silence.unanswered.shouldAcknowledgeSilence ? `Silence noticed · ${escapeHTML(companionElapsedLabel(silence.durationMs))}` : 'No unresolved silence'}</small></div>
+                <div><span>Reply behavior</span><strong>${experience.replyDelays ? 'Natural timing' : 'Immediate replies'}</strong><small>${experience.allowNoReply ? 'May choose not to answer' : 'Always answers'}</small></div>
             </section>
-            <section class="form-section">
-                <h3>Right now</h3>
-                <p>${experience.realTimeLife ? escapeHTML(companionLifeState(companion, Date.now()).label) : 'Real-time life paused for this timeline'}</p>
-                ${experience.realTimeLife
-                    ? `<p class="form-hint">${escapeHTML(companion.currentLocationDetail || companion.locationLabel || 'No specific location detail established.')}</p>
-                       <p class="form-hint">${escapeHTML(companion.currentOutfit ? `Wearing ${companion.currentOutfit}` : 'Current outfit not established.')}</p>`
-                    : '<p class="form-hint">Identity, relationship and memories still evolve, but clock, sleep and schedule do not gate this chat.</p>'}
-                <p class="form-hint">${companion.initiativeMode === 'off' ? 'Only responds when messaged.' : `May reach out first (${escapeHTML(companion.initiativeMode)}).`} Agency runs while Horde Studio is open.</p>
-                <p class="form-hint">${experience.replyDelays ? 'Natural reply timing is on.' : 'Replies are immediate.'} ${experience.allowNoReply ? 'They may choose not to answer.' : 'They will always answer.'}</p>
-                <p class="form-hint">${experience.silenceConsequences
-                    ? silence.unanswered.shouldAcknowledgeSilence
-                        ? `No player reply for ${escapeHTML(companionElapsedLabel(silence.durationMs))}${silence.stage ? ` · ${escapeHTML(silence.stage)}` : ''}. ${escapeHTML(silence.interpretation || 'They have noticed the pause but are not treating it as a rupture yet.')}`
-                        : 'No unanswered silence is currently affecting the relationship.'
-                    : 'Silence consequences are disabled for this timeline.'}</p>
-            </section>
-            <section class="form-section">
-                <h3>Human dynamics</h3>
-                <p class="form-hint">Local, timeline-specific behavioral pressures. They influence timing, initiative, refusal and tone; they are not a medical model or a claim of consciousness.</p>
-                ${bodyMeters.map(([label, value]) =>
-                    `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(Math.round(value), 0, 100)}%"></span></div><strong>${escapeHTML(String(Math.round(value)))}</strong></div>`
-                ).join('')}
-                <p class="form-hint">Temperament: ${escapeHTML(companion.regulationProfile)} sensitivity · ${escapeHTML(companion.conflictRecovery)} conflict recovery · ${escapeHTML(companion.alcoholPattern)} alcohol pattern.</p>
-                ${dynamics.cooldownUntil > nowMs
-                    ? `<p class="form-hint"><strong>Cooling off:</strong> until ${escapeHTML(companionTimestampLabel(companion, dynamics.cooldownUntil))}${dynamics.cooldownReason ? ` · ${escapeHTML(dynamics.cooldownReason)}` : ''}</p>`
-                    : '<p class="form-hint">No active emotional cool-off.</p>'}
-                ${sexuality.enabled ? `
-                    <h4>Adult desire diagnostics</h4>
-                    <p class="form-hint">Private simulation state. Desire is not trust, attraction is not consent, and impulse is not an automatic action.</p>
-                    ${[
-                        ['Drive', sexuality.desire],
-                        ['Sexual arousal', sexuality.arousal],
-                        ['Sexual frustration', sexuality.frustration],
-                        ['Expression impulse', sexuality.impulse],
-                        ['Post-intimacy calm', dynamics.postIntimacyCalm]
-                    ].map(([label, value]) =>
-                        `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(Math.round(value), 0, 100)}%"></span></div><strong>${escapeHTML(String(Math.round(value)))}</strong></div>`
-                    ).join('')}
-                    <p class="form-hint">Pattern: ${escapeHTML(companion.libidoBaseline)} libido · ${escapeHTML(companion.desirePattern)} desire · ${escapeHTML(companion.sexualConfidence)} expression · ${escapeHTML(companion.sexualRiskAppetite)} risk.</p>
-                    ${sexuality.aftereffect !== 'none' ? `<p class="form-hint">Current aftereffect: ${escapeHTML(sexuality.aftereffect)}.</p>` : ''}
-                ` : '<p class="form-hint">Adult desire simulation is disabled for this human.</p>'}
-            </section>
-            <section class="form-section">
-                <h3>Emotion architecture</h3>
-                <p class="form-hint">Private, timeline-specific simulation state. Several emotions may coexist; player-directed feelings are stored separately from general feelings, and visible expression may be masked.</p>
-                <p>${escapeHTML(companionEmotionSummary(companion, nowMs))}</p>
-                <h4>Felt internally</h4>
-                ${COMPANION_EMOTIONS.map(emotion => {
-                    const value = Math.round(emotionState.felt[emotion]);
-                    return `<div class="companion-sim-meter"><span>${escapeHTML(companionEmotionIntensityLabel(emotion, value))}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(value, 0, 100)}%"></span></div><strong>${value}</strong></div>`;
-                }).join('')}
-                <h4>Toward the player</h4>
-                ${COMPANION_EMOTIONS.map(emotion => {
-                    const value = Math.round(emotionState.towardPlayer[emotion]);
-                    return `<div class="companion-sim-meter"><span>${escapeHTML(emotion)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${livingClamp(value, 0, 100)}%"></span></div><strong>${value}</strong></div>`;
-                }).join('')}
-                <p class="form-hint">Visible now: ${escapeHTML(COMPANION_EMOTIONS
-                    .filter(emotion => expressedEmotions[emotion] >= 12)
-                    .sort((a, b) => expressedEmotions[b] - expressedEmotions[a])
-                    .slice(0, 3).map(emotion => `${emotion} ${Math.round(expressedEmotions[emotion])}`).join(' · ') || 'little visible emotion')} · mask ${Math.round(emotionState.masking)}/100.</p>
-                <p class="form-hint">Profile: ${escapeHTML(companion.emotionExpression)} expression · ${escapeHTML(companion.ruminationStyle)} rumination · ${escapeHTML(companion.reactionTiming)} reactions · ${escapeHTML(companion.emotionalGranularity)} granularity.</p>
-                ${emotionState.lastAppraisal.summary
-                    ? `<p class="form-hint"><strong>Last appraisal:</strong> ${escapeHTML(emotionState.lastAppraisal.summary)} · attributed to ${escapeHTML(emotionState.lastAppraisal.responsibility)}.</p>`
-                    : '<p class="form-hint">No structured emotional appraisal has been recorded yet.</p>'}
-                ${emotionState.pendingReactions.length
-                    ? `<p class="form-hint"><strong>Delayed reactions:</strong> ${emotionState.pendingReactions.map(reaction => `${escapeHTML(reaction.reason || 'unprocessed feeling')} at ${escapeHTML(companionTimestampLabel(companion, reaction.dueAt))}`).join(' · ')}</p>`
-                    : '<p class="form-hint">No delayed emotional reaction is pending.</p>'}
-            </section>
-            <section class="form-section">
-                <h3>Pending follow-through</h3>
-                ${pending.length ? pending.slice(-12).map(item =>
-                    `<div class="vh-memory-item"><strong>${escapeHTML(item.medium)}</strong> ${escapeHTML(item.text)}${item.dueAt ? `<small>${escapeHTML(new Date(item.dueAt).toLocaleString())}</small>` : ''}</div>`
-                ).join('') : '<p class="form-hint">Nothing currently promised.</p>'}
-            </section>
-            <section class="form-section">
-                <h3>Recent life events</h3>
-                ${companion.lifeEvents.length ? companion.lifeEvents.slice(-12).reverse().map(event =>
-                    `<div class="vh-memory-item">${escapeHTML(event.text)}<small>${escapeHTML(new Date(event.createdAt).toLocaleString())}</small></div>`
-                ).join('') : '<p class="form-hint">No personal events have become canon yet.</p>'}
-            </section>
-            <section class="form-section">
-                <h3>Durable memories</h3>
-                ${companion.memory.longTerm.length ? companion.memory.longTerm.slice(-12).reverse().map(memory =>
-                    `<div class="vh-memory-item">${escapeHTML(memory.text)}</div>`
-                ).join('') : '<p class="form-hint">Nothing durable remembered yet.</p>'}
-            </section>
-            <section class="form-section">
-                <h3>Shared media &amp; calls</h3>
-                <div class="companion-media-strip">${media.length ? media.slice(-12).map(message =>
-                    message.type === 'photo'
-                        ? `<img src="${escapeHTML(message.photo)}" alt="Shared photo">`
-                        : `<span>${message.type === 'voice' ? '🎙 Voice note' : '☎ Call'}</span>`
-                ).join('') : '<p class="form-hint">No shared media or calls in this timeline.</p>'}</div>
-                ${latestAudit ? `<p class="form-hint">Last turn: ${escapeHTML(latestAudit.source)} · photo ${escapeHTML(latestAudit.photoDecision)} · voice ${escapeHTML(latestAudit.voiceDecision)}</p>` : ''}
-                <p class="form-hint">Timeline usage: ${companion.usage.textTurns} generated turns · ${companion.usage.photosGenerated} photos · ${companion.usage.voiceNotesGenerated} cached neural voice notes · ${companion.usage.callsCompleted} completed calls.</p>
-            </section>
+            <div class="companion-sim-grid companion-sim-overview-grid">
+                <section class="companion-sim-card">
+                    <div class="companion-sim-card-head"><div><span>Between you</span><h3>Relationship</h3></div><b>${Math.round(companion.mood.relationship)}</b></div>
+                    <p class="companion-sim-copy">${escapeHTML(companionRelationshipDescription(companion.mood.relationship))}</p>
+                    ${dimensions.map(([label, value, min, max]) => meter(label, value, min, max)).join('')}
+                </section>
+                <section class="companion-sim-card">
+                    <div class="companion-sim-card-head"><div><span>Current context</span><h3>Life right now</h3></div><b>${experience.realTimeLife ? escapeHTML(companionTimestampLabel(companion, nowMs)) : 'Paused'}</b></div>
+                    <dl class="companion-sim-facts">
+                        <div><dt>Activity</dt><dd>${experience.realTimeLife ? escapeHTML(life.label) : 'Schedule is not gating chat'}</dd></div>
+                        <div><dt>Place</dt><dd>${escapeHTML(companion.currentLocationDetail || companion.locationLabel || 'Not established')}</dd></div>
+                        <div><dt>Outfit</dt><dd>${escapeHTML(companion.currentOutfit || 'Not established')}</dd></div>
+                        <div><dt>Agency</dt><dd>${companion.initiativeMode === 'off' ? 'Only responds when messaged' : `May reach out first · ${escapeHTML(companion.initiativeMode)}`}</dd></div>
+                    </dl>
+                </section>
+                <section class="companion-sim-card">
+                    <div class="companion-sim-card-head"><div><span>Behavioral pressure</span><h3>Human dynamics</h3></div><b>${Math.round(dynamics.energy)}% energy</b></div>
+                    ${bodyMeters.map(([label, value]) => meter(label, value)).join('')}
+                    <p class="companion-sim-foot">${dynamics.cooldownUntil > nowMs
+                        ? `Cooling off until ${escapeHTML(companionTimestampLabel(companion, dynamics.cooldownUntil))}`
+                        : `No active cool-off · ${escapeHTML(companion.regulationProfile)} regulation`}</p>
+                </section>
+                <section class="companion-sim-card">
+                    <div class="companion-sim-card-head"><div><span>Follow-through</span><h3>Pending promises</h3></div><b>${pending.length}</b></div>
+                    <div class="companion-sim-list">${pending.length ? pending.slice(-5).map(item =>
+                        `<article><strong>${escapeHTML(item.text)}</strong><small>${item.dueAt ? escapeHTML(new Date(item.dueAt).toLocaleString()) : escapeHTML(item.medium)}</small></article>`
+                    ).join('') : empty('Nothing currently promised.')}</div>
+                </section>
+            </div>
+        </div>
+        <div class="companion-sim-panel" data-sim-panel="feelings">
+            <section class="companion-sim-emotion-summary"><span>Emotional read</span><strong>${escapeHTML(companionEmotionSummary(companion, nowMs))}</strong><small>Visible: ${escapeHTML(visibleFeelings)} · masking ${Math.round(emotionState.masking)}/100</small></section>
+            <div class="companion-sim-grid">
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Private state</span><h3>Felt internally</h3></div></div>${COMPANION_EMOTIONS.map(emotion => meter(companionEmotionIntensityLabel(emotion, emotionState.felt[emotion]), emotionState.felt[emotion])).join('')}</section>
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Directed at you</span><h3>Toward the player</h3></div></div>${COMPANION_EMOTIONS.map(emotion => meter(emotion, emotionState.towardPlayer[emotion])).join('')}</section>
+                <details class="companion-sim-card companion-sim-advanced"><summary>How their emotions are processed</summary><p>${escapeHTML(companion.emotionExpression)} expression · ${escapeHTML(companion.ruminationStyle)} rumination · ${escapeHTML(companion.reactionTiming)} reactions · ${escapeHTML(companion.emotionalGranularity)} granularity.</p>${emotionState.lastAppraisal.summary ? `<p><strong>Last appraisal:</strong> ${escapeHTML(emotionState.lastAppraisal.summary)}</p>` : '<p>No structured appraisal yet.</p>'}</details>
+                <details class="companion-sim-card companion-sim-advanced"><summary>Adult desire diagnostics</summary>${sexuality.enabled ? `<p>Desire is separate from trust and never implies consent or action.</p>${[['Drive',sexuality.desire],['Arousal',sexuality.arousal],['Frustration',sexuality.frustration],['Expression impulse',sexuality.impulse],['Afterglow',dynamics.postIntimacyCalm]].map(([label,value]) => meter(label,value)).join('')}` : '<p>Adult desire simulation is disabled for this human.</p>'}</details>
+            </div>
+        </div>
+        <div class="companion-sim-panel" data-sim-panel="history">
+            <div class="companion-sim-grid">
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Recent canon</span><h3>Life events</h3></div><b>${companion.lifeEvents.length}</b></div><div class="companion-sim-list">${companion.lifeEvents.length ? companion.lifeEvents.slice(-10).reverse().map(event => `<article><strong>${escapeHTML(event.text)}</strong><small>${escapeHTML(new Date(event.createdAt).toLocaleString())}</small></article>`).join('') : empty('No personal events have become canon yet.')}</div></section>
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Long term</span><h3>Durable memories</h3></div><b>${companion.memory.longTerm.length}</b></div><div class="companion-sim-list">${companion.memory.longTerm.length ? companion.memory.longTerm.slice(-10).reverse().map(memory => `<article><strong>${escapeHTML(memory.text)}</strong></article>`).join('') : empty('Nothing durable remembered yet.')}</div></section>
+                <section class="companion-sim-card companion-sim-card-wide"><div class="companion-sim-card-head"><div><span>This timeline</span><h3>Shared media &amp; calls</h3></div><b>${media.length}</b></div><div class="companion-media-strip">${media.length ? media.slice(-12).map(message => message.type === 'photo' ? `<img src="${escapeHTML(message.photo)}" alt="Shared photo">` : `<span>${message.type === 'voice' ? '🎙 Voice note' : '☎ Call'}</span>`).join('') : empty('No shared media or calls in this timeline.')}</div><p class="companion-sim-foot">${companion.usage.textTurns} turns · ${companion.usage.photosGenerated} photos · ${companion.usage.voiceNotesGenerated} voice notes · ${companion.usage.videosGenerated || 0} clips · ${companion.usage.callsCompleted} calls${latestAudit ? ` · last receipt ${escapeHTML(latestAudit.source)}` : ''}</p></section>
+            </div>
         </div>`;
-    document.getElementById('companion-simulation-overlay').classList.remove('hidden');
+    content.querySelectorAll('[data-sim-tab]').forEach(button => {
+        button.onclick = () => {
+            content.querySelectorAll('[data-sim-tab]').forEach(item => item.classList.toggle('active', item === button));
+            content.querySelectorAll('[data-sim-panel]').forEach(panel => panel.classList.toggle('active', panel.dataset.simPanel === button.dataset.simTab));
+        };
+    });
+    const overlay = document.getElementById('companion-simulation-overlay');
+    overlay.classList.remove('hidden');
+    overlay.onclick = event => { if (event.target === overlay) overlay.classList.add('hidden'); };
+    overlay.onkeydown = event => {
+        if (event.key === 'Escape') overlay.classList.add('hidden');
+    };
+    document.getElementById('close-companion-simulation-btn')?.focus({ preventScroll: true });
 }
 
 function closeCompanionThreadMenu() {
@@ -38286,12 +38935,27 @@ async function generateCompanionStartingSocialPosts(companion) {
 }
 
 function companionSocialQuickControlsHTML(companion) {
+    const runtime = companion.socialFeedRuntime;
+    const now = Date.now();
+    const providerReady = providerHasCredentials(companionTextProviderId(companion));
+    const scheduleCopy = !providerReady
+        ? 'Text provider needs setup before autonomous posts can be written.'
+        : companion.socialPostFrequency === 'manual'
+            ? 'Manual cadence selected. Horde Studio will not create autonomous posts.'
+            : runtime.nextPostAt > now
+                ? `Next posting window in ${companionElapsedLabel(runtime.nextPostAt - now)}.`
+                : 'A posting window is due. Horde Studio will check it shortly.';
+    const errorCopy = runtime.lastError
+        ? `<div class="companion-social-schedule-error" role="status">Last attempt failed: ${escapeHTML(runtime.lastError)}</div>` : '';
     return `<details class="companion-social-quick-settings">
-        <summary>Quick feed settings</summary>
+        <summary><span>Autonomous posts</span><small>${escapeHTML(scheduleCopy)}</small></summary>
+        <div class="companion-social-schedule-status"><strong>${escapeHTML(scheduleCopy)}</strong><span>Missed windows catch up once when the app reopens; Horde never creates a paid backlog of posts.</span></div>
+        ${errorCopy}
         <label class="vh-test-check">
             <input type="checkbox" data-social-photo-posts ${companion.socialFeedImages && companion.allowPhotos ? 'checked' : ''} ${companion.allowPhotos ? '' : 'disabled'}>
             <span>Generated photo posts${companion.allowPhotos ? '' : ' (photos disabled in Studio)'}</span>
         </label>
+        <button type="button" class="btn btn-ghost" data-social-post-now ${providerReady ? '' : 'disabled'}>Create a post now</button>
         <button type="button" class="btn btn-ghost danger" data-disable-social-feed>Turn feed off</button>
         <small>Pauses new posts and hides the chronological feed. The gallery and profile remain available.</small>
     </details>`;
@@ -38302,6 +38966,25 @@ function bindCompanionSocialQuickControls(companion, content) {
     if (photoPosts) photoPosts.onchange = async () => {
         companion.socialFeedImages = photoPosts.checked && companion.allowPhotos;
         await saveState();
+    };
+    const postNow = content.querySelector('[data-social-post-now]');
+    if (postNow) postNow.onclick = async () => {
+        if (companionAgencyInFlight.has(companion.id)) return;
+        companionAgencyInFlight.add(companion.id);
+        postNow.disabled = true;
+        postNow.textContent = 'Creating post…';
+        try {
+            const result = await generateCompanionAutonomousSocialPost(companion, Date.now(), { force: true });
+            if (result.pendingPhoto) resolveCompanionSocialPhoto(companion, result.pendingPhoto);
+            showToast(result.posted ? 'Social post published.' : 'They decided this was not a moment they would post.', result.posted ? 'success' : 'info');
+        } catch (error) {
+            recordCompanionSocialFailure(companion, error, Date.now());
+            showToast(`Social post failed: ${error.message}`, 'error');
+        } finally {
+            companionAgencyInFlight.delete(companion.id);
+            await saveState();
+            renderCompanionSocialPanel(companion);
+        }
     };
     const disable = content.querySelector('[data-disable-social-feed]');
     if (disable) disable.onclick = async () => {
@@ -38469,15 +39152,50 @@ function renderCompanionSocialPanel(companion) {
         masterToggle.classList.toggle('active', companion.socialFeedEnabled);
         masterToggle.textContent = companion.socialFeedEnabled ? 'Feed active' : 'Feed paused';
     }
-    document.getElementById('cc-social-title').textContent = `${companion.name || 'Their'} social`;
+    document.getElementById('cc-social-title').textContent = companion.name || 'Social profile';
     const tabLabels = companion.socialPlatform === 'subscriber'
-        ? { feed: 'Posts', gallery: 'Media vault' }
-        : companion.socialPlatform === 'microblog' ? { feed: 'Timeline', gallery: 'Media' }
-        : { feed: 'Feed', gallery: 'Gallery' };
+        ? { feed: 'Posts', gallery: 'Media vault', clips: 'Clips' }
+        : companion.socialPlatform === 'microblog' ? { feed: 'Timeline', gallery: 'Media', clips: 'Clips' }
+        : { feed: 'Feed', gallery: 'Gallery', clips: 'Clips' };
     document.querySelectorAll('[data-companion-social-tab]').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.companionSocialTab === companionSocialTab);
+        const active = tab.dataset.companionSocialTab === companionSocialTab;
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
         tab.textContent = tabLabels[tab.dataset.companionSocialTab];
     });
+    if (companionSocialTab === 'clips') {
+        const jobs = [...(companion.videoJobs || [])].reverse();
+        content.innerHTML = `<section class="companion-clips-intro">
+            <div class="companion-clips-logo">▶</div><div><strong>Clips</strong><span>Vertical moments ${companion.name || 'they'} agreed to make.</span></div>
+            <button type="button" data-request-companion-clip ${companion.allowVideoClips ? '' : 'disabled'}>＋ Request a clip</button>
+        </section>
+        ${!companion.allowVideoClips ? '<div class="companion-social-empty">Clips are off for this human. Enable them in Studio → Video & Clips.</div>' : ''}
+        <div class="companion-clips-feed">${jobs.map(job => `<article class="companion-clip-card" data-clip-job="${escapeHTML(job.id)}">
+            <div class="companion-clip-stage">
+                ${job.status === 'ready' ? '<div class="companion-clip-video-slot" data-clip-video-slot></div>' : `<div class="companion-clip-progress-visual"><span>${escapeHTML(String(Math.round(job.progress)))}%</span><small>${escapeHTML(job.status)}</small></div>`}
+            </div>
+            <div class="companion-clip-meta"><span>${escapeHTML(job.clipType.replace('_', ' '))} · ${escapeHTML(job.cameraRig)} · ${escapeHTML(job.resolution)}</span><strong>${escapeHTML(job.concept || job.requestText)}</strong>
+                ${job.reason ? `<p>${escapeHTML(job.reason)}</p>` : ''}${job.error ? `<p class="companion-clip-error">${escapeHTML(job.error)}</p>` : ''}
+                <div class="companion-clip-progress"><i style="width:${escapeHTML(String(job.progress))}%"></i></div>
+                ${job.status === 'accepted' ? `<button type="button" class="primary" data-generate-clip="${escapeHTML(job.id)}">Generate clip · uses ${escapeHTML(videoProviderDisplayName(job.provider))}</button>` : ''}
+                ${job.status === 'failed' ? `<button type="button" data-generate-clip="${escapeHTML(job.id)}">Retry generation</button>` : ''}
+                ${job.status === 'requested' ? '<small>Waiting for their response in chat. No generation call has been made.</small>' : ''}
+                ${job.status === 'refused' ? '<small>They declined this request. No generation call was made.</small>' : ''}
+            </div>
+        </article>`).join('')}</div>`;
+        content.querySelector('[data-request-companion-clip]')?.addEventListener('click', () => requestCompanionClip(companion));
+        content.querySelectorAll('[data-generate-clip]').forEach(button => {
+            button.onclick = () => runCompanionVideoJob(companion, companion.videoJobs.find(job => job.id === button.dataset.generateClip));
+        });
+        jobs.filter(job => job.status === 'ready' && job.assetId).forEach(async job => {
+            const card = content.querySelector(`[data-clip-job="${CSS.escape(job.id)}"]`);
+            const slot = card?.querySelector('[data-clip-video-slot]');
+            if (!slot) return;
+            const src = await companionVideoAssetUrl(job.assetId);
+            if (src && slot.isConnected) slot.innerHTML = `<video controls playsinline preload="metadata" src="${escapeHTML(src)}"></video>`;
+        });
+        return;
+    }
     const posts = companion.socialPosts.slice().sort((left, right) => right.createdAt - left.createdAt);
     posts.filter(post => post.pending && post.scene).forEach(post => resolveCompanionSocialPhoto(companion, post));
     const relationshipCard = companionSocialRelationshipHTML(companion);
@@ -38626,6 +39344,11 @@ function companionDeliveryHTML(message, companion) {
     return `<span class="companion-delivery ${escapeHTML(stateLabel)}" title="${escapeHTML(detail)}" aria-label="${escapeHTML(detail)}">${marks}</span>`;
 }
 
+function companionPlayerPhotoCapabilityMessage(companion) {
+    const model = String(companion?.model || state.globalSettings.defaultModel || 'The selected conversation model');
+    return `${model} does not advertise image input. This button sends your photo to the virtual human; they can still generate and send you photos through the separately configured image model.`;
+}
+
 function renderCompanionThread() {
     const companion = getCompanion(state.activeCompanionId);
     const container = document.getElementById('companion-messages');
@@ -38678,7 +39401,8 @@ function renderCompanionThread() {
     if (playerPhotoButton) {
         playerPhotoButton.disabled = !companionInputSupports(companion, 'image');
         playerPhotoButton.title = playerPhotoButton.disabled
-            ? 'Selected conversation model does not advertise image input' : 'Send a photo';
+            ? companionPlayerPhotoCapabilityMessage(companion) : 'Send your photo to this virtual human';
+        playerPhotoButton.setAttribute('aria-label', playerPhotoButton.title);
     }
     if (playerVoiceButton) {
         playerVoiceButton.disabled = !companionInputSupports(companion, 'audio');
@@ -38941,14 +39665,41 @@ function advanceCompanionLife(companion, nowMs = Date.now()) {
     return newestActive;
 }
 
-async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now()) {
-    if (!companion.socialFeedEnabled || companion.socialPostFrequency === 'manual'
+function companionSocialPostArgsFromMessage(message) {
+    const embedded = extractCompanionEmbeddedToolCalls(message?.content);
+    const call = [...(Array.isArray(message?.tool_calls) ? message.tool_calls : []), ...embedded.toolCalls]
+        .find(item => item.function?.name === 'publish_social_post');
+    if (call) {
+        const args = safeParseJSONRepair(call.function.arguments);
+        if (isPlainObject(args)) return args;
+    }
+    const rawContent = Array.isArray(message?.content)
+        ? message.content.map(part => part?.text || '').join('\n') : String(message?.content || '');
+    const parsed = safeParseJSONRepair(rawContent) || extractJSON(rawContent);
+    if (isPlainObject(parsed?.social_post)) return parsed.social_post;
+    if (isPlainObject(parsed)) return parsed;
+    return null;
+}
+
+function recordCompanionSocialFailure(companion, error, nowMs = Date.now()) {
+    const runtime = companion.socialFeedRuntime;
+    runtime.lastAttemptAt = nowMs;
+    runtime.lastErrorAt = nowMs;
+    runtime.lastError = String(error?.message || error || 'Unknown social posting error').trim().slice(0, 500);
+    runtime.consecutiveFailures = livingClamp((Number(runtime.consecutiveFailures) || 0) + 1, 1, 20);
+    runtime.nextPostAt = companionSocialRetryAt(companion, nowMs);
+}
+
+async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now(), options = {}) {
+    if (!companion.socialFeedEnabled || (!options.force && companion.socialPostFrequency === 'manual')
         || !providerHasCredentials(companionTextProviderId(companion))) return null;
     const life = companionLifeState(companion, nowMs);
     const situation = life.situation || companionSituationAt(companion, nowMs);
     const currentContext = `${situation.label || life.label}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}${situation.withNames?.length ? ` with ${situation.withNames.join(', ')}` : ''}. Current clothing: ${situation.outfit || companion.currentOutfit || 'not established'}. Recent life event: ${companion.lifeEvents.at(-1)?.text || 'none'}`.slice(0, 1800);
     const gate = await labsProposal('human_social_gate', { currentContext }, 'humans', { background: true, priority: 20 });
-    if (gate?.candidate && (gate.candidate.shouldPost !== true || Number(gate.candidate.confidence) < 0.55)) return null;
+    if (!options.force && gate?.candidate && (gate.candidate.shouldPost !== true || Number(gate.candidate.confidence) < 0.55)) {
+        return { posted: false, pendingPhoto: null, reason: 'gate' };
+    }
     const photoEligible = companion.socialFeedImages && companion.allowPhotos;
     const requestedFormat = photoEligible
         && companionSeededRoll(`${companion.id}|post-format|${Math.floor(nowMs / 3600000)}`) * 100 < companion.socialPhotoRatio
@@ -38960,7 +39711,7 @@ async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now
         experience: companionChatExperience(companion.id), suppressPersonaVision: true
     }) }, {
         role: 'user',
-        content: `[PRIVATE AUTONOMOUS SOCIAL EVENT — NOT A PLAYER MESSAGE]\nYour social profile is due for consideration. Current authoritative context: ${currentContext}\nAuthored controls: ${companionSocialBehaviorSummary(companion)}\nPublish exactly one ${requestedFormat} post only if this moment is something you would authentically share. The category MUST be one of: ${allowedTypes.join(', ')}. Keep it in the authored social writing voice and obey every custom posting rule. Thirst-trap intensity is ${companion.socialThirstTrapLevel}/100; this controls flirtatious public presentation, not nudity or invented circumstances. Do not address the player, mention the simulation, expose private relationship state, or invent a new event. Call publish_social_post.`
+        content: `[PRIVATE AUTONOMOUS SOCIAL EVENT — NOT A PLAYER MESSAGE]\nYour social profile has reached a valid posting window. Current authoritative context: ${currentContext}\nAuthored controls: ${companionSocialBehaviorSummary(companion)}\nPublish exactly one ${requestedFormat} post grounded in this real moment. The category MUST be one of: ${allowedTypes.join(', ')}. Keep it in the authored social writing voice and obey every custom posting rule. Thirst-trap intensity is ${companion.socialThirstTrapLevel}/100; this controls flirtatious public presentation, not nudity or invented circumstances. Do not address the player, mention the simulation, expose private relationship state, or invent a new event. Call publish_social_post. If tool calling is unavailable, output only one JSON object with category, text, visibility, unlock_price, scene and reason.`
     }];
     const body = applyCompanionGenerationConfig({
         model: companion.model || state.globalSettings.defaultModel,
@@ -38968,23 +39719,38 @@ async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now
         tools: [COMPANION_SOCIAL_POST_TOOL],
         tool_choice: { type: 'function', function: { name: 'publish_social_post' } }
     }, companion, { maxTokens: Math.min(420, companion.maxTokens || 420) });
-    const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
+    const endpoint = providerApiBase(textProvider) + '/chat/completions';
+    const request = requestBody => fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(body)
+        body: JSON.stringify(requestBody)
     });
+    let response = await request(body);
+    if (!response.ok && [400, 404, 422].includes(response.status)) {
+        const firstError = await response.text().catch(() => '');
+        if (/tool|function|tool_choice/i.test(firstError)) {
+            const fallbackBody = { ...body };
+            delete fallbackBody.tools;
+            delete fallbackBody.tool_choice;
+            response = await request(fallbackBody);
+        } else {
+            throw new Error(humanizeApiError(new Error(firstError || `Request failed (${response.status})`)));
+        }
+    }
     if (!response.ok) throw new Error(humanizeApiError(new Error(await response.text().catch(() => `Request failed (${response.status})`))));
     const message = (await response.json())?.choices?.[0]?.message || {};
-    const embedded = extractCompanionEmbeddedToolCalls(message.content);
-    const call = [...(Array.isArray(message.tool_calls) ? message.tool_calls : []), ...embedded.toolCalls]
-        .find(item => item.function?.name === 'publish_social_post');
-    const args = call ? safeParseJSONRepair(call.function.arguments) : null;
-    if (!isPlainObject(args) || !String(args.text || '').trim()) return null;
-    return applyCompanionSocialPostCommit(companion, { social_post: {
+    const args = companionSocialPostArgsFromMessage(message);
+    if (!isPlainObject(args) || !String(args.text || '').trim()) {
+        throw new Error('The text model returned no usable social post. Try another text model or retry.');
+    }
+    const beforeCount = companion.socialPosts.length;
+    const pendingPhoto = applyCompanionSocialPostCommit(companion, { social_post: {
         decision: 'post', kind: requestedFormat, category: args.category, text: args.text,
         visibility: args.visibility, unlock_price: args.unlock_price,
         scene: args.scene, reason: args.reason || currentContext
-    } }, nowMs, 'autonomy');
+    } }, nowMs, options.force ? 'manual' : 'autonomy');
+    companion.socialFeedRuntime.lastAttemptAt = nowMs;
+    return { posted: companion.socialPosts.length > beforeCount, pendingPhoto, reason: 'model' };
 }
 
 async function processCompanionLabsLifeBeat(companion, nowMs = Date.now()) {
@@ -39056,26 +39822,64 @@ async function processCompanionAgency(nowMs = Date.now()) {
             stateChanged = true;
         }
 
-        if (companionAgencyInFlight.has(companion.id)
-            || !providerHasCredentials(companionTextProviderId(companion))) continue;
+        if (companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual') {
+            const beforeSchedule = companion.socialFeedRuntime.nextPostAt;
+            reconcileCompanionSocialSchedule(companion, nowMs);
+            if (beforeSchedule !== companion.socialFeedRuntime.nextPostAt) stateChanged = true;
+        }
+        const textProviderReady = providerHasCredentials(companionTextProviderId(companion));
+        if (!textProviderReady && companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual') {
+            const missingProviderMessage = 'Text provider is not configured for this Virtual Human.';
+            if (companion.socialFeedRuntime.lastError !== missingProviderMessage) {
+                companion.socialFeedRuntime.lastError = missingProviderMessage;
+                companion.socialFeedRuntime.lastErrorAt = nowMs;
+                stateChanged = true;
+            }
+        }
+        if (companionAgencyInFlight.has(companion.id) || !textProviderReady) continue;
         const due = messages.filter(message =>
             message.role === 'user' && message.awaitingReply
             && message.replyDueAt > 0 && message.replyDueAt <= nowMs).pop();
 
         if (due) {
             companionAgencyInFlight.add(companion.id);
-            messages.filter(message => message.role === 'user' && message.awaitingReply
-                && message.timestamp <= due.timestamp).forEach(message => { message.awaitingReply = false; });
+            // Opening the conversation to answer one due message also opens
+            // every later text that has already reached the phone. Treat the
+            // whole run since the previous companion response as one inbox
+            // batch: one set of blue checks, one prompt and one LLM call.
+            const lastCompanionIndex = messages.reduce((latest, message, index) =>
+                message.role === 'companion' && !message.invalidated ? index : latest, -1);
+            const readableBatch = messages.slice(lastCompanionIndex + 1).filter(message =>
+                message.role === 'user'
+                && !message.invalidated
+                && Number(message.deliveredAt || message.timestamp) <= nowMs);
+            // A text can arrive while the previous network request is in
+            // flight and consequently sit before that response in the stored
+            // array. If it later becomes the due trigger, it still needs to be
+            // consumed exactly once even though it is no longer after the
+            // latest companion bubble.
+            if (!readableBatch.includes(due)) readableBatch.push(due);
+            readableBatch.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+            readableBatch.forEach(message => {
+                message.deliveryState = 'read';
+                message.readAt = nowMs;
+                message.awaitingReply = false;
+            });
+            const trigger = readableBatch[readableBatch.length - 1] || due;
+            await saveState();
+            if (state.activeCompanionId === companion.id && state.view === 'companionChat') renderCompanionThread();
             if (state.activeCompanionId === companion.id) setCompanionTyping(true, `${companion.name || 'They'} is typing…`);
             try {
-                const result = await sendCompanionMessage(companion, messages, due.text, nowMs, {
-                    existingUserMessage: due
+                const result = await sendCompanionMessage(companion, messages, trigger.text, nowMs, {
+                    existingUserMessage: trigger
                 });
                 if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
                 if (result.pendingSocialPhoto) resolveCompanionSocialPhoto(companion, result.pendingSocialPhoto);
             } catch (error) {
-                due.awaitingReply = true;
-                due.replyDueAt = nowMs + 2 * 60 * 1000;
+                // Restore a single retry gate for the batch. The model will
+                // still receive every now-read message on the retry.
+                trigger.awaitingReply = true;
+                trigger.replyDueAt = nowMs + 2 * 60 * 1000;
                 console.error('Deferred companion reply failed:', error);
                 if (state.activeCompanionId === companion.id) showToast('Reply delayed by a connection error. It will retry.', 'error');
             } finally {
@@ -39087,23 +39891,20 @@ async function processCompanionAgency(nowMs = Date.now()) {
         }
 
         if (companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual'
-            && !companion.socialFeedRuntime.nextPostAt) {
-            companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
-            stateChanged = true;
-        }
-        if (companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual'
             && companion.socialFeedRuntime.nextPostAt > 0 && companion.socialFeedRuntime.nextPostAt <= nowMs) {
             companionAgencyInFlight.add(companion.id);
             companion.socialFeedRuntime.lastGateAt = nowMs;
             try {
-                const pendingSocialPhoto = await generateCompanionAutonomousSocialPost(companion, nowMs);
-                if (pendingSocialPhoto) resolveCompanionSocialPhoto(companion, pendingSocialPhoto);
-                if (!pendingSocialPhoto && companion.socialFeedRuntime.lastPostAt !== nowMs) {
-                    companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
+                const result = await generateCompanionAutonomousSocialPost(companion, nowMs);
+                if (result?.pendingPhoto) resolveCompanionSocialPhoto(companion, result.pendingPhoto);
+                if (!result?.posted) {
+                    companion.socialFeedRuntime.nextPostAt = result?.reason === 'gate'
+                        ? Math.min(companionNextSocialPostAt(companion, nowMs), nowMs + 6 * 60 * 60 * 1000)
+                        : companionNextSocialPostAt(companion, nowMs);
                 }
             } catch (error) {
                 console.warn('Autonomous social post failed:', error);
-                companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, nowMs);
+                recordCompanionSocialFailure(companion, error, nowMs);
             } finally {
                 companionAgencyInFlight.delete(companion.id);
                 stateChanged = true;
@@ -39287,7 +40088,7 @@ async function rerollLastCompanionReply() {
 async function queueCompanionUserMessage(payload) {
     const companion = getCompanion(state.activeCompanionId);
     const text = String(payload?.text || '').trim();
-    const type = ['text', 'photo', 'voice'].includes(payload?.type) ? payload.type : 'text';
+    const type = ['text', 'photo', 'voice', 'clip_request'].includes(payload?.type) ? payload.type : 'text';
     if (!companion || (!text && type === 'text')) return;
     if (!providerHasCredentials(companionTextProviderId(companion))) {
         return showToast(`${providerDisplayName(companionTextProviderId(companion))} API key missing (Settings).`, 'error');
@@ -39301,6 +40102,8 @@ async function queueCompanionUserMessage(payload) {
     const optimisticUser = normalizeCompanionMessage({
         role: 'user', type, text, photo: payload?.photo || '', audio: payload?.audio || '',
         audioFormat: payload?.audioFormat || '', timestamp: Date.now(),
+        videoRequestId: payload?.videoRequestId || '', clipType: payload?.clipType || 'custom',
+        cameraRig: payload?.cameraRig || 'selfie',
         deliveryState: 'sent', awaitingReply: true,
         returnGapMs: returnSilence.unanswered.shouldAcknowledgeSilence ? returnSilence.durationMs : 0,
         returnSilenceStage: returnSilence.stage,
@@ -39389,7 +40192,7 @@ function setupCompanionComposer() {
     sendBtn.onclick = handleCompanionSend;
     photoRequestBtn.onclick = () => {
         const companion = getCompanion(state.activeCompanionId);
-        if (!companionInputSupports(companion, 'image')) return showToast('The selected conversation model does not advertise image input. Choose a vision-capable text model.', 'info');
+        if (!companionInputSupports(companion, 'image')) return showToast(companionPlayerPhotoCapabilityMessage(companion), 'info');
         photoInput?.click();
     };
     voiceRequestBtn.onclick = async () => {

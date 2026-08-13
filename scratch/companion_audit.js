@@ -30,6 +30,7 @@ const context = {
 };
 buildContext(vm, [
     'normalizeCompanion', 'normalizeCompanionTrauma', 'normalizeCompanionMemoryEntry',
+    'normalizeCompanionVideoJob',
     'normalizeCompanionLifeEvent', 'normalizeCompanionCommitment',
     'normalizeCompanionMessage', 'normalizeCompanionAndThread', 'normalizeCompanionSilenceState',
     'captureCompanionRuntime', 'freshCompanionRuntime', 'normalizeCompanionRuntime',
@@ -55,7 +56,8 @@ buildContext(vm, [
     'companionResponsePlan', 'companionInitiativeDelayMs', 'companionUnansweredState',
     'companionElapsedLabel', 'companionTimestampLabel', 'companionSilenceSensitivity',
     'companionSilenceInterpretation', 'companionCurrentSilence', 'applyCompanionSilenceProgress',
-    'companionNextInitiativeAt',
+    'companionNextInitiativeAt', 'companionNextSocialPostAt', 'reconcileCompanionSocialSchedule',
+    'companionSocialRetryAt', 'companionSocialPostArgsFromMessage',
     'companionExperiencePreset', 'reconcileCompanionExperienceMessages',
     'consolidateCompanionMemory',
     'companionMoodDescription', 'companionRelationshipDescription',
@@ -79,7 +81,8 @@ buildContext(vm, [
     'chooseCompanionImageEndpoint', 'companionImageCapabilities', 'applyCompanionImageParameters',
     'companionImageErrorMessage', 'isCompanionReferencePrivacyError',
     'gptProtoImageReferenceProfile', 'enrichGptProtoImageModel', 'gptProtoImageEndpoint',
-    'generatedImageMimeFromBase64', 'normalizeGeneratedImageSource', 'gptProtoImageFromResponse',
+    'generatedImageMimeFromBase64', 'isRecognizableImageBase64',
+    'normalizeGeneratedImageSource', 'gptProtoImageFromResponse',
     'rankCompanionImageModels', 'modelSupportsImageReferences', 'rankCompanionTTSModels', 'isTTSCapableModel',
     'rankCompanionTextModels', 'isCompanionTextCapableModel',
     'companionEffectiveLifeBuilderModel',
@@ -145,7 +148,7 @@ test('a blank companion gets every field a downstream function assumes', () => {
     assert.equal(c.desirePattern, 'mixed');
     assert.equal(c.sexualInitiative, false);
     assert(c.lifeProfile && c.lifeRuntime && Array.isArray(c.lifeProfile.weeklySchedule));
-    assert.deepEqual(Object.keys(c.usage).sort(), ['callsCompleted', 'photosGenerated', 'textTurns', 'voiceNotesGenerated']);
+    assert.deepEqual(Object.keys(c.usage).sort(), ['callsCompleted', 'photosGenerated', 'textTurns', 'videosGenerated', 'voiceNotesGenerated']);
 });
 
 test('emotion appraisal supports mixed feelings without cancelling opposites', () => {
@@ -485,9 +488,38 @@ test('canonical human commits create life events and scheduled follow-through', 
 });
 
 test('paid media opt-outs survive normalization', () => {
-    const c = freshCompanion({ allowPhotos: false, allowVoiceNotes: false });
+    const c = freshCompanion({ allowPhotos: false, allowVoiceNotes: false, allowVideoClips: false });
     assert.equal(c.allowPhotos, false);
     assert.equal(c.allowVoiceNotes, false);
+    assert.equal(c.allowVideoClips, false);
+});
+
+test('video provider settings and jobs survive normalization without enabling paid generation', () => {
+    const c = freshCompanion({
+        allowVideoClips: true, videoProvider: 'wavespeed',
+        videoModel: 'bytedance/seedance-v2.0-fast/image-to-video',
+        videoResolution: '720p', videoDuration: 8,
+        videoJobs: [{ id: 'clip_one', status: 'accepted', clipType: 'outfit', cameraRig: 'fixed' }]
+    });
+    assert.equal(c.allowVideoClips, true);
+    assert.equal(c.videoProvider, 'wavespeed');
+    assert.equal(c.videoResolution, '720p');
+    assert.equal(c.videoDuration, 8);
+    assert.equal(c.videoJobs[0].status, 'accepted');
+    assert.equal(c.videoJobs[0].clipType, 'outfit');
+});
+
+test('clip requests stay natural in chat while carrying private structured instructions to the model', () => {
+    const c = freshCompanion({ allowVideoClips: true });
+    const message = context.normalizeCompanionMessage({
+        role: 'user', type: 'clip_request', text: 'Could you film an outfit check?',
+        videoRequestId: 'clip_request_1', clipType: 'outfit', cameraRig: 'selfie', timestamp: Date.now()
+    });
+    assert.equal(message.text, 'Could you film an outfit check?');
+    assert.equal(message.videoRequestId, 'clip_request_1');
+    const apiMessages = context.buildCompanionMessages(c, [message], Date.now());
+    assert.match(apiMessages[1].content, /\[CLIP REQUEST clip_request_1\]/);
+    assert.match(apiMessages[1].content, /Requested format: outfit/);
 });
 
 test('MCP image settings survive normalization without becoming the default source', () => {
@@ -1056,24 +1088,24 @@ test('wildcard catch-up is seeded, bounded and never duplicates a day', () => {
     assert(c.lifeRuntime.processedWildcardDays.length <= 45);
 });
 
-test('sleep mechanically defers reading and replying until after wake time', () => {
+test('sleep keeps a willing reply unread until it is opened after wake time', () => {
     const now = new Date(2026, 0, 15, 3, 0).getTime();
     const c = freshCompanion({ sleepArchetype: 'normal' });
     const message = context.normalizeCompanionMessage({ id: 'sleep-msg', role: 'user', text: 'hey', timestamp: now });
     const plan = context.companionResponsePlan(c, message, now);
     assert.equal(plan.life.availability, 'asleep');
     assert(plan.readAt >= new Date(2026, 0, 15, 7, 0).getTime());
-    if (plan.willReply) assert(plan.replyDueAt > plan.readAt);
+    if (plan.willReply) assert.equal(plan.replyDueAt, plan.readAt);
 });
 
-test('a busy human reads and answers later instead of replying immediately', () => {
+test('a busy human opens and answers later instead of pre-generating a reply', () => {
     const now = new Date(2026, 0, 15, 12, 0).getTime();
     const c = freshCompanion();
     const message = context.normalizeCompanionMessage({ id: 'busy-msg', role: 'user', text: 'lunch?', timestamp: now });
     const plan = context.companionResponsePlan(c, message, now);
     assert.equal(plan.life.availability, 'busy');
     assert(plan.readAt >= now + 30_000);
-    if (plan.willReply) assert(plan.replyDueAt >= plan.readAt + 3 * 60_000);
+    if (plan.willReply) assert.equal(plan.replyDueAt, plan.readAt);
 });
 
 test('chat immersion defaults preserve the full simulation for existing timelines', () => {
@@ -1156,7 +1188,7 @@ test('a sufficiently bad mood can leave a message on read with no scheduled repl
     assert.equal(plan.reason, 'mood');
 });
 
-test('a message left on read can be reconsidered and answered hours later', () => {
+test('an angry human can reconsider and open a message hours later', () => {
     const now = new Date(2026, 0, 15, 20, 0).getTime();
     const c = freshCompanion({ mood: { label: 'angry', valence: -80, lastUpdated: now } });
     let message;
@@ -1169,7 +1201,8 @@ test('a message left on read can be reconsidered and answered hours later', () =
     const plan = context.companionResponsePlan(c, message, now);
     assert.equal(plan.willReply, true);
     assert.equal(plan.reason, 'mood');
-    assert(plan.replyDueAt > plan.readAt + 40 * 60_000);
+    assert.equal(plan.replyDueAt, plan.readAt);
+    assert(plan.readAt > now + 40 * 60_000);
 });
 
 test('initiative timing is disabled by default and finite when enabled', () => {
@@ -1506,6 +1539,14 @@ test('GPTProto image extraction understands synchronous, async and Gemini respon
         context.gptProtoImageFromResponse({ data: [{ b64_json: 'BBBB' }] }, 'image/jpeg'),
         'data:image/jpeg;base64,BBBB'
     );
+    assert.equal(
+        context.gptProtoImageFromResponse({ data: '/9j/AAAA' }),
+        'data:image/jpeg;base64,/9j/AAAA'
+    );
+    assert.equal(
+        context.gptProtoImageFromResponse({ data: [{ url: 'https://cdn.test/temporary.jpg', b64_json: '/9j/AAAA' }] }),
+        'data:image/jpeg;base64,/9j/AAAA'
+    );
     const rawBase64 = 'A'.repeat(64);
     assert.equal(
         context.gptProtoImageFromResponse({ data: { outputs: [rawBase64] } }, 'image/png'),
@@ -1514,6 +1555,11 @@ test('GPTProto image extraction understands synchronous, async and Gemini respon
     assert.equal(
         context.normalizeGeneratedImageSource('/temporary/output.png'),
         'https://gptproto.com/temporary/output.png'
+    );
+    const jpegBase64 = `/9j/${'A'.repeat(64)}`;
+    assert.equal(
+        context.normalizeGeneratedImageSource(jpegBase64),
+        `data:image/jpeg;base64,${jpegBase64}`
     );
     assert.equal(context.normalizeGeneratedImageSource('completed'), '');
     assert.equal(context.generatedImageMimeFromBase64('/9j/AAAA'), 'image/jpeg');
@@ -2216,6 +2262,50 @@ test('silence consequences can be disabled without disabling exact message timin
     assert.equal(context.companionCurrentSilence(c, messages, now, experience).stage, '');
     const apiMessages = context.buildCompanionMessages(c, messages, now, { experience });
     assert.match(apiMessages[1].content, /you sent this/);
+});
+
+test('social schedule catches up from the latest real post instead of app startup', () => {
+    const now = Date.UTC(2026, 7, 14, 12, 0);
+    const createdAt = now - 10 * 86400000;
+    const lastPostAt = now - 5 * 86400000;
+    const c = freshCompanion({
+        id: 'social-catchup', createdAt, socialFeedEnabled: true,
+        socialPostFrequency: 'daily',
+        socialPosts: [{ id: 'old-post', kind: 'status', text: 'five days ago', createdAt: lastPostAt }]
+    });
+    c.socialFeedRuntime.nextPostAt = 0;
+    const dueAt = context.reconcileCompanionSocialSchedule(c, now);
+    assert(dueAt > lastPostAt);
+    assert(dueAt < now, 'overdue social window was incorrectly moved into the future');
+    assert.equal(context.reconcileCompanionSocialSchedule(c, now), dueAt, 'existing schedule should be stable');
+});
+
+test('social schedule repairs the v13.5 startup postponement', () => {
+    const now = Date.UTC(2026, 7, 14, 12, 0);
+    const lastPostAt = now - 5 * 86400000;
+    const c = freshCompanion({
+        id: 'social-v135-repair', createdAt: now - 10 * 86400000,
+        socialFeedEnabled: true, socialPostFrequency: 'daily',
+        socialPosts: [{ id: 'old-post', kind: 'status', text: 'old', createdAt: lastPostAt }],
+        socialFeedRuntime: { lastPostAt, nextPostAt: now + 86400000, lastGateAt: 0 }
+    });
+    assert(context.reconcileCompanionSocialSchedule(c, now) < now);
+});
+
+test('social fallback accepts JSON content when a provider omits tool_calls', () => {
+    const args = context.companionSocialPostArgsFromMessage({
+        content: '```json\n{"category":"everyday","text":"coffee then class","visibility":"public"}\n```'
+    });
+    assert.equal(args.text, 'coffee then class');
+    assert.equal(args.category, 'everyday');
+});
+
+test('social failures retry soon with bounded backoff', () => {
+    const now = Date.UTC(2026, 7, 14, 12, 0);
+    const c = freshCompanion({ id: 'social-retry', socialFeedEnabled: true, socialPostFrequency: 'few_week' });
+    c.socialFeedRuntime.consecutiveFailures = 1;
+    const retryAt = context.companionSocialRetryAt(c, now);
+    assert.equal(retryAt, now + 30 * 60 * 1000);
 });
 
 let failures = 0;
