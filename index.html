@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260814-v157-ui-overhaul-v2">
+    <link rel="stylesheet" href="style.css?v=20260815-v157-life-network-v1">
 </head>
 <body>
 <div id="app">
@@ -52,6 +52,10 @@
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 8.5c2.3-1.1 4.7-1.1 7 0M7 17c3.4 1.6 6.6 1.6 10 0M8 18l-2 2-1.5-5.5C4 10.4 5.7 6.8 9 5.5l.8 1.5M16 18l2 2 1.5-5.5C20 10.4 18.3 6.8 15 5.5l-.8 1.5"/><circle cx="9" cy="13" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1" fill="currentColor" stroke="none"/></svg>
             Discord
         </a>
+        <button class="settings-btn agency-panic-btn" id="pause-all-agency-btn" type="button" title="Immediately pause proactive messages, social posts and background generation. Direct replies still work.">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            <span id="pause-all-agency-label">Pause agency</span>
+        </button>
         <button class="settings-btn" id="global-settings-btn">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
             Settings
@@ -1772,6 +1776,11 @@
                         <p>Build deeply authored people whose moods, memories, relationships, routines and private lives continue between conversations.</p>
                     </div>
                     <div class="landing-actions">
+                        <button id="open-vh-clips-btn" class="btn vh-clips-launch" type="button">
+                            <span class="vh-clips-launch-icon" aria-hidden="true">▶</span>
+                            <span class="vh-clips-launch-copy"><strong>Clips</strong><small>Watch moments from your humans</small></span>
+                            <span class="vh-clips-launch-arrow" aria-hidden="true">›</span>
+                        </button>
                         <button id="import-companion-btn" class="btn btn-ghost">Import Human</button>
                         <input id="import-companion-input" type="file" hidden accept=".horde_human,.json,application/json">
                         <button id="create-new-companion-btn" class="btn btn-primary vh-create-btn">+ New Virtual Human</button>
@@ -1788,6 +1797,15 @@
                     </div>
                 </div>
                 <div id="companions-grid" class="vh-grid"></div>
+            </div>
+            <div id="vh-clips-discovery-backdrop" class="vh-clips-discovery-backdrop hidden">
+                <aside id="vh-clips-discovery" class="vh-clips-discovery" aria-label="Clips from your Virtual Humans">
+                    <header class="vh-clips-discovery-head">
+                        <div><span class="vh-eyebrow">From your humans</span><strong>Clips</strong></div>
+                        <button id="close-vh-clips-btn" type="button" aria-label="Close clips">×</button>
+                    </header>
+                    <div id="vh-clips-discovery-content" class="vh-clips-discovery-content"></div>
+                </aside>
             </div>
         </section>
 
@@ -2111,6 +2129,34 @@
                                 </div>
                                 <input type="range" id="cs-relationship-start" min="-100" max="100" value="0" style="width:100%;">
                                 <div class="vh-relationship-scale"><span>hostile</span><span>strangers</span><span>deeply attached</span></div>
+                                <div class="form-row">
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-connection-type">How are they connected?</label>
+                                        <select id="cs-connection-type" class="form-select">
+                                            <option value="stranger">Strangers</option><option value="dating_match">Dating-app match</option>
+                                            <option value="friend">Friends</option><option value="close_friend">Close friends</option>
+                                            <option value="coworker">Coworkers</option><option value="classmate">Classmates</option>
+                                            <option value="neighbor">Neighbors</option><option value="customer">Customer / service</option>
+                                            <option value="creator_follower">Creator / follower</option><option value="subscriber">Creator / subscriber</option>
+                                            <option value="partner">Partners</option><option value="ex">Ex-partners</option>
+                                            <option value="family">Family</option><option value="rival">Rivals</option><option value="custom">Custom</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-col">
+                                        <label class="form-label" for="cs-connection-authenticity">How sincere is their presentation?</label>
+                                        <select id="cs-connection-authenticity" class="form-select">
+                                            <option value="genuine">Broadly genuine</option><option value="mixed">Mixed motives</option>
+                                            <option value="performative">Performative</option><option value="instrumental">Wants an outcome</option>
+                                            <option value="deceptive">Hidden agenda</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <label class="form-label" for="cs-connection-role">Specific connection</label>
+                                <input id="cs-connection-role" class="form-input" placeholder="e.g. a new Tinder match, her regular customer, a paying subscriber she recognizes">
+                                <label class="form-label" for="cs-player-knowledge">What do they genuinely know about the player?</label>
+                                <textarea id="cs-player-knowledge" class="form-textarea" rows="3" placeholder="Only establish facts they could actually know, and how they learned them. The selected player persona is treated as a public profile, not omniscience."></textarea>
+                                <label class="form-label" for="cs-initial-motive">What do they want from this connection at the start?</label>
+                                <textarea id="cs-initial-motive" class="form-textarea" rows="3" placeholder="Curiosity, distraction, friendship, validation, a sale, money, networking, sincere romance, mixed motives…"></textarea>
                                 <div class="form-row vh-contact-history-fields">
                                     <div class="form-col">
                                         <label class="form-label" for="cs-prior-contact">Have they spoken before?</label>
@@ -2125,7 +2171,11 @@
                                         <p class="form-hint">Days. Use 0 for a brand-new match or introduction.</p>
                                     </div>
                                 </div>
-                                <textarea id="cs-relationship-context" class="form-textarea" rows="4" aria-label="Starting relationship context" placeholder="How did they meet? What already happened between them? Are they strangers, coworkers, childhood friends, exes, rivals, partners, or something complicated? What does each person currently believe this relationship is?"></textarea>
+                                <label class="form-label" for="cs-relationship-context">Durable shared history</label>
+                                <textarea id="cs-relationship-context" class="form-textarea" rows="4" aria-label="Durable relationship context" placeholder="What permanently happened before this timeline? Keep one-time opening scenery out of this field."></textarea>
+                                <label class="form-label" for="cs-starting-scenario">Opening scenario — used once</label>
+                                <textarea id="cs-starting-scenario" class="form-textarea" rows="4" placeholder="The immediate situation for the first exchange. After the first reply, Horde stores it as the first shared autobiographical episode and stops injecting it as the present."></textarea>
+                                <p class="form-hint">This becomes the first event between the player and this human. It will not keep replaying in later prompts.</p>
                                 <p class="form-hint" id="cs-relationship-current">Current relationship: neutral.</p>
                             </div>
                             <div class="form-row">
@@ -2171,6 +2221,11 @@
                                     <option value="balanced">Balanced — behave like an active friend</option>
                                     <option value="high">High — text often when they have something to say</option>
                                 </select>
+                                <label class="vh-test-check vh-agency-check">
+                                    <input id="cs-always-on-enabled" type="checkbox">
+                                    <span>Let the local runtime continue this life after I close the tab</span>
+                                </label>
+                                <p class="form-hint">Requires the opt-in master switch in Settings → Local Runtime. The launcher must remain running; this human’s text model may use credits while you are away.</p>
                                 <label class="vh-test-check vh-agency-check">
                                     <input id="cs-web-access" type="checkbox">
                                     <span>Allow web search and sharing links, memes, articles or videos</span>
@@ -3395,6 +3450,27 @@
                 </div>
                 <code id="launcher-command" class="vh-image-request-preview">python3 horde_mcp_bridge.py --open</code>
             </section>
+            <section class="mcp-settings-card always-on-settings-card" aria-labelledby="always-on-settings-title">
+                <div class="mcp-settings-head">
+                    <div><span class="vh-eyebrow">Optional background agency</span><h3 id="always-on-settings-title">Always-on Virtual Humans</h3></div>
+                    <span id="always-on-status-badge" class="mcp-status-badge">Off</span>
+                </div>
+                <label class="settings-switch-row">
+                    <span><strong>Continue while the browser is closed</strong><small>Only humans individually enabled in Virtual Human Studio are handed to the launcher.</small></span>
+                    <input id="global-companion-always-on" type="checkbox" role="switch">
+                </label>
+                <div id="always-on-controls" class="always-on-controls">
+                    <label class="vh-test-check"><input id="global-always-on-messages" type="checkbox" checked><span>Allow background messages and delayed replies</span></label>
+                    <label class="vh-test-check"><input id="global-always-on-social" type="checkbox" checked><span>Allow text-only autonomous social posts</span></label>
+                    <div class="form-row">
+                        <div class="form-col"><label class="form-label" for="global-always-on-daily-limit">Daily generation cap</label><input id="global-always-on-daily-limit" class="form-input" type="number" min="1" max="100" value="6"></div>
+                        <div class="form-col"><label class="form-label" for="global-always-on-minimum-minutes">Minimum time between calls</label><input id="global-always-on-minimum-minutes" class="form-input" type="number" min="15" max="1440" value="120"><span class="form-hint">minutes</span></div>
+                    </div>
+                </div>
+                <p class="form-hint"><b>Default is off.</b> The browser remains canonical and pauses the background worker while open. Credentials live only in the launcher’s memory—not saves, exports or disk—so reopen Horde Studio once after every launcher restart to re-arm it. Photos, voice and video are never generated in the background.</p>
+                <div class="settings-inline-actions"><button id="always-on-refresh-btn" class="btn btn-ghost" type="button">Check runtime</button><button id="always-on-stop-btn" class="btn btn-ghost" type="button">Stop &amp; forget credentials</button></div>
+                <div id="always-on-status-text" class="form-hint" aria-live="polite"></div>
+            </section>
             <section class="mcp-settings-card" aria-labelledby="local-tts-settings-title">
                 <div class="mcp-settings-head"><div><span class="vh-eyebrow">OpenAI-compatible speech</span><h3 id="local-tts-settings-title">Local Neural TTS</h3></div></div>
                 <label class="form-label">Server Base URL</label>
@@ -4409,14 +4485,14 @@
 <script src="boot-diagnostics.js"></script>
 <script src="presets.js"></script>
 <script src="policy-panic-world.js"></script>
-<script src="ashlyn-reynolds-human.js?v=20260814-bundled-humans-v1"></script>
+<script src="ashlyn-reynolds-human.js?v=20260814-ashlyn-clips-v1"></script>
 <script src="jane-harlow-human.js?v=20260814-bundled-humans-v1"></script>
 <script src="labs-embedded.js?v=20260810-pip-conversation-v2"></script>
 <script src="labs-core.js?v=20260810-v128"></script>
-<script src="labs-tasks.js?v=20260812-vh-media-social-v1"></script>
+<script src="labs-tasks.js?v=20260815-v157-life-network-v1"></script>
 <script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
-<script src="help-system.js?v=20260811-emotion-architecture-v1"></script>
+<script src="help-system.js?v=20260815-v157-life-network-v1"></script>
 <script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
-    <script src="app.js?v=20260814-v157-ui-overhaul-v2"></script>
+    <script src="app.js?v=20260815-v157-life-network-v1"></script>
 </body>
 </html>

@@ -178,6 +178,26 @@
         }
     });
 
+    HordeLabs.registerTask('memory_relevance', {
+        mode: 'humans', minimumTier: 'micro', maxInputChars: 6000, maxOutputTokens: 110, cacheMs: 180000,
+        system: `You are a tiny private memory index. Select only memory IDs that are directly useful for understanding the supplied current message or contact reason. IDs must come from allowedMemoryIds. Do not summarize, rewrite, infer facts, answer the message, or select memories merely because they are emotional. An empty list is correct when nothing is relevant.`,
+        schema: object({
+            memoryIds: { type: 'array', items: string(), maxItems: 10 },
+            confidence: number(0, 1)
+        }),
+        validate(candidate, envelope) {
+            if (!plainObject(candidate) || !Array.isArray(candidate.memoryIds)) return { ok: false, reason: 'Missing memory selection.' };
+            const memoryIds = unique(candidate.memoryIds).slice(0, 10);
+            if (memoryIds.some(id => !idAllowed(id, envelope.allowedMemoryIds, false))) {
+                return { ok: false, reason: 'Memory selection used an unknown ID.' };
+            }
+            return { ok: true, reason: `Selected ${memoryIds.length} allowlisted memor${memoryIds.length === 1 ? 'y' : 'ies'}.`, value: {
+                memoryIds,
+                confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
+            } };
+        }
+    });
+
     HordeLabs.registerTask('human_social_gate', {
         mode: 'humans', minimumTier: 'micro', maxInputChars: 3000, maxOutputTokens: 72, cacheMs: 900000,
         system: `You are a tiny private posting gate. Decide whether the supplied authoritative current-life facts contain an ordinary, plausible reason for this person to post now. Do not write the post, invent an event, infer hidden thoughts, or reward frequency. Return false when nothing is worth sharing. Evidence must be an exact excerpt from currentContext.`,
@@ -198,6 +218,27 @@
                 shouldPost,
                 format,
                 evidence: String(candidate.evidence || '').slice(0, 180),
+                confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
+            } };
+        }
+    });
+
+    HordeLabs.registerTask('human_contact_gate', {
+        mode: 'humans', minimumTier: 'micro', maxInputChars: 3600, maxOutputTokens: 84, cacheMs: 300000,
+        system: `You are a tiny private contact-appropriateness classifier. The deterministic life engine has already found a possible reason to contact the player. Decide only whether sending a message now is plausible given the supplied current situation, availability, unanswered-message state and reason. Do not write the message, roleplay, invent motives, alter relationships, or treat a score as permission. A due explicit promise should normally proceed. Return unsure rather than guessing. Evidence must be an exact excerpt from currentContext.`,
+        schema: object({
+            decision: string(['contact', 'wait', 'unsure']),
+            evidence: string(), confidence: number(0, 1)
+        }),
+        validate(candidate, envelope) {
+            if (!plainObject(candidate)) return { ok: false, reason: 'Missing contact decision.' };
+            const decision = ['contact', 'wait', 'unsure'].includes(candidate.decision) ? candidate.decision : 'unsure';
+            const evidence = String(candidate.evidence || '').trim().slice(0, 180);
+            if (decision !== 'unsure' && (!evidence || !evidenceExists(evidence, { text: envelope.currentContext }))) {
+                return { ok: false, reason: 'Contact advice needs exact evidence from current context.' };
+            }
+            return { ok: true, reason: 'Advisory contact decision is evidence-grounded.', value: {
+                decision, evidence,
                 confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
             } };
         }

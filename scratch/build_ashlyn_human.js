@@ -9,8 +9,12 @@ if (!profileImage || !referenceImage || !outputFile) {
     throw new Error('Usage: node scratch/build_ashlyn_human.js <profile.jpg> <reference.jpg> <output.horde_human>');
 }
 
-const profilePhoto = `data:image/jpeg;base64,${fs.readFileSync(profileImage).toString('base64')}`;
-const basePhoto = `data:image/jpeg;base64,${fs.readFileSync(referenceImage).toString('base64')}`;
+const existingArchive = profileImage.endsWith('.horde_human')
+    ? JSON.parse(fs.readFileSync(profileImage, 'utf8')) : null;
+const profilePhoto = existingArchive?.companion?.profilePhoto
+    || `data:image/jpeg;base64,${fs.readFileSync(profileImage).toString('base64')}`;
+const basePhoto = existingArchive?.companion?.basePhoto
+    || `data:image/jpeg;base64,${fs.readFileSync(referenceImage).toString('base64')}`;
 const now = Date.now();
 
 const companion = {
@@ -47,7 +51,13 @@ const companion = {
     startingRelationship: 0,
     priorContact: 'never_spoken',
     knownBeforeDays: 0,
-    relationshipContext: 'Ash and the player matched on Tinder on a Thursday around 8:30 PM while she was alone in her dorm, bored because Tyler was busy and expecting the app to provide disposable entertainment. The player is a complete stranger: she knows no name, history, appearance, gender, location, intentions or personality unless the player’s selected Persona or messages establish it. She sent no deep opening confession. The match begins with curiosity, low investment and private relationship risk. Ash may lose interest, leave messages unread, become intrigued, refuse requests, lie by omission, feel guilty, disclose Tyler later, or end the connection. She must never assume the player is attractive, dominant, safe, wealthy or compatible. The simulation is a texting relationship, not third-person narration; any eventual meeting must emerge from sustained evidence, logistics and her actual choices.',
+    connectionType: 'dating_match',
+    connectionRole: 'A brand-new Tinder match with no conversation history',
+    connectionAuthenticity: 'mixed',
+    playerKnowledge: 'Only the public information in the player’s selected persona/Tinder-style profile. She does not know their private history, actual wealth, safety, intentions, personality or compatibility until interaction provides evidence.',
+    initialMotive: 'She is bored, Tyler is busy, and she wants novelty, validation and maybe an entertaining conversation. Her curiosity can become sincere, fade, or conflict with guilt; she is not already committed to romance or meeting.',
+    relationshipContext: 'They matched on Tinder but have never spoken. Ash may eventually lose interest, become intrigued, refuse requests, omit the truth about Tyler, feel guilty, disclose him, or end the connection. Any offline meeting must emerge from sustained evidence, plausible logistics and her actual choices.',
+    startingScenario: 'Thursday, around 8:30 PM. Ash is alone in her USC dorm because Tyler is busy, half-watching a show and scrolling Tinder for disposable entertainment. She has just matched with the player and is looking at their public profile for the first time; neither person has sent a message yet.',
     sleepArchetype: 'night_owl',
     regulationProfile: 'sensitive',
     conflictRecovery: 'slow',
@@ -85,6 +95,44 @@ const companion = {
     photoReferenceFallback: true,
     allowPhotos: true,
     allowVoiceNotes: true,
+    allowVideoClips: true,
+    videoProvider: 'openrouter',
+    videoModel: '',
+    videoResolution: '480p',
+    videoDuration: 5,
+    videoAudio: true,
+    videoReferencePolicy: 'auto',
+    videoStyleRules: 'Vertical 9:16 phone-camera clips only. Keep Ash visually consistent with her generation reference, use natural handheld movement and ordinary social-video imperfections, and never imply that a pre-existing clip was made for the player.',
+    startingVideoClips: [
+        {
+            id: 'ash_clip_01',
+            status: 'ready',
+            progress: 100,
+            clipType: 'day_in_life',
+            cameraRig: 'handheld',
+            concept: 'A casual vertical phone-camera moment from Ash’s Los Angeles college life.',
+            caption: 'drafts were getting too confident',
+            reason: 'A pre-existing public clip from before she matched with the player.',
+            bundledSrc: 'assets/bundled/ashlyn-social/16.mp4',
+            resolution: '480p',
+            duration: 5,
+            seedAgeDays: 11
+        },
+        {
+            id: 'ash_clip_02',
+            status: 'ready',
+            progress: 100,
+            clipType: 'selfie',
+            cameraRig: 'selfie',
+            concept: 'An authentic vertical selfie clip with casual phone-camera movement and social-feed framing.',
+            caption: 'okay this one can stay',
+            reason: 'A pre-existing public clip from before she matched with the player.',
+            bundledSrc: 'assets/bundled/ashlyn-social/17.mp4',
+            resolution: '480p',
+            duration: 5,
+            seedAgeDays: 4
+        }
+    ],
     socialFeedEnabled: true,
     socialFeedImages: true,
     socialPlatform: 'instagram',

@@ -2,17 +2,20 @@ const fs = require('fs');
 const assert = require('assert');
 
 const html = fs.readFileSync('index.html', 'utf8');
+const app = fs.readFileSync('app.js', 'utf8');
 const js = fs.readFileSync('help-system.js', 'utf8');
 const labs = fs.readFileSync('labs-ui.js', 'utf8');
 const css = fs.readFileSync('style.css', 'utf8');
 
 const registry = [...js.matchAll(/^\s*'([^']+)':\s*'/gm)].map(match => match[1]);
-const missing = registry.filter(id => !html.includes(`id="${id}"`));
+const missing = registry.filter(id => !html.includes(`id="${id}"`) && !app.includes(`id="${id}"`));
 
 assert(registry.length >= 100, `expected broad help registry, found ${registry.length}`);
 assert.deepEqual(missing, [], `help registry points at missing controls: ${missing.join(', ')}`);
-assert(html.includes('help-system.js?v=20260811-emotion-architecture-v1'), 'help system is cache-busted and loaded');
-assert(html.includes('style.css?v=20260811-emotion-architecture-v1'), 'tooltip and Pip styles have a fresh cache key');
+const helpVersion = html.match(/help-system\.js\?v=([^"']+)/)?.[1];
+const styleVersion = html.match(/style\.css\?v=([^"']+)/)?.[1];
+assert(helpVersion, 'help system is cache-busted and loaded');
+assert.equal(styleVersion, helpVersion, 'tooltip and Pip styles share the current app cache key');
 assert(js.includes("document.addEventListener('mouseover', enter, true)"), 'mouse hover uses a capture-phase compatibility path');
 assert(js.includes("document.addEventListener('pointerover'"), 'mouse/pointer discovery is supported');
 assert(js.includes("document.addEventListener('focusin'"), 'keyboard discovery is supported');

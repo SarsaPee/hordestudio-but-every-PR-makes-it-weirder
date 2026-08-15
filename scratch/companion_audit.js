@@ -16,7 +16,7 @@ const { app, functionSource, buildContext } = require('./app_source.js');
 const context = {
     console: { warn() {}, log() {} },
     state: {
-        globalSettings: { apiProvider: 'openrouter' },
+        globalSettings: { apiProvider: 'openrouter', companionAlwaysOnDailyLimit: 6 },
         personas: [], activePersonaId: null,
         companions: [], companionThreads: {}, companionTimelines: {},
         activeCompanionId: null, editingCompanionId: null
@@ -51,6 +51,19 @@ buildContext(vm, [
     'advanceCompanionHumanDynamics', 'applyCompanionDynamicsUpdate',
     'isCompanionAsleep', 'companionActivityPool', 'companionLifeState', 'companionNextWakeAt',
     'normalizeCompanionLifeProfile', 'normalizeCompanionLifeRuntime',
+    'normalizeCompanionSocialPerson', 'normalizeCompanionSocialRelationshipRuntime',
+    'normalizeCompanionSocialWorldRuntime', 'companionSocialWorldState',
+    'companionSocialContactIntervalMs', 'advanceCompanionSocialWorld', 'companionAutonomyHealthReport',
+    'normalizeCompanionContinuityEvent', 'normalizeCompanionBelief',
+    'normalizeCompanionIntention', 'normalizeCompanionEpisode', 'normalizeCompanionOpenThread',
+    'normalizeCompanionDecisionEvidence', 'normalizeCompanionPlayerModelEntry', 'normalizeCompanionBoundary',
+    'normalizeCompanionTruthEntry', 'normalizeCompanionMilestone', 'normalizeCompanionContinuityRuntime',
+    'companionContinuity', 'companionRecordContinuityEvent', 'companionDecisionPressures',
+    'companionRecordEpisode', 'companionApplyBeliefUpdate', 'companionApplyIntentionUpdate', 'companionMatureIntentions',
+    'companionApplyPlayerModelUpdate', 'companionApplyBoundaryUpdate', 'companionApplyTruthUpdate',
+    'companionRecordMilestone', 'companionRelationshipDeltaCap',
+    'companionSetDecisionEvidence', 'companionRecordResponsePlan', 'companionContinuityPrompt',
+    'companionConnectionPrompt', 'companionConsumeStartingScenario',
     'buildProceduralCompanionLifeProfile', 'companionScheduleBlockAt',
     'companionSituationAt', 'advanceCompanionLife', 'companionWeatherLabel',
     'companionResponsePlan', 'companionInitiativeDelayMs', 'companionUnansweredState',
@@ -148,7 +161,217 @@ test('a blank companion gets every field a downstream function assumes', () => {
     assert.equal(c.desirePattern, 'mixed');
     assert.equal(c.sexualInitiative, false);
     assert(c.lifeProfile && c.lifeRuntime && Array.isArray(c.lifeProfile.weeklySchedule));
+    assert(c.continuityRuntime && c.continuityRuntime.version === 5);
+    assert(Array.isArray(c.continuityRuntime.eventLedger));
+    assert(Array.isArray(c.continuityRuntime.beliefs));
+    assert(Array.isArray(c.continuityRuntime.intentions));
+    assert(Array.isArray(c.continuityRuntime.episodes));
+    assert(Array.isArray(c.continuityRuntime.openThreads));
     assert.deepEqual(Object.keys(c.usage).sort(), ['callsCompleted', 'photosGenerated', 'textTurns', 'videosGenerated', 'voiceNotesGenerated']);
+});
+
+test('notification planning does not let a human perceive unread message contents', () => {
+    const now = Date.UTC(2026, 7, 14, 2, 0);
+    const c = freshCompanion({ id: 'privacy-boundary' });
+    const message = context.normalizeCompanionMessage({
+        id: 'unread-private-message', role: 'user', text: 'this content is not visible yet', timestamp: now
+    });
+    context.companionRecordResponsePlan(c, message, {
+        willReply: true, reason: 'asleep', readAt: now + 5 * HOUR, replyDueAt: now + 6 * HOUR,
+        life: { availability: 'asleep' }
+    }, now);
+    assert.match(c.continuityRuntime.lastDecision.perceived, /notification arrived/i);
+    assert.doesNotMatch(c.continuityRuntime.lastDecision.perceived, /not visible yet/i);
+    assert.doesNotMatch(c.continuityRuntime.eventLedger[0].summary, /not visible yet/i);
+    assert.doesNotMatch(context.companionContinuityPrompt(c), /not visible yet/i);
+    assert.equal(c.continuityRuntime.intentions[0].sourceMessageId, message.id);
+});
+
+test('agency receipts update fallible beliefs, intentions and unresolved threads together', () => {
+    const now = Date.UTC(2026, 7, 14, 12, 0);
+    const c = freshCompanion({ id: 'agency-receipt' });
+    context.applyCompanionTurnCommit(c, {
+        agency: {
+            perceived_event: 'The player apologized for missing dinner.',
+            interpretation: 'They may be trying to repair things.',
+            confidence: 64,
+            decision: 'Acknowledge the apology without pretending everything is fixed.',
+            pressures: ['hurt favors caution', 'warmth favors engagement'],
+            belief_updates: [{ action: 'add', subject: 'player', proposition: 'They want to repair the missed dinner.', confidence: 64, basis: 'Their apology.' }],
+            intention_updates: [{ operation: 'create', kind: 'relationship', action: 'Discuss the missed dinner later.', priority: 70 }],
+            thread_updates: [{ operation: 'open', topic: 'Missed dinner', summary: 'The apology was heard but the conflict is unresolved.', stakes: 'Trust and follow-through.', salience: 75 }]
+        },
+        life_event: 'The player apologized for missing dinner.'
+    }, now, 'turn', ['message-apology']);
+    assert.equal(c.continuityRuntime.lastDecision.source, 'model');
+    assert.equal(c.continuityRuntime.lastDecision.confidence, 64);
+    assert.equal(c.continuityRuntime.beliefs[0].status, 'active');
+    assert.equal(c.continuityRuntime.intentions[0].status, 'planned');
+    assert.equal(c.continuityRuntime.openThreads[0].status, 'open');
+    assert(c.continuityRuntime.eventLedger.some(event => event.type === 'life_event'));
+    assert.match(context.companionContinuityPrompt(c), /Missed dinner/);
+});
+
+test('continuity events deduplicate and remain bounded', () => {
+    const c = freshCompanion({ id: 'bounded-ledger' });
+    for (let index = 0; index < 540; index += 1) {
+        context.companionRecordContinuityEvent(c, {
+            type: 'system', summary: `event ${index}`, createdAt: index + 1,
+            dedupeKey: `event:${index}`
+        });
+    }
+    context.companionRecordContinuityEvent(c, {
+        type: 'system', summary: 'duplicate', createdAt: 9999, dedupeKey: 'event:539'
+    });
+    assert.equal(c.continuityRuntime.eventLedger.length, 500);
+    assert.equal(c.continuityRuntime.eventLedger.at(-1).summary, 'event 539');
+});
+
+test('mutual player model keeps claims separate from demonstrated behavior', () => {
+    const c = freshCompanion({ id: 'mutual-model' });
+    const now = Date.UTC(2026, 7, 15, 12, 0);
+    context.companionApplyPlayerModelUpdate(c, {
+        operation: 'add', kind: 'public_claim', source: 'observed_behavior',
+        statement: 'The player says they are generous.', confidence: 90
+    }, now, 'persona:p1');
+    assert.equal(c.continuityRuntime.playerModel[0].source, 'persona');
+    context.companionApplyPlayerModelUpdate(c, {
+        operation: 'add', kind: 'demonstrated_pattern', source: 'inference',
+        statement: 'The player follows through on promises.', confidence: 80
+    }, now + 1);
+    assert.equal(c.continuityRuntime.playerModel.length, 1, 'a demonstrated pattern requires observed evidence');
+    context.companionApplyPlayerModelUpdate(c, {
+        operation: 'add', kind: 'demonstrated_pattern', source: 'observed_behavior',
+        statement: 'The player follows through on promises.', confidence: 80,
+        evidence: ['They kept the dinner plan.', 'They sent the promised notes.']
+    }, now + 2, 'event:kept-promise');
+    assert.equal(c.continuityRuntime.playerModel[1].source, 'observed_behavior');
+    assert.match(context.companionContinuityPrompt(c), /public_claim/);
+    assert.match(context.companionContinuityPrompt(c), /demonstrated_pattern/);
+});
+
+test('relationship transitions are bounded by evidence severity', () => {
+    const now = Date.UTC(2026, 7, 15, 13, 0);
+    const c = freshCompanion({ id: 'bounded-relationship' });
+    context.applyCompanionMoodUpdate(c, {
+        relationship_change: 20, trust_change: 20, familiarity_change: 20,
+        mood_label: 'content', valence_change: 0, arousal_change: 0,
+        emotion_appraisal: { goal_impact: 10, threat: 0, loss: 0, novelty: 5, norm_violation: 0,
+            control: 80, certainty: 50, social_safety: 60, responsibility: 'unclear' }
+    }, now);
+    assert.equal(c.mood.relationship, c.startingRelationship + 2);
+    assert.equal(c.relationshipDynamics.trust, Math.max(0, c.startingRelationship) + 2);
+    assert.equal(c.relationshipDynamics.familiarity, 2);
+    context.applyCompanionMoodUpdate(c, {
+        relationship_change: -20, trust_change: -20, fear_change: 20,
+        mood_label: 'hurt', valence_change: -10, arousal_change: 10,
+        emotion_appraisal: { goal_impact: -90, threat: 85, loss: 75, novelty: 50, norm_violation: 90,
+            control: 20, certainty: 90, social_safety: 5, responsibility: 'player' }
+    }, now + 1);
+    assert.equal(c.mood.relationship, c.startingRelationship - 4, 'severe evidence allows a larger but bounded fall');
+    assert.equal(c.relationshipDynamics.fear, 7);
+});
+
+test('boundaries preserve violations and truth ledger preserves cover stories', () => {
+    const c = freshCompanion({ id: 'boundaries-truth' });
+    const now = Date.UTC(2026, 7, 15, 14, 0);
+    const boundary = context.companionApplyBoundaryUpdate(c, {
+        operation: 'create', topic: 'late-night calls', rule: 'Ask before calling after midnight.', strength: 'firm', source: 'stated'
+    }, now);
+    context.companionApplyBoundaryUpdate(c, { operation: 'violate', id: boundary.id }, now + 1);
+    context.companionApplyBoundaryUpdate(c, { operation: 'respect', id: boundary.id }, now + 2);
+    assert.equal(boundary.violated, 1);
+    assert.equal(boundary.respected, 1);
+    const truth = context.companionApplyTruthUpdate(c, {
+        operation: 'create', truth: 'She missed the plan because she chose another invitation.',
+        told_player: 'Work ran late.', cover_story: 'Work ran late.', discovery_risk: 45
+    }, now);
+    context.companionApplyTruthUpdate(c, { operation: 'tell', id: truth.id, told_player: 'It was complicated.' }, now + 3);
+    assert.equal(truth.disclosure, 'partial');
+    assert.equal(truth.coverStory, 'Work ran late.');
+    assert.match(context.companionContinuityPrompt(c), /PRIVATE TRUTH LEDGER/);
+});
+
+test('agency receipt persists one conversation goal and deduplicated milestones', () => {
+    const c = freshCompanion({ id: 'goal-milestone' });
+    const now = Date.UTC(2026, 7, 15, 15, 0);
+    context.applyCompanionTurnCommit(c, {
+        agency: {
+            perceived_event: 'The player apologized.', interpretation: 'They may want repair.', confidence: 62,
+            decision: 'Acknowledge without resolving everything.', pressures: ['hurt', 'warmth'],
+            conversation_goal: { type: 'repair', objective: 'See whether they take responsibility.', reason: 'The apology opens a narrow repair path.' },
+            milestones: [{ type: 'first_apology', summary: 'The player offered the first apology.' }]
+        },
+        state: { relationship_change: 0 }, photo: { decision: 'none' }, voice_note: { decision: 'none' }, video_clip: { decision: 'none' }
+    }, now, 'turn', ['message-1']);
+    context.companionRecordMilestone(c, { type: 'first_apology', summary: 'Duplicate wording.' }, now + 1);
+    assert.equal(c.continuityRuntime.conversationGoal.type, 'repair');
+    assert.equal(c.continuityRuntime.milestones.filter(item => item.type === 'first_apology').length, 1);
+    assert.equal(c.continuityRuntime.milestones.filter(item => item.type === 'first_message').length, 1);
+    assert.match(context.companionContinuityPrompt(c), /PREVIOUS TURN'S CONVERSATION GOAL/);
+});
+
+test('autobiographical episodes deduplicate while preserving stronger meaning', () => {
+    const c = freshCompanion({ id: 'episode-memory' });
+    const now = Date.UTC(2026, 7, 14, 15, 0);
+    const first = context.companionRecordEpisode(c, {
+        title: 'The missed dinner apology', summary: 'The player apologized for missing dinner.',
+        emotionalMeaning: 'Repair may be possible.', importance: 62, participants: ['player']
+    }, now);
+    const again = context.companionRecordEpisode(c, {
+        title: 'The missed dinner apology', summary: 'The player apologized for missing dinner.',
+        emotionalMeaning: 'The apology felt sincere but follow-through remains unproven.', importance: 78,
+        sourceEventIds: ['event-2']
+    }, now + 1000);
+    assert.equal(c.continuityRuntime.episodes.length, 1);
+    assert.equal(first.id, again.id);
+    assert.equal(again.importance, 78);
+    assert.match(context.companionContinuityPrompt(c), /AUTOBIOGRAPHICAL EPISODES/);
+    assert.match(context.companionContinuityPrompt(c), /follow-through remains unproven/);
+});
+
+test('belief evidence can reinforce weaken and revise a fallible interpretation', () => {
+    const c = freshCompanion({ id: 'belief-evidence' });
+    const now = Date.UTC(2026, 7, 14, 16, 0);
+    const belief = context.companionApplyBeliefUpdate(c, {
+        action: 'add', subject: 'player', proposition: 'They usually follow through.',
+        confidence: 50, basis: 'They kept the first promise.', evidence_strength: 60
+    }, now, 'event-1');
+    context.companionApplyBeliefUpdate(c, {
+        action: 'reinforce', id: belief.id, proposition: belief.proposition,
+        confidence: 50, basis: 'They kept another promise.', evidence_strength: 80
+    }, now + 1, 'event-2');
+    assert(belief.confidence > 50);
+    context.companionApplyBeliefUpdate(c, {
+        action: 'weaken', id: belief.id, proposition: belief.proposition,
+        confidence: belief.confidence, basis: 'They missed an important plan.', evidence_strength: 90
+    }, now + 2, 'event-3');
+    assert(belief.evidence.some(item => item.stance === 'contradicts'));
+    const replacement = context.companionApplyBeliefUpdate(c, {
+        action: 'revise', id: belief.id, subject: 'player', proposition: 'Their follow-through is inconsistent.',
+        confidence: 58, basis: 'The evidence is mixed.'
+    }, now + 3, 'event-4');
+    assert.equal(belief.status, 'revised');
+    assert.equal(belief.supersededBy, replacement.id);
+    assert.equal(replacement.status, 'active');
+});
+
+test('due intentions mature once and retain executable channel metadata', () => {
+    const c = freshCompanion({ id: 'intention-clock' });
+    const now = Date.UTC(2026, 7, 14, 17, 0);
+    const intention = context.companionApplyIntentionUpdate(c, {
+        operation: 'create', kind: 'relationship', action: 'Check in after the exam.',
+        reason: 'They asked for support.', priority: 72, due_in_minutes: 30,
+        channel: 'text', execution_mode: 'reach_out'
+    }, now, 'event-1');
+    assert.equal(context.companionMatureIntentions(c, now + 29 * 60000).length, 0);
+    assert.equal(context.companionMatureIntentions(c, now + 30 * 60000).length, 1);
+    assert.equal(intention.status, 'active');
+    assert.equal(intention.channel, 'text');
+    assert.equal(intention.executionMode, 'reach_out');
+    const eventCount = c.continuityRuntime.eventLedger.length;
+    assert.equal(context.companionMatureIntentions(c, now + 31 * 60000).length, 0);
+    assert.equal(c.continuityRuntime.eventLedger.length, eventCount);
 });
 
 test('emotion appraisal supports mixed feelings without cancelling opposites', () => {
@@ -499,7 +722,8 @@ test('video provider settings and jobs survive normalization without enabling pa
         allowVideoClips: true, videoProvider: 'wavespeed',
         videoModel: 'bytedance/seedance-v2.0-fast/image-to-video',
         videoResolution: '720p', videoDuration: 8,
-        videoJobs: [{ id: 'clip_one', status: 'accepted', clipType: 'outfit', cameraRig: 'fixed' }]
+        videoJobs: [{ id: 'clip_one', status: 'accepted', clipType: 'outfit', cameraRig: 'fixed',
+            likedByPlayer: true, likeCount: 42, comments: [{ text: 'this is great', createdAt: 1000 }] }]
     });
     assert.equal(c.allowVideoClips, true);
     assert.equal(c.videoProvider, 'wavespeed');
@@ -507,6 +731,9 @@ test('video provider settings and jobs survive normalization without enabling pa
     assert.equal(c.videoDuration, 8);
     assert.equal(c.videoJobs[0].status, 'accepted');
     assert.equal(c.videoJobs[0].clipType, 'outfit');
+    assert.equal(c.videoJobs[0].likedByPlayer, true);
+    assert.equal(c.videoJobs[0].likeCount, 42);
+    assert.equal(c.videoJobs[0].comments[0].text, 'this is great');
 });
 
 test('clip requests stay natural in chat while carrying private structured instructions to the model', () => {
@@ -883,10 +1110,10 @@ test('an invalid mood label is refused rather than accepted', () => {
     assert.equal(c.mood.label, 'sad');
 });
 
-test('relationship moves independently and is clamped', () => {
+test('relationship moves independently and an unsupported leap is evidence-capped', () => {
     const c = freshCompanion({ mood: { relationship: 90, lastUpdated: 0 } });
     context.applyCompanionMoodUpdate(c, { valence_change: 0, arousal_change: 0, mood_label: 'happy', relationship_change: 50 }, 0);
-    assert.equal(c.mood.relationship, 100);
+    assert.equal(c.mood.relationship, 92);
 });
 
 test('trauma is recorded and does not decay the way mood does', () => {
@@ -2306,6 +2533,80 @@ test('social failures retry soon with bounded backoff', () => {
     c.socialFeedRuntime.consecutiveFailures = 1;
     const retryAt = context.companionSocialRetryAt(c, now);
     assert.equal(retryAt, now + 30 * 60 * 1000);
+});
+
+test('opening scenario is consumed once and becomes the first shared episode', () => {
+    const now = Date.UTC(2026, 7, 14, 20, 30);
+    const c = freshCompanion({
+        id: 'origin-once', connectionType: 'dating_match', connectionAuthenticity: 'mixed',
+        startingScenario: 'She has just matched with the player while bored in her dorm.',
+        initialMotive: 'Novelty and a little validation.'
+    });
+    const first = context.normalizeCompanionMessage({ role: 'user', text: 'hey', timestamp: now, readAt: now });
+    assert.match(context.companionConsumeStartingScenario(c, first, now), /just matched/);
+    assert.equal(context.companionConsumeStartingScenario(c, first, now + 1000), '');
+    assert.equal(c.continuityRuntime.episodes.filter(item => item.title === 'How this connection began').length, 1);
+    assert(c.continuityRuntime.originScenarioConsumedAt > 0);
+    const firstPrompt = context.buildCompanionSystemPrompt(c, [first], now, {
+        startingScenarioThisTurn: c.startingScenario
+    });
+    assert.match(firstPrompt, /OPENING EVENT — USE FOR THIS FIRST RESPONSE ONLY/);
+    const laterPrompt = context.buildCompanionSystemPrompt(c, [first], now + 60_000);
+    assert.doesNotMatch(laterPrompt, /OPENING EVENT — USE FOR THIS FIRST RESPONSE ONLY/);
+    assert.match(laterPrompt, /How this connection began/);
+});
+
+test('connection provenance prevents profile omniscience and unearned intimacy', () => {
+    context.state.personas = [{ id: 'p1', name: 'Sam', text: 'Claims to be successful and adventurous.' }];
+    context.state.activePersonaId = 'p1';
+    const c = freshCompanion({
+        connectionType: 'subscriber', connectionRole: 'a new paying subscriber',
+        connectionAuthenticity: 'instrumental', initialMotive: 'Earn a renewal without promising intimacy.',
+        playerKnowledge: 'Their public username and subscription tier only.'
+    });
+    const prompt = context.buildCompanionSystemPrompt(c, [], Date.now());
+    assert.match(prompt, /paying subscriber/);
+    assert.match(prompt, /Paid attention is not trust, friendship, romance or consent/);
+    assert.match(prompt, /profile is information they chose to present, not proof of private behavior/);
+    assert.match(prompt, /Earn a renewal without promising intimacy/);
+    context.state.personas = [];
+    context.state.activePersonaId = null;
+});
+
+test('supporting people receive persistent bounded timeline relationship state', () => {
+    const initializedAt = Date.UTC(2026, 6, 1, 8, 0);
+    const c = freshCompanion({
+        id: 'social-world', createdAt: initializedAt,
+        lifeProfile: {
+            initializedAt, seed: 'social-world-seed', places: [], wardrobe: [], weeklySchedule: [], wildcardDeck: [],
+            socialCircle: [{ id: 'maya', name: 'Maya', role: 'friend', relationship: 'old friend',
+                closeness: 45, trust: 52, tension: 4, influence: 70, contactFrequency: 'daily' }]
+        },
+        lifeRuntime: { lastSimulatedAt: initializedAt, socialWorld: { lastAdvancedAt: initializedAt } }
+    });
+    const events = context.advanceCompanionSocialWorld(c, initializedAt + 10 * 24 * HOUR);
+    const relation = c.lifeRuntime.socialWorld.people[0];
+    assert.equal(relation.personId, 'maya');
+    assert(relation.relationshipEvents.length > 0);
+    assert(relation.closeness >= -100 && relation.closeness <= 100);
+    assert(relation.tension >= 0 && relation.tension <= 100);
+    assert(events.every(event => Math.abs(event.closenessDelta) <= 2 && event.tensionDelta <= 2));
+});
+
+test('Autonomy Health is advisory and does not mutate the human', () => {
+    const c = freshCompanion({
+        id: 'health-check', initiativeMode: 'high', socialFeedEnabled: true, socialPostFrequency: 'active',
+        lifeProfile: { initializedAt: Date.now(), seed: 'health', socialCircle: [], places: [], wardrobe: [], wildcardDeck: [], weeklySchedule: [
+            { days: [1], startMinute: 540, endMinute: 700, activity: 'work', placeId: 'work' },
+            { days: [1], startMinute: 600, endMinute: 800, activity: 'errand', placeId: 'shop' }
+        ] }
+    });
+    const before = JSON.stringify(c);
+    const report = context.companionAutonomyHealthReport(c, 28);
+    assert.equal(report.advisory, true);
+    assert(report.score < 100);
+    assert(report.findings.some(item => /overlap|spammy|repeat/i.test(item.text)));
+    assert.equal(JSON.stringify(c), before);
 });
 
 let failures = 0;

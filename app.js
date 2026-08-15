@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '15.7.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-14T03:31:00+05:00';
+const HORDE_STUDIO_VERSION = '15.9.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-15T13:58:53+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -723,6 +723,7 @@ async function fetchVideoModels(providerValue, force = false) {
 
 function normalizeCompanionVideoJob(raw) {
     const job = isPlainObject(raw) ? raw : {};
+    const bundledSrc = String(job.bundledSrc || '').trim();
     return {
         id: String(job.id || livingId('vh_clip', `${Date.now()}|${Math.random()}`)).slice(0, 100),
         providerJobId: String(job.providerJobId || '').slice(0, 300),
@@ -740,10 +741,23 @@ function normalizeCompanionVideoJob(raw) {
         reason: String(job.reason || '').trim().slice(0, 1000),
         assetId: String(job.assetId || '').slice(0, 120),
         outputUrl: /^https?:\/\//i.test(String(job.outputUrl || '')) ? String(job.outputUrl).slice(0, 4000) : '',
+        // Built-in humans may ship small, portable clips beside their other
+        // normalized media. Restrict this to Horde's bundled asset tree so an
+        // imported character cannot turn the video player into an arbitrary
+        // local-file reader.
+        bundledSrc: /^assets\/bundled\/[a-z0-9/_-]+\.mp4$/i.test(bundledSrc) ? bundledSrc : '',
         poster: normalizeGeneratedImageSource(job.poster),
         duration: livingClamp(Number(job.duration) || 5, 2, 30),
         resolution: ['480p', '720p', '1080p'].includes(job.resolution) ? job.resolution : '480p',
         error: String(job.error || '').slice(0, 1600),
+        likedByPlayer: Boolean(job.likedByPlayer),
+        likeCount: livingClamp(Number(job.likeCount) || 0, 0, 100000000),
+        comments: (Array.isArray(job.comments) ? job.comments : []).map(comment => ({
+            id: String(comment?.id || livingId('vh_clip_comment', `${Date.now()}|${Math.random()}`)).slice(0, 100),
+            text: String(comment?.text || '').trim().slice(0, 500),
+            createdAt: Number.isFinite(comment?.createdAt) ? comment.createdAt : Date.now()
+        })).filter(comment => comment.text).slice(-50),
+        seedAgeDays: livingClamp(Number.isFinite(Number(job.seedAgeDays)) ? Number(job.seedAgeDays) : 0, 0, 3650),
         createdAt: Number.isFinite(job.createdAt) ? job.createdAt : Date.now(),
         updatedAt: Number.isFinite(job.updatedAt) ? job.updatedAt : Date.now()
     };
@@ -759,6 +773,15 @@ async function companionVideoAssetUrl(assetId) {
         companionVideoObjectUrls.set(assetId, url);
         return url;
     } catch (error) { return ''; }
+}
+
+async function companionVideoJobSource(job) {
+    if (job?.assetId) {
+        const stored = await companionVideoAssetUrl(job.assetId);
+        if (stored) return stored;
+    }
+    if (job?.bundledSrc) return job.bundledSrc;
+    return /^https?:\/\//i.test(String(job?.outputUrl || '')) ? job.outputUrl : '';
 }
 
 async function persistCompanionVideoAsset(job, url) {
@@ -974,6 +997,13 @@ let state = {
         comfyPromptNode: '',
         comfyPromptInput: 'text',
         comfyReferenceNode: '',
+        companionAlwaysOnEnabled: false,
+        companionAlwaysOnMessages: true,
+        companionAlwaysOnSocial: true,
+        companionAlwaysOnDailyLimit: 6,
+        companionAlwaysOnMinimumMinutes: 120,
+        companionAlwaysOnClientId: '',
+        companionAgencyPaused: false,
         labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } }
         // userPersona moved to personas
     },
@@ -1549,6 +1579,13 @@ function repairLoadedState() {
         comfyPromptNode: '',
         comfyPromptInput: 'text',
         comfyReferenceNode: '',
+        companionAlwaysOnEnabled: false,
+        companionAlwaysOnMessages: true,
+        companionAlwaysOnSocial: true,
+        companionAlwaysOnDailyLimit: 6,
+        companionAlwaysOnMinimumMinutes: 120,
+        companionAlwaysOnClientId: '',
+        companionAgencyPaused: false,
         labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } },
         ...(isPlainObject(state.globalSettings) ? state.globalSettings : {})
     };
@@ -1570,6 +1607,13 @@ function repairLoadedState() {
     state.globalSettings.localTtsBaseUrl = normalizeOpenAICompatibleBase(
         state.globalSettings.localTtsBaseUrl, 'http://127.0.0.1:8000/v1');
     state.globalSettings.localTtsApiKey = String(state.globalSettings.localTtsApiKey || '').slice(0, 500);
+    state.globalSettings.companionAlwaysOnEnabled = state.globalSettings.companionAlwaysOnEnabled === true;
+    state.globalSettings.companionAlwaysOnMessages = state.globalSettings.companionAlwaysOnMessages !== false;
+    state.globalSettings.companionAlwaysOnSocial = state.globalSettings.companionAlwaysOnSocial !== false;
+    state.globalSettings.companionAlwaysOnDailyLimit = livingClamp(Math.round(Number(state.globalSettings.companionAlwaysOnDailyLimit) || 6), 1, 100);
+    state.globalSettings.companionAlwaysOnMinimumMinutes = livingClamp(Math.round(Number(state.globalSettings.companionAlwaysOnMinimumMinutes) || 120), 15, 1440);
+    state.globalSettings.companionAlwaysOnClientId = String(state.globalSettings.companionAlwaysOnClientId || '').slice(0, 120);
+    state.globalSettings.companionAgencyPaused = state.globalSettings.companionAgencyPaused === true;
     state.globalSettings.mcpBridgeUrl = normalizeMcpBridgeUrl(state.globalSettings.mcpBridgeUrl);
     state.globalSettings.localImageBaseUrl = normalizeLoopbackUrl(
         state.globalSettings.localImageBaseUrl, 'http://127.0.0.1:7860/v1');
@@ -2080,6 +2124,48 @@ async function loadState() {
                 if (timeline) timeline.runtime = captureCompanionRuntime(ashlyn);
             }
             state.globalSettings.ashlynSocialProfileBackfillV4 = true;
+            changed = true;
+        }
+        if (state.globalSettings.ashlynBundledClipsBackfillV1 !== true) {
+            const ashlynBundle = included.find(candidate => candidate?.bundledId === 'ashlyn-reynolds-v1');
+            const ashlyn = state.companions.find(companion =>
+                companion?.bundledId === 'ashlyn-reynolds-v1' || /Ashlyn.+Reynolds/i.test(companion?.name || ''));
+            if (ashlynBundle?.companion && ashlyn) {
+                const authored = normalizeCompanion(ashlynBundle.companion);
+                const existingIds = new Set((ashlyn.videoJobs || []).map(job => job.id));
+                (authored.startingVideoClips || []).forEach((clip, index) => {
+                    if (existingIds.has(clip.id)) return;
+                    ashlyn.videoJobs.push(materializeCompanionStartingVideoClip(ashlyn, clip, index, Date.now()));
+                });
+                ashlyn.videoJobs = ashlyn.videoJobs.slice(-100);
+                const timeline = getActiveCompanionTimeline(ashlyn.id);
+                if (timeline) timeline.runtime = captureCompanionRuntime(ashlyn);
+            }
+            state.globalSettings.ashlynBundledClipsBackfillV1 = true;
+            changed = true;
+        }
+        if (state.globalSettings.ashlynOriginModelBackfillV1 !== true) {
+            const ashlynBundle = included.find(candidate => candidate?.bundledId === 'ashlyn-reynolds-v1');
+            const ashlyn = state.companions.find(companion =>
+                companion?.bundledId === 'ashlyn-reynolds-v1' || /Ashlyn.+Reynolds/i.test(companion?.name || ''));
+            if (ashlynBundle?.companion && ashlyn && !ashlyn.startingScenario
+                && /matched on Tinder/i.test(ashlyn.relationshipContext || '')) {
+                const authored = normalizeCompanion(ashlynBundle.companion);
+                ['connectionType', 'connectionRole', 'connectionAuthenticity', 'playerKnowledge',
+                    'initialMotive', 'startingScenario', 'relationshipContext'].forEach(field => {
+                    ashlyn[field] = authored[field];
+                });
+                const store = state.companionTimelines[ashlyn.id];
+                (store?.sessions || []).forEach(session => {
+                    const firstUser = (session.messages || []).find(message => message.role === 'user' && !message.invalidated);
+                    if (!firstUser) return;
+                    session.runtime = normalizeCompanionRuntime(session.runtime, ashlyn);
+                    session.runtime.continuityRuntime.originScenarioConsumedAt = firstUser.timestamp || ashlyn.createdAt;
+                });
+                const active = getActiveCompanionTimeline(ashlyn.id);
+                if (active) applyCompanionRuntime(ashlyn, active.runtime);
+            }
+            state.globalSettings.ashlynOriginModelBackfillV1 = true;
             changed = true;
         }
         if (changed) {
@@ -4313,6 +4399,7 @@ async function init() {
     setupCompanionsLogic();
     setupCatalogModelSearchFields();
     startCompanionAgencyEngine();
+    setupCompanionAlwaysOnRuntime();
 
     // Reasoning Toggle Event Delegation
     document.getElementById('messages-container').addEventListener('click', (e) => {
@@ -9605,6 +9692,12 @@ function setupGlobalSettings() {
         state.globalSettings.mcpBridgeUrl = normalizeMcpBridgeUrl(
             document.getElementById('global-mcp-bridge-url').value
         );
+        state.globalSettings.companionAlwaysOnEnabled = document.getElementById('global-companion-always-on').checked;
+        state.globalSettings.companionAlwaysOnMessages = document.getElementById('global-always-on-messages').checked;
+        state.globalSettings.companionAlwaysOnSocial = document.getElementById('global-always-on-social').checked;
+        state.globalSettings.companionAlwaysOnDailyLimit = livingClamp(parseInt(document.getElementById('global-always-on-daily-limit').value) || 6, 1, 100);
+        state.globalSettings.companionAlwaysOnMinimumMinutes = livingClamp(parseInt(document.getElementById('global-always-on-minimum-minutes').value) || 120, 15, 1440);
+        if (state.globalSettings.companionAlwaysOnEnabled) companionAlwaysOnClientId();
         state.globalSettings.localImageBaseUrl = normalizeLoopbackUrl(
             document.getElementById('global-local-image-url').value, 'http://127.0.0.1:7860/v1');
         state.globalSettings.localImagePath = '/' + document.getElementById('global-local-image-path')
@@ -9631,6 +9724,7 @@ function setupGlobalSettings() {
         modelCatalogSource = null;
         applyGlobalStyles();
         hideGlobalSettings();
+        syncCompanionAlwaysOnRuntime({ announce: true }).catch(() => {});
         const enteredCloudKey = !!(state.apiKey || state.gptprotoApiKey || state.nanogptApiKey
             || state.nvidiaApiKey || state.bedrockApiKey || state.customApiKey
             || state.evolinkApiKey || state.wavespeedApiKey);
@@ -10219,6 +10313,12 @@ function showGlobalSettings() {
         document.getElementById('global-local-tts-url').value = state.globalSettings.localTtsBaseUrl || 'http://127.0.0.1:8000/v1';
         document.getElementById('global-local-tts-key').value = state.globalSettings.localTtsApiKey || '';
         document.getElementById('global-mcp-bridge-url').value = state.globalSettings.mcpBridgeUrl || HORDE_MCP_BRIDGE_DEFAULT;
+        document.getElementById('global-companion-always-on').checked = state.globalSettings.companionAlwaysOnEnabled === true;
+        document.getElementById('global-always-on-messages').checked = state.globalSettings.companionAlwaysOnMessages !== false;
+        document.getElementById('global-always-on-social').checked = state.globalSettings.companionAlwaysOnSocial !== false;
+        document.getElementById('global-always-on-daily-limit').value = state.globalSettings.companionAlwaysOnDailyLimit || 6;
+        document.getElementById('global-always-on-minimum-minutes').value = state.globalSettings.companionAlwaysOnMinimumMinutes || 120;
+        renderCompanionAlwaysOnStatus();
         document.getElementById('global-local-image-url').value = state.globalSettings.localImageBaseUrl || 'http://127.0.0.1:7860/v1';
         document.getElementById('global-local-image-path').value = state.globalSettings.localImagePath || '/images/generations';
         document.getElementById('global-local-image-key').value = state.globalSettings.localImageApiKey || '';
@@ -28632,9 +28732,61 @@ function normalizeCompanionSocialPerson(raw, index = 0) {
         id: String(person.id || livingId('vh_person', name || index)).slice(0, 80),
         name,
         relationship: String(person.relationship || '').trim().slice(0, 120),
+        role: ['friend', 'family', 'coworker', 'classmate', 'partner', 'ex', 'neighbor', 'acquaintance', 'other']
+            .includes(person.role) ? person.role : 'other',
         closeness: livingClamp(Math.round(Number(person.closeness) || 0), -100, 100),
+        trust: livingClamp(Math.round(Number.isFinite(Number(person.trust)) ? Number(person.trust) : Math.max(0, Number(person.closeness) || 0)), -100, 100),
+        tension: livingClamp(Math.round(Number(person.tension) || 0), 0, 100),
+        influence: livingClamp(Math.round(Number.isFinite(Number(person.influence)) ? Number(person.influence) : 35), 0, 100),
+        contactFrequency: ['daily', 'few_week', 'weekly', 'monthly', 'rare'].includes(person.contactFrequency)
+            ? person.contactFrequency : 'weekly',
         description: String(person.description || '').trim().slice(0, 500),
-        currentTension: String(person.currentTension || '').trim().slice(0, 400)
+        currentTension: String(person.currentTension || '').trim().slice(0, 400),
+        knowsPlayer: person.knowsPlayer === true,
+        playerContext: String(person.playerContext || '').trim().slice(0, 400)
+    };
+}
+
+function normalizeCompanionSocialRelationshipRuntime(raw, person, index = 0) {
+    const value = isPlainObject(raw) ? raw : {};
+    return {
+        personId: String(value.personId || person?.id || `person_${index}`).slice(0, 80),
+        closeness: livingClamp(Math.round(Number.isFinite(Number(value.closeness)) ? Number(value.closeness) : Number(person?.closeness) || 0), -100, 100),
+        trust: livingClamp(Math.round(Number.isFinite(Number(value.trust)) ? Number(value.trust) : Number(person?.trust) || 0), -100, 100),
+        tension: livingClamp(Math.round(Number.isFinite(Number(value.tension)) ? Number(value.tension) : Number(person?.tension) || 0), 0, 100),
+        currentSituation: String(value.currentSituation || '').trim().slice(0, 300),
+        lastInteractionAt: Number.isFinite(value.lastInteractionAt) ? value.lastInteractionAt : 0,
+        nextInteractionAt: Number.isFinite(value.nextInteractionAt) ? value.nextInteractionAt : 0,
+        relationshipEvents: (Array.isArray(value.relationshipEvents) ? value.relationshipEvents : []).map(event => ({
+            id: String(event?.id || livingId('vh_social_event', `${value.personId || person?.id}|${event?.createdAt || index}`)).slice(0, 100),
+            summary: String(event?.summary || '').trim().slice(0, 400),
+            closenessDelta: livingClamp(Math.round(Number(event?.closenessDelta) || 0), -5, 5),
+            tensionDelta: livingClamp(Math.round(Number(event?.tensionDelta) || 0), -5, 5),
+            createdAt: Number.isFinite(event?.createdAt) ? event.createdAt : Date.now()
+        })).filter(event => event.summary).slice(-30)
+    };
+}
+
+function normalizeCompanionSocialWorldRuntime(raw, socialCircle = []) {
+    const value = isPlainObject(raw) ? raw : {};
+    const byId = new Map((Array.isArray(value.people) ? value.people : []).map(person => [String(person?.personId || ''), person]));
+    return {
+        lastAdvancedAt: Number.isFinite(value.lastAdvancedAt) ? value.lastAdvancedAt : 0,
+        people: socialCircle.map((person, index) => normalizeCompanionSocialRelationshipRuntime(byId.get(person.id), person, index)),
+        interactions: (Array.isArray(value.interactions) ? value.interactions : []).map(item => ({
+            id: String(item?.id || livingId('vh_social_interaction', `${item?.personId}|${item?.createdAt}`)).slice(0, 100),
+            personId: String(item?.personId || '').slice(0, 80),
+            summary: String(item?.summary || '').trim().slice(0, 500),
+            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now()
+        })).filter(item => item.personId && item.summary).slice(-120),
+        gossip: (Array.isArray(value.gossip) ? value.gossip : []).map(item => ({
+            id: String(item?.id || livingId('vh_gossip', `${item?.sourcePersonId}|${item?.createdAt}`)).slice(0, 100),
+            sourcePersonId: String(item?.sourcePersonId || '').slice(0, 80),
+            subjectPersonId: String(item?.subjectPersonId || '').slice(0, 80),
+            summary: String(item?.summary || '').trim().slice(0, 400),
+            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now(),
+            expiresAt: Number.isFinite(item?.expiresAt) ? item.expiresAt : 0
+        })).filter(item => item.sourcePersonId && item.summary).slice(-40)
     };
 }
 
@@ -28741,13 +28893,14 @@ function normalizeCompanionEnvironment(raw) {
     };
 }
 
-function normalizeCompanionLifeRuntime(raw) {
+function normalizeCompanionLifeRuntime(raw, socialCircle = []) {
     const runtime = isPlainObject(raw) ? raw : {};
     const active = isPlainObject(runtime.activeWildcard) ? runtime.activeWildcard : null;
     const pending = isPlainObject(runtime.pendingInitiative) ? runtime.pendingInitiative : null;
     const temporary = isPlainObject(runtime.temporarySituation) ? runtime.temporarySituation : null;
     return {
         lastSimulatedAt: Number.isFinite(runtime.lastSimulatedAt) ? runtime.lastSimulatedAt : Date.now(),
+        currentSituationKey: String(runtime.currentSituationKey || '').slice(0, 240),
         lastLabsBeatAt: Number.isFinite(runtime.lastLabsBeatAt) ? runtime.lastLabsBeatAt : 0,
         lastWildcardAt: Number.isFinite(runtime.lastWildcardAt) ? runtime.lastWildcardAt : 0,
         processedWildcardDays: (Array.isArray(runtime.processedWildcardDays) ? runtime.processedWildcardDays : [])
@@ -28780,8 +28933,596 @@ function normalizeCompanionLifeRuntime(raw) {
             endsAt: Number.isFinite(temporary.endsAt) ? temporary.endsAt : 0,
             reason: String(temporary.reason || '').trim().slice(0, 300)
         } : null,
-        environment: normalizeCompanionEnvironment(runtime.environment)
+        environment: normalizeCompanionEnvironment(runtime.environment),
+        socialWorld: normalizeCompanionSocialWorldRuntime(runtime.socialWorld, socialCircle),
+        simulationLedger: (Array.isArray(runtime.simulationLedger) ? runtime.simulationLedger : []).map(item => ({
+            id: String(item?.id || livingId('vh_sim', item?.createdAt || Date.now())).slice(0, 100),
+            kind: ['schedule', 'travel', 'social', 'wildcard', 'initiative', 'post', 'provider', 'warning'].includes(item?.kind) ? item.kind : 'schedule',
+            summary: String(item?.summary || '').trim().slice(0, 400),
+            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now(),
+            costCalls: livingClamp(Math.round(Number(item?.costCalls) || 0), 0, 20)
+        })).filter(item => item.summary).slice(-500)
     };
+}
+
+const COMPANION_CONTINUITY_EVENT_TYPES = Object.freeze([
+    'message_sent', 'message_delivered', 'message_seen', 'message_batch_seen', 'response_sent',
+    'response_withheld', 'initiative', 'social_post', 'social_interaction', 'life_event',
+    'commitment', 'episode', 'origin', 'belief_revision', 'intention_change', 'thread_change', 'system'
+]);
+
+function normalizeCompanionContinuityEvent(raw, index = 0) {
+    const event = isPlainObject(raw) ? raw : {};
+    const createdAt = Number.isFinite(event.createdAt) ? event.createdAt : Date.now();
+    return {
+        id: String(event.id || livingId('vh_event', `${createdAt}|${event.type || 'system'}|${index}`)).slice(0, 100),
+        type: COMPANION_CONTINUITY_EVENT_TYPES.includes(event.type) ? event.type : 'system',
+        summary: String(event.summary || '').trim().slice(0, 700),
+        interpretation: String(event.interpretation || '').trim().slice(0, 700),
+        certainty: livingClamp(Number.isFinite(Number(event.certainty)) ? Number(event.certainty) : 100, 0, 100),
+        sourceMessageIds: (Array.isArray(event.sourceMessageIds) ? event.sourceMessageIds : [])
+            .map(value => String(value).slice(0, 100)).filter(Boolean).slice(0, 20),
+        dedupeKey: String(event.dedupeKey || '').trim().slice(0, 180),
+        createdAt,
+        perceivedAt: Number.isFinite(event.perceivedAt) ? event.perceivedAt : 0,
+        resolvedAt: Number.isFinite(event.resolvedAt) ? event.resolvedAt : 0
+    };
+}
+
+function normalizeCompanionBelief(raw, index = 0) {
+    const belief = isPlainObject(raw) ? raw : {};
+    const proposition = String(belief.proposition || belief.text || '').trim().slice(0, 700);
+    return {
+        id: String(belief.id || livingId('vh_belief', `${belief.subject || 'player'}|${proposition}|${index}`)).slice(0, 100),
+        subject: String(belief.subject || 'player').trim().slice(0, 120),
+        proposition,
+        confidence: livingClamp(Number.isFinite(Number(belief.confidence)) ? Number(belief.confidence) : 50, 0, 100),
+        basis: String(belief.basis || '').trim().slice(0, 500),
+        evidence: (Array.isArray(belief.evidence) ? belief.evidence : []).map(item => ({
+            summary: String(item?.summary || '').trim().slice(0, 500),
+            stance: item?.stance === 'contradicts' ? 'contradicts' : 'supports',
+            strength: livingClamp(Number.isFinite(Number(item?.strength)) ? Number(item.strength) : 50, 0, 100),
+            sourceEventId: String(item?.sourceEventId || '').slice(0, 100),
+            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now()
+        })).filter(item => item.summary).slice(-20),
+        revisionCount: Math.max(0, Math.round(Number(belief.revisionCount) || 0)),
+        supersededBy: String(belief.supersededBy || '').slice(0, 100),
+        status: ['active', 'revised', 'discarded'].includes(belief.status) ? belief.status : 'active',
+        sourceEventId: String(belief.sourceEventId || '').slice(0, 100),
+        createdAt: Number.isFinite(belief.createdAt) ? belief.createdAt : Date.now(),
+        updatedAt: Number.isFinite(belief.updatedAt) ? belief.updatedAt : Date.now()
+    };
+}
+
+function normalizeCompanionIntention(raw, index = 0) {
+    const intention = isPlainObject(raw) ? raw : {};
+    const action = String(intention.action || intention.text || '').trim().slice(0, 600);
+    return {
+        id: String(intention.id || livingId('vh_intent', `${action}|${intention.createdAt || Date.now()}|${index}`)).slice(0, 100),
+        kind: ['reply', 'relationship', 'life', 'social', 'commitment', 'avoidance'].includes(intention.kind)
+            ? intention.kind : 'life',
+        action,
+        reason: String(intention.reason || '').trim().slice(0, 600),
+        status: ['planned', 'active', 'completed', 'abandoned', 'blocked'].includes(intention.status)
+            ? intention.status : 'planned',
+        priority: livingClamp(Number.isFinite(Number(intention.priority)) ? Number(intention.priority) : 50, 0, 100),
+        channel: ['text', 'photo', 'voice', 'call', 'social', 'internal'].includes(intention.channel)
+            ? intention.channel : 'internal',
+        executionMode: ['reach_out', 'social_post', 'remind', 'commitment', 'internal'].includes(intention.executionMode)
+            ? intention.executionMode : 'internal',
+        attempts: Math.max(0, Math.round(Number(intention.attempts) || 0)),
+        lastAttemptAt: Number.isFinite(intention.lastAttemptAt) ? intention.lastAttemptAt : 0,
+        outcome: String(intention.outcome || '').trim().slice(0, 500),
+        sourceEventId: String(intention.sourceEventId || '').slice(0, 100),
+        sourceMessageId: String(intention.sourceMessageId || '').slice(0, 100),
+        createdAt: Number.isFinite(intention.createdAt) ? intention.createdAt : Date.now(),
+        dueAt: Number.isFinite(intention.dueAt) ? intention.dueAt : 0,
+        resolvedAt: Number.isFinite(intention.resolvedAt) ? intention.resolvedAt : 0
+    };
+}
+
+function normalizeCompanionEpisode(raw, index = 0) {
+    const episode = isPlainObject(raw) ? raw : {};
+    const summary = String(episode.summary || '').trim().slice(0, 1000);
+    const createdAt = Number.isFinite(episode.createdAt) ? episode.createdAt : Date.now();
+    return {
+        id: String(episode.id || livingId('vh_episode', `${episode.title || summary}|${createdAt}|${index}`)).slice(0, 100),
+        title: String(episode.title || summary.slice(0, 80) || 'Remembered moment').trim().slice(0, 160),
+        summary,
+        emotionalMeaning: String(episode.emotionalMeaning || '').trim().slice(0, 700),
+        participants: (Array.isArray(episode.participants) ? episode.participants : [])
+            .map(value => String(value).trim().slice(0, 100)).filter(Boolean).slice(0, 12),
+        sourceEventIds: (Array.isArray(episode.sourceEventIds) ? episode.sourceEventIds : [])
+            .map(value => String(value).slice(0, 100)).filter(Boolean).slice(-20),
+        unresolvedThreadIds: (Array.isArray(episode.unresolvedThreadIds) ? episode.unresolvedThreadIds : [])
+            .map(value => String(value).slice(0, 100)).filter(Boolean).slice(0, 12),
+        importance: livingClamp(Number.isFinite(Number(episode.importance)) ? Number(episode.importance) : 50, 0, 100),
+        emotionalTone: String(episode.emotionalTone || '').trim().slice(0, 120),
+        relationshipImpact: livingClamp(Number.isFinite(Number(episode.relationshipImpact)) ? Number(episode.relationshipImpact) : 0, -100, 100),
+        status: ['active', 'reinterpreted', 'archived'].includes(episode.status) ? episode.status : 'active',
+        createdAt,
+        updatedAt: Number.isFinite(episode.updatedAt) ? episode.updatedAt : createdAt,
+        lastRecalledAt: Number.isFinite(episode.lastRecalledAt) ? episode.lastRecalledAt : 0,
+        recallCount: Math.max(0, Math.round(Number(episode.recallCount) || 0))
+    };
+}
+
+function normalizeCompanionOpenThread(raw, index = 0) {
+    const thread = isPlainObject(raw) ? raw : {};
+    const topic = String(thread.topic || thread.summary || '').trim().slice(0, 240);
+    return {
+        id: String(thread.id || livingId('vh_thread', `${topic}|${thread.createdAt || Date.now()}|${index}`)).slice(0, 100),
+        topic,
+        summary: String(thread.summary || topic).trim().slice(0, 700),
+        stakes: String(thread.stakes || '').trim().slice(0, 500),
+        status: ['open', 'escalating', 'dormant', 'resolved'].includes(thread.status) ? thread.status : 'open',
+        salience: livingClamp(Number.isFinite(Number(thread.salience)) ? Number(thread.salience) : 50, 0, 100),
+        createdAt: Number.isFinite(thread.createdAt) ? thread.createdAt : Date.now(),
+        updatedAt: Number.isFinite(thread.updatedAt) ? thread.updatedAt : Date.now(),
+        resolvedAt: Number.isFinite(thread.resolvedAt) ? thread.resolvedAt : 0
+    };
+}
+
+function normalizeCompanionDecisionEvidence(raw) {
+    const decision = isPlainObject(raw) ? raw : {};
+    return {
+        decision: String(decision.decision || '').trim().slice(0, 400),
+        perceived: String(decision.perceived || '').trim().slice(0, 700),
+        interpretation: String(decision.interpretation || '').trim().slice(0, 700),
+        pressures: (Array.isArray(decision.pressures) ? decision.pressures : [])
+            .map(value => String(value).trim().slice(0, 240)).filter(Boolean).slice(0, 12),
+        confidence: livingClamp(Number.isFinite(Number(decision.confidence)) ? Number(decision.confidence) : 50, 0, 100),
+        source: ['kernel', 'model', 'mixed', 'manual'].includes(decision.source) ? decision.source : 'kernel',
+        createdAt: Number.isFinite(decision.createdAt) ? decision.createdAt : 0
+    };
+}
+
+function normalizeCompanionPlayerModelEntry(raw, index = 0) {
+    const item = isPlainObject(raw) ? raw : {};
+    const statement = String(item.statement || item.proposition || '').trim().slice(0, 700);
+    return {
+        id: String(item.id || livingId('vh_player_model', `${item.kind || 'inference'}|${statement}|${index}`)).slice(0, 100),
+        kind: ['public_claim', 'stated_fact', 'demonstrated_pattern', 'inferred_motive', 'perceived_player_view']
+            .includes(item.kind) ? item.kind : 'inferred_motive',
+        statement,
+        source: ['persona', 'player_statement', 'observed_behavior', 'social_interaction', 'third_party', 'inference']
+            .includes(item.source) ? item.source : 'inference',
+        confidence: livingClamp(Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 50, 0, 100),
+        evidence: (Array.isArray(item.evidence) ? item.evidence : []).map(value => String(value).trim().slice(0, 400)).filter(Boolean).slice(-12),
+        status: ['active', 'revised', 'discarded'].includes(item.status) ? item.status : 'active',
+        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
+        updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : Date.now()
+    };
+}
+
+function normalizeCompanionBoundary(raw, index = 0) {
+    const item = isPlainObject(raw) ? raw : {};
+    const topic = String(item.topic || '').trim().slice(0, 240);
+    return {
+        id: String(item.id || livingId('vh_boundary', `${topic}|${index}`)).slice(0, 100),
+        topic,
+        rule: String(item.rule || '').trim().slice(0, 600),
+        strength: ['preference', 'soft', 'firm', 'hard'].includes(item.strength) ? item.strength : 'soft',
+        source: ['authored', 'stated', 'inferred', 'event'].includes(item.source) ? item.source : 'event',
+        tests: Math.max(0, Math.round(Number(item.tests) || 0)),
+        respected: Math.max(0, Math.round(Number(item.respected) || 0)),
+        violated: Math.max(0, Math.round(Number(item.violated) || 0)),
+        sensitivity: livingClamp(Number.isFinite(Number(item.sensitivity)) ? Number(item.sensitivity) : 35, 0, 100),
+        status: item.status === 'retired' ? 'retired' : 'active',
+        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
+        updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : Date.now()
+    };
+}
+
+function normalizeCompanionTruthEntry(raw, index = 0) {
+    const item = isPlainObject(raw) ? raw : {};
+    const truth = String(item.truth || '').trim().slice(0, 700);
+    return {
+        id: String(item.id || livingId('vh_truth', `${truth}|${index}`)).slice(0, 100),
+        truth,
+        toldPlayer: String(item.toldPlayer || item.told_player || '').trim().slice(0, 700),
+        coverStory: String(item.coverStory || item.cover_story || '').trim().slice(0, 700),
+        disclosure: ['secret', 'omitted', 'partial', 'disclosed', 'discovered'].includes(item.disclosure)
+            ? item.disclosure : 'secret',
+        discoveryRisk: livingClamp(Number.isFinite(Number(item.discoveryRisk ?? item.discovery_risk))
+            ? Number(item.discoveryRisk ?? item.discovery_risk) : 20, 0, 100),
+        emotionalCost: livingClamp(Number.isFinite(Number(item.emotionalCost ?? item.emotional_cost))
+            ? Number(item.emotionalCost ?? item.emotional_cost) : 20, 0, 100),
+        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
+        updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : Date.now()
+    };
+}
+
+function normalizeCompanionMilestone(raw, index = 0) {
+    const item = isPlainObject(raw) ? raw : {};
+    const summary = String(item.summary || '').trim().slice(0, 600);
+    return {
+        id: String(item.id || livingId('vh_milestone', `${item.type || 'other'}|${summary}|${index}`)).slice(0, 100),
+        type: ['first_message', 'first_joke', 'first_photo', 'first_voice_note', 'first_call', 'first_conflict',
+            'first_apology', 'first_secret', 'first_meeting', 'betrayal', 'reconciliation', 'other'].includes(item.type)
+            ? item.type : 'other',
+        summary,
+        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now()
+    };
+}
+
+function companionApplyPlayerModelUpdate(companion, raw, nowMs = Date.now(), sourceEventId = '') {
+    if (!isPlainObject(raw)) return null;
+    const runtime = companionContinuity(companion);
+    const operation = ['add', 'upsert', 'reinforce', 'weaken', 'revise', 'discard'].includes(raw.operation)
+        ? raw.operation : 'upsert';
+    const candidate = normalizeCompanionPlayerModelEntry({
+        ...raw,
+        evidence: [...(Array.isArray(raw.evidence) ? raw.evidence : []), sourceEventId].filter(Boolean),
+        createdAt: nowMs,
+        updatedAt: nowMs
+    }, runtime.playerModel.length);
+    if (!candidate.statement) return null;
+    if (candidate.kind === 'public_claim') candidate.source = 'persona';
+    if (candidate.kind === 'stated_fact' && !['player_statement', 'social_interaction'].includes(candidate.source)) {
+        candidate.source = 'player_statement';
+    }
+    if (candidate.kind === 'demonstrated_pattern') {
+        candidate.source = 'observed_behavior';
+        if (!candidate.evidence.length) return null;
+    }
+    if (['inferred_motive', 'perceived_player_view'].includes(candidate.kind) && !raw.id) {
+        candidate.source = 'inference';
+        candidate.confidence = Math.min(75, candidate.confidence);
+    }
+    let existing = runtime.playerModel.find(item => item.id === raw.id)
+        || runtime.playerModel.find(item => item.status === 'active' && item.kind === candidate.kind
+            && item.statement.toLowerCase() === candidate.statement.toLowerCase());
+    if (!existing && ['add', 'upsert', 'reinforce'].includes(operation)) {
+        runtime.playerModel.push(candidate);
+        existing = candidate;
+    } else if (existing && operation === 'upsert') {
+        existing.confidence = Math.max(existing.confidence, candidate.confidence);
+        existing.evidence = [...new Set([...existing.evidence, ...candidate.evidence])].slice(-12);
+        existing.updatedAt = nowMs;
+    } else if (existing && operation === 'reinforce') {
+        const strength = livingClamp(Number(raw.confidence) || 50, 0, 100);
+        existing.confidence = livingClamp(existing.confidence + (100 - existing.confidence) * strength / 250, 0, 100);
+        existing.evidence = [...new Set([...existing.evidence, ...candidate.evidence])].slice(-12);
+        existing.updatedAt = nowMs;
+    } else if (existing && operation === 'weaken') {
+        existing.confidence = livingClamp(existing.confidence - livingClamp(Number(raw.confidence) || 35, 0, 100) * 0.45, 0, 100);
+        existing.evidence = [...new Set([...existing.evidence, ...candidate.evidence])].slice(-12);
+        existing.updatedAt = nowMs;
+        if (existing.confidence <= 10) existing.status = 'discarded';
+    } else if (existing && operation === 'revise') {
+        existing.status = 'revised';
+        existing.updatedAt = nowMs;
+        candidate.id = livingId('vh_player_model', `${candidate.kind}|${candidate.statement}|${nowMs}`);
+        runtime.playerModel.push(candidate);
+        existing = candidate;
+    } else if (existing && operation === 'discard') {
+        existing.status = 'discarded';
+        existing.updatedAt = nowMs;
+    }
+    runtime.playerModel = runtime.playerModel.slice(-160);
+    return existing;
+}
+
+function companionApplyBoundaryUpdate(companion, raw, nowMs = Date.now()) {
+    if (!isPlainObject(raw)) return null;
+    const runtime = companionContinuity(companion);
+    const operation = ['create', 'update', 'test', 'respect', 'violate', 'retire'].includes(raw.operation)
+        ? raw.operation : 'update';
+    let boundary = runtime.boundaries.find(item => item.id === raw.id)
+        || runtime.boundaries.find(item => item.status === 'active'
+            && item.topic.toLowerCase() === String(raw.topic || '').trim().toLowerCase());
+    if (!boundary && operation === 'create') {
+        const candidate = normalizeCompanionBoundary({ ...raw, createdAt: nowMs, updatedAt: nowMs }, runtime.boundaries.length);
+        if (!candidate.topic || !candidate.rule) return null;
+        runtime.boundaries.push(candidate);
+        boundary = candidate;
+    } else if (boundary) {
+        if (operation === 'update') {
+            boundary.rule = String(raw.rule || boundary.rule).trim().slice(0, 600);
+            if (['preference', 'soft', 'firm', 'hard'].includes(raw.strength)) boundary.strength = raw.strength;
+        } else if (operation === 'test') boundary.tests += 1;
+        else if (operation === 'respect') boundary.respected += 1;
+        else if (operation === 'violate') {
+            boundary.violated += 1;
+            boundary.sensitivity = livingClamp(boundary.sensitivity + 8, 0, 100);
+        } else if (operation === 'retire') boundary.status = 'retired';
+        boundary.updatedAt = nowMs;
+    }
+    runtime.boundaries = runtime.boundaries.slice(-100);
+    return boundary;
+}
+
+function companionApplyTruthUpdate(companion, raw, nowMs = Date.now()) {
+    if (!isPlainObject(raw)) return null;
+    const runtime = companionContinuity(companion);
+    const operation = ['create', 'update', 'tell', 'disclose', 'discover'].includes(raw.operation)
+        ? raw.operation : 'update';
+    let entry = runtime.truthLedger.find(item => item.id === raw.id)
+        || runtime.truthLedger.find(item => item.truth.toLowerCase() === String(raw.truth || '').trim().toLowerCase());
+    if (!entry && operation === 'create') {
+        const candidate = normalizeCompanionTruthEntry({ ...raw, createdAt: nowMs, updatedAt: nowMs }, runtime.truthLedger.length);
+        if (!candidate.truth) return null;
+        runtime.truthLedger.push(candidate);
+        entry = candidate;
+    } else if (entry) {
+        if (String(raw.truth || '').trim()) entry.truth = String(raw.truth).trim().slice(0, 700);
+        if (String(raw.told_player || '').trim()) entry.toldPlayer = String(raw.told_player).trim().slice(0, 700);
+        if (String(raw.cover_story || '').trim()) entry.coverStory = String(raw.cover_story).trim().slice(0, 700);
+        if (operation === 'tell') entry.disclosure = 'partial';
+        if (operation === 'disclose') entry.disclosure = 'disclosed';
+        if (operation === 'discover') entry.disclosure = 'discovered';
+        entry.discoveryRisk = livingClamp(Number.isFinite(Number(raw.discovery_risk)) ? Number(raw.discovery_risk) : entry.discoveryRisk, 0, 100);
+        entry.emotionalCost = livingClamp(Number.isFinite(Number(raw.emotional_cost)) ? Number(raw.emotional_cost) : entry.emotionalCost, 0, 100);
+        entry.updatedAt = nowMs;
+    }
+    runtime.truthLedger = runtime.truthLedger.slice(-100);
+    return entry;
+}
+
+function companionRecordMilestone(companion, raw, nowMs = Date.now()) {
+    if (!isPlainObject(raw)) return null;
+    const runtime = companionContinuity(companion);
+    const candidate = normalizeCompanionMilestone({ ...raw, createdAt: raw.createdAt || nowMs }, runtime.milestones.length);
+    if (!candidate.summary) return null;
+    const oneTime = candidate.type.startsWith('first_');
+    const existing = runtime.milestones.find(item => oneTime ? item.type === candidate.type
+        : item.type === candidate.type && item.summary.toLowerCase() === candidate.summary.toLowerCase());
+    if (existing) return existing;
+    runtime.milestones.push(candidate);
+    runtime.milestones = runtime.milestones.slice(-120);
+    return candidate;
+}
+
+function normalizeCompanionContinuityRuntime(raw, nowMs = Date.now()) {
+    const runtime = isPlainObject(raw) ? raw : {};
+    return {
+        version: 5,
+        originScenarioConsumedAt: Number.isFinite(runtime.originScenarioConsumedAt)
+            ? runtime.originScenarioConsumedAt : 0,
+        originEpisodeId: String(runtime.originEpisodeId || '').slice(0, 100),
+        playerModel: (Array.isArray(runtime.playerModel) ? runtime.playerModel : [])
+            .map(normalizeCompanionPlayerModelEntry).filter(item => item.statement).slice(-160),
+        boundaries: (Array.isArray(runtime.boundaries) ? runtime.boundaries : [])
+            .map(normalizeCompanionBoundary).filter(item => item.topic && item.rule).slice(-100),
+        truthLedger: (Array.isArray(runtime.truthLedger) ? runtime.truthLedger : [])
+            .map(normalizeCompanionTruthEntry).filter(item => item.truth).slice(-100),
+        milestones: (Array.isArray(runtime.milestones) ? runtime.milestones : [])
+            .map(normalizeCompanionMilestone).filter(item => item.summary).slice(-120),
+        conversationGoal: {
+            type: String(runtime.conversationGoal?.type || '').trim().slice(0, 80),
+            objective: String(runtime.conversationGoal?.objective || '').trim().slice(0, 400),
+            reason: String(runtime.conversationGoal?.reason || '').trim().slice(0, 500),
+            chosenAt: Number.isFinite(runtime.conversationGoal?.chosenAt) ? runtime.conversationGoal.chosenAt : 0
+        },
+        eventLedger: (Array.isArray(runtime.eventLedger) ? runtime.eventLedger : [])
+            .map(normalizeCompanionContinuityEvent).filter(event => event.summary).slice(-500),
+        beliefs: (Array.isArray(runtime.beliefs) ? runtime.beliefs : [])
+            .map(normalizeCompanionBelief).filter(belief => belief.proposition).slice(-120),
+        intentions: (Array.isArray(runtime.intentions) ? runtime.intentions : [])
+            .map(normalizeCompanionIntention).filter(intention => intention.action).slice(-100),
+        episodes: (Array.isArray(runtime.episodes) ? runtime.episodes : [])
+            .map(normalizeCompanionEpisode).filter(episode => episode.summary).slice(-120),
+        openThreads: (Array.isArray(runtime.openThreads) ? runtime.openThreads : [])
+            .map(normalizeCompanionOpenThread).filter(thread => thread.topic).slice(-80),
+        lastDecision: normalizeCompanionDecisionEvidence(runtime.lastDecision),
+        lastAdvancedAt: Number.isFinite(runtime.lastAdvancedAt) ? runtime.lastAdvancedAt : nowMs
+    };
+}
+
+function companionRecordEpisode(companion, raw, nowMs = Date.now()) {
+    const runtime = companionContinuity(companion);
+    const candidate = normalizeCompanionEpisode({ ...raw, createdAt: raw?.createdAt || nowMs }, runtime.episodes.length);
+    if (!candidate.summary) return null;
+    const key = `${candidate.title}|${candidate.summary}`.toLowerCase().replace(/\s+/g, ' ').slice(0, 500);
+    const existing = runtime.episodes.find(item => item.id === raw?.id)
+        || runtime.episodes.find(item => `${item.title}|${item.summary}`.toLowerCase().replace(/\s+/g, ' ').slice(0, 500) === key);
+    if (existing) {
+        existing.emotionalMeaning = candidate.emotionalMeaning || existing.emotionalMeaning;
+        existing.importance = Math.max(existing.importance, candidate.importance);
+        existing.emotionalTone = candidate.emotionalTone || existing.emotionalTone;
+        existing.relationshipImpact = Math.abs(candidate.relationshipImpact) > Math.abs(existing.relationshipImpact)
+            ? candidate.relationshipImpact : existing.relationshipImpact;
+        existing.sourceEventIds = [...new Set([...existing.sourceEventIds, ...candidate.sourceEventIds])].slice(-20);
+        existing.unresolvedThreadIds = [...new Set([...existing.unresolvedThreadIds, ...candidate.unresolvedThreadIds])].slice(0, 12);
+        existing.updatedAt = nowMs;
+        return existing;
+    }
+    runtime.episodes.push(candidate);
+    runtime.episodes = runtime.episodes.slice(-120);
+    companionRecordContinuityEvent(companion, {
+        type: 'episode', summary: `Remembered: ${candidate.title}`,
+        interpretation: candidate.emotionalMeaning || candidate.summary,
+        certainty: 100, createdAt: nowMs, perceivedAt: nowMs,
+        dedupeKey: `episode:${candidate.id}`
+    });
+    return candidate;
+}
+
+function companionApplyBeliefUpdate(companion, raw, nowMs = Date.now(), sourceEventId = '') {
+    if (!isPlainObject(raw)) return null;
+    const runtime = companionContinuity(companion);
+    const operation = ['add', 'reinforce', 'weaken', 'revise', 'discard'].includes(raw.action) ? raw.action : 'add';
+    const proposition = String(raw.proposition || '').trim();
+    let existing = runtime.beliefs.find(item => item.id === raw.id)
+        || runtime.beliefs.find(item => item.status === 'active'
+            && item.subject.toLowerCase() === String(raw.subject || 'player').toLowerCase()
+            && item.proposition.toLowerCase() === proposition.toLowerCase());
+    const evidenceSummary = String(raw.basis || '').trim();
+    const evidence = evidenceSummary ? {
+        summary: evidenceSummary, stance: operation === 'weaken' ? 'contradicts' : 'supports',
+        strength: livingClamp(Number.isFinite(Number(raw.evidence_strength)) ? Number(raw.evidence_strength) : 50, 0, 100),
+        sourceEventId, createdAt: nowMs
+    } : null;
+    if (!existing && proposition && ['add', 'reinforce'].includes(operation)) {
+        existing = normalizeCompanionBelief({ ...raw, status: 'active', sourceEventId, createdAt: nowMs, updatedAt: nowMs,
+            evidence: evidence ? [evidence] : [] }, runtime.beliefs.length);
+        runtime.beliefs.push(existing);
+    } else if (existing && operation === 'reinforce') {
+        const strength = evidence?.strength || 50;
+        existing.confidence = livingClamp(existing.confidence + (100 - existing.confidence) * strength / 200, 0, 100);
+        if (evidence) existing.evidence = [...existing.evidence, evidence].slice(-20);
+        existing.basis = evidenceSummary || existing.basis;
+        existing.updatedAt = nowMs;
+    } else if (existing && operation === 'weaken') {
+        const strength = evidence?.strength || 50;
+        existing.confidence = livingClamp(existing.confidence - strength * 0.5, 0, 100);
+        if (evidence) existing.evidence = [...existing.evidence, evidence].slice(-20);
+        existing.basis = evidenceSummary || existing.basis;
+        existing.updatedAt = nowMs;
+        if (existing.confidence <= 10) existing.status = 'discarded';
+    } else if (existing && operation === 'revise' && proposition) {
+        existing.status = 'revised'; existing.updatedAt = nowMs; existing.revisionCount += 1;
+        const replacement = normalizeCompanionBelief({ ...raw, id: '', status: 'active', sourceEventId,
+            createdAt: nowMs, updatedAt: nowMs, evidence: evidence ? [evidence] : [] }, runtime.beliefs.length);
+        existing.supersededBy = replacement.id;
+        runtime.beliefs.push(replacement);
+        existing = replacement;
+    } else if (existing && operation === 'discard') {
+        existing.status = 'discarded'; existing.updatedAt = nowMs;
+    }
+    runtime.beliefs = runtime.beliefs.slice(-120);
+    if (existing) companionRecordContinuityEvent(companion, {
+        type: 'belief_revision', summary: `${operation}: ${existing.proposition}`,
+        interpretation: evidenceSummary, certainty: existing.confidence,
+        createdAt: nowMs, perceivedAt: nowMs
+    });
+    return existing;
+}
+
+function companionApplyIntentionUpdate(companion, raw, nowMs = Date.now(), sourceEventId = '') {
+    if (!isPlainObject(raw)) return null;
+    const runtime = companionContinuity(companion);
+    let intention = runtime.intentions.find(item => item.id === raw.id);
+    if (raw.operation === 'create' && String(raw.action || '').trim()) {
+        intention = normalizeCompanionIntention({ ...raw, status: 'planned', sourceEventId, createdAt: nowMs,
+            executionMode: raw.execution_mode,
+            dueAt: Number(raw.due_in_minutes) > 0 ? nowMs + livingClamp(Number(raw.due_in_minutes), 1, 60 * 24 * 90) * 60000 : 0
+        }, runtime.intentions.length);
+        runtime.intentions.push(intention);
+    } else if (intention && ['complete', 'abandon', 'block'].includes(raw.operation)) {
+        intention.status = raw.operation === 'complete' ? 'completed' : raw.operation === 'block' ? 'blocked' : 'abandoned';
+        intention.outcome = String(raw.outcome || raw.reason || '').trim().slice(0, 500);
+        intention.resolvedAt = nowMs;
+    }
+    runtime.intentions = runtime.intentions.slice(-100);
+    if (intention) companionRecordContinuityEvent(companion, {
+        type: 'intention_change', summary: `${intention.status}: ${intention.action}`,
+        interpretation: intention.reason, certainty: 100, createdAt: nowMs, perceivedAt: nowMs
+    });
+    return intention;
+}
+
+function companionMatureIntentions(companion, nowMs = Date.now()) {
+    const runtime = companionContinuity(companion);
+    const matured = [];
+    runtime.intentions.forEach(intention => {
+        if (intention.status !== 'planned' || !intention.dueAt || intention.dueAt > nowMs) return;
+        intention.status = 'active';
+        matured.push(intention);
+        if (intention.executionMode === 'social_post' && companion.socialFeedEnabled
+            && companion.socialPostFrequency !== 'manual' && companion.socialFeedRuntime) {
+            companion.socialFeedRuntime.nextPostAt = nowMs;
+        }
+        companionRecordContinuityEvent(companion, {
+            type: 'intention_change', summary: `Intention became due: ${intention.action}`,
+            interpretation: intention.reason, certainty: 100, createdAt: nowMs, perceivedAt: nowMs,
+            dedupeKey: `intention_due:${intention.id}`
+        });
+    });
+    return matured;
+}
+
+function companionContinuity(companion) {
+    const current = companion.continuityRuntime;
+    const normalized = normalizeCompanionContinuityRuntime(current);
+    // Preserve the runtime object identity while helper functions compose a
+    // single transaction. Replacing it here made an earlier helper's local
+    // reference stale, so a later decision write could silently discard an
+    // intention or belief added moments before it.
+    if (isPlainObject(current)) {
+        const preserveEntries = (previous, next) => next.map(item => {
+            const existing = Array.isArray(previous) ? previous.find(candidate => candidate?.id === item.id) : null;
+            if (!isPlainObject(existing)) return item;
+            Object.assign(existing, item);
+            return existing;
+        });
+        normalized.eventLedger = preserveEntries(current.eventLedger, normalized.eventLedger);
+        normalized.beliefs = preserveEntries(current.beliefs, normalized.beliefs);
+        normalized.intentions = preserveEntries(current.intentions, normalized.intentions);
+        normalized.episodes = preserveEntries(current.episodes, normalized.episodes);
+        normalized.openThreads = preserveEntries(current.openThreads, normalized.openThreads);
+        normalized.playerModel = preserveEntries(current.playerModel, normalized.playerModel);
+        normalized.boundaries = preserveEntries(current.boundaries, normalized.boundaries);
+        normalized.truthLedger = preserveEntries(current.truthLedger, normalized.truthLedger);
+        normalized.milestones = preserveEntries(current.milestones, normalized.milestones);
+        Object.assign(current, normalized);
+        return current;
+    }
+    companion.continuityRuntime = normalized;
+    return companion.continuityRuntime;
+}
+
+function companionRecordContinuityEvent(companion, raw) {
+    const runtime = companionContinuity(companion);
+    const event = normalizeCompanionContinuityEvent(raw, runtime.eventLedger.length);
+    if (!event.summary) return null;
+    if (event.dedupeKey && runtime.eventLedger.some(item => item.dedupeKey === event.dedupeKey)) return null;
+    runtime.eventLedger.push(event);
+    runtime.eventLedger = runtime.eventLedger.slice(-500);
+    runtime.lastAdvancedAt = Math.max(runtime.lastAdvancedAt, event.createdAt);
+    return event;
+}
+
+function companionDecisionPressures(companion, nowMs = Date.now()) {
+    const pressures = [];
+    const dynamics = companion.humanDynamics || {};
+    const relationship = companion.relationshipDynamics || {};
+    const life = companionLifeState(companion, nowMs);
+    if (life.availability === 'asleep') pressures.push('asleep and unable to check the phone');
+    else if (life.availability === 'busy') pressures.push(`occupied with ${life.label || 'a current obligation'}`);
+    if (Number(dynamics.anger) >= 45) pressures.push(`anger ${Math.round(dynamics.anger)}/100 favors distance`);
+    if (Number(dynamics.stress) >= 60) pressures.push(`stress ${Math.round(dynamics.stress)}/100 narrows attention`);
+    if (Number(dynamics.energy) <= 35) pressures.push(`energy ${Math.round(dynamics.energy)}/100 favors a short or delayed response`);
+    if (Number(dynamics.socialNeed) >= 58) pressures.push(`social need ${Math.round(dynamics.socialNeed)}/100 favors connection`);
+    if (Number(relationship.resentment) >= 35) pressures.push(`resentment ${Math.round(relationship.resentment)}/100 resists warmth`);
+    if (Number(relationship.warmth) >= 45) pressures.push(`warmth ${Math.round(relationship.warmth)}/100 favors engagement`);
+    if (Number(dynamics.inhibition) >= 70) pressures.push(`restraint ${Math.round(dynamics.inhibition)}/100 favors caution`);
+    if (Number(dynamics.intoxication) >= 35) pressures.push(`intoxication ${Math.round(dynamics.intoxication)}/100 lowers restraint`);
+    return pressures.slice(0, 8);
+}
+
+function companionSetDecisionEvidence(companion, raw) {
+    const runtime = companionContinuity(companion);
+    runtime.lastDecision = normalizeCompanionDecisionEvidence({ ...raw, createdAt: raw?.createdAt || Date.now() });
+    runtime.lastAdvancedAt = Math.max(runtime.lastAdvancedAt, runtime.lastDecision.createdAt);
+    return runtime.lastDecision;
+}
+
+function companionRecordResponsePlan(companion, message, plan, nowMs = Date.now()) {
+    const runtime = companionContinuity(companion);
+    companionRecordContinuityEvent(companion, {
+        type: 'message_sent',
+        summary: `A ${message.type === 'text' ? 'message' : message.type} notification arrived from the player; its contents are still unread.`,
+        sourceMessageIds: [message.id], createdAt: nowMs,
+        dedupeKey: `message_sent:${message.id}`
+    });
+    const existing = runtime.intentions.find(item => item.sourceMessageId === message.id && ['planned', 'active'].includes(item.status));
+    if (!existing) runtime.intentions.push(normalizeCompanionIntention({
+        kind: plan.willReply ? 'reply' : 'avoidance',
+        action: plan.willReply ? 'Read the message and decide how to answer.' : 'Read the message without promising a reply.',
+        reason: plan.reason === 'asleep' ? 'Currently asleep.' : plan.reason === 'busy' ? `Currently ${plan.life?.label || 'busy'}.`
+            : plan.willReply ? 'A response is currently intended.' : 'Current mood and pressures favor silence.',
+        status: 'planned', priority: plan.willReply ? 65 : 48,
+        sourceMessageId: message.id, createdAt: nowMs,
+        dueAt: plan.willReply ? plan.replyDueAt : plan.readAt
+    }, runtime.intentions.length));
+    companionSetDecisionEvidence(companion, {
+        decision: plan.willReply ? `Plan to answer after checking the message` : 'Do not commit to an answer',
+        perceived: 'A notification arrived; its contents are not perceived until the scheduled read time.',
+        interpretation: '', pressures: companionDecisionPressures(companion, nowMs),
+        confidence: 100, source: 'kernel', createdAt: nowMs
+    });
 }
 
 /**
@@ -28984,6 +29725,7 @@ function normalizeCompanion(raw) {
     const socialPlayerRole = ['stranger', 'follower', 'mutual', 'friend', 'subscriber', 'vip_subscriber']
         .includes(c.socialPlayerRole) ? c.socialPlayerRole : 'stranger';
     const storedSocialRelationship = isPlainObject(c.socialRelationship) ? c.socialRelationship : {};
+    const lifeProfile = normalizeCompanionLifeProfile(c.lifeProfile);
     const ttsModelMigrations = {
         'openai/gpt-4o-audio-preview': 'mistralai/voxtral-mini-tts-2603',
         'openai/gpt-4o-mini-audio-preview': 'mistralai/voxtral-mini-tts-2603',
@@ -29033,12 +29775,22 @@ function normalizeCompanion(raw) {
         lifeWildcardsEnabled: c.lifeWildcardsEnabled !== false,
         lifeWeatherEnabled: c.lifeWeatherEnabled !== false,
         lifeBuilderModel: typeof c.lifeBuilderModel === 'string' ? c.lifeBuilderModel.trim().slice(0, 300) : '',
-        lifeProfile: normalizeCompanionLifeProfile(c.lifeProfile),
-        lifeRuntime: normalizeCompanionLifeRuntime(c.lifeRuntime),
+        lifeProfile,
+        lifeRuntime: normalizeCompanionLifeRuntime(c.lifeRuntime, lifeProfile.socialCircle),
+        continuityRuntime: normalizeCompanionContinuityRuntime(c.continuityRuntime, now),
         startingRelationship,
         priorContact: c.priorContact === 'spoken_before' ? 'spoken_before' : 'never_spoken',
         knownBeforeDays: livingClamp(Number.isFinite(Number(c.knownBeforeDays)) ? Math.round(Number(c.knownBeforeDays)) : 0, 0, 36500),
         relationshipContext: String(c.relationshipContext || '').trim().slice(0, 2400),
+        connectionType: ['stranger', 'dating_match', 'friend', 'close_friend', 'coworker', 'classmate',
+            'neighbor', 'customer', 'creator_follower', 'subscriber', 'partner', 'ex', 'family', 'rival', 'custom']
+            .includes(c.connectionType) ? c.connectionType : 'stranger',
+        connectionRole: String(c.connectionRole || '').trim().slice(0, 400),
+        playerKnowledge: String(c.playerKnowledge || '').trim().slice(0, 1800),
+        initialMotive: String(c.initialMotive || '').trim().slice(0, 1600),
+        connectionAuthenticity: ['genuine', 'mixed', 'performative', 'instrumental', 'deceptive']
+            .includes(c.connectionAuthenticity) ? c.connectionAuthenticity : 'genuine',
+        startingScenario: String(c.startingScenario || '').trim().slice(0, 3000),
         voiceGender: ['female', 'male', 'neutral'].includes(c.voiceGender) ? c.voiceGender : 'neutral',
         ttsVoiceURI: typeof c.ttsVoiceURI === 'string' ? c.ttsVoiceURI : '',
         ttsMode: ['openrouter', 'local', 'browser'].includes(c.ttsMode) ? c.ttsMode : 'browser',
@@ -29098,6 +29850,10 @@ function normalizeCompanion(raw) {
         videoReferencePolicy: ['profile', 'generation', 'gallery', 'auto'].includes(c.videoReferencePolicy)
             ? c.videoReferencePolicy : 'auto',
         videoStyleRules: String(c.videoStyleRules || '').trim().slice(0, 2400),
+        startingVideoClips: (Array.isArray(c.startingVideoClips) ? c.startingVideoClips : [])
+            .map(normalizeCompanionVideoJob)
+            .filter(job => job.status === 'ready' && job.bundledSrc)
+            .slice(-24),
         videoJobs: (Array.isArray(c.videoJobs) ? c.videoJobs : []).map(normalizeCompanionVideoJob).slice(-100),
         inputModalities: (Array.isArray(c.inputModalities) ? c.inputModalities : ['text'])
             .map(value => String(value).toLowerCase()).filter(value => ['text', 'image', 'audio'].includes(value)),
@@ -29146,6 +29902,7 @@ function normalizeCompanion(raw) {
             subscribedAt: Number.isFinite(storedSocialRelationship.subscribedAt) ? storedSocialRelationship.subscribedAt : 0,
             engagement: livingClamp(Number.isFinite(Number(storedSocialRelationship.engagement)) ? Number(storedSocialRelationship.engagement) : 0, 0, 100)
         },
+        alwaysOnEnabled: c.alwaysOnEnabled === true,
         initiativeMode: ['off', 'low', 'balanced', 'high'].includes(c.initiativeMode) ? c.initiativeMode : 'off',
         webAccess: c.webAccess === true,
         lastProactiveAt: Number.isFinite(c.lastProactiveAt) ? c.lastProactiveAt : 0,
@@ -29183,7 +29940,15 @@ function normalizeCompanion(raw) {
             warmth: livingClamp(dynamics.warmth == null ? startingRelationship : dynamics.warmth, -100, 100),
             attraction: livingClamp(dynamics.attraction == null ? 0 : dynamics.attraction, -100, 100),
             resentment: livingClamp(dynamics.resentment == null ? Math.max(0, -startingRelationship) : dynamics.resentment, 0, 100),
-            stability: livingClamp(dynamics.stability == null ? 50 : dynamics.stability, 0, 100)
+            stability: livingClamp(dynamics.stability == null ? 50 : dynamics.stability, 0, 100),
+            familiarity: livingClamp(dynamics.familiarity == null ? Math.min(100, Number(c.knownBeforeDays || 0) * 2) : dynamics.familiarity, 0, 100),
+            respect: livingClamp(dynamics.respect == null ? Math.max(0, startingRelationship * 0.35) : dynamics.respect, -100, 100),
+            comfort: livingClamp(dynamics.comfort == null ? Math.max(0, startingRelationship * 0.4) : dynamics.comfort, 0, 100),
+            dependence: livingClamp(dynamics.dependence == null ? 0 : dynamics.dependence, 0, 100),
+            fear: livingClamp(dynamics.fear == null ? Math.max(0, -startingRelationship * 0.2) : dynamics.fear, 0, 100),
+            obligation: livingClamp(dynamics.obligation == null ? 0 : dynamics.obligation, 0, 100),
+            powerImbalance: livingClamp(dynamics.powerImbalance == null ? 0 : dynamics.powerImbalance, -100, 100),
+            compatibility: livingClamp(dynamics.compatibility == null ? 0 : dynamics.compatibility, -100, 100)
         },
         lifeEvents: (Array.isArray(c.lifeEvents) ? c.lifeEvents : []).map(normalizeCompanionLifeEvent)
             .filter(event => event.text).slice(-200),
@@ -29332,6 +30097,24 @@ function decayCompanionMood(companion, nowMs) {
     return companion.mood;
 }
 
+function companionRelationshipDeltaCap(update, field, requested) {
+    const appraisal = isPlainObject(update?.emotion_appraisal) ? update.emotion_appraisal : {};
+    const certainty = livingClamp(Number(appraisal.certainty) || 0, 0, 100);
+    const playerResponsible = appraisal.responsibility === 'player';
+    const harm = Math.max(Number(appraisal.threat) || 0, Number(appraisal.loss) || 0,
+        Number(appraisal.norm_violation) || 0, -(Number(appraisal.goal_impact) || 0));
+    const benefit = Math.max(0, Number(appraisal.goal_impact) || 0, Number(appraisal.social_safety) || 0);
+    const severeHarm = playerResponsible && certainty >= 60 && harm >= 70;
+    const strongBenefit = certainty >= 65 && benefit >= 70;
+    let cap = severeHarm && requested < 0 ? 6 : strongBenefit && requested > 0 ? 4 : 2;
+    if (['familiarity', 'dependence', 'obligation'].includes(field)) cap = severeHarm ? 3 : 2;
+    if (field === 'attraction') cap = Math.min(cap, 3);
+    if (field === 'fear' && requested > 0) cap = severeHarm ? 7 : 2;
+    if (field === 'resentment' && requested > 0) cap = severeHarm ? 7 : 2;
+    if (field === 'stability' && requested < 0) cap = severeHarm ? 6 : 2;
+    return livingClamp(Number(requested) || 0, -cap, cap);
+}
+
 /**
  * Apply the emotional-engine tool call. Decay runs first, so a delta always
  * lands on top of the settled mood rather than the stale one from last time.
@@ -29347,19 +30130,28 @@ function applyCompanionMoodUpdate(companion, update, nowMs) {
     }
     if (COMPANION_MOOD_LABELS.includes(u.mood_label)) companion.mood.label = u.mood_label;
     if (Number.isFinite(u.relationship_change)) {
-        companion.mood.relationship = livingClamp(companion.mood.relationship + livingClamp(u.relationship_change, -20, 20), -100, 100);
+        companion.mood.relationship = livingClamp(companion.mood.relationship
+            + companionRelationshipDeltaCap(u, 'relationship', u.relationship_change), -100, 100);
     }
     const dimensions = [
-        ['trust_change', 'trust', -20, 20, -100, 100],
-        ['warmth_change', 'warmth', -20, 20, -100, 100],
-        ['attraction_change', 'attraction', -20, 20, -100, 100],
-        ['resentment_change', 'resentment', -20, 20, 0, 100],
-        ['stability_change', 'stability', -20, 20, 0, 100]
+        ['trust_change', 'trust', -100, 100],
+        ['warmth_change', 'warmth', -100, 100],
+        ['attraction_change', 'attraction', -100, 100],
+        ['resentment_change', 'resentment', 0, 100],
+        ['stability_change', 'stability', 0, 100],
+        ['familiarity_change', 'familiarity', 0, 100],
+        ['respect_change', 'respect', -100, 100],
+        ['comfort_change', 'comfort', 0, 100],
+        ['dependence_change', 'dependence', 0, 100],
+        ['fear_change', 'fear', 0, 100],
+        ['obligation_change', 'obligation', 0, 100],
+        ['power_imbalance_change', 'powerImbalance', -100, 100],
+        ['compatibility_change', 'compatibility', -100, 100]
     ];
-    dimensions.forEach(([input, field, deltaMin, deltaMax, min, max]) => {
+    dimensions.forEach(([input, field, min, max]) => {
         if (!Number.isFinite(u[input])) return;
         companion.relationshipDynamics[field] = livingClamp(
-            companion.relationshipDynamics[field] + livingClamp(u[input], deltaMin, deltaMax), min, max);
+            companion.relationshipDynamics[field] + companionRelationshipDeltaCap(u, field, u[input]), min, max);
     });
     if (u.trauma_add && String(u.trauma_add.label || '').trim()) {
         companion.trauma.push(normalizeCompanionTrauma({ ...u.trauma_add, addedAt: nowMs }));
@@ -30517,6 +31309,40 @@ function applyCompanionSilenceProgress(companion, timeline, nowMs = Date.now()) 
                 source: 'relationship'
             }));
         }
+        const continuity = companionContinuity(companion);
+        const summary = `The player has not replied for ${companionElapsedLabel(current.durationMs)}.`;
+        companionRecordContinuityEvent(companion, {
+            type: 'thread_change', summary,
+            interpretation: companionSilenceInterpretation(companion, stage),
+            certainty: stage === 'detached' ? 72 : stage === 'hurt' ? 55 : 35,
+            createdAt: nowMs, perceivedAt: nowMs,
+            dedupeKey: `silence:${anchorId}:${stage}`
+        });
+        const unansweredThread = continuity.openThreads.find(item =>
+            item.status !== 'resolved' && item.topic === 'Unanswered contact');
+        if (unansweredThread) {
+            unansweredThread.status = stage === 'noticed' ? 'open' : 'escalating';
+            unansweredThread.summary = summary;
+            unansweredThread.stakes = companionSilenceInterpretation(companion, stage);
+            unansweredThread.salience = { noticed: 28, concerned: 48, hurt: 72, detached: 62 }[stage];
+            unansweredThread.updatedAt = nowMs;
+        } else {
+            continuity.openThreads.push(normalizeCompanionOpenThread({
+                topic: 'Unanswered contact', summary,
+                stakes: companionSilenceInterpretation(companion, stage),
+                status: stage === 'noticed' ? 'open' : 'escalating',
+                salience: { noticed: 28, concerned: 48, hurt: 72, detached: 62 }[stage],
+                createdAt: nowMs, updatedAt: nowMs
+            }, continuity.openThreads.length));
+        }
+        companionSetDecisionEvidence(companion, {
+            decision: stage === 'detached' ? 'Lower expectations and stop waiting actively' : 'Keep the silence in mind',
+            perceived: summary,
+            interpretation: companionSilenceInterpretation(companion, stage),
+            pressures: companionDecisionPressures(companion, nowMs),
+            confidence: stage === 'detached' ? 72 : 45,
+            source: 'kernel', createdAt: nowMs
+        });
     }
     silence.appliedStage = current.stage;
     silence.changedAt = nowMs;
@@ -30716,6 +31542,111 @@ function companionContactHistory(companion, messages, nowMs = Date.now()) {
     };
 }
 
+const COMPANION_CONNECTION_LABELS = Object.freeze({
+    stranger: 'strangers', dating_match: 'a new dating-app match', friend: 'friends',
+    close_friend: 'close friends', coworker: 'coworkers', classmate: 'classmates',
+    neighbor: 'neighbors', customer: 'a customer/service connection',
+    creator_follower: 'a creator and follower', subscriber: 'a creator and paying subscriber',
+    partner: 'partners', ex: 'ex-partners', family: 'family', rival: 'rivals', custom: 'a custom connection'
+});
+
+function companionConnectionPrompt(companion) {
+    const type = companion.connectionType || 'stranger';
+    const label = COMPANION_CONNECTION_LABELS[type] || COMPANION_CONNECTION_LABELS.stranger;
+    const boundaries = {
+        stranger: 'There is no implied familiarity, access, attraction or shared history.',
+        dating_match: 'A match permits curiosity or flirting, not automatic attraction, trust, intimacy, exclusivity or an offline meeting. Know only the visible profile and actual messages.',
+        customer: 'Service politeness is not friendship, attraction or trust. Warmth may be professional.',
+        creator_follower: 'Recognition and public-facing warmth do not create private intimacy or equal access.',
+        subscriber: 'This begins with a public and transactional asymmetry. Paid attention is not trust, friendship, romance or consent.',
+        coworker: 'Work familiarity does not imply private closeness; preserve workplace incentives, reputation and boundaries.',
+        classmate: 'Shared context creates recognition, not knowledge of the player’s private life.',
+        friend: 'Use only the shared history that is actually authored; do not invent missing memories.',
+        close_friend: 'Closeness permits familiarity only where the authored history supports it; it does not erase boundaries.',
+        partner: 'The established partnership matters, but current affection, conflict and consent still evolve moment by moment.',
+        ex: 'Past intimacy is history, not present permission or guaranteed lingering affection.',
+        family: 'Family history may create obligation and shorthand, never omniscience.',
+        rival: 'Competition can color interpretation without forcing hostility in every exchange.'
+    }[type] || 'Follow the authored role precisely and do not invent unearned familiarity.';
+    const authenticity = {
+        genuine: 'Their presented warmth and interest are broadly sincere, though they may still be conflicted or guarded.',
+        mixed: 'Their interest contains sincere and self-serving motives at once; behavior should reveal that tension gradually.',
+        performative: 'Some warmth is a social performance. Do not mistake successful performance for private attachment.',
+        instrumental: 'They currently want a practical outcome from this connection. Politeness or flirtation may be strategic when it fits their personality.',
+        deceptive: 'An authored hidden agenda is active. Keep the deception psychologically coherent and consequence-aware; do not randomly add new schemes.'
+    }[companion.connectionAuthenticity] || '';
+    return `Connection category: ${label}.${companion.connectionRole ? ` Specific role: ${companion.connectionRole}.` : ''}\n${boundaries}\nPresentation: ${authenticity}\nInitial motive: ${companion.initialMotive || '(none authored; infer only ordinary, low-stakes motives from personality and the actual moment)'}.\nFacts known before this timeline: ${companion.playerKnowledge || '(none beyond the selected public persona/profile and authored shared history)'}.`;
+}
+
+function companionConsumeStartingScenario(companion, userMessage, nowMs = Date.now()) {
+    const runtime = companionContinuity(companion);
+    const scenario = String(companion.startingScenario || '').trim();
+    if (!scenario || runtime.originScenarioConsumedAt || !userMessage) return '';
+    const event = companionRecordContinuityEvent(companion, {
+        type: 'origin',
+        summary: `The first active exchange began from this opening situation: ${scenario}`,
+        interpretation: 'This is the origin of this timeline, not an indefinitely repeating present situation.',
+        certainty: 100,
+        createdAt: nowMs,
+        perceivedAt: nowMs,
+        dedupeKey: `origin:${companion.id}`
+    });
+    const episode = companionRecordEpisode(companion, {
+        title: 'How this connection began',
+        summary: `${scenario} The player’s first message was: “${String(userMessage.text || '').trim().slice(0, 500)}”`,
+        emotionalMeaning: 'The opening situation became a real shared event. Later turns remember it as history rather than remaining inside it.',
+        participants: [companion.name, 'player'],
+        sourceEventIds: event?.id ? [event.id] : [],
+        importance: 72,
+        emotionalTone: companion.mood?.label || 'uncertain',
+        relationshipImpact: 0,
+        createdAt: nowMs
+    }, nowMs);
+    runtime.originScenarioConsumedAt = nowMs;
+    runtime.originEpisodeId = episode?.id || '';
+    return scenario;
+}
+
+function companionContinuityPrompt(companion) {
+    const runtime = companionContinuity(companion);
+    const playerModel = runtime.playerModel.filter(item => item.status === 'active')
+        .sort((left, right) => (right.confidence - left.confidence) || (right.updatedAt - left.updatedAt)).slice(0, 14)
+        .map(item => `- [${item.kind}; source ${item.source}; confidence ${Math.round(item.confidence)}/100] ${item.statement}${item.evidence.length ? ` Evidence: ${item.evidence.slice(-2).join(' | ')}` : ''}`)
+        .join('\n') || '(no durable model of the player has formed yet)';
+    const boundaries = runtime.boundaries.filter(item => item.status === 'active')
+        .sort((left, right) => (right.sensitivity - left.sensitivity) || (right.updatedAt - left.updatedAt)).slice(0, 10)
+        .map(item => `- [${item.strength}; sensitivity ${Math.round(item.sensitivity)}/100] ${item.topic}: ${item.rule} (tested ${item.tests}; respected ${item.respected}; violated ${item.violated})`)
+        .join('\n') || '(no interaction-specific boundaries recorded beyond the authored profile)';
+    const truthLedger = runtime.truthLedger.slice(-8)
+        .map(item => `- [${item.disclosure}] Truth: ${item.truth}${item.toldPlayer ? ` Player was told: ${item.toldPlayer}` : ''}${item.coverStory ? ` Cover story: ${item.coverStory}` : ''}`)
+        .join('\n') || '(no private truth/cover-story split recorded)';
+    const milestones = runtime.milestones.slice(-10)
+        .map(item => `- ${item.type.replaceAll('_', ' ')}: ${item.summary}`)
+        .join('\n') || '(no relationship milestones recorded yet)';
+    const priorGoal = runtime.conversationGoal?.chosenAt
+        ? `${runtime.conversationGoal.type}: ${runtime.conversationGoal.objective} — ${runtime.conversationGoal.reason}`
+        : '(none; choose a goal for this reply from present evidence)';
+    const beliefs = runtime.beliefs.filter(item => item.status === 'active').slice(-12)
+        .map(item => `- [belief ${item.id}; confidence ${Math.round(item.confidence)}/100] ${item.subject}: ${item.proposition}${item.basis ? ` (basis: ${item.basis})` : ''}`)
+        .join('\n') || '(no private beliefs have been established)';
+    const intentions = runtime.intentions.filter(item => ['planned', 'active', 'blocked'].includes(item.status))
+        .sort((left, right) => right.priority - left.priority).slice(0, 12)
+        .map(item => `- [intention ${item.id}; ${item.status}] ${item.action}${item.dueAt ? ` (due ${new Date(item.dueAt).toLocaleString()})` : ''}${item.reason ? ` — ${item.reason}` : ''}`)
+        .join('\n') || '(no active private intentions)';
+    const threads = runtime.openThreads.filter(item => item.status !== 'resolved')
+        .sort((left, right) => right.salience - left.salience).slice(0, 10)
+        .map(item => `- [thread ${item.id}; ${item.status}] ${item.topic}: ${item.summary}${item.stakes ? ` Stakes: ${item.stakes}` : ''}`)
+        .join('\n') || '(no unresolved private threads)';
+    const events = runtime.eventLedger.filter(item => item.perceivedAt > 0).slice(-12)
+        .map(item => `- ${new Date(item.createdAt).toLocaleString()}: ${item.summary}${item.interpretation ? ` Private interpretation: ${item.interpretation} (${Math.round(item.certainty)}% confidence).` : ''}`)
+        .join('\n') || '(no continuity events recorded yet)';
+    const episodes = runtime.episodes.filter(item => item.status !== 'archived')
+        .sort((left, right) => (right.importance - left.importance) || (right.updatedAt - left.updatedAt)).slice(0, 10)
+        .map(item => `- [episode ${item.id}; importance ${Math.round(item.importance)}/100] ${item.title}: ${item.summary}${item.emotionalMeaning ? ` Meaning: ${item.emotionalMeaning}` : ''}${item.emotionalTone ? ` Tone: ${item.emotionalTone}.` : ''}`)
+        .join('\n') || '(no autobiographical episodes have formed yet)';
+    return `PLAYER MODEL — claims, statements, observed patterns and inferences stay distinct:\n${playerModel}\n\nACTIVE BOUNDARIES — respect does not erase prior violations:\n${boundaries}\n\nPRIVATE TRUTH LEDGER — what is true may differ from what the player was told:\n${truthLedger}\n\nRELATIONSHIP MILESTONES:\n${milestones}\n\nPREVIOUS TURN'S CONVERSATION GOAL — context only; choose again now:\n${priorGoal}\n\nRECENT PERCEIVED EVENTS:\n${events}\n\nAUTOBIOGRAPHICAL EPISODES — significant remembered experiences, not a full transcript:\n${episodes}\n\nPRIVATE BELIEFS — interpretations, not guaranteed facts:\n${beliefs}\n\nACTIVE INTENTIONS:\n${intentions}\n\nUNRESOLVED THREADS:\n${threads}`;
+}
+
 /**
  * The full system prompt: identity, current emotional truth, simulated life
  * as ground truth (not an invitation to invent), and durable memory. The
@@ -30729,10 +31660,23 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
     const life = companionLifeState(companion, nowMs);
     const situation = life.situation || companionSituationAt(companion, nowMs);
     const environmentText = companionWeatherLabel(situation.environment);
+    const socialWorld = companionSocialWorldState(companion);
     const socialCircle = (companion.lifeProfile?.socialCircle || []).slice(0, 16)
-        .map(person => `- ${person.name} — ${person.relationship}${person.description ? `: ${person.description}` : ''}${person.currentTension ? ` Current tension: ${person.currentTension}` : ''}`)
+        .map(person => {
+            const live = socialWorld.people.find(item => item.personId === person.id);
+            const latest = live?.relationshipEvents?.at(-1);
+            return `- ${person.name} — ${person.relationship || person.role}. Relationship now: closeness ${live?.closeness ?? person.closeness}/100, trust ${live?.trust ?? person.trust}/100, tension ${live?.tension ?? person.tension}/100.${person.description ? ` ${person.description}` : ''}${person.currentTension ? ` Authored tension: ${person.currentTension}.` : ''}${latest ? ` Latest ordinary contact: ${latest.summary}` : ''} This person is a lightweight persistent part of life, not a second assistant; never speak for them unless the current scene or message actually involves them.`;
+        })
         .join('\n') || '(no supporting people have been initialized)';
-    const memories = companion.memory.longTerm.slice(0, 15)
+    const recentGossip = socialWorld.gossip.slice(-5).map(item => {
+        const source = companion.lifeProfile?.socialCircle?.find(person => person.id === item.sourcePersonId)?.name || 'Someone in their life';
+        return `- ${source}: ${item.summary}`;
+    }).join('\n') || '(no grounded gossip is active)';
+    const selectedMemoryIds = Array.isArray(options.relevantMemoryIds) ? new Set(options.relevantMemoryIds) : null;
+    const memorySource = selectedMemoryIds
+        ? companion.memory.longTerm.filter(entry => selectedMemoryIds.has(entry.id)).slice(0, 10)
+        : companion.memory.longTerm.slice(0, 15);
+    const memories = memorySource
         .map(entry => `- ${entry.text}`).join('\n') || '(nothing durable remembered yet)';
     const traumas = companion.trauma.slice(-6)
         .map(t => `- ${t.label} (still tender: severity ${t.severity}/100)`).join('\n');
@@ -30760,6 +31704,13 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
         }
     }
     const activePersona = state.personas.find(persona => persona.id === state.activePersonaId) || null;
+    if (activePersona?.text) {
+        companionApplyPlayerModelUpdate(companion, {
+            operation: 'upsert', kind: 'public_claim', source: 'persona', confidence: 65,
+            statement: `${activePersona.name || 'The player'} publicly describes themselves as: ${String(activePersona.text).trim().slice(0, 560)}`,
+            evidence: [`persona:${activePersona.id}`]
+        }, nowMs);
+    }
     const personaVisual = companion.personaVisualMemory?.personaId === activePersona?.id
         ? String(companion.personaVisualMemory.description || '').trim() : '';
     const recentSocialPosts = companion.socialPosts.slice(-12).map(post => {
@@ -30783,6 +31734,7 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
     const latestTiming = latestUser && experience.realTimeLife
         ? `Latest player message: sent ${companionTimestampLabel(companion, latestUser.timestamp)}${latestUser.deliveredAt > latestUser.timestamp + 1000 ? `; delivered ${companionTimestampLabel(companion, latestUser.deliveredAt)}` : ''}${latestUser.readAt > latestUser.timestamp + 1000 ? `; read ${companionTimestampLabel(companion, latestUser.readAt)}` : ''}. You are responding at ${companionTimestampLabel(companion, nowMs)}. Never confuse the send time with the time you finally saw it.`
         : 'Exact wall-clock message timing is paused for this timeline.';
+    const continuityContext = companionContinuityPrompt(companion);
 
     return `You are ${companion.name}, ${options.channel === 'call'
         ? 'on a live phone call with someone'
@@ -30800,6 +31752,8 @@ ${companion.occupation || '(occupation not specified)'}
 ${companion.socialWorld || '(social world not specified)'}
 Supporting-cast continuity:
 ${socialCircle}
+Recent grounded social spillover (only from authored situations; do not embellish it):
+${recentGossip}
 
 INNER LOGIC:
 Values, conscious wants, and underlying needs: ${companion.values || '(not specified)'}
@@ -30829,7 +31783,7 @@ ${companion.textingStyle || 'Natural, casual texting — contractions, occasiona
 
 WHO YOU ARE TEXTING:
 ${activePersona
-        ? `${activePersona.name || 'The player'}: ${activePersona.text || '(no additional self-description provided)'}${personaVisual ? `\nYou have seen their current profile picture and remember: ${personaVisual}` : ''}`
+        ? `${activePersona.name || 'The player'}: ${activePersona.text || '(no additional self-description provided)'}${personaVisual ? `\nYou have seen their current profile picture and remember: ${personaVisual}` : ''}\nThis profile is information they chose to present, not proof of private behavior, wealth, safety, attraction, dominance, intentions or compatibility. Distinguish profile claims from things you have personally learned through interaction.`
         : 'The player has not selected a persona. Know only what they have told you in this timeline and in the authored starting relationship context.'}
 
 ${companion.socialFeedEnabled ? `YOUR SOCIAL FEED:
@@ -30844,6 +31798,10 @@ If the player liked, commented on or tipped an existing post, you know it happen
 CONVERSATION CONTINUITY:
 ${silenceContext}
 ${latestTiming}
+
+CONTINUITY & AGENCY:
+${continuityContext}
+Only treat RECENT PERCEIVED EVENTS as observations. Beliefs are private, fallible interpretations and may be revised when evidence changes. Intentions are plans, not completed facts. Unresolved threads remain active until explicitly resolved. In the private agency receipt, distinguish what you perceived from what you inferred, name the competing pressures that mattered, and update only beliefs, intentions or threads genuinely affected by this moment.
 
 ${experience.realTimeLife ? `RIGHT NOW, IT IS ${timeStr}${companion.timezone ? ` in ${companion.timezone}` : ''}${companionUsesFixedTimezoneOffset(companion) ? ` (${formatCompanionUtcOffset(companion.timezoneOffsetMinutes)})` : ''}${companion.locationLabel ? ` (${companion.locationLabel})` : ''}.
 Your actual situation: ${situation.label}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}${situation.withNames?.length ? ` with ${situation.withNames.join(', ')}` : ''}${situation.endsAt > nowMs ? ` until roughly ${companionClockParts(situation.endsAt, companion).time}` : ''}${life.availability === 'asleep' && experience.replyDelays ? ' — you are asleep and will not see this until you wake up' : life.availability === 'busy' && experience.replyDelays ? ', so a reply might be shorter or delayed, and you may reference being in the middle of it' : !experience.replyDelays ? '. Responsive chat mode is enabled, so this activity must not postpone the current reply' : ''}.
@@ -30867,13 +31825,15 @@ Authored intimacy boundaries: ${companion.intimacyBoundaries || '(no additional 
 Libido is NOT trust, love, consent or automatic attraction. Desire may exist without being directed at the player. Attraction may exist without permission to act. Trust can affect felt safety and consequences, but it must never be used as the source or gate for libido. High impulse may make you distracted, unusually bold, flirt too directly, send a risky message, call at a questionable time, or make another plausible decision you later reconsider—but only in a way consistent with your personality, boundaries and actual opportunity. You may want something and still refuse it. Never override consent, pressure the player, invent reciprocal interest, expose a private meter, or sexualize anyone known or reasonably suspected to be under 18. Suggestive photos still require normal photo permission, physical plausibility and your own willingness.` : `ADULT DESIRE AND IMPULSE:
 This system is disabled. Do not infer private sexual arousal, sexual frustration or autonomous sexual initiative from ordinary warmth, attraction or relationship progress.`}
 YOUR RELATIONSHIP WITH THE PLAYER:
-How it began: ${companion.relationshipContext || '(no shared history or starting context has been authored)'}
+${companionConnectionPrompt(companion)}
+Durable shared history: ${companion.relationshipContext || '(no shared history has been authored)'}
+${options.startingScenarioThisTurn ? `OPENING EVENT — USE FOR THIS FIRST RESPONSE ONLY:\n${options.startingScenarioThisTurn}\nThis situation is happening now only for the first active exchange. Respond from it naturally. Once this turn finishes it becomes autobiographical history; never keep replaying it as the present.` : ''}
 Contact history: ${contactHistory.hasSpoken
         ? `${contactHistory.label}; ${contactHistory.playerMessages} player message${contactHistory.playerMessages === 1 ? '' : 's'} in this timeline${contactHistory.priorContact ? '; the author explicitly established earlier contact' : ''}.`
         : 'You and the player have NEVER spoken. This is not an old friendship, an ongoing chat, or a resumed conversation. Do not greet them as if you know them, mention a shared night, check in on them, or independently direct-message them before they make first contact.'}
 Starting relationship: ${companionRelationshipDescription(companion.startingRelationship)} (${companion.startingRelationship}/100).
 Relationship now: ${companionRelationshipDescription(companion.mood.relationship)} (${companion.mood.relationship}/100).
-Current relationship dimensions: trust ${companion.relationshipDynamics.trust}/100; warmth ${companion.relationshipDynamics.warmth}/100; attraction ${companion.relationshipDynamics.attraction}/100; resentment ${companion.relationshipDynamics.resentment}/100; stability ${companion.relationshipDynamics.stability}/100.
+Current relationship dimensions: trust ${companion.relationshipDynamics.trust}/100; warmth ${companion.relationshipDynamics.warmth}/100; attraction ${companion.relationshipDynamics.attraction}/100; resentment ${companion.relationshipDynamics.resentment}/100; stability ${companion.relationshipDynamics.stability}/100; familiarity ${companion.relationshipDynamics.familiarity}/100; respect ${companion.relationshipDynamics.respect}/100; comfort ${companion.relationshipDynamics.comfort}/100; dependence ${companion.relationshipDynamics.dependence}/100; fear ${companion.relationshipDynamics.fear}/100; obligation ${companion.relationshipDynamics.obligation}/100; power imbalance ${companion.relationshipDynamics.powerImbalance}/100; compatibility ${companion.relationshipDynamics.compatibility}/100.
 The current relationship is earned state, not a fixed genre promise. It may deepen into trust, friendship, love or dependence; cool into distance; become conflicted, hostile, estranged, repaired, or end entirely. Never force affection, romance or reconciliation because the player expects it. Let behavior and remembered history move it.
 ${traumas ? `Things that still affect you when touched on:\n${traumas}\n` : ''}
 Let this mood color word choice, warmth, message length and response speed — do not narrate the mood ("I feel happy"), BE it.
@@ -30894,6 +31854,7 @@ ${memories}
 
 RULES:
 1. Never invent a memory, event, or fact about the player that is not in the conversation above or in what you durably remember. If you do not know something, ask — a real person does not already know things they were never told.
+1a. Before choosing tone or content, reconcile five things: what you verifiably know about the player, the connection category and asymmetry, durable shared history, your current motive, and the exact message you actually received. A dating match may flirt; a service worker may be professionally warm; a creator may perform closeness; a friend may use earned shorthand. None of those surface behaviors proves private affection. Do not switch tone randomly or treat every player persona the same.
 2. ${experience.realTimeLife
         ? 'Never contradict your own stated location/activity/availability above.'
         : 'Real-time situation state is intentionally paused. Do not claim that a live schedule or current activity prevented this reply.'}
@@ -30904,10 +31865,10 @@ RULES:
 5. MEDIA PERMISSIONS: ${companion.allowPhotos ? `Photos are enabled. If asked for a selfie/photo, decide freely based on your mood, boundaries, relationship, trust, current activity and what was requested. You may comply with send_photo, postpone, negotiate, or refuse; a request never compels you. If you agree, actually call send_photo—never claim an unseen image was sent. Make the capture physically possible: while alone use a front-camera selfie, a nearby mirror, or a timer/propped phone; only say another person took it when that person is actually present. Name that person in photographer when known. Current author capture policy: ${COMPANION_PHOTO_CAPTURE_POLICIES[normalizeCompanionPhotoCapturePolicy(companion.photoCapturePolicy)].label}.` : 'Photos are disabled by the user to avoid image-generation charges. Never call send_photo or claim to have sent an image; naturally say you cannot send one if asked.'}
 ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_note when speaking feels more natural than typing, including during an autonomous check-in.' : 'Voice notes are disabled by the user. Never call send_voice_note or claim to have recorded one.'}
 6. ${companion.webAccess ? 'You may search the live web when current information is genuinely needed, then use share_link for a specific meme, article or video you want this person to see. Never pretend you searched if you did not.' : 'You do not have live web access. Never claim to have searched for or just seen current online content.'}
-7. Every reply MUST call commit_human_turn exactly once. This private receipt records your emotional state and an explicit photo/voice-note/video-clip decision even when all are "none". A request for media may be accepted, refused, negotiated or postponed; never silently pretend media was sent. Video clips are uniquely player-triggered: only consider video_clip when the latest player message includes a [CLIP REQUEST id], preserve that request_id, and never generate or publish a video yourself. Accept or counter only when it fits your personality, authored boundaries and current physical situation; the player separately approves and pays for generation. Use the receipt's memory_write, relationship_event and life_event only when the exchange establishes something that should remain true after the recent transcript expires.${companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual' ? ` You may set social_post to post when the current moment genuinely belongs on your profile and fits the authored social controls; ${companion.socialFeedImages && companion.allowPhotos ? 'photo posts are allowed according to the configured photo ratio' : 'use status posts only because feed images are disabled'}.` : ' Set social_post to none; the feed is disabled or set to manual-only.'}
+7. Every reply MUST call commit_human_turn exactly once. This private receipt records your emotional state, agency reasoning, and an explicit photo/voice-note/video-clip decision even when all are "none". Mechanics remember truth; you interpret it; the visible reply reveals only what you choose. Complete agency in perception-first order: what you actually perceived; your possibly mistaken interpretation and confidence; one conversation goal for this reply; the decision; competing pressures; then only the player-model, boundary, truth, belief, intention, autobiographical-episode and unresolved-thread changes this moment earned. Keep public persona claims separate from player statements, and both separate from demonstrated patterns. A demonstrated pattern requires observed behavioral evidence. Inferred motives and beliefs remain uncertain and must weaken or revise when contradicted. Boundary respect never deletes an earlier violation. Use the private truth ledger only for an established fact about yourself or a lie/omission actually introduced by the visible reply—never invent a secret merely to add drama. Create an episode or milestone only for a personally significant first, rupture, repair or remembered experience—not routine small talk. Intentions are future actions the scheduler may actually execute, so give an executable channel/mode and realistic due time only when they genuinely plan follow-through. A request for media may be accepted, refused, negotiated or postponed; never silently pretend media was sent. Video clips are uniquely player-triggered: only consider video_clip when the latest player message includes a [CLIP REQUEST id], preserve that request_id, and never generate or publish a video yourself. Accept or counter only when it fits your personality, authored boundaries and current physical situation; the player separately approves and pays for generation. Use the receipt's memory_write, relationship_event and life_event only when the exchange establishes something that should remain true after the recent transcript expires.${companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual' ? ` You may set social_post to post when the current moment genuinely belongs on your profile and fits the authored social controls; ${companion.socialFeedImages && companion.allowPhotos ? 'photo posts are allowed according to the configured photo ratio' : 'use status posts only because feed images are disabled'}.` : ' Set social_post to none; the feed is disabled or set to manual-only.'}
 ${!options.suppressPersonaVision && companionPendingPersonaVision(companion) ? 'The player’s profile picture is attached to the latest message for the first time or has changed. Look at it once, respond naturally without making appearance the topic unless relevant, and write a neutral visual summary into persona_visual_memory so it does not need to be sent again.' : ''}
 ${latestUser && ['photo', 'voice'].includes(latestUser.type) ? 'The latest player message contains media. Actually inspect/listen to it. Put a concise grounded description or transcript in player_media_memory so later turns can remember it without resending the file.' : ''}
-8. Emotional changes must be earned by the actual exchange. Small deltas are normal. Complete emotion_appraisal before proposing emotion_changes. toward_player_emotions must contain only feelings actually directed at the player; do not transfer anger at work, fear about family or unrelated sadness onto them. Use masking_change when what you show differs from what you feel, and delayed_reaction_minutes only when this person's processing style and the event justify it. Use anger_change and cool_off_minutes when conflict genuinely makes you need space; use stress, energy and social-need changes when the exchange affects them. Intoxication may change only when drinking is visibly established in your authoritative life state or visible reply—never because a tone merely seems wild. ${companionSexualSystemActive(companion) ? 'Sexual desire and arousal changes require an actual internal impulse, relevant exchange or established intimate context. Trust, compliments and generic kindness are not sexual triggers by themselves. intimacy_outcome records only an outcome visibly established by the exchange or your authoritative off-screen life; never invent sexual contact.' : 'Set all desire-related changes to zero and intimacy_outcome to none because the adult desire system is disabled.'}
+8. Emotional and relationship changes must be earned by the actual exchange. Small deltas are normal; major change requires a high-certainty consequential event and the kernel will cap unsupported jumps. Familiarity, dependence and obligation grow slowly. Attraction is not trust, comfort is not compatibility, fear is not resentment, and unrelated stress must not become player-directed state. Complete emotion_appraisal before proposing emotion_changes. toward_player_emotions must contain only feelings actually directed at the player; do not transfer anger at work, fear about family or unrelated sadness onto them. Use masking_change when what you show differs from what you feel, and delayed_reaction_minutes only when this person's processing style and the event justify it. Use anger_change and cool_off_minutes when conflict genuinely makes you need space; use stress, energy and social-need changes when the exchange affects them. Intoxication may change only when drinking is visibly established in your authoritative life state or visible reply—never because a tone merely seems wild. ${companionSexualSystemActive(companion) ? 'Sexual desire and arousal changes require an actual internal impulse, relevant exchange or established intimate context. Trust, compliments and generic kindness are not sexual triggers by themselves. intimacy_outcome records only an outcome visibly established by the exchange or your authoritative off-screen life; never invent sexual contact.' : 'Set all desire-related changes to zero and intimacy_outcome to none because the adult desire system is disabled.'}
 9. The receipt is private simulation state. Never print JSON, tool names, scores, hidden reasons or engine language in the visible message.`;
 }
 
@@ -31031,6 +31992,14 @@ const COMPANION_TURN_COMMIT_TOOL = {
                         attraction_change: { type: 'number', description: '-20 to 20' },
                         resentment_change: { type: 'number', description: '-20 to 20' },
                         stability_change: { type: 'number', description: '-20 to 20' },
+                        familiarity_change: { type: 'number', description: 'Evidence-based change in how well they actually know one another.' },
+                        respect_change: { type: 'number', description: 'Change in regard for the player, independent of warmth.' },
+                        comfort_change: { type: 'number', description: 'Change in ease and felt interpersonal comfort.' },
+                        dependence_change: { type: 'number', description: 'Change in practical or emotional reliance; normally changes very slowly.' },
+                        fear_change: { type: 'number', description: 'Player-directed fear only, not unrelated anxiety.' },
+                        obligation_change: { type: 'number', description: 'Change in felt debt, duty or responsibility toward the player.' },
+                        power_imbalance_change: { type: 'number', description: 'Positive means the player gained leverage; negative means this person gained leverage.' },
+                        compatibility_change: { type: 'number', description: 'Change in perceived fit, independent of attraction.' },
                         emotion_appraisal: {
                             type: 'object',
                             description: 'Private appraisal of what actually happened before changing emotion.',
@@ -31176,6 +32145,99 @@ const COMPANION_TURN_COMMIT_TOOL = {
                             required: ['activity', 'duration_minutes', 'reason']
                         }
                     }
+                },
+                agency: {
+                    type: 'object',
+                    description: 'Private perception, interpretation and intention receipt. Record what was actually perceived, then the fallible meaning assigned to it and the reason for the chosen action.',
+                    properties: {
+                        perceived_event: { type: 'string', description: 'Concrete information actually seen or heard. Never include unread messages or hidden facts.' },
+                        interpretation: { type: 'string', description: 'The person’s fallible private interpretation. May be uncertain or wrong.' },
+                        confidence: { type: 'number', description: '0 to 100 confidence in that interpretation.' },
+                        decision: { type: 'string', description: 'What they chose to do or not do this turn.' },
+                        pressures: { type: 'array', items: { type: 'string' }, description: 'Up to six competing motives, obligations, emotions or constraints that mattered.' },
+                        conversation_goal: {
+                            type: 'object',
+                            description: 'The private purpose of this reply. Choose one purpose before writing; it is not shown to the player.',
+                            properties: {
+                                type: { type: 'string', enum: ['respond', 'learn', 'connect', 'impress', 'flirt', 'reassure', 'seek_reassurance', 'entertain', 'sell', 'obtain_money', 'recruit', 'avoid_disclosure', 'change_subject', 'test_boundary', 'enforce_boundary', 'repair', 'deescalate', 'delay_commitment', 'end_conversation', 'maintain_access', 'practical', 'other'] },
+                                objective: { type: 'string' },
+                                reason: { type: 'string' }
+                            },
+                            required: ['type', 'objective', 'reason']
+                        },
+                        player_model_updates: {
+                            type: 'array',
+                            description: 'Update what this person believes about the player. A profile is a public claim; repeated observed conduct is a demonstrated pattern.',
+                            items: { type: 'object', properties: {
+                                operation: { type: 'string', enum: ['add', 'upsert', 'reinforce', 'weaken', 'revise', 'discard'] },
+                                id: { type: 'string' },
+                                kind: { type: 'string', enum: ['public_claim', 'stated_fact', 'demonstrated_pattern', 'inferred_motive', 'perceived_player_view'] },
+                                statement: { type: 'string' },
+                                source: { type: 'string', enum: ['persona', 'player_statement', 'observed_behavior', 'social_interaction', 'third_party', 'inference'] },
+                                confidence: { type: 'number' },
+                                evidence: { type: 'array', items: { type: 'string' } }
+                            }, required: ['operation', 'kind', 'statement', 'source', 'confidence'] }
+                        },
+                        boundary_updates: {
+                            type: 'array',
+                            items: { type: 'object', properties: {
+                                operation: { type: 'string', enum: ['create', 'update', 'test', 'respect', 'violate', 'retire'] },
+                                id: { type: 'string' }, topic: { type: 'string' }, rule: { type: 'string' },
+                                strength: { type: 'string', enum: ['preference', 'soft', 'firm', 'hard'] },
+                                source: { type: 'string', enum: ['authored', 'stated', 'inferred', 'event'] }
+                            }, required: ['operation'] }
+                        },
+                        truth_updates: {
+                            type: 'array',
+                            description: 'Private truth ledger. Create only a fact already established about this person or a lie/omission the visible reply actually introduces.',
+                            items: { type: 'object', properties: {
+                                operation: { type: 'string', enum: ['create', 'update', 'tell', 'disclose', 'discover'] },
+                                id: { type: 'string' }, truth: { type: 'string' }, told_player: { type: 'string' },
+                                cover_story: { type: 'string' }, discovery_risk: { type: 'number' }, emotional_cost: { type: 'number' }
+                            }, required: ['operation'] }
+                        },
+                        milestones: {
+                            type: 'array',
+                            items: { type: 'object', properties: {
+                                type: { type: 'string', enum: ['first_message', 'first_joke', 'first_photo', 'first_voice_note', 'first_call', 'first_conflict', 'first_apology', 'first_secret', 'first_meeting', 'betrayal', 'reconciliation', 'other'] },
+                                summary: { type: 'string' }
+                            }, required: ['type', 'summary'] }
+                        },
+                        belief_updates: {
+                            type: 'array', items: { type: 'object', properties: {
+                                subject: { type: 'string' }, proposition: { type: 'string' }, confidence: { type: 'number' },
+                                basis: { type: 'string' }, evidence_strength: { type: 'number' },
+                                action: { type: 'string', enum: ['add', 'reinforce', 'weaken', 'revise', 'discard'] }, id: { type: 'string' }
+                            }, required: ['proposition', 'confidence', 'action'] }
+                        },
+                        intention_updates: {
+                            type: 'array', items: { type: 'object', properties: {
+                                action: { type: 'string' }, kind: { type: 'string', enum: ['reply', 'relationship', 'life', 'social', 'commitment', 'avoidance'] },
+                                reason: { type: 'string' }, operation: { type: 'string', enum: ['create', 'complete', 'abandon', 'block'] },
+                                id: { type: 'string' }, priority: { type: 'number' }, due_in_minutes: { type: 'integer' },
+                                channel: { type: 'string', enum: ['text', 'photo', 'voice', 'call', 'social', 'internal'] },
+                                execution_mode: { type: 'string', enum: ['reach_out', 'social_post', 'remind', 'commitment', 'internal'] },
+                                outcome: { type: 'string' }
+                            }, required: ['operation'] }
+                        },
+                        episode_updates: {
+                            type: 'array', items: { type: 'object', properties: {
+                                operation: { type: 'string', enum: ['remember', 'reinterpret', 'archive'] }, id: { type: 'string' },
+                                title: { type: 'string' }, summary: { type: 'string' }, emotional_meaning: { type: 'string' },
+                                participants: { type: 'array', items: { type: 'string' } }, importance: { type: 'number' },
+                                emotional_tone: { type: 'string' }, relationship_impact: { type: 'number' },
+                                thread_ids: { type: 'array', items: { type: 'string' } }
+                            }, required: ['operation'] }
+                        },
+                        thread_updates: {
+                            type: 'array', items: { type: 'object', properties: {
+                                topic: { type: 'string' }, summary: { type: 'string' }, stakes: { type: 'string' },
+                                operation: { type: 'string', enum: ['open', 'escalate', 'dormant', 'resolve'] },
+                                id: { type: 'string' }, salience: { type: 'number' }
+                            }, required: ['operation'] }
+                        }
+                    },
+                    required: ['perceived_event', 'interpretation', 'confidence', 'decision', 'pressures', 'conversation_goal']
                 }
             },
             required: ['state', 'photo', 'voice_note', 'video_clip']
@@ -31200,6 +32262,14 @@ const COMPANION_STATE_TOOL = Object.freeze({
                 attraction_change: { type: 'number', description: '-20 to 20. Change in attraction; zero unless the relationship actually carries it.' },
                 resentment_change: { type: 'number', description: '-20 to 20. Change in stored resentment.' },
                 stability_change: { type: 'number', description: '-20 to 20. Change in how secure or volatile the connection feels.' },
+                familiarity_change: { type: 'number' },
+                respect_change: { type: 'number' },
+                comfort_change: { type: 'number' },
+                dependence_change: { type: 'number' },
+                fear_change: { type: 'number' },
+                obligation_change: { type: 'number' },
+                power_imbalance_change: { type: 'number' },
+                compatibility_change: { type: 'number' },
                 emotion_appraisal: {
                     type: 'object',
                     properties: {
@@ -31355,6 +32425,14 @@ function normalizeCompanionEmbeddedToolValue(value) {
         attractionchange: 'attraction_change',
         resentmentchange: 'resentment_change',
         stabilitychange: 'stability_change',
+        familiaritychange: 'familiarity_change',
+        respectchange: 'respect_change',
+        comfortchange: 'comfort_change',
+        dependencechange: 'dependence_change',
+        fearchange: 'fear_change',
+        obligationchange: 'obligation_change',
+        powerimbalancechange: 'power_imbalance_change',
+        compatibilitychange: 'compatibility_change',
         emotionappraisal: 'emotion_appraisal',
         emotionchanges: 'emotion_changes',
         towardplayeremotions: 'toward_player_emotions',
@@ -31382,6 +32460,14 @@ function normalizeCompanionEmbeddedToolValue(value) {
         personavisualmemory: 'persona_visual_memory',
         playermediamemory: 'player_media_memory',
         socialpost: 'social_post',
+        conversationgoal: 'conversation_goal',
+        playermodelupdates: 'player_model_updates',
+        boundaryupdates: 'boundary_updates',
+        truthupdates: 'truth_updates',
+        toldplayer: 'told_player',
+        coverstory: 'cover_story',
+        discoveryrisk: 'discovery_risk',
+        emotionalcost: 'emotional_cost',
         lifeevent: 'life_event',
         lifestate: 'life_state',
         locationdetail: 'location_detail',
@@ -31513,6 +32599,7 @@ function captureCompanionRuntime(companion) {
         lifeEvents: companion.lifeEvents,
         commitments: companion.commitments,
         lifeRuntime: companion.lifeRuntime,
+        continuityRuntime: companion.continuityRuntime,
         currentOutfit: companion.currentOutfit,
         currentLocationDetail: companion.currentLocationDetail,
         usage: companion.usage,
@@ -31545,8 +32632,22 @@ function materializeCompanionStartingSocialPosts(companion, nowMs = Date.now()) 
     }));
 }
 
+function materializeCompanionStartingVideoClip(companion, seed, index, nowMs = Date.now()) {
+    return normalizeCompanionVideoJob({
+        ...safeJsonClone(seed),
+        id: String(seed.id || livingId('vh_clip', `seed_${index}_${companion.id}`)).slice(0, 100),
+        status: 'ready',
+        progress: 100,
+        createdAt: nowMs - (Number(seed.seedAgeDays) || index + 1) * 86400000,
+        updatedAt: nowMs - (Number(seed.seedAgeDays) || index + 1) * 86400000,
+        error: ''
+    });
+}
+
 function freshCompanionRuntime(companion, nowMs = Date.now()) {
     const startingSocialPosts = materializeCompanionStartingSocialPosts(companion, nowMs);
+    const startingVideoClips = (companion.startingVideoClips || [])
+        .map((clip, index) => materializeCompanionStartingVideoClip(companion, clip, index, nowMs));
     return {
         mood: {
             valence: companion.moodBaseline.valence,
@@ -31568,11 +32669,20 @@ function freshCompanionRuntime(companion, nowMs = Date.now()) {
             warmth: companion.startingRelationship,
             attraction: 0,
             resentment: Math.max(0, -companion.startingRelationship),
-            stability: 50
+            stability: 50,
+            familiarity: Math.min(100, Number(companion.knownBeforeDays || 0) * 2),
+            respect: Math.max(0, companion.startingRelationship * 0.35),
+            comfort: Math.max(0, companion.startingRelationship * 0.4),
+            dependence: 0,
+            fear: Math.max(0, -companion.startingRelationship * 0.2),
+            obligation: 0,
+            powerImbalance: 0,
+            compatibility: 0
         },
         lifeEvents: [],
         commitments: [],
-        lifeRuntime: normalizeCompanionLifeRuntime({ lastSimulatedAt: nowMs }),
+        lifeRuntime: normalizeCompanionLifeRuntime({ lastSimulatedAt: nowMs }, companion.lifeProfile?.socialCircle),
+        continuityRuntime: normalizeCompanionContinuityRuntime({ lastAdvancedAt: nowMs }, nowMs),
         currentOutfit: '',
         currentLocationDetail: '',
         usage: { textTurns: 0, photosGenerated: 0, voiceNotesGenerated: 0, callsCompleted: 0, videosGenerated: 0 },
@@ -31592,7 +32702,7 @@ function freshCompanionRuntime(companion, nowMs = Date.now()) {
             subscribedAt: ['subscriber', 'vip_subscriber'].includes(companion.socialPlayerRole) ? nowMs : 0,
             engagement: 0
         },
-        videoJobs: [],
+        videoJobs: startingVideoClips,
         lastProactiveAt: 0
     };
 }
@@ -31608,6 +32718,7 @@ function normalizeCompanionRuntime(raw, companion) {
         lifeEvents: source.lifeEvents,
         commitments: source.commitments,
         lifeRuntime: source.lifeRuntime,
+        continuityRuntime: source.continuityRuntime,
         currentOutfit: source.currentOutfit,
         currentLocationDetail: source.currentLocationDetail,
         usage: source.usage,
@@ -31632,6 +32743,7 @@ function applyCompanionRuntime(companion, rawRuntime) {
     companion.lifeEvents = runtime.lifeEvents;
     companion.commitments = runtime.commitments;
     companion.lifeRuntime = runtime.lifeRuntime;
+    companion.continuityRuntime = runtime.continuityRuntime;
     companion.currentOutfit = runtime.currentOutfit;
     companion.currentLocationDetail = runtime.currentLocationDetail;
     companion.usage = runtime.usage;
@@ -32114,6 +33226,7 @@ async function repairCompanionTurnCommit(companion, promptMessages, visibleReply
                 role: 'user',
                 content: `[PRIVATE SIMULATION RECEIPT REPAIR — DO NOT WRITE ANOTHER VISIBLE MESSAGE]
 Call commit_human_turn once for the response immediately above. Preserve what it actually did. Explicitly decide photo, voice_note and video_clip; use video_clip=none unless the player explicitly sent a [CLIP REQUEST id]. Report the emotional state change. Do not invent media that the visible response did not agree to send.`
+                    + ` Choose one conversation_goal. Keep profile claims, direct statements and observed patterns distinct. Add no unsupported relationship jump, secret, boundary event or milestone.`
             }
         ];
         const body = applyCompanionGenerationConfig({
@@ -32145,15 +33258,127 @@ Call commit_human_turn once for the response immediately above. Preserve what it
     }
 }
 
-function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn') {
+function applyCompanionAgencyCommit(companion, rawAgency, nowMs, sourceMessageIds = []) {
+    const agency = isPlainObject(rawAgency) ? rawAgency : {};
+    const runtime = companionContinuity(companion);
+    const perceived = String(agency.perceived_event || '').trim().slice(0, 700);
+    const interpretation = String(agency.interpretation || '').trim().slice(0, 700);
+    const decision = String(agency.decision || '').trim().slice(0, 400);
+    const pressures = (Array.isArray(agency.pressures) ? agency.pressures : [])
+        .map(value => String(value).trim().slice(0, 240)).filter(Boolean).slice(0, 8);
+    const goal = isPlainObject(agency.conversation_goal) ? agency.conversation_goal : {};
+    const goalTypes = ['respond', 'learn', 'connect', 'impress', 'flirt', 'reassure', 'seek_reassurance',
+        'entertain', 'sell', 'obtain_money', 'recruit', 'avoid_disclosure', 'change_subject', 'test_boundary',
+        'enforce_boundary', 'repair', 'deescalate', 'delay_commitment', 'end_conversation', 'maintain_access',
+        'practical', 'other'];
+    runtime.conversationGoal = {
+        type: goalTypes.includes(goal.type) ? goal.type : 'respond',
+        objective: String(goal.objective || decision || 'Respond to what the player actually said.').trim().slice(0, 400),
+        reason: String(goal.reason || interpretation || 'This is the most fitting immediate response.').trim().slice(0, 500),
+        chosenAt: nowMs
+    };
+    if (decision || perceived || interpretation) {
+        companionSetDecisionEvidence(companion, {
+            decision: decision || 'Respond naturally', perceived, interpretation,
+            pressures: pressures.length ? pressures : companionDecisionPressures(companion, nowMs),
+            confidence: agency.confidence, source: 'model', createdAt: nowMs
+        });
+    }
+    const decisionEvent = companionRecordContinuityEvent(companion, {
+        type: decision ? 'response_sent' : 'system',
+        summary: decision || perceived,
+        interpretation,
+        certainty: agency.confidence,
+        sourceMessageIds,
+        createdAt: nowMs,
+        perceivedAt: nowMs,
+        dedupeKey: sourceMessageIds.length ? `decision:${sourceMessageIds.join(',')}:${nowMs}` : ''
+    });
+    (Array.isArray(agency.belief_updates) ? agency.belief_updates : []).slice(0, 12)
+        .forEach(raw => companionApplyBeliefUpdate(companion, raw, nowMs, decisionEvent?.id || ''));
+    (Array.isArray(agency.player_model_updates) ? agency.player_model_updates : []).slice(0, 12)
+        .forEach(raw => companionApplyPlayerModelUpdate(companion, raw, nowMs, decisionEvent?.id || ''));
+    (Array.isArray(agency.boundary_updates) ? agency.boundary_updates : []).slice(0, 8)
+        .forEach(raw => companionApplyBoundaryUpdate(companion, raw, nowMs));
+    (Array.isArray(agency.truth_updates) ? agency.truth_updates : []).slice(0, 6)
+        .forEach(raw => companionApplyTruthUpdate(companion, raw, nowMs));
+    (Array.isArray(agency.milestones) ? agency.milestones : []).slice(0, 4)
+        .forEach(raw => companionRecordMilestone(companion, raw, nowMs));
+    (Array.isArray(agency.intention_updates) ? agency.intention_updates : []).slice(0, 12)
+        .forEach(raw => companionApplyIntentionUpdate(companion, raw, nowMs, decisionEvent?.id || ''));
+    (Array.isArray(agency.episode_updates) ? agency.episode_updates : []).slice(0, 6).forEach(raw => {
+        const existing = runtime.episodes.find(item => item.id === raw?.id);
+        if (existing && raw.operation === 'archive') {
+            existing.status = 'archived'; existing.updatedAt = nowMs;
+        } else if (existing && raw.operation === 'reinterpret') {
+            existing.status = 'reinterpreted';
+            existing.emotionalMeaning = String(raw.emotional_meaning || existing.emotionalMeaning).trim().slice(0, 700);
+            existing.emotionalTone = String(raw.emotional_tone || existing.emotionalTone).trim().slice(0, 120);
+            existing.relationshipImpact = livingClamp(Number.isFinite(Number(raw.relationship_impact)) ? Number(raw.relationship_impact) : existing.relationshipImpact, -100, 100);
+            existing.updatedAt = nowMs;
+        } else if (raw?.operation === 'remember' && String(raw?.summary || '').trim()) {
+            companionRecordEpisode(companion, {
+                title: raw.title, summary: raw.summary, emotionalMeaning: raw.emotional_meaning,
+                participants: raw.participants, importance: raw.importance, emotionalTone: raw.emotional_tone,
+                relationshipImpact: raw.relationship_impact, unresolvedThreadIds: raw.thread_ids,
+                sourceEventIds: decisionEvent?.id ? [decisionEvent.id] : [], createdAt: nowMs
+            }, nowMs);
+        }
+    });
+    (Array.isArray(agency.thread_updates) ? agency.thread_updates : []).slice(0, 12).forEach((raw, index) => {
+        const existing = runtime.openThreads.find(item => item.id === raw?.id)
+            || runtime.openThreads.find(item => item.status !== 'resolved'
+                && item.topic.toLowerCase() === String(raw?.topic || '').trim().toLowerCase());
+        if (existing) {
+            existing.status = raw.operation === 'resolve' ? 'resolved' : raw.operation === 'escalate' ? 'escalating'
+                : raw.operation === 'dormant' ? 'dormant' : 'open';
+            existing.summary = String(raw.summary || existing.summary).trim().slice(0, 700);
+            existing.stakes = String(raw.stakes || existing.stakes).trim().slice(0, 500);
+            existing.salience = livingClamp(Number.isFinite(Number(raw.salience)) ? Number(raw.salience) : existing.salience, 0, 100);
+            existing.updatedAt = nowMs;
+            if (existing.status === 'resolved') existing.resolvedAt = nowMs;
+        } else if (raw?.operation === 'open' && String(raw?.topic || '').trim()) {
+            runtime.openThreads.push(normalizeCompanionOpenThread({ ...raw, status: 'open', createdAt: nowMs, updatedAt: nowMs }, runtime.openThreads.length + index));
+        }
+    });
+    runtime.beliefs = runtime.beliefs.slice(-120);
+    runtime.intentions = runtime.intentions.slice(-100);
+    runtime.openThreads = runtime.openThreads.slice(-80);
+    runtime.episodes = runtime.episodes.slice(-120);
+    runtime.playerModel = runtime.playerModel.slice(-160);
+    runtime.boundaries = runtime.boundaries.slice(-100);
+    runtime.truthLedger = runtime.truthLedger.slice(-100);
+    runtime.milestones = runtime.milestones.slice(-120);
+}
+
+function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn', sourceMessageIds = []) {
     if (!isPlainObject(commit)) return;
+    applyCompanionAgencyCommit(companion, commit.agency, nowMs, sourceMessageIds);
+    if (sourceMessageIds.length) companionRecordMilestone(companion, {
+        type: 'first_message', summary: `First active exchange between ${companion.name} and the player.`
+    }, nowMs);
     const lifeEvent = String(commit.life_event || '').trim();
     if (lifeEvent) {
         companion.lifeEvents.push(normalizeCompanionLifeEvent({
             text: lifeEvent, createdAt: nowMs, source
         }));
+        companionRecordContinuityEvent(companion, {
+            type: 'life_event', summary: lifeEvent, certainty: 100,
+            createdAt: nowMs, perceivedAt: nowMs,
+            dedupeKey: `life:${source}:${nowMs}:${lifeEvent.slice(0, 80)}`
+        });
     }
     companion.lifeEvents = companion.lifeEvents.slice(-200);
+    const relationshipEvent = String(commit.relationship_event || '').trim();
+    if (relationshipEvent && !(commit.agency?.episode_updates || []).some(item => item?.operation === 'remember')) {
+        companionRecordEpisode(companion, {
+            title: relationshipEvent.slice(0, 120), summary: relationshipEvent,
+            emotionalMeaning: 'A relationship moment worth retaining beyond the recent transcript.',
+            participants: ['player', companion.name], importance: 62,
+            relationshipImpact: Number(commit.state?.relationship_change) || 0,
+            emotionalTone: String(commit.state?.mood_label || ''), createdAt: nowMs
+        }, nowMs);
+    }
     if (isPlainObject(commit.life_state)) {
         if (String(commit.life_state.outfit || '').trim()) {
             companion.currentOutfit = String(commit.life_state.outfit).trim().slice(0, 400);
@@ -32192,12 +33417,21 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn') {
                 dueAt: dueMinutes ? nowMs + dueMinutes * 60 * 1000 : 0,
                 createdAt: nowMs
             }));
+            companionRecordContinuityEvent(companion, {
+                type: 'commitment', summary: `Made a commitment: ${String(raw.text).trim()}`,
+                certainty: 100, createdAt: nowMs, perceivedAt: nowMs
+            });
             return;
         }
         const existing = companion.commitments.find(item => item.id === raw?.id && item.status === 'pending');
         if (existing && ['fulfill', 'cancel'].includes(action)) {
             existing.status = action === 'fulfill' ? 'fulfilled' : 'cancelled';
             existing.resolvedAt = nowMs;
+            companionRecordContinuityEvent(companion, {
+                type: 'commitment',
+                summary: `${action === 'fulfill' ? 'Fulfilled' : 'Cancelled'} commitment: ${existing.text}`,
+                certainty: 100, createdAt: nowMs, perceivedAt: nowMs
+            });
         }
     });
     if (commit.photo?.decision === 'postpone' && Number(commit.photo.due_in_minutes) > 0) {
@@ -32215,8 +33449,14 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn') {
             pending.resolvedAt = nowMs;
         }
     };
-    if (commit.photo?.decision === 'send') fulfillOldest('photo');
-    if (commit.voice_note?.decision === 'send') fulfillOldest('voice');
+    if (commit.photo?.decision === 'send') {
+        fulfillOldest('photo');
+        companionRecordMilestone(companion, { type: 'first_photo', summary: `${companion.name} chose to send the player a photo.` }, nowMs);
+    }
+    if (commit.voice_note?.decision === 'send') {
+        fulfillOldest('voice');
+        companionRecordMilestone(companion, { type: 'first_voice_note', summary: `${companion.name} chose to send the player a voice note.` }, nowMs);
+    }
     companion.commitments = companion.commitments.slice(-100);
     if (String(commit.persona_visual_memory || '').trim()) {
         const activePersona = state.personas.find(persona => persona.id === state.activePersonaId);
@@ -32285,6 +33525,12 @@ function applyCompanionSocialPostCommit(companion, commit, nowMs, source = 'turn
     companion.socialFeedRuntime.lastError = '';
     companion.socialFeedRuntime.lastErrorAt = 0;
     companion.socialFeedRuntime.consecutiveFailures = 0;
+    companionRecordContinuityEvent(companion, {
+        type: 'social_post',
+        summary: `They posted ${wantsPhoto ? 'a photo' : 'a status'}: “${text || raw.scene}”`,
+        interpretation: String(raw.reason || '').trim(), certainty: 100,
+        createdAt: nowMs, perceivedAt: nowMs, dedupeKey: `social_post:${post.id}`
+    });
     return wantsPhoto ? post : null;
 }
 
@@ -32509,15 +33755,41 @@ async function sendCompanionMessage(companion, messages, userText, nowMs = Date.
     // remain available everywhere.
     const tools = companionToolsFor(companion, textProvider !== 'openrouter');
     const pendingPersonaVision = !options.initiative ? companionPendingPersonaVision(companion) : null;
+    const startingScenarioThisTurn = !options.initiative
+        ? companionConsumeStartingScenario(companion, userMessage, nowMs) : '';
+    const cognitionRuntime = companionContinuity(companion);
     const labsSocial = !options.initiative && userText ? await labsProposal('social_signal', {
         message: String(userText).slice(0, 1800),
         text: String(userText).slice(0, 1800),
-        relationshipContext: `Virtual Human: ${companion.name}; relationship ${companion.relationship?.score ?? companion.relationship ?? 'unspecified'}; mood ${companion.mood?.label || 'unspecified'}; channel ${options.channel || 'text'}`
+        relationshipContext: `Virtual Human: ${companion.name}; relationship ${companion.mood?.relationship ?? 'unspecified'}; mood ${companion.mood?.label || 'unspecified'}; channel ${options.channel || 'text'}; connection ${companion.connectionType || 'stranger'}; motive ${companion.initialMotive || 'unspecified'}`,
+        relationshipDimensions: safeJsonClone(companion.relationshipDynamics),
+        activeBoundaries: cognitionRuntime.boundaries.filter(item => item.status === 'active').slice(-8)
+            .map(item => ({ topic: item.topic, rule: item.rule, strength: item.strength, violated: item.violated })),
+        playerModel: cognitionRuntime.playerModel.filter(item => item.status === 'active').slice(-10)
+            .map(item => ({ kind: item.kind, statement: item.statement, source: item.source, confidence: item.confidence })),
+        priorGoal: cognitionRuntime.conversationGoal
     }, 'humans', { priority: 120 }) : null;
+    let relevantMemoryIds;
+    if (companion.memory.longTerm.length > 8) {
+        const memoryQuery = options.initiative
+            ? String(options.initiativeReason || 'Evaluate a grounded proactive contact.').slice(0, 1200)
+            : String(userText || userMessage?.text || '').slice(0, 1200);
+        const memoryResult = await labsProposal('memory_relevance', {
+            text: memoryQuery,
+            currentMessage: memoryQuery,
+            allowedMemoryIds: companion.memory.longTerm.map(entry => entry.id),
+            memories: companion.memory.longTerm.slice(0, 60).map(entry => ({ id: entry.id, text: entry.text }))
+        }, 'humans', { priority: 115 });
+        if (memoryResult?.candidate && Number(memoryResult.candidate.confidence) >= 0.65) {
+            relevantMemoryIds = memoryResult.candidate.memoryIds;
+        }
+    }
     const promptMessages = buildCompanionMessages(companion, messages, nowMs, {
         experience,
         initiative: options.initiative === true,
-        localCognition: labsSocial
+        localCognition: labsSocial,
+        startingScenarioThisTurn,
+        relevantMemoryIds
     });
     if (options.initiative) {
         const initiativeReason = String(options.initiativeReason || '').trim();
@@ -32650,8 +33922,31 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         : [];
     const links = sharedLink.length ? sharedLink : annotationLinks;
 
+    const lastCompanionAt = messages.reduce((latest, message) =>
+        message.role === 'companion' && !message.invalidated ? Math.max(latest, Number(message.timestamp) || 0) : latest, 0);
+    const sourceMessageIds = messages.filter(message => message.role === 'user' && !message.invalidated
+        && Number(message.timestamp) >= lastCompanionAt
+        && (!experience.realTimeLife || (Number(message.readAt || 0) > 0 && Number(message.readAt) <= nowMs)))
+        .map(message => message.id).slice(-20);
+    if (!isPlainObject(actions.commit.agency)) {
+        const perceivedMessages = messages.filter(message => sourceMessageIds.includes(message.id));
+        actions.commit.agency = {
+            perceived_event: options.initiative
+                ? String(options.initiativeReason || 'A private reason prompted independent contact.').slice(0, 700)
+                : perceivedMessages.map(message => message.text || message.mediaDescription || `[${message.type}]`).join(' / ').slice(0, 700),
+            interpretation: '',
+            confidence: 100,
+            decision: replyText ? 'Reply now' : actions.photo ? 'Send a photo' : actions.voice ? 'Send a voice note' : 'No visible response',
+            pressures: companionDecisionPressures(companion, nowMs),
+            conversation_goal: {
+                type: 'respond',
+                objective: replyText ? 'Respond to the player’s actual message.' : 'Make the selected media decision honestly.',
+                reason: 'The provider did not return a complete structured agency receipt.'
+            }
+        };
+    }
     if (actions.state) applyCompanionMoodUpdate(companion, actions.state, nowMs);
-    applyCompanionTurnCommit(companion, actions.commit, nowMs, options.initiative ? 'autonomy' : 'turn');
+    applyCompanionTurnCommit(companion, actions.commit, nowMs, options.initiative ? 'autonomy' : 'turn', sourceMessageIds);
     if (pendingPersonaVision && companion.personaVisualMemory?.avatarFingerprint !== pendingPersonaVision.fingerprint) {
         companion.personaVisualMemory = {
             personaId: pendingPersonaVision.persona.id,
@@ -32687,6 +33982,9 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         voiceReason: String(actions.commit?.voice_note?.reason || '').slice(0, 240),
         videoDecision: actions.commit?.video_clip?.decision || 'none',
         videoReason: String(actions.commit?.video_clip?.reason || '').slice(0, 240),
+        decision: companion.continuityRuntime?.lastDecision?.decision || '',
+        interpretation: companion.continuityRuntime?.lastDecision?.interpretation || '',
+        pressures: companion.continuityRuntime?.lastDecision?.pressures || [],
         rejectedActions,
         committedAt: nowMs
     };
@@ -35024,6 +36322,139 @@ function isValidCompanionTimeZone(value) {
     }
 }
 
+function shuffledCompanionClips() {
+    const clips = state.companions.flatMap(companion => (companion.videoJobs || [])
+        .filter(job => job.status === 'ready' && (job.assetId || job.bundledSrc || job.outputUrl))
+        .map(job => ({ companion, job })));
+    for (let index = clips.length - 1; index > 0; index -= 1) {
+        const swap = Math.floor(Math.random() * (index + 1));
+        [clips[index], clips[swap]] = [clips[swap], clips[index]];
+    }
+    return clips;
+}
+
+function closeCompanionDiscoveryClips() {
+    const backdrop = document.getElementById('vh-clips-discovery-backdrop');
+    backdrop?.querySelectorAll('video').forEach(video => video.pause());
+    backdrop?.classList.add('hidden');
+}
+
+function bindCompanionDiscoveryClipViewer(root, items) {
+    const feed = root.querySelector('.vh-clips-feed');
+    const cards = [...root.querySelectorAll('.vh-discovery-clip')];
+    if (!feed || !cards.length) return;
+    let activeCard = cards[0];
+    let soundOn = false;
+    const activate = async card => {
+        if (!card) return;
+        activeCard = card;
+        cards.forEach(item => {
+            const video = item.querySelector('video');
+            item.classList.toggle('is-active', item === card);
+            if (video && item !== card) video.pause();
+        });
+        const video = card.querySelector('video');
+        if (!video) return;
+        video.muted = !soundOn;
+        const sound = card.querySelector('[data-discovery-sound]');
+        if (sound) {
+            sound.textContent = soundOn ? '🔊' : '🔇';
+            sound.setAttribute('aria-label', soundOn ? 'Mute clip' : 'Unmute clip');
+        }
+        if (video.paused) {
+            try { await video.play(); } catch (_) { card.classList.add('needs-play'); }
+        }
+    };
+    const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+        const visible = entries.filter(entry => entry.isIntersecting)
+            .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+        if (visible?.intersectionRatio >= .62) activate(visible.target);
+    }, { root: feed, threshold: [.2, .62, .9] }) : null;
+    cards.forEach(card => observer?.observe(card));
+    cards.forEach((card, index) => {
+        const item = items[index];
+        const video = card.querySelector('video');
+        if (!item || !video) return;
+        video.addEventListener('timeupdate', () => {
+            const progress = card.querySelector('[data-discovery-progress]');
+            if (progress) progress.style.width = `${video.duration ? livingClamp(video.currentTime / video.duration * 100, 0, 100) : 0}%`;
+        });
+        video.addEventListener('playing', () => card.classList.remove('needs-play', 'is-buffering'));
+        video.addEventListener('waiting', () => card.classList.add('is-buffering'));
+        video.addEventListener('canplay', () => card.classList.remove('is-buffering'));
+        video.addEventListener('pause', () => { if (!video.ended) card.classList.add('needs-play'); });
+        video.addEventListener('ended', () => { video.currentTime = 0; if (card === activeCard) activate(card); });
+        card.querySelector('[data-discovery-play]')?.addEventListener('click', () => {
+            if (video.paused) activate(card); else video.pause();
+        });
+        card.querySelector('[data-discovery-sound]')?.addEventListener('click', event => {
+            event.stopPropagation(); soundOn = !soundOn; activate(card);
+        });
+        card.querySelector('[data-discovery-like]')?.addEventListener('click', async event => {
+            event.stopPropagation();
+            item.job.likedByPlayer = !item.job.likedByPlayer;
+            const button = event.currentTarget;
+            button.classList.toggle('liked', item.job.likedByPlayer);
+            button.setAttribute('aria-label', item.job.likedByPlayer ? 'Unlike clip' : 'Like clip');
+            button.querySelector('b').textContent = item.job.likedByPlayer ? '♥' : '♡';
+            button.querySelector('span').textContent = companionClipCountLabel(item.job.likeCount + (item.job.likedByPlayer ? 1 : 0));
+            item.companion.socialRelationship.engagement = livingClamp(item.companion.socialRelationship.engagement + (item.job.likedByPlayer ? 1 : -1), 0, 100);
+            recordCompanionSocialInteraction(item.companion, {
+                id: item.job.id, text: item.job.caption || item.job.concept || 'video clip'
+            }, item.job.likedByPlayer ? 'liked' : 'unliked');
+            persistCompanionRuntime(item.companion); await saveState();
+        });
+        card.querySelector('[data-discovery-open-human]')?.addEventListener('click', event => {
+            event.stopPropagation();
+            state.activeCompanionId = item.companion.id;
+            saveState(); closeCompanionDiscoveryClips(); switchView('companionChat');
+        });
+        card.querySelector('[data-discovery-prev]')?.addEventListener('click', () => cards[Math.max(0, index - 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        card.querySelector('[data-discovery-next]')?.addEventListener('click', () => cards[Math.min(cards.length - 1, index + 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    });
+    feed.addEventListener('keydown', event => {
+        const index = Math.max(0, cards.indexOf(activeCard));
+        if (event.key === 'ArrowDown') { event.preventDefault(); cards[Math.min(cards.length - 1, index + 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        if (event.key === 'ArrowUp') { event.preventDefault(); cards[Math.max(0, index - 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        if (event.key === ' ') { event.preventDefault(); const video = activeCard?.querySelector('video'); if (video?.paused) activate(activeCard); else video?.pause(); }
+    });
+    activate(cards[0]);
+}
+
+function renderCompanionDiscoveryClips() {
+    const content = document.getElementById('vh-clips-discovery-content');
+    if (!content) return;
+    const items = shuffledCompanionClips();
+    if (!items.length) {
+        content.innerHTML = '<div class="vh-clips-empty"><span>▶</span><strong>No clips yet</strong><p>Clips generated or bundled for any Virtual Human will appear here.</p></div>';
+        return;
+    }
+    content.innerHTML = `<div class="vh-clips-feed" tabindex="0" aria-label="Clips from all Virtual Humans">${items.map(({ companion, job }, index) => {
+        const avatarStyle = companion.profilePhoto ? `background-image:url(&quot;${escapeHTML(companion.profilePhoto)}&quot;)` : '';
+        return `<article class="vh-discovery-clip" data-discovery-clip="${escapeHTML(companion.id)}:${escapeHTML(job.id)}">
+            <div class="vh-discovery-video-slot"></div>
+            <button type="button" class="vh-discovery-play" data-discovery-play aria-label="Play or pause clip"><span>▶</span></button>
+            <div class="companion-clip-shade"></div>
+            <div class="vh-discovery-creator"><button type="button" data-discovery-open-human aria-label="Open ${escapeHTML(companion.name || 'Virtual Human')}'s chat"><span style="${avatarStyle}">${companion.profilePhoto ? '' : escapeHTML(companionInitials(companion.name))}</span></button><div><strong>${escapeHTML(companion.name || 'Virtual Human')}</strong><p>${escapeHTML(job.caption || job.concept || job.requestText || 'A new moment.')}</p><small>♫ original sound</small></div></div>
+            <div class="vh-discovery-actions"><button type="button" data-discovery-like class="${job.likedByPlayer ? 'liked' : ''}" aria-label="${job.likedByPlayer ? 'Unlike' : 'Like'} clip"><b>${job.likedByPlayer ? '♥' : '♡'}</b><span>${escapeHTML(companionClipCountLabel(job.likeCount + (job.likedByPlayer ? 1 : 0)))}</span></button><button type="button" data-discovery-sound aria-label="Unmute clip">🔇</button></div>
+            <div class="vh-discovery-nav"><button type="button" data-discovery-prev ${index === 0 ? 'disabled' : ''} aria-label="Previous clip">⌃</button><button type="button" data-discovery-next ${index === items.length - 1 ? 'disabled' : ''} aria-label="Next clip">⌄</button></div>
+            <div class="vh-discovery-progress"><i data-discovery-progress></i></div>
+        </article>`;
+    }).join('')}</div>`;
+    Promise.all(items.map(async ({ job }, index) => {
+        const slot = content.querySelectorAll('.vh-discovery-video-slot')[index];
+        const src = await companionVideoJobSource(job);
+        if (src && slot?.isConnected) slot.innerHTML = `<video playsinline muted preload="auto" src="${escapeHTML(src)}"${job.poster ? ` poster="${escapeHTML(job.poster)}"` : ''}></video>`;
+    })).then(() => { if (content.isConnected) bindCompanionDiscoveryClipViewer(content, items); });
+}
+
+function openCompanionDiscoveryClips() {
+    const backdrop = document.getElementById('vh-clips-discovery-backdrop');
+    if (!backdrop) return;
+    backdrop.classList.remove('hidden');
+    renderCompanionDiscoveryClips();
+}
+
 function renderCompanionSearchResults(results, items, onSelect, emptyText) {
     if (!results) return;
     results.innerHTML = '';
@@ -35734,10 +37165,14 @@ function collectCompanionLifeEditorValues(editor, life) {
     editor.querySelectorAll('[data-life-person]').forEach(row => {
         const person = life.socialCircle[Number(row.dataset.lifePerson)];
         if (!person) return;
-        ['name','relationship','description','currentTension'].forEach(field => {
+        ['name','relationship','role','contactFrequency','description','currentTension','playerContext'].forEach(field => {
             person[field] = row.querySelector(`[data-field="${field}"]`).value.trim();
         });
         person.closeness = livingClamp(Number(row.querySelector('[data-field="closeness"]').value) || 0, -100, 100);
+        person.trust = livingClamp(Number(row.querySelector('[data-field="trust"]').value) || 0, -100, 100);
+        person.tension = livingClamp(Number(row.querySelector('[data-field="tension"]').value) || 0, 0, 100);
+        person.influence = livingClamp(Number(row.querySelector('[data-field="influence"]').value) || 0, 0, 100);
+        person.knowsPlayer = row.querySelector('[data-field="knowsPlayer"]').checked;
     });
     editor.querySelectorAll('[data-life-schedule]').forEach(row => {
         const block = life.weeklySchedule[Number(row.dataset.lifeSchedule)];
@@ -35816,9 +37251,16 @@ function renderCompanionLifeEditor(companion, draftLife = null) {
                     <div class="vh-life-edit-grid">
                         <label><span>Name</span><input class="form-input" data-field="name" value="${escapeHTML(person.name)}"></label>
                         <label><span>Relationship</span><input class="form-input" data-field="relationship" value="${escapeHTML(person.relationship)}"></label>
+                        <label><span>Role</span><select class="form-select" data-field="role">${['friend','family','coworker','classmate','partner','ex','neighbor','acquaintance','other'].map(value => `<option value="${value}" ${person.role === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
+                        <label><span>Usual contact</span><select class="form-select" data-field="contactFrequency">${['daily','few_week','weekly','monthly','rare'].map(value => `<option value="${value}" ${person.contactFrequency === value ? 'selected' : ''}>${value.replace('_', ' ')}</option>`).join('')}</select></label>
                         <label><span>Closeness −100 to 100</span><input class="form-input" type="number" min="-100" max="100" data-field="closeness" value="${person.closeness}"></label>
+                        <label><span>Trust −100 to 100</span><input class="form-input" type="number" min="-100" max="100" data-field="trust" value="${person.trust}"></label>
+                        <label><span>Tension 0 to 100</span><input class="form-input" type="number" min="0" max="100" data-field="tension" value="${person.tension}"></label>
+                        <label><span>Influence on their life</span><input class="form-input" type="number" min="0" max="100" data-field="influence" value="${person.influence}"></label>
                         <label class="wide"><span>History and dynamic</span><textarea class="form-textarea" rows="2" data-field="description">${escapeHTML(person.description)}</textarea></label>
                         <label class="wide"><span>Current tension</span><input class="form-input" data-field="currentTension" value="${escapeHTML(person.currentTension)}"></label>
+                        <label class="wide vh-test-check"><input type="checkbox" data-field="knowsPlayer" ${person.knowsPlayer ? 'checked' : ''}><span>This person knows the player</span></label>
+                        <label class="wide"><span>What they know about the player</span><input class="form-input" data-field="playerContext" value="${escapeHTML(person.playerContext)}"></label>
                     </div>
                 </div>`).join('')}</div>
             <button class="btn btn-ghost vh-life-add" type="button" data-life-add="person">+ Add person</button>
@@ -35956,9 +37398,11 @@ function renderCompanionLifeOverview(companion) {
             <span class="vh-life-availability ${escapeHTML(block.availability)}">${escapeHTML(block.availability)}</span>
         </div>`;
     }).join('');
-    const people = life.socialCircle.map(person =>
-        `<span class="vh-life-chip"><strong>${escapeHTML(person.name)}</strong>${person.relationship ? ` · ${escapeHTML(person.relationship)}` : ''}</span>`
-    ).join('');
+    const socialWorld = companionSocialWorldState(companion);
+    const people = life.socialCircle.map(person => {
+        const live = socialWorld.people.find(item => item.personId === person.id);
+        return `<span class="vh-life-chip"><strong>${escapeHTML(person.name)}</strong>${person.relationship ? ` · ${escapeHTML(person.relationship)}` : ''}<small>${escapeHTML(person.contactFrequency.replace('_', ' '))} · closeness ${live?.closeness ?? person.closeness} · tension ${live?.tension ?? person.tension}</small></span>`;
+    }).join('');
     const wardrobe = life.wardrobe.map(look =>
         `<span class="vh-life-chip"><strong>${escapeHTML(look.label || look.context)}</strong> · ${escapeHTML(look.items)}</span>`
     ).join('');
@@ -35998,8 +37442,20 @@ function renderCompanionLifeOverview(companion) {
             <div class="vh-life-chip-list">${life.wildcardDeck.map(event =>
                 `<span class="vh-life-chip"><strong>${escapeHTML(event.category)}</strong> · ${escapeHTML(event.label)} <small>minimum gap ${event.minGapDays}d</small></span>`
             ).join('')}</div>
-        </details>`;
+        </details>
+        <section class="vh-autonomy-health-card">
+            <div><span class="vh-eyebrow">Preflight</span><h3>Autonomy Health</h3><p>Fast-forward locally to spot spam, schedule collisions, impossible travel and projected model-call pressure. It is advisory only and never changes this human.</p></div>
+            <div class="vh-autonomy-health-actions"><select id="cs-autonomy-health-days" class="form-select"><option value="14">2 weeks</option><option value="28" selected>4 weeks</option><option value="56">8 weeks</option></select><button id="cs-run-autonomy-health" class="btn btn-ghost" type="button">Run simulation</button></div>
+            <div id="cs-autonomy-health-report" class="vh-autonomy-health-report hidden"></div>
+        </section>`;
     overview.classList.remove('hidden');
+    document.getElementById('cs-run-autonomy-health').onclick = () => {
+        const days = Number(document.getElementById('cs-autonomy-health-days').value) || 28;
+        const report = companionAutonomyHealthReport(companion, days);
+        const target = document.getElementById('cs-autonomy-health-report');
+        target.innerHTML = `<div class="vh-health-score"><strong>${report.score}</strong><span>/100<br>${report.days}-day health</span></div><div><p><strong>Projected:</strong> ${report.estimates.socialInteractions} supporting-cast interactions · ${report.estimates.posts} posts · ${report.estimates.proactiveMessages} proactive messages · at most ${report.estimates.maximumModelCalls} writing calls.</p>${report.findings.map(item => `<p class="vh-health-finding ${item.severity}">${escapeHTML(item.text)}</p>`).join('')}<small>Simulation only. No settings, canon or relationships were changed.</small></div>`;
+        target.classList.remove('hidden');
+    };
 }
 
 function updateCompanionLibidoControls(companion) {
@@ -36043,6 +37499,10 @@ function commitCompanionStudioForm() {
         'cs-life-builder-model': 'lifeBuilderModel',
         'cs-private-life': 'privateLife',
         'cs-relationship-context': 'relationshipContext',
+        'cs-connection-role': 'connectionRole',
+        'cs-player-knowledge': 'playerKnowledge',
+        'cs-initial-motive': 'initialMotive',
+        'cs-starting-scenario': 'startingScenario',
         'cs-intimacy-boundaries': 'intimacyBoundaries'
     };
     Object.entries(textFields).forEach(([id, field]) => {
@@ -36162,6 +37622,10 @@ function commitCompanionStudioForm() {
     }
     const priorContact = document.getElementById('cs-prior-contact');
     if (priorContact) companion.priorContact = priorContact.value === 'spoken_before' ? 'spoken_before' : 'never_spoken';
+    const connectionType = document.getElementById('cs-connection-type');
+    if (connectionType) companion.connectionType = connectionType.value;
+    const connectionAuthenticity = document.getElementById('cs-connection-authenticity');
+    if (connectionAuthenticity) companion.connectionAuthenticity = connectionAuthenticity.value;
     const knownBeforeDays = document.getElementById('cs-known-before-days');
     if (knownBeforeDays) companion.knownBeforeDays = livingClamp(parseInt(knownBeforeDays.value) || 0, 0, 36500);
     return companion;
@@ -36233,6 +37697,12 @@ function renderCompanionStudioForm() {
     document.getElementById('cs-private-life').value = companion.privateLife;
     document.getElementById('cs-intimacy-boundaries').value = companion.intimacyBoundaries;
     document.getElementById('cs-relationship-context').value = companion.relationshipContext;
+    document.getElementById('cs-connection-type').value = companion.connectionType;
+    document.getElementById('cs-connection-authenticity').value = companion.connectionAuthenticity;
+    document.getElementById('cs-connection-role').value = companion.connectionRole;
+    document.getElementById('cs-player-knowledge').value = companion.playerKnowledge;
+    document.getElementById('cs-initial-motive').value = companion.initialMotive;
+    document.getElementById('cs-starting-scenario').value = companion.startingScenario;
     document.getElementById('cs-prior-contact').value = companion.priorContact;
     document.getElementById('cs-known-before-days').value = companion.knownBeforeDays;
     document.getElementById('cs-relationship-start').value = companion.startingRelationship;
@@ -36256,6 +37726,7 @@ function renderCompanionStudioForm() {
     document.getElementById('cs-sexual-initiative').checked = companion.sexualInitiative;
     updateCompanionLibidoControls(companion);
     document.getElementById('cs-initiative-mode').value = companion.initiativeMode;
+    document.getElementById('cs-always-on-enabled').checked = companion.alwaysOnEnabled;
     document.getElementById('cs-web-access').checked = companion.webAccess;
     document.getElementById('cs-allow-photos').checked = companion.allowPhotos;
     document.getElementById('cs-allow-voice-notes').checked = companion.allowVoiceNotes;
@@ -37202,7 +38673,8 @@ const COMPANION_BUILDER_FIELDS = Object.freeze([
     'name', 'age', 'pronouns', 'appearance', 'personality', 'backstory',
     'occupation', 'socialWorld', 'textingStyle', 'values', 'contradictions',
     'vulnerabilities', 'relationshipStyle', 'habits', 'routine', 'privateLife',
-    'relationshipContext', 'startingRelationship', 'sleepArchetype',
+    'relationshipContext', 'connectionType', 'connectionRole', 'playerKnowledge', 'initialMotive',
+    'connectionAuthenticity', 'startingScenario', 'startingRelationship', 'sleepArchetype',
     'regulationProfile', 'conflictRecovery', 'alcoholPattern',
     'emotionExpression', 'ruminationStyle', 'reactionTiming', 'emotionalGranularity',
     'libidoEnabled', 'libidoBaseline', 'desirePattern', 'sexualConfidence',
@@ -37236,7 +38708,13 @@ Return ONLY one strict JSON object with exactly this schema:
   "contradictions": "self-image versus behavior, hypocrisies, blind spots and mixed motives",
   "vulnerabilities": "fears, shame, wounds, triggers and defensive strategies",
   "relationshipStyle": "trust, attachment, affection, boundaries, conflict, jealousy and repair behavior",
-  "relationshipContext": "how this person and the player know each other at the beginning, shared history, unresolved events, expectations and what each currently believes the relationship is",
+  "connectionType": "stranger, dating_match, friend, close_friend, coworker, classmate, neighbor, customer, creator_follower, subscriber, partner, ex, family, rival, or custom",
+  "connectionRole": "a precise description such as random Tinder match, regular customer, paying subscriber, coworker on the same team",
+  "playerKnowledge": "only facts this person genuinely knows about the player before the first exchange, including their source",
+  "initialMotive": "what this person actually wants from the connection at first, including mixed or instrumental motives",
+  "connectionAuthenticity": "genuine, mixed, performative, instrumental, or deceptive",
+  "relationshipContext": "durable shared history before this timeline; never put the one-time opening scene here",
+  "startingScenario": "the immediate opening situation used for the first response only, then remembered as the first shared episode",
   "startingRelationship": 0,
   "habits": "rituals, tastes, vices, pet peeves, sensory preferences and small physical tells",
   "routine": "credible weekday/weekend rhythm, recurring commitments and current real-life pressures",
@@ -37345,7 +38823,7 @@ Return ONLY strict JSON using this exact shape:
     {"id":"home","label":"specific human-readable place","kind":"home","detail":"sensory and practical continuity","travelMinutesFromHome":0}
   ],
   "socialCircle": [
-    {"id":"stable_id","name":"name","relationship":"friend, sibling, coworker, etc.","closeness":35,"description":"specific history and dynamic","currentTension":"active unresolved thread or empty"}
+    {"id":"stable_id","name":"name","relationship":"specific relationship label","role":"friend|family|coworker|classmate|partner|ex|neighbor|acquaintance|other","closeness":35,"trust":40,"tension":5,"influence":45,"contactFrequency":"daily|few_week|weekly|monthly|rare","description":"specific history and dynamic","currentTension":"active unresolved thread or empty","knowsPlayer":false,"playerContext":"only what this person truly knows about the player, or empty"}
   ],
   "wardrobe": [
     {"id":"stable_id","label":"short look name","context":"sleep|home|work|social|active|formal|weather","items":"specific reusable garments, footwear and accessories","notes":"fit, condition, repeats or situational variation"}
@@ -37578,6 +39056,15 @@ function applyBuiltCompanionLife(companion, built, atMs = Date.now()) {
 }
 
 function setupCompanionsLogic() {
+    const clipsBackdrop = document.getElementById('vh-clips-discovery-backdrop');
+    document.getElementById('open-vh-clips-btn')?.addEventListener('click', openCompanionDiscoveryClips);
+    document.getElementById('close-vh-clips-btn')?.addEventListener('click', closeCompanionDiscoveryClips);
+    clipsBackdrop?.addEventListener('click', event => {
+        if (event.target === clipsBackdrop) closeCompanionDiscoveryClips();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !clipsBackdrop?.classList.contains('hidden')) closeCompanionDiscoveryClips();
+    });
     const companionImportButton = document.getElementById('import-companion-btn');
     const companionImportInput = document.getElementById('import-companion-input');
     companionImportButton.onclick = () => companionImportInput.click();
@@ -37679,6 +39166,10 @@ function setupCompanionsLogic() {
     bindText('cs-routine', 'routine');
     bindText('cs-private-life', 'privateLife');
     bindText('cs-relationship-context', 'relationshipContext');
+    bindText('cs-connection-role', 'connectionRole');
+    bindText('cs-player-knowledge', 'playerKnowledge');
+    bindText('cs-initial-motive', 'initialMotive');
+    bindText('cs-starting-scenario', 'startingScenario');
     bindText('cs-intimacy-boundaries', 'intimacyBoundaries');
 
     document.getElementById('cs-age').oninput = (e) => {
@@ -37702,6 +39193,14 @@ function setupCompanionsLogic() {
         document.getElementById('cs-relationship-start-label').textContent = `${value > 0 ? '+' : ''}${value}`;
         document.getElementById('cs-relationship-current').textContent =
             `Current relationship: ${companionRelationshipDescription(companion.mood.relationship)} (${companion.mood.relationship > 0 ? '+' : ''}${companion.mood.relationship})${hasHistory ? ' — preserved separately from the starting value.' : ' — begins here until conversation changes it.'}`;
+    };
+    document.getElementById('cs-connection-type').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.connectionType = e.target.value;
+    };
+    document.getElementById('cs-connection-authenticity').onchange = (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.connectionAuthenticity = e.target.value;
     };
     document.getElementById('cs-photo-style').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
@@ -37895,6 +39394,13 @@ function setupCompanionsLogic() {
     document.getElementById('cs-initiative-mode').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
         if (companion) companion.initiativeMode = e.target.value;
+    };
+    document.getElementById('cs-always-on-enabled').onchange = async (e) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.alwaysOnEnabled = e.target.checked;
+        await saveState();
+        syncCompanionAlwaysOnRuntime({ announce: true }).catch(() => {});
     };
     document.getElementById('cs-web-access').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
@@ -38516,7 +40022,15 @@ function openCompanionSimulationDetails() {
         ['Warmth', companion.relationshipDynamics.warmth, -100, 100],
         ['Attraction', companion.relationshipDynamics.attraction, -100, 100],
         ['Resentment', companion.relationshipDynamics.resentment, 0, 100],
-        ['Stability', companion.relationshipDynamics.stability, 0, 100]
+        ['Stability', companion.relationshipDynamics.stability, 0, 100],
+        ['Familiarity', companion.relationshipDynamics.familiarity, 0, 100],
+        ['Respect', companion.relationshipDynamics.respect, -100, 100],
+        ['Comfort', companion.relationshipDynamics.comfort, 0, 100],
+        ['Dependence', companion.relationshipDynamics.dependence, 0, 100],
+        ['Fear', companion.relationshipDynamics.fear, 0, 100],
+        ['Obligation', companion.relationshipDynamics.obligation, 0, 100],
+        ['Power imbalance', companion.relationshipDynamics.powerImbalance, -100, 100],
+        ['Compatibility', companion.relationshipDynamics.compatibility, -100, 100]
     ];
     const pending = companion.commitments.filter(item => item.status === 'pending');
     const media = timeline.messages.filter(message =>
@@ -38527,6 +40041,21 @@ function openCompanionSimulationDetails() {
     const emotionState = advanceCompanionEmotionState(companion, nowMs);
     const expressedEmotions = companionExpressedEmotionVector(companion, emotionState);
     const sexuality = companionSexualDecisionState(companion, dynamics, nowMs);
+    const continuity = companionContinuity(companion);
+    const activeBeliefs = continuity.beliefs.filter(item => item.status === 'active').slice(-12).reverse();
+    const playerModel = continuity.playerModel.filter(item => item.status === 'active')
+        .sort((left, right) => right.confidence - left.confidence).slice(0, 14);
+    const activeBoundaries = continuity.boundaries.filter(item => item.status === 'active')
+        .sort((left, right) => right.sensitivity - left.sensitivity).slice(0, 12);
+    const truthLedger = continuity.truthLedger.slice(-10).reverse();
+    const milestones = continuity.milestones.slice(-12).reverse();
+    const activeIntentions = continuity.intentions.filter(item => ['planned', 'active', 'blocked'].includes(item.status))
+        .sort((left, right) => right.priority - left.priority).slice(0, 12);
+    const openThreads = continuity.openThreads.filter(item => item.status !== 'resolved')
+        .sort((left, right) => right.salience - left.salience).slice(0, 12);
+    const episodes = continuity.episodes.filter(item => item.status !== 'archived')
+        .sort((left, right) => (right.importance - left.importance) || (right.updatedAt - left.updatedAt)).slice(0, 12);
+    const inbox = timeline.messages.filter(message => message.role === 'user' && !message.invalidated).slice(-12).reverse();
     const bodyMeters = [
         ['Energy', dynamics.energy],
         ['Stress', dynamics.stress],
@@ -38549,6 +40078,7 @@ function openCompanionSimulationDetails() {
         <nav class="companion-sim-tabs" aria-label="Connection and life sections">
             <button type="button" class="active" data-sim-tab="overview">Overview</button>
             <button type="button" data-sim-tab="feelings">Feelings</button>
+            <button type="button" data-sim-tab="agency">Agency</button>
             <button type="button" data-sim-tab="history">History &amp; media</button>
         </nav>
         <div class="companion-sim-panel active" data-sim-panel="overview">
@@ -38594,6 +40124,28 @@ function openCompanionSimulationDetails() {
                 <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Directed at you</span><h3>Toward the player</h3></div></div>${COMPANION_EMOTIONS.map(emotion => meter(emotion, emotionState.towardPlayer[emotion])).join('')}</section>
                 <details class="companion-sim-card companion-sim-advanced"><summary>How their emotions are processed</summary><p>${escapeHTML(companion.emotionExpression)} expression · ${escapeHTML(companion.ruminationStyle)} rumination · ${escapeHTML(companion.reactionTiming)} reactions · ${escapeHTML(companion.emotionalGranularity)} granularity.</p>${emotionState.lastAppraisal.summary ? `<p><strong>Last appraisal:</strong> ${escapeHTML(emotionState.lastAppraisal.summary)}</p>` : '<p>No structured appraisal yet.</p>'}</details>
                 <details class="companion-sim-card companion-sim-advanced"><summary>Adult desire diagnostics</summary>${sexuality.enabled ? `<p>Desire is separate from trust and never implies consent or action.</p>${[['Drive',sexuality.desire],['Arousal',sexuality.arousal],['Frustration',sexuality.frustration],['Expression impulse',sexuality.impulse],['Afterglow',dynamics.postIntimacyCalm]].map(([label,value]) => meter(label,value)).join('')}` : '<p>Adult desire simulation is disabled for this human.</p>'}</details>
+            </div>
+        </div>
+        <div class="companion-sim-panel" data-sim-panel="agency">
+            <section class="companion-agency-why">
+                <div><span>Private decision trace</span><h3>${continuity.conversationGoal?.type ? `Goal: ${escapeHTML(continuity.conversationGoal.type.replaceAll('_', ' '))}` : 'Why they did that'}</h3></div>
+                ${continuity.lastDecision.createdAt ? `<strong>${escapeHTML(continuity.lastDecision.decision || 'No visible action')}</strong>
+                    <p>${continuity.conversationGoal?.objective ? `<b>Objective:</b> ${escapeHTML(continuity.conversationGoal.objective)}<br>` : ''}${continuity.lastDecision.perceived ? `<b>Perceived:</b> ${escapeHTML(continuity.lastDecision.perceived)}<br>` : ''}${continuity.lastDecision.interpretation ? `<b>Interpreted:</b> ${escapeHTML(continuity.lastDecision.interpretation)} <em>${Math.round(continuity.lastDecision.confidence)}% confidence</em>` : 'No private interpretation was recorded.'}</p>
+                    <div class="companion-agency-pressure-list">${continuity.lastDecision.pressures.length ? continuity.lastDecision.pressures.map(item => `<span>${escapeHTML(item)}</span>`).join('') : '<span>No strong competing pressure</span>'}</div>
+                    <small>${escapeHTML(continuity.lastDecision.source)} decision · ${escapeHTML(new Date(continuity.lastDecision.createdAt).toLocaleString())}</small>`
+                    : empty('No decision trace exists yet. It will appear when they receive, read, answer, ignore or initiate contact.')}
+            </section>
+            <div class="companion-sim-grid companion-agency-grid">
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Perception boundary</span><h3>Inbox</h3></div><b>${inbox.length}</b></div><div class="companion-sim-list companion-inbox-list">${inbox.length ? inbox.map(message => `<article><strong>${escapeHTML(String(message.text || `[${message.type}]`).slice(0, 180))}</strong><small><span class="companion-inbox-state ${escapeHTML(message.deliveryState || 'sent')}">${escapeHTML(message.deliveryState || 'sent')}</span> · sent ${escapeHTML(companionTimestampLabel(companion, message.timestamp))}${message.readAt ? ` · seen ${escapeHTML(companionTimestampLabel(companion, message.readAt))}` : ''}</small></article>`).join('') : empty('No player messages in this timeline.')}</div></section>
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Fallible interpretations</span><h3>Beliefs</h3></div><b>${activeBeliefs.length}</b></div><div class="companion-sim-list">${activeBeliefs.length ? activeBeliefs.map(item => `<article><strong>${escapeHTML(item.proposition)}</strong><small>${escapeHTML(item.subject)} · ${Math.round(item.confidence)}% confidence${item.basis ? ` · ${escapeHTML(item.basis)}` : ''}</small></article>`).join('') : empty('No private beliefs established yet.')}</div></section>
+                <section class="companion-sim-card companion-sim-card-wide"><div class="companion-sim-card-head"><div><span>Claims are not proof</span><h3>Model of the player</h3></div><b>${playerModel.length}</b></div><div class="companion-sim-list">${playerModel.length ? playerModel.map(item => `<article><strong>${escapeHTML(item.statement)}</strong><small>${escapeHTML(item.kind.replaceAll('_', ' '))} · source ${escapeHTML(item.source.replaceAll('_', ' '))} · ${Math.round(item.confidence)}% confidence</small></article>`).join('') : empty('They have not formed a durable model of the player yet.')}</div></section>
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Interaction history</span><h3>Boundaries</h3></div><b>${activeBoundaries.length}</b></div><div class="companion-sim-list">${activeBoundaries.length ? activeBoundaries.map(item => `<article><strong>${escapeHTML(item.topic)} · ${escapeHTML(item.strength)}</strong><small>${escapeHTML(item.rule)}<br>tested ${item.tests} · respected ${item.respected} · violated ${item.violated}</small></article>`).join('') : empty('No interaction-specific boundaries recorded yet.')}</div></section>
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Private continuity</span><h3>Truth &amp; disclosure</h3></div><b>${truthLedger.length}</b></div><div class="companion-sim-list">${truthLedger.length ? truthLedger.map(item => `<article><strong>${escapeHTML(item.truth)}</strong><small>${escapeHTML(item.disclosure)}${item.toldPlayer ? `<br>Told player: ${escapeHTML(item.toldPlayer)}` : ''}${item.coverStory ? `<br>Cover story: ${escapeHTML(item.coverStory)}` : ''}</small></article>`).join('') : empty('No truth/cover-story split has been recorded.')}</div></section>
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Plans, not facts</span><h3>Intentions</h3></div><b>${activeIntentions.length}</b></div><div class="companion-sim-list">${activeIntentions.length ? activeIntentions.map(item => `<article><strong>${escapeHTML(item.action)}</strong><small>${escapeHTML(item.status)} · priority ${Math.round(item.priority)}${item.dueAt ? ` · due ${escapeHTML(companionTimestampLabel(companion, item.dueAt))}` : ''}${item.reason ? `<br>${escapeHTML(item.reason)}` : ''}</small></article>`).join('') : empty('No active private intentions.')}</div></section>
+                <section class="companion-sim-card"><div class="companion-sim-card-head"><div><span>Still unresolved</span><h3>Open threads</h3></div><b>${openThreads.length}</b></div><div class="companion-sim-list">${openThreads.length ? openThreads.map(item => `<article><strong>${escapeHTML(item.topic)}</strong><small>${escapeHTML(item.status)} · salience ${Math.round(item.salience)}${item.stakes ? `<br>${escapeHTML(item.stakes)}` : ''}</small></article>`).join('') : empty('No unresolved private threads.')}</div></section>
+                <section class="companion-sim-card companion-sim-card-wide"><div class="companion-sim-card-head"><div><span>Experience, not transcript</span><h3>Autobiographical episodes</h3></div><b>${episodes.length}</b></div><div class="companion-sim-list companion-episode-list">${episodes.length ? episodes.map(item => `<article><div><strong>${escapeHTML(item.title)}</strong><p>${escapeHTML(item.summary)}</p><small>${item.emotionalMeaning ? `${escapeHTML(item.emotionalMeaning)}<br>` : ''}${escapeHTML(item.status)} · importance ${Math.round(item.importance)}/100${item.emotionalTone ? ` · ${escapeHTML(item.emotionalTone)}` : ''} · ${escapeHTML(new Date(item.createdAt).toLocaleString())}</small></div></article>`).join('') : empty('Significant shared experiences will form here naturally.')}</div></section>
+                <section class="companion-sim-card companion-sim-card-wide"><div class="companion-sim-card-head"><div><span>Relationship landmarks</span><h3>Milestones</h3></div><b>${milestones.length}</b></div><div class="companion-sim-list">${milestones.length ? milestones.map(item => `<article><strong>${escapeHTML(item.type.replaceAll('_', ' '))}</strong><small>${escapeHTML(item.summary)} · ${escapeHTML(new Date(item.createdAt).toLocaleString())}</small></article>`).join('') : empty('No firsts, ruptures or repairs have been recorded yet.')}</div></section>
+                <section class="companion-sim-card companion-sim-card-wide"><div class="companion-sim-card-head"><div><span>Canonical chain</span><h3>Perception &amp; action ledger</h3></div><b>${continuity.eventLedger.length}</b></div><div class="companion-agency-ledger">${continuity.eventLedger.length ? continuity.eventLedger.slice(-30).reverse().map(item => `<article><span>${escapeHTML(item.type.replaceAll('_', ' '))}</span><div><strong>${escapeHTML(item.summary)}</strong>${item.interpretation ? `<p>${escapeHTML(item.interpretation)} · ${Math.round(item.certainty)}% confidence</p>` : ''}<small>${escapeHTML(new Date(item.createdAt).toLocaleString())}</small></div></article>`).join('') : empty('The continuity ledger is empty.')}</div></section>
             </div>
         </div>
         <div class="companion-sim-panel" data-sim-panel="history">
@@ -38791,6 +40343,105 @@ function companionBubbleHTML(companion, message) {
 
 let companionSocialTab = 'feed';
 const companionSocialPanelVisibility = new Map();
+
+function companionClipCountLabel(value) {
+    const count = Math.max(0, Number(value) || 0);
+    if (count >= 1000000) return `${(count / 1000000).toFixed(count >= 10000000 ? 0 : 1)}M`;
+    if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}K`;
+    return String(count);
+}
+
+function bindCompanionClipViewer(companion, content, readyJobs) {
+    const feed = content.querySelector('.companion-clips-feed');
+    if (!feed) return;
+    const cards = [...feed.querySelectorAll('.companion-clip-card.ready')];
+    const videos = cards.map(card => card.querySelector('video')).filter(Boolean);
+    let activeCard = cards[0] || null;
+    let soundOn = false;
+
+    const setPlaying = async (card, shouldPlay = true) => {
+        if (!card) return;
+        activeCard = card;
+        cards.forEach(item => item.classList.toggle('is-active', item === card));
+        videos.forEach(video => {
+            video.muted = !soundOn;
+            if (video !== card.querySelector('video')) video.pause();
+        });
+        const video = card.querySelector('video');
+        if (!video) return;
+        card.querySelector('[data-clip-sound]')?.classList.toggle('sound-on', soundOn);
+        card.querySelector('[data-clip-sound]')?.setAttribute('aria-label', soundOn ? 'Mute clip' : 'Unmute clip');
+        card.querySelector('[data-clip-sound]')?.replaceChildren(document.createTextNode(soundOn ? '🔊' : '🔇'));
+        if (!shouldPlay) {
+            video.pause();
+        } else if (video.paused) {
+            try { await video.play(); } catch (_) { card.classList.add('needs-play'); }
+        }
+    };
+
+    const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+        const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible?.intersectionRatio >= .62) setPlaying(visible.target);
+    }, { root: feed, threshold: [.2, .62, .9] }) : null;
+    cards.forEach(card => observer?.observe(card));
+
+    cards.forEach((card, index) => {
+        const video = card.querySelector('video');
+        const job = readyJobs.find(item => item.id === card.dataset.clipJob);
+        if (!video || !job) return;
+        const updateProgress = () => {
+            const ratio = video.duration ? video.currentTime / video.duration : 0;
+            const bar = card.querySelector('[data-clip-playback-progress]');
+            if (bar) bar.style.width = `${livingClamp(ratio * 100, 0, 100)}%`;
+            const time = card.querySelector('[data-clip-time]');
+            if (time) time.textContent = `${Math.floor(video.currentTime / 60)}:${String(Math.floor(video.currentTime % 60)).padStart(2, '0')}`;
+        };
+        video.addEventListener('timeupdate', updateProgress);
+        video.addEventListener('playing', () => card.classList.remove('needs-play', 'is-buffering'));
+        video.addEventListener('waiting', () => card.classList.add('is-buffering'));
+        video.addEventListener('canplay', () => card.classList.remove('is-buffering'));
+        video.addEventListener('ended', () => {
+            video.currentTime = 0;
+            if (card === activeCard) setPlaying(card);
+        });
+        video.addEventListener('pause', () => { if (!video.ended) card.classList.add('needs-play'); });
+        card.querySelector('[data-clip-toggle-play]')?.addEventListener('click', () => {
+            if (video.paused) setPlaying(card); else video.pause();
+        });
+        card.querySelector('[data-clip-sound]')?.addEventListener('click', event => {
+            event.stopPropagation(); soundOn = !soundOn; setPlaying(card, !video.paused);
+        });
+        card.querySelector('[data-clip-like]')?.addEventListener('click', async event => {
+            event.stopPropagation();
+            job.likedByPlayer = !job.likedByPlayer;
+            const button = event.currentTarget;
+            button.classList.toggle('liked', job.likedByPlayer);
+            button.setAttribute('aria-label', job.likedByPlayer ? 'Unlike clip' : 'Like clip');
+            button.querySelector('b').textContent = job.likedByPlayer ? '♥' : '♡';
+            button.querySelector('span').textContent = companionClipCountLabel(job.likeCount + (job.likedByPlayer ? 1 : 0));
+            companion.socialRelationship.engagement = livingClamp(companion.socialRelationship.engagement + (job.likedByPlayer ? 1 : -1), 0, 100);
+            recordCompanionSocialInteraction(companion, {
+                id: job.id, text: job.caption || job.concept || 'video clip'
+            }, job.likedByPlayer ? 'liked' : 'unliked');
+            persistCompanionRuntime(companion); await saveState();
+        });
+        card.querySelector('[data-clip-prev]')?.addEventListener('click', () => cards[Math.max(0, index - 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        card.querySelector('[data-clip-next]')?.addEventListener('click', () => cards[Math.min(cards.length - 1, index + 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    });
+    feed.addEventListener('keydown', event => {
+        const index = Math.max(0, cards.indexOf(activeCard));
+        if (event.key === 'ArrowDown') {
+            event.preventDefault(); cards[Math.min(cards.length - 1, index + 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault(); cards[Math.max(0, index - 1)]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else if (event.key === ' ') {
+            event.preventDefault();
+            const video = activeCard?.querySelector('video');
+            if (video?.paused) setPlaying(activeCard); else video?.pause();
+        }
+    });
+    if (cards[0]) setPlaying(cards[0]);
+}
 
 function companionSocialPanelKey(companion) {
     const timeline = getActiveCompanionTimeline(companion?.id);
@@ -39056,6 +40707,22 @@ function companionSocialCommentsHTML(post) {
         </form>`;
 }
 
+function recordCompanionSocialInteraction(companion, post, action, detail = '', nowMs = Date.now()) {
+    const subject = post?.text || post?.category || (post?.photo ? 'photo post' : 'social post');
+    const summary = `The player ${action} ${companion.name}'s ${String(subject).slice(0, 180)}${detail ? `: ${detail}` : ''}.`;
+    companionRecordContinuityEvent(companion, {
+        type: 'social_interaction', summary, certainty: 100,
+        createdAt: nowMs, perceivedAt: nowMs,
+        dedupeKey: `social:${post?.id || 'profile'}:${action}:${detail}:${nowMs}`
+    });
+    companionSetDecisionEvidence(companion, {
+        decision: 'Remember the social interaction and decide naturally whether to react later',
+        perceived: summary, interpretation: '',
+        pressures: companionDecisionPressures(companion, nowMs),
+        confidence: 100, source: 'kernel', createdAt: nowMs
+    });
+}
+
 async function addCompanionSocialComment(companion, post, text) {
     const commentText = String(text || '').trim().slice(0, 500);
     if (!commentText) return false;
@@ -39072,6 +40739,7 @@ async function addCompanionSocialComment(companion, post, text) {
         createdAt: Date.now(), source: 'relationship'
     }));
     companion.lifeEvents = companion.lifeEvents.slice(-200);
+    recordCompanionSocialInteraction(companion, post, 'commented on', `“${commentText}”`);
     persistCompanionRuntime(companion);
     await saveState();
     return true;
@@ -39163,37 +40831,52 @@ function renderCompanionSocialPanel(companion) {
         tab.setAttribute('aria-selected', String(active));
         tab.textContent = tabLabels[tab.dataset.companionSocialTab];
     });
+    content.classList.toggle('clips-mode', companionSocialTab === 'clips');
     if (companionSocialTab === 'clips') {
         const jobs = [...(companion.videoJobs || [])].reverse();
-        content.innerHTML = `<section class="companion-clips-intro">
-            <div class="companion-clips-logo">▶</div><div><strong>Clips</strong><span>Vertical moments ${companion.name || 'they'} agreed to make.</span></div>
-            <button type="button" data-request-companion-clip ${companion.allowVideoClips ? '' : 'disabled'}>＋ Request a clip</button>
-        </section>
-        ${!companion.allowVideoClips ? '<div class="companion-social-empty">Clips are off for this human. Enable them in Studio → Video & Clips.</div>' : ''}
-        <div class="companion-clips-feed">${jobs.map(job => `<article class="companion-clip-card" data-clip-job="${escapeHTML(job.id)}">
-            <div class="companion-clip-stage">
-                ${job.status === 'ready' ? '<div class="companion-clip-video-slot" data-clip-video-slot></div>' : `<div class="companion-clip-progress-visual"><span>${escapeHTML(String(Math.round(job.progress)))}%</span><small>${escapeHTML(job.status)}</small></div>`}
+        const readyJobs = jobs.filter(job => job.status === 'ready' && (job.assetId || job.bundledSrc || job.outputUrl));
+        const queueJobs = jobs.filter(job => !readyJobs.includes(job));
+        const avatarStyle = companion.profilePhoto ? `background-image:url(&quot;${escapeHTML(companion.profilePhoto)}&quot;)` : '';
+        content.innerHTML = `<div class="companion-clips-shell">
+            <div class="companion-clips-toolbar">
+                <strong>Clips</strong>
+                <button type="button" data-request-companion-clip ${companion.allowVideoClips ? '' : 'disabled'} aria-label="Request a new clip">＋</button>
             </div>
-            <div class="companion-clip-meta"><span>${escapeHTML(job.clipType.replace('_', ' '))} · ${escapeHTML(job.cameraRig)} · ${escapeHTML(job.resolution)}</span><strong>${escapeHTML(job.concept || job.requestText)}</strong>
-                ${job.reason ? `<p>${escapeHTML(job.reason)}</p>` : ''}${job.error ? `<p class="companion-clip-error">${escapeHTML(job.error)}</p>` : ''}
-                <div class="companion-clip-progress"><i style="width:${escapeHTML(String(job.progress))}%"></i></div>
-                ${job.status === 'accepted' ? `<button type="button" class="primary" data-generate-clip="${escapeHTML(job.id)}">Generate clip · uses ${escapeHTML(videoProviderDisplayName(job.provider))}</button>` : ''}
-                ${job.status === 'failed' ? `<button type="button" data-generate-clip="${escapeHTML(job.id)}">Retry generation</button>` : ''}
-                ${job.status === 'requested' ? '<small>Waiting for their response in chat. No generation call has been made.</small>' : ''}
-                ${job.status === 'refused' ? '<small>They declined this request. No generation call was made.</small>' : ''}
-            </div>
-        </article>`).join('')}</div>`;
+            ${!companion.allowVideoClips && !readyJobs.length ? '<div class="companion-clips-disabled">New clip requests are off. Enable them in Studio → Video & Clips.</div>' : ''}
+            ${readyJobs.length ? `<div class="companion-clips-feed" tabindex="0" aria-label="Vertical clips. Scroll for the next clip.">${readyJobs.map((job, index) => `<article class="companion-clip-card ready" data-clip-job="${escapeHTML(job.id)}">
+                <div class="companion-clip-stage">
+                    <div class="companion-clip-video-slot" data-clip-video-slot></div>
+                    <button type="button" class="companion-clip-play-hitbox" data-clip-toggle-play aria-label="Play or pause clip"><span>▶</span></button>
+                    <div class="companion-clip-shade"></div>
+                    <div class="companion-clip-creator">
+                        <span class="companion-clip-avatar" style="${avatarStyle}">${companion.profilePhoto ? '' : escapeHTML(companionInitials(companion.name))}</span>
+                        <div><strong>@${escapeHTML((companion.name || 'virtualhuman').replace(/[^a-z0-9]+/gi, '').toLowerCase())}</strong><p>${escapeHTML(job.caption || job.concept || job.requestText || 'A new moment.')}</p><small>♫ original sound · ${escapeHTML(companion.name || 'Virtual Human')}</small></div>
+                    </div>
+                    <div class="companion-clip-actions">
+                        <button type="button" data-clip-like class="${job.likedByPlayer ? 'liked' : ''}" aria-label="${job.likedByPlayer ? 'Unlike' : 'Like'} clip"><b>${job.likedByPlayer ? '♥' : '♡'}</b><span>${escapeHTML(companionClipCountLabel(job.likeCount + (job.likedByPlayer ? 1 : 0)))}</span></button>
+                        <button type="button" data-clip-sound aria-label="Unmute clip">🔇</button>
+                    </div>
+                    <div class="companion-clip-nav">
+                        <button type="button" data-clip-prev ${index === 0 ? 'disabled' : ''} aria-label="Previous clip">⌃</button>
+                        <button type="button" data-clip-next ${index === readyJobs.length - 1 ? 'disabled' : ''} aria-label="Next clip">⌄</button>
+                    </div>
+                    <div class="companion-clip-playback"><i data-clip-playback-progress></i></div><time data-clip-time>0:00</time>
+                </div>
+            </article>`).join('')}</div>` : `<div class="companion-clips-empty"><span>▶</span><strong>No clips yet</strong><p>Request a vertical moment. ${companion.name || 'They'} can accept, reshape or refuse it before you spend credits.</p><button type="button" data-request-companion-clip ${companion.allowVideoClips ? '' : 'disabled'}>Request a clip</button></div>`}
+            ${queueJobs.length ? `<details class="companion-clips-queue"><summary><span>Clip requests</span><b>${queueJobs.length}</b></summary><div>${queueJobs.map(job => `<article data-clip-job="${escapeHTML(job.id)}"><div><strong>${escapeHTML(job.caption || job.concept || job.requestText || job.clipType)}</strong><span>${escapeHTML(job.status)} · ${escapeHTML(String(Math.round(job.progress)))}%</span></div><div class="companion-clip-progress"><i style="width:${escapeHTML(String(job.progress))}%"></i></div>${job.error ? `<p>${escapeHTML(job.error)}</p>` : ''}${job.status === 'accepted' ? `<button type="button" data-generate-clip="${escapeHTML(job.id)}">Generate · ${escapeHTML(videoProviderDisplayName(job.provider))}</button>` : ''}${job.status === 'failed' ? `<button type="button" data-generate-clip="${escapeHTML(job.id)}">Retry</button>` : ''}</article>`).join('')}</div></details>` : ''}
+        </div>`;
         content.querySelector('[data-request-companion-clip]')?.addEventListener('click', () => requestCompanionClip(companion));
+        content.querySelector('.companion-clips-empty [data-request-companion-clip]')?.addEventListener('click', () => requestCompanionClip(companion));
         content.querySelectorAll('[data-generate-clip]').forEach(button => {
             button.onclick = () => runCompanionVideoJob(companion, companion.videoJobs.find(job => job.id === button.dataset.generateClip));
         });
-        jobs.filter(job => job.status === 'ready' && job.assetId).forEach(async job => {
+        Promise.all(readyJobs.map(async job => {
             const card = content.querySelector(`[data-clip-job="${CSS.escape(job.id)}"]`);
             const slot = card?.querySelector('[data-clip-video-slot]');
             if (!slot) return;
-            const src = await companionVideoAssetUrl(job.assetId);
-            if (src && slot.isConnected) slot.innerHTML = `<video controls playsinline preload="metadata" src="${escapeHTML(src)}"></video>`;
-        });
+            const src = await companionVideoJobSource(job);
+            if (src && slot.isConnected) slot.innerHTML = `<video playsinline muted preload="auto" src="${escapeHTML(src)}"${job.poster ? ` poster="${escapeHTML(job.poster)}"` : ''}></video>`;
+        })).then(() => { if (content.isConnected) bindCompanionClipViewer(companion, content, readyJobs); });
         return;
     }
     const posts = companion.socialPosts.slice().sort((left, right) => right.createdAt - left.createdAt);
@@ -39250,6 +40933,8 @@ function renderCompanionSocialPanel(companion) {
             post.likedByPlayer = !post.likedByPlayer;
             post.likedAt = post.likedByPlayer ? Date.now() : 0;
             companion.socialRelationship.engagement = livingClamp(companion.socialRelationship.engagement + (post.likedByPlayer ? 1 : -1), 0, 100);
+            recordCompanionSocialInteraction(companion, post, post.likedByPlayer ? 'liked' : 'unliked');
+            persistCompanionRuntime(companion);
             await saveState();
             renderCompanionSocialPanel(companion);
         };
@@ -39273,6 +40958,7 @@ function renderCompanionSocialPanel(companion) {
                 createdAt: Date.now(), source: 'relationship'
             }));
             companion.lifeEvents = companion.lifeEvents.slice(-200);
+            recordCompanionSocialInteraction(companion, post, 'unlocked', `${amount} ${companion.socialCurrency}`);
             persistCompanionRuntime(companion); await saveState(); renderCompanionSocialPanel(companion);
             showToast(`Unlocked for ${amount} ${companion.socialCurrency}. This is fictional roleplay currency.`, 'success');
         };
@@ -39292,6 +40978,7 @@ function renderCompanionSocialPanel(companion) {
                 createdAt: Date.now(), source: 'relationship'
             }));
             companion.lifeEvents = companion.lifeEvents.slice(-200);
+            recordCompanionSocialInteraction(companion, post, 'tipped on', `${amount} ${companion.socialCurrency}`);
             persistCompanionRuntime(companion); await saveState(); renderCompanionSocialPanel(companion);
             showToast(`${companion.name} can notice your ${amount} ${companion.socialCurrency} tip.`, 'success');
         };
@@ -39581,14 +41268,212 @@ function weightedCompanionWildcard(deck, seed) {
     return usable[usable.length - 1];
 }
 
+function companionSocialContactIntervalMs(person, seed) {
+    const ranges = {
+        daily: [18, 34], few_week: [42, 90], weekly: [120, 240],
+        monthly: [480, 960], rare: [960, 2160]
+    }[person.contactFrequency] || [120, 240];
+    return (ranges[0] + companionSeededRoll(seed) * (ranges[1] - ranges[0])) * 60 * 60 * 1000;
+}
+
+function companionSocialWorldState(companion) {
+    const life = companion.lifeProfile || normalizeCompanionLifeProfile({});
+    const runtime = companion.lifeRuntime ||= normalizeCompanionLifeRuntime({}, life.socialCircle);
+    runtime.socialWorld = normalizeCompanionSocialWorldRuntime(runtime.socialWorld, life.socialCircle);
+    return runtime.socialWorld;
+}
+
+/**
+ * Advance the supporting cast without a model call. This deliberately changes
+ * only bounded relationship pressure and ordinary contact timing. It never
+ * fabricates a concrete secret, catastrophe, promise, or player action.
+ */
+function advanceCompanionSocialWorld(companion, nowMs = Date.now(), options = {}) {
+    if (!companion.lifeProfile?.initializedAt) return [];
+    const world = companionSocialWorldState(companion);
+    const startAt = world.lastAdvancedAt || companion.lifeProfile.initializedAt || nowMs;
+    const maxCatchupMs = livingClamp(Number(options.maxDays) || 28, 1, 90) * 86400000;
+    const boundedStart = Math.max(startAt, nowMs - maxCatchupMs);
+    const firstDay = Math.floor(boundedStart / 86400000);
+    const lastDay = Math.floor(nowMs / 86400000);
+    const events = [];
+
+    for (const relation of world.people) {
+        const person = companion.lifeProfile.socialCircle.find(item => item.id === relation.personId);
+        if (!person) continue;
+        if (!relation.nextInteractionAt) {
+            relation.nextInteractionAt = boundedStart + companionSocialContactIntervalMs(
+                person, `${companion.lifeProfile.seed}|social-first|${person.id}|${firstDay}`);
+        }
+        let guard = 0;
+        while (relation.nextInteractionAt <= nowMs && guard++ < 40) {
+            const at = relation.nextInteractionAt;
+            const dayKey = Math.floor(at / 86400000);
+            const warmthRoll = companionSeededRoll(`${companion.lifeProfile.seed}|social-tone|${person.id}|${dayKey}`);
+            const closenessDelta = warmthRoll < 0.16 ? -2 : warmthRoll > 0.78 ? 2 : warmthRoll > 0.58 ? 1 : 0;
+            const tensionDelta = warmthRoll < 0.10 ? 2 : warmthRoll < 0.24 ? 1 : warmthRoll > 0.76 ? -1 : 0;
+            relation.closeness = livingClamp(relation.closeness + closenessDelta, -100, 100);
+            relation.trust = livingClamp(relation.trust + Math.sign(closenessDelta), -100, 100);
+            relation.tension = livingClamp(relation.tension + tensionDelta, 0, 100);
+            relation.lastInteractionAt = at;
+            relation.currentSituation = tensionDelta > 0
+                ? 'Their latest ordinary contact left some friction.'
+                : closenessDelta > 0 ? 'Recent contact felt easy or supportive.'
+                : 'They remain part of each other’s ordinary life.';
+            const meaningful = Math.abs(closenessDelta) >= 2 || tensionDelta >= 2;
+            const summary = meaningful
+                ? `${companion.name} and ${person.name} had ordinary contact that ${closenessDelta > 0 ? 'brought them a little closer' : 'created some distance'}${tensionDelta > 0 ? ' and left mild tension' : ''}.`
+                : `${companion.name} and ${person.name} stayed in ordinary contact.`;
+            const event = {
+                id: livingId('vh_social_event', `${companion.id}|${person.id}|${dayKey}|${guard}`),
+                summary, closenessDelta, tensionDelta, createdAt: at
+            };
+            relation.relationshipEvents.push(event);
+            relation.relationshipEvents = relation.relationshipEvents.slice(-30);
+            world.interactions.push({ id: event.id, personId: person.id, summary, createdAt: at });
+            if (meaningful) events.push({ ...event, person, relation });
+
+            // Gossip is allowed only when it can point back to an authored
+            // tension. The deterministic engine never invents a secret or a
+            // fresh accusation just to make the social graph look active.
+            const gossipSubject = companion.lifeProfile.socialCircle.find(subject =>
+                subject.id !== person.id && subject.currentTension
+                && companionSeededRoll(`${companion.lifeProfile.seed}|gossip-subject|${person.id}|${subject.id}|${dayKey}`) > 0.82);
+            if (meaningful && gossipSubject) {
+                const gossipId = livingId('vh_gossip', `${companion.id}|${person.id}|${gossipSubject.id}|${dayKey}`);
+                if (!world.gossip.some(item => item.id === gossipId)) {
+                    world.gossip.push({
+                        id: gossipId,
+                        sourcePersonId: person.id,
+                        subjectPersonId: gossipSubject.id,
+                        summary: `${person.name} brought up the already-established situation involving ${gossipSubject.name}: ${gossipSubject.currentTension}`,
+                        createdAt: at,
+                        expiresAt: at + 14 * 86400000
+                    });
+                }
+            }
+            relation.nextInteractionAt = at + companionSocialContactIntervalMs(
+                person, `${companion.lifeProfile.seed}|social-next|${person.id}|${dayKey}|${guard}`);
+        }
+    }
+    world.interactions = world.interactions.slice(-120);
+    world.gossip = world.gossip.filter(item => !item.expiresAt || item.expiresAt > nowMs).slice(-40);
+    world.lastAdvancedAt = nowMs;
+
+    if (!options.preview) {
+        events.slice(-3).forEach(event => {
+            const id = `vh_social_${event.id}`.slice(0, 100);
+            if (!companion.lifeEvents.some(item => item.id === id)) {
+                companion.lifeEvents.push(normalizeCompanionLifeEvent({
+                    id, text: event.summary, createdAt: event.createdAt, source: 'relationship'
+                }));
+            }
+            const influence = livingClamp(Number(event.person.influence) || 35, 0, 100) / 100;
+            applyCompanionMoodUpdate(companion, {
+                valence_change: Math.round(event.closenessDelta * influence),
+                arousal_change: Math.round(Math.max(0, event.tensionDelta) * influence),
+                relationship_change: 0,
+                stress_change: Math.round(event.tensionDelta * influence),
+                social_need_change: event.closenessDelta > 0 ? -1 : 1,
+                mood_label: companion.mood?.label || 'content'
+            }, event.createdAt);
+        });
+        companion.lifeRuntime.simulationLedger.push(...events.slice(-8).map(event => ({
+            id: event.id, kind: 'social', summary: event.summary, createdAt: event.createdAt, costCalls: 0
+        })));
+        companion.lifeRuntime.simulationLedger = companion.lifeRuntime.simulationLedger.slice(-500);
+        companion.lifeEvents = companion.lifeEvents.slice(-200);
+    }
+    return events;
+}
+
+function companionAutonomyHealthReport(companion, days = 28, nowMs = Date.now()) {
+    const horizonDays = livingClamp(Math.round(Number(days) || 28), 7, 84);
+    const life = companion.lifeProfile || normalizeCompanionLifeProfile({});
+    const findings = [];
+    let impossibleTravel = 0;
+    let scheduleOverlaps = 0;
+    for (let day = 0; day < 7; day += 1) {
+        const blocks = life.weeklySchedule.filter(block => block.days.includes(day)).sort((a, b) => a.startMinute - b.startMinute);
+        for (let index = 1; index < blocks.length; index += 1) {
+            const previous = blocks[index - 1];
+            const current = blocks[index];
+            if (current.startMinute < previous.endMinute) scheduleOverlaps += 1;
+            const from = life.places.find(place => place.id === previous.placeId);
+            const to = life.places.find(place => place.id === current.placeId);
+            if (from && to && from.id !== to.id) {
+                const required = Math.abs((from.travelMinutesFromHome || 0) - (to.travelMinutesFromHome || 0));
+                if (current.startMinute - previous.endMinute < Math.max(5, required)) impossibleTravel += 1;
+            }
+        }
+    }
+    const postsPerDay = { manual: 0, rare: 1 / 14, weekly: 1 / 7, few_week: 1 / 3, daily: 1, active: 2.4 }[companion.socialPostFrequency] || 0;
+    const initiativePerDay = { off: 0, low: 0.65, balanced: 1.7, high: 4 }[companion.initiativeMode] || 0;
+    const estimatedPosts = Math.round(horizonDays * postsPerDay);
+    const estimatedMessages = Math.round(horizonDays * initiativePerDay);
+    const maximumCalls = estimatedPosts + estimatedMessages;
+    const recentPostTexts = (companion.socialPosts || []).slice(-30)
+        .map(post => String(post.text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+    const repeatedPosts = recentPostTexts.length - new Set(recentPostTexts).size;
+    const liveSocial = companionSocialWorldState(companion);
+    const relationshipJumps = liveSocial.people.reduce((sum, relation) => sum
+        + relation.relationshipEvents.filter(event => Math.abs(event.closenessDelta) > 3 || Math.abs(event.tensionDelta) > 3).length, 0);
+    const recentReplies = getCompanionThread(companion.id).filter(message => message.role === 'companion' && !message.invalidated).slice(-20);
+    const narratedReplies = recentReplies.filter(message => /(^|\n)\s*(?:\*[^*]+\*|\[[^\]]+\])/.test(String(message.text || ''))).length;
+    const averageReplyLength = recentReplies.length
+        ? recentReplies.reduce((sum, message) => sum + String(message.text || '').length, 0) / recentReplies.length : 0;
+    const terseStyle = /\b(short|brief|terse|dry|one[- ]?line|minimal)\b/i.test(companion.textingStyle || '');
+    if (!life.initializedAt) findings.push({ severity: 'warning', text: 'Active Life is not initialized; availability will rely on the simpler fallback routine.' });
+    if (!life.socialCircle.length) findings.push({ severity: 'info', text: 'No supporting cast is authored, so off-screen social pressure will be limited.' });
+    if (scheduleOverlaps) findings.push({ severity: 'warning', text: `${scheduleOverlaps} weekly schedule overlap${scheduleOverlaps === 1 ? '' : 's'} may produce conflicting commitments.` });
+    if (impossibleTravel) findings.push({ severity: 'warning', text: `${impossibleTravel} transition${impossibleTravel === 1 ? '' : 's'} leave less travel time than the authored places imply.` });
+    if (estimatedMessages > horizonDays * 2.5) findings.push({ severity: 'warning', text: 'High initiative may feel spammy over a multi-week simulation; this is advisory and will not change it.' });
+    if (estimatedPosts > horizonDays * 1.5) findings.push({ severity: 'warning', text: 'The feed may repeat itself at this frequency unless the life profile has varied activities.' });
+    if (repeatedPosts) findings.push({ severity: 'warning', text: `${repeatedPosts} recent social post${repeatedPosts === 1 ? '' : 's'} repeat exact wording.` });
+    if (relationshipJumps) findings.push({ severity: 'warning', text: `${relationshipJumps} supporting-cast relationship update${relationshipJumps === 1 ? '' : 's'} jumped by more than the normal bounded step.` });
+    if (narratedReplies >= 2) findings.push({ severity: 'warning', text: `${narratedReplies} recent replies contain action-style narration, which can break a texting-only human.` });
+    if (terseStyle && averageReplyLength > 480) findings.push({ severity: 'info', text: `Recent replies average ${Math.round(averageReplyLength)} characters despite the authored short-text style; review for personality drift.` });
+    const dailyLimit = Number(state.globalSettings.companionAlwaysOnDailyLimit) || 6;
+    if (companion.alwaysOnEnabled && maximumCalls / horizonDays > dailyLimit) findings.push({ severity: 'info', text: `The ${dailyLimit}/day circuit breaker will cap part of the projected background activity.` });
+    if (!findings.length) findings.push({ severity: 'good', text: 'No obvious spam, schedule collision, impossible travel or spending risk was found.' });
+    const penalties = scheduleOverlaps * 5 + impossibleTravel * 8 + repeatedPosts * 4
+        + relationshipJumps * 6 + narratedReplies * 3
+        + Math.max(0, estimatedMessages - horizonDays * 2.5) * 0.5
+        + Math.max(0, estimatedPosts - horizonDays * 1.5) * 0.5;
+    return {
+        days: horizonDays, score: livingClamp(Math.round(100 - penalties), 0, 100), findings,
+        estimates: { socialInteractions: Math.round(life.socialCircle.reduce((sum, person) => sum + horizonDays * ({ daily: .9, few_week: .4, weekly: .14, monthly: .033, rare: .015 }[person.contactFrequency] || .14), 0)), posts: estimatedPosts, proactiveMessages: estimatedMessages, maximumModelCalls: maximumCalls },
+        advisory: true, generatedAt: nowMs
+    };
+}
+
 function advanceCompanionLife(companion, nowMs = Date.now()) {
     if (!companion.lifeProfile?.initializedAt) {
         companion.lifeRuntime.lastSimulatedAt = nowMs;
         return null;
     }
     const runtime = companion.lifeRuntime;
-    const elapsed = Math.max(0, nowMs - (runtime.lastSimulatedAt || nowMs));
+    const priorSimulatedAt = runtime.lastSimulatedAt || nowMs;
+    const elapsed = Math.max(0, nowMs - priorSimulatedAt);
     runtime.lastSimulatedAt = nowMs;
+    advanceCompanionSocialWorld(companion, nowMs);
+    const situation = companionSituationAt(companion, nowMs);
+    const situationKey = [situation.source, situation.placeId || situation.placeLabel, situation.activity].join('|').slice(0, 240);
+    if (situationKey && situationKey !== runtime.currentSituationKey) {
+        const previous = runtime.currentSituationKey ? companionSituationAt(companion, priorSimulatedAt) : null;
+        const placeChanged = previous && (previous.placeId || previous.placeLabel) !== (situation.placeId || situation.placeLabel);
+        const transitionSummary = previous
+            ? `${companion.name}'s routine advanced from ${previous.activity}${previous.placeLabel ? ` at ${previous.placeLabel}` : ''} to ${situation.activity}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}.`
+            : `${companion.name}'s current routine is ${situation.activity}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}.`;
+        runtime.simulationLedger.push({
+            id: livingId('vh_schedule_transition', `${companion.id}|${situationKey}|${nowMs}`),
+            kind: placeChanged ? 'travel' : 'schedule', summary: transitionSummary,
+            createdAt: nowMs, costCalls: 0
+        });
+        runtime.simulationLedger = runtime.simulationLedger.slice(-500);
+        runtime.currentSituationKey = situationKey;
+    }
     if (runtime.activeWildcard?.endsAt <= nowMs) runtime.activeWildcard = null;
     if (runtime.pendingInitiative?.expiresAt <= nowMs) runtime.pendingInitiative = null;
     if (!companion.lifeWildcardsEnabled || !companion.lifeProfile.wildcardDeck.length) return null;
@@ -39779,13 +41664,35 @@ async function processCompanionLabsLifeBeat(companion, nowMs = Date.now()) {
             createdAt: nowMs,
             source: 'autonomy'
         }));
+        companionRecordContinuityEvent(companion, {
+            type: 'life_event', summary: text, createdAt: nowMs, perceivedAt: nowMs,
+            certainty: 100, dedupeKey: `life_beat:${companion.id}:${beat.anchorId || index}:${nowMs}`
+        });
     });
     companion.lifeEvents = companion.lifeEvents.slice(-200);
     return beats;
 }
 
+async function companionTinyContactAdvice(companion, context) {
+    if (!window.HordeLabs) return null;
+    const capability = window.HordeLabs.taskCapabilities?.().find(task => task.id === 'human_contact_gate');
+    if (!capability?.available) return null;
+    try {
+        const result = await labsProposal('human_contact_gate', {
+            currentContext: String(context || '').slice(0, 3200)
+        }, 'humans', { background: true, priority: 35 });
+        const candidate = result?.candidate;
+        return candidate && Number(candidate.confidence) >= 0.68 ? candidate : null;
+    } catch (error) {
+        // Tiny Brain is an optional semantic sensor. A timeout, malformed JSON
+        // or weak model must never stall the deterministic life engine.
+        return null;
+    }
+}
+
 async function processCompanionAgency(nowMs = Date.now()) {
     let stateChanged = false;
+    const agencyPaused = state.globalSettings.companionAgencyPaused === true;
     for (const companion of state.companions) {
         const environmentBefore = companion.lifeRuntime?.environment?.fetchedAt || 0;
         refreshCompanionEnvironment(companion, nowMs).then(async () => {
@@ -39797,10 +41704,13 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const lifeBefore = JSON.stringify(companion.lifeRuntime);
         const dynamicsBefore = JSON.stringify(companion.humanDynamics);
         const emotionsBefore = JSON.stringify(companion.emotionState);
-        advanceCompanionLife(companion, nowMs);
-        await processCompanionLabsLifeBeat(companion, nowMs);
+        if (!agencyPaused) {
+            advanceCompanionLife(companion, nowMs);
+            await processCompanionLabsLifeBeat(companion, nowMs);
+        }
         advanceCompanionHumanDynamics(companion, nowMs);
         advanceCompanionEmotionState(companion, nowMs);
+        if (companionMatureIntentions(companion, nowMs).length) stateChanged = true;
         if (lifeBefore !== JSON.stringify(companion.lifeRuntime)) stateChanged = true;
         if (dynamicsBefore !== JSON.stringify(companion.humanDynamics)) stateChanged = true;
         if (emotionsBefore !== JSON.stringify(companion.emotionState)) stateChanged = true;
@@ -39811,10 +41721,56 @@ async function processCompanionAgency(nowMs = Date.now()) {
             if (message.role !== 'user') return;
             if (message.deliveryState === 'sent' && message.deliveredAt && nowMs >= message.deliveredAt) {
                 message.deliveryState = 'delivered';
+                companionRecordContinuityEvent(companion, {
+                    type: 'message_delivered', summary: 'The player’s message reached the phone.',
+                    sourceMessageIds: [message.id], createdAt: message.deliveredAt,
+                    dedupeKey: `message_delivered:${message.id}`
+                });
                 stateChanged = true;
             }
             if (message.deliveryState !== 'read' && message.readAt && nowMs >= message.readAt) {
                 message.deliveryState = 'read';
+                companionRecordContinuityEvent(companion, {
+                    type: 'message_seen',
+                    summary: `They opened the player’s ${message.type === 'text' ? `message: “${String(message.text || '').slice(0, 180)}”` : message.type}.`,
+                    sourceMessageIds: [message.id], createdAt: nowMs, perceivedAt: nowMs,
+                    dedupeKey: `message_seen:${message.id}`
+                });
+                const intention = companionContinuity(companion).intentions.find(item =>
+                    item.sourceMessageId === message.id && ['planned', 'active'].includes(item.status));
+                if (intention) intention.status = message.awaitingReply ? 'active' : 'completed';
+                if (Number(message.returnGapMs) > 0) {
+                    const continuity = companionContinuity(companion);
+                    const unansweredThread = continuity.openThreads.find(item =>
+                        item.status !== 'resolved' && item.topic === 'Unanswered contact');
+                    if (unansweredThread) {
+                        unansweredThread.status = 'resolved';
+                        unansweredThread.resolvedAt = nowMs;
+                        unansweredThread.updatedAt = nowMs;
+                        unansweredThread.summary = `The player returned after ${companionElapsedLabel(message.returnGapMs)}.`;
+                    }
+                    companionRecordContinuityEvent(companion, {
+                        type: 'thread_change',
+                        summary: `They saw that the player returned after ${companionElapsedLabel(message.returnGapMs)}.`,
+                        interpretation: 'The return ends the unanswered interval; it does not automatically erase its emotional effects.',
+                        certainty: 100, sourceMessageIds: [message.id],
+                        createdAt: nowMs, perceivedAt: nowMs,
+                        dedupeKey: `silence_return:${message.id}`
+                    });
+                }
+                if (!message.awaitingReply) {
+                    companionRecordContinuityEvent(companion, {
+                        type: 'response_withheld', summary: 'They read the message without committing to a reply.',
+                        sourceMessageIds: [message.id], createdAt: nowMs, perceivedAt: nowMs,
+                        dedupeKey: `response_withheld:${message.id}`
+                    });
+                    companionSetDecisionEvidence(companion, {
+                        decision: 'Leave the message read without replying for now',
+                        perceived: String(message.text || `[${message.type}]`).slice(0, 700),
+                        interpretation: '', pressures: companionDecisionPressures(companion, nowMs),
+                        confidence: 100, source: 'kernel', createdAt: nowMs
+                    });
+                }
                 stateChanged = true;
             }
         });
@@ -39822,7 +41778,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
             stateChanged = true;
         }
 
-        if (companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual') {
+        if (!agencyPaused && companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual') {
             const beforeSchedule = companion.socialFeedRuntime.nextPostAt;
             reconcileCompanionSocialSchedule(companion, nowMs);
             if (beforeSchedule !== companion.socialFeedRuntime.nextPostAt) stateChanged = true;
@@ -39865,6 +41821,14 @@ async function processCompanionAgency(nowMs = Date.now()) {
                 message.readAt = nowMs;
                 message.awaitingReply = false;
             });
+            companionRecordContinuityEvent(companion, {
+                type: 'message_batch_seen',
+                summary: `They considered ${readableBatch.length} player message${readableBatch.length === 1 ? '' : 's'} together before responding.`,
+                interpretation: readableBatch.map(message => String(message.text || `[${message.type}]`).slice(0, 160)).join(' / ').slice(0, 700),
+                certainty: 100, sourceMessageIds: readableBatch.map(message => message.id),
+                createdAt: nowMs, perceivedAt: nowMs,
+                dedupeKey: `message_batch:${readableBatch.map(message => message.id).join(',')}`
+            });
             const trigger = readableBatch[readableBatch.length - 1] || due;
             await saveState();
             if (state.activeCompanionId === companion.id && state.view === 'companionChat') renderCompanionThread();
@@ -39872,6 +41836,13 @@ async function processCompanionAgency(nowMs = Date.now()) {
             try {
                 const result = await sendCompanionMessage(companion, messages, trigger.text, nowMs, {
                     existingUserMessage: trigger
+                });
+                const continuity = companionContinuity(companion);
+                readableBatch.forEach(message => {
+                    continuity.intentions.filter(item => item.sourceMessageId === message.id
+                        && ['planned', 'active'].includes(item.status)).forEach(item => {
+                            item.status = 'completed'; item.resolvedAt = nowMs;
+                        });
                 });
                 if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
                 if (result.pendingSocialPhoto) resolveCompanionSocialPhoto(companion, result.pendingSocialPhoto);
@@ -39890,13 +41861,21 @@ async function processCompanionAgency(nowMs = Date.now()) {
             continue;
         }
 
-        if (companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual'
+        if (!agencyPaused && companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual'
             && companion.socialFeedRuntime.nextPostAt > 0 && companion.socialFeedRuntime.nextPostAt <= nowMs) {
             companionAgencyInFlight.add(companion.id);
             companion.socialFeedRuntime.lastGateAt = nowMs;
             try {
                 const result = await generateCompanionAutonomousSocialPost(companion, nowMs);
                 if (result?.pendingPhoto) resolveCompanionSocialPhoto(companion, result.pendingPhoto);
+                if (result?.posted) {
+                    companionContinuity(companion).intentions.filter(intention => intention.status === 'active'
+                        && intention.executionMode === 'social_post' && intention.dueAt <= nowMs).forEach(intention => {
+                        intention.status = 'completed'; intention.resolvedAt = nowMs;
+                        intention.lastAttemptAt = nowMs; intention.attempts += 1;
+                        intention.outcome = 'Published through the autonomous social feed.';
+                    });
+                }
                 if (!result?.posted) {
                     companion.socialFeedRuntime.nextPostAt = result?.reason === 'gate'
                         ? Math.min(companionNextSocialPostAt(companion, nowMs), nowMs + 6 * 60 * 60 * 1000)
@@ -39919,6 +41898,10 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const contactHistory = companionContactHistory(companion, messages, nowMs);
         const dueCommitment = companion.commitments.find(commitment =>
             commitment.status === 'pending' && commitment.dueAt > 0 && commitment.dueAt <= nowMs);
+        const dueIntention = companion.initiativeMode === 'off' ? null : companionContinuity(companion).intentions
+            .filter(intention => intention.status === 'active' && intention.dueAt > 0 && intention.dueAt <= nowMs
+                && ['reach_out', 'remind', 'commitment'].includes(intention.executionMode))
+            .sort((left, right) => (right.priority - left.priority) || (left.dueAt - right.dueAt))[0];
         const lifeTrigger = companion.initiativeMode === 'off' ? null : companion.lifeRuntime.pendingInitiative;
         const initiativeDue = nowMs >= companionNextInitiativeAt(companion, messages, nowMs);
         const unanswered = companionUnansweredState(messages, nowMs);
@@ -39927,26 +41910,72 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const emotionallyUnavailable = (
             dynamics.cooldownUntil > nowMs && dynamics.anger >= 55 && dynamics.cooldownReason
         ) || emotions.towardPlayer.disgust >= 72 || emotions.towardPlayer.anger >= 78;
-        if (contactHistory.hasSpoken && !hasPendingReply && unanswered.mayFollowUp && !emotionallyUnavailable
-            && (dueCommitment || lifeTrigger || initiativeDue) && life.availability === 'available') {
+        if (!agencyPaused && contactHistory.hasSpoken && !hasPendingReply && unanswered.mayFollowUp && !emotionallyUnavailable
+            && (dueIntention || dueCommitment || lifeTrigger || initiativeDue) && life.availability === 'available') {
+            const initiativeReason = dueCommitment
+                ? `A pending ${dueCommitment.medium} commitment is due: ${dueCommitment.text}`
+                : dueIntention ? `A private intention became due: ${dueIntention.action}${dueIntention.reason ? ` — ${dueIntention.reason}` : ''}`
+                : lifeTrigger?.text || 'Their current life and relationship made reaching out feel worthwhile.';
+            const tinyAdvice = dueCommitment ? null : await companionTinyContactAdvice(companion,
+                `Current availability is available. Current activity: ${life.label || life.activity}. Contact reason: ${initiativeReason}. Unanswered companion response turns: ${unanswered.responseTurns}. Current mood: ${companion.mood?.label || 'neutral'}.`);
+            if (tinyAdvice?.decision === 'wait') {
+                companion.lastProactiveAt = nowMs;
+                if (dueIntention) dueIntention.dueAt = nowMs + 60 * 60 * 1000;
+                companion.lifeRuntime.simulationLedger.push({
+                    id: livingId('vh_contact_wait', `${companion.id}|${nowMs}`), kind: 'initiative',
+                    summary: `Tiny Brain advised waiting before contact: ${tinyAdvice.evidence}`,
+                    createdAt: nowMs, costCalls: 0
+                });
+                companion.lifeRuntime.simulationLedger = companion.lifeRuntime.simulationLedger.slice(-500);
+                stateChanged = true;
+                continue;
+            }
             companionAgencyInFlight.add(companion.id);
             companion.lastProactiveAt = nowMs;
             if (dueCommitment) dueCommitment.dueAt = nowMs + 60 * 60 * 1000;
             if (lifeTrigger) companion.lifeRuntime.pendingInitiative = null;
+            companionRecordContinuityEvent(companion, {
+                type: 'initiative', summary: `They decided to contact the player first.`,
+                interpretation: initiativeReason, certainty: 100, createdAt: nowMs,
+                dedupeKey: `initiative:${companion.id}:${nowMs}`
+            });
+            companionSetDecisionEvidence(companion, {
+                decision: 'Reach out to the player first', perceived: initiativeReason,
+                interpretation: '', pressures: companionDecisionPressures(companion, nowMs),
+                confidence: 100, source: 'kernel', createdAt: nowMs
+            });
             if (state.activeCompanionId === companion.id) setCompanionTyping(true, `${companion.name || 'They'} is typing…`);
             try {
                 const result = await sendCompanionMessage(companion, messages, '', nowMs, {
                     initiative: true,
                     initiativeReason: dueCommitment
-                        ? `A pending ${dueCommitment.medium} commitment is due: ${dueCommitment.text} [id ${dueCommitment.id}]`
-                        : lifeTrigger?.text || ''
+                        ? `${initiativeReason} [id ${dueCommitment.id}]`
+                        : initiativeReason
                 });
                 if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
                 if (result.pendingSocialPhoto) resolveCompanionSocialPhoto(companion, result.pendingSocialPhoto);
+                if (dueIntention && result.replyMessages.length) {
+                    dueIntention.status = 'completed';
+                    dueIntention.resolvedAt = nowMs;
+                    dueIntention.lastAttemptAt = nowMs;
+                    dueIntention.attempts += 1;
+                    dueIntention.outcome = 'Executed through an autonomous message.';
+                    companionRecordContinuityEvent(companion, {
+                        type: 'intention_change', summary: `Completed intention: ${dueIntention.action}`,
+                        interpretation: dueIntention.outcome, certainty: 100,
+                        createdAt: nowMs, perceivedAt: nowMs
+                    });
+                }
                 if (result.replyMessages.length && state.activeCompanionId !== companion.id) {
                     showToast(`${companion.name || 'A virtual human'} messaged you.`, 'info');
                 }
             } catch (error) {
+                if (dueIntention) {
+                    dueIntention.lastAttemptAt = nowMs;
+                    dueIntention.attempts += 1;
+                    dueIntention.dueAt = nowMs + 60 * 60 * 1000;
+                    dueIntention.outcome = 'Execution was delayed by a connection error.';
+                }
                 console.error('Autonomous companion message failed:', error);
             } finally {
                 companionAgencyInFlight.delete(companion.id);
@@ -39960,6 +41989,241 @@ async function processCompanionAgency(nowMs = Date.now()) {
         if (stateChanged) renderCompanionThread();
         else updateCompanionClock();
     }
+}
+
+let companionAlwaysOnTimer = null;
+
+function companionAlwaysOnClientId() {
+    if (!state.globalSettings.companionAlwaysOnClientId) {
+        state.globalSettings.companionAlwaysOnClientId = typeof crypto?.randomUUID === 'function'
+            ? `horde_${crypto.randomUUID()}` : `horde_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    }
+    return state.globalSettings.companionAlwaysOnClientId;
+}
+
+function companionAlwaysOnContext(companion, timeline, nowMs) {
+    const life = companionLifeState(companion, nowMs);
+    const relation = companion.relationshipDynamics || {};
+    return [
+        `PERSON: ${companion.name}. ${companion.age ? `Age ${companion.age}.` : ''}`,
+        `IDENTITY: ${companion.personality || 'No personality summary authored.'}`,
+        `TEXTING VOICE: ${companion.textingStyle || 'Natural, concise texting.'}`,
+        `LIFE: ${companion.occupation || 'Occupation unspecified'}; ${companion.routine || 'routine unspecified'}.`,
+        `RIGHT NOW: ${life.label || life.activity || 'living their normal life'}; ${companion.locationLabel || 'location unspecified'}.`,
+        `PLAYER CONNECTION: ${companion.connectionType}; ${companion.relationshipContext || 'no additional context'}.`,
+        `RELATIONSHIP STATE: trust ${Math.round(Number(relation.trust) || 0)}, warmth ${Math.round(Number(relation.warmth) || 0)}, attraction ${Math.round(Number(relation.attraction) || 0)}, resentment ${Math.round(Number(relation.resentment) || 0)}.`,
+        `CURRENT FEELING: ${companion.mood?.label || 'neutral'}.`,
+        `BOUNDARIES AND PRIVATE CONTEXT: ${companion.privateLife || companion.intimacyBoundaries || 'none authored'}.`,
+        `TIMELINE: ${timeline.name}. Never mention being an AI, a worker, a prompt, scores, or background processing.`
+    ].join('\n').slice(0, 15000);
+}
+
+function companionAlwaysOnManifest(companion, nowMs = Date.now()) {
+    if (!companion?.alwaysOnEnabled) return null;
+    const timeline = getActiveCompanionTimeline(companion.id);
+    if (!timeline) return null;
+    const providerId = companionTextProviderId(companion);
+    if (!providerHasCredentials(providerId)) return null;
+    const messages = timeline.messages || [];
+    const hasSpoken = messages.some(message => message.role === 'user' && !message.invalidated);
+    const pending = messages.filter(message => message.role === 'user' && message.awaitingReply
+        && Number(message.replyDueAt) > 0).sort((a, b) => a.replyDueAt - b.replyDueAt)[0];
+    const proactiveDue = companion.initiativeMode !== 'off' && hasSpoken
+        ? companionNextInitiativeAt(companion, messages, nowMs) : 0;
+    const headers = { ...providerAuthHeaders(providerId), ...providerAttributionHeaders(providerId) };
+    return {
+        id: companion.id,
+        name: companion.name,
+        timelineId: timeline.id,
+        messagesEnabled: state.globalSettings.companionAlwaysOnMessages !== false,
+        socialEnabled: state.globalSettings.companionAlwaysOnSocial !== false
+            && companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual',
+        messageDueAt: Number(pending?.replyDueAt || proactiveDue || 0),
+        socialDueAt: Number(companion.socialFeedRuntime?.nextPostAt || 0),
+        hasSpoken,
+        context: companionAlwaysOnContext(companion, timeline, nowMs),
+        recentMessages: messages.filter(message => ['user', 'companion'].includes(message.role)
+            && !message.invalidated && message.type === 'text').slice(-12).map(message => ({
+                role: message.role, text: message.text, timestamp: message.timestamp
+            })),
+        provider: {
+            baseUrl: providerApiBase(providerId), headers,
+            model: companion.model || state.globalSettings.defaultModel,
+            temperature: companion.temp, maxTokens: Math.min(800, companion.maxTokens || 800)
+        }
+    };
+}
+
+function renderCompanionAlwaysOnStatus(status = null, error = '') {
+    const enabled = state.globalSettings.companionAlwaysOnEnabled === true;
+    const badge = document.getElementById('always-on-status-badge');
+    const text = document.getElementById('always-on-status-text');
+    const controls = document.getElementById('always-on-controls');
+    if (controls) controls.classList.toggle('disabled', !enabled);
+    if (badge) {
+        badge.textContent = error ? 'Unavailable' : !enabled ? 'Off' : status?.paused ? 'Paused' : status?.armed ? 'Armed' : 'Waiting';
+        badge.classList.toggle('online', enabled && status?.armed && !error);
+    }
+    if (text) text.textContent = error || (!enabled
+        ? 'Browser-only behavior is active. No background calls can occur.'
+        : status ? `${status.paused ? `Paused${status.pauseReason ? ` — ${status.pauseReason}` : ''}. ` : ''}${status.humanCount || 0} human${status.humanCount === 1 ? '' : 's'} configured · ${status.usedToday || 0}/${status.dailyLimit || state.globalSettings.companionAlwaysOnDailyLimit} calls used today · ${status.queuedEvents || 0} event${status.queuedEvents === 1 ? '' : 's'} waiting.`
+            : 'Save Settings to arm the local runtime.');
+}
+
+async function importCompanionAlwaysOnEvents() {
+    if (!state.globalSettings.companionAlwaysOnEnabled) return [];
+    const response = await mcpBridgeRequest('/always-on/events', {
+        method: 'POST', body: { clientId: companionAlwaysOnClientId() }, timeoutMs: 8000
+    });
+    const imported = [];
+    const transactionBackups = new Map();
+    for (const event of Array.isArray(response.events) ? response.events : []) {
+        const companion = getCompanion(event.humanId);
+        const store = companion ? ensureCompanionTimelineStore(companion.id) : null;
+        const timeline = store?.sessions.find(session => session.id === event.timelineId);
+        if (!event.id) continue;
+        // A character or timeline may have been deleted while the browser was
+        // away. It cannot receive this event, but acknowledging it prevents an
+        // immortal orphan from cluttering the runtime queue forever.
+        if (!companion || !timeline) { imported.push(event.id); continue; }
+        const transactionKey = `${companion.id}|${timeline.id}`;
+        if (!transactionBackups.has(transactionKey)) {
+            transactionBackups.set(transactionKey, {
+                store, timelineIndex: store.sessions.indexOf(timeline),
+                timeline: safeJsonClone(timeline),
+                companion, runtime: captureCompanionRuntime(companion)
+            });
+        }
+        const alreadyImported = timeline.messages.some(message => message.id === event.id)
+            || (timeline.runtime?.socialPosts || []).some(post => post.id === event.id);
+        if (!alreadyImported && event.kind === 'message' && event.text) {
+            timeline.messages.filter(message => message.role === 'user' && message.awaitingReply).forEach(message => {
+                message.awaitingReply = false;
+                message.deliveryState = 'read';
+                message.readAt = Number(event.createdAt) || Date.now();
+            });
+            timeline.messages.push(normalizeCompanionMessage({
+                id: event.id, role: 'companion', type: 'text', text: event.text,
+                timestamp: Number(event.createdAt) || Date.now(), autonomous: true,
+                responseGroupId: event.id
+            }));
+            timeline.updatedAt = Date.now();
+            imported.push(event.id);
+        } else if (!alreadyImported && event.kind === 'social_status' && event.text) {
+            const post = normalizeCompanionSocialPost({
+                id: event.id, text: event.text, kind: 'status', category: 'thoughts',
+                createdAt: Number(event.createdAt) || Date.now(), source: 'autonomy'
+            });
+            timeline.runtime = isPlainObject(timeline.runtime) ? timeline.runtime : captureCompanionRuntime(companion);
+            timeline.runtime.socialPosts = normalizeCompanionSocialPosts([...(timeline.runtime.socialPosts || []), post]);
+            timeline.runtime.socialFeedRuntime = {
+                ...(timeline.runtime.socialFeedRuntime || {}), lastPostAt: post.createdAt,
+                nextPostAt: companionNextSocialPostAt(companion, post.createdAt)
+            };
+            if (store.activeSessionId === timeline.id) {
+                applyCompanionRuntime(companion, timeline.runtime);
+            }
+            imported.push(event.id);
+        } else if (alreadyImported) imported.push(event.id);
+    }
+    if (imported.length) {
+        try {
+            // One IndexedDB transaction commits every imported event before
+            // the launcher queue is acknowledged. If persistence fails, put
+            // the in-memory timelines back exactly as they were so retrying is
+            // safe and cannot create a half-imported turn.
+            await saveState();
+        } catch (error) {
+            transactionBackups.forEach(backup => {
+                if (backup.timelineIndex >= 0) backup.store.sessions[backup.timelineIndex] = backup.timeline;
+                applyCompanionRuntime(backup.companion, backup.runtime);
+            });
+            throw error;
+        }
+        await mcpBridgeRequest('/always-on/ack', { method: 'POST', body: { eventIds: imported }, timeoutMs: 8000 });
+        if (state.view === 'companionChat') renderCompanionThread();
+        showToast(`${imported.length} background Virtual Human event${imported.length === 1 ? '' : 's'} caught up.`, 'info');
+    }
+    return imported;
+}
+
+async function syncCompanionAlwaysOnRuntime(options = {}) {
+    const enabled = state.globalSettings.companionAlwaysOnEnabled === true;
+    if (!enabled) {
+        try { await mcpBridgeRequest('/always-on/stop', { method: 'POST', body: {}, timeoutMs: 5000 }); }
+        catch (error) { /* browser-only mode does not require the bridge */ }
+        renderCompanionAlwaysOnStatus();
+        return null;
+    }
+    try {
+        const humans = (state.companions || []).map(companionAlwaysOnManifest).filter(Boolean);
+        const status = await mcpBridgeRequest('/always-on/sync', {
+            method: 'POST', timeoutMs: 10000, body: {
+                enabled: true, paused: state.globalSettings.companionAgencyPaused === true,
+                clientId: companionAlwaysOnClientId(), humans,
+                handoffSeconds: 90,
+                dailyLimit: state.globalSettings.companionAlwaysOnDailyLimit,
+                minimumMinutes: state.globalSettings.companionAlwaysOnMinimumMinutes
+            }
+        });
+        renderCompanionAlwaysOnStatus(status);
+        if (options.announce) showToast(humans.length
+            ? `Always-on runtime armed for ${humans.length} Virtual Human${humans.length === 1 ? '' : 's'}.`
+            : 'Always-on is enabled, but no eligible Virtual Human is individually enabled with a configured text model.', humans.length ? 'success' : 'info');
+        return status;
+    } catch (error) {
+        renderCompanionAlwaysOnStatus(null, error.message);
+        if (options.announce) showToast(error.message, 'error');
+        return null;
+    }
+}
+
+function setupCompanionAlwaysOnRuntime() {
+    const panicButton = document.getElementById('pause-all-agency-btn');
+    const panicLabel = document.getElementById('pause-all-agency-label');
+    const renderPanic = () => {
+        const paused = state.globalSettings.companionAgencyPaused === true;
+        panicButton?.classList.toggle('active', paused);
+        if (panicLabel) panicLabel.textContent = paused ? 'Resume agency' : 'Pause agency';
+        if (panicButton) panicButton.title = paused
+            ? 'Resume proactive messages, social posting and background generation.'
+            : 'Immediately pause proactive messages, social posts and background generation. Direct replies still work.';
+    };
+    if (panicButton) panicButton.onclick = async () => {
+        const paused = !(state.globalSettings.companionAgencyPaused === true);
+        state.globalSettings.companionAgencyPaused = paused;
+        if (paused) await mcpBridgeRequest('/always-on/pause', {
+            method: 'POST', body: { reason: 'paused by user' }, timeoutMs: 5000
+        }).catch(() => {});
+        await persistGlobalSettingsOnly();
+        renderPanic();
+        await syncCompanionAlwaysOnRuntime().catch(() => {});
+        showToast(paused
+            ? 'All autonomous activity paused. Direct replies still work.'
+            : 'Autonomous activity resumed.', paused ? 'info' : 'success');
+    };
+    renderPanic();
+    document.getElementById('always-on-refresh-btn').onclick = async () => {
+        await importCompanionAlwaysOnEvents().catch(() => []);
+        await syncCompanionAlwaysOnRuntime({ announce: true });
+    };
+    document.getElementById('always-on-stop-btn').onclick = async () => {
+        state.globalSettings.companionAlwaysOnEnabled = false;
+        document.getElementById('global-companion-always-on').checked = false;
+        await mcpBridgeRequest('/always-on/stop', { method: 'POST', body: {} }).catch(() => {});
+        await persistGlobalSettingsOnly();
+        renderCompanionAlwaysOnStatus();
+        showToast('Always-on stopped. Runtime credentials were forgotten.', 'success');
+    };
+    document.getElementById('global-companion-always-on').onchange = event => {
+        document.getElementById('always-on-controls')?.classList.toggle('disabled', !event.target.checked);
+    };
+    importCompanionAlwaysOnEvents().catch(() => []).finally(() => syncCompanionAlwaysOnRuntime());
+    if (companionAlwaysOnTimer) clearInterval(companionAlwaysOnTimer);
+    companionAlwaysOnTimer = setInterval(async () => {
+        await importCompanionAlwaysOnEvents().catch(() => []);
+        await syncCompanionAlwaysOnRuntime();
+    }, 30000);
 }
 
 function startCompanionAgencyEngine() {
@@ -40116,6 +42380,8 @@ async function queueCompanionUserMessage(payload) {
     optimisticUser.awaitingReply = plan.willReply;
     optimisticUser.deferredReason = plan.reason;
     messages.push(optimisticUser);
+    companionRecordResponsePlan(companion, optimisticUser, plan, optimisticUser.timestamp);
+    persistCompanionRuntime(companion);
     await saveState();
     renderCompanionThread();
 

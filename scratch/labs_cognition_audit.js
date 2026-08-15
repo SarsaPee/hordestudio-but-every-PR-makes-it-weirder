@@ -40,7 +40,8 @@ async function run() {
     assert.match(cssSource, /@media \(max-width: 760px\)[\s\S]+?labs-policy-grid/, 'Labs has a narrow-screen layout');
 
     const Labs = context.HordeLabs;
-    assert.equal(Labs.tasks().length, 7, 'all bounded tasks register');
+    assert.ok(Labs.tasks().length >= 10, 'all bounded tasks register');
+    assert.ok(Labs.tasks().some(task => task.id === 'memory_relevance'), 'Tiny Brain has an allowlisted memory retrieval task');
     assert.equal(Labs.normalizeConfig({ baseUrl: 'https://evil.example/v1' }).baseUrl, 'http://127.0.0.1:11434/v1', 'remote cognition endpoints are blocked');
 
     Labs.configure({ enabled: false, model: 'smollm2:360m', policies: { chat: 'assist' } }, { onDiagnostic: row => diagnostics.push(row) });
@@ -58,6 +59,23 @@ async function run() {
     result = await Labs.propose('social_signal', { message: 'missed you again', text: 'missed you again' }, { mode: 'chat' });
     assert.equal(result.accepted, true, 'assist accepts validator-approved output');
     assert.equal(result.candidate.signals.warmth, 2);
+
+    nextContent = JSON.stringify({ memoryIds: ['memory_2'], confidence: .86 });
+    Labs.configure({ enabled: true, model: 'smollm2:360m', policies: { humans: 'assist' } });
+    result = await Labs.propose('memory_relevance', {
+        text: 'what was that cafe called?', currentMessage: 'what was that cafe called?',
+        allowedMemoryIds: ['memory_1', 'memory_2'],
+        memories: [{ id: 'memory_1', text: 'Likes blue.' }, { id: 'memory_2', text: 'They met at Juniper Cafe.' }]
+    }, { mode: 'humans', policy: 'assist' });
+    assert.equal(result.accepted, true, 'Tiny Brain may retrieve only allowlisted memories');
+    assert.deepEqual(result.candidate.memoryIds, ['memory_2']);
+
+    nextContent = JSON.stringify({ memoryIds: ['invented_memory'], confidence: .99 });
+    result = await Labs.propose('memory_relevance', {
+        text: 'remember this', currentMessage: 'remember this', allowedMemoryIds: ['memory_1'],
+        memories: [{ id: 'memory_1', text: 'A real memory.' }]
+    }, { mode: 'humans', policy: 'assist' });
+    assert.equal(result.accepted, false, 'Tiny Brain cannot manufacture a memory ID');
 
     nextContent = JSON.stringify({
         meters: [{ id: 'trust', value: 57, evidence: 'I kept my promise' }],

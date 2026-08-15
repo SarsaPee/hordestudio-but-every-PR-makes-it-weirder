@@ -117,10 +117,308 @@ elif os.uname().sysname == "Darwin":
 else:
     CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "horde-studio"
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
+ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
 mcp_sessions: dict[str, dict[str, str]] = {}
+
+
+class AlwaysOnRuntime:
+    """Opt-in Virtual Human handoff for when the browser is closed.
+
+    IndexedDB remains canonical. The browser sends a deliberately small
+    snapshot and a lease heartbeat; this worker only acts after that lease has
+    expired. Generated events use a crash-safe queue until the browser imports
+    and acknowledges them. Provider credentials and request headers are never
+    written to that queue.
+    """
+
+    def __init__(self, queue_file: Path | None = None, start_thread: bool = True) -> None:
+        self.lock = threading.RLock()
+        self.queue_file = queue_file or ALWAYS_ON_QUEUE_FILE
+        self.enabled = False
+        self.paused = False
+        self.pause_reason = ""
+        self.client_id = ""
+        self.last_heartbeat = 0.0
+        self.handoff_seconds = 90
+        self.daily_limit = 6
+        self.minimum_minutes = 120
+        self.humans: dict[str, dict[str, Any]] = {}
+        self.events: dict[str, dict[str, Any]] = {}
+        self.usage_day = ""
+        self.usage_count = 0
+        self.in_flight: set[str] = set()
+        self.last_error = ""
+        self.consecutive_failures = 0
+        self._restore_queue()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="horde-always-on", daemon=True)
+        if start_thread:
+            self._thread.start()
+
+    def _restore_queue(self) -> None:
+        try:
+            value = json.loads(self.queue_file.read_text("utf-8"))
+            if not isinstance(value, dict):
+                return
+            events = value.get("events") if isinstance(value.get("events"), list) else []
+            self.events = {str(item.get("id")): item for item in events if isinstance(item, dict) and item.get("id")}
+            self.usage_day = str(value.get("usageDay") or "")[:20]
+            self.usage_count = max(0, int(value.get("usageCount") or 0))
+            self.paused = value.get("paused") is True
+            self.pause_reason = str(value.get("pauseReason") or "")[:300]
+            self.consecutive_failures = max(0, int(value.get("consecutiveFailures") or 0))
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _persist_queue(self) -> None:
+        # Only generated event payloads and circuit-breaker counters are
+        # durable. `humans`, provider headers and credentials remain RAM-only.
+        try:
+            self.queue_file.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.queue_file.with_suffix(".tmp")
+            temporary.write_text(json.dumps({
+                "version": 1, "events": list(self.events.values()),
+                "usageDay": self.usage_day, "usageCount": self.usage_count,
+                "paused": self.paused, "pauseReason": self.pause_reason,
+                "consecutiveFailures": self.consecutive_failures
+            }, indent=2), "utf-8")
+            try:
+                os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
+            temporary.replace(self.queue_file)
+        except OSError as error:
+            self.last_error = f"Could not persist background queue: {error}"[:500]
+
+    def _today(self) -> str:
+        return time.strftime("%Y-%m-%d", time.localtime())
+
+    def _roll_day(self) -> None:
+        today = self._today()
+        if self.usage_day != today:
+            self.usage_day, self.usage_count = today, 0
+            self.consecutive_failures = 0
+            if self.pause_reason == "provider circuit breaker":
+                self.paused, self.pause_reason = False, ""
+            self._persist_queue()
+
+    def sync(self, body: dict[str, Any]) -> dict[str, Any]:
+        humans = body.get("humans") if isinstance(body.get("humans"), list) else []
+        cleaned: dict[str, dict[str, Any]] = {}
+        for raw in humans[:100]:
+            if not isinstance(raw, dict):
+                continue
+            human_id = str(raw.get("id") or "")[:100]
+            provider = raw.get("provider") if isinstance(raw.get("provider"), dict) else {}
+            base_url = str(provider.get("baseUrl") or "").rstrip("/")[:1000]
+            parsed = urllib.parse.urlparse(base_url)
+            if not human_id or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                continue
+            headers = provider.get("headers") if isinstance(provider.get("headers"), dict) else {}
+            safe_headers = {str(k)[:100]: str(v)[:4000] for k, v in list(headers.items())[:30]}
+            cleaned[human_id] = {
+                "id": human_id,
+                "name": str(raw.get("name") or "Virtual Human")[:160],
+                "timelineId": str(raw.get("timelineId") or "")[:100],
+                "messagesEnabled": raw.get("messagesEnabled") is True,
+                "socialEnabled": raw.get("socialEnabled") is True,
+                "messageDueAt": max(0, int(raw.get("messageDueAt") or 0)),
+                "socialDueAt": max(0, int(raw.get("socialDueAt") or 0)),
+                "hasSpoken": raw.get("hasSpoken") is True,
+                "context": str(raw.get("context") or "")[:16000],
+                "recentMessages": raw.get("recentMessages") if isinstance(raw.get("recentMessages"), list) else [],
+                "provider": {
+                    "baseUrl": base_url,
+                    "headers": safe_headers,
+                    "model": str(provider.get("model") or "")[:500],
+                    "temperature": max(0.0, min(2.0, float(provider.get("temperature") or 0.75))),
+                    "maxTokens": max(64, min(2000, int(provider.get("maxTokens") or 500))),
+                },
+                "nextAllowedAt": max(0, int(raw.get("nextAllowedAt") or 0)),
+            }
+        with self.lock:
+            self.enabled = body.get("enabled") is True
+            self.paused = body.get("paused") is True
+            self.pause_reason = "paused by user" if self.paused else ""
+            self.client_id = str(body.get("clientId") or self.client_id)[:120]
+            self.last_heartbeat = time.time()
+            self.handoff_seconds = max(45, min(900, int(body.get("handoffSeconds") or 90)))
+            self.daily_limit = max(1, min(100, int(body.get("dailyLimit") or 6)))
+            self.minimum_minutes = max(15, min(1440, int(body.get("minimumMinutes") or 120)))
+            self.humans = cleaned if self.enabled else {}
+            self._roll_day()
+            self._persist_queue()
+        return self.status()
+
+    def status(self) -> dict[str, Any]:
+        with self.lock:
+            self._roll_day()
+            return {
+                "enabled": self.enabled,
+                "paused": self.paused,
+                "pauseReason": self.pause_reason,
+                "armed": self.enabled and not self.paused and bool(self.humans),
+                "humanCount": len(self.humans),
+                "queuedEvents": len(self.events),
+                "browserLeaseActive": (time.time() - self.last_heartbeat) < self.handoff_seconds,
+                "dailyLimit": self.daily_limit,
+                "usedToday": self.usage_count,
+                "lastError": self.last_error,
+                "consecutiveFailures": self.consecutive_failures,
+                "queuePersistent": True,
+                "credentialsPersistent": False,
+            }
+
+    def pending_events(self, client_id: str) -> list[dict[str, Any]]:
+        with self.lock:
+            if self.client_id and client_id and client_id != self.client_id:
+                return []
+            return list(self.events.values())
+
+    def acknowledge(self, event_ids: list[Any]) -> dict[str, Any]:
+        with self.lock:
+            for event_id in event_ids[:500]:
+                self.events.pop(str(event_id), None)
+            self._persist_queue()
+        return self.status()
+
+    def pause(self, reason: str = "paused by user") -> dict[str, Any]:
+        with self.lock:
+            self.paused = True
+            self.pause_reason = str(reason or "paused by user")[:300]
+            self.in_flight.clear()
+            self._persist_queue()
+        return self.status()
+
+    def stop(self) -> dict[str, Any]:
+        with self.lock:
+            self.enabled = False
+            self.humans = {}
+            self.in_flight.clear()
+            self.last_error = ""
+            self.paused = False
+            self.pause_reason = ""
+            self._persist_queue()
+        return self.status()
+
+    def _run(self) -> None:
+        while not self._stop.wait(10):
+            try:
+                self._tick()
+            except Exception as error:
+                with self.lock:
+                    self.last_error = str(error)[:500]
+
+    def _tick(self) -> None:
+        now_ms = int(time.time() * 1000)
+        candidate: tuple[str, str, dict[str, Any]] | None = None
+        with self.lock:
+            self._roll_day()
+            if (not self.enabled or self.paused or time.time() - self.last_heartbeat < self.handoff_seconds
+                    or self.usage_count >= self.daily_limit):
+                return
+            for human_id, human in self.humans.items():
+                if human_id in self.in_flight or now_ms < int(human.get("nextAllowedAt") or 0):
+                    continue
+                if human.get("messagesEnabled") and human.get("hasSpoken") and 0 < human.get("messageDueAt", 0) <= now_ms:
+                    candidate = (human_id, "message", dict(human)); break
+                if human.get("socialEnabled") and 0 < human.get("socialDueAt", 0) <= now_ms:
+                    candidate = (human_id, "social_status", dict(human)); break
+            if not candidate:
+                return
+            self.in_flight.add(candidate[0])
+        human_id, kind, human = candidate
+        try:
+            result = self._generate(human, kind)
+            next_minutes = max(self.minimum_minutes, min(1440, int(result.get("next_check_minutes") or self.minimum_minutes)))
+            with self.lock:
+                lease_reclaimed = (time.time() - self.last_heartbeat) < self.handoff_seconds
+                agency_paused = self.paused
+                live = self.humans.get(human_id)
+                if live:
+                    live["nextAllowedAt"] = now_ms + next_minutes * 60000
+                    live["messageDueAt" if kind == "message" else "socialDueAt"] = now_ms + next_minutes * 60000
+                self.usage_count += 1
+                self.consecutive_failures = 0
+                self.last_error = ""
+                decision = str(result.get("decision") or "none")
+                text = str(result.get("text") or "").strip()[:4000]
+                # The user may reopen Horde Studio while a provider request is
+                # already in flight. The browser immediately regains authority;
+                # discarding this late result prevents a duplicated reply.
+                if not lease_reclaimed and not agency_paused and decision == kind and text:
+                    event_id = f"always_{secrets.token_hex(12)}"
+                    self.events[event_id] = {
+                        "id": event_id, "kind": kind, "humanId": human_id,
+                        "timelineId": human.get("timelineId", ""), "text": text,
+                        "createdAt": now_ms, "reason": str(result.get("reason") or "")[:500]
+                    }
+                self._persist_queue()
+        except Exception as error:
+            with self.lock:
+                self.last_error = f"{human.get('name', 'Virtual Human')}: {error}"[:500]
+                self.consecutive_failures += 1
+                live = self.humans.get(human_id)
+                if live:
+                    delay_minutes = min(12 * 60, 15 * (2 ** min(6, self.consecutive_failures - 1)))
+                    live["nextAllowedAt"] = now_ms + delay_minutes * 60000
+                if self.consecutive_failures >= 5:
+                    self.paused = True
+                    self.pause_reason = "provider circuit breaker"
+                self._persist_queue()
+        finally:
+            with self.lock:
+                self.in_flight.discard(human_id)
+
+    def _generate(self, human: dict[str, Any], kind: str) -> dict[str, Any]:
+        provider = human["provider"]
+        if not provider.get("model"):
+            raise RuntimeError("No text model was selected.")
+        purpose = ("Decide whether to send one natural autonomous text message now."
+                   if kind == "message" else
+                   "Decide whether to publish one short text-only social status now.")
+        system = (
+            "You are Horde Studio's bounded background agency worker. " + purpose +
+            " Stay fully in character and grounded in the supplied facts. Do not invent a major event. "
+            "Return JSON only: {\"decision\":\"" + kind + "|none\",\"text\":\"...\","
+            "\"reason\":\"brief private reason\",\"next_check_minutes\":120}. "
+            "Choosing none is correct when contact would feel forced.\n\n" + human.get("context", "")
+        )
+        recent = []
+        for item in human.get("recentMessages", [])[-12:]:
+            if not isinstance(item, dict):
+                continue
+            role = "assistant" if item.get("role") == "companion" else "user"
+            text = str(item.get("text") or "")[:1000]
+            if text:
+                recent.append({"role": role, "content": text})
+        if not recent:
+            recent.append({"role": "user", "content": "Evaluate whether any background action is natural now."})
+        payload = {
+            "model": provider["model"], "messages": [{"role": "system", "content": system}, *recent],
+            "temperature": provider["temperature"], "max_tokens": provider["maxTokens"]
+        }
+        status, _, data = json_request(provider["baseUrl"] + "/chat/completions", method="POST",
+                                       headers={"Content-Type": "application/json", **provider["headers"]},
+                                       payload=payload, timeout=120)
+        if status < 200 or status >= 300:
+            message = data.get("error", {}).get("message") if isinstance(data, dict) else ""
+            raise RuntimeError(message or f"Provider returned HTTP {status}.")
+        content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+                   if isinstance(data, dict) else "")
+        if isinstance(content, list):
+            content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+        match = re.search(r"\{[\s\S]*\}", str(content or ""))
+        if not match:
+            raise RuntimeError("Background model did not return JSON.")
+        parsed = json.loads(match.group(0))
+        return parsed if isinstance(parsed, dict) else {"decision": "none"}
+
+
+always_on_runtime = AlwaysOnRuntime()
 
 
 def load_store() -> dict[str, Any]:
@@ -756,6 +1054,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
+    def client_is_loopback(self) -> bool:
+        try:
+            return ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            return False
+
     def cors(self) -> None:
         origin = self.headers.get("Origin", "")
         if origin and self.origin_allowed():
@@ -821,7 +1125,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if self.serve_app_file(parsed.path):
                 return
             if parsed.path == "/health":
-                return self.respond(200, {"ok": True, "service": "Horde Studio MCP Bridge", "version": 1})
+                return self.respond(200, {"ok": True, "service": "Horde Studio MCP Bridge", "version": 2,
+                                          "alwaysOn": always_on_runtime.status()})
+            if parsed.path == "/always-on/status":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Always-on control is loopback-only."})
+                return self.respond(200, always_on_runtime.status())
             if parsed.path == "/providers":
                 return self.respond(200, {"providers": [provider_status(key) for key in PROVIDERS]})
             if parsed.path == "/oauth/callback":
@@ -851,6 +1160,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         try:
             parsed_path = urllib.parse.urlparse(self.path).path
+            if parsed_path.startswith("/always-on/") and not self.client_is_loopback():
+                return self.respond(403, {"error": "Always-on control is loopback-only."})
+            if parsed_path == "/always-on/sync":
+                return self.respond(200, always_on_runtime.sync(self.read_json()))
+            if parsed_path == "/always-on/events":
+                body = self.read_json()
+                return self.respond(200, {"events": always_on_runtime.pending_events(str(body.get("clientId") or ""))})
+            if parsed_path == "/always-on/ack":
+                body = self.read_json()
+                ids = body.get("eventIds") if isinstance(body.get("eventIds"), list) else []
+                return self.respond(200, always_on_runtime.acknowledge(ids))
+            if parsed_path == "/always-on/pause":
+                body = self.read_json()
+                return self.respond(200, always_on_runtime.pause(str(body.get("reason") or "paused by user")))
+            if parsed_path == "/always-on/stop":
+                return self.respond(200, always_on_runtime.stop())
             if parsed_path == "/local-image/comfy/generate":
                 body = self.read_json()
                 return self.respond(200, {"image": comfy_generate(body)})
