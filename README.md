@@ -116,7 +116,7 @@ Create an AI person designed to feel like they have a life beyond the current me
 | Integration | Use |
 |---|---|
 | ComfyUI | Run API-format image workflows locally |
-| OpenAI-compatible local image servers | Generate images through a loopback endpoint |
+| OpenAI-compatible local image servers | Generate images through a local-device or private-LAN endpoint |
 | Higgsfield MCP | Connected creative-media tools through the local bridge |
 | Magnific MCP | Connected enhancement tools through the local bridge |
 

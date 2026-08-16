@@ -3379,7 +3379,7 @@
             </details>
 
             <details class="mcp-settings-card settings-disclosure-card" aria-labelledby="local-image-settings-title">
-                <summary class="settings-disclosure-summary"><span><small>Local generation</small><strong id="local-image-settings-title">ComfyUI &amp; local servers</strong></span><span class="mcp-status-badge">Loopback</span></summary>
+                <summary class="settings-disclosure-summary"><span><small>Local generation</small><strong id="local-image-settings-title">ComfyUI &amp; local servers</strong></span><span class="mcp-status-badge">Local network</span></summary>
                 <div class="settings-disclosure-body">
                 <div class="mcp-settings-head">
                     <p>Optional advanced endpoints and reusable workflow profiles.</p>
@@ -3398,6 +3398,7 @@
                 </div>
                 <label class="form-label" for="global-comfy-url" style="margin-top:14px;">ComfyUI server</label>
                 <input id="global-comfy-url" class="form-input" value="http://127.0.0.1:8188" spellcheck="false">
+                <p class="form-hint">ComfyUI may run on this computer or at a private LAN IP such as <code>http://192.168.1.42:8188</code>. On the other computer, start ComfyUI with LAN listening enabled and allow port 8188 through its firewall. Public internet hosts remain blocked.</p>
                 <div class="comfy-profile-head" style="margin-top:12px;">
                     <div>
                         <label class="form-label" for="global-comfy-profile">Workflow profile</label>

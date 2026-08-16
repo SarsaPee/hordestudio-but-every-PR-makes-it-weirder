@@ -54,13 +54,25 @@ class McpBridgeAudit(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 bridge.main()
 
-    def test_local_image_urls_are_restricted_to_loopback(self):
+    def test_local_image_urls_are_restricted_to_the_local_network(self):
         self.assertEqual(
             bridge.loopback_base_url("http://localhost:8188/", 8188),
             "http://localhost:8188",
         )
+        self.assertEqual(
+            bridge.loopback_base_url("http://192.168.1.42:8188/", 8188),
+            "http://192.168.1.42:8188",
+        )
+        self.assertEqual(
+            bridge.loopback_base_url("http://[fd12:3456::42]:8188/", 8188),
+            "http://[fd12:3456::42]:8188",
+        )
         with self.assertRaises(ValueError):
             bridge.loopback_base_url("https://example.com/v1", 7860)
+        with self.assertRaises(ValueError):
+            bridge.loopback_base_url("https://8.8.8.8:8188", 8188)
+        with self.assertRaises(ValueError):
+            bridge.loopback_base_url("http://169.254.169.254:8188", 8188)
 
     @mock.patch.object(bridge.socket, "getaddrinfo")
     def test_generated_media_proxy_is_https_global_and_provider_scoped(self, lookup):

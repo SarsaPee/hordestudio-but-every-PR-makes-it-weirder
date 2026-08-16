@@ -867,10 +867,46 @@ def safe_remote_image_url(value: Any) -> str:
 
 
 def loopback_base_url(value: Any, default_port: int) -> str:
+    """Validate a user-configured image server on this device or its private LAN.
+
+    The bridge deliberately refuses public hosts so these endpoints cannot turn it
+    into a general-purpose server-side request proxy.  Private address literals
+    are allowed because ComfyUI is commonly hosted on a second machine on the
+    user's home network.
+    """
     candidate = str(value or f"http://127.0.0.1:{default_port}").strip().rstrip("/")
     parsed = urllib.parse.urlparse(candidate)
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-        raise ValueError("Local image endpoints must use localhost, 127.0.0.1, or ::1.")
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Local image endpoints must be credential-free HTTP(S) URLs without a query or fragment.")
+    if hostname != "localhost":
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError as error:
+            raise ValueError(
+                "Local image endpoints must use localhost or a literal private LAN IP address."
+            ) from error
+        local_networks = (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("127.0.0.0/8"),
+            ipaddress.ip_network("fc00::/7"),
+            ipaddress.ip_network("::1/128"),
+        )
+        if not any(address.version == network.version and address in network for network in local_networks):
+            raise ValueError(
+                "Local image endpoints must use localhost or a private LAN IP such as 192.168.x.x."
+            )
+        if address.is_unspecified or address.is_multicast:
+            raise ValueError("Local image endpoints cannot use an unspecified or multicast address.")
     return candidate
 
 

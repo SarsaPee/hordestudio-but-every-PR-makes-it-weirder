@@ -167,6 +167,7 @@
         'cs-autonomy-health-days': 'Choose how many simulated weeks the non-destructive Autonomy Health preflight should inspect.',
         'global-local-image-url': 'Base URL for an OpenAI-compatible local image server.',
         'global-comfy-profile': 'Saved ComfyUI workflow and node mapping. Switch profiles without replacing other workflows.',
+        'global-comfy-url': 'Address of ComfyUI on this computer or a private LAN IP. Remote ComfyUI must listen on the LAN (commonly with --listen 0.0.0.0) and expose port 8188 through its firewall.',
         'global-comfy-workflow': 'ComfyUI API workflow JSON. Browser-exported UI workflow JSON is not always compatible.',
         'global-comfy-prompt-node': 'Node ID receiving Horde Studio’s generated positive prompt.',
         'global-comfy-reference-node': 'Optional LoadImage node ID receiving an identity reference.',

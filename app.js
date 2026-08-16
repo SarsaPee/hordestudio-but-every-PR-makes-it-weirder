@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '15.9.1';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-16T15:11:54+05:00';
+const HORDE_STUDIO_VERSION = '15.9.2';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-16T19:19:00+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -265,8 +265,25 @@ const HORDE_MCP_PROVIDERS = Object.freeze({
 
 function normalizeLoopbackUrl(value, fallback) {
     const candidate = String(value || '').trim().replace(/\/+$/, '');
-    return /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)(?::\d+)?(?:\/[^\s?#]*)?$/i.test(candidate)
-        ? candidate : fallback;
+    try {
+        const parsed = new URL(candidate);
+        const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+        const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+        const octets = ipv4 ? ipv4.slice(1).map(Number) : [];
+        const privateIpv4 = octets.length === 4 && octets.every(part => part >= 0 && part <= 255) && (
+            octets[0] === 10
+            || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+            || (octets[0] === 192 && octets[1] === 168)
+            || octets[0] === 127
+        );
+        const privateIpv6 = hostname === '::1' || /^f[cd][0-9a-f]{2}:/i.test(hostname);
+        const safe = parsed.protocol === 'http:'
+            && !parsed.username && !parsed.password && !parsed.search && !parsed.hash
+            && (hostname === 'localhost' || privateIpv4 || privateIpv6);
+        return safe ? candidate : fallback;
+    } catch (_) {
+        return fallback;
+    }
 }
 
 function normalizeMcpBridgeUrl(value) {
