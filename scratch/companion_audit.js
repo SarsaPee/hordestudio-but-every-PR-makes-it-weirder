@@ -1164,6 +1164,33 @@ test('life state is a pure function of the timestamp — replaying gives the sam
     assert.deepEqual(first, second, 'the same instant produced two different lives');
 });
 
+test('an idle five-second agency poll does not dirty persistent life state', () => {
+    const at = Date.UTC(2026, 0, 5, 10, 0);
+    const c = freshCompanion({
+        locationMode: 'custom', timezoneOffsetMinutes: 0,
+        lifeWildcardsEnabled: false,
+        lifeProfile: {
+            initializedAt: at - 86400000,
+            seed: 'idle-persistence-test', places: [], wardrobe: [],
+            socialCircle: [], wildcardDeck: [], weeklySchedule: []
+        }
+    });
+    // The first observation may establish a canonical situation key. Once it
+    // has, polling again without a schedule/social event must be a no-op.
+    context.advanceCompanionLife(c, at);
+    const before = JSON.stringify(c.lifeRuntime);
+    context.advanceCompanionLife(c, at + 5000);
+    assert.equal(JSON.stringify(c.lifeRuntime), before,
+        'idle polling changed timestamps and would trigger another full IndexedDB save');
+});
+
+test('observing an uninitialized fallback life never advances persistence markers', () => {
+    const c = freshCompanion({ lifeProfile: { initializedAt: 0 } });
+    const before = JSON.stringify(c.lifeRuntime);
+    context.advanceCompanionLife(c, Date.UTC(2026, 0, 5, 10, 0));
+    assert.equal(JSON.stringify(c.lifeRuntime), before);
+});
+
 test('a companion is asleep at 3am regardless of what else is true about them', () => {
     const c = freshCompanion({ sleepArchetype: 'normal' });
     const at = new Date(2026, 0, 15, 3, 0).getTime();

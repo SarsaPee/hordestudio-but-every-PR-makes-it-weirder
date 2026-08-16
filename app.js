@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '15.9.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-15T13:58:53+05:00';
+const HORDE_STUDIO_VERSION = '15.9.1';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-16T15:11:54+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -2253,7 +2253,11 @@ async function loadState() {
     }
 }
 
-async function saveState() {
+let saveStateInFlight = null;
+let saveStateQueued = false;
+
+async function persistStateSnapshot() {
+    const savingWorldMedia = worldMediaDirty;
     try {
         (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
         // Keep heavy image payloads out of the world manifest that is rewritten
@@ -2294,16 +2298,20 @@ async function saveState() {
             activeCompanionId: state.activeCompanionId,
             labsDiagnostics: (state.labsDiagnostics || []).slice(-100)
         };
-        if (worldMediaDirty) {
+        if (savingWorldMedia) {
             records.worldMediaAssets = Object.fromEntries((state.worlds || []).map(world => [
                 world.id,
                 safeJsonClone(Array.isArray(world.mediaAssets) ? world.mediaAssets : [])
             ]));
+            // Clear before yielding to IndexedDB. If another media edit occurs
+            // while this transaction is open it will set the flag again and
+            // the coalesced follow-up pass will preserve that newer payload.
+            worldMediaDirty = false;
         }
         await HordeDB.setMultiple(records);
         writeGlobalSettingsMirror(records.globalSettings);
-        worldMediaDirty = false;
     } catch (err) {
+        if (savingWorldMedia) worldMediaDirty = true;
         const isQuota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
         if (isQuota) {
             showToast('⚠️ Storage FULL — changes are NOT being saved! Export a backup now (Settings → Export Full Backup), then remove large images/old sessions.', 'error');
@@ -2312,6 +2320,29 @@ async function saveState() {
         }
         console.error('saveState failed:', err);
         throw err;
+    }
+}
+
+/**
+ * Serialize full-state persistence and coalesce bursts. IndexedDB structured
+ * clones values at put-time, so overlapping saves of media-heavy state can
+ * temporarily retain several enormous clones and thrash the browser profile.
+ * Every caller still waits until its request (or a newer snapshot) is safely
+ * committed; calls arriving during a transaction request one trailing pass.
+ */
+async function saveState() {
+    saveStateQueued = true;
+    if (saveStateInFlight) return saveStateInFlight;
+    saveStateInFlight = (async () => {
+        do {
+            saveStateQueued = false;
+            await persistStateSnapshot();
+        } while (saveStateQueued);
+    })();
+    try {
+        await saveStateInFlight;
+    } finally {
+        saveStateInFlight = null;
     }
 }
 
@@ -41291,6 +41322,7 @@ function companionSocialWorldState(companion) {
 function advanceCompanionSocialWorld(companion, nowMs = Date.now(), options = {}) {
     if (!companion.lifeProfile?.initializedAt) return [];
     const world = companionSocialWorldState(companion);
+    let changed = false;
     const startAt = world.lastAdvancedAt || companion.lifeProfile.initializedAt || nowMs;
     const maxCatchupMs = livingClamp(Number(options.maxDays) || 28, 1, 90) * 86400000;
     const boundedStart = Math.max(startAt, nowMs - maxCatchupMs);
@@ -41304,9 +41336,11 @@ function advanceCompanionSocialWorld(companion, nowMs = Date.now(), options = {}
         if (!relation.nextInteractionAt) {
             relation.nextInteractionAt = boundedStart + companionSocialContactIntervalMs(
                 person, `${companion.lifeProfile.seed}|social-first|${person.id}|${firstDay}`);
+            changed = true;
         }
         let guard = 0;
         while (relation.nextInteractionAt <= nowMs && guard++ < 40) {
+            changed = true;
             const at = relation.nextInteractionAt;
             const dayKey = Math.floor(at / 86400000);
             const warmthRoll = companionSeededRoll(`${companion.lifeProfile.seed}|social-tone|${person.id}|${dayKey}`);
@@ -41357,8 +41391,15 @@ function advanceCompanionSocialWorld(companion, nowMs = Date.now(), options = {}
         }
     }
     world.interactions = world.interactions.slice(-120);
-    world.gossip = world.gossip.filter(item => !item.expiresAt || item.expiresAt > nowMs).slice(-40);
-    world.lastAdvancedAt = nowMs;
+    const activeGossip = world.gossip.filter(item => !item.expiresAt || item.expiresAt > nowMs).slice(-40);
+    if (activeGossip.length !== world.gossip.length) changed = true;
+    world.gossip = activeGossip;
+    // A five-second poll is not a simulation event. Moving this marker on an
+    // idle pass made the entire companion record dirty, so installations with
+    // embedded photos/videos rewrote hundreds of megabytes to IndexedDB over
+    // and over. Only persist an advancement marker when canonical social state
+    // actually changed.
+    if (changed) world.lastAdvancedAt = nowMs;
 
     if (!options.preview) {
         events.slice(-3).forEach(event => {
@@ -41449,15 +41490,16 @@ function companionAutonomyHealthReport(companion, days = 28, nowMs = Date.now())
 }
 
 function advanceCompanionLife(companion, nowMs = Date.now()) {
-    if (!companion.lifeProfile?.initializedAt) {
-        companion.lifeRuntime.lastSimulatedAt = nowMs;
-        return null;
-    }
+    // Uninitialized life is a pure fallback computed from the clock. Merely
+    // observing it must not dirty persistent state on every agency poll.
+    if (!companion.lifeProfile?.initializedAt) return null;
     const runtime = companion.lifeRuntime;
     const priorSimulatedAt = runtime.lastSimulatedAt || nowMs;
     const elapsed = Math.max(0, nowMs - priorSimulatedAt);
-    runtime.lastSimulatedAt = nowMs;
+    let changed = false;
+    const socialBefore = JSON.stringify(runtime.socialWorld || null);
     advanceCompanionSocialWorld(companion, nowMs);
+    if (socialBefore !== JSON.stringify(runtime.socialWorld || null)) changed = true;
     const situation = companionSituationAt(companion, nowMs);
     const situationKey = [situation.source, situation.placeId || situation.placeLabel, situation.activity].join('|').slice(0, 240);
     if (situationKey && situationKey !== runtime.currentSituationKey) {
@@ -41473,10 +41515,20 @@ function advanceCompanionLife(companion, nowMs = Date.now()) {
         });
         runtime.simulationLedger = runtime.simulationLedger.slice(-500);
         runtime.currentSituationKey = situationKey;
+        changed = true;
     }
-    if (runtime.activeWildcard?.endsAt <= nowMs) runtime.activeWildcard = null;
-    if (runtime.pendingInitiative?.expiresAt <= nowMs) runtime.pendingInitiative = null;
-    if (!companion.lifeWildcardsEnabled || !companion.lifeProfile.wildcardDeck.length) return null;
+    if (runtime.activeWildcard?.endsAt <= nowMs) {
+        runtime.activeWildcard = null;
+        changed = true;
+    }
+    if (runtime.pendingInitiative?.expiresAt <= nowMs) {
+        runtime.pendingInitiative = null;
+        changed = true;
+    }
+    if (!companion.lifeWildcardsEnabled || !companion.lifeProfile.wildcardDeck.length) {
+        if (changed) runtime.lastSimulatedAt = nowMs;
+        return null;
+    }
     const catchupDays = Math.min(7, Math.max(0, Math.ceil(elapsed / 86400000)));
     let newestActive = runtime.activeWildcard;
     for (let daysAgo = catchupDays; daysAgo >= 0; daysAgo -= 1) {
@@ -41488,6 +41540,7 @@ function advanceCompanionLife(companion, nowMs = Date.now()) {
         const triggerMinute = 8 * 60 + Math.floor(companionSeededRoll(`${companion.lifeProfile.seed}|trigger|${local.dateKey}`) * 13 * 60);
         if (consideredMinute < triggerMinute) continue;
         runtime.processedWildcardDays.push(local.dateKey);
+        changed = true;
 
         const localMidnightApprox = sampleAt - currentMinute * 60000;
         const startedAt = localMidnightApprox + triggerMinute * 60000;
@@ -41500,6 +41553,7 @@ function advanceCompanionLife(companion, nowMs = Date.now()) {
 
         const active = { ...event, startedAt, endsAt: startedAt + event.durationMinutes * 60000 };
         runtime.lastWildcardAt = Math.max(runtime.lastWildcardAt || 0, startedAt);
+        changed = true;
         if (active.endsAt > nowMs && active.startedAt <= nowMs) {
             runtime.activeWildcard = active;
             newestActive = active;
@@ -41547,6 +41601,7 @@ function advanceCompanionLife(companion, nowMs = Date.now()) {
     }
     runtime.processedWildcardDays = runtime.processedWildcardDays.slice(-45);
     companion.lifeEvents = companion.lifeEvents.slice(-200);
+    if (changed) runtime.lastSimulatedAt = nowMs;
     return newestActive;
 }
 
@@ -41702,8 +41757,6 @@ async function processCompanionAgency(nowMs = Date.now()) {
             if (state.editingCompanionId === companion.id && state.view === 'companionStudio') renderCompanionLifeOverview(companion);
         }).catch(error => console.warn('Virtual Human environment update failed:', error));
         const lifeBefore = JSON.stringify(companion.lifeRuntime);
-        const dynamicsBefore = JSON.stringify(companion.humanDynamics);
-        const emotionsBefore = JSON.stringify(companion.emotionState);
         if (!agencyPaused) {
             advanceCompanionLife(companion, nowMs);
             await processCompanionLabsLifeBeat(companion, nowMs);
@@ -41712,8 +41765,10 @@ async function processCompanionAgency(nowMs = Date.now()) {
         advanceCompanionEmotionState(companion, nowMs);
         if (companionMatureIntentions(companion, nowMs).length) stateChanged = true;
         if (lifeBefore !== JSON.stringify(companion.lifeRuntime)) stateChanged = true;
-        if (dynamicsBefore !== JSON.stringify(companion.humanDynamics)) stateChanged = true;
-        if (emotionsBefore !== JSON.stringify(companion.emotionState)) stateChanged = true;
+        // Human dynamics and emotion decay are deterministic clock-derived
+        // caches. Persist them with the next real event/user save, but do not
+        // rewrite every embedded photo or video merely because five minutes
+        // elapsed. Reloading safely catches them up from their last timestamp.
         const timeline = getActiveCompanionTimeline(companion.id);
         const experience = normalizeCompanionChatExperience(timeline?.experience);
         const messages = getCompanionThread(companion.id);
