@@ -79,6 +79,560 @@ const HordeDB = {
     }
 };
 
+// --- Shared Library Sync ---------------------------------------------------
+// Horde remains a browser-first application. This small layer gives its
+// IndexedDB library a canonical, versioned snapshot on the Mac's bridge so a
+// phone can safely pick up the same library without sharing credentials or
+// machine-local service URLs.
+const SHARED_LIBRARY_SYNC_META_KEY = 'horde_shared_library_sync_v1';
+const SHARED_LIBRARY_SYNC_DEVICE_ID_KEY = 'horde_shared_library_device_id_v1';
+const SHARED_LIBRARY_SYNC_DEVICE_LABEL_KEY = 'horde_shared_library_device_label_v1';
+const SHARED_LIBRARY_BACKUP_POLICY_KEY = 'horde_shared_library_backup_policy_v1';
+const SHARED_LIBRARY_LOCAL_SETTING_KEYS = Object.freeze([
+    'mcpBridgeUrl', 'localBaseUrl', 'localApiKey', 'localGenerationTimeoutSeconds',
+    'embeddingBaseUrl', 'embeddingApiKey', 'localTtsBaseUrl', 'localTtsApiKey',
+    'localImageBaseUrl', 'localImageApiKey', 'comfyUiBaseUrl', 'comfyWorkflowProfiles',
+]);
+const sharedLibrarySync = {
+    ready: false,
+    applying: false,
+    pushing: false,
+    checking: false,
+    pushTimer: null,
+    pollTimer: null,
+    revision: 0,
+    remoteRevision: 0,
+    updatedAt: 0,
+    updatedBy: '',
+    activeDevices: [],
+    conflict: false,
+    lastAnnouncedRevision: 0,
+    lastActiveDeviceSignature: '',
+    lastPublishedFingerprint: '',
+    history: [],
+    dirty: false,
+    assistantTurnsSincePublish: 0,
+    autoBackupTimer: null,
+};
+
+function sharedLibraryBackupPolicy() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(SHARED_LIBRARY_BACKUP_POLICY_KEY) || '{}');
+        return {
+            periodicEnabled: raw.periodicEnabled !== false,
+            intervalMinutes: Math.max(1, Math.min(1440, Number(raw.intervalMinutes) || 5)),
+            afterAssistantTurnEnabled: raw.afterAssistantTurnEnabled === true,
+            assistantTurnInterval: Math.max(1, Math.min(100, Number(raw.assistantTurnInterval) || 5)),
+            afterEveryChangeEnabled: raw.afterEveryChangeEnabled === true,
+        };
+    } catch (_) {
+        return { periodicEnabled: true, intervalMinutes: 5, afterAssistantTurnEnabled: false, assistantTurnInterval: 5, afterEveryChangeEnabled: false };
+    }
+}
+
+function saveSharedLibraryBackupPolicy(partial) {
+    const next = { ...sharedLibraryBackupPolicy(), ...partial };
+    next.intervalMinutes = Math.max(1, Math.min(1440, Number(next.intervalMinutes) || 5));
+    next.assistantTurnInterval = Math.max(1, Math.min(100, Number(next.assistantTurnInterval) || 5));
+    next.periodicEnabled = next.periodicEnabled !== false;
+    next.afterAssistantTurnEnabled = next.afterAssistantTurnEnabled === true;
+    next.afterEveryChangeEnabled = next.afterEveryChangeEnabled === true;
+    localStorage.setItem(SHARED_LIBRARY_BACKUP_POLICY_KEY, JSON.stringify(next));
+    configureSharedLibraryAutoBackup();
+    renderSharedLibraryBackupPolicy();
+    return next;
+}
+
+function sharedLibraryDeviceId() {
+    let id = localStorage.getItem(SHARED_LIBRARY_SYNC_DEVICE_ID_KEY);
+    if (!id) {
+        id = globalThis.crypto?.randomUUID?.() || `horde_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem(SHARED_LIBRARY_SYNC_DEVICE_ID_KEY, id);
+    }
+    return id;
+}
+
+function defaultSharedLibraryDeviceLabel() {
+    const ua = navigator.userAgent || '';
+    if (/iPad/i.test(ua)) return 'iPad browser';
+    if (/iPhone|iPod/i.test(ua)) return 'iPhone browser';
+    if (/Android/i.test(ua)) return 'Android browser';
+    if (/Mac/i.test(navigator.platform || ua)) return 'Mac browser';
+    return 'Horde browser';
+}
+
+function sharedLibraryDeviceLabel() {
+    return String(localStorage.getItem(SHARED_LIBRARY_SYNC_DEVICE_LABEL_KEY) || defaultSharedLibraryDeviceLabel())
+        .trim().slice(0, 80) || defaultSharedLibraryDeviceLabel();
+}
+
+function sharedLibraryMeta() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SHARED_LIBRARY_SYNC_META_KEY) || '{}');
+        return isPlainObject(parsed) ? parsed : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function persistSharedLibraryMeta(partial) {
+    const next = { ...sharedLibraryMeta(), ...partial };
+    localStorage.setItem(SHARED_LIBRARY_SYNC_META_KEY, JSON.stringify(next));
+    sharedLibrarySync.revision = Number(next.revision) || 0;
+    return next;
+}
+
+function sharedLibraryBridgeUrl() {
+    const origin = String(globalThis.location?.origin || '').replace(/\/+$/, '');
+    return /^http:\/\//i.test(origin) ? origin : getMcpBridgeUrl();
+}
+
+async function sharedLibraryRequest(path, options = {}) {
+    const response = await fetch(`${sharedLibraryBridgeUrl()}${path}`, {
+        method: options.method || 'GET',
+        cache: 'no-store',
+        headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+        body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = { error: raw }; }
+    if (!response.ok) {
+        const error = new Error(data?.error || `Shared library request failed (${response.status}).`);
+        error.status = response.status;
+        error.data = data;
+        throw error;
+    }
+    return data;
+}
+
+function sharedLibraryDeviceQuery() {
+    const query = new URLSearchParams({
+        deviceId: sharedLibraryDeviceId(),
+        label: sharedLibraryDeviceLabel(),
+        revision: String(sharedLibrarySync.revision || 0),
+    });
+    return query.toString();
+}
+
+function sharedSettingsForSync(settings = state.globalSettings) {
+    const clean = safeJsonClone(isPlainObject(settings) ? settings : {});
+    SHARED_LIBRARY_LOCAL_SETTING_KEYS.forEach(key => delete clean[key]);
+    return clean;
+}
+
+function buildSharedLibrarySnapshot() {
+    const worlds = safeJsonClone(state.worlds || []);
+    return {
+        version: 1,
+        globalSettings: sharedSettingsForSync(),
+        characters: safeJsonClone(state.characters || []),
+        chats: safeJsonClone(state.chats || {}),
+        activeSessionId: safeJsonClone(state.activeSessionId || {}),
+        personas: safeJsonClone(state.personas || []),
+        activePersonaId: state.activePersonaId || null,
+        rooms: safeJsonClone(state.rooms || []),
+        theme: state.theme,
+        systemPresets: safeJsonClone(state.systemPresets || []),
+        regexScripts: safeJsonClone(state.regexScripts || []),
+        worlds,
+        worldInstances: safeJsonClone(state.worldInstances || {}),
+        activeWorldId: state.activeWorldId || null,
+        companions: safeJsonClone(state.companions || []),
+        companionThreads: safeJsonClone(state.companionThreads || {}),
+        companionTimelines: safeJsonClone(state.companionTimelines || {}),
+        activeCompanionId: state.activeCompanionId || null,
+        labsDiagnostics: safeJsonClone((state.labsDiagnostics || []).slice(-100)),
+    };
+}
+
+function sharedLibrarySnapshotFingerprint(snapshot) {
+    // This is a local no-op guard. The bridge repeats the comparison authoritatively.
+    return JSON.stringify(snapshot);
+}
+
+function hasPublishableLocalLibrary() {
+    const starterWorldIds = new Set((STARTER_WORLDS || []).map(world => world?.id).filter(Boolean));
+    const starterCharacterIds = new Set((STARTER_CHARACTERS || []).map(character => character?.id).filter(Boolean));
+    const hasAuthoredWorld = (state.worlds || []).some(world => world?.id && !starterWorldIds.has(world.id));
+    const hasAuthoredCharacter = (state.characters || []).some(character => character?.id && !starterCharacterIds.has(character.id));
+    const hasConversation = Object.values(state.chats || {}).some(sessions =>
+        Array.isArray(sessions) && sessions.some(session => Array.isArray(session?.messages) && session.messages.length > 1));
+    const hasWorldSession = Object.values(state.worldInstances || {}).some(instance =>
+        Array.isArray(instance?.sessions) && instance.sessions.some(session => Array.isArray(session?.history) && session.history.length > 1));
+    return hasAuthoredWorld || hasAuthoredCharacter || hasConversation || hasWorldSession || (state.companions || []).length > 0;
+}
+
+function normalizeSharedLibrarySnapshot(raw) {
+    if (!isPlainObject(raw)) throw new Error('The shared library snapshot is invalid.');
+    return {
+        globalSettings: isPlainObject(raw.globalSettings) ? raw.globalSettings : {},
+        characters: Array.isArray(raw.characters) ? raw.characters : [],
+        chats: isPlainObject(raw.chats) ? raw.chats : {},
+        activeSessionId: isPlainObject(raw.activeSessionId) ? raw.activeSessionId : {},
+        personas: Array.isArray(raw.personas) ? raw.personas : [],
+        activePersonaId: raw.activePersonaId || null,
+        rooms: Array.isArray(raw.rooms) ? raw.rooms : [],
+        theme: raw.theme || state.theme,
+        systemPresets: Array.isArray(raw.systemPresets) ? raw.systemPresets : [],
+        regexScripts: Array.isArray(raw.regexScripts) ? raw.regexScripts : [],
+        worlds: Array.isArray(raw.worlds) ? raw.worlds : [],
+        worldInstances: isPlainObject(raw.worldInstances) ? raw.worldInstances : {},
+        activeWorldId: raw.activeWorldId || null,
+        companions: Array.isArray(raw.companions) ? raw.companions : [],
+        companionThreads: isPlainObject(raw.companionThreads) ? raw.companionThreads : {},
+        companionTimelines: isPlainObject(raw.companionTimelines) ? raw.companionTimelines : {},
+        activeCompanionId: raw.activeCompanionId || null,
+        labsDiagnostics: Array.isArray(raw.labsDiagnostics) ? raw.labsDiagnostics : [],
+    };
+}
+
+async function applySharedLibrarySnapshot(rawSnapshot, revision) {
+    const snapshot = normalizeSharedLibrarySnapshot(rawSnapshot);
+    const localSettings = safeJsonClone(state.globalSettings || {});
+    sharedLibrarySync.applying = true;
+    try {
+        state.globalSettings = { ...snapshot.globalSettings };
+        SHARED_LIBRARY_LOCAL_SETTING_KEYS.forEach(key => {
+            if (localSettings[key] !== undefined) state.globalSettings[key] = localSettings[key];
+        });
+        state.characters = snapshot.characters;
+        state.chats = snapshot.chats;
+        state.activeSessionId = snapshot.activeSessionId;
+        state.personas = snapshot.personas;
+        state.activePersonaId = snapshot.activePersonaId;
+        state.rooms = snapshot.rooms;
+        state.theme = snapshot.theme;
+        state.systemPresets = snapshot.systemPresets;
+        state.regexScripts = snapshot.regexScripts;
+        state.worlds = snapshot.worlds;
+        state.worldInstances = snapshot.worldInstances;
+        state.activeWorldId = snapshot.activeWorldId;
+        state.companions = snapshot.companions;
+        state.companionThreads = snapshot.companionThreads;
+        state.companionTimelines = snapshot.companionTimelines;
+        state.activeCompanionId = snapshot.activeCompanionId;
+        state.labsDiagnostics = snapshot.labsDiagnostics;
+        worldMediaDirty = true;
+        repairLoadedState();
+        await saveState();
+        sharedLibrarySync.lastPublishedFingerprint = sharedLibrarySnapshotFingerprint(buildSharedLibrarySnapshot());
+        persistSharedLibraryMeta({ revision: Number(revision) || 0, pulledAt: Date.now() });
+        sharedLibrarySync.conflict = false;
+    } finally {
+        sharedLibrarySync.applying = false;
+    }
+}
+
+function applySharedLibraryStatus(data) {
+    sharedLibrarySync.remoteRevision = Number(data?.revision) || 0;
+    sharedLibrarySync.updatedAt = Number(data?.updatedAt) || 0;
+    sharedLibrarySync.updatedBy = String(data?.updatedBy || '');
+    sharedLibrarySync.activeDevices = Array.isArray(data?.activeDevices) ? data.activeDevices : [];
+    renderSharedLibrarySyncStatus();
+}
+
+async function checkSharedLibraryStatus({ announce = false } = {}) {
+    if (sharedLibrarySync.checking) return null;
+    sharedLibrarySync.checking = true;
+    try {
+        const data = await sharedLibraryRequest(`/sync/status?${sharedLibraryDeviceQuery()}`);
+        applySharedLibraryStatus(data);
+        if (data.available && Number(data.revision) > Number(sharedLibrarySync.revision || 0)) {
+            sharedLibrarySync.conflict = true;
+            if (announce && sharedLibrarySync.lastAnnouncedRevision !== Number(data.revision)) {
+                sharedLibrarySync.lastAnnouncedRevision = Number(data.revision);
+                showToast('Another device updated the shared library. Pull the latest snapshot before generating.', 'warning');
+            }
+        }
+        const activeElsewhere = (data.activeDevices || [])
+            .filter(device => device?.id && device.id !== sharedLibraryDeviceId())
+            .map(device => `${device.id}:${device.label || 'Horde browser'}`).sort().join('|');
+        if (announce && activeElsewhere && activeElsewhere !== sharedLibrarySync.lastActiveDeviceSignature) {
+            showToast('Another device opened the shared library. Horde will stop a turn if that device publishes a newer revision.', 'info');
+        }
+        sharedLibrarySync.lastActiveDeviceSignature = activeElsewhere;
+        return data;
+    } catch (error) {
+        console.warn('Shared library status check failed:', error);
+        renderSharedLibrarySyncStatus(`Bridge unavailable: ${error.message}`);
+        return null;
+    } finally {
+        sharedLibrarySync.checking = false;
+    }
+}
+
+async function pullSharedLibrarySnapshot({ reload = false } = {}) {
+    const data = await sharedLibraryRequest(`/sync/snapshot?${sharedLibraryDeviceQuery()}`);
+    applySharedLibraryStatus(data);
+    if (!data.available || !data.snapshot) {
+        throw new Error('No shared Horde library has been published yet.');
+    }
+    await applySharedLibrarySnapshot(data.snapshot, data.revision);
+    if (reload) window.location.reload();
+}
+
+async function pushSharedLibrarySnapshot({ manual = false, trigger = 'manual' } = {}) {
+    if (sharedLibrarySync.applying || sharedLibrarySync.pushing) return;
+    sharedLibrarySync.pushing = true;
+    try {
+        const snapshot = buildSharedLibrarySnapshot();
+        const fingerprint = sharedLibrarySnapshotFingerprint(snapshot);
+        if (!manual && fingerprint === sharedLibrarySync.lastPublishedFingerprint) return;
+        const data = await sharedLibraryRequest('/sync/push', {
+            method: 'POST',
+            body: {
+                deviceId: sharedLibraryDeviceId(),
+                label: sharedLibraryDeviceLabel(),
+                baseRevision: Number(sharedLibrarySync.revision) || 0,
+                snapshot,
+                trigger,
+            },
+        });
+        applySharedLibraryStatus(data);
+        persistSharedLibraryMeta({ revision: Number(data.revision) || 0, pushedAt: Date.now() });
+        sharedLibrarySync.lastPublishedFingerprint = fingerprint;
+        sharedLibrarySync.conflict = false;
+        sharedLibrarySync.dirty = false;
+        sharedLibrarySync.assistantTurnsSincePublish = 0;
+        if (manual) showToast(data.unchanged
+            ? `Shared library is already protected at revision ${data.revision}.`
+            : `Shared library published (revision ${data.revision}).`, 'success');
+    } catch (error) {
+        if (error.status === 409) {
+            sharedLibrarySync.conflict = true;
+            applySharedLibraryStatus(error.data || {});
+            if (manual) showToast('A newer shared library exists. Pull it before publishing changes.', 'warning');
+        } else if (manual) {
+            showToast(`Could not publish shared library: ${error.message}`, 'error');
+        } else {
+            console.warn('Shared library publish failed:', error);
+        }
+    } finally {
+        sharedLibrarySync.pushing = false;
+        renderSharedLibrarySyncStatus();
+    }
+}
+
+function scheduleSharedLibraryPush() {
+    if (!sharedLibrarySync.ready || sharedLibrarySync.applying) return;
+    sharedLibrarySync.dirty = true;
+    if (sharedLibraryBackupPolicy().afterEveryChangeEnabled) {
+        // Coalesce the small cluster of saves a single edit normally creates.
+        clearTimeout(sharedLibrarySync.pushTimer);
+        sharedLibrarySync.pushTimer = setTimeout(() => void pushSharedLibrarySnapshot({ trigger: 'persisted_change' }), 250);
+    }
+}
+
+function configureSharedLibraryAutoBackup() {
+    clearInterval(sharedLibrarySync.autoBackupTimer);
+    sharedLibrarySync.autoBackupTimer = null;
+    const policy = sharedLibraryBackupPolicy();
+    if (!policy.periodicEnabled || !sharedLibrarySync.ready) return;
+    sharedLibrarySync.autoBackupTimer = setInterval(() => {
+        if (sharedLibrarySync.dirty) void pushSharedLibrarySnapshot({ trigger: 'periodic' });
+    }, policy.intervalMinutes * 60 * 1000);
+}
+
+function recordSharedLibraryAssistantTurn() {
+    if (!sharedLibrarySync.ready || sharedLibrarySync.applying) return;
+    sharedLibrarySync.dirty = true;
+    sharedLibrarySync.assistantTurnsSincePublish += 1;
+    const policy = sharedLibraryBackupPolicy();
+    if (policy.afterAssistantTurnEnabled
+        && sharedLibrarySync.assistantTurnsSincePublish >= policy.assistantTurnInterval) {
+        void pushSharedLibrarySnapshot({ trigger: 'assistant_turn' });
+    }
+}
+
+function renderSharedLibraryBackupPolicy() {
+    const policy = sharedLibraryBackupPolicy();
+    const periodic = document.getElementById('shared-library-periodic-enabled');
+    const minutes = document.getElementById('shared-library-interval-minutes');
+    const assistant = document.getElementById('shared-library-after-assistant-enabled');
+    const turns = document.getElementById('shared-library-assistant-turn-interval');
+    const everyChange = document.getElementById('shared-library-after-every-change-enabled');
+    if (periodic) periodic.checked = policy.periodicEnabled;
+    if (minutes) { minutes.value = policy.intervalMinutes; minutes.disabled = !policy.periodicEnabled; }
+    if (assistant) assistant.checked = policy.afterAssistantTurnEnabled;
+    if (turns) { turns.value = policy.assistantTurnInterval; turns.disabled = !policy.afterAssistantTurnEnabled; }
+    if (everyChange) everyChange.checked = policy.afterEveryChangeEnabled;
+}
+
+async function refreshSharedLibraryHistory() {
+    const data = await sharedLibraryRequest(`/sync/history?${sharedLibraryDeviceQuery()}`);
+    applySharedLibraryStatus(data);
+    sharedLibrarySync.history = Array.isArray(data.history) ? data.history : [];
+    renderSharedLibraryHistory();
+    return sharedLibrarySync.history;
+}
+
+function formatSharedLibraryRecoveryPoint(point) {
+    const time = point?.archivedAt ? new Date(point.archivedAt).toLocaleString() : 'Unknown time';
+    const size = Number(point?.bytes) ? `${(Number(point.bytes) / 1024 / 1024).toFixed(1)} MB` : 'size unknown';
+    const trigger = String(point?.trigger || 'legacy').replaceAll('_', ' ');
+    const changes = Array.isArray(point?.changes) && point.changes.length
+        ? ` · ${point.changes.join(', ').replaceAll('_', ' ')}` : '';
+    return `r${point?.revision ?? '?'} · ${time} · ${point?.updatedBy || 'unknown device'} · ${size} · ${trigger}${changes}`;
+}
+
+function renderSharedLibraryHistory() {
+    const select = document.getElementById('shared-library-history-select');
+    const restore = document.getElementById('shared-library-restore-btn');
+    if (!select || !restore) return;
+    const points = sharedLibrarySync.history || [];
+    select.innerHTML = points.length
+        ? points.map(point => `<option value="${escapeHTML(point.id)}">${escapeHTML(formatSharedLibraryRecoveryPoint(point))}</option>`).join('')
+        : '<option value="">No recovery points yet</option>';
+    select.disabled = !points.length;
+    restore.disabled = !points.length;
+}
+
+async function restoreSharedLibraryHistory(historyId) {
+    const data = await sharedLibraryRequest('/sync/restore', {
+        method: 'POST',
+        body: {
+            deviceId: sharedLibraryDeviceId(),
+            label: sharedLibraryDeviceLabel(),
+            baseRevision: Number(sharedLibrarySync.revision) || 0,
+            historyId,
+        },
+    });
+    applySharedLibraryStatus(data);
+    await applySharedLibrarySnapshot(data.snapshot, data.revision);
+    return data;
+}
+
+async function ensureSharedLibraryFreshForGeneration() {
+    const data = await checkSharedLibraryStatus({ announce: true });
+    if (data?.available && Number(data.revision) > Number(sharedLibrarySync.revision || 0)) {
+        showToast('Generation paused: another device has a newer library snapshot. Pull it first.', 'warning');
+        return false;
+    }
+    return true;
+}
+
+async function initializeSharedLibrarySync() {
+    const meta = sharedLibraryMeta();
+    sharedLibrarySync.revision = Number(meta.revision) || 0;
+    const status = await checkSharedLibraryStatus();
+    const remoteWasNewer = !!(status?.available
+        && Number(status.revision) > Number(sharedLibrarySync.revision || 0));
+    if (remoteWasNewer) {
+        await pullSharedLibrarySnapshot();
+    }
+    sharedLibrarySync.ready = true;
+    // Startup rule: remote wins only when it is newer. Otherwise this browser
+    // republishes its known-good local library, making a server restart and a
+    // subsequent Horde launch a simple freshness check rather than a manual
+    // sync ceremony. A brand-new phone with only stock starter data waits for
+    // the Mac instead of accidentally becoming the first authority.
+    if (status && !remoteWasNewer && hasPublishableLocalLibrary()) scheduleSharedLibraryPush();
+    configureSharedLibraryAutoBackup();
+    void refreshSharedLibraryHistory().catch(error => console.warn('Shared library history refresh failed:', error));
+    sharedLibrarySync.pollTimer = setInterval(() => void checkSharedLibraryStatus({ announce: true }), 25000);
+    window.addEventListener('focus', () => void checkSharedLibraryStatus({ announce: true }));
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) void checkSharedLibraryStatus({ announce: true });
+    });
+}
+
+function renderSharedLibrarySyncStatus(errorMessage = '') {
+    const status = document.getElementById('shared-library-sync-status');
+    const label = document.getElementById('shared-library-device-label');
+    if (label && document.activeElement !== label) label.value = sharedLibraryDeviceLabel();
+    if (!status) return;
+    if (errorMessage) {
+        status.textContent = errorMessage;
+        return;
+    }
+    if (!sharedLibrarySync.remoteRevision) {
+        status.textContent = 'No shared library published yet. Horde will publish this device automatically when it contains an authored library.';
+        return;
+    }
+    const otherDevices = sharedLibrarySync.activeDevices
+        .filter(device => device?.id !== sharedLibraryDeviceId())
+        .map(device => device.label || 'another device');
+    const freshness = sharedLibrarySync.remoteRevision > sharedLibrarySync.revision
+        ? 'A newer remote revision is waiting - pull before generating.'
+        : `Synced at revision ${sharedLibrarySync.revision}.`;
+    status.textContent = `${freshness}${otherDevices.length ? ` Active now: ${otherDevices.join(', ')}.` : ''}`;
+}
+
+function setupSharedLibrarySyncControls() {
+    const label = document.getElementById('shared-library-device-label');
+    if (label) label.onchange = () => {
+        localStorage.setItem(SHARED_LIBRARY_SYNC_DEVICE_LABEL_KEY, label.value.trim().slice(0, 80) || defaultSharedLibraryDeviceLabel());
+        void checkSharedLibraryStatus();
+    };
+    const pull = document.getElementById('shared-library-pull-btn');
+    if (pull) pull.onclick = async () => {
+        pull.disabled = true;
+        try {
+            await pullSharedLibrarySnapshot({ reload: true });
+        } catch (error) {
+            showToast(`Could not pull shared library: ${error.message}`, 'error');
+            pull.disabled = false;
+        }
+    };
+    const push = document.getElementById('shared-library-push-btn');
+    if (push) push.onclick = async () => {
+        push.disabled = true;
+        await pushSharedLibrarySnapshot({ manual: true, trigger: 'manual' });
+        push.disabled = false;
+    };
+    const check = document.getElementById('shared-library-check-btn');
+    if (check) check.onclick = () => void checkSharedLibraryStatus({ announce: true });
+    const periodic = document.getElementById('shared-library-periodic-enabled');
+    if (periodic) periodic.onchange = () => saveSharedLibraryBackupPolicy({ periodicEnabled: periodic.checked });
+    const minutes = document.getElementById('shared-library-interval-minutes');
+    if (minutes) minutes.onchange = () => saveSharedLibraryBackupPolicy({ intervalMinutes: minutes.value });
+    const afterAssistant = document.getElementById('shared-library-after-assistant-enabled');
+    if (afterAssistant) afterAssistant.onchange = () => saveSharedLibraryBackupPolicy({ afterAssistantTurnEnabled: afterAssistant.checked });
+    const assistantTurns = document.getElementById('shared-library-assistant-turn-interval');
+    if (assistantTurns) assistantTurns.onchange = () => saveSharedLibraryBackupPolicy({ assistantTurnInterval: assistantTurns.value });
+    const everyChange = document.getElementById('shared-library-after-every-change-enabled');
+    if (everyChange) everyChange.onchange = () => saveSharedLibraryBackupPolicy({ afterEveryChangeEnabled: everyChange.checked });
+    const refreshHistory = document.getElementById('shared-library-history-refresh-btn');
+    if (refreshHistory) refreshHistory.onclick = async () => {
+        refreshHistory.disabled = true;
+        try { await refreshSharedLibraryHistory(); }
+        catch (error) { showToast(`Could not load recovery points: ${error.message}`, 'error'); }
+        finally { refreshHistory.disabled = false; }
+    };
+    const restore = document.getElementById('shared-library-restore-btn');
+    if (restore) restore.onclick = async () => {
+        const select = document.getElementById('shared-library-history-select');
+        const historyId = select?.value;
+        if (!historyId) return;
+        if (!window.confirm('Restore this shared recovery point? Your current live state will be archived first, then this browser will reload.')) return;
+        restore.disabled = true;
+        try {
+            const data = await restoreSharedLibraryHistory(historyId);
+            showToast(`Restored recovery point r${data.restoredFromRevision}. Reloading…`, 'success');
+            window.setTimeout(() => window.location.reload(), 350);
+        } catch (error) {
+            showToast(`Could not restore recovery point: ${error.message}`, 'error');
+            restore.disabled = false;
+        }
+    };
+    renderSharedLibrarySyncStatus();
+    renderSharedLibraryHistory();
+    renderSharedLibraryBackupPolicy();
+}
+
+// Kept deliberately tiny for recovery and launcher-driven diagnostics.
+// `HordeSharedLibrary.check()`, `.publish()`, and `.pull()` are available from
+// the page console without exposing any credentials or private local settings.
+globalThis.HordeSharedLibrary = Object.freeze({
+    check: () => checkSharedLibraryStatus({ announce: true }),
+    publish: () => pushSharedLibrarySnapshot({ manual: true }),
+    pull: () => pullSharedLibrarySnapshot({ reload: true }),
+    history: () => refreshSharedLibraryHistory(),
+    restore: (historyId) => restoreSharedLibraryHistory(historyId),
+    backupNow: () => pushSharedLibrarySnapshot({ manual: true, trigger: 'manual' }),
+});
+
 // --- Vector Memory Engine with Cache & Fallback ---
 const HordeVectorMemory = {
     cache: new Map(), // Mem-cache for runtime
@@ -2446,6 +3000,7 @@ async function persistStateSnapshot() {
         }
         await HordeDB.setMultiple(records);
         writeGlobalSettingsMirror(records.globalSettings);
+        scheduleSharedLibraryPush();
     } catch (err) {
         if (savingWorldMedia) worldMediaDirty = true;
         const isQuota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
@@ -5084,11 +5639,15 @@ async function init() {
     }
 
     await loadState();
+    // Apply a newer shared snapshot before UI setup so this browser never
+    // starts an engine against stale local IndexedDB state.
+    await initializeSharedLibrarySync();
     setupNavigation();
     setupStudioTabs();
     setupStudioLogic();
     setupChatLogic();
     setupGlobalSettings();
+    setupSharedLibrarySyncControls();
     setupOpenRouterRouting();
     setupHordeLabs();
     setupPersonasLogic();
@@ -8291,6 +8850,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
         }
         session.messages.push(newAiMsg);
         await saveState();
+        recordSharedLibraryAssistantTurn();
         renderChat(); // Refresh to bind message actions
 
         // Trigger non-blocking rolling episodic memory consolidation
@@ -11036,6 +11596,7 @@ function showGlobalSettings() {
         document.getElementById('global-local-image-key').value = state.globalSettings.localImageApiKey || '';
         document.getElementById('global-comfy-url').value = state.globalSettings.comfyUiBaseUrl || 'http://127.0.0.1:8188';
         renderComfyWorkflowProfileControls();
+        renderSharedLibrarySyncStatus();
         const platformBadge = document.getElementById('launcher-platform-badge');
         const launcherCommand = document.getElementById('launcher-command');
         const platform = String(navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
@@ -19951,6 +20512,7 @@ async function executeWorldTurn(commandOrReroll = null) {
         showToast('The DM is still responding — please wait.', 'info');
         return;
     }
+    if (!(await ensureSharedLibraryFreshForGeneration())) return;
     worldTurnInProgress = true;
     const worldSendBtn = document.getElementById('world-send-btn');
     if (worldSendBtn) {
@@ -21935,6 +22497,7 @@ ${modularMandate}
                 }, { mode: 'worlds', background: true, priority: 15 }).catch(() => {});
             }
             await saveState();
+            recordSharedLibraryAssistantTurn();
         } else if (command === "init") {
             // INIT RESCUE: If the AI failed to introduce the world, provide a basic descriptive fallback
             const fallbackIntro = `You arrive at ${locName}. ${locDesc}\n\n[SYSTEM: The AI failed to generate a custom introduction. You can now take your first action.]`;
@@ -21955,6 +22518,7 @@ ${modularMandate}
             fallbackMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
             delete fallbackMsg.postSnapshot;
             await saveState();
+            recordSharedLibraryAssistantTurn();
             fullText = fallbackIntro; // Set fullText so sync logic has something to work with if needed
         } else {
             const why = lastFinishReason === 'length'
