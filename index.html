@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260901-v167-memory-release">
+    <link rel="stylesheet" href="style.css?v=20260901-v167-openrouter-routing-v1">
 </head>
 <body>
 <div id="app">
@@ -942,6 +942,7 @@
                                 </div>
                                 <p class="form-hint">Leave blank to follow the default text provider and model from Settings. Choosing a model here deliberately pins only this World.</p>
                             </div>
+                            <div id="world-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                             <!-- World Agent: off-screen simulation with genuine invention -->
                             <div class="form-section world-kernel-card">
@@ -1001,6 +1002,7 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div id="world-agent-openrouter-routing" class="openrouter-routing-host hidden"></div>
                             </div>
 
                             <!-- System Presets (Modular) -->
@@ -1595,6 +1597,7 @@
                                     <button id="fetch-model-btn" class="btn btn-ghost" title="Fetch model info from the selected provider" style="white-space: nowrap; flex-shrink: 0;">Fetch Data</button>
                                 </div>
                             </div>
+                            <div id="character-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                             <!-- System Presets -->
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
@@ -3447,6 +3450,7 @@
                 <div id="global-default-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
             </div>
             <p class="form-hint">This catalog follows the provider selected above—even before you save. If the platform does not expose <code>/models</code>, type its exact model ID.</p>
+            <div id="global-openrouter-routing" class="openrouter-routing-host hidden" data-settings-keywords="openrouter provider routing fallback throughput latency price coreweave"></div>
             <div id="local-provider-fields" style="display:none; margin-top:12px; padding:12px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
                 <label class="form-label">Local Server URL</label>
                 <input type="text" id="global-local-url" class="form-input" placeholder="http://localhost:11434/v1">
@@ -4108,6 +4112,7 @@
                         <button id="fetch-room-model-btn" class="btn btn-ghost" title="Fetch model info" style="white-space: nowrap; flex-shrink: 0; padding: 4px 12px;">Fetch Data</button>
                     </div>
                 </div>
+                <div id="room-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                 <div style="display:flex; flex-direction:column; justify-content:space-between; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -4875,6 +4880,6 @@
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
-    <script src="app.js?v=20260901-v167-memory-release"></script>
+    <script src="app.js?v=20260901-v167-openrouter-routing-v1"></script>
 </body>
 </html>

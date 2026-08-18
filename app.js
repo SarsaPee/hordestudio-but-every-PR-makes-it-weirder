@@ -893,6 +893,85 @@ function videoOutputFromPayload(payload) {
     return String(data.output_url || data.video_url || data.url || data.result?.url || '');
 }
 
+
+// --- OpenRouter provider routing -------------------------------------------
+// Keep this adapter deliberately small. Every OpenRouter text request passes
+// through it, while other providers receive the original request object by
+// identity so their payloads are not changed by this feature.
+const OPENROUTER_ROUTING_SORTS = Object.freeze(['throughput', 'latency', 'price']);
+const DEFAULT_OPENROUTER_ROUTING = Object.freeze({
+    order: Object.freeze([]),
+    allowFallbacks: true,
+    fallbackSort: 'throughput'
+});
+
+function isValidOpenRouterProviderSlug(value) {
+    return typeof value === 'string'
+        && value.length <= 160
+        && /^[a-z0-9][a-z0-9._/-]*$/i.test(value);
+}
+
+function normalizeOpenRouterRouting(raw, { allowNull = false } = {}) {
+    if ((raw === null || raw === undefined) && allowNull) return null;
+    const source = isPlainObject(raw) ? raw : {};
+    const seen = new Set();
+    const order = (Array.isArray(source.order) ? source.order : [])
+        .map(value => String(value || '').trim())
+        .filter(value => {
+            const key = value.toLowerCase();
+            if (!isValidOpenRouterProviderSlug(value) || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .slice(0, 50);
+    const requestedSort = String(source.fallbackSort || source.sort || '').trim().toLowerCase();
+    const fallbackSort = OPENROUTER_ROUTING_SORTS.includes(requestedSort)
+        ? requestedSort : DEFAULT_OPENROUTER_ROUTING.fallbackSort;
+    let allowFallbacks = source.allowFallbacks;
+    if (allowFallbacks === undefined) allowFallbacks = source.allow_fallbacks;
+    allowFallbacks = allowFallbacks === undefined ? true : allowFallbacks === true;
+    // With no preferred providers there is nothing to route to when fallbacks
+    // are disabled. Heal that impossible legacy state rather than making every
+    // generation fail.
+    if (!order.length) allowFallbacks = true;
+    return { order, allowFallbacks, fallbackSort };
+}
+
+function effectiveOpenRouterRouting(owner = null, scope = 'default') {
+    const globalRouting = normalizeOpenRouterRouting(state.globalSettings?.openRouterRouting);
+    if (!owner) return globalRouting;
+    if (scope === 'worldAgent') {
+        const agentRouting = normalizeOpenRouterRouting(owner.worldAgent?.openRouterRouting, { allowNull: true });
+        if (agentRouting) return agentRouting;
+        const worldRouting = normalizeOpenRouterRouting(owner.openRouterRouting, { allowNull: true });
+        return worldRouting || globalRouting;
+    }
+    return normalizeOpenRouterRouting(owner.openRouterRouting, { allowNull: true }) || globalRouting;
+}
+
+function openRouterProviderPreferences(owner = null, scope = 'default') {
+    const routing = effectiveOpenRouterRouting(owner, scope);
+    const preferences = {
+        allow_fallbacks: routing.allowFallbacks
+    };
+    if (routing.order.length) preferences.order = [...routing.order];
+    if (routing.allowFallbacks) preferences.sort = routing.fallbackSort;
+    return preferences;
+}
+
+function applyOpenRouterRouting(body, owner = null, {
+    scope = 'default',
+    providerId = state.globalSettings?.apiProvider
+} = {}) {
+    if (normalizedProviderId(providerId) !== 'openrouter') return body;
+    const existing = isPlainObject(body?.provider) ? body.provider : {};
+    const routing = openRouterProviderPreferences(owner, scope);
+    return {
+        ...body,
+        provider: { ...existing, ...routing }
+    };
+}
+
 function companionTextProviderId(companion) {
     return normalizedProviderId(companion?.textProvider);
 }
@@ -1051,6 +1130,7 @@ let state = {
     customHeaders: '',
     globalSettings: {
         defaultModel: 'deepseek/deepseek-v4-flash',
+        openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
         bedrockRegion: 'us-east-1',
         bedrockBaseUrl: '',
         customProviderName: 'Custom API',
@@ -1258,6 +1338,25 @@ function validateLorebook(value, label = 'Lorebook') {
     });
 }
 
+function validateOpenRouterRoutingData(value, label, { optional = true, allowNull = true } = {}) {
+    if (optional && value === undefined) return;
+    if (allowNull && value === null) return;
+    requirePlainObject(value, label);
+    requireArray(value.order, `${label} provider order`, { optional: true, max: 50 });
+    (value.order || []).forEach((slug, index) => {
+        requireString(slug, `${label} provider ${index + 1}`, { max: 160 });
+        if (!isValidOpenRouterProviderSlug(slug)) {
+            throw new Error(`${label} provider ${index + 1} is not a valid OpenRouter slug`);
+        }
+    });
+    if (value.allowFallbacks !== undefined && typeof value.allowFallbacks !== 'boolean') {
+        throw new Error(`${label} fallback setting must be true or false`);
+    }
+    if (value.fallbackSort !== undefined && !OPENROUTER_ROUTING_SORTS.includes(value.fallbackSort)) {
+        throw new Error(`${label} fallback sorting is invalid`);
+    }
+}
+
 function validateCharacterData(value, label = 'Character') {
     requirePlainObject(value, label);
     requireString(value.name, `${label} name`, { max: 300 });
@@ -1266,6 +1365,7 @@ function validateCharacterData(value, label = 'Character') {
         requireString(value[key], `${label} ${key}`, { optional: true }));
     ['avatar', 'bg'].forEach(key =>
         requireString(value[key], `${label} ${key}`, { optional: true, max: 2_000_000 }));
+    validateOpenRouterRoutingData(value.openRouterRouting, `${label} OpenRouter routing`);
     requireArray(value.tags, `${label} tags`, { optional: true, max: 100 });
     (value.tags || []).forEach((tag, index) => requireString(tag, `${label} tag ${index + 1}`, { max: 100 }));
     requireArray(value.alternateGreetings, `${label} alternate greetings`, { optional: true, max: 100 });
@@ -1412,6 +1512,7 @@ function validateRoomData(value, label = 'Room') {
     requireSafeId(value.id, `${label} id`, { optional: true });
     ['scenario', 'model', 'avatar', 'bg', 'authorsNote'].forEach(key =>
         requireString(value[key], `${label} ${key}`, { optional: true }));
+    validateOpenRouterRoutingData(value.openRouterRouting, `${label} OpenRouter routing`);
     requireArray(value.characterIds, `${label} characterIds`, { optional: true, max: 500 });
     (value.characterIds || []).forEach((id, index) => requireSafeId(id, `${label} character id ${index + 1}`));
     validateLorebook(value.lorebook, `${label} lorebook`);
@@ -1424,6 +1525,11 @@ function validateWorldData(value, label = 'World') {
     requireSafeId(value.id, `${label} id`, { optional: true });
     ['description', 'dmPrompt', 'intro', 'model', 'authorNote'].forEach(key =>
         requireString(value[key], `${label} ${key}`, { optional: true }));
+    validateOpenRouterRoutingData(value.openRouterRouting, `${label} OpenRouter routing`);
+    if (value.worldAgent !== undefined) {
+        requirePlainObject(value.worldAgent, `${label} World Agent`);
+        validateOpenRouterRoutingData(value.worldAgent.openRouterRouting, `${label} World Agent OpenRouter routing`);
+    }
     requireString(value.banner, `${label} banner`, { optional: true, max: 2_000_000 });
     requireArray(value.locations, `${label} locations`, { max: 2000 });
     if (!value.locations.length) throw new Error(`${label} needs at least one location`);
@@ -1597,6 +1703,13 @@ function validateBackupData(value) {
             requireArray(record.embedding, `Chat continuity ${continuityId} memory ${index + 1} embedding`, { optional: true, max: 10000 });
         });
     });
+    if (value.globalSettings) {
+        validateOpenRouterRoutingData(
+            value.globalSettings.openRouterRouting,
+            'Backup global OpenRouter routing',
+            { optional: true, allowNull: false }
+        );
+    }
     Object.entries(value.chats || {}).forEach(([ownerId, sessions]) => {
         requireArray(sessions, `Chat sessions for ${ownerId}`, { max: 5000 });
         sessions.forEach((session, index) => {
@@ -1677,6 +1790,7 @@ function validateBackupData(value) {
 function repairLoadedState() {
     state.globalSettings = {
         defaultModel: 'deepseek/deepseek-v4-flash',
+        openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
         editFontSize: 15,
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
@@ -1709,6 +1823,7 @@ function repairLoadedState() {
         ...(isPlainObject(state.globalSettings) ? state.globalSettings : {})
     };
     state.globalSettings.defaultModel = typeof state.globalSettings.defaultModel === 'string' ? state.globalSettings.defaultModel.slice(0, 500) : 'deepseek/deepseek-v4-flash';
+    state.globalSettings.openRouterRouting = normalizeOpenRouterRouting(state.globalSettings.openRouterRouting);
     // Blank is meaningful here: it means "fall back to the world's own model".
     state.globalSettings.structuredModel = typeof state.globalSettings.structuredModel === 'string'
         ? state.globalSettings.structuredModel.trim().slice(0, 200) : '';
@@ -1774,6 +1889,7 @@ function repairLoadedState() {
             });
         });
         character.chatHud = normalizeChatHudConfig(character.chatHud);
+        character.openRouterRouting = normalizeOpenRouterRouting(character.openRouterRouting, { allowNull: true });
     });
     state.personas = Array.isArray(state.personas)
         ? state.personas.filter(p => isPlainObject(p) && typeof p.name === 'string').map(normalizePersona)
@@ -1784,6 +1900,7 @@ function repairLoadedState() {
     state.rooms.forEach(room => {
         room.characterIds = room.characterIds || [];
         room.lorebook = room.lorebook || [];
+        room.openRouterRouting = normalizeOpenRouterRouting(room.openRouterRouting, { allowNull: true });
     });
     repairChatMemoryState();
     // Never silently discard authored worlds. Older releases filtered any
@@ -1806,6 +1923,10 @@ function repairLoadedState() {
         }
     });
     state.worlds.forEach(world => {
+        world.entities = world.entities || [];
+        world.lorebook = world.lorebook || [];
+        world.openRouterRouting = normalizeOpenRouterRouting(world.openRouterRouting, { allowNull: true });
+        world.worldAgent = normalizeWorldAgentConfig(world);
         world.hudConfig = {
             showClock: true,
             showQuests: true,
@@ -2821,7 +2942,8 @@ AGENCY
             modules: { stats: true, health: true, conditions: true, checks: true, inventory: true, commerce: true, quests: true, relationships: true, schedules: true, livingWorld: true },
             vitalStatId: 'hp', currencyStatId: 'gold', currencyName: 'wealth', zeroHpMode: 'fail_forward'
         },
-        worldAgent: { enabled: true, intervalTurns: 6, model: '' }
+        openRouterRouting: null,
+        worldAgent: { enabled: true, intervalTurns: 6, model: '', openRouterRouting: null }
     };
 }
 
@@ -3106,7 +3228,8 @@ IMMERSION
         hudConfig:{timeStep:15,startTimeHours:7,startWeekday:'Monday',enableSchedules:true,showClock:true,showDays:true,showLedger:true,showInventory:true,showQuests:true,stats:[
             {id:'hp',name:'Health',value:100,min:0,max:100,color:'#e05a5a'},{id:'cash',name:'Cash',value:80,min:0,max:0,color:'#d7aa42'},{id:'energy',name:'Energy',value:75,min:0,max:100,color:'#4da56d'},{id:'stress',name:'Stress',value:30,min:0,max:100,color:'#d47c45'},{id:'reputation',name:'Local Reputation',value:0,min:-100,max:100,color:'#8774cf'},{id:'social',name:'Social',value:1,min:-5,max:10,color:'#c76c9b'},{id:'focus',name:'Focus',value:1,min:-5,max:10,color:'#4f8fc9'},{id:'practical',name:'Practical',value:1,min:-5,max:10,color:'#6f9d58'}]},
         gameRules:{profileId:'full_rpg',modules:{stats:true,health:true,conditions:true,checks:true,inventory:true,commerce:true,quests:true,relationships:true,schedules:true,livingWorld:true},vitalStatId:'hp',currencyStatId:'cash',currencyName:'dollars',zeroHpMode:'fail_forward'},
-        worldAgent:{enabled:true,intervalTurns:8,model:''}
+        openRouterRouting:null,
+        worldAgent:{enabled:true,intervalTurns:8,model:'',openRouterRouting:null}
     };
 }
 
@@ -3498,6 +3621,542 @@ async function getOpenRouterModels() {
         console.error(`Failed to fetch ${isLocalProvider() ? 'local' : cloudProviderName()} models:`, e);
     }
     return openRouterModels;
+}
+
+const OPENROUTER_PROVIDER_API = 'https://openrouter.ai/api/v1/providers';
+const OPENROUTER_ENDPOINT_API = 'https://openrouter.ai/api/v1/models';
+let openRouterProviderCatalog = [];
+let openRouterProviderCatalogFetchedAt = 0;
+const openRouterEndpointCatalogs = new Map();
+const openRouterRoutingDrafts = new Map();
+
+function openRouterRoutingPanelDefinition(scope) {
+    const definitions = {
+        global: {
+            hostId: 'global-openrouter-routing',
+            modelId: 'global-default-model',
+            inheritLabel: '',
+            owner: () => null,
+            stored: () => state.globalSettings.openRouterRouting
+        },
+        character: {
+            hostId: 'character-openrouter-routing',
+            modelId: 'studio-model',
+            inheritLabel: 'Inherit global routing',
+            owner: () => state.editingChar,
+            stored: () => state.editingChar?.openRouterRouting
+        },
+        room: {
+            hostId: 'room-openrouter-routing',
+            modelId: 'room-model',
+            inheritLabel: 'Inherit global routing',
+            owner: () => state.editingRoom,
+            stored: () => state.editingRoom?.openRouterRouting
+        },
+        world: {
+            hostId: 'world-openrouter-routing',
+            modelId: 'w-studio-model',
+            inheritLabel: 'Inherit global routing',
+            owner: () => state.editingWorld,
+            stored: () => state.editingWorld?.openRouterRouting
+        },
+        worldAgent: {
+            hostId: 'world-agent-openrouter-routing',
+            modelId: 'w-agent-model',
+            inheritLabel: 'Inherit World routing',
+            owner: () => state.editingWorld,
+            stored: () => state.editingWorld?.worldAgent?.openRouterRouting
+        }
+    };
+    return definitions[scope] || null;
+}
+
+function openRouterRoutingParent(scope) {
+    const globalRouting = normalizeOpenRouterRouting(state.globalSettings.openRouterRouting);
+    if (scope !== 'worldAgent') return globalRouting;
+    const worldDraft = openRouterRoutingDrafts.get('world');
+    if (worldDraft) {
+        return worldDraft.inherit
+            ? globalRouting
+            : normalizeOpenRouterRouting(worldDraft.routing);
+    }
+    return normalizeOpenRouterRouting(state.editingWorld?.openRouterRouting, { allowNull: true }) || globalRouting;
+}
+
+function openRouterRoutingModel(scope) {
+    const definition = openRouterRoutingPanelDefinition(scope);
+    const selected = String(document.getElementById(definition?.modelId)?.value || '').trim();
+    if (selected) return selected;
+    if (scope === 'worldAgent') {
+        return String(document.getElementById('w-studio-model')?.value
+            || state.editingWorld?.model || state.globalSettings.defaultModel || '').trim();
+    }
+    return String(state.globalSettings.defaultModel || '').trim();
+}
+
+function openRouterRoutingVisible(scope) {
+    const selected = scope === 'global'
+        ? document.getElementById('global-api-provider')?.value
+        : state.globalSettings.apiProvider;
+    return normalizedProviderId(selected) === 'openrouter';
+}
+
+function initializeOpenRouterRoutingPanel(scope, { force = true } = {}) {
+    const definition = openRouterRoutingPanelDefinition(scope);
+    if (!definition || !document.getElementById(definition.hostId)) return;
+    if (!force && openRouterRoutingDrafts.has(scope)) {
+        renderOpenRouterRoutingPanel(scope);
+        return;
+    }
+    const stored = normalizeOpenRouterRouting(definition.stored(), { allowNull: scope !== 'global' });
+    const inherit = scope !== 'global' && stored === null;
+    openRouterRoutingDrafts.set(scope, {
+        inherit,
+        routing: normalizeOpenRouterRouting(stored || openRouterRoutingParent(scope)),
+        search: '',
+        endpointModel: '',
+        endpoints: [],
+        endpointsLoaded: false,
+        loading: false,
+        status: '',
+        statusKind: '',
+        tests: new Map()
+    });
+    renderOpenRouterRoutingPanel(scope);
+}
+
+function readOpenRouterRoutingPanel(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    if (!draft) {
+        const definition = openRouterRoutingPanelDefinition(scope);
+        return normalizeOpenRouterRouting(definition?.stored(), { allowNull: scope !== 'global' });
+    }
+    if (scope !== 'global' && draft.inherit) return null;
+    return normalizeOpenRouterRouting(draft.routing);
+}
+
+function openRouterRoutingDraftValue(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    if (!draft) return normalizeOpenRouterRouting(openRouterRoutingParent(scope));
+    return draft.inherit ? normalizeOpenRouterRouting(openRouterRoutingParent(scope)) : draft.routing;
+}
+
+function openRouterUiKey() {
+    return String(document.getElementById('global-api-key')?.value || state.apiKey || '').trim();
+}
+
+function openRouterUiHeaders() {
+    const key = openRouterUiKey();
+    return {
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+        ...attributionHeaders()
+    };
+}
+
+async function fetchOpenRouterProviderCatalog({ force = false } = {}) {
+    if (!force && openRouterProviderCatalog.length && Date.now() - openRouterProviderCatalogFetchedAt < 15 * 60 * 1000) {
+        return openRouterProviderCatalog;
+    }
+    const response = await fetch(OPENROUTER_PROVIDER_API, { headers: openRouterUiHeaders() });
+    if (!response.ok) throw new Error(`provider catalog failed (${response.status})`);
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.data) ? payload.data : [];
+    openRouterProviderCatalog = rows.map(row => ({
+        slug: String(row?.slug || '').trim(),
+        name: String(row?.name || row?.slug || '').trim()
+    })).filter(row => isValidOpenRouterProviderSlug(row.slug));
+    openRouterProviderCatalogFetchedAt = Date.now();
+    return openRouterProviderCatalog;
+}
+
+async function fetchOpenRouterModelEndpoints(model, { force = false } = {}) {
+    const cleanModel = String(model || '').trim();
+    if (!cleanModel.includes('/')) throw new Error('choose an OpenRouter model before refreshing endpoint metadata');
+    const cached = openRouterEndpointCatalogs.get(cleanModel);
+    if (!force && cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) return cached.endpoints;
+    const splitAt = cleanModel.indexOf('/');
+    const author = cleanModel.slice(0, splitAt);
+    const slug = cleanModel.slice(splitAt + 1);
+    const url = `${OPENROUTER_ENDPOINT_API}/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/endpoints`;
+    const response = await fetch(url, { headers: openRouterUiHeaders() });
+    if (!response.ok) throw new Error(`model endpoints failed (${response.status})`);
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.data?.endpoints) ? payload.data.endpoints : [];
+    const endpoints = rows.map(row => ({
+        slug: String(row?.tag || '').trim(),
+        name: String(row?.provider_name || row?.name || row?.tag || '').trim(),
+        pricing: isPlainObject(row?.pricing) ? row.pricing : {},
+        latency: Number(row?.latency_last_30m?.p50),
+        throughput: Number(row?.throughput_last_30m?.p50),
+        uptime: Number(row?.uptime_last_30m),
+        status: row?.status
+    })).filter(row => isValidOpenRouterProviderSlug(row.slug));
+    openRouterEndpointCatalogs.set(cleanModel, { endpoints, fetchedAt: Date.now() });
+    return endpoints;
+}
+
+function openRouterEndpointForSlug(slug, endpoints) {
+    const exact = endpoints.find(endpoint => endpoint.slug.toLowerCase() === slug.toLowerCase());
+    if (exact) return exact;
+    const variants = endpoints.filter(endpoint => endpoint.slug.toLowerCase().startsWith(`${slug.toLowerCase()}/`));
+    return variants[0] || null;
+}
+
+function openRouterProvidersForDraft(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    const route = openRouterRoutingDraftValue(scope);
+    const map = new Map();
+    openRouterProviderCatalog.forEach(provider => map.set(provider.slug.toLowerCase(), {
+        ...provider, available: draft?.endpointsLoaded ? false : null, endpoint: null
+    }));
+    (draft?.endpoints || []).forEach(endpoint => {
+        const key = endpoint.slug.toLowerCase();
+        const catalog = map.get(key);
+        map.set(key, {
+            slug: endpoint.slug,
+            name: catalog?.name || endpoint.name || endpoint.slug,
+            available: true,
+            endpoint
+        });
+    });
+    // OpenRouter base slugs target their endpoint variants. Preserve the exact
+    // catalog slug while attaching metrics from a matching variant.
+    if (draft?.endpointsLoaded) {
+        map.forEach((provider, key) => {
+            if (provider.available) return;
+            const endpoint = openRouterEndpointForSlug(provider.slug, draft.endpoints);
+            if (endpoint) map.set(key, { ...provider, available: true, endpoint });
+        });
+    }
+    route.order.forEach(slug => {
+        const key = slug.toLowerCase();
+        if (!map.has(key)) map.set(key, {
+            slug, name: slug, available: draft?.endpointsLoaded ? false : null, endpoint: null
+        });
+    });
+    const providers = [...map.values()];
+    const metric = provider => {
+        const endpoint = provider.endpoint;
+        if (route.fallbackSort === 'throughput') return Number.isFinite(endpoint?.throughput) ? -endpoint.throughput : Infinity;
+        if (route.fallbackSort === 'latency') return Number.isFinite(endpoint?.latency) ? endpoint.latency : Infinity;
+        const input = Number(endpoint?.pricing?.prompt);
+        const output = Number(endpoint?.pricing?.completion);
+        return Number.isFinite(input) || Number.isFinite(output)
+            ? (Number.isFinite(input) ? input : 0) + (Number.isFinite(output) ? output : 0) : Infinity;
+    };
+    const availabilityRank = value => value === true ? 0 : value === null ? 1 : 2;
+    providers.sort((a, b) => availabilityRank(a.available) - availabilityRank(b.available)
+        || metric(a) - metric(b) || a.name.localeCompare(b.name));
+    return providers;
+}
+
+function formatOpenRouterPrice(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? `$${(number * 1_000_000).toFixed(number * 1_000_000 < 0.01 ? 4 : 2)}/M` : 'n/a';
+}
+
+function openRouterProviderMetrics(provider) {
+    const endpoint = provider?.endpoint;
+    if (!endpoint) return 'metadata unavailable';
+    const latency = Number.isFinite(endpoint.latency) ? `${endpoint.latency.toFixed(2)}s latency` : 'latency n/a';
+    const throughput = Number.isFinite(endpoint.throughput) ? `${Math.round(endpoint.throughput)} t/s` : 'throughput n/a';
+    return `in ${formatOpenRouterPrice(endpoint.pricing?.prompt)} · out ${formatOpenRouterPrice(endpoint.pricing?.completion)} · ${latency} · ${throughput}`;
+}
+
+function openRouterProviderAvailability(provider, test) {
+    if (test?.ok === true) return '<span class="or-provider-live ok">live test passed</span>';
+    if (test?.ok === false) return `<span class="or-provider-live fail">live test failed${test.error ? ` · ${escapeHTML(test.error)}` : ''}</span>`;
+    if (provider?.available === true) return '<span class="or-provider-advisory ok">listed for this model</span>';
+    if (provider?.available === false) return '<span class="or-provider-advisory warn">not listed for this model · still selectable</span>';
+    return '<span class="or-provider-advisory">availability unknown</span>';
+}
+
+function renderOpenRouterProviderSearchResults(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    const results = document.querySelector(`#${openRouterRoutingPanelDefinition(scope)?.hostId} [data-or-results]`);
+    if (!draft || !results) return;
+    const query = draft.search.trim().toLowerCase();
+    const selected = new Set(openRouterRoutingDraftValue(scope).order.map(slug => slug.toLowerCase()));
+    const providers = openRouterProvidersForDraft(scope)
+        .filter(provider => !selected.has(provider.slug.toLowerCase()))
+        .filter(provider => !query || provider.slug.toLowerCase().includes(query) || provider.name.toLowerCase().includes(query))
+        .slice(0, 40);
+    if (!providers.length) {
+        const exact = draft.search.trim();
+        results.innerHTML = exact && isValidOpenRouterProviderSlug(exact)
+            ? `<button type="button" class="or-provider-option" data-or-add="${escapeHTML(exact)}"><strong>Add exact slug: ${escapeHTML(exact)}</strong><small>Unverified provider slugs remain usable.</small></button>`
+            : '<div class="or-provider-empty">No matches. Refresh metadata, or type an exact OpenRouter slug and press Enter.</div>';
+        return;
+    }
+    results.innerHTML = providers.map(provider => {
+        const test = draft.tests.get(provider.slug.toLowerCase());
+        return `<button type="button" class="or-provider-option" data-or-add="${escapeHTML(provider.slug)}">
+            <span><strong>${escapeHTML(provider.name)}</strong><code>${escapeHTML(provider.slug)}</code></span>
+            <small>${escapeHTML(openRouterProviderMetrics(provider))} · ${test?.ok === true ? 'test passed' : provider.available === false ? 'not listed for model' : provider.available === true ? 'available' : 'unknown'}</small>
+        </button>`;
+    }).join('');
+    results.querySelectorAll('[data-or-add]').forEach(button => {
+        button.onclick = () => addOpenRouterProvider(scope, button.dataset.orAdd);
+    });
+}
+
+function addOpenRouterProvider(scope, slug) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    const clean = String(slug || '').trim();
+    if (!draft || !isValidOpenRouterProviderSlug(clean)) return;
+    if (draft.inherit) {
+        draft.inherit = false;
+        draft.routing = normalizeOpenRouterRouting(openRouterRoutingParent(scope));
+    }
+    if (!draft.routing.order.some(value => value.toLowerCase() === clean.toLowerCase())) {
+        draft.routing.order.push(clean);
+    }
+    draft.search = '';
+    renderOpenRouterRoutingPanel(scope);
+}
+
+function moveOpenRouterProvider(scope, sourceSlug, targetSlug) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    if (!draft || draft.inherit || sourceSlug === targetSlug) return;
+    const order = [...draft.routing.order];
+    const from = order.indexOf(sourceSlug);
+    const to = order.indexOf(targetSlug);
+    if (from < 0 || to < 0) return;
+    order.splice(to, 0, order.splice(from, 1)[0]);
+    draft.routing.order = order;
+    renderOpenRouterRoutingPanel(scope);
+}
+
+function renderOpenRouterRoutingPanel(scope) {
+    const definition = openRouterRoutingPanelDefinition(scope);
+    const host = document.getElementById(definition?.hostId);
+    const draft = openRouterRoutingDrafts.get(scope);
+    if (!host || !draft) return;
+    host.classList.toggle('hidden', !openRouterRoutingVisible(scope));
+    if (!openRouterRoutingVisible(scope)) return;
+    const route = openRouterRoutingDraftValue(scope);
+    const providers = openRouterProvidersForDraft(scope);
+    const bySlug = new Map(providers.map(provider => [provider.slug.toLowerCase(), provider]));
+    const disabled = draft.inherit ? 'disabled' : '';
+    host.innerHTML = `<section class="openrouter-routing-panel" data-or-scope="${scope}">
+        <div class="or-routing-head">
+            <div><span class="or-routing-kicker">OPENROUTER</span><h3>Provider Routing</h3></div>
+            <span class="or-routing-model" title="The connection test uses this model">${escapeHTML(openRouterRoutingModel(scope) || 'No model selected')}</span>
+        </div>
+        <p class="form-hint">Preferred providers are tried in this order. If they fail, OpenRouter ranks the remaining endpoints by the fallback strategy below.</p>
+        ${definition.inheritLabel ? `<label class="or-inherit-toggle"><input type="checkbox" data-or-inherit ${draft.inherit ? 'checked' : ''}> ${escapeHTML(definition.inheritLabel)}</label>` : ''}
+        <div class="or-routing-body ${draft.inherit ? 'is-inherited' : ''}">
+            <label class="form-label">Preferred provider order</label>
+            <div class="or-selected-providers" data-or-selected>
+                ${route.order.length ? route.order.map((slug, index) => {
+                    const provider = bySlug.get(slug.toLowerCase()) || { slug, name: slug, available: null };
+                    const test = draft.tests.get(slug.toLowerCase());
+                    return `<div class="or-selected-provider ${test?.ok === true ? 'test-ok' : test?.ok === false ? 'test-fail' : ''}" draggable="${!draft.inherit}" data-or-slug="${escapeHTML(slug)}">
+                        <span class="or-drag-handle" aria-hidden="true">⠿</span>
+                        <span class="or-provider-order">${index + 1}</span>
+                        <span class="or-provider-copy"><strong>${escapeHTML(provider.name)}</strong><code>${escapeHTML(slug)}</code><small>${escapeHTML(openRouterProviderMetrics(provider))}</small>${openRouterProviderAvailability(provider, test)}</span>
+                        <button type="button" class="or-remove-provider" data-or-remove="${escapeHTML(slug)}" ${disabled} aria-label="Remove ${escapeHTML(slug)}">×</button>
+                    </div>`;
+                }).join('') : '<div class="or-provider-empty">No preferred providers. OpenRouter will use the fallback sorting strategy directly.</div>'}
+            </div>
+            <div class="or-provider-search-wrap">
+                <input type="search" class="form-input" data-or-search value="${escapeHTML(draft.search)}" placeholder="Search providers or enter an exact slug" ${disabled} autocomplete="off">
+                <div class="or-provider-results" data-or-results></div>
+            </div>
+            <div class="or-routing-controls">
+                <label class="or-fallback-toggle"><input type="checkbox" data-or-fallback ${route.allowFallbacks ? 'checked' : ''} ${disabled || (!route.order.length ? 'disabled' : '')}> Allow unrestricted provider fallbacks</label>
+                <label><span>Rank fallbacks by</span><select class="form-select" data-or-sort ${disabled || (!route.allowFallbacks ? 'disabled' : '')}>
+                    <option value="throughput" ${route.fallbackSort === 'throughput' ? 'selected' : ''}>Highest throughput</option>
+                    <option value="latency" ${route.fallbackSort === 'latency' ? 'selected' : ''}>Lowest latency</option>
+                    <option value="price" ${route.fallbackSort === 'price' ? 'selected' : ''}>Lowest price</option>
+                </select></label>
+            </div>
+            <div class="or-routing-actions">
+                <button type="button" class="btn btn-ghost" data-or-refresh ${draft.loading ? 'disabled' : ''}>${draft.loading ? 'Refreshing…' : '↻ Refresh Providers'}</button>
+                <button type="button" class="btn btn-ghost" data-or-test ${draft.loading || !route.order.length ? 'disabled' : ''}>${draft.loading ? 'Please wait…' : '⚡ Test Selected Providers'}</button>
+            </div>
+            <div class="or-routing-status ${escapeHTML(draft.statusKind)}" aria-live="polite">${escapeHTML(draft.status || 'Metadata is advisory. A live test result overrides catalog warnings for this session.')}</div>
+        </div>
+    </section>`;
+
+    const inherit = host.querySelector('[data-or-inherit]');
+    if (inherit) inherit.onchange = () => {
+        draft.inherit = inherit.checked;
+        if (!draft.inherit) draft.routing = normalizeOpenRouterRouting(openRouterRoutingParent(scope));
+        draft.tests.clear();
+        renderOpenRouterRoutingPanel(scope);
+    };
+    const fallback = host.querySelector('[data-or-fallback]');
+    if (fallback) fallback.onchange = () => {
+        draft.routing.allowFallbacks = fallback.checked;
+        renderOpenRouterRoutingPanel(scope);
+    };
+    const sort = host.querySelector('[data-or-sort]');
+    if (sort) sort.onchange = () => {
+        draft.routing.fallbackSort = OPENROUTER_ROUTING_SORTS.includes(sort.value) ? sort.value : 'throughput';
+        renderOpenRouterRoutingPanel(scope);
+    };
+    const search = host.querySelector('[data-or-search]');
+    if (search) {
+        search.oninput = () => {
+            draft.search = search.value;
+            renderOpenRouterProviderSearchResults(scope);
+        };
+        search.onkeydown = event => {
+            if (event.key === 'Enter' && isValidOpenRouterProviderSlug(search.value.trim())) {
+                event.preventDefault();
+                addOpenRouterProvider(scope, search.value.trim());
+            }
+        };
+    }
+    host.querySelectorAll('[data-or-remove]').forEach(button => {
+        button.onclick = () => {
+            draft.routing.order = draft.routing.order.filter(slug => slug !== button.dataset.orRemove);
+            if (!draft.routing.order.length) draft.routing.allowFallbacks = true;
+            renderOpenRouterRoutingPanel(scope);
+        };
+    });
+    let dragged = '';
+    host.querySelectorAll('[data-or-slug]').forEach(row => {
+        row.ondragstart = event => {
+            dragged = row.dataset.orSlug;
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', dragged);
+            row.classList.add('is-dragging');
+        };
+        row.ondragend = () => row.classList.remove('is-dragging');
+        row.ondragover = event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; };
+        row.ondrop = event => {
+            event.preventDefault();
+            moveOpenRouterProvider(scope, dragged || event.dataTransfer.getData('text/plain'), row.dataset.orSlug);
+        };
+    });
+    const refresh = host.querySelector('[data-or-refresh]');
+    if (refresh) refresh.onclick = () => refreshOpenRouterRoutingPanel(scope);
+    const test = host.querySelector('[data-or-test]');
+    if (test) test.onclick = () => testOpenRouterRoutingProviders(scope);
+    renderOpenRouterProviderSearchResults(scope);
+}
+
+async function refreshOpenRouterRoutingPanel(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    if (!draft || draft.loading) return;
+    draft.loading = true;
+    draft.status = 'Refreshing provider catalog and model endpoints…';
+    draft.statusKind = '';
+    renderOpenRouterRoutingPanel(scope);
+    const model = openRouterRoutingModel(scope);
+    const [catalogResult, endpointResult] = await Promise.allSettled([
+        fetchOpenRouterProviderCatalog({ force: true }),
+        fetchOpenRouterModelEndpoints(model, { force: true })
+    ]);
+    draft.loading = false;
+    if (endpointResult.status === 'fulfilled') {
+        draft.endpoints = endpointResult.value;
+        draft.endpointsLoaded = true;
+        draft.endpointModel = model;
+    } else {
+        draft.endpoints = [];
+        draft.endpointsLoaded = false;
+        draft.endpointModel = '';
+    }
+    const successes = [catalogResult, endpointResult].filter(result => result.status === 'fulfilled').length;
+    if (successes === 2) {
+        draft.status = `Provider data refreshed · ${openRouterProviderCatalog.length} catalog entries · ${draft.endpoints.length} endpoints for this model.`;
+        draft.statusKind = 'ok';
+    } else if (successes === 1) {
+        const failure = [catalogResult, endpointResult].find(result => result.status === 'rejected')?.reason;
+        draft.status = `Partial refresh: ${failure?.message || 'one metadata source was unavailable'}. Saved provider slugs remain usable.`;
+        draft.statusKind = 'warn';
+    } else {
+        const failure = catalogResult.reason || endpointResult.reason;
+        draft.status = `Refresh failed: ${failure?.message || 'OpenRouter metadata unavailable'}. Saved provider slugs remain usable.`;
+        draft.statusKind = 'fail';
+    }
+    renderOpenRouterRoutingPanel(scope);
+}
+
+async function testOpenRouterRoutingProviders(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    const route = openRouterRoutingDraftValue(scope);
+    const model = openRouterRoutingModel(scope);
+    const key = openRouterUiKey();
+    if (!draft || draft.loading || !route.order.length) return;
+    if (!key) {
+        draft.status = 'Enter an OpenRouter API key in Settings → Connections before testing providers.';
+        draft.statusKind = 'fail';
+        return renderOpenRouterRoutingPanel(scope);
+    }
+    if (!model) {
+        draft.status = 'Choose a model before testing providers.';
+        draft.statusKind = 'fail';
+        return renderOpenRouterRoutingPanel(scope);
+    }
+    draft.loading = true;
+    draft.tests.clear();
+    renderOpenRouterRoutingPanel(scope);
+    for (let index = 0; index < route.order.length; index++) {
+        const slug = route.order[index];
+        draft.status = `Testing ${slug} (${index + 1}/${route.order.length})…`;
+        renderOpenRouterRoutingPanel(scope);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 45_000);
+        try {
+            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                signal: controller.signal,
+                headers: { ...openRouterUiHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model,
+                    messages: [{ role: 'user', content: 'Reply with OK.' }],
+                    max_tokens: 1,
+                    stream: false,
+                    provider: { order: [slug], allow_fallbacks: false }
+                })
+            });
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload?.error?.message || `HTTP ${response.status}`);
+            }
+            draft.tests.set(slug.toLowerCase(), { ok: true });
+        } catch (error) {
+            draft.tests.set(slug.toLowerCase(), {
+                ok: false,
+                error: error?.name === 'AbortError' ? 'timed out' : String(error?.message || error).slice(0, 160)
+            });
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+    draft.loading = false;
+    const passed = [...draft.tests.values()].filter(result => result.ok).length;
+    draft.status = `Provider tests complete · ${passed}/${route.order.length} succeeded. Tests used one output token each.`;
+    draft.statusKind = passed === route.order.length ? 'ok' : passed ? 'warn' : 'fail';
+    renderOpenRouterRoutingPanel(scope);
+}
+
+function renderAllOpenRouterRoutingPanels() {
+    openRouterRoutingDrafts.forEach((draft, scope) => renderOpenRouterRoutingPanel(scope));
+}
+
+function setupOpenRouterRouting() {
+    const provider = document.getElementById('global-api-provider');
+    if (provider) provider.addEventListener('change', renderAllOpenRouterRoutingPanels);
+    ['global', 'character', 'room', 'world', 'worldAgent'].forEach(scope => {
+        const definition = openRouterRoutingPanelDefinition(scope);
+        const modelInput = document.getElementById(definition?.modelId);
+        if (modelInput) modelInput.addEventListener('change', () => {
+            const draft = openRouterRoutingDrafts.get(scope);
+            if (draft) {
+                draft.endpoints = [];
+                draft.endpointsLoaded = false;
+                draft.tests.clear();
+                draft.status = 'Model changed. Refresh Providers to update endpoint metadata.';
+                draft.statusKind = 'warn';
+                renderOpenRouterRoutingPanel(scope);
+            }
+        });
+    });
 }
 
 function verifyModelCapabilities(model, prefix) {
@@ -4076,7 +4735,7 @@ Ensure the JSON is strictly formatted and parsable. Make the character feel rich
                         'Content-Type': 'application/json',
                         ...attributionHeaders()
                     },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(applyOpenRouterRouting(requestBody, state.editingChar))
                 });
 
                 if (!response.ok) {
@@ -4295,7 +4954,7 @@ Respond ONLY with a valid JSON block.`;
                         'Content-Type': 'application/json',
                         ...attributionHeaders()
                     },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(applyOpenRouterRouting(requestBody, state.editingWorld))
                 });
 
                 if (!response.ok) {
@@ -4639,6 +5298,7 @@ async function init() {
     setupStudioLogic();
     setupChatLogic();
     setupGlobalSettings();
+    setupOpenRouterRouting();
     setupHordeLabs();
     setupPersonasLogic();
     setupRoomsLogic();
@@ -5724,6 +6384,7 @@ function createNewCharacter() {
         avatar: '',
         bg: '',
         model: state.globalSettings.defaultModel,
+        openRouterRouting: null,
         temp: 0.9,
         maxTokens: 2048,
         topP: 1,
@@ -5791,6 +6452,7 @@ function loadStudioData() {
 
     document.getElementById('studio-intro').value = c.intro;
     document.getElementById('studio-model').value = c.model || '';
+    initializeOpenRouterRoutingPanel('character');
     document.getElementById('studio-tags').value = (c.tags || []).join(', ');
     
     document.getElementById('studio-temp').value = c.temp || 0.9;
@@ -6084,6 +6746,7 @@ async function saveStudioCharacter() {
 
     c.intro = document.getElementById('studio-intro').value.trim();
     c.model = model;
+    c.openRouterRouting = readOpenRouterRoutingPanel('character');
     c.tags = document.getElementById('studio-tags').value.split(',').map(t => t.trim()).filter(t => t);
     c.temp = parseFloat(document.getElementById('studio-temp').value) || 0.9;
     c.maxTokens = parseInt(document.getElementById('studio-max-tokens').value) || 2048;
@@ -8033,7 +8696,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
                 'Content-Type': 'application/json',
                 ...attributionHeaders()
             },
-            body: JSON.stringify(requestBody),
+            body: JSON.stringify(applyOpenRouterRouting(requestBody, config)),
             signal: generationController.signal
         });
 
@@ -9481,7 +10144,7 @@ function shouldRepairMissingWorldReceipt(world, command, userInput, narrative) {
  * Ask a tiny, tool-free classifier only in that failure case so meaningful
  * developments are still recorded without filling the ledger with small talk.
  */
-async function recoverWorldLedgerEntry(modelId, userInput, narrative, signal) {
+async function recoverWorldLedgerEntry(world, modelId, userInput, narrative, signal) {
     if (!narrative || !String(narrative).trim()) return '';
     try {
         const response = await fetch(apiBase() + '/chat/completions', {
@@ -9492,7 +10155,7 @@ async function recoverWorldLedgerEntry(modelId, userInput, narrative, signal) {
                 'Content-Type': 'application/json',
                 ...attributionHeaders()
             },
-            body: JSON.stringify({
+            body: JSON.stringify(applyOpenRouterRouting({
                 model: modelId,
                 stream: false,
                 temperature: 0,
@@ -9510,7 +10173,7 @@ async function recoverWorldLedgerEntry(modelId, userInput, narrative, signal) {
                         content: `PLAYER ACTION:\n${String(userInput || '(continued scene)').slice(0, 1200)}\n\nDM OUTCOME:\n${String(narrative).slice(0, 4000)}`
                     }
                 ])
-            })
+            }, world))
         });
         if (!response.ok) {
             console.warn(`Horde Engine: Chronicle classifier unavailable (${response.status}); using local recovery.`);
@@ -9573,14 +10236,14 @@ async function impersonateUser() {
         const response = await fetch(apiBase() + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({
+            body: JSON.stringify(applyOpenRouterRouting({
                 model: config.model || state.globalSettings.defaultModel,
                 max_tokens: 400,
                 messages: [
                     { role: 'system', content: `You are ghost-writing the PLAYER's next message in a roleplay. Write ONLY the player's reply — in first person, matching their voice and the scene's tone. No quotation wrappers, no meta-commentary, no character (non-player) dialogue.\n\nPLAYER PERSONA:\n${personaDesc}` },
                     { role: 'user', content: `Recent roleplay:\n\n${history}\n\nWrite the player's next message:` }
                 ]
-            })
+            }, config))
         });
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || response.statusText);
         const draft = (await response.json()).choices?.[0]?.message?.content?.trim();
@@ -10281,6 +10944,8 @@ function setupGlobalSettings() {
         if (state.customApiKey) sessionStorage.setItem('horde_custom_api_key', state.customApiKey);
         else sessionStorage.removeItem('horde_custom_api_key');
         state.globalSettings.defaultModel = document.getElementById('global-default-model').value.trim().slice(0, 500);
+        state.globalSettings.openRouterRouting = readOpenRouterRoutingPanel('global')
+            || normalizeOpenRouterRouting(null);
         state.globalSettings.editFontSize = Math.max(10, Math.min(32, parseInt(document.getElementById('edit-font-size').value) || 15));
         state.globalSettings.editFontColor = cssColor(document.getElementById('edit-font-color').value, '#ffffff');
         state.globalSettings.editBgColor = cssColor(document.getElementById('edit-bg-color').value, '#2b2b36');
@@ -10955,6 +11620,7 @@ function showGlobalSettings() {
             ? state.globalSettings.apiProvider : 'openrouter';
         document.getElementById('global-api-provider').value = provider;
         refreshSettingsProviderCards(provider);
+        initializeOpenRouterRoutingPanel('global');
         document.getElementById('global-local-url').value = state.globalSettings.localBaseUrl || '';
         document.getElementById('global-local-key').value = state.globalSettings.localApiKey || '';
         document.getElementById('global-local-generation-timeout').value = String(
@@ -11134,13 +11800,13 @@ async function summarizeStory() {
             const response = await fetch(apiBase() + '/chat/completions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                body: JSON.stringify({
+                body: JSON.stringify(applyOpenRouterRouting({
                     model: world.model || state.globalSettings.defaultModel,
                     messages: [
                         { role: 'system', content: `You are "Horde Chronos", the world chronicle keeper. Summarize this adventure concisely and dramatically.\n\nStructure:\n### 📜 THE STORY SO FAR\n[2-3 sentence narrative overview]\n\n### 🔑 KEY DEVELOPMENTS\n- [3 most important events or changes]\n\n### 📍 CURRENT STATE\n- Location, active quests, key NPC status` },
                         { role: 'user', content: `Summarize this world session:\n\n${history}` }
                     ]
-                })
+                }, world))
             });
             if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || 'API error');
             const summary = (await response.json()).choices[0].message.content;
@@ -11204,7 +11870,7 @@ async function summarizeStory() {
                 ...authHeaders(),
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
+            body: JSON.stringify(applyOpenRouterRouting({
                 model: config.model || state.globalSettings.defaultModel,
                 max_tokens: 900,
                 messages: [
@@ -11227,7 +11893,7 @@ async function summarizeStory() {
                     },
                     { role: 'user', content: `Summarize the following journey:\n\n${history}` }
                 ]
-            })
+            }, config))
         });
 
         if (!response.ok) {
@@ -11578,6 +12244,7 @@ function setupRoomsLogic() {
             bg: '',
             lorebook: [],
             model: state.globalSettings.defaultModel,
+            openRouterRouting: null,
             maxTokens: 2048,
             contextSize: 8192,
             temp: 0.9,
@@ -11616,6 +12283,7 @@ function setupRoomsLogic() {
         r.avatar = document.getElementById('room-avatar').value.trim();
         r.bg = document.getElementById('room-bg').value.trim();
         r.model = document.getElementById('room-model').value.trim();
+        r.openRouterRouting = readOpenRouterRoutingPanel('room');
         r.contextSize = parseInt(document.getElementById('room-context-size').value) || 8192;
         r.maxTokens = parseInt(document.getElementById('room-max-tokens').value) || 2048;
         r.temp = parseFloat(document.getElementById('room-temp').value) || 0.9;
@@ -11681,6 +12349,7 @@ function openRoomStudio(roomId = null) {
     document.getElementById('room-avatar').value = r.avatar || '';
     document.getElementById('room-bg').value = r.bg || '';
     document.getElementById('room-model').value = r.model || '';
+    initializeOpenRouterRoutingPanel('room');
     configureContextSliderForModel('room-context-size', r.model);
     document.getElementById('room-context-size').value = r.contextSize || 8192;
     updateContextSliderUI('room-context-size', 'room-context-size-val', 'room-context-size-badge');
@@ -12328,6 +12997,8 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-agent-enabled').checked = agentConfig.enabled;
     document.getElementById('w-agent-interval').value = agentConfig.intervalTurns;
     document.getElementById('w-agent-model').value = agentConfig.model;
+    initializeOpenRouterRoutingPanel('world');
+    initializeOpenRouterRoutingPanel('worldAgent');
     const kernelConfig = normalizeWorldKernelConfig(w);
     document.getElementById('w-kernel-enabled').checked = kernelConfig.enabled;
     document.getElementById('w-kernel-location-limit').value = kernelConfig.sceneLocationLimit;
@@ -12399,11 +13070,13 @@ async function saveWorld() {
     w.intro = document.getElementById('w-studio-intro').value.trim();
     w.authorNote = document.getElementById('w-studio-note').value.trim();
     w.model = document.getElementById('w-studio-model').value.trim();
+    w.openRouterRouting = readOpenRouterRoutingPanel('world');
     w.worldAgent = normalizeWorldAgentConfig({
         worldAgent: {
             enabled: document.getElementById('w-agent-enabled').checked,
             intervalTurns: document.getElementById('w-agent-interval').value,
-            model: document.getElementById('w-agent-model').value
+            model: document.getElementById('w-agent-model').value,
+            openRouterRouting: readOpenRouterRoutingPanel('worldAgent')
         }
     });
     w.kernel = normalizeWorldKernelConfig({ kernel: {
@@ -23422,7 +24095,7 @@ ${modularMandate}
                 'Content-Type': 'application/json',
                 ...attributionHeaders()
             },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify(applyOpenRouterRouting(requestBody, world))
         });
 
         if (!response.ok) {
@@ -23446,7 +24119,7 @@ ${modularMandate}
                     method: 'POST',
                     signal: controller.signal,
                     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(applyOpenRouterRouting(requestBody, world))
                 });
                 if (!response.ok) errBody = await response.text();
             }
@@ -23788,7 +24461,7 @@ ${modularMandate}
                         'Content-Type': 'application/json',
                         ...attributionHeaders()
                     },
-                    body: JSON.stringify(followUpBody)
+                    body: JSON.stringify(applyOpenRouterRouting(followUpBody, world))
                 });
 
                 if (followUpResponse.ok) {
@@ -23834,7 +24507,7 @@ ${modularMandate}
                     method: 'POST',
                     signal: controller.signal,
                     headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-                    body: JSON.stringify(rescueBody)
+                    body: JSON.stringify(applyOpenRouterRouting(rescueBody, world))
                 });
                 if (rescueResp.ok) {
                     const rescueData = await rescueResp.json();
@@ -23941,7 +24614,7 @@ ${modularMandate}
             if (!extractedChronicle && (!kernelConfig.enabled || kernelConfig.memoryMode === 'semantic')
                 && command !== 'init' && command !== 'look') {
                 turnCallAudit.chronicleClassifier++;
-                const recovered = await recoverWorldLedgerEntry(structuredModelFor(world), submittedInput || userInput, cleanText, controller.signal);
+                const recovered = await recoverWorldLedgerEntry(world, structuredModelFor(world), submittedInput || userInput, cleanText, controller.signal);
                 extractedChronicle = appendWorldLedgerEntry(sess, recovered);
                 if (extractedChronicle) {
                     chronicleSource = 'classifier';
@@ -26978,7 +27651,7 @@ Disposition and relationship scores are -100..100. Generate 4-10 people, never a
     }
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-        body: JSON.stringify(body)
+        body: JSON.stringify(applyOpenRouterRouting(body, world))
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error?.message || response.statusText);
     const message = (await response.json())?.choices?.[0]?.message || {};
@@ -28265,7 +28938,8 @@ function normalizeWorldAgentConfig(world) {
     return {
         enabled: raw.enabled === true,
         intervalTurns: Math.max(8, Math.min(200, parseInt(raw.intervalTurns) || 24)),
-        model: String(raw.model || '').trim().slice(0, 160)
+        model: String(raw.model || '').trim().slice(0, 160),
+        openRouterRouting: normalizeOpenRouterRouting(raw.openRouterRouting, { allowNull: true })
     };
 }
 
@@ -28387,14 +29061,14 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({
+        body: JSON.stringify(applyOpenRouterRouting({
             model: config.model || structuredModelFor(world),
             max_tokens: 1200,
             messages: [
                 { role: 'system', content: system },
                 { role: 'user', content: buildWorldAgentDigest(world, sess) }
             ]
-        })
+        }, world, { scope: 'worldAgent' }))
     });
     if (!response.ok) {
         throw new Error((await response.json().catch(() => ({})))?.error?.message || response.statusText);
@@ -28600,14 +29274,14 @@ Return ONLY this JSON, nothing else:
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({
+        body: JSON.stringify(applyOpenRouterRouting({
             model: world.model || state.globalSettings.defaultModel,
             max_tokens: 900,
             messages: [
                 { role: 'system', content: 'You are a world-simulation designer. You output only valid JSON.' },
                 { role: 'user', content: prompt }
             ]
-        })
+        }, world))
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || response.statusText);
     const raw = (await response.json()).choices?.[0]?.message?.content || '';
@@ -29563,7 +30237,7 @@ async function generateAgendaBeats(entity, button) {
         const response = await fetch(apiBase() + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-            body: JSON.stringify({
+            body: JSON.stringify(applyOpenRouterRouting({
                 model: structuredModelFor(world),
                 max_tokens: 1200,
                 response_format: { type: 'json_object' },
@@ -29577,7 +30251,7 @@ Also suggest one follow-up aim they would take up once this one resolves.
 Reply with only this JSON: {"beats":["...","..."],"next_goal":"..."}` },
                     { role: 'user', content: `WORLD: ${world.name}\n${world.description ? `PREMISE: ${String(world.description).slice(0, 300)}\n` : ''}CHARACTER: ${entity.name}\n${entity.description ? `ABOUT: ${String(entity.description).slice(0, 600)}\n` : ''}${entity.persona ? `MANNER: ${String(entity.persona).slice(0, 600)}\n` : ''}THEIR GOAL: ${entity.goal}\n\nWrite their beats.` }
                 ]
-            })
+            }, world))
         });
         if (!response.ok) {
             throw new Error((await response.json().catch(() => ({})))?.error?.message || response.statusText);
@@ -30479,7 +31153,7 @@ async function runCalibrationBatch(world, pass, batch, carriedFactions) {
         const response = await fetch(apiBase() + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-            body: JSON.stringify(body)
+            body: JSON.stringify(applyOpenRouterRouting(body, world))
         });
         if (!response.ok) {
             const errorText = (await response.json().catch(() => ({})))?.error?.message || response.statusText;
@@ -31446,11 +32120,11 @@ Return ONLY JSON:
             method: 'POST',
             signal: controller.signal,
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({
+            body: JSON.stringify(applyOpenRouterRouting({
                 model: structuredModelFor(world),
                 max_tokens: 4000, // reasoning models eat budget before emitting content
                 messages
-            })
+            }, world))
         }).finally(() => clearTimeout(timeout));
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || response.statusText);
         const msg = (await response.json()).choices?.[0]?.message;
@@ -31851,7 +32525,7 @@ async function consolidateSessionEpisodicMemoryRun(session, config) {
                 ...authHeaders(),
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
+            body: JSON.stringify(applyOpenRouterRouting({
                 model: consolidationModel,
                 max_tokens: isChatMemory ? 1100 : 500,
                 messages: [
@@ -31867,7 +32541,7 @@ Begin your response with: [EPISODIC ARCHIVE]:`
                     },
                     { role: 'user', content: `Roleplay segment:\n\n${sliceText}` }
                 ]
-            })
+            }, config))
         });
 
         if (!response.ok) {
@@ -37411,7 +38085,7 @@ Call commit_human_turn once for the response immediately above. Preserve what it
         const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-            body: JSON.stringify(body)
+            body: JSON.stringify(applyOpenRouterRouting(body, null, { providerId: textProvider }))
         }, companion, true);
         if (!response.ok) return null;
         const message = (await response.json())?.choices?.[0]?.message || {};
@@ -37986,7 +38660,7 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
     const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(body)
+        body: JSON.stringify(applyOpenRouterRouting(body, null, { providerId: textProvider }))
     }, companion);
     if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -40367,13 +41041,13 @@ This is an active, synchronous phone call. You hear the caller in real time and 
     const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(applyCompanionGenerationConfig({
+        body: JSON.stringify(applyOpenRouterRouting(applyCompanionGenerationConfig({
             model: companion.model || state.globalSettings.defaultModel,
             messages: sanitizeMessagesForProvider(
                 [{ role: 'system', content: prompt }, ...callMessages], textProvider),
             tools: [COMPANION_TURN_COMMIT_TOOL, COMPANION_STATE_TOOL],
             tool_choice: 'auto'
-        }, companion, { maxTokens: companion.reasoning ? Math.max(600, companion.maxTokens) : Math.min(600, companion.maxTokens) }))
+        }, companion, { maxTokens: companion.reasoning ? Math.max(600, companion.maxTokens) : Math.min(600, companion.maxTokens) }), null, { providerId: textProvider }))
     });
     if (!response.ok) throw new Error(`Call failed (${response.status})`);
     const choice = (await response.json())?.choices?.[0] || {};
@@ -43045,7 +43719,7 @@ async function buildCompanionFromNotes(notes, options = {}) {
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
-        body: JSON.stringify(body)
+        body: JSON.stringify(applyOpenRouterRouting(body))
     });
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -43301,7 +43975,7 @@ async function buildCompanionLifeWithAI(companion, options = {}) {
     const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(body)
+        body: JSON.stringify(applyOpenRouterRouting(body, null, { providerId: textProvider }))
     });
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -44863,7 +45537,7 @@ async function generateCompanionStartingSocialPosts(companion) {
     const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(body)
+        body: JSON.stringify(applyOpenRouterRouting(body, null, { providerId: textProvider }))
     });
     if (!response.ok) throw new Error(humanizeApiError(new Error((await response.json().catch(() => ({})))?.error?.message || `Request failed (${response.status})`)));
     const payload = await response.json();
@@ -45933,12 +46607,12 @@ async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now
         role: 'user',
         content: `[PRIVATE AUTONOMOUS SOCIAL EVENT — NOT A PLAYER MESSAGE]\nYour social profile has reached a valid posting window. Current authoritative context: ${currentContext}\nAuthored controls: ${companionSocialBehaviorSummary(companion)}\nPublish exactly one ${requestedFormat} post grounded in this real moment. The category MUST be one of: ${allowedTypes.join(', ')}. Keep it in the authored social writing voice and obey every custom posting rule. Thirst-trap intensity is ${companion.socialThirstTrapLevel}/100; this controls flirtatious public presentation, not nudity or invented circumstances. Do not address the player, mention the simulation, expose private relationship state, or invent a new event. Call publish_social_post. If tool calling is unavailable, output only one JSON object with category, text, visibility, unlock_price, scene and reason.`
     }];
-    const body = applyCompanionGenerationConfig({
+    const body = applyOpenRouterRouting(applyCompanionGenerationConfig({
         model: companion.model || state.globalSettings.defaultModel,
         messages: sanitizeMessagesForProvider(messages, textProvider),
         tools: [COMPANION_SOCIAL_POST_TOOL],
         tool_choice: { type: 'function', function: { name: 'publish_social_post' } }
-    }, companion, { maxTokens: Math.min(420, companion.maxTokens || 420) });
+    }, companion, { maxTokens: Math.min(420, companion.maxTokens || 420) }), null, { providerId: textProvider });
     const endpoint = providerApiBase(textProvider) + '/chat/completions';
     const request = requestBody => fetch(endpoint, {
         method: 'POST',
