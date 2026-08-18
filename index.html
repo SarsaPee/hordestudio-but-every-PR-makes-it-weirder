@@ -406,6 +406,9 @@
                                 <button class="tool-btn" id="world-roll-btn" title="Roll Dice">🎲 Roll</button>
                                 <button class="tool-btn" id="world-continue-btn" title="DM continues without your input">⏩ Continue</button>
                                 <button class="tool-btn" id="world-session-zero-btn" title="Open session identity and story preferences">🎬 Session Setup</button>
+                                <button class="tool-btn world-v3-only" id="world-v3-end-scene-btn" title="End the current scene and create its scene card">🎬 End Scene</button>
+                                <button class="tool-btn world-v3-only" id="world-v3-gm-btn" title="Open a private line to the World GM">🧭 World GM</button>
+                                <button class="tool-btn world-v3-only" id="world-v3-panel-btn" title="Inspect the current scene, relationships and canon workflow">◈ Scene State</button>
                                 <button class="tool-btn" id="world-map-btn" title="Toggle Map View">🗺️ Map</button>
                                 <button class="tool-btn" id="world-reroll-btn" title="Reroll last DM response">🔄 Reroll</button>
                                 <button class="tool-btn world-more-btn" id="world-more-btn" type="button" aria-expanded="false">••• More</button>
@@ -3691,6 +3694,43 @@
                 <p class="form-hint"><b>Default is off.</b> The browser remains canonical and pauses the background worker while open. Credentials live only in the launcher’s memory—not saves, exports or disk—so reopen Horde Studio once after every launcher restart to re-arm it. Photos, voice and video are never generated in the background.</p>
                 <div class="settings-inline-actions"><button id="always-on-refresh-btn" class="btn btn-ghost" type="button">Check runtime</button><button id="always-on-stop-btn" class="btn btn-ghost" type="button">Stop &amp; forget credentials</button></div>
                 <div id="always-on-status-text" class="form-hint" aria-live="polite"></div>
+            <section class="mcp-settings-card" aria-labelledby="shared-library-sync-title">
+                <div class="mcp-settings-head">
+                    <div>
+                        <span class="vh-eyebrow">Local-first recovery</span>
+                        <h3 id="shared-library-sync-title">Live State Backups &amp; Sync</h3>
+                    </div>
+                </div>
+                <p class="form-hint">Horde keeps its working copy in this browser, then publishes versioned recovery points to this Mac. These local backups work without Tailscale; Tailscale only lets another device reach the same history. API keys, embedding caches, and local service URLs stay on the device that owns them.</p>
+                <label class="form-label" for="shared-library-device-label">This device</label>
+                <input id="shared-library-device-label" class="form-input" maxlength="80" placeholder="Mac browser">
+                <div class="mcp-provider-grid" style="margin-top:10px;">
+                    <button id="shared-library-pull-btn" class="btn btn-ghost" type="button">Pull latest</button>
+                    <button id="shared-library-push-btn" class="btn btn-primary" type="button">Publish this device</button>
+                    <button id="shared-library-check-btn" class="btn btn-ghost" type="button">Check devices</button>
+                </div>
+                <div id="shared-library-sync-status" class="form-hint" aria-live="polite"></div>
+                <div class="form-hint" style="margin-top:14px;">Automatic backups only publish changed state. Manual Publish remains immediate.</div>
+                <label class="switch-row" style="margin-top:8px;"><input id="shared-library-periodic-enabled" type="checkbox" checked> <span>Snapshot every</span></label>
+                <div class="mcp-provider-grid" style="margin-top:6px; grid-template-columns:minmax(0, 1fr) auto; align-items:center;">
+                    <input id="shared-library-interval-minutes" class="form-input" type="number" min="1" max="1440" value="5">
+                    <span class="form-hint">minutes</span>
+                </div>
+                <label class="switch-row" style="margin-top:10px;"><input id="shared-library-after-assistant-enabled" type="checkbox"> <span>Also snapshot after assistant responses</span></label>
+                <div class="mcp-provider-grid" style="margin-top:6px; grid-template-columns:minmax(0, 1fr) auto; align-items:center;">
+                    <input id="shared-library-assistant-turn-interval" class="form-input" type="number" min="1" max="100" value="5" disabled>
+                    <span class="form-hint">assistant turns</span>
+                </div>
+                <label class="switch-row" style="margin-top:10px;"><input id="shared-library-after-every-change-enabled" type="checkbox"> <span>Also snapshot after every chat, Virtual Human, or World change</span></label>
+                <div class="form-hint" style="margin-top:14px;">Recovery points keep the previous 12 real publishes. Restoring one first archives the current shared state.</div>
+                <label class="form-label" for="shared-library-history-select" style="margin-top:8px;">Recovery point</label>
+                <select id="shared-library-history-select" class="form-input" disabled>
+                    <option value="">No recovery points yet</option>
+                </select>
+                <div class="mcp-provider-grid" style="margin-top:10px;">
+                    <button id="shared-library-history-refresh-btn" class="btn btn-ghost" type="button">Refresh recovery points</button>
+                    <button id="shared-library-restore-btn" class="btn btn-ghost" type="button" disabled>Restore selected</button>
+                </div>
             </section>
             <section class="mcp-settings-card" aria-labelledby="local-tts-settings-title">
                 <div class="mcp-settings-head"><div><span class="vh-eyebrow">OpenAI-compatible speech</span><h3 id="local-tts-settings-title">Local Neural TTS</h3></div></div>
@@ -4880,6 +4920,6 @@
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
-    <script src="app.js?v=20260901-v167-openrouter-routing-v1"></script>
+    <script src="app.js?v=20260901-v167-shared-library-sync-v1"></script>
 </body>
 </html>
