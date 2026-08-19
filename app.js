@@ -28897,6 +28897,14 @@ async function requestWorldTurnReceiptRepair(world, prompt, signal, commitTool) 
         temperature: 0,
         messages: [{ role: 'system', content: prompt }]
     };
+    // Repair needs a fast, mechanical JSON compile, not creative reasoning —
+    // a model that reasons by default can burn the whole max_tokens budget on
+    // hidden reasoning before ever emitting the receipt, failing every attempt
+    // identically. OpenRouter's unified reasoning object is the one param that
+    // reliably suppresses that across models without an explicit opt-in.
+    if (normalizedProviderId(state.globalSettings?.apiProvider) === 'openrouter') {
+        baseBody.reasoning = { enabled: false };
+    }
     const attempts = [];
     if (commitTool) {
         attempts.push({
