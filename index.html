@@ -3576,10 +3576,24 @@
                     <div class="form-col" style="flex:1">
                         <label class="form-label">Memory Consolidation Model</label>
                         <div class="searchable-dropdown-wrap">
-                            <input type="search" id="global-consolidation-model" class="form-input" value="google/gemini-flash-1.5-8b" placeholder="Search text models…" autocomplete="off" role="combobox" aria-controls="global-consolidation-model-results" aria-expanded="false">
+                            <input type="search" id="global-consolidation-model" class="form-input" value="google/gemini-2.5-flash-lite" placeholder="Search text models…" autocomplete="off" role="combobox" aria-controls="global-consolidation-model-results" aria-expanded="false">
                             <div id="global-consolidation-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
                         </div>
-                        <span class="form-hint">Fast, cheap model used for background episodic archiving. Runs automatically every 8 turns. Gemini Flash is recommended. On a local provider, use one of your local models (defaults to your Default Model).</span>
+                        <span class="form-hint">Fast, cheap model used for background episodic archiving. Runs automatically every 8 turns. Gemini Flash is recommended. On a local provider, use one of your local models (defaults to your Default Model). Reasoning models bill their hidden thinking against the same token budget — a heavy reasoner can spend all of it on a long history slice and return an empty summary.</span>
+                        <div id="global-consolidation-openrouter-routing" class="openrouter-routing-host hidden" data-settings-keywords="openrouter provider routing consolidation memory fallback throughput"></div>
+                        <label class="form-label" style="margin-top:12px;">Consolidation Reasoning Effort</label>
+                        <select id="global-consolidation-reasoning" class="form-select" data-settings-keywords="reasoning effort thinking tokens consolidation memory">
+                            <option value="default">Model default</option>
+                            <option value="off">Off — no reasoning</option>
+                            <option value="minimal">Minimal</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                        <span class="form-hint">Summarising does not need deep reasoning. Reasoning tokens are billed against the same budget as the summary, so a heavy reasoner can consume it all and return nothing. Set this Off or Low if archiving fails with an empty summary.</span>
+                        <label class="form-label" style="margin-top:12px;">Messages Per Memory (slice size)</label>
+                        <input type="number" id="global-consolidation-slice" class="form-input" min="4" max="100" step="1" value="12" data-settings-keywords="slice chunk messages per memory granularity consolidation">
+                        <span class="form-hint">How many messages each archived memory covers. Lower is more granular and retrieves more precisely; higher is cheaper but compresses more story into the same ~60 words. Default 12.</span>
                         <label class="form-label" style="margin-top:12px;">Separate Embedding Server URL (optional)</label>
                         <input type="text" id="global-embedding-url" class="form-input" placeholder="http://127.0.0.1:11435/v1">
                         <label class="form-label" style="margin-top:8px;">Embedding Server API Key (optional)</label>
@@ -4230,9 +4244,16 @@
                 <!-- Cards injected dynamically by JS -->
             </div>
         </div>
-        <div class="modal-ft" style="display:flex; justify-content:space-between; align-items:center;">
-            <button id="force-archive-now-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">⚡ Force Archive Now</button>
-            <button id="close-vector-memory-ft-btn" class="btn btn-ghost">Close</button>
+        <div class="modal-ft" style="display:flex; justify-content:space-between; align-items:center; gap:14px;">
+            <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+                <button id="force-archive-now-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">⚡ Force Archive Now</button>
+                <button id="repair-memory-gaps-btn" class="btn btn-ghost hidden" type="button" title="Re-archive only the ranges that previously failed">🩹 Repair gaps</button>
+            </div>
+            <div id="archive-progress-wrap" class="archive-progress hidden">
+                <div class="archive-progress-track"><div id="archive-progress-fill"></div></div>
+                <span id="archive-progress-label">Archiving…</span>
+            </div>
+            <button id="close-vector-memory-ft-btn" class="btn btn-ghost" style="flex-shrink:0;">Close</button>
         </div>
     </div>
 </div>

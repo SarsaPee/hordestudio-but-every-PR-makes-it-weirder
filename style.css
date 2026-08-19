@@ -7159,3 +7159,33 @@ label[data-help] > span:first-child::after,
     .or-provider-option small { max-width: 100%; text-align: left; }
     .or-routing-controls > label:last-child { width: 100%; min-width: 0; }
 }
+
+/* Force-archive progress, shown between the archive and close buttons */
+.archive-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.archive-progress-track {
+    flex: 1 1 auto;
+    min-width: 60px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface3);
+    overflow: hidden;
+}
+.archive-progress-track > div {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #e63946, #06D6A0);
+    transition: width 0.25s ease;
+}
+.archive-progress span {
+    font-size: 0.7rem;
+    font-family: monospace;
+    color: var(--text-3);
+    white-space: nowrap;
+}

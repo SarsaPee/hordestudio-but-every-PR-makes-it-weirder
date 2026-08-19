@@ -1403,6 +1403,13 @@ function videoOutputFromPayload(payload) {
 // through it, while other providers receive the original request object by
 // identity so their payloads are not changed by this feature.
 const OPENROUTER_ROUTING_SORTS = Object.freeze(['throughput', 'latency', 'price']);
+const CONSOLIDATION_REASONING_LEVELS = Object.freeze(['default', 'off', 'minimal', 'low', 'medium', 'high']);
+
+function consolidationReasoningParam(level) {
+    if (level === 'off') return { enabled: false };
+    if (['minimal', 'low', 'medium', 'high'].includes(level)) return { effort: level };
+    return null; // 'default' — send nothing and let the model decide
+}
 const DEFAULT_OPENROUTER_ROUTING = Object.freeze({
     order: Object.freeze([]),
     allowFallbacks: true,
@@ -2363,7 +2370,16 @@ function repairLoadedState() {
     // Blank is meaningful here: it means "fall back to the world's own model".
     state.globalSettings.structuredModel = typeof state.globalSettings.structuredModel === 'string'
         ? state.globalSettings.structuredModel.trim().slice(0, 200) : '';
-    state.globalSettings.consolidationModel = typeof state.globalSettings.consolidationModel === 'string' ? state.globalSettings.consolidationModel.slice(0, 500) : 'google/gemini-flash-1.5-8b';
+    state.globalSettings.consolidationModel = typeof state.globalSettings.consolidationModel === 'string' ? state.globalSettings.consolidationModel.slice(0, 500) : 'google/gemini-2.5-flash-lite';
+    // null is meaningful: "route on availability" rather than pinning the
+    // consolidation model to the narrative model's providers.
+    state.globalSettings.consolidationRouting = normalizeOpenRouterRouting(
+        state.globalSettings.consolidationRouting, { allowNull: true });
+    state.globalSettings.consolidationReasoning = CONSOLIDATION_REASONING_LEVELS
+        .includes(state.globalSettings.consolidationReasoning)
+        ? state.globalSettings.consolidationReasoning : 'default';
+    state.globalSettings.consolidationSliceSize = Math.max(4, Math.min(100,
+        Math.round(Number(state.globalSettings.consolidationSliceSize) || 12)));
     state.globalSettings.editFontSize = Math.max(10, Math.min(32, Number(state.globalSettings.editFontSize) || 15));
     state.globalSettings.editFontColor = cssColor(state.globalSettings.editFontColor, '#ffffff');
     state.globalSettings.editBgColor = cssColor(state.globalSettings.editBgColor, '#2b2b36');
@@ -4110,6 +4126,13 @@ function openRouterRoutingPanelDefinition(scope) {
             inheritLabel: 'Inherit World routing',
             owner: () => state.editingWorld,
             stored: () => state.editingWorld?.worldAgent?.openRouterRouting
+        },
+        consolidation: {
+            hostId: 'global-consolidation-openrouter-routing',
+            modelId: 'global-consolidation-model',
+            inheritLabel: 'Route on availability (recommended)',
+            owner: () => null,
+            stored: () => state.globalSettings.consolidationRouting
         }
     };
     return definitions[scope] || null;
@@ -4117,6 +4140,9 @@ function openRouterRoutingPanelDefinition(scope) {
 
 function openRouterRoutingParent(scope) {
     const globalRouting = normalizeOpenRouterRouting(state.globalSettings.openRouterRouting);
+    // Unchecking "inherit" on a utility route means routing on availability,
+    // not adopting the narrative model's provider pin.
+    if (scope === 'consolidation') return availabilityOpenRouterRouting();
     if (scope !== 'worldAgent') return globalRouting;
     const worldDraft = openRouterRoutingDrafts.get('world');
     if (worldDraft) {
@@ -11037,7 +11063,13 @@ function setupGlobalSettings() {
         const threshold = Number(document.getElementById('global-memory-threshold').value);
         state.globalSettings.memoryThreshold = Number.isFinite(threshold) ? Math.max(0, Math.min(1, threshold)) : 0.35;
         state.globalSettings.memoryTopK = Math.max(1, Math.min(100, parseInt(document.getElementById('global-memory-topk').value) || 4));
-        state.globalSettings.consolidationModel = document.getElementById('global-consolidation-model').value.trim() || 'google/gemini-flash-1.5-8b';
+        state.globalSettings.consolidationModel = document.getElementById('global-consolidation-model').value.trim() || 'google/gemini-2.5-flash-lite';
+        state.globalSettings.consolidationRouting = readOpenRouterRoutingPanel('consolidation');
+        const reasoningChoice = document.getElementById('global-consolidation-reasoning').value;
+        state.globalSettings.consolidationReasoning = CONSOLIDATION_REASONING_LEVELS.includes(reasoningChoice)
+            ? reasoningChoice : 'default';
+        state.globalSettings.consolidationSliceSize = Math.max(4, Math.min(100,
+            parseInt(document.getElementById('global-consolidation-slice').value, 10) || 12));
         state.globalSettings.rememberApiKey = document.getElementById('remember-api-key').checked;
         state.globalSettings.slopStripper = document.getElementById('global-slop-stripper').checked;
         state.globalSettings.immersionMode = document.getElementById('global-immersion-mode').checked;
@@ -11760,7 +11792,13 @@ function showGlobalSettings() {
         document.getElementById('global-memory-threshold-val').textContent = parseFloat(thresh).toFixed(2);
         document.getElementById('global-memory-topk').value = topk;
         document.getElementById('global-memory-topk-val').textContent = topk;
-        document.getElementById('global-consolidation-model').value = state.globalSettings.consolidationModel || 'google/gemini-flash-1.5-8b';
+        document.getElementById('global-consolidation-model').value = state.globalSettings.consolidationModel || 'google/gemini-2.5-flash-lite';
+        document.getElementById('global-consolidation-reasoning').value = state.globalSettings.consolidationReasoning || 'default';
+        document.getElementById('global-consolidation-slice').value = state.globalSettings.consolidationSliceSize || 12;
+        // Initialized only after the model input is populated: the panel stamps
+        // and displays the model its pin belongs to, so it must not read the
+        // markup's placeholder default.
+        initializeOpenRouterRoutingPanel('consolidation');
         refreshMcpSettingsStatus();
     }
 }
@@ -29453,126 +29491,231 @@ function trimToLastSentence(text) {
     return t + '…';
 }
 
-async function consolidateSessionEpisodicMemory(session, config) {
+function recordMemoryGap(session, startIndex, endIndex, reason) {
     if (!session) return;
-    // Race guard: remember the epoch at read time; if a reroll/edit/restore
-    // rewrites history while our API calls are in flight, we must not commit.
-    const startEpoch = session._memEpoch || 0;
-
-    const messages = session.messages || session.history;
-    if (!messages || messages.length < 2) return;
-    
-    const lastIdx = session.lastConsolidatedIndex || 0;
-    const currentLen = messages.length;
-    
-    // Consolidate in rolling chunks of 8 messages
-    const CONSOLIDATION_CHUNK_SIZE = 8;
-    if (currentLen - lastIdx < CONSOLIDATION_CHUNK_SIZE) return;
-    
-    if (!hasApiCredentials()) {
-        console.warn('Consolidation: Skipping - API Key missing.');
+    if (!Array.isArray(session.memoryGaps)) session.memoryGaps = [];
+    const existing = session.memoryGaps.find(gap => gap.startIndex === startIndex && gap.endIndex === endIndex);
+    if (existing) {
+        existing.attempts = (Number(existing.attempts) || 1) + 1;
+        existing.reason = String(reason || existing.reason || '').slice(0, 300);
+        existing.at = Date.now();
         return;
     }
-    
-    // FIX 1: World sessions use config.title, not config.name
+    session.memoryGaps.push({
+        startIndex, endIndex,
+        reason: String(reason || '').slice(0, 300),
+        attempts: 1,
+        at: Date.now()
+    });
+    session.memoryGaps = session.memoryGaps.slice(-200);
+}
+
+function clearMemoryGap(session, startIndex, endIndex) {
+    if (!session || !Array.isArray(session.memoryGaps)) return;
+    session.memoryGaps = session.memoryGaps.filter(gap =>
+        !(gap.startIndex === startIndex && gap.endIndex === endIndex));
+}
+
+// Summarize + embed one explicit message range and store it. Shared by the
+// rolling pass and by gap repair so both produce identical memory records.
+// Throws on failure; callers decide whether to skip, retry or stop.
+async function archiveMessageRange(session, config, startIdx, endIdx, startEpoch) {
+    const messages = session.messages || session.history;
     const configName = config.name || config.title || 'Narrator';
-
-    // Process the next sequential block of unconsolidated messages (up to 40 max)
-    const MAX_SLICE = 40;
-    const chunkEnd = Math.min(lastIdx + MAX_SLICE, currentLen);
-    const slice = messages.slice(lastIdx, chunkEnd);
-    
-    console.log(`Consolidation: Archiving messages ${lastIdx}–${chunkEnd} (${slice.length} msgs)`);
-
+    const slice = messages.slice(startIdx, endIdx);
     const sliceText = slice.map(m => {
-        if (m.role === 'system') return null; // skip injected system blocks
+        if (m.role === 'system') return null;
         let prefix = 'Participant';
-        if (m.role === 'user') {
-            prefix = 'User';
-        } else if (m.role === 'assistant' || m.role === 'dm') {
+        if (m.role === 'user') prefix = 'User';
+        else if (m.role === 'assistant' || m.role === 'dm') {
             prefix = configName;
             if (m.charId) {
                 const char = state.characters.find(c => c.id === m.charId);
                 if (char) prefix = char.name;
             }
         }
-        const content = (canonicalMsgText(m)).trim();
+        const content = canonicalMsgText(m).trim();
         return content ? `${prefix}: ${content}` : null;
     }).filter(Boolean).join('\n\n');
 
-    if (!sliceText) {
-        session.lastConsolidatedIndex = chunkEnd;
-        return;
-    }
-    
-    try {
-        // FIX 3: Use a dedicated fast model — never the character's full model
-        // A flash-tier model is sufficient and avoids context limit / cost issues
-        const consolidationModel = state.globalSettings?.consolidationModel
-            || (isLocalProvider() ? state.globalSettings.defaultModel : 'google/gemini-flash-1.5-8b');
+    if (!sliceText) return { empty: true };
 
-        const response = await fetch(apiBase() + '/chat/completions', {
-            method: 'POST',
-            headers: {
-                ...authHeaders(),
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(applyOpenRouterRouting({
-                model: consolidationModel,
-                max_tokens: 500, // headroom so summaries finish (was 300 → cut off mid-sentence)
-                messages: [
-                    {
-                        role: 'system',
-                        content: `You are "Horde Chronos" — a narrative memory archivist.
+    const consolidationModel = state.globalSettings?.consolidationModel
+        || (isLocalProvider() ? state.globalSettings.defaultModel : 'google/gemini-2.5-flash-lite');
+    const reasoning = consolidationReasoningParam(state.globalSettings?.consolidationReasoning);
+
+    const response = await fetch(apiBase() + '/chat/completions', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(applyOpenRouterRouting({
+            model: consolidationModel,
+            max_tokens: 2000,
+            messages: [
+                {
+                    role: 'system',
+                    content: `You are "Horde Chronos" — a narrative memory archivist.
 Summarize the roleplay segment below in AT MOST 3 short sentences (roughly 60 words). Capture only the key events, decisions, secrets revealed, and status changes. Third person, factual, no embellishment. Finish every sentence — never trail off.
 Begin your response with: [EPISODIC ARCHIVE]:`
-                    },
-                    { role: 'user', content: `Roleplay segment:\n\n${sliceText}` }
-                ]
-            }, config))
-        });
+                },
+                { role: 'user', content: `Roleplay segment:\n\n${sliceText}` }
+            ],
+            ...(reasoning ? { reasoning } : {})
+        }, config, { scope: 'consolidation' }))
+    });
 
-        if (!response.ok) {
-            const errBody = await response.text();
-            throw new Error(`Consolidation API ${response.status}: ${errBody.slice(0, 200)}`);
+    if (!response.ok) {
+        const errBody = await response.text();
+        throw new Error(`Consolidation API ${response.status}: ${errBody.slice(0, 200)}`);
+    }
+
+    const data = await response.json();
+    let summary = data.choices?.[0]?.message?.content?.trim();
+    if (!summary) {
+        const reasoningTokens = Number(data.usage?.completion_tokens_details?.reasoning_tokens) || 0;
+        throw new Error(reasoningTokens
+            ? `empty summary — the model spent ${reasoningTokens} tokens reasoning and left none for output. Set Consolidation Reasoning Effort to Off, or reduce slice size.`
+            : 'empty summary returned by the consolidation model');
+    }
+    if (data.choices?.[0]?.finish_reason === 'length') summary = trimToLastSentence(summary);
+
+    const embedding = await HordeVectorMemory.getCachedEmbedding(summary);
+    if ((session._memEpoch || 0) !== startEpoch) {
+        return { aborted: true };
+    }
+    session.episodicMemories = session.episodicMemories || [];
+    session.episodicMemories.push({
+        text: summary, embedding, createdAt: Date.now(),
+        startIndex: startIdx, endIndex: endIdx
+    });
+    clearMemoryGap(session, startIdx, endIdx);
+    return { ok: true, summary };
+}
+
+// Derive missing ranges from what the memories actually cover, rather than
+// trusting the failure log. lastConsolidatedIndex only records how far the
+// pointer advanced \u2014 an interrupted save, a cleared archive or a skipped
+// slice all leave holes behind it that no failure was ever recorded for.
+function detectMemoryGaps(session) {
+    if (!session) return [];
+    const messages = session.messages || session.history || [];
+    const upTo = Math.min(Number(session.lastConsolidatedIndex) || 0, messages.length);
+    if (upTo <= 0) return [];
+    const covered = (session.episodicMemories || [])
+        .filter(m => Number.isFinite(m.startIndex) && Number.isFinite(m.endIndex))
+        .map(m => ({ start: m.startIndex, end: m.endIndex }))
+        .sort((a, b) => a.start - b.start);
+    const sliceSize = Math.max(4, Math.min(100,
+        Math.round(Number(state.globalSettings?.consolidationSliceSize) || 12)));
+    const rawGaps = [];
+    let cursor = 0;
+    for (const range of covered) {
+        if (range.start > cursor) rawGaps.push({ startIndex: cursor, endIndex: Math.min(range.start, upTo) });
+        cursor = Math.max(cursor, range.end);
+    }
+    if (cursor < upTo) rawGaps.push({ startIndex: cursor, endIndex: upTo });
+    // Split wide holes into slice-sized units so repair produces the same
+    // granularity as a normal pass instead of one enormous summary.
+    const chunked = [];
+    rawGaps.filter(gap => gap.endIndex > gap.startIndex).forEach(gap => {
+        for (let start = gap.startIndex; start < gap.endIndex; start += sliceSize) {
+            chunked.push({ startIndex: start, endIndex: Math.min(start + sliceSize, gap.endIndex) });
         }
+    });
+    return chunked;
+}
 
-        const data = await response.json();
-        let summary = data.choices?.[0]?.message?.content?.trim();
-        if (!summary) throw new Error('Consolidation model returned empty content');
-
-        // Safety net: if the model still overran the budget, trim to the last
-        // COMPLETE sentence so we never archive a mid-word fragment like "…while".
-        if (data.choices?.[0]?.finish_reason === 'length') {
-            summary = trimToLastSentence(summary);
+// Re-archive every range that is missing coverage. Returns a per-range result
+// so the inspector can report what healed and what is still broken.
+async function repairSessionMemoryGaps(session, config, onProgress) {
+    const gaps = detectMemoryGaps(session);
+    if (!gaps.length) return { attempted: 0, repaired: 0, stillFailing: [] };
+    const startEpoch = session._memEpoch || 0;
+    let repaired = 0;
+    const stillFailing = [];
+    for (let i = 0; i < gaps.length; i++) {
+        const gap = gaps[i];
+        if (onProgress) onProgress({ phase: 'repair', index: i, total: gaps.length, startIndex: gap.startIndex, endIndex: gap.endIndex });
+        try {
+            const result = await archiveMessageRange(session, config, gap.startIndex, gap.endIndex, startEpoch);
+            if (result.aborted) break;
+            if (result.ok || result.empty) {
+                clearMemoryGap(session, gap.startIndex, gap.endIndex);
+                repaired++;
+            }
+        } catch (error) {
+            recordMemoryGap(session, gap.startIndex, gap.endIndex, error.message);
+            stillFailing.push({ startIndex: gap.startIndex, endIndex: gap.endIndex, reason: error.message });
         }
-        
-        console.log(`Consolidation OK: ${summary.slice(0, 100)}...`);
-        
-        // Cache vector embedding for this block
-        const embedding = await HordeVectorMemory.getCachedEmbedding(summary);
-        
-        session.episodicMemories = session.episodicMemories || [];
-        // Stamp the covered message range so this memory can be invalidated if
-        // any of its source messages are later edited, rerolled, or deleted.
-        // Commit gate: history was rewritten while we were summarizing —
-        // this summary describes an abandoned take. Discard it.
-        if ((session._memEpoch || 0) !== startEpoch) {
-            console.warn('Consolidation aborted: history changed during archiving (reroll/edit) — summary discarded.');
-            return;
-        }
+    }
+    session.episodicMemories?.sort((a, b) => (a.startIndex || 0) - (b.startIndex || 0));
+    await saveState();
+    return { attempted: gaps.length, repaired, stillFailing };
+}
 
-        session.episodicMemories.push({ text: summary, embedding, createdAt: Date.now(), startIndex: lastIdx, endIndex: chunkEnd });
+// Returns true only when it actually advanced lastConsolidatedIndex. Callers
+// that loop (Force Archive Now) MUST stop on false: without `skipOnFailure`
+// this deliberately leaves the index untouched so the next turn retries, which
+// makes an unguarded `while (remaining >= CHUNK)` loop spin forever on a
+// persistent error. With `skipOnFailure` the bad range is recorded as a gap and
+// the pass moves on, so one flaky slice cannot stall the whole archive.
+async function consolidateSessionEpisodicMemory(session, config, options = {}) {
+    if (!session) return false;
+    // Race guard: remember the epoch at read time; if a reroll/edit/restore
+    // rewrites history while our API calls are in flight, we must not commit.
+    const startEpoch = session._memEpoch || 0;
+
+    const messages = session.messages || session.history;
+    if (!messages || messages.length < 2) return false;
+
+    const lastIdx = session.lastConsolidatedIndex || 0;
+    const currentLen = messages.length;
+
+    const MAX_SLICE = Math.max(4, Math.min(100,
+        Math.round(Number(state.globalSettings?.consolidationSliceSize) || 12)));
+    // The trigger must track the slice size. When it was hardcoded to 8 and the
+    // slice was smaller, each pass archived MAX_SLICE and then refused to run
+    // again until 8 more arrived, so the archive permanently lagged behind.
+    const CONSOLIDATION_CHUNK_SIZE = MAX_SLICE;
+    if (currentLen - lastIdx < CONSOLIDATION_CHUNK_SIZE) return false;
+
+    if (!hasApiCredentials()) {
+        console.warn('Consolidation: Skipping - API Key missing.');
+        return false;
+    }
+    const chunkEnd = Math.min(lastIdx + MAX_SLICE, currentLen);
+
+    console.log(`Consolidation: Archiving messages ${lastIdx}\u2013${chunkEnd} (${chunkEnd - lastIdx} msgs)`);
+    if (options.onProgress) {
+        options.onProgress({ phase: 'archive', startIndex: lastIdx, endIndex: chunkEnd, total: currentLen });
+    }
+
+    try {
+        const result = await archiveMessageRange(session, config, lastIdx, chunkEnd, startEpoch);
+        if (result.aborted) {
+            console.warn('Consolidation aborted: history changed during archiving (reroll/edit) \u2014 summary discarded.');
+            return false;
+        }
+        // An all-system slice has nothing to summarize; advancing past it is
+        // still progress and must not be mistaken for a failure.
         session.lastConsolidatedIndex = chunkEnd;
-
         await saveState();
-
-        // FIX 4: Visible feedback so you know it actually ran
-        showToast(`🧠 Memory archived (${session.episodicMemories.length} total)`, 'info');
-        console.log(`Consolidation saved. Total memories: ${session.episodicMemories.length}`);
+        if (result.ok) {
+            showToast(`\u{1F9E0} Memory archived (${session.episodicMemories.length} total)`, 'info');
+            console.log(`Consolidation saved. Total memories: ${session.episodicMemories.length}`);
+        }
+        return true;
     } catch (e) {
-        // Do NOT update lastConsolidatedIndex on failure — will retry next turn
+        if (options.skipOnFailure) {
+            // Record the range and move on: one flaky slice must not stall the
+            // entire archive. The inspector can repair recorded gaps later.
+            recordMemoryGap(session, lastIdx, chunkEnd, e.message);
+            session.lastConsolidatedIndex = chunkEnd;
+            await saveState();
+            console.warn(`Consolidation: skipped messages ${lastIdx}\u2013${chunkEnd} \u2014 ${e.message}`);
+            return true;
+        }
         console.warn(`Consolidation failed (will retry next turn):`, e.message);
+        return false;
     }
 }
 
@@ -29651,49 +29794,113 @@ function setupVectorMemoryViewerEvents() {
         };
     }
 
-    // Force Archive Now — bypass 8-turn wait and immediately consolidate all history
+    // Force Archive Now — bypass the wait window and immediately consolidate
+    // all history. skipOnFailure: a flaky slice is recorded as a gap and
+    // stepped over, so one failed slice can no longer abandon the whole run.
     const forceArchiveBtn = document.getElementById('force-archive-now-btn');
     if (forceArchiveBtn) {
         forceArchiveBtn.onclick = async () => {
             forceArchiveBtn.disabled = true;
             forceArchiveBtn.textContent = '⏳ Archiving...';
-
             const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
             try {
-                if (isWorld) {
-                    const world = state.worlds.find(w => w.id === state.activeWorldId);
-                    const sess = getCurrentWorldSession();
-                    if (!sess || !world) throw new Error('No active world session');
-                    // Full rebuild: clear stale memories and re-consolidate from scratch
-                    // (otherwise we'd duplicate the entire archive on top of old entries).
-                    sess.episodicMemories = [];
-                    sess.lastConsolidatedIndex = 0;
-                    while (sess.history.length - (sess.lastConsolidatedIndex || 0) >= 8) {
-                        await consolidateSessionEpisodicMemory(sess, world);
-                    }
-                } else {
-                    const session = getCurrentSession();
-                    const config = state.characters.find(c => c.id === state.activeCharId)
-                                || state.rooms.find(r => r.id === state.activeRoomId);
-                    if (!session || !config) throw new Error('No active chat session');
-                    // Full rebuild: clear stale memories and re-consolidate from scratch
-                    // (otherwise we'd duplicate the entire archive on top of old entries).
-                    session.episodicMemories = [];
-                    session.lastConsolidatedIndex = 0;
-                    while (session.messages.length - (session.lastConsolidatedIndex || 0) >= 8) {
-                        await consolidateSessionEpisodicMemory(session, config);
-                    }
+                const session = isWorld ? getCurrentWorldSession() : getCurrentSession();
+                const config = isWorld
+                    ? state.worlds.find(w => w.id === state.activeWorldId)
+                    : (state.characters.find(c => c.id === state.activeCharId)
+                        || state.rooms.find(r => r.id === state.activeRoomId));
+                if (!session || !config) throw new Error(isWorld ? 'No active world session' : 'No active chat session');
+                const messages = isWorld ? session.history : session.messages;
+                // Full rebuild: clear stale memories and re-consolidate from scratch
+                // (otherwise we'd duplicate the entire archive on top of old entries).
+                session.episodicMemories = [];
+                session.memoryGaps = [];
+                session.lastConsolidatedIndex = 0;
+                const total = messages.length;
+                let guard = 0;
+                setArchiveProgress(0, 'Starting…');
+                while (messages.length - (session.lastConsolidatedIndex || 0) >= 4) {
+                    if (guard++ > 500) break;
+                    const progressed = await consolidateSessionEpisodicMemory(session, config, {
+                        skipOnFailure: true,
+                        onProgress: info => setArchiveProgress(
+                            total ? (info.startIndex / total) * 100 : 0,
+                            `Messages ${info.startIndex}–${info.endIndex} of ${total}`)
+                    });
+                    if (!progressed) break;
+                    renderVectorMemoryList();
                 }
-                // Refresh the list
+                setArchiveProgress(100, 'Done');
+                const gaps = (session.memoryGaps || []).length;
+                showToast(gaps
+                    ? `Archived with ${gaps} gap${gaps === 1 ? '' : 's'} — use Repair gaps.`
+                    : `🧠 Archive complete (${session.episodicMemories.length} memories).`,
+                    gaps ? 'warning' : 'success');
                 renderVectorMemoryList();
             } catch (e) {
                 showToast('Force archive failed: ' + e.message, 'error');
             } finally {
                 forceArchiveBtn.disabled = false;
                 forceArchiveBtn.textContent = '⚡ Force Archive Now';
+                setTimeout(() => setArchiveProgress(null), 1200);
             }
         };
     }
+
+    const repairGapsBtn = document.getElementById('repair-memory-gaps-btn');
+    if (repairGapsBtn) {
+        repairGapsBtn.onclick = async () => {
+            const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+            const session = isWorld ? getCurrentWorldSession() : getCurrentSession();
+            const config = isWorld
+                ? state.worlds.find(w => w.id === state.activeWorldId)
+                : (state.characters.find(c => c.id === state.activeCharId)
+                    || state.rooms.find(r => r.id === state.activeRoomId));
+            if (!session || !config) return showToast('No active session.', 'error');
+            repairGapsBtn.disabled = true;
+            const originalLabel = repairGapsBtn.textContent;
+            repairGapsBtn.textContent = '⏳ Repairing…';
+            try {
+                const result = await repairSessionMemoryGaps(session, config, info =>
+                    setArchiveProgress(info.total ? (info.index / info.total) * 100 : 0,
+                        `Repairing ${info.startIndex}–${info.endIndex}`));
+                setArchiveProgress(100, 'Done');
+                showToast(result.stillFailing.length
+                    ? `Repaired ${result.repaired} of ${result.attempted}; ${result.stillFailing.length} still failing.`
+                    : `Repaired all ${result.repaired} gap${result.repaired === 1 ? '' : 's'}.`,
+                    result.stillFailing.length ? 'warning' : 'success');
+                renderVectorMemoryList();
+            } catch (e) {
+                showToast('Repair failed: ' + e.message, 'error');
+            } finally {
+                repairGapsBtn.disabled = false;
+                repairGapsBtn.textContent = originalLabel;
+                setTimeout(() => setArchiveProgress(null), 1200);
+            }
+        };
+    }
+}
+
+function setArchiveProgress(percent, label) {
+    const wrap = document.getElementById('archive-progress-wrap');
+    const fill = document.getElementById('archive-progress-fill');
+    const text = document.getElementById('archive-progress-label');
+    if (!wrap || !fill || !text) return;
+    if (percent === null) { wrap.classList.add('hidden'); return; }
+    wrap.classList.remove('hidden');
+    fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+    text.textContent = label || '';
+}
+
+// Show the repair affordance only when there is something to repair.
+function refreshMemoryGapUI() {
+    const btn = document.getElementById('repair-memory-gaps-btn');
+    if (!btn) return;
+    const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+    const session = isWorld ? getCurrentWorldSession() : getCurrentSession();
+    const gaps = detectMemoryGaps(session).length;
+    btn.classList.toggle('hidden', gaps === 0);
+    if (gaps) btn.textContent = `🩹 Repair ${gaps} gap${gaps === 1 ? '' : 's'}`;
 }
 
 function updateVectorTabUI() {
@@ -29728,7 +29935,9 @@ function updateVectorTabUI() {
 async function renderVectorMemoryList(filterQuery = "") {
     const listContainer = document.getElementById('vector-memory-list');
     if (!listContainer) return;
-    
+
+    refreshMemoryGapUI();
+
     listContainer.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text-3);">Loading memories...</div>`;
     
     const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
@@ -29937,9 +30146,15 @@ async function renderVectorMemoryList(filterQuery = "") {
                 <button class="tool-btn tool-btn-danger epi-del-btn" title="Delete memory" style="font-size:11px; padding:2px 8px;">✕</button>
             </div>` : '';
 
+        // Which messages this memory actually covers, so gaps between cards are
+        // visible and a specific range can be checked against the transcript.
+        const rangeTag = Number.isFinite(item.ref?.startIndex) && Number.isFinite(item.ref?.endIndex)
+            ? `<span style="font-size:0.6rem; font-weight:800; font-family:monospace; color:var(--text-3); background:var(--surface2); padding:2px 7px; border-radius:9px;">MSG ${item.ref.startIndex}–${item.ref.endIndex}</span>`
+            : '';
+
         card.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border2); padding-bottom:6px;">
-                <div style="display:flex; gap:8px; align-items:center;">${cacheTag}${scoreTag}</div>
+                <div style="display:flex; gap:8px; align-items:center;">${rangeTag}${cacheTag}${scoreTag}</div>
                 ${actionBtns}
             </div>
             <div class="epi-text" style="font-size:0.9rem; line-height:1.5; color:var(--text); white-space:pre-wrap;">${escaped}</div>
