@@ -22789,39 +22789,15 @@ ${modularMandate}
             try {
                 if (dmTypingLabel) dmTypingLabel.textContent = 'DM is reconciling the world state...';
                 const repairFrame = buildWorldSceneFrame(world, sess);
-                const repairPrompt = `[WORLD TURN RECEIPT REPAIR]\nThe narrative below has already been shown and MUST NOT be rewritten. Return JSON only for one commit_world_turn receipt with required keys scene, events, entity_updates, state_updates, and summary.\n- Every action names actor_id.\n- NPC movement never changes player location.\n- Intent, attempts, movement toward somewhere, dialogue claims and hypotheticals are not completed events.\n- scene is the complete ENDING checksum.\n- If nothing persistent changed, use empty events/state_updates but still return the current scene.\nAuthoritative pre-repair scene: ${JSON.stringify(repairFrame)}\nPlayer input: ${JSON.stringify(String(submittedInput || userInput).slice(0, 1200))}\nNarrative: ${JSON.stringify(String(fullText).slice(0, 7000))}`;
-                const repairBody = {
-                    model: structuredModelFor(world),
-                    stream: false,
-                    max_tokens: 650,
-                    temperature: 0,
-                    messages: [{ role: 'system', content: repairPrompt }]
-                };
-                turnCallAudit.receiptRepair++;
-                const repairResponse = await fetch(apiBase() + '/chat/completions', {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-                    body: JSON.stringify(repairBody)
-                });
-                if (repairResponse.ok) {
-                    const repairData = await repairResponse.json();
-                    const repairMessage = repairData.choices?.[0]?.message || {};
-                    const repairCall = (repairMessage.tool_calls || []).find(call =>
-                        call.function?.name === 'commit_world_turn');
-                    let repairedReceipt = repairCall
-                        ? parseWorldToolArguments(repairCall.function?.arguments || '{}')
-                        : safeParseJSONRepair(String(repairMessage.content || '')
-                            .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-                    if (!repairedReceipt) repairedReceipt = extractInlineWorldTurnReceipt(repairMessage.content || '');
-                    if (isPlainObject(repairedReceipt?.scene)
-                        && Array.isArray(repairedReceipt.events)
-                        && Array.isArray(repairedReceipt.entity_updates)) {
-                        const committed = commitWorldTurnReceipt(world, sess, repairedReceipt, receiptContext, 'repair_receipt');
-                        if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
-                        repairedReceiptApplied = true;
-                        console.warn('Horde Engine: missing turn receipt repaired without regenerating the narrative.');
-                    }
+                const repairPrompt = `[WORLD TURN RECEIPT REPAIR]\nThe narrative below has already been shown and MUST NOT be rewritten. Call commit_world_turn once with required keys scene, events, entity_updates, state_updates, and summary.\n- Every action names actor_id.\n- NPC movement never changes player location.\n- Intent, attempts, movement toward somewhere, dialogue claims and hypotheticals are not completed events.\n- scene is the complete ENDING checksum.\n- If nothing persistent changed, use empty events/state_updates but still return the current scene.\nAuthoritative pre-repair scene: ${JSON.stringify(repairFrame)}\nPlayer input: ${JSON.stringify(String(submittedInput || userInput).slice(0, 1200))}\nNarrative: ${JSON.stringify(String(fullText).slice(0, 7000))}`;
+                const commitTool = toolsConfig.find(tool => tool.function?.name === 'commit_world_turn');
+                const repairResult = await requestWorldTurnReceiptRepair(world, repairPrompt, controller.signal, commitTool);
+                turnCallAudit.receiptRepair += repairResult.requestCount;
+                if (repairResult.receipt) {
+                    const committed = commitWorldTurnReceipt(world, sess, repairResult.receipt, receiptContext, 'repair_receipt');
+                    if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
+                    repairedReceiptApplied = true;
+                    console.warn('Horde Engine: missing turn receipt repaired without regenerating the narrative.');
                 }
             } catch (repairError) {
                 if (repairError?.name === 'AbortError') throw repairError;
@@ -22983,29 +22959,14 @@ ${modularMandate}
             && !repairedReceiptApplied && !frozenReceiptApplied) {
             try {
                 const finalFrame = buildWorldSceneFrame(world, sess);
-                const finalRepairPrompt = `[WORLD TURN RECEIPT REPAIR]\nReturn JSON only. Do not rewrite the narrative. Produce one commit_world_turn receipt with scene, events, entity_updates, state_updates and summary. Actor-scope every action; NPC movement never moves the player; intent/attempt/in_progress does not mutate state; scene is the complete ending checksum.\nAuthoritative scene: ${JSON.stringify(finalFrame)}\nPlayer input: ${JSON.stringify(String(submittedInput || userInput).slice(0, 1200))}\nFinal narrative: ${JSON.stringify(String(fullText).slice(0, 7000))}`;
-                turnCallAudit.receiptRepair++;
-                const finalRepairResponse = await fetch(apiBase() + '/chat/completions', {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-                    body: JSON.stringify({
-                        model: structuredModelFor(world), stream: false, max_tokens: 650, temperature: 0,
-                        messages: [{ role: 'system', content: finalRepairPrompt }]
-                    })
-                });
-                if (finalRepairResponse.ok) {
-                    const data = await finalRepairResponse.json();
-                    const message = data.choices?.[0]?.message || {};
-                    let repaired = safeParseJSONRepair(String(message.content || '')
-                        .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-                    if (!repaired) repaired = extractInlineWorldTurnReceipt(message.content || '');
-                    if (isPlainObject(repaired?.scene) && Array.isArray(repaired.events)
-                        && Array.isArray(repaired.entity_updates)) {
-                        const committed = commitWorldTurnReceipt(world, sess, repaired, receiptContext, 'repair_receipt');
-                        if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
-                        repairedReceiptApplied = true;
-                    }
+                const finalRepairPrompt = `[WORLD TURN RECEIPT REPAIR]\nDo not rewrite the narrative. Call commit_world_turn once with scene, events, entity_updates, state_updates and summary. Actor-scope every action; NPC movement never moves the player; intent/attempt/in_progress does not mutate state; scene is the complete ending checksum.\nAuthoritative scene: ${JSON.stringify(finalFrame)}\nPlayer input: ${JSON.stringify(String(submittedInput || userInput).slice(0, 1200))}\nFinal narrative: ${JSON.stringify(String(fullText).slice(0, 7000))}`;
+                const commitTool = toolsConfig.find(tool => tool.function?.name === 'commit_world_turn');
+                const repairResult = await requestWorldTurnReceiptRepair(world, finalRepairPrompt, controller.signal, commitTool);
+                turnCallAudit.receiptRepair += repairResult.requestCount;
+                if (repairResult.receipt) {
+                    const committed = commitWorldTurnReceipt(world, sess, repairResult.receipt, receiptContext, 'repair_receipt');
+                    if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
+                    repairedReceiptApplied = true;
                 }
             } catch (error) {
                 if (error?.name === 'AbortError') throw error;
@@ -28292,6 +28253,92 @@ function structuredModelFor(world) {
     if (chosen) return chosen;
     const agent = world ? normalizeWorldAgentConfig(world).model : '';
     return agent || world?.model || state.globalSettings.defaultModel;
+}
+
+function worldReceiptModelFor(world) {
+    const chosen = String(state.globalSettings?.structuredModel || '').trim();
+    if (chosen) return chosen;
+    // A turn receipt describes the narrative model's own output. Prefer that
+    // model over the unrelated background world-agent model unless the user
+    // explicitly selected a global structured-data model.
+    return world?.model || normalizeWorldAgentConfig(world).model || state.globalSettings.defaultModel;
+}
+
+function parseWorldReceiptRepairMessage(message) {
+    const toolCall = (message?.tool_calls || []).find(call => call.function?.name === 'commit_world_turn');
+    if (toolCall) {
+        try {
+            const parsedTool = parseWorldToolArguments(toolCall.function?.arguments || '{}');
+            if (isPlainObject(parsedTool)) return parsedTool;
+        } catch (error) {
+            console.warn('Horde Engine: malformed forced receipt tool payload — trying text fallbacks.', error.message);
+        }
+    }
+    const contentParts = Array.isArray(message?.content)
+        ? message.content.map(part => part?.text || part?.content || '').filter(Boolean)
+        : [message?.content];
+    const candidates = [
+        ...contentParts,
+        message?.reasoning_content,
+        message?.reasoning,
+        message?.thought
+    ].filter(value => typeof value === 'string' && value.trim());
+    for (const candidate of candidates) {
+        const cleaned = candidate.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        const parsed = safeParseJSONRepair(cleaned) || extractInlineWorldTurnReceipt(candidate);
+        if (isPlainObject(parsed)) return parsed;
+    }
+    return null;
+}
+
+// Providers vary in how reliably they honor a forced tool call versus plain
+// JSON versus plain text, and a reasoning model can spend its whole budget
+// thinking before either. Try the strictest contract first and fall back,
+// instead of gambling the whole repair on one request shape.
+async function requestWorldTurnReceiptRepair(world, prompt, signal, commitTool) {
+    const baseBody = {
+        model: worldReceiptModelFor(world),
+        stream: false,
+        max_tokens: 1100,
+        temperature: 0,
+        messages: [{ role: 'system', content: prompt }]
+    };
+    const attempts = [];
+    if (commitTool) {
+        attempts.push({
+            ...baseBody,
+            tools: [safeJsonClone(commitTool)],
+            tool_choice: { type: 'function', function: { name: 'commit_world_turn' } },
+            parallel_tool_calls: false
+        });
+    }
+    attempts.push({ ...baseBody, response_format: { type: 'json_object' } });
+    attempts.push(baseBody);
+
+    let requestCount = 0;
+    let lastFailure = '';
+    for (const body of attempts) {
+        requestCount++;
+        const response = await fetch(apiBase() + '/chat/completions', {
+            method: 'POST',
+            signal,
+            headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+            body: JSON.stringify(applyOpenRouterRouting(body, world, { scope: 'receiptRepair' }))
+        });
+        if (!response.ok) {
+            lastFailure = await response.text().catch(() => `HTTP ${response.status}`);
+            continue;
+        }
+        const message = (await response.json())?.choices?.[0]?.message || {};
+        const receipt = parseWorldReceiptRepairMessage(message);
+        if (isPlainObject(receipt?.scene) && Array.isArray(receipt.events)
+            && Array.isArray(receipt.entity_updates)) {
+            return { receipt, requestCount };
+        }
+        lastFailure = 'provider returned no valid commit_world_turn envelope';
+    }
+    if (lastFailure) console.warn('Horde Engine: receipt repair exhausted all structured fallbacks —', lastFailure);
+    return { receipt: null, requestCount };
 }
 
 /**
