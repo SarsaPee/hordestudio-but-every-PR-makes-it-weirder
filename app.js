@@ -28934,10 +28934,13 @@ function worldReceiptModelFor(world) {
     if (!repairConfig.useMainModel && repairConfig.model) return repairConfig.model;
     const chosen = String(state.globalSettings?.structuredModel || '').trim();
     if (chosen) return chosen;
-    // A turn receipt describes the narrative model's own output. Prefer that
-    // model over the unrelated background world-agent model unless the user
-    // explicitly selected a global structured-data model.
-    return world?.model || normalizeWorldAgentConfig(world).model || state.globalSettings.defaultModel;
+    // A turn receipt describes the narrative model's own output — use exactly
+    // what the world's own narrative call resolves to. The world-agent model
+    // is a separate, unrelated background-simulation model (often chosen for
+    // being cheap/fast rather than tool-call reliable) and was previously
+    // falling in ahead of the global default whenever the world had no model
+    // of its own pinned, silently routing every repair attempt through it.
+    return world?.model || state.globalSettings.defaultModel;
 }
 
 // HTTP error bodies from providers are often a full JSON error envelope —
