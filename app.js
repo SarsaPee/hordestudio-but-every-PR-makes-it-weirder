@@ -9492,6 +9492,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                 const alreadyCommitted = !!committedDestination && toLoc.id === committedDestination;
                 const playerIntentMatch = !!context.playerMovementAuthorized
                     && (!context.authorizedPlayerDestinationId || toLoc.id === context.authorizedPlayerDestinationId);
+                // A stated cause is what makes non-voluntary movement legitimate;
                 // an actor is only meaningful when another actor is doing the
                 // moving. Requiring caused_by_actor_id for every non-voluntary
                 // mode rejected perfectly valid receipts — a vehicle ride ("Uber
@@ -16840,6 +16841,9 @@ function loadWorldGameRuleControls(world) {
     const commerceModeEl = document.getElementById('w-rules-commerce-mode');
     if (commerceModeEl) {
         commerceModeEl.value = rules.commerceMode || 'ludic';
+        // Money handling only means anything while commerce itself is enabled.
+        const row = document.getElementById('w-rules-commerce-mode-row');
+        if (row) row.classList.toggle('hidden', !rules.modules.commerce);
     }
     const dice = normalizeWorldDiceConfig(world);
     if (document.getElementById('w-dice-resolution')) document.getElementById('w-dice-resolution').value = dice.resolution;
