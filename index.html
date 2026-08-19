@@ -1109,6 +1109,14 @@
                                         <input id="w-rules-currency-name" class="form-input" maxlength="60" placeholder="gold">
                                     </div>
                                 </div>
+                                <div id="w-rules-commerce-mode-row" style="margin-top:12px;">
+                                    <label class="form-label" style="font-size:0.75rem;">Money handling</label>
+                                    <select id="w-rules-commerce-mode" class="form-select">
+                                        <option value="ludic">Vendors &amp; shops — catalogued goods, stock and listed prices</option>
+                                        <option value="narrative">Narrative money — costs happen in the story, nothing catalogued</option>
+                                    </select>
+                                    <div class="form-hint" style="margin-top:6px;">Narrative money still tracks the balance and still deducts real amounts; it simply never shows a shop menu, stock list or price catalogue. Use it when you want "the round cost $47", not "one coffee, 3 gold".</div>
+                                </div>
                                 <div class="form-hint" style="margin-top:10px;">Core movement, memory, world canon, and NPC identity always remain active. Every mechanical module above is optional and can be changed later without deleting its saved data.</div>
                             </div>
 

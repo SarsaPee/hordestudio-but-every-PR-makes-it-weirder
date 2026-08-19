@@ -16818,6 +16818,10 @@ function loadWorldGameRuleControls(world) {
     currency.value = rules.currencyStatId;
     document.getElementById('w-rules-zero-hp-mode').value = rules.zeroHpMode;
     document.getElementById('w-rules-currency-name').value = rules.currencyName;
+    const commerceModeEl = document.getElementById('w-rules-commerce-mode');
+    if (commerceModeEl) {
+        commerceModeEl.value = rules.commerceMode || 'ludic';
+    }
     const dice = normalizeWorldDiceConfig(world);
     if (document.getElementById('w-dice-resolution')) document.getElementById('w-dice-resolution').value = dice.resolution;
     if (document.getElementById('w-dice-sides')) document.getElementById('w-dice-sides').value = String(dice.sides);
@@ -16863,6 +16867,7 @@ function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
     world.gameRules.zeroHpMode = document.getElementById('w-rules-zero-hp-mode')?.value === 'lethal'
         ? 'lethal' : 'fail_forward';
     world.gameRules.currencyName = String(document.getElementById('w-rules-currency-name')?.value || 'coin').trim().slice(0, 60) || 'coin';
+    world.gameRules.commerceMode = document.getElementById('w-rules-commerce-mode')?.value === 'narrative' ? 'narrative' : 'ludic';
     world.gameRules.dice = normalizeWorldDiceConfig({ gameRules: { dice: {
         resolution: document.getElementById('w-dice-resolution')?.value,
         sides: document.getElementById('w-dice-sides')?.value,
@@ -18075,6 +18080,11 @@ function normalizeWorldGameRules(world) {
         zeroHpMode: raw.zeroHpMode === 'lethal' ? 'lethal' : 'fail_forward',
         currencyStatId,
         currencyName: String(raw.currencyName || currencyDefinition?.name || 'coin').trim().slice(0, 60) || 'coin',
+        // 'ludic'     — vendors, shop stock and catalogued prices (classic RPG).
+        // 'narrative' — money is real and decreases, but nothing is catalogued:
+        //               the story asserts what a thing cost. Grounded settings
+        //               want a spend tracker, not a storefront.
+        commerceMode: raw.commerceMode === 'narrative' ? 'narrative' : 'ludic',
         dice: diceRaw
     };
     normalizeWorldDiceConfig(world);
@@ -19876,7 +19886,10 @@ function renderWorldPlayState() {
         sess.factions.filter(faction => !['defeated', 'disbanded'].includes(faction.status)).slice(0, 3).forEach(faction => {
             cards.push(`⚑ ${faction.name} · influence ${faction.influence}${faction.goal ? ` · ${faction.goalProgress}% toward its goal` : ''}`);
         });
-        const market = ruleModules.commerce ? sess.economy.markets[sess.playerLocation] : null;
+        // Narrative money deliberately shows no stock lists — a storefront is
+        // exactly the thing this mode exists to remove.
+        const market = (ruleModules.commerce && normalizeWorldGameRules(world).commerceMode !== 'narrative')
+            ? sess.economy.markets[sess.playerLocation] : null;
         if (market && Object.keys(market).length) {
             cards.push(`🪙 ${Object.values(market).slice(0, 5).map(stock =>
                 `${stock.item} ×${stock.quantity} @ ${stock.price} ${sess.economy.currency}`).join(', ')}`);
@@ -21594,7 +21607,9 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
                 ? "12c. Conditions: Persist lasting injuries or statuses as completed condition events for the correct actor; remove them only when recovery is established."
                 : '12c. Mechanical player conditions are DISABLED. Describe temporary feelings or discomfort in prose only.',
             ruleModules.commerce
-                ? "12d. Commerce: Resolve every purchase or sale with 'transactions'. Never duplicate it through inventory, stats, or economy updates; rejected deals change nothing."
+                ? (gameRules.commerceMode === 'narrative'
+                    ? `12d. Money: ${gameRules.currencyName} is real and finite, but nothing is catalogued. When the fiction means the player spent or received money — a round of drinks, a fare, a cover charge, splitting a bill, a favour repaid — assert it with 'transactions' using a plausible everyday amount and a plain cause. Never present a shop menu, price list, stock count or itemised inventory, and never ask the player what they would like to purchase. Ordinary costs may simply have happened.`
+                    : "12d. Commerce: Resolve every purchase or sale with 'transactions'. Never duplicate it through inventory, stats, or economy updates; rejected deals change nothing.")
                 : '12d. Mechanical commerce is DISABLED. Do not deduct currency, transfer shop inventory, or invent affordability checks.',
             ruleModules.checks
                 ? "12e. Checks: For uncertain actions with meaningful failure, call 'checks' first with a fair difficulty and declared failure cost. The returned roll is binding and may resolve only once per turn."
