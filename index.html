@@ -3311,6 +3311,9 @@
             </div>
             <p class="form-hint">This catalog follows the provider selected above—even before you save. If the platform does not expose <code>/models</code>, type its exact model ID.</p>
             <div id="global-openrouter-routing" class="openrouter-routing-host hidden" data-settings-keywords="openrouter provider routing fallback throughput latency price coreweave"></div>
+            <label class="form-label" style="margin-top:16px">Cloud generation idle timeout (seconds)</label>
+            <input type="number" id="global-cloud-generation-timeout" class="form-input" min="0" max="600" step="15" value="45">
+            <p class="form-hint">How long Worlds waits with no bytes received from a cloud provider before aborting a generation. The timer resets whenever streaming data arrives — this is idle time, not total time. Raise this if you use a reasoning/thinking model that can sit silent for a while before its first token. Use <code>0</code> to disable it.</p>
             <div id="local-provider-fields" style="display:none; margin-top:12px; padding:12px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
                 <label class="form-label">Local Server URL</label>
                 <input type="text" id="global-local-url" class="form-input" placeholder="http://localhost:11434/v1">
