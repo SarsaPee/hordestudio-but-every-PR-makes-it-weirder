@@ -85,7 +85,43 @@ body {
   flex-direction: column;
   padding: 24px 16px 20px;
   gap: 8px;
+  overflow: hidden;
+  transition: width 0.18s ease, padding 0.18s ease, opacity 0.18s ease, border-color 0.18s ease;
 }
+
+#app.sidebar-collapsed .sidebar {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  border-right-color: transparent;
+  pointer-events: none;
+}
+
+/* Always reachable regardless of view or collapsed state — the sidebar's
+   own nav items are unusable as a way back in once it's hidden. */
+.global-sidebar-toggle-btn {
+  position: fixed;
+  top: 26px;
+  left: calc(var(--sidebar-w) - 14px);
+  z-index: 80;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  transition: left 0.18s ease, background 0.15s ease, color 0.15s ease, transform 0.18s ease;
+}
+.global-sidebar-toggle-btn:hover { background: var(--surface3); color: var(--text); }
+#app.sidebar-collapsed .global-sidebar-toggle-btn { left: 10px; transform: rotate(180deg); }
 
 .sidebar-logo {
   font-family: 'Outfit', sans-serif;
@@ -3229,18 +3265,145 @@ input[type=number].form-input::-webkit-inner-spin-button {
     border-right: 1px solid var(--border);
 }
 
+.world-scroll-bottom-btn {
+    position: absolute;
+    right: 32px;
+    bottom: 108px;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    z-index: 20;
+    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.world-scroll-bottom-btn:hover { background: var(--surface3); color: var(--text); transform: translateY(-2px); }
+
 .world-status-col {
-    width: 320px;
-    min-width: 0;
-    flex: 0 0 320px;
+    width: var(--world-status-w, 320px);
+    min-width: 240px;
+    max-width: 720px;
+    flex: 0 0 var(--world-status-w, 320px);
     box-sizing: border-box;
     background: var(--surface);
     padding: 24px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 28px;
+    gap: 20px;
     border-left: 1px solid var(--border);
+}
+
+/* Sections live inside #world-status-columns so the toolbar stays outside
+   the part that reshuffles between one flowing stack and two independent
+   stacks. In two-column mode each .hud-col is its own separate flex column:
+   heights never couple across the split, and collapsing/compacting a
+   section only ever reflows the sections below it in its own column. */
+.hud-columns {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+.hud-columns.is-two-col {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 16px;
+}
+.hud-col {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+.world-status-resize-handle {
+    flex: 0 0 6px;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    position: relative;
+}
+.world-status-resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 2px;
+    width: 2px;
+    border-radius: 2px;
+    background: transparent;
+    transition: background 0.15s ease;
+}
+.world-status-resize-handle:hover::after,
+.world-status-resize-handle.is-dragging::after {
+    background: var(--red-glow, #e63946);
+}
+
+.world-status-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: -8px;
+}
+.world-status-toolbar .tool-btn[aria-pressed="true"] {
+    color: var(--red);
+    border-color: var(--red-glow, #e63946);
+}
+
+.hud-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.hud-head h3 { margin: 0; }
+.hud-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+}
+.hud-collapse-btn, .hud-drag-handle, .hud-compact-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-3);
+    font-size: 0.75rem;
+    line-height: 1;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.hud-drag-handle { cursor: grab; letter-spacing: -1px; }
+.hud-collapse-btn:hover, .hud-drag-handle:hover, .hud-compact-btn:hover { background: var(--surface3); color: var(--text-2); }
+.hud-compact-btn[aria-pressed="true"] { color: var(--red); background: color-mix(in srgb, var(--red) 14%, transparent); }
+.world-status-section.is-collapsed .hud-collapse-btn { transform: rotate(180deg); }
+.world-status-section.is-collapsed .hud-body { display: none; }
+.world-status-section.is-compact .hud-body {
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.world-status-section.is-dragging { opacity: 0.45; }
+.hud-drop-indicator {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--red);
+    box-shadow: 0 0 8px var(--red-glow, #e63946);
+    flex-shrink: 0;
 }
 
 #world-play-view .chat-header {

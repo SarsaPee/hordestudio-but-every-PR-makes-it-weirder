@@ -5747,7 +5747,26 @@ function labsSocialContext(result) {
 }
 
 // --- Initialization ---
+function applyPersistedSidebarState() {
+    try {
+        document.getElementById('app')?.classList.toggle('sidebar-collapsed',
+            localStorage.getItem('hordeSidebarCollapsed') === 'true');
+    } catch (_) { /* localStorage unavailable */ }
+}
+
+function toggleSidebarCollapsed() {
+    const collapsed = document.getElementById('app').classList.toggle('sidebar-collapsed');
+    try { localStorage.setItem('hordeSidebarCollapsed', String(collapsed)); } catch (_) { /* storage unavailable */ }
+}
+
+function initGlobalSidebarToggle() {
+    const btn = document.getElementById('global-sidebar-toggle');
+    if (btn) btn.onclick = toggleSidebarCollapsed;
+}
+
 async function init() {
+    applyPersistedSidebarState();
+    initGlobalSidebarToggle();
     // Ask the browser to protect our IndexedDB from storage-pressure eviction
     if (navigator.storage && navigator.storage.persist) {
         navigator.storage.persist().catch(() => {});
@@ -17198,6 +17217,226 @@ async function resolveWorldCheckFromModal() {
     executeWorldTurn('continue');
 }
 
+function initWorldStatusResizeHandle() {
+    const handle = document.getElementById('world-status-resize-handle');
+    const col = document.querySelector('.world-status-col');
+    if (!handle || !col) return;
+    const applyWidth = px => {
+        const clamped = Math.max(240, Math.min(720, px));
+        document.documentElement.style.setProperty('--world-status-w', clamped + 'px');
+        return clamped;
+    };
+    const stored = parseInt(localStorage.getItem('hordeWorldStatusWidth'), 10);
+    if (Number.isFinite(stored)) applyWidth(stored);
+    let dragging = false;
+    handle.addEventListener('pointerdown', e => {
+        dragging = true;
+        handle.classList.add('is-dragging');
+        handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove', e => {
+        if (!dragging) return;
+        applyWidth(col.getBoundingClientRect().right - e.clientX);
+    });
+    const stopDrag = e => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('is-dragging');
+        try { handle.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
+        const width = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--world-status-w'), 10);
+        if (Number.isFinite(width)) {
+            try { localStorage.setItem('hordeWorldStatusWidth', String(width)); } catch (_) { /* storage unavailable */ }
+        }
+    };
+    handle.addEventListener('pointerup', stopDrag);
+    handle.addEventListener('pointercancel', stopDrag);
+}
+
+// One-time wiring for the right-side HUD: persisted column layout, per-section
+// collapse/compact state, and drag-to-reorder. Sections are static DOM nodes
+// reused across every renderWorldPlayState() call, so this only needs to run
+// once. Two-column mode splits the flat order in half by count (not by
+// measured height) into two independent flex columns, so collapsing or
+// compacting a section only ever reflows sections below it in its own
+// column — it never couples heights across the split.
+function initWorldStatusPanel() {
+    const container = document.getElementById('world-status-columns');
+    const columnsBtn = document.getElementById('world-status-columns-toggle');
+    if (!container) return;
+    const allSections = () => Array.from(container.querySelectorAll('.world-status-section[data-hud-id]'));
+    const knownIds = allSections().map(section => section.dataset.hudId);
+
+    const readList = key => {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) { return []; }
+    };
+    const writeList = (key, value) => {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* storage unavailable */ }
+    };
+
+    const savedOrder = readList('hordeWorldStatusOrder').filter(id => knownIds.includes(id));
+    const state = {
+        order: savedOrder.length ? savedOrder.concat(knownIds.filter(id => !savedOrder.includes(id))) : knownIds,
+        collapsed: new Set(readList('hordeWorldStatusCollapsed')),
+        compact: new Set(readList('hordeWorldStatusCompact')),
+        twoCol: localStorage.getItem('hordeWorldStatusTwoCol') === 'true'
+    };
+    const persistOrder = () => writeList('hordeWorldStatusOrder', state.order);
+    const persistCollapsed = () => writeList('hordeWorldStatusCollapsed', [...state.collapsed]);
+    const persistCompact = () => writeList('hordeWorldStatusCompact', [...state.compact]);
+
+    // Always wrapped in at least one .hud-col, even in one-column mode, so
+    // drag targeting logic (findColumnAt/placeIndicator below) has one shape
+    // to reason about regardless of layout.
+    function layoutColumns() {
+        const byId = new Map(allSections().map(section => [section.dataset.hudId, section]));
+        const ordered = state.order.map(id => byId.get(id)).filter(Boolean);
+        container.replaceChildren();
+        container.classList.toggle('is-two-col', state.twoCol);
+        const mid = Math.ceil(ordered.length / 2);
+        const halves = state.twoCol ? [ordered.slice(0, mid), ordered.slice(mid)] : [ordered];
+        halves.forEach(half => {
+            const columnEl = document.createElement('div');
+            columnEl.className = 'hud-col';
+            half.forEach(section => columnEl.appendChild(section));
+            container.appendChild(columnEl);
+        });
+    }
+
+    if (columnsBtn) {
+        const applyColumnsButton = () => {
+            columnsBtn.setAttribute('aria-pressed', String(state.twoCol));
+            columnsBtn.textContent = state.twoCol ? '⬛⬛ 2 col' : '⬛ 1 col';
+        };
+        applyColumnsButton();
+        columnsBtn.onclick = () => {
+            state.twoCol = !state.twoCol;
+            applyColumnsButton();
+            layoutColumns();
+            try { localStorage.setItem('hordeWorldStatusTwoCol', String(state.twoCol)); } catch (_) { /* storage unavailable */ }
+        };
+    }
+
+    // A single shared placeholder that moves to sit between sections as the
+    // user drags, so the gap itself shows where the drop will land instead
+    // of requiring a drop directly on another section's header.
+    const indicator = document.createElement('div');
+    indicator.className = 'hud-drop-indicator';
+
+    function findColumnAt(x) {
+        const cols = Array.from(container.querySelectorAll('.hud-col'));
+        if (cols.length <= 1) return cols[0] || null;
+        let closest = cols[0];
+        let closestDist = Infinity;
+        cols.forEach(col => {
+            const rect = col.getBoundingClientRect();
+            const dist = x < rect.left ? rect.left - x : x > rect.right ? x - rect.right : 0;
+            if (dist < closestDist) { closestDist = dist; closest = col; }
+        });
+        return closest;
+    }
+
+    function placeIndicator(col, y) {
+        const siblingSections = Array.from(col.children)
+            .filter(el => el !== indicator && el.classList.contains('world-status-section'));
+        const target = siblingSections.find(section => {
+            const rect = section.getBoundingClientRect();
+            return y < rect.top + rect.height / 2;
+        });
+        if (target) col.insertBefore(indicator, target);
+        else col.appendChild(indicator);
+    }
+
+    function clearDrag() {
+        draggingId = null;
+        indicator.remove();
+        allSections().forEach(item => item.classList.remove('is-dragging'));
+    }
+
+    container.addEventListener('dragover', e => {
+        if (!draggingId) return;
+        e.preventDefault();
+        const col = findColumnAt(e.clientX);
+        if (col) placeIndicator(col, e.clientY);
+    });
+    container.addEventListener('dragleave', e => {
+        if (!container.contains(e.relatedTarget)) indicator.remove();
+    });
+    container.addEventListener('drop', e => {
+        e.preventDefault();
+        if (!draggingId || !indicator.isConnected) return;
+        const nextSection = indicator.nextElementSibling?.classList.contains('world-status-section')
+            ? indicator.nextElementSibling : null;
+        const prevSection = indicator.previousElementSibling?.classList.contains('world-status-section')
+            ? indicator.previousElementSibling : null;
+        state.order = state.order.filter(id => id !== draggingId);
+        if (nextSection) {
+            const idx = state.order.indexOf(nextSection.dataset.hudId);
+            state.order.splice(idx < 0 ? state.order.length : idx, 0, draggingId);
+        } else if (prevSection) {
+            const idx = state.order.indexOf(prevSection.dataset.hudId);
+            state.order.splice(idx < 0 ? state.order.length : idx + 1, 0, draggingId);
+        } else {
+            state.order.push(draggingId);
+        }
+        persistOrder();
+        layoutColumns();
+    });
+
+    let draggingId = null;
+    allSections().forEach(section => {
+        const hudId = section.dataset.hudId;
+        const collapseBtn = section.querySelector('.hud-collapse-btn');
+        const compactBtn = section.querySelector('.hud-compact-btn');
+        const dragHandle = section.querySelector('.hud-drag-handle');
+
+        const isCollapsed = state.collapsed.has(hudId);
+        section.classList.toggle('is-collapsed', isCollapsed);
+        if (collapseBtn) {
+            collapseBtn.setAttribute('aria-expanded', String(!isCollapsed));
+            collapseBtn.onclick = () => {
+                const next = section.classList.toggle('is-collapsed');
+                collapseBtn.setAttribute('aria-expanded', String(!next));
+                if (next) state.collapsed.add(hudId); else state.collapsed.delete(hudId);
+                persistCollapsed();
+            };
+        }
+
+        const isCompact = state.compact.has(hudId);
+        section.classList.toggle('is-compact', isCompact);
+        if (compactBtn) {
+            compactBtn.setAttribute('aria-pressed', String(isCompact));
+            compactBtn.onclick = () => {
+                const next = section.classList.toggle('is-compact');
+                compactBtn.setAttribute('aria-pressed', String(next));
+                if (next) state.compact.add(hudId); else state.compact.delete(hudId);
+                persistCompact();
+            };
+        }
+
+        if (!dragHandle) return;
+        let dragArmed = false;
+        dragHandle.addEventListener('pointerdown', () => {
+            dragArmed = true;
+            setTimeout(() => { dragArmed = false; }, 400);
+        });
+        section.setAttribute('draggable', 'true');
+        section.addEventListener('dragstart', e => {
+            if (!dragArmed) { e.preventDefault(); return; }
+            dragArmed = false;
+            draggingId = hudId;
+            section.classList.add('is-dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', hudId);
+        });
+        section.addEventListener('dragend', clearDrag);
+    });
+
+    layoutColumns();
+}
+
 function setupWorldPlayLogic() {
     document.getElementById('world-exit-btn').onclick = () => switchView('worlds');
     document.getElementById('world-map-btn').onclick = renderWorldMap;
@@ -17568,6 +17807,20 @@ function setupWorldPlayLogic() {
             showToast(on ? 'Message metadata shown' : 'Message metadata hidden', 'info');
         }
     };
+
+    const scrollBtn = document.getElementById('world-scroll-bottom-btn');
+    const messagesContainer = document.getElementById('world-messages-container');
+    if (scrollBtn && messagesContainer) {
+        const nearBottom = () => messagesContainer.scrollHeight - messagesContainer.scrollTop
+            - messagesContainer.clientHeight < 120;
+        const updateScrollBtn = () => scrollBtn.classList.toggle('hidden', nearBottom());
+        messagesContainer.addEventListener('scroll', updateScrollBtn);
+        scrollBtn.onclick = () => messagesContainer.scrollTo({ top: messagesContainer.scrollHeight, behavior: 'smooth' });
+        updateScrollBtn();
+    }
+
+    initWorldStatusResizeHandle();
+    initWorldStatusPanel();
 
     document.getElementById('world-roll-btn').onclick = openWorldCheckModal;
     document.getElementById('close-world-check-modal').onclick = closeWorldCheckModal;

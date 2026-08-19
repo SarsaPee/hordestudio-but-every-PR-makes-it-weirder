@@ -15,6 +15,8 @@
 <body>
 <div id="app">
 
+    <button id="global-sidebar-toggle" class="global-sidebar-toggle-btn" type="button" title="Show/hide sidebar" aria-label="Show or hide the sidebar">‹</button>
+
     <!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
     <aside class="sidebar">
         <button class="sidebar-logo sidebar-logo-button" id="sidebar-home-btn" type="button" title="Go to Chat Library">Horde<span>Studio</span></button>
@@ -331,6 +333,7 @@
                         </div>
                         <span style="font-size:0.8rem; color:var(--text-3); font-style:italic;" id="world-dm-typing-label">DM is writing...</span>
                     </div>
+                    <button id="world-scroll-bottom-btn" class="world-scroll-bottom-btn hidden" type="button" title="Scroll to latest" aria-label="Scroll to latest message">↓</button>
                     <div class="input-wrap">
                         <div class="input-row">
                             <textarea id="world-user-input" class="msg-input" placeholder="What do you do?..." rows="1"></textarea>
@@ -342,15 +345,30 @@
                 </div>
 
                 <!-- Status & Info Column -->
+                <div class="world-status-resize-handle" id="world-status-resize-handle" title="Drag to resize"></div>
                 <aside class="world-status-col">
+                    <div class="world-status-toolbar">
+                        <button id="world-status-columns-toggle" class="tool-btn" type="button" title="Toggle one or two column layout" aria-pressed="false">⬛ 1 col</button>
+                    </div>
+                    <div class="hud-columns" id="world-status-columns">
                     <!-- Player HUD (Phase 2 RPG Mechanics) -->
                     <!-- World Time & Atmosphere -->
-                    <section class="world-status-section" id="hud-section-clock" style="margin-top:0;">
+                    <section class="world-status-section" id="hud-section-clock" data-hud-id="clock" style="margin-top:0;">
+                        <div class="hud-head">
+                            <h3>Time &amp; Weather</h3>
+                            <div class="hud-head-actions">
+                                <button class="hud-compact-btn" type="button" title="Compact (scroll inside)" aria-pressed="false">↕</button>
+                                <button class="hud-collapse-btn" type="button" title="Collapse section" aria-expanded="true">︿</button>
+                                <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>
+                            </div>
+                        </div>
+                        <div class="hud-body">
                         <div class="world-card" style="text-align:center; padding:15px; background: linear-gradient(135deg, var(--surface2), var(--bg));">
                             <div id="world-clock-display" style="font-size:1.6rem; font-family:'Outfit',sans-serif; font-weight:700; color:var(--accent);">8:00 AM</div>
                             <div id="world-time-period" style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; letter-spacing:1px; margin-top:4px; margin-bottom:8px;">Daylight</div>
                             <div id="world-weather-display" style="font-size:0.8rem; color:var(--text-2); margin-bottom:8px; cursor:pointer;" title="Click to change the weather"></div>
                             <button id="w-hud-adjust-time-btn" class="tool-btn" style="font-size:0.65rem; padding: 4px 8px; border: 1px dashed var(--accent); color:var(--text-1);">Adjust Clock</button>
+                        </div>
                         </div>
                     </section>
 
@@ -379,15 +397,22 @@
                         </div>
                     </section>
 
-                    <section class="world-status-section" id="hud-section-ledger">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h3 style="margin:0;">World Ledger</h3>
-                            <button id="edit-ledger-btn" class="tool-btn" style="font-size:0.7rem; padding:2px 6px;">Edit</button>
+                    <section class="world-status-section" id="hud-section-ledger" data-hud-id="ledger">
+                        <div class="hud-head">
+                            <h3>World Ledger</h3>
+                            <div class="hud-head-actions">
+                                <button id="edit-ledger-btn" class="tool-btn" style="font-size:0.7rem; padding:2px 6px;">Edit</button>
+                                <button class="hud-compact-btn" type="button" title="Compact (scroll inside)" aria-pressed="false">↕</button>
+                                <button class="hud-collapse-btn" type="button" title="Collapse section" aria-expanded="true">︿</button>
+                                <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>
+                            </div>
                         </div>
+                        <div class="hud-body">
                         <div id="world-ledger-card" class="world-card" style="max-height:150px; overflow-y:auto; border-left: 3px solid var(--red);">
                             <div id="world-ledger-content" style="font-size:0.8rem; color:var(--text-2); line-height:1.5; font-style:italic; white-space: pre-wrap;">No milestones recorded yet.</div>
                         </div>
                         <div id="world-ledger-status" style="margin-top:5px; font-size:0.62rem; color:var(--text-3);"></div>
+                        </div>
                     </section>
 
                     <section class="world-status-section">
@@ -397,46 +422,73 @@
                         <div id="world-present-list" style="display:flex; flex-direction:column; gap:6px;"></div>
                     </section>
 
-                    <section class="world-status-section" id="hud-section-quests">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h3 style="margin:0;">Active Quests</h3>
-                            <div style="display:flex; align-items:center; gap:6px;">
+                    <section class="world-status-section" id="hud-section-quests" data-hud-id="quests">
+                        <div class="hud-head">
+                            <h3>Active Quests</h3>
+                            <div class="hud-head-actions">
                                 <span id="quest-count" class="mini-tag">0</span>
                                 <button id="quest-manage-btn" class="tool-btn quest-manage-btn" type="button">Manage</button>
+                                <button class="hud-compact-btn" type="button" title="Compact (scroll inside)" aria-pressed="false">↕</button>
+                                <button class="hud-collapse-btn" type="button" title="Collapse section" aria-expanded="true">︿</button>
+                                <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>
                             </div>
                         </div>
+                        <div class="hud-body">
                         <div id="world-quest-list" style="display:flex; flex-direction:column; gap:8px;">
                             <!-- Quests here -->
                         </div>
+                        </div>
                     </section>
 
-                    <section class="world-status-section" id="hud-section-secrets" style="display:none;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h3 style="margin:0;">Secrets Uncovered</h3>
-                            <span id="secret-count" class="mini-tag">0</span>
+                    <section class="world-status-section" id="hud-section-secrets" data-hud-id="secrets" style="display:none;">
+                        <div class="hud-head">
+                            <h3>Secrets Uncovered</h3>
+                            <div class="hud-head-actions">
+                                <span id="secret-count" class="mini-tag">0</span>
+                                <button class="hud-compact-btn" type="button" title="Compact (scroll inside)" aria-pressed="false">↕</button>
+                                <button class="hud-collapse-btn" type="button" title="Collapse section" aria-expanded="true">︿</button>
+                                <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>
+                            </div>
                         </div>
+                        <div class="hud-body">
                         <div id="world-secrets-list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+                        </div>
                     </section>
 
-                    <section class="world-status-section" id="hud-section-threads">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h3 style="margin:0;">Story Threads</h3>
-                            <span id="thread-count" class="mini-tag">0</span>
+                    <section class="world-status-section" id="hud-section-threads" data-hud-id="threads">
+                        <div class="hud-head">
+                            <h3>Story Threads</h3>
+                            <div class="hud-head-actions">
+                                <span id="thread-count" class="mini-tag">0</span>
+                                <button class="hud-compact-btn" type="button" title="Compact (scroll inside)" aria-pressed="false">↕</button>
+                                <button class="hud-collapse-btn" type="button" title="Collapse section" aria-expanded="true">︿</button>
+                                <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>
+                            </div>
                         </div>
+                        <div class="hud-body">
                         <div id="world-thread-list" style="display:flex; flex-direction:column; gap:8px;">
                             <!-- Open narrative threads here -->
                         </div>
+                        </div>
                     </section>
 
-                    <section class="world-status-section" id="hud-section-living-world">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h3 style="margin:0;">Living World</h3>
-                            <span id="living-world-count" class="mini-tag">0</span>
+                    <section class="world-status-section" id="hud-section-living-world" data-hud-id="livingworld">
+                        <div class="hud-head">
+                            <h3>Living World</h3>
+                            <div class="hud-head-actions">
+                                <span id="living-world-count" class="mini-tag">0</span>
+                                <button class="hud-compact-btn" type="button" title="Compact (scroll inside)" aria-pressed="false">↕</button>
+                                <button class="hud-collapse-btn" type="button" title="Collapse section" aria-expanded="true">︿</button>
+                                <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>
+                            </div>
                         </div>
+                        <div class="hud-body">
                         <div id="world-living-world-list" style="display:flex; flex-direction:column; gap:8px;">
                             <!-- Simulation state appears here -->
                         </div>
+                        </div>
                     </section>
+                    </div>
                 </aside>
             </div>
         </section>
