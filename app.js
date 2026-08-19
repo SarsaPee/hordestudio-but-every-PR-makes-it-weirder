@@ -9898,11 +9898,21 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                 const alreadyCommitted = !!committedDestination && toLoc.id === committedDestination;
                 const playerIntentMatch = !!context.playerMovementAuthorized
                     && (!context.authorizedPlayerDestinationId || toLoc.id === context.authorizedPlayerDestinationId);
+                // an actor is only meaningful when another actor is doing the
+                // moving. Requiring caused_by_actor_id for every non-voluntary
+                // mode rejected perfectly valid receipts — a vehicle ride ("Uber
+                // from CBD to St Kilda"), a fall or a teleport has no acting
+                // actor, so the player silently stayed put for entire arcs while
+                // the narrative moved on without the tracker.
+                const actorDrivenMode = ['forced', 'carried'].includes(movement.movement_mode);
                 const forced = movement.movement_mode !== 'voluntary'
-                    && movement.caused_by_actor_id && movement.cause;
+                    && !!movement.cause
+                    && (!actorDrivenMode || !!movement.caused_by_actor_id);
                 if (!alreadyCommitted && !playerIntentMatch && !forced) {
                     reject(index, event, 'player_movement_not_authorized',
-                        'No matching player movement intent or explicit forced-movement cause.');
+                        actorDrivenMode && !movement.caused_by_actor_id
+                            ? `${movement.movement_mode} movement must name caused_by_actor_id.`
+                            : 'No matching player movement intent, and no non-voluntary movement_mode with a stated cause.');
                     return;
                 }
                 const routeOrigin = alreadyCommitted ? playerStart : sess.playerLocation;
