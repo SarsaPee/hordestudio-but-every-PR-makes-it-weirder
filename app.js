@@ -13105,6 +13105,8 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-agent-enabled').checked = agentConfig.enabled;
     document.getElementById('w-agent-interval').value = agentConfig.intervalTurns;
     document.getElementById('w-agent-model').value = agentConfig.model;
+    document.getElementById('w-agent-reasoning').checked = agentConfig.reasoning;
+    document.getElementById('w-agent-reasoning-effort').value = agentConfig.reasoningEffort;
     initializeOpenRouterRoutingPanel('world');
     initializeOpenRouterRoutingPanel('worldAgent');
     const kernelConfig = normalizeWorldKernelConfig(w);
@@ -13152,6 +13154,7 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-studio-reasoning').checked = w.reasoning || false;
     document.getElementById('w-studio-reasoning-effort').value = w.reasoningEffort || 'auto';
     document.getElementById('w-reasoning-effort-row').classList.toggle('hidden', !w.reasoning);
+    document.getElementById('w-studio-include-reasoning').checked = w.includeReasoning || false;
 
     // Load HUD Config
     if (!w.hudConfig) w.hudConfig = { showClock: true, showQuests: true, showLedger: true, showInventory: true, timeStep: 5, startTimeHours: 8, showDays: false, stats: [{id:'hp', name:'HP', value:100, min:0, max:100, color:'var(--red)'}, {id:'gold', name:'Gold', value:0, min:0, max:0, color:'var(--yellow)'}] };
@@ -13201,7 +13204,9 @@ async function saveWorld() {
             enabled: document.getElementById('w-agent-enabled').checked,
             intervalTurns: document.getElementById('w-agent-interval').value,
             model: document.getElementById('w-agent-model').value,
-            openRouterRouting: readOpenRouterRoutingPanel('worldAgent')
+            openRouterRouting: readOpenRouterRoutingPanel('worldAgent'),
+            reasoning: document.getElementById('w-agent-reasoning').checked,
+            reasoningEffort: document.getElementById('w-agent-reasoning-effort').value
         }
     });
     w.kernel = normalizeWorldKernelConfig({ kernel: {
@@ -13232,6 +13237,7 @@ async function saveWorld() {
     w.contextSize = parseInt(document.getElementById('w-studio-context-size').value) || 8192;
     w.reasoning = document.getElementById('w-studio-reasoning').checked;
     w.reasoningEffort = document.getElementById('w-studio-reasoning-effort').value;
+    w.includeReasoning = document.getElementById('w-studio-include-reasoning').checked;
     w.activePresetId = document.getElementById('w-studio-system-preset').value;
     
     // Save HUD Config
@@ -21158,6 +21164,12 @@ function appendWorldMessageUI(msg, index = null) {
     const metaHtml = metaParts.length
         ? `<div class="world-msg-meta">${metaParts.join(' &nbsp;·&nbsp; ')}</div>`
         : '';
+    const thinkingHtml = (msg.role === 'dm' && msg.reasoningContent)
+        ? `<div class="thinking-block collapsed">
+            <div class="thinking-block-content">${parseHordeMarkdown(msg.reasoningContent)}</div>
+            <button class="thinking-block-toggle">Show full reasoning</button>
+        </div>`
+        : '';
 
     // Version nav restores that take's world-state snapshot — only safe on the
     // LAST entry. Allowing it mid-history rewound stats/NPCs/ledger underneath
@@ -21169,6 +21181,7 @@ function appendWorldMessageUI(msg, index = null) {
     div.innerHTML = `
         <div class="msg-bubble">
             <div class="msg-text">${messageHtml}</div>
+            ${thinkingHtml}
             ${metaHtml}
             <textarea class="msg-edit-area hidden" style="width:100%; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:8px; margin-top:8px; font-family:inherit; font-size:inherit;"></textarea>
             ${msg.role === 'dm' && versions.length > 1 && !isLastEntry ? `
@@ -23216,6 +23229,7 @@ ${modularMandate}
         const streamedToolCalls = new Map();
         let streamError = null;       // provider error delivered inside the stream
         let reasoningSeen = false;    // model emitted hidden reasoning deltas
+        let reasoningContent = '';    // accumulated only when the world opts in to display it
         let lastFinishReason = null;  // e.g. 'length' = token budget exhausted
 
         // Create a temporary UI message for streaming
@@ -23241,6 +23255,7 @@ ${modularMandate}
                 if (choice.finish_reason) lastFinishReason = choice.finish_reason;
                 if (delta.reasoning || delta.thought) {
                     reasoningSeen = true;
+                    if (world.includeReasoning) reasoningContent += delta.reasoning || delta.thought || '';
                     if (dmTypingLabel && !fullText) dmTypingLabel.textContent = 'DM is thinking deeply...';
                 }
                 const content = Array.isArray(delta.content)
@@ -23764,6 +23779,7 @@ ${modularMandate}
                 command,
                 ledgerEntry: extractedChronicle,
                 stateSource: sess.lastTurnStateSource || 'none',
+                reasoningContent: reasoningContent ? reasoningContent.slice(0, 20000) : '',
                 stateFallbackArmed: command !== 'look' && command !== 'init',
                 ledgerStatus: sess.ledgerDiagnostics?.source === 'none' && !extractedChronicle
                     ? 'classifier_empty' : (sess.ledgerDiagnostics?.source || ''),
@@ -27765,7 +27781,9 @@ function normalizeWorldAgentConfig(world) {
         enabled: raw.enabled === true,
         intervalTurns: Math.max(8, Math.min(200, parseInt(raw.intervalTurns) || 24)),
         model: String(raw.model || '').trim().slice(0, 160),
-        openRouterRouting: normalizeOpenRouterRouting(raw.openRouterRouting, { allowNull: true })
+        openRouterRouting: normalizeOpenRouterRouting(raw.openRouterRouting, { allowNull: true }),
+        reasoning: raw.reasoning === true,
+        reasoningEffort: ['low', 'medium', 'high'].includes(raw.reasoningEffort) ? raw.reasoningEffort : 'medium'
     };
 }
 
@@ -27884,17 +27902,23 @@ Propose 1 to 3 developments. Return ONLY this JSON, no prose or fences:
  "npc_relationship_updates":[{"source_npc_id":"<id>","target_npc_id":"<id>","change":<integer>,"reason":"<short>"}]}
 Omit any array you are not using. Current turn is ${turn}; schedule events a few turns out, not in the past.`;
 
+    const agentBody = {
+        model: config.model || structuredModelFor(world),
+        max_tokens: 1200,
+        messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: buildWorldAgentDigest(world, sess) }
+        ]
+    };
+    // Off by default: this call already returns JSON-only with no narrative
+    // to lose, so reasoning is pure latency/cost unless explicitly wanted.
+    if (config.reasoning && normalizedProviderId(state.globalSettings?.apiProvider) === 'openrouter') {
+        agentBody.reasoning = { effort: config.reasoningEffort };
+    }
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting({
-            model: config.model || structuredModelFor(world),
-            max_tokens: 1200,
-            messages: [
-                { role: 'system', content: system },
-                { role: 'user', content: buildWorldAgentDigest(world, sess) }
-            ]
-        }, world, { scope: 'worldAgent' }))
+        body: JSON.stringify(applyOpenRouterRouting(agentBody, world, { scope: 'worldAgent' }))
     });
     if (!response.ok) {
         throw new Error((await response.json().catch(() => ({})))?.error?.message || response.statusText);

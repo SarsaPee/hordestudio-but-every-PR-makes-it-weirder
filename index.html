@@ -979,6 +979,15 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div style="display:flex; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap;">
+                                    <label class="vh-test-check" style="margin:0;"><input type="checkbox" id="w-agent-reasoning"> Reasoning</label>
+                                    <select id="w-agent-reasoning-effort" class="form-select" style="width:120px; padding:4px 8px; font-size:0.85rem;">
+                                        <option value="low">Low</option>
+                                        <option value="medium" selected>Medium</option>
+                                        <option value="high">High</option>
+                                    </select>
+                                    <span class="form-hint">Off by default — this call returns JSON only, no narrative to lose.</span>
+                                </div>
                                 <div id="world-agent-openrouter-routing" class="openrouter-routing-host hidden"></div>
                             </div>
 
@@ -1049,6 +1058,14 @@
                                             <option value="high">High (Deep, more tokens)</option>
                                         </select>
                                     </div>
+                                    <label class="toggle-row" style="display:flex; align-items:center; gap:12px; cursor:pointer;">
+                                        <input type="checkbox" id="w-studio-include-reasoning" class="toggle-checkbox">
+                                        <span class="toggle-switch"></span>
+                                        <div>
+                                            <div style="font-weight:500; color:var(--text);">Show reasoning on messages</div>
+                                            <div class="form-hint">Adds a collapsible "thinking" block to each DM message's metadata, alongside the state-source badge.</div>
+                                        </div>
+                                    </label>
                                 </div>
                             </div>
 
