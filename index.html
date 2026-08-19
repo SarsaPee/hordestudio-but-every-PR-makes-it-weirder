@@ -902,6 +902,61 @@
                             </div>
 
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
+                                <label class="form-label" style="margin:0;">🩹 Receipt Repair</label>
+                                <p class="form-hint" style="margin-top:6px;">When a turn's response has no valid state receipt, this asks — separately from the narrative — for just the missing piece. Governed by "Missing receipt policy" above; these settings control how that follow-up call itself behaves once triggered.</p>
+                                <label class="vh-test-check" style="margin-top:10px;"><input type="checkbox" id="w-receipt-repair-use-main" checked> Use main model</label>
+                                <p class="form-hint" style="margin-top:4px;">On: repair reuses this world's own model and provider. Off: repair runs against a separately chosen model/provider — useful for pairing a non-reasoning model with a reasoning main model.</p>
+                                <div id="w-receipt-repair-sidecar-fields" class="hidden" style="margin-top:10px;">
+                                    <div style="display:flex; gap:12px;">
+                                        <div style="flex:1;">
+                                            <label class="form-label" style="font-size:0.75rem;">Provider</label>
+                                            <select id="w-receipt-repair-provider" class="form-select">
+                                                <option value="">Use default provider</option>
+                                                <option value="openrouter">OpenRouter</option>
+                                                <option value="gptproto">GPTProto</option>
+                                                <option value="nanogpt">NanoGPT</option>
+                                                <option value="nvidia">NVIDIA NIM</option>
+                                                <option value="bedrock">AWS Bedrock</option>
+                                                <option value="custom">Custom OpenAI-compatible</option>
+                                                <option value="local">Local / Self-hosted</option>
+                                            </select>
+                                        </div>
+                                        <div style="flex:1;">
+                                            <label class="form-label" style="font-size:0.75rem;">Model <span class="form-hint">(blank = this world's model)</span></label>
+                                            <input type="search" id="w-receipt-repair-model" class="form-input" placeholder="Search models…" autocomplete="off">
+                                        </div>
+                                    </div>
+                                    <div id="world-receipt-repair-openrouter-routing" class="openrouter-routing-host hidden" style="margin-top:10px;"></div>
+                                </div>
+                                <div style="display:flex; gap:12px; margin-top:12px; flex-wrap:wrap;">
+                                    <div style="flex:1; min-width:140px;">
+                                        <label class="form-label" style="font-size:0.75rem;">Reasoning level</label>
+                                        <select id="w-receipt-repair-reasoning" class="form-select">
+                                            <option value="off">Off (recommended)</option>
+                                            <option value="low">Low</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="high">High</option>
+                                        </select>
+                                    </div>
+                                    <div style="flex:1; min-width:140px;">
+                                        <label class="form-label" style="font-size:0.75rem;">Max tokens <span class="form-hint">(blank = auto)</span></label>
+                                        <input type="number" id="w-receipt-repair-max-tokens" class="form-input" min="200" max="16000" step="100" placeholder="auto">
+                                    </div>
+                                    <div style="flex:1; min-width:140px;">
+                                        <label class="form-label" style="font-size:0.75rem;">Retry attempts</label>
+                                        <input type="number" id="w-receipt-repair-attempts" class="form-input" min="1" max="3" step="1" value="3">
+                                    </div>
+                                </div>
+                                <div style="margin-top:12px;">
+                                    <label class="form-label" style="font-size:0.75rem;">If every attempt fails</label>
+                                    <select id="w-receipt-repair-on-exhausted" class="form-select">
+                                        <option value="frozen">Freeze state silently</option>
+                                        <option value="frozen_notify">Freeze state and notify every time</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
                                 <label class="form-label" style="display:flex; align-items:center; gap:8px; margin:0;">
                                     <input type="checkbox" id="w-agent-enabled">
                                     🌍 Background World Agent

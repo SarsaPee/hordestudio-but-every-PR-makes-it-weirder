@@ -4142,6 +4142,13 @@ function openRouterRoutingPanelDefinition(scope) {
             inheritLabel: 'Route on availability (recommended)',
             owner: () => null,
             stored: () => state.globalSettings.consolidationRouting
+        },
+        receiptRepair: {
+            hostId: 'world-receipt-repair-openrouter-routing',
+            modelId: 'w-receipt-repair-model',
+            inheritLabel: 'Inherit World routing',
+            owner: () => state.editingWorld,
+            stored: () => state.editingWorld?.receiptRepairRouting
         }
     };
     return definitions[scope] || null;
@@ -4152,7 +4159,7 @@ function openRouterRoutingParent(scope) {
     // Unchecking "inherit" on a utility route means routing on availability,
     // not adopting the narrative model's provider pin.
     if (scope === 'consolidation') return availabilityOpenRouterRouting();
-    if (scope !== 'worldAgent') return globalRouting;
+    if (scope !== 'worldAgent' && scope !== 'receiptRepair') return globalRouting;
     const worldDraft = openRouterRoutingDrafts.get('world');
     if (worldDraft) {
         return worldDraft.inherit
@@ -4166,7 +4173,7 @@ function openRouterRoutingModel(scope) {
     const definition = openRouterRoutingPanelDefinition(scope);
     const selected = String(document.getElementById(definition?.modelId)?.value || '').trim();
     if (selected) return selected;
-    if (scope === 'worldAgent') {
+    if (scope === 'worldAgent' || scope === 'receiptRepair') {
         return String(document.getElementById('w-studio-model')?.value
             || state.editingWorld?.model || state.globalSettings.defaultModel || '').trim();
     }
@@ -4626,7 +4633,7 @@ function renderAllOpenRouterRoutingPanels() {
 function setupOpenRouterRouting() {
     const provider = document.getElementById('global-api-provider');
     if (provider) provider.addEventListener('change', renderAllOpenRouterRoutingPanels);
-    ['global', 'character', 'room', 'world', 'worldAgent', 'consolidation'].forEach(scope => {
+    ['global', 'character', 'room', 'world', 'worldAgent', 'consolidation', 'receiptRepair'].forEach(scope => {
         const definition = openRouterRoutingPanelDefinition(scope);
         const modelInput = document.getElementById(definition?.modelId);
         if (modelInput) modelInput.addEventListener('change', () => {
@@ -13107,6 +13114,25 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-kernel-repair-mode').value = kernelConfig.repairMode;
     document.getElementById('w-kernel-compact-tools').checked = kernelConfig.compactTools;
 
+    const repairConfig = normalizeReceiptRepairConfig(w);
+    document.getElementById('w-receipt-repair-use-main').checked = repairConfig.useMainModel;
+    document.getElementById('w-receipt-repair-provider').value = repairConfig.provider;
+    document.getElementById('w-receipt-repair-model').value = repairConfig.model;
+    document.getElementById('w-receipt-repair-reasoning').value = repairConfig.reasoningEffort;
+    document.getElementById('w-receipt-repair-max-tokens').value = repairConfig.maxTokensOverride || '';
+    document.getElementById('w-receipt-repair-max-tokens').placeholder = `auto (${RECEIPT_REPAIR_REASONING_TOKEN_DEFAULTS[repairConfig.reasoningEffort]})`;
+    document.getElementById('w-receipt-repair-attempts').value = repairConfig.maxAttempts;
+    document.getElementById('w-receipt-repair-on-exhausted').value = repairConfig.onExhausted;
+    document.getElementById('w-receipt-repair-sidecar-fields').classList.toggle('hidden', repairConfig.useMainModel);
+    document.getElementById('w-receipt-repair-use-main').onchange = event => {
+        document.getElementById('w-receipt-repair-sidecar-fields').classList.toggle('hidden', event.target.checked);
+    };
+    document.getElementById('w-receipt-repair-reasoning').onchange = event => {
+        document.getElementById('w-receipt-repair-max-tokens').placeholder =
+            `auto (${RECEIPT_REPAIR_REASONING_TOKEN_DEFAULTS[event.target.value] || 1100})`;
+    };
+    initializeOpenRouterRoutingPanel('receiptRepair');
+
     document.getElementById('w-studio-temp').value = w.temp ?? 0.9;
     document.getElementById('w-studio-min-p').value = w.minP ?? 0.0;
     document.getElementById('w-studio-top-p').value = w.topP ?? 1.0;
@@ -13184,6 +13210,16 @@ async function saveWorld() {
         memoryMode: document.getElementById('w-kernel-memory-mode').value,
         repairMode: document.getElementById('w-kernel-repair-mode').value,
         compactTools: document.getElementById('w-kernel-compact-tools').checked
+    } });
+    w.receiptRepairRouting = readOpenRouterRoutingPanel('receiptRepair');
+    w.receiptRepair = normalizeReceiptRepairConfig({ receiptRepair: {
+        useMainModel: document.getElementById('w-receipt-repair-use-main').checked,
+        provider: document.getElementById('w-receipt-repair-provider').value,
+        model: document.getElementById('w-receipt-repair-model').value,
+        reasoningEffort: document.getElementById('w-receipt-repair-reasoning').value,
+        maxTokensOverride: document.getElementById('w-receipt-repair-max-tokens').value,
+        maxAttempts: document.getElementById('w-receipt-repair-attempts').value,
+        onExhausted: document.getElementById('w-receipt-repair-on-exhausted').value
     } });
     w.temp = parseFloat(document.getElementById('w-studio-temp').value) || 0.9;
     w.minP = parseFloat(document.getElementById('w-studio-min-p').value) || 0.0;
@@ -23378,6 +23414,7 @@ ${modularMandate}
         // already-written narrative. This repair request runs only when the
         // provider failed the primary contract.
         let repairedReceiptApplied = false;
+        let repairFailureReason = '';
         const receiptRepairNeeded = shouldRepairMissingWorldReceipt(world, command, submittedInput || userInput, fullText);
         if (!successfulStateCall && !inlineStateApplied && fullText.trim() && receiptRepairNeeded) {
             try {
@@ -23392,9 +23429,12 @@ ${modularMandate}
                     if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
                     repairedReceiptApplied = true;
                     console.warn('Horde Engine: missing turn receipt repaired without regenerating the narrative.');
+                } else {
+                    repairFailureReason = repairResult.failureReason || '';
                 }
             } catch (repairError) {
                 if (repairError?.name === 'AbortError') throw repairError;
+                repairFailureReason = repairError.message || 'Repair request failed.';
                 console.warn('Horde Engine: receipt-only repair failed; freezing unverified state.', repairError.message);
             }
         }
@@ -23427,6 +23467,9 @@ ${modularMandate}
                 actor_id: '', detail: 'Narrative preserved; unverified state mutations were frozen.'
             });
             frozenReceiptApplied = true;
+            if (normalizeReceiptRepairConfig(world).onExhausted === 'frozen_notify') {
+                showToast(`Turn state frozen — ${repairFailureReason || 'no valid receipt was produced.'}`, 'error');
+            }
         }
         sess.lastTurnStateSource = successfulStateCall ? 'tool_call'
             : inlineStateApplied ? 'inline_rescue'
@@ -23561,9 +23604,12 @@ ${modularMandate}
                     const committed = commitWorldTurnReceipt(world, sess, repairResult.receipt, receiptContext, 'repair_receipt');
                     if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
                     repairedReceiptApplied = true;
+                } else {
+                    repairFailureReason = repairResult.failureReason || '';
                 }
             } catch (error) {
                 if (error?.name === 'AbortError') throw error;
+                repairFailureReason = error.message || 'Repair request failed.';
                 console.warn('Horde Engine: final narrative receipt repair failed.', error.message);
             }
             if (!repairedReceiptApplied) {
@@ -23584,6 +23630,9 @@ ${modularMandate}
                     actor_id: '', detail: 'Final narrative preserved; unverified state mutations were frozen.'
                 });
                 frozenReceiptApplied = true;
+                if (normalizeReceiptRepairConfig(world).onExhausted === 'frozen_notify') {
+                    showToast(`Turn state frozen — ${repairFailureReason || 'no valid receipt was produced.'}`, 'error');
+                }
             }
             sess.lastTurnStateSource = repairedReceiptApplied ? 'receipt_repair' : 'frozen_no_receipt';
         }
@@ -28849,13 +28898,59 @@ function structuredModelFor(world) {
     return agent || world?.model || state.globalSettings.defaultModel;
 }
 
+// Reasoning burns the same max_tokens budget the receipt has to fit in — a
+// model that reasons at a nontrivial level needs proportionally more room,
+// or it exhausts every attempt without ever emitting the payload.
+const RECEIPT_REPAIR_REASONING_TOKEN_DEFAULTS = Object.freeze({
+    off: 1100, low: 2000, medium: 3200, high: 5000
+});
+
+function normalizeReceiptRepairConfig(world) {
+    const raw = (world && typeof world.receiptRepair === 'object' && !Array.isArray(world.receiptRepair))
+        ? world.receiptRepair : {};
+    const reasoningEffort = ['off', 'low', 'medium', 'high'].includes(raw.reasoningEffort)
+        ? raw.reasoningEffort : 'off';
+    const overrideTokens = Math.round(Number(raw.maxTokensOverride));
+    const maxTokensOverride = Number.isFinite(overrideTokens) && overrideTokens > 0
+        ? Math.max(200, Math.min(16000, overrideTokens)) : 0;
+    return {
+        useMainModel: raw.useMainModel !== false,
+        provider: String(raw.provider || '').trim(),
+        model: String(raw.model || '').trim().slice(0, 160),
+        reasoningEffort,
+        maxTokens: maxTokensOverride || RECEIPT_REPAIR_REASONING_TOKEN_DEFAULTS[reasoningEffort],
+        maxTokensOverride,
+        maxAttempts: Math.max(1, Math.min(3, parseInt(raw.maxAttempts) || 3)),
+        // 'frozen' matches the historical silent behavior; 'frozen_notify'
+        // surfaces every occurrence, deliberately unthrottled — repeated
+        // freezes are a sign the current model/settings aren't working, not
+        // noise to suppress.
+        onExhausted: raw.onExhausted === 'frozen_notify' ? 'frozen_notify' : 'frozen'
+    };
+}
+
 function worldReceiptModelFor(world) {
+    const repairConfig = normalizeReceiptRepairConfig(world);
+    if (!repairConfig.useMainModel && repairConfig.model) return repairConfig.model;
     const chosen = String(state.globalSettings?.structuredModel || '').trim();
     if (chosen) return chosen;
     // A turn receipt describes the narrative model's own output. Prefer that
     // model over the unrelated background world-agent model unless the user
     // explicitly selected a global structured-data model.
     return world?.model || normalizeWorldAgentConfig(world).model || state.globalSettings.defaultModel;
+}
+
+// HTTP error bodies from providers are often a full JSON error envelope —
+// not something to hand a player verbatim in a toast.
+function summarizeReceiptRepairFailure(rawText, status) {
+    const text = String(rawText || '').trim();
+    if (!text) return status ? `Provider returned HTTP ${status} with no body.` : 'Unknown repair error.';
+    try {
+        const parsed = JSON.parse(text);
+        const msg = parsed?.error?.message || parsed?.message;
+        if (msg) return String(msg).slice(0, 220);
+    } catch (_) { /* not JSON */ }
+    return text.slice(0, 220);
 }
 
 function parseWorldReceiptRepairMessage(message) {
@@ -28890,20 +28985,33 @@ function parseWorldReceiptRepairMessage(message) {
 // thinking before either. Try the strictest contract first and fall back,
 // instead of gambling the whole repair on one request shape.
 async function requestWorldTurnReceiptRepair(world, prompt, signal, commitTool) {
+    const repairConfig = normalizeReceiptRepairConfig(world);
+    const sidecarProviderId = !repairConfig.useMainModel && repairConfig.provider
+        ? normalizedProviderId(repairConfig.provider)
+        : normalizedProviderId(state.globalSettings?.apiProvider);
+    // A dedicated sidecar provider gets its own base URL and credentials,
+    // independent of whatever the main narrative call is using.
+    const repairApiBase = (!repairConfig.useMainModel && repairConfig.provider)
+        ? providerApiBase(sidecarProviderId) : apiBase();
+    const repairAuthHeaders = (!repairConfig.useMainModel && repairConfig.provider)
+        ? providerAuthHeaders(sidecarProviderId) : authHeaders();
+
     const baseBody = {
         model: worldReceiptModelFor(world),
         stream: false,
-        max_tokens: 1100,
+        max_tokens: repairConfig.maxTokens,
         temperature: 0,
         messages: [{ role: 'system', content: prompt }]
     };
-    // Repair needs a fast, mechanical JSON compile, not creative reasoning —
-    // a model that reasons by default can burn the whole max_tokens budget on
+    // Repair needs a fast, mechanical JSON compile, not creative reasoning by
+    // default — a model that reasons can burn the whole max_tokens budget on
     // hidden reasoning before ever emitting the receipt, failing every attempt
-    // identically. OpenRouter's unified reasoning object is the one param that
-    // reliably suppresses that across models without an explicit opt-in.
-    if (normalizedProviderId(state.globalSettings?.apiProvider) === 'openrouter') {
-        baseBody.reasoning = { enabled: false };
+    // identically. OpenRouter's unified reasoning object is the one param
+    // that reliably controls this across models without an explicit opt-in;
+    // 'off' suppresses it outright, the other levels just cap its effort.
+    if (sidecarProviderId === 'openrouter') {
+        baseBody.reasoning = repairConfig.reasoningEffort === 'off'
+            ? { enabled: false } : { effort: repairConfig.reasoningEffort };
     }
     const attempts = [];
     if (commitTool) {
@@ -28916,19 +29024,24 @@ async function requestWorldTurnReceiptRepair(world, prompt, signal, commitTool) 
     }
     attempts.push({ ...baseBody, response_format: { type: 'json_object' } });
     attempts.push(baseBody);
+    // maxAttempts trims from the front: forced tool call is the strictest and
+    // most reliable contract, so a lower budget keeps that one and drops the
+    // more permissive fallbacks rather than the other way around.
+    const activeAttempts = attempts.slice(0, repairConfig.maxAttempts);
 
     let requestCount = 0;
     let lastFailure = '';
-    for (const body of attempts) {
+    for (const body of activeAttempts) {
         requestCount++;
-        const response = await fetch(apiBase() + '/chat/completions', {
+        const response = await fetch(repairApiBase + '/chat/completions', {
             method: 'POST',
             signal,
-            headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-            body: JSON.stringify(applyOpenRouterRouting(body, world, { scope: 'receiptRepair' }))
+            headers: { ...repairAuthHeaders, 'Content-Type': 'application/json', ...attributionHeaders() },
+            body: JSON.stringify(applyOpenRouterRouting(body, world, { scope: 'receiptRepair', providerId: sidecarProviderId }))
         });
         if (!response.ok) {
-            lastFailure = await response.text().catch(() => `HTTP ${response.status}`);
+            const rawText = await response.text().catch(() => '');
+            lastFailure = summarizeReceiptRepairFailure(rawText, response.status);
             continue;
         }
         const message = (await response.json())?.choices?.[0]?.message || {};
@@ -28937,10 +29050,14 @@ async function requestWorldTurnReceiptRepair(world, prompt, signal, commitTool) 
             && Array.isArray(receipt.entity_updates)) {
             return { receipt, requestCount };
         }
-        lastFailure = 'provider returned no valid commit_world_turn envelope';
+        lastFailure = 'The model responded, but did not include a valid state receipt.';
     }
     if (lastFailure) console.warn('Horde Engine: receipt repair exhausted all structured fallbacks —', lastFailure);
-    return { receipt: null, requestCount };
+    return {
+        receipt: null,
+        requestCount,
+        failureReason: lastFailure || 'No structured repair attempt produced a usable response.'
+    };
 }
 
 /**
