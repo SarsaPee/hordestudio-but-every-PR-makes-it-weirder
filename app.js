@@ -4617,7 +4617,7 @@ function renderAllOpenRouterRoutingPanels() {
 function setupOpenRouterRouting() {
     const provider = document.getElementById('global-api-provider');
     if (provider) provider.addEventListener('change', renderAllOpenRouterRoutingPanels);
-    ['global', 'character', 'room', 'world', 'worldAgent'].forEach(scope => {
+    ['global', 'character', 'room', 'world', 'worldAgent', 'consolidation'].forEach(scope => {
         const definition = openRouterRoutingPanelDefinition(scope);
         const modelInput = document.getElementById(definition?.modelId);
         if (modelInput) modelInput.addEventListener('change', () => {
