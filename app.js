@@ -811,7 +811,16 @@ function cloudProviderName() {
                     : isCustomProvider() ? customProviderName() : 'OpenRouter';
 }
 
-const HORDE_MCP_BRIDGE_DEFAULT = 'http://127.0.0.1:43127';
+// A tailnet client must call the bridge on this Mac, not its own localhost.
+// Keep the stock loopback default for desktop use, but use the current origin
+// when Horde is opened through its MagicDNS address.
+const HORDE_MCP_BRIDGE_DEFAULT = (() => {
+    const origin = String(globalThis.location?.origin || '').replace(/\/+$/, '');
+    const hostname = String(globalThis.location?.hostname || '').toLowerCase();
+    return /^http:\/\/.+\.ts\.net(?::\d+)?$/i.test(origin) && hostname.endsWith('.ts.net')
+        ? origin
+        : 'http://127.0.0.1:43127';
+})();
 const HORDE_MCP_PROVIDERS = Object.freeze({
     higgsfield: Object.freeze({ label: 'Higgsfield', endpoint: 'https://mcp.higgsfield.ai/mcp' }),
     magnific: Object.freeze({ label: 'Magnific', endpoint: 'https://mcp.magnific.com' })
@@ -841,7 +850,14 @@ function normalizeLoopbackUrl(value, fallback) {
 }
 
 function normalizeMcpBridgeUrl(value) {
-    return normalizeLoopbackUrl(value, HORDE_MCP_BRIDGE_DEFAULT);
+    const candidate = String(value || '').trim().replace(/\/+$/, '');
+    const currentOrigin = String(globalThis.location?.origin || '').replace(/\/+$/, '');
+    // A hosted tailnet page may use only its own same-origin bridge. This
+    // retains the existing loopback/LAN allowlist for local desktop use.
+    if (currentOrigin && candidate === currentOrigin && /^http:\/\/.+\.ts\.net(?::\d+)?$/i.test(candidate)) {
+        return candidate;
+    }
+    return normalizeLoopbackUrl(candidate, HORDE_MCP_BRIDGE_DEFAULT);
 }
 
 function normalizeOpenAICompatibleBase(value, fallback = '') {
