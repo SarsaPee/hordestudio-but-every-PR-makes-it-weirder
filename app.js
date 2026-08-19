@@ -2016,6 +2016,9 @@ function validateWorldData(value, label = 'World') {
         requireSafeId(loc.id, `${label} location ${index + 1} id`, { optional: true });
         ['description', 'region', 'mapType', 'parentLocationId', 'mapFloor'].forEach(key =>
             requireString(loc[key], `${label} location ${index + 1} ${key}`, { optional: true }));
+        if (loc.transit !== undefined && typeof loc.transit !== 'boolean') {
+            throw new Error(`${label} location ${index + 1} transit must be true or false`);
+        }
         if (loc.visuals !== undefined) {
             requirePlainObject(loc.visuals, `${label} location ${index + 1} visuals`);
             ['backgroundAssetId', 'backgroundPosition'].forEach(key =>
@@ -9134,12 +9137,17 @@ function buildKernelLocationManifest(world, sess, userInput) {
     const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
     const locations = view.locations;
     const kernel = normalizeWorldKernelConfig(world);
+    // Transit nodes are never offered as destinations. The player's current
+    // location is always listed, so a timeline already parked on one (from
+    // before this rule existed) can still assert where it is.
+    const manifestable = location => !isTransitLocation(location) || location.id === sess?.playerLocation;
     if (!kernel.enabled || locations.length <= kernel.sceneLocationLimit) {
-        return locations.map(location => `  - "${location.name}" → id: "${location.id}"`).join('\n');
+        return locations.filter(manifestable)
+            .map(location => `  - "${location.name}" → id: "${location.id}"`).join('\n');
     }
     const selected = new Map();
     const add = (location, priority, reason) => {
-        if (!location?.id) return;
+        if (!location?.id || !manifestable(location)) return;
         const prior = selected.get(location.id);
         if (!prior || priority > prior.priority) selected.set(location.id, { location, priority, reason });
     };
@@ -9178,7 +9186,18 @@ function buildKernelLocationManifest(world, sess, userInput) {
         const movementPhrase = extractUserMovementTarget(userInput);
         const movementTarget = movementPhrase
             ? resolveWorldMovementTarget(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, movementPhrase) : null;
-        if (movementTarget) add(movementTarget, 990, 'movement_target');
+        if (isTransitLocation(movementTarget)) {
+            // The player named an area ("uber to St Kilda"). The waypoint itself
+            // can never be an arrival, so offer the real places inside it —
+            // otherwise filtering the waypoint out leaves the model heading
+            // somewhere with nothing there to land on.
+            (movementTarget.exits || []).forEach(exit => {
+                const inside = resolveWorldExitTarget(view, exit);
+                if (inside && !isTransitLocation(inside)) add(inside, 985, 'named_area');
+            });
+        } else if (movementTarget) {
+            add(movementTarget, 990, 'movement_target');
+        }
     }
 
     (sess?.quests || []).filter(quest => quest.status === 'active').slice(0, 12).forEach(quest => {
@@ -9342,6 +9361,16 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
             }
             if (status !== 'completed') {
                 informationalEvents.push(movement);
+                return;
+            }
+            // Backstop. The manifest no longer offers waypoints, so this should
+            // rarely fire — but when it does, name the real places so the
+            // receipt-repair pass can land the arrival instead of stalling.
+            if (isTransitLocation(toLoc)) {
+                const hints = transitDestinationHints(world, toLoc);
+                reject(index, event, 'transit_node_not_a_destination',
+                    `${toLoc.name} is a travel waypoint, not a place anyone can be.`
+                    + (hints.length ? ` End this journey at one of: ${hints.join(', ')}.` : ''));
                 return;
             }
             if (actorId === 'player') {
@@ -13087,6 +13116,35 @@ function getExitDirection(exit) {
     if (!clean || /^to\s+/i.test(clean)) return '';
     const splitIndex = clean.search(/\s+to\s+/i);
     return splitIndex > 0 ? clean.slice(0, splitIndex).trim() : '';
+}
+
+// A transit node is a routing waypoint — "Melbourne CBD", "St Kilda Nightlife" —
+// that exists so the graph can carry someone across town. Nobody is ever AT one.
+// The pathfinder still walks through them, but they are never a destination and
+// they are withheld from the model's location manifest: an Uber that ends "at
+// St Kilda Nightlife" strands the player inside an abstraction with no room, no
+// cast and nothing to describe.
+// Containment cannot detect these — The Guildhall is both a real building you
+// walk into and the parent of its bar, smokers area and back of house — so the
+// flag is authored, never inferred.
+function isTransitLocation(location) {
+    return location?.transit === true;
+}
+
+// Where a journey through this node could actually have ended. Read from exits
+// rather than region strings, because region naming is inconsistent: Chloe's
+// flat is region "St Kilda" while the node itself is named "St Kilda Nightlife".
+function transitDestinationHints(world, location, limit = 6) {
+    if (!location) return [];
+    const seen = new Set();
+    const hints = [];
+    (location.exits || []).forEach(exit => {
+        const target = resolveWorldExitTarget(world, exit);
+        if (!target || isTransitLocation(target) || seen.has(target.id)) return;
+        seen.add(target.id);
+        hints.push(`"${target.name}" [${target.id}]`);
+    });
+    return hints.slice(0, limit);
 }
 
 function normalizeLocationSearchText(value) {
@@ -20377,6 +20435,17 @@ function extractUserMovementTarget(userInput) {
         if (resolved) return resolved;
     }
 
+    // Hailing a ride is locomotion. "we get an uber to St Kilda", "I grab a cab
+    // home", "let's catch the tram to Carlton" state a destination as plainly as
+    // "we walk to" — the conveyance simply sits between the verb and the place.
+    // Without this the engine saw no movement intent at all, so the DM narrated
+    // the whole journey while the tracker never left the kerb.
+    const conveyanceMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:(?:i|we)\s+|let'?s\s+)(?:get|grab|take|call|order|catch|hail|book|jump\s+in)\s+(?:an?\s+|the\s+)?(?:uber|lyft|didi|ola|cab|taxi|rideshare|ride|tram|train|bus|car|lift)\b[^.;!?]{0,40}?\bto\s+([^,.;!?]+)/ig;
+    for (const conveyanceMatch of actionText.matchAll(conveyanceMovement)) {
+        const resolved = resolveMatch(conveyanceMatch);
+        if (resolved) return resolved;
+    }
+
     // A first-person turn commonly begins with another action before moving:
     // "I yawn and step out", "I open the door, then walk into the hall".
     // The subject remains the player across that coordinated clause. Requiring
@@ -20510,6 +20579,17 @@ function applyUserDirectedMovement(world, sess, userInput, microCandidate = null
             console.log(`Horde Engine: no registered location matches "${targetPhrase}" — leaving it to the DM.`);
         }
         return '';
+    }
+    if (isTransitLocation(targetLoc)) {
+        // "Uber to St Kilda" names a whole area. Moving the player onto the
+        // waypoint would strand them nowhere, so hand the arrival to the DM and
+        // let it commit a real place. Movement stays authorized for this turn.
+        const hints = transitDestinationHints(view, targetLoc);
+        console.log(`Horde Engine: "${targetPhrase}" resolved to transit node ${targetLoc.name}; the DM chooses the arrival.`);
+        return `\n[SYSTEM: The player is travelling to ${targetLoc.name}, which is an area rather than a single place.`
+            + ` Narrate the journey and land them somewhere specific within it`
+            + (hints.length ? ` — valid destinations: ${hints.join(', ')}` : '')
+            + `. Commit the arrival as an actor-scoped movement event using that exact id.]`;
     }
     const result = movePlayerAlongWorldPath(world, sess, targetLoc);
     if (!result.ok) {
@@ -22008,7 +22088,11 @@ ${modularMandate}
             playerStartLocationId: receiptPlayerStart,
             committedPlayerDestinationId: sess.playerLocation !== receiptPlayerStart ? sess.playerLocation : '',
             playerMovementAuthorized: !!receiptAuthorizedTarget,
-            authorizedPlayerDestinationId: receiptAuthorizedTarget?.id || '',
+            // Naming an area authorizes arrival anywhere inside it. Pinning the
+            // waypoint's own id here would reject the real destination the DM
+            // was just told to choose.
+            authorizedPlayerDestinationId: isTransitLocation(receiptAuthorizedTarget)
+                ? '' : (receiptAuthorizedTarget?.id || ''),
             narrativeText: fullText
         };
         for (const call of toolCalls) {
