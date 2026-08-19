@@ -1504,23 +1504,88 @@ function normalizeOpenRouterRouting(raw, { allowNull = false } = {}) {
     // are disabled. Heal that impossible legacy state rather than making every
     // generation fail.
     if (!order.length) allowFallbacks = true;
-    return { order, allowFallbacks, fallbackSort };
+    // The model this pin was chosen for. A provider allowlist is only valid for
+    // that model; see relaxRoutingForForeignModel().
+    const model = String(source.model || '').trim().slice(0, 200);
+    return { order, allowFallbacks, fallbackSort, ...(model ? { model } : {}) };
+}
+
+const OPENROUTER_ROUTE_CHAINS = Object.freeze({
+    // Narrative turn: the latency-sensitive streaming call. World pin, else global.
+    default: ['world', 'global'],
+    // Background world agent: its own pin, else world, else global (unchanged).
+    worldAgent: ['worldAgent', 'world', 'global'],
+    // Utility routes run their own models. They resolve their own stored
+    // routing and otherwise route on availability — never the world's pin.
+    consolidation: ['consolidation', 'availability'],
+    // Receipt repair usually re-runs the narrative model, so the world's pin is
+    // still the right *preference*; it is a background scope, so fallbacks are
+    // force-enabled and a foreign structured model relaxes the pin anyway.
+    receiptRepair: ['receiptRepair', 'world', 'global'],
+    utility: ['availability']
+});
+
+// Availability routing: no hard provider allowlist, fallbacks on. Whatever
+// serves the requested model may serve it.
+function availabilityOpenRouterRouting() {
+    return normalizeOpenRouterRouting({ order: [], allowFallbacks: true, fallbackSort: 'throughput' });
+}
+
+function storedOpenRouterRoutingForLink(link, owner) {
+    if (link === 'availability') return availabilityOpenRouterRouting();
+    if (link === 'global') return normalizeOpenRouterRouting(state.globalSettings?.openRouterRouting);
+    if (link === 'consolidation') {
+        return normalizeOpenRouterRouting(state.globalSettings?.consolidationRouting, { allowNull: true });
+    }
+    if (link === 'receiptRepair') {
+        return normalizeOpenRouterRouting(owner?.receiptRepairRouting, { allowNull: true });
+    }
+    if (link === 'worldAgent') {
+        return normalizeOpenRouterRouting(owner?.worldAgent?.openRouterRouting, { allowNull: true });
+    }
+    if (link === 'world') {
+        return normalizeOpenRouterRouting(owner?.openRouterRouting, { allowNull: true });
+    }
+    return null;
 }
 
 function effectiveOpenRouterRouting(owner = null, scope = 'default') {
     const globalRouting = normalizeOpenRouterRouting(state.globalSettings?.openRouterRouting);
-    if (!owner) return globalRouting;
-    if (scope === 'worldAgent') {
-        const agentRouting = normalizeOpenRouterRouting(owner.worldAgent?.openRouterRouting, { allowNull: true });
-        if (agentRouting) return agentRouting;
-        const worldRouting = normalizeOpenRouterRouting(owner.openRouterRouting, { allowNull: true });
-        return worldRouting || globalRouting;
+    const chain = OPENROUTER_ROUTE_CHAINS[scope] || OPENROUTER_ROUTE_CHAINS.default;
+    for (const link of chain) {
+        // Owner-scoped links are unavailable on ownerless calls; skip to the
+        // next link rather than collapsing straight to global.
+        if (!owner && ['world', 'worldAgent', 'receiptRepair'].includes(link)) continue;
+        const resolved = storedOpenRouterRoutingForLink(link, owner);
+        if (resolved) return resolved;
     }
-    return normalizeOpenRouterRouting(owner.openRouterRouting, { allowNull: true }) || globalRouting;
+    return globalRouting;
 }
 
-function openRouterProviderPreferences(owner = null, scope = 'default') {
-    const routing = effectiveOpenRouterRouting(owner, scope);
+// Background routes must never hard-fail on provider availability. A pinned
+// order stays a *preference* for them, but disabling fallbacks on a background
+// model is always a misconfiguration — it is how consolidation, the world agent
+// and receipt repair silently died with "No endpoints found".
+const OPENROUTER_BACKGROUND_SCOPES = Object.freeze(['worldAgent', 'consolidation', 'receiptRepair', 'utility']);
+
+// A pin chosen for one model is meaningless (and often invalid) for a
+// different one. Foreign-model calls keep the preferred order but relax
+// fallbacks on, rather than hard-failing on an endpoint that was never
+// going to serve the requested model anyway.
+function relaxRoutingForForeignModel(routing, requestedModel) {
+    const pinnedFor = String(routing?.model || '').trim();
+    const target = String(requestedModel || '').trim();
+    if (!pinnedFor || !target || pinnedFor === target) return routing;
+    if (routing.allowFallbacks) return routing;
+    return { ...routing, allowFallbacks: true };
+}
+
+function openRouterProviderPreferences(owner = null, scope = 'default', requestedModel = '') {
+    let routing = relaxRoutingForForeignModel(
+        effectiveOpenRouterRouting(owner, scope), requestedModel);
+    if (OPENROUTER_BACKGROUND_SCOPES.includes(scope) && !routing.allowFallbacks) {
+        routing = { ...routing, allowFallbacks: true };
+    }
     const preferences = {
         allow_fallbacks: routing.allowFallbacks
     };
@@ -1535,7 +1600,7 @@ function applyOpenRouterRouting(body, owner = null, {
 } = {}) {
     if (normalizedProviderId(providerId) !== 'openrouter') return body;
     const existing = isPlainObject(body?.provider) ? body.provider : {};
-    const routing = openRouterProviderPreferences(owner, scope);
+    const routing = openRouterProviderPreferences(owner, scope, body?.model);
     return {
         ...body,
         provider: { ...existing, ...routing }
@@ -4303,7 +4368,12 @@ function readOpenRouterRoutingPanel(scope) {
         return normalizeOpenRouterRouting(definition?.stored(), { allowNull: scope !== 'global' });
     }
     if (scope !== 'global' && draft.inherit) return null;
-    return normalizeOpenRouterRouting(draft.routing);
+    // Stamp the model this pin was chosen against so it is never applied to an
+    // unrelated model later (see relaxRoutingForForeignModel).
+    return normalizeOpenRouterRouting({
+        ...draft.routing,
+        model: openRouterRoutingModel(scope)
+    });
 }
 
 function openRouterRoutingDraftValue(scope) {
