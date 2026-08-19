@@ -15775,6 +15775,212 @@ function renderWorldArchitectMap() {
     });
 }
 
+const AI_FIELD_DESCRIPTORS = Object.freeze({
+    'ent-desc': {
+        label: 'Basic description',
+        guidance: 'Two or three sentences of stable physical identity: build, colouring, face, habitual dress. Present tense, no scene-specific action, no backstory.'
+    },
+    'ent-persona': {
+        label: 'Persona / backstory',
+        guidance: 'One dense paragraph on temperament, competence, what they want and what they protect. Third person. Reveal private truths only if the transcript already established them.'
+    },
+    'ent-goal': {
+        label: 'Living-world agenda',
+        guidance: 'A single sentence naming one persistent thing this character pursues off-screen. Concrete and ongoing, not a plot beat.'
+    },
+    'ent-image-prompt': {
+        label: 'Portrait image prompt',
+        guidance: 'A single image-generation prompt describing this character\'s appearance for a portrait: age, build, colouring, hair, face, characteristic clothing and expression. Obey the world art bible. No camera brand names, no negative prompts, no narrative.'
+    },
+    'world-visual-primary': {
+        label: 'Stable visual identity',
+        guidance: 'Two or three sentences of unchanging physical identity used to keep every generated image consistent: age, build, colouring, hair, face, default clothing register. No pose, no lighting, no scene.'
+    },
+    // Dossier fields. These write authored claims, so the user always reviews
+    // before Save — but identity fields (name, age, pronouns) are deliberately
+    // absent: those are the player's to decide, never the model's.
+    'dossier-description': {
+        label: 'Physical description',
+        guidance: 'Two or three sentences of stable appearance: build, colouring, face, habitual dress. Present tense, no scene-specific action.'
+    },
+    'dossier-persona': {
+        label: 'Personality and persona',
+        guidance: 'One dense paragraph on voice, temperament, competence, needs and what they protect. Third person.'
+    },
+    'dossier-values': {
+        label: 'Values',
+        guidance: 'Three to five short lines, ONE PER LINE, no bullets or numbering. Each names something this person actually protects or believes.'
+    },
+    'dossier-vulnerabilities': {
+        label: 'Vulnerabilities',
+        guidance: 'Three to five short lines, ONE PER LINE, no bullets or numbering. Each names a real pressure point — fear, need, blind spot. Not weaknesses as flaws-list filler.'
+    },
+    'dossier-boundaries': {
+        label: 'Hard and personal boundaries',
+        guidance: 'Three to five short lines, ONE PER LINE, no bullets. What this person will not do or will not accept. Character boundaries, not content policy.'
+    },
+    'dossier-current-outfit': {
+        label: 'Current outfit',
+        guidance: 'One or two sentences describing what they are wearing right now, consistent with the current scene and time of day in the transcript.'
+    },
+    'dossier-affiliations': {
+        label: 'Affiliations',
+        guidance: 'Short lines, ONE PER LINE, no bullets. Groups, workplaces or scenes this person genuinely belongs to. Only ones established elsewhere.'
+    },
+    'dossier-routines': {
+        label: 'Routines and ordinary schedule',
+        guidance: 'Short lines, ONE PER LINE, no bullets. What this person ordinarily does and when. Everyday rhythm, not plot.'
+    },
+    'loc-desc': {
+        label: 'Location description',
+        guidance: 'Two or three sentences on what is physically present and how the place feels to stand in. No characters by name, no events.'
+    },
+    'fac-desc': {
+        label: 'Faction description',
+        guidance: 'Two sentences on who belongs to this group and what holds them together. No invented leaders.'
+    }
+});
+
+// Engine placeholders read as populated but carry no information. Treating
+// them as filled meant the sparkle button offered "embellish" on the string
+// "A person you just met." — so they count as empty everywhere.
+const AI_FIELD_PLACEHOLDERS = Object.freeze([
+    'a person you just met.',
+    'a person you just met',
+    'an unremarkable place.',
+    'nothing specified.',
+    'unknown'
+]);
+
+function isPlaceholderFieldValue(value) {
+    const clean = String(value || '').trim().toLowerCase();
+    if (!clean) return true;
+    return AI_FIELD_PLACEHOLDERS.includes(clean);
+}
+
+function aiFieldWorldContext(world, entity) {
+    const parts = [];
+    if (world?.name) parts.push(`World: ${world.name}`);
+    if (world?.description) parts.push(`Premise: ${String(world.description).slice(0, 400)}`);
+    if (world?.artBible) parts.push(`Art direction: ${String(world.artBible).slice(0, 400)}`);
+    if (entity) {
+        const sib = ['name', 'role', 'description', 'persona', 'goal', 'appearance']
+            .map(key => (entity[key] && !isPlaceholderFieldValue(entity[key]))
+                ? `${key}: ${String(entity[key]).slice(0, 400)}` : null)
+            .filter(Boolean);
+        if (sib.length) parts.push(`Known about this subject:\n${sib.join('\n')}`);
+    }
+    return parts.join('\n\n');
+}
+
+// Only the transcript that actually mentions the subject. Sending the whole
+// history would bury the few lines that describe them.
+function aiFieldTranscriptContext(entity, limit = 14) {
+    const sess = getCurrentWorldSession();
+    if (!sess || !entity?.name) return '';
+    const names = String(entity.name).split(/\s+/).filter(n => n.length > 2).concat([entity.name]);
+    const hits = (sess.history || [])
+        .filter(m => m.role === 'dm' || m.role === 'user')
+        .filter(m => names.some(n => String(m.text || '').toLowerCase().includes(n.toLowerCase())))
+        .slice(-limit)
+        .map(m => `${m.role === 'user' ? 'Player' : 'Narrator'}: ${String(m.text || '').slice(0, 600)}`);
+    return hits.length ? `Recent transcript mentioning them:\n${hits.join('\n\n')}` : '';
+}
+
+async function completeFieldWithAI(fieldKey, currentValue, entity, world, mode) {
+    const descriptor = AI_FIELD_DESCRIPTORS[fieldKey];
+    if (!descriptor) throw new Error(`No descriptor for field "${fieldKey}"`);
+    if (isPlaceholderFieldValue(currentValue)) { currentValue = ''; mode = 'fill'; }
+    const intent = mode === 'rewrite'
+        ? 'The subject has changed during play. Rewrite this field to match who they are NOW, preserving anything still true.'
+        : mode === 'embellish'
+            ? 'Enrich the existing text. Keep every fact already written and add specificity. Never contradict it.'
+            : 'This field is empty. Write it from scratch using only what is established below.';
+    const model = String(state.globalSettings?.structuredModel || '').trim()
+        || world?.model || state.globalSettings?.defaultModel;
+    const body = applyOpenRouterRouting({
+        model,
+        max_tokens: 700,
+        messages: [
+            {
+                role: 'system',
+                content: `You write a single field of a roleplay world's character/location database.\n\nFIELD: ${descriptor.label}\nREQUIREMENT: ${descriptor.guidance}\n\n${intent}\n\nReturn ONLY the field's new text. No preamble, no quotes, no markdown headings, no explanation.`
+            },
+            {
+                role: 'user',
+                content: [
+                    aiFieldWorldContext(world, entity),
+                    aiFieldTranscriptContext(entity),
+                    currentValue ? `Current value of this field:\n${currentValue}` : 'This field is currently empty.'
+                ].filter(Boolean).join('\n\n---\n\n')
+            }
+        ]
+    }, world, { scope: 'utility' });
+    const response = await fetch(apiBase() + '/chat/completions', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 160)}`);
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim();
+    if (!text) {
+        const reasoning = Number(data.usage?.completion_tokens_details?.reasoning_tokens) || 0;
+        throw new Error(reasoning
+            ? `model returned nothing after ${reasoning} reasoning tokens — pick a non-reasoning model for structured fields`
+            : 'model returned an empty field');
+    }
+    return text.replace(/^["'`]+|["'`]+$/g, '').trim();
+}
+
+// Empty fields offer "write it"; populated fields offer "embellish" and
+// "rewrite", because a character who changed across 40 turns needs replacing,
+// not padding.
+function aiFieldButtonMarkup(fieldKey, isEmpty, targetId = '') {
+    if (!AI_FIELD_DESCRIPTORS[fieldKey]) return '';
+    if (typeof isEmpty === 'string') isEmpty = isPlaceholderFieldValue(isEmpty);
+    const t = targetId ? ` data-ai-target="${targetId}"` : '';
+    return isEmpty
+        ? `<button type="button" class="ai-field-btn" data-ai-field="${fieldKey}"${t} data-ai-mode="fill" title="Write this field from the rest of the world and the transcript">✨</button>`
+        : `<button type="button" class="ai-field-btn" data-ai-field="${fieldKey}"${t} data-ai-mode="embellish" title="Embellish: keep what is written, add specificity">✨</button>
+           <button type="button" class="ai-field-btn" data-ai-field="${fieldKey}"${t} data-ai-mode="rewrite" title="Rewrite to match who they have become in play">↻</button>`;
+}
+
+function bindAiFieldButtons(root, getEntity, world) {
+    root.querySelectorAll('.ai-field-btn').forEach(btn => {
+        if (btn.dataset.aiBound === '1') return;
+        btn.dataset.aiBound = '1';
+        btn.onclick = async (event) => {
+            // These buttons sometimes sit inside a <label> that wraps the field;
+            // without this the click also activates the label and re-focuses it.
+            event.preventDefault();
+            event.stopPropagation();
+            const wrap = btn.closest('[data-ai-field-wrap]') || btn.parentElement?.parentElement;
+            const input = btn.dataset.aiTarget
+                ? document.getElementById(btn.dataset.aiTarget)
+                : (wrap?.querySelector(`.${btn.dataset.aiField}`)
+                    || document.getElementById(btn.dataset.aiField));
+            if (!input) return showToast('Could not find the field to fill.', 'error');
+            const original = input.value;
+            btn.disabled = true;
+            const label = btn.textContent;
+            btn.textContent = '⏳';
+            try {
+                const text = await completeFieldWithAI(
+                    btn.dataset.aiField, original, getEntity(), world, btn.dataset.aiMode);
+                input.value = text;
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                showToast('Field written. Review it, then Save World.', 'success');
+            } catch (error) {
+                showToast(`AI fill failed — ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = label;
+            }
+        };
+    });
+}
+
 function renderWorldEntities() {
     const world = state.editingWorld;
     if (!world) return;
@@ -15813,8 +16019,11 @@ function renderWorldEntities() {
             </div>
 
             <div style="display:flex; flex-direction:column; gap:12px;">
-                <div>
-                    <label class="form-label" style="font-size:0.75rem;">Basic Description</label>
+                <div data-ai-field-wrap>
+                    <label class="form-label" style="font-size:0.75rem; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                        <span>Basic Description</span>
+                        <span class="ai-field-actions">${aiFieldButtonMarkup('ent-desc', String(ent.description || ''))}</span>
+                    </label>
                     <textarea class="form-textarea ent-desc" rows="2" placeholder="Physical features, items they carry, etc.">${escapeHTML(ent.description)}</textarea>
                 </div>
 
@@ -15844,15 +16053,21 @@ function renderWorldEntities() {
                 ` : ''}
                 
                 ${ent.isMajor && ent.type === 'npc' ? `
-                    <div>
-                        <label class="form-label" style="font-size:0.75rem; color:var(--red);">Major Persona / Backstory (Full Context Injection)</label>
+                    <div data-ai-field-wrap>
+                        <label class="form-label" style="font-size:0.75rem; color:var(--red); display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                            <span>Major Persona / Backstory (Full Context Injection)</span>
+                            <span class="ai-field-actions">${aiFieldButtonMarkup('ent-persona', String(ent.persona || ''))}</span>
+                        </label>
                         <textarea class="form-textarea ent-persona" rows="4" placeholder="Deep personality traits, secrets, long-term goals...">${escapeHTML(ent.persona || '')}</textarea>
                     </div>
                 ` : ''}
                 ${ent.type === 'npc' ? `
                     <div style="display:grid; grid-template-columns:minmax(0, 1fr) 150px; gap:12px;">
-                        <div>
-                            <label class="form-label" style="font-size:0.75rem; color:var(--accent);">Starting Living World Agenda</label>
+                        <div data-ai-field-wrap>
+                            <label class="form-label" style="font-size:0.75rem; color:var(--accent); display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                <span>Starting Living World Agenda</span>
+                                <span class="ai-field-actions">${aiFieldButtonMarkup('ent-goal', String(ent.goal || ent.agenda || ''))}</span>
+                            </label>
                             <textarea class="form-textarea ent-goal" rows="2" placeholder="A persistent goal this character pursues off-screen...">${escapeHTML(ent.goal || ent.agenda || '')}</textarea>
                         </div>
                         <div>
@@ -15980,7 +16195,10 @@ function renderWorldEntities() {
         div.querySelector('.ent-name').oninput = (e) => { ent.name = e.target.value; updateWorldTokenCount(); };
         div.querySelector('.ent-type').onchange = (e) => { ent.type = e.target.value; renderWorldEntities(); };
         div.querySelector('.ent-desc').oninput = (e) => { ent.description = e.target.value; updateWorldTokenCount(); };
-        
+        // 'change' also fires when the AI completer writes a value directly.
+        div.querySelector('.ent-desc').onchange = (e) => { ent.description = e.target.value; updateWorldTokenCount(); };
+        bindAiFieldButtons(div, () => ent, world);
+
         if (ent.type === 'npc') {
             ent.visuals = isPlainObject(ent.visuals) ? ent.visuals : {};
             div.querySelector('.ent-dialogue-color').oninput = event => {

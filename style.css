@@ -7189,3 +7189,23 @@ label[data-help] > span:first-child::after,
     color: var(--text-3);
     white-space: nowrap;
 }
+
+/* Inline AI field completion */
+.ai-field-actions { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.ai-field-btn {
+    border: 1px solid var(--border2);
+    background: var(--surface2);
+    color: var(--text-3);
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.ai-field-btn:hover:not(:disabled) {
+    background: var(--surface3);
+    color: #e63946;
+    border-color: #e63946;
+}
+.ai-field-btn:disabled { opacity: 0.55; cursor: default; }
