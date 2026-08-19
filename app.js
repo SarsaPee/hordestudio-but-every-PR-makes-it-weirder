@@ -9861,6 +9861,43 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
     return audit;
 }
 
+function showPendingDossierNotifications(world, sess) {
+    if (!globalThis.HordeDossiers?.isEnabled?.(world)) return;
+    const notifications = globalThis.HordeDossiers.getNotifications(world, sess)
+        .filter(notification => !notification.displayedAt);
+    notifications.forEach(notification => {
+        notification.displayedAt = Date.now();
+        const npc = world.entities.find(entity => entity.id === notification.characterId);
+        const count = notification.claimIds?.length || 0;
+        const toast = document.createElement('div');
+        toast.className = `toast dossier-notification ${notification.kind === 'soft_lock_conflict' ? 'dossier-notification-conflict' : 'info'}`;
+        toast.innerHTML = `<strong>${escapeHTML(npc?.name || notification.characterId)}</strong>
+            <span>${count} dossier update${count === 1 ? '' : 's'}${notification.kind === 'soft_lock_conflict' ? ' · authored field challenged' : ''}</span>
+            <div class="dossier-notification-actions">
+                <button class="btn btn-ghost" type="button" data-action="review">Review</button>
+                <button class="btn btn-ghost" type="button" data-action="undo">Undo All</button>
+            </div>`;
+        toast.querySelector('[data-action="review"]').onclick = () => {
+            globalThis.HordeDossiers.markNotificationReviewed(world, sess, notification.notificationId);
+            toast.remove();
+            openNpcDossier(notification.characterId);
+        };
+        toast.querySelector('[data-action="undo"]').onclick = async () => {
+            notification.claimIds.forEach(claimId => globalThis.HordeDossiers.suppressClaim(
+                world, sess, claimId, `Undo All from notification ${notification.notificationId}`
+            ));
+            globalThis.HordeDossiers.markNotificationReviewed(world, sess, notification.notificationId);
+            await saveState();
+            toast.remove();
+            renderWorldPlayState();
+        };
+        document.getElementById('toast-container')?.appendChild(toast);
+        setTimeout(() => {
+            if (toast.isConnected) toast.remove();
+        }, notification.kind === 'soft_lock_conflict' ? 20000 : 10000);
+    });
+}
+
 function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 'tool_call') {
     const validation = validateWorldTurnReceipt(world, sess, rawReceipt, context);
     const hasConditionalCheck = Array.isArray(validation.legacyArgs?.checks) && validation.legacyArgs.checks.length > 0;
@@ -9887,9 +9924,37 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
             validation.entityPatches = [];
         }
     }
+    const dossierPrepared = globalThis.HordeDossiers?.prepareCommit(world, sess, validation)
+        || { enabled: false, accepted: true, errors: [] };
+    if (dossierPrepared.enabled && !dossierPrepared.accepted) {
+        dossierPrepared.errors.forEach((error, index) => validation.rejectedEvents.push({
+            index: -(index + 1), type: 'dossier_state', reason: 'dossier_validation_failed',
+            actor_id: '', detail: String(error).slice(0, 240)
+        }));
+        return {
+            validation,
+            actionResult: {},
+            audit: {
+                turn: Math.max(1, parseInt(sess.turnCount) || 1),
+                receipt_id: validation.receipt.turn_id,
+                source,
+                world_state_version: Math.max(0, parseInt(sess.worldStateVersion) || 0),
+                accepted: 0,
+                informational: 0,
+                rejected: validation.rejectedEvents,
+                applied_fields: [],
+                entity_patches: [],
+                scene: buildWorldSceneFrame(world, sess),
+                cast_checksum_match: false,
+                transaction_accepted: false,
+                timestamp: Date.now()
+            }
+        };
+    }
     const previousLocation = sess.playerLocation;
     const actionResult = processStructuredActions(validation.legacyArgs);
     applyWorldEntityPatches(world, sess, validation.entityPatches);
+    globalThis.HordeDossiers?.applyPreparedCommit?.(world, sess, dossierPrepared);
     // Recover an omitted NPC movement only when two independent channels
     // agree: the structured ending checksum names the NPC and the visible
     // prose explicitly places that same named person in the player's scene.
@@ -9923,6 +9988,8 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         };
     }
     const audit = recordWorldTurnCommit(world, sess, validation, actionResult, source);
+    globalThis.HordeDossiers?.finalizeCommit?.(world, sess, validation, audit, dossierPrepared);
+    showPendingDossierNotifications(world, sess);
     return { validation, actionResult, audit };
 }
 
@@ -16845,6 +16912,10 @@ function loadWorldGameRuleControls(world) {
         const row = document.getElementById('w-rules-commerce-mode-row');
         if (row) row.classList.toggle('hidden', !rules.modules.commerce);
     }
+    const dossierClaimsControl = document.getElementById('w-rules-dossier-claims');
+    if (dossierClaimsControl) {
+        dossierClaimsControl.checked = globalThis.HordeDossiers?.isEnabled?.(world) === true;
+    }
     const dice = normalizeWorldDiceConfig(world);
     if (document.getElementById('w-dice-resolution')) document.getElementById('w-dice-resolution').value = dice.resolution;
     if (document.getElementById('w-dice-sides')) document.getElementById('w-dice-sides').value = String(dice.sides);
@@ -16891,6 +16962,11 @@ function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
         ? 'lethal' : 'fail_forward';
     world.gameRules.currencyName = String(document.getElementById('w-rules-currency-name')?.value || 'coin').trim().slice(0, 60) || 'coin';
     world.gameRules.commerceMode = document.getElementById('w-rules-commerce-mode')?.value === 'narrative' ? 'narrative' : 'ludic';
+    const dossierClaimsRequested = document.getElementById('w-rules-dossier-claims')?.checked === true;
+    // Only touch mechanicsProfile for our own value — never clobber a profile
+    // string some other compatibility runtime set.
+    if (dossierClaimsRequested) world.mechanicsProfile = 'dossier_claims_v1';
+    else if (world.mechanicsProfile === 'dossier_claims_v1') world.mechanicsProfile = '';
     world.gameRules.dice = normalizeWorldDiceConfig({ gameRules: { dice: {
         resolution: document.getElementById('w-dice-resolution')?.value,
         sides: document.getElementById('w-dice-sides')?.value,
@@ -19294,6 +19370,7 @@ async function createNewWorldSession() {
             };
         }
     });
+    globalThis.HordeDossiers?.initializeWorld?.(world, newSess);
 
     // Init stats from config
     (world.hudConfig?.stats || []).forEach(s => {
@@ -19501,12 +19578,212 @@ function openSessionZero(onDone) {
  * 📇 NPC Dossier: everything the engine believes about an NPC — status,
  * disposition, goal, activity, and memories (deletable, for pruning bad ones).
  */
+function normalizeNpcSubstanceProfile(npc) {
+    const raw = isPlainObject(npc?.substanceProfile) ? npc.substanceProfile : {};
+    const list = value => (Array.isArray(value) ? value : String(value || '').split(/[,\n]/))
+        .map(item => String(item || '').trim()).filter(Boolean).slice(0, 30);
+    return {
+        familiar: list(raw.familiar),
+        prefers: list(raw.prefers),
+        avoids: list(raw.avoids),
+        boundaries: String(raw.boundaries || '').trim().slice(0, 1000),
+        notes: String(raw.notes || '').trim().slice(0, 1500)
+    };
+}
+
+// Optional extension point: a compatibility runtime can populate
+// HordeDossiers-adjacent altered-state records and register
+// globalThis.HordeDossiers.getActorAlteredStates; absent that, no altered
+// states are tracked and the dossier browser simply shows none.
+function getNpcAlteredStates(world, sess, npcId) {
+    if (!world || !sess || !npcId) return [];
+    if (globalThis.HordeDossiers?.getActorAlteredStates) {
+        return globalThis.HordeDossiers.getActorAlteredStates(world, sess, npcId) || [];
+    }
+    return [];
+}
+
+function renderWorldDossierBrowser() {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    const overlay = document.getElementById('world-dossier-browser-overlay');
+    const list = document.getElementById('world-dossier-browser-list');
+    const search = document.getElementById('world-dossier-search');
+    const filter = document.getElementById('world-dossier-filter');
+    if (!world || !sess || !overlay || !list) return;
+    const query = String(search?.value || '').trim().toLowerCase();
+    const mode = filter?.value || 'all';
+    const activeSess = getCurrentWorldSession();
+    const present = new Set(sessionNpcs(world, activeSess)
+        .filter(ent => activeSess.entityStates[ent.id]?.location === activeSess.playerLocation
+            && isNpcActive(activeSess.entityStates[ent.id]))
+        .map(ent => ent.id));
+    const locations = sessionLocations(world, sess);
+    const archivedCharacters = globalThis.HordeDossiers?.listArchivedCharacters?.(world, sess) || [];
+    const archivedMatches = archivedCharacters.filter(record => {
+        if (!['all', 'archived'].includes(mode)) return false;
+        if (!query) return true;
+        const base = record.base || {};
+        return [base.name, base.role, base.description, base.persona, record.branchId]
+            .some(value => String(value || '').toLowerCase().includes(query));
+    });
+    const people = sessionNpcs(world, sess).filter(npc => {
+        const dossierNpc = globalThis.HordeDossiers?.materializeEntity?.(world, sess, npc, {
+            worldTime: sess.worldTime || ''
+        }) || npc;
+        const entState = sess.entityStates?.[npc.id] || {};
+        const altered = getNpcAlteredStates(world, sess, npc.id);
+        if (mode === 'archived') return false;
+        if (mode === 'present' && !present.has(npc.id)) return false;
+        if (mode === 'absent' && present.has(npc.id)) return false;
+        if (mode === 'altered' && !altered.length) return false;
+        if (!query) return true;
+        const profile = normalizeNpcSubstanceProfile(dossierNpc);
+        const location = locations.find(item => item.id === entState.location)?.name || '';
+        return [dossierNpc.name, dossierNpc.role, dossierNpc.description, dossierNpc.persona, location,
+            ...profile.familiar, ...profile.prefers, ...profile.avoids, profile.boundaries, profile.notes]
+            .some(value => String(value || '').toLowerCase().includes(query));
+    }).sort((left, right) => {
+        const presence = Number(present.has(right.id)) - Number(present.has(left.id));
+        return presence || String(left.name).localeCompare(String(right.name));
+    });
+
+    list.innerHTML = '';
+    if (!people.length && !archivedMatches.length) {
+        list.innerHTML = '<div class="world-card" style="grid-column:1/-1; color:var(--text-3);">No dossiers match this view.</div>';
+        return;
+    }
+    people.forEach(npc => {
+        const dossierNpc = globalThis.HordeDossiers?.materializeEntity?.(world, sess, npc, {
+            worldTime: sess.worldTime || ''
+        }) || npc;
+        const entState = sess.entityStates?.[npc.id] || {};
+        const conditions = Array.isArray(entState.conditions) ? entState.conditions.filter(Boolean) : [];
+        const currentLocation = locations.find(location => location.id === entState.location);
+        const altered = getNpcAlteredStates(world, sess, npc.id);
+        const profile = normalizeNpcSubstanceProfile(dossierNpc);
+        const portrait = worldMediaSource(world, dossierNpc.visuals?.portraitAssetId);
+        const initials = String(dossierNpc.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
+        const card = document.createElement('article');
+        card.className = `dossier-browser-card${present.has(npc.id) ? ' is-present' : ''}`;
+        card.innerHTML = `
+            <div class="dossier-browser-avatar" style="${portrait ? `background-image:url('${cssUrl(portrait)}')` : ''}">${portrait ? '' : escapeHTML(initials)}</div>
+            <div><div class="dossier-browser-name">${escapeHTML(dossierNpc.name)}</div>
+                <div class="dossier-browser-meta">${escapeHTML(dossierNpc.role || 'No role set')} · ${escapeHTML(currentLocation?.name || 'Location unresolved')}</div></div>
+            <div class="dossier-browser-state">
+                <span class="mini-tag">${present.has(npc.id) ? '● present' : '○ absent'}</span>
+                ${conditions.map(condition => `<span class="mini-tag">${escapeHTML(condition)}</span>`).join('')}
+                ${altered.map(value => `<span class="mini-tag">${escapeHTML(value.profileKey)} · ${escapeHTML(value.phase)}</span>`).join('')}
+                ${profile.prefers.length ? `<span class="mini-tag">Affinity: ${escapeHTML(profile.prefers.join(', '))}</span>` : ''}
+            </div>
+            <div class="dossier-browser-actions">
+                <select class="form-select dossier-location-select" aria-label="${escapeHTML(dossierNpc.name)} location">
+                    ${locations.map(location => `<option value="${escapeHTML(location.id)}" ${location.id === entState.location ? 'selected' : ''}>${escapeHTML(location.name)}</option>`).join('')}
+                </select>
+                <button class="btn btn-primary dossier-edit-btn" type="button">Edit dossier</button>
+            </div>`;
+        card.querySelector('.dossier-location-select').onchange = async event => {
+            if (!sess.entityStates[npc.id]) sess.entityStates[npc.id] = { observations: [] };
+            sess.entityStates[npc.id].location = event.target.value;
+            await saveState();
+            renderWorldPlayState();
+            renderWorldDossierBrowser();
+        };
+        card.querySelector('.dossier-edit-btn').onclick = () => {
+            overlay.classList.add('hidden');
+            openNpcDossier(npc.id);
+        };
+        list.appendChild(card);
+    });
+    archivedMatches.forEach(record => {
+        const npc = record.base || { id: record.characterId, name: record.characterId };
+        const card = document.createElement('article');
+        card.className = 'dossier-browser-card is-archived';
+        card.innerHTML = `
+            <div class="dossier-browser-avatar">↶</div>
+            <div><div class="dossier-browser-name">${escapeHTML(npc.name || record.characterId)}</div>
+                <div class="dossier-browser-meta">Discarded branch · ${escapeHTML(record.branchId || 'unknown')}</div></div>
+            <div class="dossier-browser-state"><span class="mini-tag">branch-invalid provenance</span></div>
+            <div class="dossier-browser-actions">
+                <button class="btn btn-ghost dossier-archive-inspect" type="button">Inspect discarded dossier</button>
+            </div>`;
+        card.querySelector('.dossier-archive-inspect').onclick = () => {
+            overlay.classList.add('hidden');
+            openArchivedNpcDossier(record.characterId);
+        };
+        list.appendChild(card);
+    });
+}
+
+function openWorldDossierBrowser() {
+    const overlay = document.getElementById('world-dossier-browser-overlay');
+    const search = document.getElementById('world-dossier-search');
+    const filter = document.getElementById('world-dossier-filter');
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+    if (search) search.oninput = renderWorldDossierBrowser;
+    if (filter) filter.onchange = renderWorldDossierBrowser;
+    const close = document.getElementById('close-world-dossier-browser-btn');
+    if (close) close.onclick = () => overlay.classList.add('hidden');
+    renderWorldDossierBrowser();
+    search?.focus();
+}
+
+function openArchivedNpcDossier(npcId) {
+    const world = state.worlds.find(w => w.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    const overlay = document.getElementById('npc-dossier-overlay');
+    const record = globalThis.HordeDossiers?.listArchivedCharacters?.(world, sess)
+        .find(item => item.characterId === npcId);
+    if (!world || !sess || !overlay || !record) return;
+    const base = { ...(record.base || {}) };
+    delete base._dossierOrigin;
+    delete base._capturedAtRevision;
+    const ledger = globalThis.HordeDossiers.claimHistory(world, sess, npcId);
+    document.getElementById('npc-dossier-title').textContent = `↶ ${base.name || npcId} · discarded timeline`;
+    const content = document.getElementById('npc-dossier-content');
+    const claimValue = claim => typeof claim.value === 'string'
+        ? claim.value : JSON.stringify(claim.value, null, 2);
+    content.innerHTML = `
+        <div class="form-section soft-lock-conflict">
+            <strong>Inactive provenance only</strong>
+            <p class="form-hint">This story-born character belonged to branch ${escapeHTML(record.branchId || 'unknown')}. Nothing shown here affects the active world.</p>
+            <button id="dossier-back-browser" class="btn btn-ghost" type="button">← All dossiers</button>
+        </div>
+        <div class="form-section"><label class="form-label">Archived provisional base</label>
+            <pre class="dossier-json-view">${escapeHTML(JSON.stringify(base, null, 2))}</pre></div>
+        <div class="form-section"><label class="form-label">Branch-invalid claims (${ledger.branchInvalid.length})</label>
+            ${ledger.branchInvalid.length ? ledger.branchInvalid.map(claim => `<article class="dossier-claim-card">
+                <div class="dossier-claim-heading"><strong>${escapeHTML(claim.fieldPath)}</strong><span>${escapeHTML(claim.maturity)} · ${escapeHTML(claim.origin)}</span></div>
+                <div class="dossier-claim-value">${escapeHTML(claimValue(claim))}</div>
+                <div class="dossier-claim-provenance">Reason: ${escapeHTML(claim.reason || 'No reason recorded')}<br>
+                Source turn: ${escapeHTML(claim.sourceTurnId || 'unknown')}<br>
+                Evidence: ${escapeHTML((claim.evidenceIds || []).join(', ') || 'none')}</div>
+            </article>`).join('') : '<p class="form-hint">No archived claims survived capture.</p>'}
+        </div>`;
+    content.querySelector('#dossier-back-browser').onclick = () => {
+        overlay.classList.add('hidden');
+        openWorldDossierBrowser();
+    };
+    document.getElementById('close-npc-dossier-btn').onclick = () => overlay.classList.add('hidden');
+    overlay.classList.remove('hidden');
+}
+
 function openNpcDossier(npcId) {
     const world = state.worlds.find(w => w.id === state.activeWorldId);
     const sess = getCurrentWorldSession();
     const npc = world ? world.entities.find(e => e.id === npcId) : null;
     const overlay = document.getElementById('npc-dossier-overlay');
     if (!world || !sess || !npc || !overlay) return;
+
+    const dossierEnabled = globalThis.HordeDossiers?.isEnabled?.(world) === true;
+    const dossierResolution = dossierEnabled
+        ? globalThis.HordeDossiers?.resolveDossier?.(world, sess, npc, { worldTime: sess.worldTime || '' })
+        : null;
+    const dossierNpc = dossierResolution?.value || npc;
+    const dossierLedger = dossierEnabled
+        ? globalThis.HordeDossiers?.claimHistory?.(world, sess, npc.id) : null;
+    const authoredBase = sess.dossierState?.authoredBase?.[npc.id] || npc;
 
     const entState = sess.entityStates[npc.id] || {};
     const status = entState.status || 'alive';
@@ -19518,21 +19795,107 @@ function openNpcDossier(npcId) {
     const goalProgress = livingClamp(entState.goalProgress || 0, 0, 100);
     const goalAutonomy = ['paused', 'low', 'medium', 'high'].includes(entState.goalAutonomy) ? entState.goalAutonomy : 'medium';
     const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(npc.id));
+    const locations = sessionLocations(world, sess);
+    const substanceProfile = normalizeNpcSubstanceProfile(dossierNpc);
+    const currentConditions = Array.isArray(entState.conditions) ? entState.conditions.filter(Boolean) : [];
+    const dossierLines = value => Array.isArray(value) ? value.join('\n')
+        : (value && typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value || ''));
 
-    document.getElementById('npc-dossier-title').textContent = `📇 ${npc.name}`;
+    document.getElementById('npc-dossier-title').textContent = `📇 ${dossierNpc.name || npc.name}`;
     const content = document.getElementById('npc-dossier-content');
     content.innerHTML = `
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
             <span class="mini-tag">${status === 'alive' ? '🟢 alive' : (status === 'dead' ? '☠️ dead' : '🚪 gone')}</span>
             <span class="mini-tag">📍 ${escapeHTML(locName)}</span>
-            ${npc.isMajor ? '<span class="mini-tag">⭐ major</span>' : ''}
+            ${dossierNpc.isMajor ? '<span class="mini-tag">⭐ major</span>' : ''}
             ${npc.sessionOrigin ? '<span class="mini-tag" title="Created by the story in this timeline">✨ story-born</span>' : ''}
             ${entState.relationshipToPlayer ? `<span class="mini-tag">🤝 ${escapeHTML(entState.relationshipToPlayer)}</span>` : ''}
-            ${npc.role ? `<span class="mini-tag">💼 ${escapeHTML(npc.role)}</span>` : ''}
+            ${dossierNpc.role ? `<span class="mini-tag">💼 ${escapeHTML(dossierNpc.role)}</span>` : ''}
             ${entState.currentActivity ? `<span class="mini-tag">🕒 ${escapeHTML(entState.currentActivity)}</span>` : ''}
         </div>
-        ${npc.description ? `<p style="font-size:0.85rem; color:var(--text-2); margin-bottom:12px;">${escapeHTML(npc.description)}</p>` : ''}
-        ${npc.persona ? `<div class="form-section"><label class="form-label">Personality</label><p style="font-size:0.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML(npc.persona)}</p></div>` : ''}
+        ${dossierEnabled ? `<div class="dossier-ledger-shell">
+            <div class="dossier-ledger-tabs" role="tablist">
+                ${[
+                    ['current', 'Current Projection'], ['base', 'Authored Base'], ['active', 'Active Claims'],
+                    ['history', 'History'], ['suppressed', 'Suppressed'], ['branch', 'Branch-Invalid'],
+                    ['pending', 'Pending Approval'], ['evidence', 'Evidence']
+                ].map(([value, label], index) => `<button class="dossier-ledger-tab${index === 0 ? ' active' : ''}" type="button" data-view="${value}">${label}</button>`).join('')}
+            </div>
+            <div id="dossier-ledger-panel" class="dossier-ledger-panel"></div>
+        </div>` : ''}
+        <div class="form-section">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+                <label class="form-label" style="margin:0;">Character Authoring</label>
+                <button id="dossier-back-browser" class="btn btn-ghost" type="button" style="font-size:0.7rem; padding:5px 9px;">← All dossiers</button>
+            </div>
+            <div class="dossier-edit-grid">
+                <label class="form-label">Name
+                    <input id="dossier-name" class="form-input" value="${escapeHTML(dossierNpc.name || '')}" placeholder="Character name">
+                </label>
+                <label class="form-label">Pronouns
+                    <input id="dossier-pronouns" class="form-input" value="${escapeHTML(dossierLines(dossierNpc.pronouns))}" placeholder="she/her">
+                </label>
+                <label class="form-label">Current location
+                    <select id="dossier-location" class="form-select">
+                        ${locations.map(location => `<option value="${escapeHTML(location.id)}" ${location.id === entState.location ? 'selected' : ''}>${escapeHTML(location.name)}</option>`).join('')}
+                    </select>
+                </label>
+            </div>
+            <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Physical description</span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-description', String(dossierNpc.description || ''))}</span></span>
+                <textarea id="dossier-description" class="form-textarea" rows="3" placeholder="Stable appearance and physical identity for prose and image generation">${escapeHTML(dossierNpc.description || '')}</textarea>
+            </label>
+            <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Personality and persona</span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-persona', String(dossierNpc.persona || ''))}</span></span>
+                <textarea id="dossier-persona" class="form-textarea" rows="4" placeholder="Voice, temperament, competence, vulnerability, needs and boundaries">${escapeHTML(dossierNpc.persona || '')}</textarea>
+            </label>
+            <div class="dossier-edit-grid">
+                <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Values <span class="form-hint">one per line</span></span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-values', String(dossierLines(dossierNpc.values)))}</span></span>
+                    <textarea id="dossier-values" class="form-textarea" rows="3">${escapeHTML(dossierLines(dossierNpc.values))}</textarea>
+                </label>
+                <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Vulnerabilities <span class="form-hint">one per line</span></span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-vulnerabilities', String(dossierLines(dossierNpc.vulnerabilities)))}</span></span>
+                    <textarea id="dossier-vulnerabilities" class="form-textarea" rows="3">${escapeHTML(dossierLines(dossierNpc.vulnerabilities))}</textarea>
+                </label>
+            </div>
+            <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Hard and personal boundaries <span class="form-hint">one per line</span></span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-boundaries', String(dossierLines(dossierNpc.boundaries)))}</span></span>
+                <textarea id="dossier-boundaries" class="form-textarea" rows="3">${escapeHTML(dossierLines(dossierNpc.boundaries))}</textarea>
+            </label>
+            <div class="dossier-edit-grid">
+                <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Current outfit</span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-current-outfit', String(dossierLines(dossierNpc.outfits?.current || dossierNpc.currentOutfit)))}</span></span>
+                    <textarea id="dossier-current-outfit" class="form-textarea" rows="3">${escapeHTML(dossierLines(dossierNpc.outfits?.current || dossierNpc.currentOutfit))}</textarea>
+                </label>
+                <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Affiliations <span class="form-hint">one per line</span></span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-affiliations', String(dossierLines(dossierNpc.affiliations)))}</span></span>
+                    <textarea id="dossier-affiliations" class="form-textarea" rows="3">${escapeHTML(dossierLines(dossierNpc.affiliations))}</textarea>
+                </label>
+            </div>
+            <label class="form-label" data-ai-field-wrap><span style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Routines and ordinary schedule</span><span class="ai-field-actions">${aiFieldButtonMarkup('dossier-routines', String(dossierLines(dossierNpc.routines)))}</span></span>
+                <textarea id="dossier-routines" class="form-textarea" rows="3">${escapeHTML(dossierLines(dossierNpc.routines))}</textarea>
+            </label>
+            <label class="form-label">Current conditions <span class="form-hint">one per line</span>
+                <textarea id="dossier-conditions" class="form-textarea" rows="2" placeholder="tired&#10;sore feet&#10;dressed for a night out">${escapeHTML(currentConditions.join('\n'))}</textarea>
+            </label>
+            <p class="form-hint" style="margin:-4px 0 10px;">Physical and situational states only — tiredness, injury, mood, what they are dressed for.</p>
+            <button id="dossier-save-character" class="btn btn-primary btn-full" type="button">Save Character Dossier</button>
+        </div>
+        <div class="form-section">
+            <label class="form-label">Substance familiarity and characterization</label>
+            <p class="form-hint" style="margin-bottom:8px;">These shape plausible choices and reactions. They never imply consent, obedience, possession or automatic use.</p>
+            <div class="dossier-edit-grid">
+                <label class="form-label">Familiar with
+                    <textarea id="dossier-substance-familiar" class="form-textarea" rows="2" placeholder="alcohol, cocaine">${escapeHTML(substanceProfile.familiar.join('\n'))}</textarea>
+                </label>
+                <label class="form-label">Affinities / preferences
+                    <textarea id="dossier-substance-prefers" class="form-textarea" rows="2" placeholder="cocaine in nightlife contexts">${escapeHTML(substanceProfile.prefers.join('\n'))}</textarea>
+                </label>
+                <label class="form-label">Avoids
+                    <textarea id="dossier-substance-avoids" class="form-textarea" rows="2" placeholder="ketamine">${escapeHTML(substanceProfile.avoids.join('\n'))}</textarea>
+                </label>
+                <label class="form-label">Personal boundaries
+                    <textarea id="dossier-substance-boundaries" class="form-textarea" rows="2" placeholder="Character-specific boundaries, not medical advice">${escapeHTML(substanceProfile.boundaries)}</textarea>
+                </label>
+            </div>
+            <label class="form-label">Context notes
+                <textarea id="dossier-substance-notes" class="form-textarea" rows="2" placeholder="How this fits their history, habits and social context">${escapeHTML(substanceProfile.notes)}</textarea>
+            </label>
+        </div>
         <div class="form-section">
             <label class="form-label">Disposition Toward You (drag to adjust)</label>
             <div style="display:flex; align-items:center; gap:10px;">
@@ -19575,6 +19938,179 @@ function openNpcDossier(npcId) {
         </div>
     `;
 
+    if (dossierEnabled && dossierLedger) {
+        const panel = content.querySelector('#dossier-ledger-panel');
+        const claimValue = claim => typeof claim.value === 'string'
+            ? claim.value : JSON.stringify(claim.value, null, 2);
+        const claimCard = claim => {
+            const automatic = !['user', 'import'].includes(claim.origin);
+            const emphasis = automatic
+                ? (claim.mode === 'replacement' ? 'dossier-claim-replacement' : 'dossier-claim-addition') : '';
+            const actions = claim.status === 'pending_approval'
+                ? `<button class="btn btn-primary dossier-claim-action" data-action="approve" data-claim="${escapeHTML(claim.claimId)}">Approve</button>
+                   <button class="btn btn-ghost dossier-claim-action" data-action="suppress" data-claim="${escapeHTML(claim.claimId)}">Suppress</button>`
+                : claim.status === 'user_suppressed'
+                    ? `<button class="btn btn-ghost dossier-claim-action" data-action="restore" data-claim="${escapeHTML(claim.claimId)}">Restore</button>`
+                    : claim.status === 'active'
+                        ? `${claim.softLockConflict ? `<button class="btn btn-primary dossier-claim-action" data-action="accept-conflict" data-claim="${escapeHTML(claim.claimId)}">Accept change</button>` : ''}
+                           <button class="btn btn-ghost dossier-claim-action" data-action="suppress" data-claim="${escapeHTML(claim.claimId)}">Undo</button>` : '';
+            return `<article class="dossier-claim-card ${emphasis}${claim.softLockConflict ? ' soft-lock-conflict' : ''}">
+                <div class="dossier-claim-heading"><strong>${escapeHTML(claim.fieldPath)}</strong><span>${escapeHTML(claim.maturity)} · ${escapeHTML(claim.origin)}</span></div>
+                <div class="dossier-claim-value">${escapeHTML(claimValue(claim))}</div>
+                <details><summary>Provenance</summary>
+                    <div class="dossier-claim-provenance">Reason: ${escapeHTML(claim.reason || 'No reason recorded')}<br>
+                    Source turn: ${escapeHTML(claim.sourceTurnId || 'manual/import')}<br>
+                    Branch: ${escapeHTML(claim.branchId)}<br>
+                    Evidence: ${escapeHTML((claim.evidenceIds || []).join(', ') || 'user authority')}<br>
+                    Survived: ${escapeHTML(String(claim.maturityEvidence?.turnsSurvived || 0))} turns, ${escapeHTML(String(claim.maturityEvidence?.scenesSurvived || 0))} scenes · ${escapeHTML(String(claim.maturityEvidence?.reinforcementCount || 0))} reinforcements · ${escapeHTML(String(claim.maturityEvidence?.contradictionCount || 0))} contradictions</div>
+                </details>
+                ${actions ? `<div class="dossier-claim-actions">${actions}</div>` : ''}
+            </article>`;
+        };
+        const renderLedgerView = view => {
+            content.querySelectorAll('.dossier-ledger-tab').forEach(button => {
+                button.classList.toggle('active', button.dataset.view === view);
+            });
+            if (view === 'current') {
+                const metaRows = Object.entries(dossierResolution?.fieldMeta || {}).map(([field, meta]) =>
+                    `<div><strong>${escapeHTML(field)}</strong><span>${escapeHTML(meta.maturity)} · ${escapeHTML(meta.origin)}</span></div>`).join('');
+                panel.innerHTML = `<p>The editor below shows the resolved current projection. Receipt-derived location, cast, inventory and active altered states remain authoritative live state.</p>${metaRows ? `<div class="dossier-projection-meta">${metaRows}</div>` : '<p class="form-hint">No overlays yet; current projection equals authored base.</p>'}`;
+            } else if (view === 'base') {
+                const visibleBase = { ...authoredBase };
+                delete visibleBase._dossierOrigin;
+                delete visibleBase._capturedAtRevision;
+                panel.innerHTML = `<pre class="dossier-json-view">${escapeHTML(JSON.stringify(visibleBase, null, 2))}</pre>`;
+            } else if (view === 'evidence') {
+                const activeEvidence = dossierLedger.evidence.length
+                    ? dossierLedger.evidence.map(item => `<div class="dossier-evidence-row">${escapeHTML(item)}</div>`).join('')
+                    : '<p class="form-hint">No claim evidence has been recorded.</p>';
+                const suppressedEvidence = (dossierLedger.suppressedEvidence || []).map(item => `
+                    <article class="dossier-claim-card ${item.status === 'branch_invalid' ? 'is-archived' : ''}">
+                        <div class="dossier-claim-heading"><strong>Suppressed evidence</strong><span>${escapeHTML(item.status || 'active')}</span></div>
+                        <div class="dossier-claim-value">${escapeHTML((item.evidenceIds || []).join(', '))}</div>
+                        <div class="dossier-claim-provenance">${escapeHTML(item.reason || '')}</div>
+                        ${item.status === 'active' ? `<div class="dossier-claim-actions"><button class="btn btn-ghost dossier-evidence-action" data-suppression="${escapeHTML(item.suppressionId)}" type="button">Restore evidence</button></div>` : ''}
+                    </article>`).join('');
+                panel.innerHTML = `${activeEvidence}${suppressedEvidence
+                    ? `<h4 class="dossier-subheading">Suppressed evidence</h4>${suppressedEvidence}` : ''}`;
+            } else {
+                const key = { active: 'active', history: 'history', suppressed: 'suppressed', branch: 'branchInvalid', pending: 'pending' }[view];
+                const claims = dossierLedger[key] || [];
+                panel.innerHTML = claims.length ? claims.map(claimCard).join('')
+                    : `<p class="form-hint">No ${escapeHTML(view.replace('-', ' '))} claims.</p>`;
+            }
+            panel.querySelectorAll('.dossier-claim-action').forEach(button => {
+                button.onclick = async () => {
+                    const claimId = button.dataset.claim;
+                    if (button.dataset.action === 'approve') globalThis.HordeDossiers.approveClaim(world, sess, claimId);
+                    else if (button.dataset.action === 'accept-conflict') globalThis.HordeDossiers.acceptConflictingClaim(world, sess, claimId);
+                    else if (button.dataset.action === 'restore') globalThis.HordeDossiers.restoreSuppressedClaim(world, sess, claimId);
+                    else globalThis.HordeDossiers.suppressClaim(world, sess, claimId, 'Suppressed from All Dossiers.');
+                    await saveState();
+                    openNpcDossier(npc.id);
+                };
+            });
+            panel.querySelectorAll('.dossier-evidence-action').forEach(button => {
+                button.onclick = async () => {
+                    const restored = globalThis.HordeDossiers.restoreEvidenceSuppression(
+                        world, sess, button.dataset.suppression
+                    );
+                    const snapshot = restored?.snapshot;
+                    if (snapshot && !entState.observations.some(item => (item?.id || '') === (snapshot.id || ''))) {
+                        entState.observations.push(snapshot);
+                    }
+                    await saveState();
+                    openNpcDossier(npc.id);
+                };
+            });
+        };
+        content.querySelectorAll('.dossier-ledger-tab').forEach(button => {
+            button.onclick = () => renderLedgerView(button.dataset.view);
+        });
+        renderLedgerView('current');
+    }
+
+    content.querySelector('#dossier-back-browser').onclick = () => {
+        overlay.classList.add('hidden');
+        openWorldDossierBrowser();
+    };
+    // Dossier AI fill. The resolved projection is the right context source:
+    // it already merges authored base with active claims, so the model sees the
+    // character as they currently are rather than as first authored.
+    bindAiFieldButtons(content, () => dossierNpc, world);
+
+    content.querySelector('#dossier-save-character').onclick = async () => {
+        if (!sess.entityStates[npc.id]) sess.entityStates[npc.id] = { observations: [] };
+        const es = sess.entityStates[npc.id];
+        const lines = selector => String(content.querySelector(selector)?.value || '').split(/[,\n]/)
+            .map(value => value.trim()).filter(Boolean).slice(0, 30);
+        const authoredName = String(content.querySelector('#dossier-name').value || '').trim().slice(0, 200);
+        const authoredPronouns = String(content.querySelector('#dossier-pronouns').value || '').trim().slice(0, 200);
+        const authoredDescription = String(content.querySelector('#dossier-description').value || '').trim().slice(0, 4000);
+        const authoredPersona = String(content.querySelector('#dossier-persona').value || '').trim().slice(0, 6000);
+        const authoredValues = lines('#dossier-values');
+        const authoredVulnerabilities = lines('#dossier-vulnerabilities');
+        const authoredBoundaries = lines('#dossier-boundaries');
+        const authoredCurrentOutfit = String(content.querySelector('#dossier-current-outfit').value || '').trim().slice(0, 3000);
+        const authoredAffiliations = lines('#dossier-affiliations');
+        const authoredRoutines = String(content.querySelector('#dossier-routines').value || '').trim().slice(0, 4000);
+        es.location = content.querySelector('#dossier-location').value || es.location || sess.playerLocation;
+        const rawConditions = String(content.querySelector('#dossier-conditions').value || '');
+        es.conditions = rawConditions.split('\n')
+            .map(value => value.trim()).filter(Boolean).slice(0, 30);
+        const authoredSubstanceProfile = {
+            familiar: lines('#dossier-substance-familiar'),
+            prefers: lines('#dossier-substance-prefers'),
+            avoids: lines('#dossier-substance-avoids'),
+            boundaries: String(content.querySelector('#dossier-substance-boundaries').value || '').trim().slice(0, 1000),
+            notes: String(content.querySelector('#dossier-substance-notes').value || '').trim().slice(0, 1500)
+        };
+        if (dossierEnabled && globalThis.HordeDossiers) {
+            globalThis.HordeDossiers.ensureCharacter(world, sess, npc, { storyBorn: !!npc.sessionOrigin });
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'name', authoredName);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'pronouns', authoredPronouns);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'description', authoredDescription);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'persona', authoredPersona);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'values', authoredValues);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'vulnerabilities', authoredVulnerabilities);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'boundaries', authoredBoundaries);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'affiliations', authoredAffiliations);
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'routines', authoredRoutines);
+            const priorOutfit = dossierNpc.outfits?.current || dossierNpc.currentOutfit || '';
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'outfits.current', authoredCurrentOutfit);
+            if (authoredCurrentOutfit && authoredCurrentOutfit !== priorOutfit) {
+                globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'outfitHistory', [{
+                    outfitId: `outfit_user_${Date.now()}`,
+                    characterId: npc.id,
+                    date: sess.worldTime || '',
+                    location: es.location || '',
+                    description: authoredCurrentOutfit,
+                    evidenceIds: [],
+                    provenance: 'user dossier edit'
+                }], { mode: 'additive', preserveConcurrent: true, reason: 'User-authored outfit history.' });
+            }
+            globalThis.HordeDossiers.createAuthoredClaim(world, sess, npc.id, 'substanceProfile', authoredSubstanceProfile);
+        } else {
+            // Backward-compatible direct authoring for worlds that have not
+            // opted into the dossier claims profile.
+            npc.name = authoredName;
+            npc.pronouns = authoredPronouns;
+            npc.description = authoredDescription;
+            npc.persona = authoredPersona;
+            npc.values = authoredValues;
+            npc.vulnerabilities = authoredVulnerabilities;
+            npc.boundaries = authoredBoundaries;
+            npc.affiliations = authoredAffiliations;
+            npc.routines = authoredRoutines;
+            npc.currentOutfit = authoredCurrentOutfit;
+            npc.substanceProfile = authoredSubstanceProfile;
+        }
+        await saveState();
+        renderWorldPlayState();
+        showToast(`${dossierNpc.name || npc.name}'s dossier saved.`, 'success');
+        openNpcDossier(npc.id);
+    };
+
     // Disposition slider: live label, debounced persist
     const slider = content.querySelector('#dossier-dispo-slider');
     const dispoVal = content.querySelector('#dossier-dispo-val');
@@ -19587,6 +20123,12 @@ function openNpcDossier(npcId) {
         dispoSaveTimer = setTimeout(async () => {
             if (!sess.entityStates[npc.id]) sess.entityStates[npc.id] = { location: sess.playerLocation };
             sess.entityStates[npc.id].disposition = v;
+            if (dossierEnabled) {
+                globalThis.HordeDossiers?.createAuthoredClaim?.(
+                    world, sess, npc.id, 'relationships.player.disposition', v,
+                    { reason: 'User-authored directional disposition baseline.' }
+                );
+            }
             await saveState();
         }, 400);
     };
@@ -19620,11 +20162,21 @@ function openNpcDossier(npcId) {
             delete es.goalDeadlineTurn;
             delete es.goalStatus;
         }
+        if (dossierEnabled) {
+            globalThis.HordeDossiers?.createAuthoredClaim?.(world, sess, npc.id, 'goals.current', goal ? {
+                text: es.goal,
+                motivation: es.goalMotivation || '',
+                progress: es.goalProgress || 0,
+                autonomy: es.goalAutonomy || 'medium',
+                status: es.goalStatus || 'active'
+            } : null, { reason: 'User-authored current goal.' });
+        }
         await saveState();
         showToast(goal ? `🎯 Goal set for ${npc.name}` : `Goal cleared for ${npc.name}`, 'success');
     };
 
-    // Observation rows with delete (prune wrong/stale NPC memories)
+    // Removing an observation hides it from live cognition, but preserves a
+    // reversible evidence record and suppresses dependent claims.
     const obsList = content.querySelector('#dossier-obs-list');
     obs.forEach((o, idx) => {
         const row = document.createElement('div');
@@ -19634,6 +20186,13 @@ function openNpcDossier(npcId) {
             <button class="tool-btn tool-btn-danger" style="font-size:10px; padding:2px 6px;" title="Delete this memory">✕</button>
         `;
         row.querySelector('button').onclick = async () => {
+            const evidenceIds = [o.id ? `observation:${o.id}` : '', o.eventId ? `event:${o.eventId}` : '']
+                .filter(Boolean);
+            globalThis.HordeDossiers?.suppressEvidence?.(world, sess, evidenceIds, {
+                characterId: npc.id,
+                snapshot: o,
+                reason: 'Observation removed from the live dossier by the user.'
+            });
             entState.observations.splice(idx, 1);
             await saveState();
             openNpcDossier(npcId); // re-render
@@ -19886,6 +20445,8 @@ function renderWorldPlayState() {
     // 5. Cast (NPCs Present)
     const presList = document.getElementById('world-present-list');
     presList.innerHTML = '';
+    const allDossiersButton = document.getElementById('world-all-dossiers-btn');
+    if (allDossiersButton) allDossiersButton.onclick = openWorldDossierBrowser;
     // Audit: Use fresh session reference to avoid stale UI
     const activeSess = getCurrentWorldSession();
     const presentNPCs = sessionNpcs(world, activeSess).filter(ent =>
@@ -20688,6 +21249,7 @@ function captureWorldTurnState(world, sess) {
 
 function restoreWorldTurnState(world, sess, snapshot) {
     if (!snapshot || !isPlainObject(snapshot) || !isPlainObject(snapshot.session) || !isPlainObject(snapshot.world)) return false;
+    const discardedDossierState = globalThis.HordeDossiers?.captureDiscardedState?.(world, sess) || null;
     const liveManualRevision = Number(sess.ledgerManualRevision) || 0;
     const liveLedgerRevision = Number(sess.ledgerRevision) || 0;
     const snapshotManualRevision = Number(snapshot.session.ledgerManualRevision) || 0;
@@ -20724,6 +21286,9 @@ function restoreWorldTurnState(world, sess, snapshot) {
         world.entities = (world.entities || []).filter(entity => entity?.sessionOrigin !== sess.id);
         world.entities.push(...safeJsonClone(snapshotDynamic));
     }
+    // Retain abandoned claims as inactive provenance, then continue on a new
+    // explicit branch. Nothing from the discarded take may affect projection.
+    globalThis.HordeDossiers?.forkAfterRestore?.(world, sess, discardedDossierState);
     bumpMemoryEpoch(sess); // any in-flight consolidation must now abort its commit
     if (typeof bumpWorldEpoch === 'function') bumpWorldEpoch(sess);  // and so must the asynchronous World Agent
     return true;
@@ -21468,10 +22033,13 @@ async function executeWorldTurn(commandOrReroll = null) {
         return 'devoted — deep loyalty or love';
     };
     presentNPCs.forEach(npc => {
+        const dossierNpc = globalThis.HordeDossiers?.materializeEntity?.(world, sess, npc, {
+            worldTime: sess.worldTime || ''
+        }) || npc;
         const entState = sess.entityStates[npc.id] || {};
         const obs = getObservationWindow(npc.id);
-        const description = npc.description ? `\nPHYSICAL DESCRIPTION: ${npc.description}` : "";
-        const personaStr = (npc.isMajor && npc.persona) ? `\nPERSONALITY & PERSONA: ${npc.persona}` : "";
+        const description = dossierNpc.description ? `\nPHYSICAL DESCRIPTION: ${dossierNpc.description}` : "";
+        const personaStr = (dossierNpc.isMajor && dossierNpc.persona) ? `\nPERSONALITY & PERSONA: ${dossierNpc.persona}` : "";
         const activity = ruleModules.schedules && entState.currentActivity ? `\nCurrently: ${entState.currentActivity}` : "";
         const dispo = entState.disposition !== undefined ? entState.disposition : 50;
         const dispoStr = ruleModules.relationships
@@ -21653,8 +22221,10 @@ Characters in this world are NOT omniscient. They only know what they have perso
     const labsWorldHint = labsWorldLens?.candidate && Number(labsWorldLens.candidate.confidence) >= 0.55
         ? `\n\n[PRIVATE MICRO WORLD SENSOR — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor, intent, destination, outfit, explicit time and completion scope only. The graph still owns routes and travel time. It cannot create facts, replace commit_world_turn, or override canonical state. If it conflicts with the player's words or canonical frame, ignore it.`
         : '';
+    const dossierContext = globalThis.HordeDossiers?.isEnabled?.(world)
+        ? globalThis.HordeDossiers.promptContext(world, sess, presentNPCs) : '';
 
-    let systemPrompt = `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
+    let systemPrompt = `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}${dossierContext}
 
 ${HORDE_NARRATIVE_RULES}
 ${state.globalSettings.immersionMode !== false ? '\n' + HORDE_IMMERSION_DIRECTIVE + '\n' : ''}
@@ -22439,6 +23009,9 @@ ${modularMandate}
         }];
 
         const worldStateTool = toolsConfig.find(tool => tool.function?.name === 'commit_world_turn');
+        if (globalThis.HordeDossiers?.isEnabled?.(world)) {
+            globalThis.HordeDossiers.extendReceiptSchema(worldStateTool.function.parameters);
+        }
         const worldStateProperties = worldStateTool.function.parameters.properties;
         worldStateTool.function.description = `MANDATORY canonical receipt for every response. Propose actor-scoped events, complete ending scene/cast, entity activity, and enabled module updates (${WORLD_RULE_MODULE_KEYS.filter(key => ruleModules[key]).join(', ') || 'narrative core only'}).`;
         const removeToolFields = fields => fields.forEach(field => delete worldStateProperties[field]);

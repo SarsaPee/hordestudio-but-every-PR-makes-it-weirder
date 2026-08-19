@@ -419,6 +419,10 @@
                         <h3>Exits & Surroundings</h3>
                         <div id="world-exits-list" style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px;"></div>
                         <div id="world-inventory-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                            <span class="form-hint" style="margin:0;">Present cast</span>
+                            <button id="world-all-dossiers-btn" class="tool-btn" type="button" style="font-size:0.66rem; padding:3px 7px;">All Dossiers</button>
+                        </div>
                         <div id="world-present-list" style="display:flex; flex-direction:column; gap:6px;"></div>
                     </section>
 
@@ -1169,6 +1173,11 @@
                                     </select>
                                     <div class="form-hint" style="margin-top:6px;">Narrative money still tracks the balance and still deducts real amounts; it simply never shows a shop menu, stock list or price catalogue. Use it when you want "the round cost $47", not "one coffee, 3 gold".</div>
                                 </div>
+                                <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+                                    <input id="w-rules-dossier-claims" type="checkbox">
+                                    <label class="form-label" for="w-rules-dossier-claims" style="margin:0; font-size:0.75rem;">Character dossiers (evidence-backed claims)</label>
+                                </div>
+                                <div class="form-hint" style="margin-top:6px;">Every fact an NPC's dossier gains during play — from the model, from you, from an accepted event — is tracked as a claim with its own evidence, maturity and history, instead of overwriting the character record directly. Claims can be approved, suppressed or rolled back individually, and a reroll discards only what that timeline actually produced.</div>
                                 <div class="form-hint" style="margin-top:10px;">Core movement, memory, world canon, and NPC identity always remain active. Every mechanical module above is optional and can be changed later without deleting its saved data.</div>
                             </div>
 
@@ -4391,6 +4400,30 @@
     </div>
 </div>
 
+<!-- World Dossier Browser -->
+<div id="world-dossier-browser-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg dossier-browser-modal">
+        <div class="modal-hd">
+            <div>
+                <h2>Character Dossiers</h2>
+                <p class="form-hint">Inspect and edit anyone in this world independently of scene presence.</p>
+            </div>
+            <button id="close-world-dossier-browser-btn" class="modal-close" type="button" aria-label="Close character dossiers">✕</button>
+        </div>
+        <div class="dossier-browser-toolbar">
+            <input id="world-dossier-search" class="form-input" type="search" placeholder="Search characters, roles, locations or affinities…">
+            <select id="world-dossier-filter" class="form-select">
+                <option value="all">All characters</option>
+                <option value="present">Present in scene</option>
+                <option value="absent">Absent from scene</option>
+                <option value="altered">Active altered state</option>
+                <option value="archived">Discarded-timeline provenance</option>
+            </select>
+        </div>
+        <div id="world-dossier-browser-list" class="dossier-browser-list"></div>
+    </div>
+</div>
+
 <!-- New Session Setup Modal -->
 <div id="world-session-zero-overlay" class="modal-bg hidden">
     <div class="modal modal-md session-zero-modal" style="max-width:900px;">
@@ -4620,6 +4653,7 @@
 <script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
 <script src="help-system.js?v=20260816-v1591-memory-hotfix-v1"></script>
 <script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
+<script src="dossier-claims.js"></script>
     <script src="app.js?v=20260819-shared-library-sync-v1"></script>
 </body>
 </html>
