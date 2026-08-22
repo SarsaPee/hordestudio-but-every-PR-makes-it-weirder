@@ -1,0 +1,9 @@
+{
+  "name": "horde-studio-room-relay",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-01",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "HordeRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HordeRoom"] }]
+}

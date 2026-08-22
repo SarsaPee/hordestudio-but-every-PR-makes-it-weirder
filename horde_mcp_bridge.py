@@ -63,7 +63,7 @@ HOST = os.environ.get("HORDE_SERVER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HORDE_SERVER_PORT", "43127"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
-BRIDGE_BUILD = "20260822-tinybrain2-v7"
+BRIDGE_BUILD = "20260822-multiplayer-v1"
 APP_INSTANCE_ID = hashlib.sha256(str(APP_DIR).encode("utf-8")).hexdigest()[:16]
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
 
@@ -125,6 +125,7 @@ STATIC_FILES = {
     "/labs-ui.js": ("labs-ui.js", "text/javascript"),
     "/labs-guide.js": ("labs-guide.js", "text/javascript"),
     "/help-system.js": ("help-system.js", "text/javascript"),
+    "/multiplayer.js": ("multiplayer.js", "text/javascript"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/worlds/policy-panic.horde_world": ("Policy Panic at Bramble and Pike.horde_world", "application/json"),
     "/Start%20Horde%20Studio.command": ("Start Horde Studio.command", "application/octet-stream"),
@@ -449,6 +450,347 @@ class AlwaysOnRuntime:
 
 
 always_on_runtime = AlwaysOnRuntime()
+
+
+class MultiplayerRuntime:
+    """Ephemeral LAN rooms for host-authoritative, turn-based shared play.
+
+    This deliberately does not proxy provider requests. Guests submit intent to
+    the host; the host browser performs the one model call using its existing
+    settings and publishes a sanitized transcript snapshot back to the room.
+    API keys, hidden world state and provider responses never enter this store.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.rooms: dict[str, dict[str, Any]] = {}
+        self.server: ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
+        self.port = 0
+
+    @staticmethod
+    def _now() -> int:
+        return int(time.time() * 1000)
+
+    @staticmethod
+    def _room_code() -> str:
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(6))
+
+    @staticmethod
+    def _clean_name(value: Any, fallback: str = "Player") -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        return text[:48] or fallback
+
+    @staticmethod
+    def _clean_snapshot(value: Any) -> dict[str, Any]:
+        """Allow only the visible transcript fields guests are meant to see."""
+        if not isinstance(value, dict):
+            return {}
+        history: list[dict[str, str]] = []
+        rows = value.get("history") if isinstance(value.get("history"), list) else []
+        for item in rows[-120:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "system")
+            if role not in {"dm", "user", "system"}:
+                role = "system"
+            text = str(item.get("text") or "").strip()[:12000]
+            if text:
+                history.append({"role": role, "text": text})
+        experience_type = str(value.get("experienceType") or "world").strip().lower()
+        if experience_type not in {"world", "chat"}:
+            experience_type = "world"
+        experience_name = str(value.get("experienceName") or value.get("worldName") or "Shared Session")[:120]
+        return {
+            "experienceType": experience_type,
+            "experienceName": experience_name,
+            "worldName": experience_name,
+            "sessionName": str(value.get("sessionName") or "Shared Timeline")[:120],
+            "location": str(value.get("location") or "Unknown")[:160],
+            "turn": max(0, min(int(value.get("turn") or 0), 1_000_000_000)),
+            "history": history,
+        }
+
+    @staticmethod
+    def _clean_persona(value: Any) -> dict[str, str]:
+        """Keep only the public player identity shared with other participants."""
+        source = value if isinstance(value, dict) else {}
+        limits = {"name": 48, "pronouns": 60, "appearance": 500,
+                  "publicIdentity": 500, "reputation": 500, "color": 24}
+        return {key: re.sub(r"\s+", " ", str(source.get(key) or "")).strip()[:limit]
+                for key, limit in limits.items()}
+
+    def _lan_ip(self) -> str:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect(("8.8.8.8", 80))
+                return probe.getsockname()[0]
+        except OSError:
+            try:
+                return socket.gethostbyname(socket.gethostname())
+            except OSError:
+                return "127.0.0.1"
+
+    def ensure_server(self) -> None:
+        with self.lock:
+            if self.server and self.thread and self.thread.is_alive():
+                return
+            start = int(os.environ.get("HORDE_MULTIPLAYER_PORT", str(PORT + 1)))
+            server = None
+            for candidate in range(start, start + 20):
+                try:
+                    server = ThreadingHTTPServer(("0.0.0.0", candidate), MultiplayerHandler)
+                    self.port = candidate
+                    break
+                except OSError as error:
+                    if error.errno not in {errno.EADDRINUSE, 48, 98, 10048}:
+                        raise
+            if server is None:
+                raise RuntimeError("No free LAN multiplayer port was available.")
+            self.server = server
+            self.thread = threading.Thread(target=server.serve_forever,
+                                           name="horde-multiplayer", daemon=True)
+            self.thread.start()
+
+    def shutdown(self) -> None:
+        with self.lock:
+            server, self.server, self.thread = self.server, None, None
+            self.rooms.clear()
+            self.port = 0
+        if server:
+            threading.Thread(target=server.shutdown, daemon=True).start()
+
+    def create_room(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.ensure_server()
+        now = self._now()
+        with self.lock:
+            room_code = self._room_code()
+            while room_code in self.rooms:
+                room_code = self._room_code()
+            invite_token = secrets.token_urlsafe(24)
+            host_id = "player_" + secrets.token_hex(8)
+            host_token = secrets.token_urlsafe(24)
+            experience_type = str(body.get("experienceType") or "world").strip().lower()
+            if experience_type not in {"world", "chat"}:
+                experience_type = "world"
+            experience_name = self._clean_name(body.get("experienceName") or body.get("worldName"),
+                                               "Shared Chat" if experience_type == "chat" else "Shared World")
+            session_name = self._clean_name(body.get("sessionName"), "Shared Timeline")
+            host_name = self._clean_name(body.get("displayName"), "Host")
+            self.rooms[room_code] = {
+                "code": room_code, "inviteToken": invite_token,
+                "experienceType": experience_type, "experienceName": experience_name,
+                "worldName": experience_name, "sessionName": session_name,
+                "createdAt": now, "updatedAt": now, "revision": 1,
+                "hostPlayerId": host_id,
+                "players": {host_id: {"id": host_id, "name": host_name,
+                                        "token": host_token, "joinedAt": now,
+                                        "lastSeen": now, "isHost": True,
+                                        "persona": self._clean_persona(body.get("persona"))}},
+                "round": {"number": 1, "status": "collecting", "submissions": {},
+                           "activePlayerId": host_id},
+                "proposal": None,
+                "snapshot": self._clean_snapshot(body.get("snapshot")),
+            }
+            lan_url = f"http://{self._lan_ip()}:{self.port}/"
+            invite_url = (f"{lan_url}?multiplayer={room_code}"
+                          f"#invite={urllib.parse.quote(invite_token)}")
+            return {"ok": True, "roomCode": room_code, "inviteToken": invite_token,
+                    "inviteUrl": invite_url, "hostPlayerId": host_id,
+                    "playerToken": host_token, "serverPort": self.port}
+
+    def _room(self, body: dict[str, Any]) -> dict[str, Any]:
+        code = str(body.get("roomCode") or "").strip().upper()
+        room = self.rooms.get(code)
+        if not room or not secrets.compare_digest(str(body.get("inviteToken") or ""), room["inviteToken"]):
+            raise PermissionError("That multiplayer room or invite has expired.")
+        return room
+
+    def _player(self, room: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+        player = room["players"].get(str(body.get("playerId") or ""))
+        if not player or not secrets.compare_digest(str(body.get("playerToken") or ""), player["token"]):
+            raise PermissionError("Player authentication failed. Rejoin the room.")
+        player["lastSeen"] = self._now()
+        return player
+
+    def _active_players(self, room: dict[str, Any]) -> list[dict[str, Any]]:
+        # A short disconnect does not invalidate a round. Players remain in the
+        # order they joined until the host closes the room.
+        return sorted(room["players"].values(), key=lambda player: player["joinedAt"])
+
+    def _advance_turn(self, room: dict[str, Any]) -> None:
+        round_state = room["round"]
+        players = self._active_players(room)
+        submitted = round_state["submissions"]
+        next_player = next((player for player in players if player["id"] not in submitted), None)
+        round_state["activePlayerId"] = next_player["id"] if next_player else ""
+        round_state["status"] = "collecting" if next_player else "ready"
+
+    def join(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            if len(room["players"]) >= 12:
+                raise ValueError("This room already has the 12-player maximum.")
+            now = self._now()
+            player_id = "player_" + secrets.token_hex(8)
+            player_token = secrets.token_urlsafe(24)
+            room["players"][player_id] = {
+                "id": player_id, "name": self._clean_name(body.get("displayName")),
+                "token": player_token, "joinedAt": now, "lastSeen": now, "isHost": False,
+                "persona": self._clean_persona(body.get("persona"))
+            }
+            room["updatedAt"] = now
+            room["revision"] += 1
+            return {"ok": True, "roomCode": room["code"], "playerId": player_id,
+                    "playerToken": player_token}
+
+    def state(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            viewer = self._player(room, body)
+            players = self._active_players(room)
+            round_state = room["round"]
+            submissions = round_state["submissions"]
+            public_submissions = []
+            for player in players:
+                submitted = submissions.get(player["id"])
+                row = {"playerId": player["id"], "name": player["name"],
+                       "submitted": submitted is not None}
+                if viewer["isHost"] and submitted is not None:
+                    row["text"] = submitted["text"]
+                public_submissions.append(row)
+            proposal = room.get("proposal")
+            if proposal:
+                proposal = {"id": proposal["id"], "type": proposal["type"],
+                            "label": proposal["label"], "status": proposal["status"],
+                            "yes": sum(1 for vote in proposal["votes"].values() if vote),
+                            "no": sum(1 for vote in proposal["votes"].values() if not vote),
+                            "myVote": proposal["votes"].get(viewer["id"])}
+            return {"ok": True, "roomCode": room["code"],
+                    "experienceType": room.get("experienceType", "world"),
+                    "experienceName": room.get("experienceName", room["worldName"]),
+                    "worldName": room["worldName"],
+                    "sessionName": room["sessionName"], "revision": room["revision"],
+                    "isHost": viewer["isHost"], "hostPlayerId": room["hostPlayerId"],
+                    "permissions": (["submit", "vote", "commit", "resolve", "close"]
+                                    if viewer["isHost"] else ["submit", "vote"]),
+                    "players": [{"id": p["id"], "name": p["name"],
+                                 "persona": p.get("persona", {}), "isHost": p["isHost"],
+                                 "online": self._now() - p["lastSeen"] < 45000} for p in players],
+                    "round": {"number": round_state["number"], "status": round_state["status"],
+                              "activePlayerId": round_state["activePlayerId"],
+                              "submissions": public_submissions},
+                    "proposal": proposal, "snapshot": room.get("snapshot") or {}}
+
+    def submit(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            player = self._player(room, body)
+            round_state = room["round"]
+            if round_state["status"] != "collecting":
+                raise ValueError("This round is already ready for the host to commit.")
+            if round_state["activePlayerId"] != player["id"]:
+                raise ValueError("Wait for your turn before submitting.")
+            text = re.sub(r"\s+", " ", str(body.get("text") or "")).strip()[:2000]
+            if not text:
+                raise ValueError("Enter an action for this turn.")
+            round_state["submissions"][player["id"]] = {"text": text, "at": self._now()}
+            self._advance_turn(room)
+            room["updatedAt"] = self._now()
+            room["revision"] += 1
+            return {"ok": True, "roundStatus": round_state["status"],
+                    "activePlayerId": round_state["activePlayerId"]}
+
+    def commit(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            player = self._player(room, body)
+            if not player["isHost"]:
+                raise PermissionError("Only the host can commit the party turn.")
+            if room["round"]["status"] != "ready":
+                raise ValueError("Every player must submit before the host can commit.")
+            snapshot = body.get("snapshot")
+            if isinstance(snapshot, dict):
+                room["snapshot"] = self._clean_snapshot(snapshot)
+            room["round"] = {"number": room["round"]["number"] + 1,
+                             "status": "collecting", "submissions": {},
+                             "activePlayerId": self._active_players(room)[0]["id"]}
+            room["proposal"] = None
+            room["updatedAt"] = self._now()
+            room["revision"] += 1
+            return {"ok": True, "roundNumber": room["round"]["number"]}
+
+    def propose(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            player = self._player(room, body)
+            kind = str(body.get("type") or "").strip().lower()
+            if kind not in {"reroll", "reset"}:
+                raise ValueError("Only reroll and timeline reset votes are supported in this first release.")
+            if room.get("proposal") and room["proposal"]["status"] == "open":
+                raise ValueError("Finish the current vote first.")
+            proposal = {"id": "vote_" + secrets.token_hex(8), "type": kind,
+                        "label": str(body.get("label") or kind.title())[:120],
+                        "status": "open", "votes": {player["id"]: True}}
+            room["proposal"] = proposal
+            self._tally(room)
+            room["revision"] += 1
+            return {"ok": True, "proposalId": proposal["id"]}
+
+    def _tally(self, room: dict[str, Any]) -> None:
+        proposal = room.get("proposal")
+        if not proposal or proposal["status"] != "open":
+            return
+        total = len(self._active_players(room))
+        yes = sum(1 for vote in proposal["votes"].values() if vote)
+        no = sum(1 for vote in proposal["votes"].values() if not vote)
+        majority = total // 2 + 1
+        if yes >= majority:
+            proposal["status"] = "approved"
+        elif no >= majority or len(proposal["votes"]) >= total:
+            proposal["status"] = "rejected"
+
+    def vote(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            player = self._player(room, body)
+            proposal = room.get("proposal")
+            if not proposal or proposal["id"] != str(body.get("proposalId") or ""):
+                raise ValueError("That vote is no longer active.")
+            if proposal["status"] != "open":
+                raise ValueError("Voting has already closed.")
+            proposal["votes"][player["id"]] = body.get("approve") is True
+            self._tally(room)
+            room["revision"] += 1
+            return {"ok": True, "status": proposal["status"]}
+
+    def resolve_proposal(self, body: dict[str, Any], snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            player = self._player(room, body)
+            if not player["isHost"]:
+                raise PermissionError("Only the host can apply an approved decision.")
+            proposal = room.get("proposal")
+            if not proposal or proposal["status"] != "approved":
+                raise ValueError("The decision has not been approved.")
+            if isinstance(snapshot, dict):
+                room["snapshot"] = self._clean_snapshot(snapshot)
+            proposal["status"] = "applied"
+            room["revision"] += 1
+            return {"ok": True}
+
+    def close_room(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            player = self._player(room, body)
+            if not player["isHost"]:
+                raise PermissionError("Only the host can close the room.")
+            self.rooms.pop(room["code"], None)
+            return {"ok": True}
+
+
+multiplayer_runtime = MultiplayerRuntime()
 
 
 def load_store() -> dict[str, Any]:
@@ -1099,6 +1441,113 @@ def provider_status(provider_id: str, verify: bool = False) -> dict[str, Any]:
     return status
 
 
+class MultiplayerHandler(BaseHTTPRequestHandler):
+    """Restricted LAN surface: app assets plus authenticated room messages."""
+
+    server_version = "HordeMultiplayer/1.0"
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        print(f"[party] {self.address_string()} {fmt % args}")
+
+    def respond(self, status: int, payload: Any, content_type: str = "application/json") -> None:
+        raw = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def read_json(self) -> dict[str, Any]:
+        declared = int(self.headers.get("Content-Length", "0") or 0)
+        if declared > 2 * 1024 * 1024:
+            raise ValueError("Multiplayer request exceeds the 2 MB safety limit.")
+        raw = self.rfile.read(declared)
+        value = json.loads(raw.decode()) if raw else {}
+        if not isinstance(value, dict):
+            raise ValueError("Request body must be a JSON object.")
+        return value
+
+    def serve_app_file(self, path: str) -> bool:
+        entry = STATIC_FILES.get(path) or STATIC_FILES.get(
+            urllib.parse.quote(urllib.parse.unquote(path), safe="/"))
+        if entry:
+            filename, content_type = entry
+            target = APP_DIR / filename
+        else:
+            decoded = urllib.parse.unquote(path)
+            target, content_type = None, "application/octet-stream"
+            for url_prefix, root in STATIC_MEDIA_ROOTS:
+                if not decoded.startswith(url_prefix):
+                    continue
+                candidate = (root / decoded[len(url_prefix):].lstrip("/")).resolve()
+                try:
+                    candidate.relative_to(root.resolve())
+                except ValueError:
+                    self.respond(403, {"error": "Invalid public asset path."})
+                    return True
+                target = candidate
+                content_type = mimetypes.guess_type(candidate.name)[0] or content_type
+                break
+            if target is None:
+                return False
+        try:
+            raw = target.read_bytes()
+        except OSError:
+            self.respond(404, {"error": "Application asset not found."})
+            return True
+        self.send_response(200)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(raw)
+        return True
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            if parsed.path == "/multiplayer/health":
+                return self.respond(200, {"ok": True, "service": "Horde Studio Multiplayer",
+                                          "rooms": len(multiplayer_runtime.rooms)})
+            if parsed.path == "/multiplayer/state":
+                query = urllib.parse.parse_qs(parsed.query)
+                body = {key: values[0] for key, values in query.items() if values}
+                return self.respond(200, multiplayer_runtime.state(body))
+            if self.serve_app_file(parsed.path):
+                return
+            return self.respond(404, {"error": "Unknown multiplayer endpoint."})
+        except PermissionError as error:
+            self.respond(401, {"error": str(error)})
+        except (KeyError, ValueError) as error:
+            self.respond(400, {"error": str(error)})
+        except Exception as error:
+            self.respond(500, {"error": str(error)})
+
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        try:
+            body = self.read_json()
+            routes = {
+                "/multiplayer/join": multiplayer_runtime.join,
+                "/multiplayer/state": multiplayer_runtime.state,
+                "/multiplayer/submit": multiplayer_runtime.submit,
+                "/multiplayer/propose": multiplayer_runtime.propose,
+                "/multiplayer/vote": multiplayer_runtime.vote,
+            }
+            if parsed.path in routes:
+                return self.respond(200, routes[parsed.path](body))
+            return self.respond(404, {"error": "This LAN endpoint is not available to guests."})
+        except PermissionError as error:
+            self.respond(401, {"error": str(error)})
+        except (KeyError, ValueError) as error:
+            self.respond(400, {"error": str(error)})
+        except Exception as error:
+            self.respond(500, {"error": str(error)})
+
+
 class BridgeHandler(BaseHTTPRequestHandler):
     server_version = "HordeMCPBridge/1.0"
 
@@ -1211,7 +1660,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed.path == "/health":
                 return self.respond(200, {"ok": True, "service": "Horde Studio MCP Bridge", "version": 2,
                                           "build": BRIDGE_BUILD, "appInstance": APP_INSTANCE_ID,
-                                          "alwaysOn": always_on_runtime.status()})
+                                          "alwaysOn": always_on_runtime.status(),
+                                          "multiplayer": {"running": bool(multiplayer_runtime.server),
+                                                          "port": multiplayer_runtime.port,
+                                                          "rooms": len(multiplayer_runtime.rooms)}})
+            if parsed.path == "/multiplayer/state":
+                query = urllib.parse.parse_qs(parsed.query)
+                body = {key: values[0] for key, values in query.items() if values}
+                return self.respond(200, multiplayer_runtime.state(body))
             if parsed.path == "/always-on/status":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Always-on control is loopback-only."})
@@ -1249,12 +1705,41 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Server shutdown is loopback-only."})
                 always_on_runtime.stop()
+                multiplayer_runtime.shutdown()
                 self.respond(200, {"ok": True, "stopping": True})
                 # Finish the HTTP response before ending serve_forever so the
                 # browser can show an intentional stopped state, not a network
                 # failure. This does not delete settings, saves or model caches.
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
+            if parsed_path == "/multiplayer/rooms":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Only the host device can create a room."})
+                return self.respond(200, multiplayer_runtime.create_room(self.read_json()))
+            if parsed_path in {"/multiplayer/join", "/multiplayer/state", "/multiplayer/submit", "/multiplayer/propose",
+                               "/multiplayer/vote", "/multiplayer/commit", "/multiplayer/resolve",
+                               "/multiplayer/close"}:
+                body = self.read_json()
+                host_only = parsed_path in {"/multiplayer/commit", "/multiplayer/resolve", "/multiplayer/close"}
+                if host_only and not self.client_is_loopback():
+                    return self.respond(403, {"error": "Host control is loopback-only."})
+                if parsed_path == "/multiplayer/join":
+                    result = multiplayer_runtime.join(body)
+                elif parsed_path == "/multiplayer/state":
+                    result = multiplayer_runtime.state(body)
+                elif parsed_path == "/multiplayer/submit":
+                    result = multiplayer_runtime.submit(body)
+                elif parsed_path == "/multiplayer/propose":
+                    result = multiplayer_runtime.propose(body)
+                elif parsed_path == "/multiplayer/vote":
+                    result = multiplayer_runtime.vote(body)
+                elif parsed_path == "/multiplayer/commit":
+                    result = multiplayer_runtime.commit(body)
+                elif parsed_path == "/multiplayer/resolve":
+                    result = multiplayer_runtime.resolve_proposal(body, body.get("snapshot"))
+                else:
+                    result = multiplayer_runtime.close_room(body)
+                return self.respond(200, result)
             if parsed_path.startswith("/always-on/") and not self.client_is_loopback():
                 return self.respond(403, {"error": "Always-on control is loopback-only."})
             if parsed_path == "/always-on/sync":
@@ -1386,6 +1871,7 @@ def main() -> None:
         print("\nStopping Horde Studio…")
     finally:
         always_on_runtime.stop()
+        multiplayer_runtime.shutdown()
         server.server_close()
 
 

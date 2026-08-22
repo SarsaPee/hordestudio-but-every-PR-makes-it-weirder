@@ -25,6 +25,7 @@ jobs:
           notes_file="docs/releases/${GITHUB_REF_NAME}.md"
           portable_asset="dist/Horde-Studio-${GITHUB_REF_NAME}-portable.zip#Horde Studio portable app"
           showcase_asset="Policy Panic at Bramble and Pike.horde_world#Policy Panic at Bramble and Pike.horde_world"
+          poster_file="assets/marketing/${GITHUB_REF_NAME}/horde-studio-${GITHUB_REF_NAME}-launch-poster.png"
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             if [[ -f "$notes_file" ]]; then
@@ -47,4 +48,10 @@ jobs:
               --title "Horde Studio ${GITHUB_REF_NAME#v}" \
               --generate-notes \
               "$portable_asset"
+          fi
+
+          if [[ -f "$poster_file" ]]; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "$poster_file#Horde Studio launch poster" \
+              --clobber
           fi

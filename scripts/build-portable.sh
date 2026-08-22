@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${1:-16.1.0}"
+VERSION="${1:-16.5.0}"
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 APP_DIR="$BUILD_DIR/Horde Studio"
@@ -30,6 +30,7 @@ for file in \
   labs-guide.js \
   labs-ui.js \
   help-system.js \
+  multiplayer.js \
   policy-panic-world.js \
   favicon.svg \
   horde_mcp_bridge.py \
@@ -56,6 +57,12 @@ if [ -d "$ROOT_DIR/assets/bundled" ]; then
   mkdir -p "$APP_DIR/assets"
   cp -R "$ROOT_DIR/assets/bundled" "$APP_DIR/assets/"
 fi
+
+# Internet multiplayer is bring-your-own relay. Ship the small auditable Worker
+# source and setup guide so portable users are not dependent on this repository.
+mkdir -p "$APP_DIR/docs"
+cp "$ROOT_DIR/docs/multiplayer.md" "$APP_DIR/docs/"
+cp -R "$ROOT_DIR/multiplayer-relay" "$APP_DIR/"
 
 chmod +x "$APP_DIR/Start Horde Studio.command" "$APP_DIR/start-horde-studio.sh"
 rm -f "$OUTPUT_FILE"

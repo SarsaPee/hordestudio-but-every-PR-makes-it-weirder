@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '16.1.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-22T19:15:00+05:00';
+const HORDE_STUDIO_VERSION = '16.5.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-23T03:15:00+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -3364,6 +3364,7 @@ function formatByteSize(bytes) {
 // --- DOM References ---
 const views = {
     library: document.getElementById('library-view'),
+    multiplayer: document.getElementById('multiplayer-view'),
     pip: document.getElementById('pip-view'),
     chat: document.getElementById('chat-view'),
     studio: document.getElementById('studio-view'),
@@ -4567,6 +4568,19 @@ async function init() {
     setupWorldStudioLogic();
     setupAIBuilderLogic(); // ✨ AI Builder & Verification Layer setup
     setupWorldPlayLogic();
+    setupMultiplayerHub();
+    window.HordeMultiplayer?.setup?.({
+        bridgeRequest: mcpBridgeRequest,
+        currentContext: currentMultiplayerContext,
+        activateContext: activateMultiplayerContext,
+        currentSession: multiplayerCurrentSession,
+        snapshot: buildMultiplayerSnapshot,
+        currentPersona: currentMultiplayerPersona,
+        historyLength: multiplayerHistoryLength,
+        executeTurn: executeMultiplayerTurn,
+        reroll: rerollMultiplayerTurn,
+        resetTimeline: resetMultiplayerTimeline
+    });
     setupLibraryFilters();
     setupPresetImport();
     setupPresetEditor();
@@ -4857,6 +4871,7 @@ function switchView(viewName) {
 
     // View specific logic
     if (viewName === 'library') renderLibrary();
+    if (viewName === 'multiplayer') renderMultiplayerHub();
     if (viewName === 'pip') requestAnimationFrame(() => document.getElementById('labs-guide-input')?.focus());
     
     if (viewName === 'chat') {
@@ -16978,6 +16993,254 @@ async function resolveWorldCheckFromModal() {
     executeWorldTurn('continue');
 }
 
+let multiplayerHubType = 'chat';
+let multiplayerHubTransport = 'lan';
+
+function multiplayerSources(type = multiplayerHubType) {
+    if (type === 'world') {
+        return state.worlds.map(world => ({
+            type: 'world', id: world.id, name: world.name || 'Untitled World',
+            description: world.description || 'Persistent World', image: world.image || world.banner || ''
+        }));
+    }
+    return [
+        ...state.characters.map(character => ({
+            type: 'chat', kind: 'character', id: character.id, name: character.name || 'Untitled Character',
+            description: character.desc || 'Character chat', image: character.avatar || ''
+        })),
+        ...state.rooms.map(room => ({
+            type: 'chat', kind: 'room', id: room.id, name: room.name || 'Untitled Room',
+            description: `${(room.characterIds || []).length} member group room`, image: room.avatar || room.bg || ''
+        }))
+    ];
+}
+
+function renderMultiplayerHub() {
+    const list = document.getElementById('multiplayer-source-list');
+    if (!list) return;
+    document.querySelectorAll('[data-multiplayer-tab]').forEach(button => {
+        button.classList.toggle('active', button.dataset.multiplayerTab === multiplayerHubType);
+    });
+    const query = String(document.getElementById('multiplayer-source-search')?.value || '').trim().toLowerCase();
+    const sources = multiplayerSources().filter(source => !query
+        || source.name.toLowerCase().includes(query)
+        || source.description.toLowerCase().includes(query));
+    if (!sources.length) {
+        list.innerHTML = `<div class="multiplayer-source-empty">${query ? 'No matching experiences.' : `No ${multiplayerHubType === 'world' ? 'Worlds' : 'Chats'} yet. Create one first, then return here to host it.`}</div>`;
+        return;
+    }
+    list.innerHTML = '';
+    sources.forEach(source => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'multiplayer-source-card';
+        const imageStyle = source.image ? ` style="background-image:url('${cssUrl(source.image)}')"` : '';
+        button.innerHTML = `<span class="multiplayer-source-avatar"${imageStyle}>${source.image ? '' : escapeHTML(displayInitials(source.name))}</span><span><strong>${escapeHTML(source.name)}</strong><small>${escapeHTML(source.description)}</small></span>`;
+        button.onclick = () => window.HordeMultiplayer?.prepare?.(source, {
+            transport: multiplayerHubTransport,
+            relayUrl: document.getElementById('multiplayer-relay-url')?.value || ''
+        });
+        list.appendChild(button);
+    });
+}
+
+function setupMultiplayerHub() {
+    document.querySelectorAll('[data-multiplayer-transport]').forEach(button => {
+        button.onclick = () => {
+            multiplayerHubTransport = button.dataset.multiplayerTransport === 'online' ? 'online' : 'lan';
+            document.querySelectorAll('[data-multiplayer-transport]').forEach(item => item.classList.toggle('active', item === button));
+            document.getElementById('multiplayer-online-config')?.classList.toggle('hidden', multiplayerHubTransport !== 'online');
+            const relay = document.getElementById('multiplayer-relay-url');
+            if (relay && !relay.value) relay.value = localStorage.getItem('horde_multiplayer_relay_url') || '';
+        };
+    });
+    document.getElementById('multiplayer-relay-url')?.addEventListener('change', event => {
+        localStorage.setItem('horde_multiplayer_relay_url', String(event.target.value || '').trim());
+    });
+    document.getElementById('multiplayer-copy-setup')?.addEventListener('click', async event => {
+        const commands = 'npx wrangler login\nnpx wrangler deploy';
+        const button = event.currentTarget;
+        try {
+            await navigator.clipboard.writeText(commands);
+            button.textContent = 'Copied';
+            showToast('Cloudflare setup commands copied.', 'success');
+            setTimeout(() => { button.textContent = 'Copy commands'; }, 1600);
+        } catch (_) {
+            showToast('Could not copy automatically. Select the commands and copy them manually.', 'error');
+        }
+    });
+    document.getElementById('world-party-online-help')?.addEventListener('click', () => {
+        const overlay = document.getElementById('world-multiplayer-overlay');
+        overlay?.classList.add('hidden');
+        overlay?.setAttribute('aria-hidden', 'true');
+        multiplayerHubTransport = 'online';
+        document.querySelectorAll('[data-multiplayer-transport]').forEach(item => item.classList.toggle('active', item.dataset.multiplayerTransport === 'online'));
+        document.getElementById('multiplayer-online-config')?.classList.remove('hidden');
+        switchView('multiplayer');
+        requestAnimationFrame(() => document.querySelector('.multiplayer-online-setup')?.setAttribute('open', ''));
+    });
+    document.querySelectorAll('[data-multiplayer-tab]').forEach(button => {
+        button.onclick = () => {
+            multiplayerHubType = button.dataset.multiplayerTab === 'world' ? 'world' : 'chat';
+            const search = document.getElementById('multiplayer-source-search');
+            if (search) search.value = '';
+            renderMultiplayerHub();
+        };
+    });
+    document.getElementById('multiplayer-source-search')?.addEventListener('input', renderMultiplayerHub);
+    document.querySelectorAll('.open-multiplayer-hub').forEach(button => {
+        button.onclick = () => {
+            multiplayerHubType = button.dataset.multiplayerType === 'world' ? 'world' : 'chat';
+            switchView('multiplayer');
+        };
+    });
+    document.getElementById('multiplayer-hub-join')?.addEventListener('click', () => {
+        window.HordeMultiplayer?.joinInvite?.(
+            document.getElementById('multiplayer-hub-invite')?.value,
+            document.getElementById('multiplayer-hub-name')?.value || 'Player'
+        );
+    });
+}
+
+function currentMultiplayerPersona() {
+    const inWorld = !document.getElementById('world-play-view')?.classList.contains('hidden');
+    const sessionPersonaId = inWorld ? getCurrentWorldSession()?.personaId : '';
+    const persona = state.personas.find(item => item.id === (sessionPersonaId || state.activePersonaId)) || null;
+    if (!persona) return {};
+    const normalized = normalizePersona(persona);
+    return {
+        name: normalized.name, pronouns: normalized.pronouns,
+        appearance: normalized.appearance, publicIdentity: normalized.publicIdentity,
+        reputation: normalized.reputation, color: normalized.color
+    };
+}
+
+function currentMultiplayerContext(preferredType = '') {
+    if (preferredType === 'chat' || (!preferredType && (state.activeCharId || state.activeRoomId))) {
+        if (state.activeRoomId) {
+            const room = state.rooms.find(item => item.id === state.activeRoomId);
+            if (room) return { type: 'chat', kind: 'room', id: room.id, name: room.name || 'Shared Room' };
+        }
+        const character = state.characters.find(item => item.id === state.activeCharId);
+        if (character) return { type: 'chat', kind: 'character', id: character.id, name: character.name || 'Shared Chat' };
+    }
+    if (preferredType === 'world' || !preferredType) {
+        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        if (world) return { type: 'world', id: world.id, name: world.name || 'Shared World' };
+    }
+    return null;
+}
+
+async function activateMultiplayerContext(context) {
+    if (!context?.id) return false;
+    if (context.type === 'chat') {
+        state.activeRoomId = context.kind === 'room' ? context.id : null;
+        state.activeCharId = context.kind === 'room' ? null : context.id;
+        getCurrentSession();
+        switchView('chat');
+        return true;
+    }
+    const world = state.worlds.find(item => item.id === context.id);
+    if (!world) return false;
+    state.activeCharId = null;
+    state.activeRoomId = null;
+    state.activeWorldId = context.id;
+    if (!state.worldInstances[context.id]) state.worldInstances[context.id] = { sessions: [], activeSessionId: null };
+    getCurrentWorldSession();
+    renderWorldPlayState();
+    switchView('worldPlay');
+    return true;
+}
+
+function multiplayerCurrentSession(context) {
+    return context?.type === 'chat' ? getCurrentSession() : getCurrentWorldSession();
+}
+
+function buildChatMultiplayerSnapshot() {
+    const context = currentMultiplayerContext('chat');
+    const session = getCurrentSession();
+    if (!context || !session) return {};
+    return {
+        experienceType: 'chat', experienceName: context.name,
+        sessionName: String(session.name || 'Shared Session').slice(0, 120),
+        location: 'Chat', turn: (session.messages || []).filter(message => message.role === 'assistant').length,
+        history: (session.messages || []).slice(-120).map(message => ({
+            role: message.role === 'assistant' ? 'dm' : message.role === 'user' ? 'user' : 'system',
+            text: canonicalMsgText(message).slice(0, 12000)
+        }))
+    };
+}
+
+function buildMultiplayerSnapshot(context) {
+    return context?.type === 'chat' ? buildChatMultiplayerSnapshot() : buildWorldMultiplayerSnapshot();
+}
+
+function multiplayerHistoryLength(context) {
+    const session = multiplayerCurrentSession(context);
+    return context?.type === 'chat' ? (session?.messages?.length || 0) : (session?.history?.length || 0);
+}
+
+async function executeMultiplayerTurn(context, prompt) {
+    if (context?.type !== 'chat') return executeWorldTurn(prompt);
+    const input = document.getElementById('user-input');
+    input.value = prompt;
+    const room = context.kind === 'room' ? state.rooms.find(item => item.id === context.id) : null;
+    const speakerId = room ? (room.characterIds || []).find(id => state.characters.some(character => character.id === id)) : null;
+    return handleChat(false, speakerId);
+}
+
+async function rerollMultiplayerTurn(context) {
+    if (context?.type !== 'chat') return executeWorldTurn(true);
+    const room = context.kind === 'room' ? state.rooms.find(item => item.id === context.id) : null;
+    const lastSpeaker = [...(getCurrentSession()?.messages || [])].reverse().find(message => message.role === 'assistant')?.charId;
+    return handleChat(true, lastSpeaker || room?.characterIds?.[0] || null);
+}
+
+async function resetMultiplayerTimeline(context) {
+    if (context?.type !== 'chat') return hardResetActiveWorldTimeline();
+    const session = getCurrentSession();
+    if (!session) return false;
+    session.messages = [];
+    if (context.kind !== 'room') {
+        const character = state.characters.find(item => item.id === context.id);
+        if (character?.intro) session.messages.push(characterGreetingMessage(character));
+    }
+    await saveState();
+    renderChat();
+    showToast('Shared chat timeline reset after the party vote.', 'info');
+    return true;
+}
+
+function buildWorldMultiplayerSnapshot() {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return {};
+    const location = getLocationRef(world, sess.playerLocation);
+    return {
+        experienceType: 'world', experienceName: String(world.name || 'Shared World').slice(0, 120),
+        worldName: String(world.name || 'Shared World').slice(0, 120),
+        sessionName: String(sess.name || 'Shared Timeline').slice(0, 120),
+        location: String(location?.name || 'Unknown').slice(0, 160),
+        turn: Number(sess.turnCount || 0),
+        history: (sess.history || []).slice(-120).map(message => ({
+            role: ['dm', 'user', 'system'].includes(message.role) ? message.role : 'system',
+            text: canonicalMsgText(message).slice(0, 12000)
+        }))
+    };
+}
+
+async function hardResetActiveWorldTimeline() {
+    const sess = getCurrentWorldSession();
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    if (!sess || !world) return false;
+    resetWorldTimeline(world, sess);
+    await saveState();
+    renderWorldPlayState();
+    openSessionZero(() => executeWorldTurn('init'));
+    showToast('Timeline reset. Choose a new starting life.', 'info');
+    return true;
+}
+
 function setupWorldPlayLogic() {
     document.getElementById('world-exit-btn').onclick = () => switchView('worlds');
     document.getElementById('world-map-btn').onclick = renderWorldMap;
@@ -17110,12 +17373,18 @@ function setupWorldPlayLogic() {
             if (worldGenController) worldGenController.abort();
             return;
         }
+        if (window.HordeMultiplayer?.isActive?.()) {
+            return window.HordeMultiplayer.submit(input.value);
+        }
         executeWorldTurn();
     };
     input.onkeydown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             if (worldTurnInProgress) return; // don't queue while generating
+            if (window.HordeMultiplayer?.isActive?.()) {
+                return window.HordeMultiplayer.submit(input.value);
+            }
             executeWorldTurn();
         }
     };
@@ -17384,7 +17653,12 @@ function setupWorldPlayLogic() {
     };
 
     document.getElementById('world-summarize-btn').onclick = summarizeStory;
-    document.getElementById('world-reroll-btn').onclick = () => executeWorldTurn(true);
+    document.getElementById('world-reroll-btn').onclick = () => {
+        if (window.HordeMultiplayer?.isActive?.()) {
+            return window.HordeMultiplayer.propose('reroll', 'Reroll the last World response');
+        }
+        executeWorldTurn(true);
+    };
     
     document.getElementById('world-download-btn').onclick = () => {
         const sess = getCurrentWorldSession();
@@ -17411,16 +17685,11 @@ function setupWorldPlayLogic() {
     };
 
     document.getElementById('world-clear-btn').onclick = () => {
+        if (window.HordeMultiplayer?.isActive?.()) {
+            return window.HordeMultiplayer.propose('reset', 'Hard reset this shared timeline');
+        }
         showConfirmModal('Clear World History', 'Perform a HARD RESET on this timeline? This wipes history, ledger, inventory, quests, discoveries, character memories, stats, and your current outfit.', async () => {
-            const sess = getCurrentWorldSession();
-            const world = state.worlds.find(w => w.id === state.activeWorldId);
-            if (sess && world) {
-                resetWorldTimeline(world, sess);
-                await saveState();
-                renderWorldPlayState();
-                openSessionZero(() => executeWorldTurn('init'));
-                showToast('Timeline reset. Choose a new starting life.', 'info');
-            }
+            await hardResetActiveWorldTimeline();
         });
     };
 

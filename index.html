@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260822-v161">
+    <link rel="stylesheet" href="style.css?v=20260823-online-room-setup-v1">
 </head>
 <body>
 <div id="app">
@@ -30,6 +30,10 @@
             <button class="nav-item" data-view="worlds" id="nav-worlds-btn">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                 Worlds
+            </button>
+            <button class="nav-item multiplayer-nav-item" data-view="multiplayer" id="nav-multiplayer-btn" type="button" title="Host or join a shared Chat or World session">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M2.5 20v-1.5A5.5 5.5 0 018 13h0a5.5 5.5 0 015.5 5.5V20M13 14.2A5.5 5.5 0 0121.5 19v1"/></svg>
+                <span>Multiplayer</span><span class="multiplayer-nav-badge">BETA</span>
             </button>
             <button class="nav-item pip-nav-item" data-view="pip" id="pip-sidebar-btn" type="button" title="Open Pip, Horde Studio's private local guide">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 001.7 3h10.6a2 2 0 001.7-3l-5-9V3"/><path d="M7.5 16h9"/></svg>
@@ -75,6 +79,7 @@
                     <p class="page-subtitle">Start a conversation, return to an existing cast, or build a shared room.</p>
                 </div>
                 <div class="header-actions landing-actions">
+                    <button class="btn btn-ghost open-multiplayer-hub" type="button" data-multiplayer-type="chat">◎ Play Together</button>
                     <button id="import-nexus-btn" class="btn btn-ghost" title="Import a .horde, .nexus or SillyTavern .png file">Import Archive</button>
                     <button id="create-new-char-btn" class="btn btn-primary">+ New Character</button>
                     <button id="create-new-room-btn" class="btn btn-primary hidden">+ New Room</button>
@@ -125,6 +130,7 @@
                     <p class="page-subtitle">Enter a living setting or build an expansive, persistent RPG engine.</p>
                 </div>
                 <div class="header-actions landing-actions">
+                    <button class="btn btn-ghost open-multiplayer-hub" type="button" data-multiplayer-type="world">◎ Play Together</button>
                     <button id="import-world-btn" class="btn btn-ghost">Import World</button>
                     <button id="create-new-world-btn" class="btn btn-primary">+ Create New World</button>
                 </div>
@@ -146,6 +152,63 @@
             </div>
         </section>
 
+        <!-- ────────── MULTIPLAYER HUB ────────── -->
+        <section id="multiplayer-view" class="view hidden multiplayer-view">
+            <div class="multiplayer-shell">
+                <header class="multiplayer-hero">
+                    <div>
+                        <span class="vh-eyebrow">Host-authoritative shared play</span>
+                        <h1 class="page-title">Multiplayer</h1>
+                        <p class="page-subtitle">Play a Chat or World together. Every player keeps a distinct name and persona, takes one turn, then the host commits the round with one model call.</p>
+                    </div>
+                    <div class="multiplayer-transport-summary"><span class="is-ready">LAN ready</span><span class="is-ready">Internet rooms ready</span></div>
+                </header>
+                <div class="multiplayer-transport-tabs" role="tablist" aria-label="Connection type">
+                    <button id="multiplayer-transport-lan" class="active" type="button" data-multiplayer-transport="lan"><strong>Same Wi-Fi / LAN</strong><small>Host directly from this Horde Studio launcher</small></button>
+                    <button id="multiplayer-transport-online" type="button" data-multiplayer-transport="online"><strong>Internet room</strong><small>Connect friends anywhere with a private room code</small></button>
+                </div>
+                <div id="multiplayer-online-config" class="multiplayer-online-config hidden">
+                    <label><span>Online room server address</span><input id="multiplayer-relay-url" class="form-input" type="url" placeholder="https://horde-room-server.your-name.workers.dev"><small>Set this up once. Horde Studio remembers it in this browser.</small></label>
+                    <div><strong>What is this?</strong><span>A tiny meeting point that connects players on different networks. It carries room turns and the shared transcript, but never your AI-provider key.</span></div>
+                    <details class="multiplayer-online-setup">
+                        <summary>Get a free online room server <span>About 5 minutes</span></summary>
+                        <div class="multiplayer-setup-body">
+                            <ol>
+                                <li><strong>Create a free Cloudflare account.</strong><span>No domain or payment is required for the Workers Free plan.</span></li>
+                                <li><strong>Open Terminal in Horde Studio’s <code>multiplayer-relay</code> folder.</strong><span>The folder is included with the portable release.</span></li>
+                                <li><strong>Run the two commands below.</strong><span>Sign in when Cloudflare opens, then deploy the included room server.</span></li>
+                            </ol>
+                            <div class="multiplayer-command"><code>npx wrangler login<br>npx wrangler deploy</code><button id="multiplayer-copy-setup" class="btn btn-ghost btn-small" type="button">Copy commands</button></div>
+                            <p>Cloudflare prints a <code>https://…workers.dev</code> address. Paste it above. Then choose a Chat or World and share the generated <code>HS1…</code> invite code.</p>
+                            <div class="multiplayer-setup-actions"><a class="btn btn-ghost btn-small" href="https://dash.cloudflare.com/sign-up" target="_blank" rel="noopener noreferrer">Create free Cloudflare account ↗</a><a class="btn btn-ghost btn-small" href="https://developers.cloudflare.com/durable-objects/platform/pricing/" target="_blank" rel="noopener noreferrer">Check current free limits ↗</a></div>
+                            <p class="multiplayer-privacy-note"><strong>Privacy:</strong> the server owner can technically inspect relayed gameplay text. Do not share private information in a room you do not trust.</p>
+                        </div>
+                    </details>
+                </div>
+                <div class="multiplayer-hub-grid">
+                    <section class="multiplayer-host-panel">
+                        <div class="multiplayer-section-heading"><div><span>HOST</span><h2>Choose what to play</h2></div><p>The selected local timeline remains authoritative.</p></div>
+                        <div class="multiplayer-type-tabs" role="tablist" aria-label="Experience type">
+                            <button id="multiplayer-chat-tab" class="active" type="button" data-multiplayer-tab="chat">Chat Library</button>
+                            <button id="multiplayer-world-tab" type="button" data-multiplayer-tab="world">Worlds</button>
+                        </div>
+                        <label class="multiplayer-search"><span class="sr-only">Search experiences</span><input id="multiplayer-source-search" class="form-input" type="search" placeholder="Search characters, rooms or worlds…"></label>
+                        <div id="multiplayer-source-list" class="multiplayer-source-list" aria-live="polite"></div>
+                    </section>
+                    <aside class="multiplayer-join-panel">
+                        <div class="multiplayer-section-heading"><div><span>JOIN</span><h2>Enter a room</h2></div></div>
+                        <p>Paste the host’s LAN link or Internet invite code. You never need their provider key.</p>
+                        <label><span>Your display name</span><input id="multiplayer-hub-name" class="form-input" maxlength="48" placeholder="Player name"></label>
+                        <label><span>Invite link or code</span><input id="multiplayer-hub-invite" class="form-input" placeholder="LAN link or HS1.… internet code"></label>
+                        <button id="multiplayer-hub-join" class="btn btn-primary" type="button">Join room</button>
+                        <div class="multiplayer-transport-card"><strong>Same Wi-Fi / LAN</strong><span>Works now through the Horde Studio launcher. Closing the host ends the room.</span></div>
+                        <div class="multiplayer-transport-card"><strong>Online over the internet</strong><span>The host sets up a free room server once, then shares a simple <code>HS1…</code> invite code with everyone else.</span></div>
+                    </aside>
+                </div>
+                <div class="multiplayer-shared-state-note"><strong>Shared-party Worlds</strong><span>Players remain distinct, but this release uses one shared scene, clock and HUD. It does not yet simulate separate player locations or private inventories.</span></div>
+            </div>
+        </section>
+
         <!-- ────────── PIP LOCAL GUIDE ────────── -->
         <section id="pip-view" class="view hidden pip-view">
             <div class="pip-shell">
@@ -153,49 +216,32 @@
                     <div class="pip-identity">
                         <div class="pip-avatar" aria-hidden="true">🧠</div>
                         <div>
-                            <span class="vh-eyebrow">Horde Studio command center</span>
+                            <span class="vh-eyebrow">LOCAL SUPPORT</span>
                             <h1 class="page-title">Pip</h1>
-                            <p class="page-subtitle">Search the handbook, diagnose your setup and jump directly to the control you need.</p>
+                            <p class="page-subtitle">Ask about Horde Studio, paste an error, or find a setting.</p>
                         </div>
                     </div>
                     <div class="pip-header-actions">
                         <span id="pip-runtime-state" class="labs-tier-badge pip-runtime-state">BUILT-IN ONLY</span>
-                        <button id="pip-clear-chat-btn" class="btn btn-ghost" type="button">Clear chat</button>
-                        <button id="pip-configure-btn" class="btn btn-ghost" type="button">Configure TinyBrain 2</button>
+                        <button id="pip-clear-chat-btn" class="btn btn-ghost" type="button">Clear</button>
+                        <button id="pip-configure-btn" class="btn btn-ghost" type="button">TinyBrain settings</button>
                     </div>
                 </header>
-
-                <div class="pip-workspace">
-                    <aside class="pip-tools" aria-label="Pip tools">
-                        <div class="pip-tool-heading"><span>DEVICE STATUS</span><strong>Private</strong></div>
-                        <button class="pip-status-card" type="button" data-pip-action="labs">
-                            <span>Local cognition</span><strong id="pip-labs-summary">Not configured</strong><small>Inspect TinyBrain 2 and policies</small>
-                        </button>
-                        <button class="pip-status-card" type="button" data-pip-action="settings">
-                            <span>Providers</span><strong>Connections &amp; models</strong><small>Open provider configuration</small>
-                        </button>
-                        <div class="pip-tool-heading pip-tool-heading-spaced"><span>QUICK HELP</span></div>
-                        <button type="button" class="pip-topic" data-guide-question="Diagnose my TinyBrain and Labs setup">Run Labs diagnosis</button>
-                        <button type="button" class="pip-topic" data-guide-question="How do I test and troubleshoot a provider connection?">Provider diagnosis</button>
-                        <button type="button" class="pip-topic" data-guide-question="How do World movement and travel time work?">World movement</button>
-                        <button type="button" class="pip-topic" data-guide-question="How do Virtual Humans remember me and know time?">Virtual Human memory</button>
-                    </aside>
-                    <div class="pip-chat-card">
-                        <div class="pip-search-label">ASK OR SEARCH HORDE STUDIO</div>
-                        <div class="labs-guide-composer pip-composer pip-search-composer">
-                            <textarea id="labs-guide-input" class="form-textarea" rows="2" maxlength="1200" placeholder="Describe a problem, feature, or setting…" aria-label="Ask Pip about Horde Studio"></textarea>
-                            <button id="labs-guide-send-btn" class="btn btn-primary" type="button">Ask Pip</button>
-                        </div>
-                        <div class="labs-guide-prompts pip-prompts" aria-label="Suggested questions">
-                            <button type="button" data-guide-question="What can you do, Pip?">What can you do?</button>
-                            <button type="button" data-guide-question="What is the difference between Shadow, Assist and Audit?">Labs modes</button>
-                            <button type="button" data-guide-question="Can I use OpenRouter for text and GPTProto for images?">Provider setup</button>
-                        </div>
-                        <div id="labs-guide-messages" class="labs-guide-messages pip-messages" aria-live="polite"></div>
-                        <div id="pip-response-actions" class="pip-response-actions hidden" aria-live="polite"></div>
-                        <p id="labs-guide-status" class="form-hint">Product answers come from Pip’s versioned local handbook. TinyBrain 2 routes requests and diagnostics without writing canonical state.</p>
+                <main class="pip-conversation" aria-label="Conversation with Pip">
+                    <div id="labs-guide-messages" class="labs-guide-messages pip-messages" aria-live="polite"></div>
+                    <div id="pip-response-actions" class="pip-response-actions hidden" aria-live="polite"></div>
+                    <div class="labs-guide-prompts pip-prompts" aria-label="Suggested questions">
+                        <button type="button" data-guide-question="Diagnose my TinyBrain and Labs setup">Diagnose TinyBrain</button>
+                        <button type="button" data-guide-question="How do I test and troubleshoot a provider connection?">Fix a provider</button>
+                        <button type="button" data-guide-question="How do World movement and travel time work?">World movement</button>
+                        <button type="button" data-guide-question="How do Virtual Humans remember me and know time?">Virtual Human memory</button>
                     </div>
-                </div>
+                    <div class="labs-guide-composer pip-composer">
+                        <textarea id="labs-guide-input" class="form-textarea" rows="2" maxlength="1200" placeholder="Ask about Horde Studio or paste an error…" aria-label="Ask Pip about Horde Studio"></textarea>
+                        <button id="labs-guide-send-btn" class="btn btn-primary" type="button">Send</button>
+                    </div>
+                    <p id="labs-guide-status" class="form-hint pip-status-line">Pip answers product questions from the local handbook. TinyBrain 2 may route the question, but cannot alter a save.</p>
+                </main>
             </div>
         </section>
 
@@ -229,6 +275,7 @@
                         <button class="tool-btn" id="download-chat-btn" title="Download Transcript">💾 Save</button>
                         <button class="tool-btn tool-btn-danger" id="clear-history-btn" title="Clear conversation">🗑️ Clear</button>
                         <button class="tool-btn" id="open-in-studio-btn" title="Open character in Studio">⚙️ Studio</button>
+                        <button class="tool-btn chat-multiplayer-btn" id="chat-multiplayer-btn" title="Host this chat or join a multiplayer room">◎ Multiplayer</button>
                     </div>
                 </header>
                 <div id="vector-fallback-banner" class="fallback-banner hidden">
@@ -303,6 +350,7 @@
                                 </div>
                                 
                                 <button class="tool-btn" id="world-studio-btn" title="Open World in Studio">⚙️ Studio</button>
+                                <button class="tool-btn world-party-btn" id="world-multiplayer-btn" title="Host or join a turn-based shared World session">🌐 Multiplayer</button>
                                 <button class="tool-btn world-hud-toggle" id="world-hud-toggle" title="Show or hide world status">◫ HUD</button>
                                 <button class="tool-btn tool-btn-danger" id="world-exit-btn" title="Exit World">✕ Exit</button>
                             </div>
@@ -4583,6 +4631,59 @@
     </div>
 </div>
 
+<!-- Opt-in multiplayer. The host is authoritative and keeps all API keys. -->
+<div id="world-multiplayer-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal world-party-modal" role="dialog" aria-modal="true" aria-labelledby="world-party-title">
+        <header class="world-party-head">
+            <div><span class="vh-eyebrow">SHARED SESSION</span><h2 id="world-party-title">Play Together</h2><p id="world-party-subtitle">One host, one API call, one shared turn at a time.</p></div>
+            <button id="world-party-close-btn" class="labs-close-btn" type="button" aria-label="Close multiplayer setup">✕</button>
+        </header>
+        <div class="world-party-body">
+            <section id="world-party-start" class="world-party-start">
+                <div class="world-party-transport" role="group" aria-label="Room connection type">
+                    <button id="world-party-transport-lan" class="active" type="button" data-party-transport="lan">LAN</button>
+                    <button id="world-party-transport-online" type="button" data-party-transport="online">Internet</button>
+                    <label id="world-party-relay-wrap" class="hidden"><span>Online room server</span><input id="world-party-relay-url" class="form-input" type="url" placeholder="https://horde-room-server.your-name.workers.dev"><button id="world-party-online-help" class="inline-help-link" type="button">How to set one up free</button></label>
+                </div>
+                <article class="world-party-choice world-party-host-choice">
+                    <span class="world-party-choice-icon">♛</span><div><h3 id="world-party-host-heading">Host this timeline</h3><p>Your browser owns the save and makes the only model call after everyone submits.</p></div>
+                    <label><span>Your display name</span><input id="world-party-host-name" class="form-input" maxlength="48" value="Host"></label>
+                    <div id="world-party-host-persona" class="world-party-persona-summary"></div>
+                    <button id="world-party-host-btn" class="btn btn-primary" type="button">Create LAN room</button>
+                </article>
+                <article class="world-party-choice">
+                    <span class="world-party-choice-icon">↳</span><div><h3>Join a room</h3><p>Open the host’s invite link. Your action goes to the host—not to their API provider.</p></div>
+                    <label><span>Your display name</span><input id="world-party-join-name" class="form-input" maxlength="48" placeholder="Player name"></label>
+                    <label><span>LAN room code or Internet invite</span><input id="world-party-room-code" class="form-input" placeholder="ABC123 or HS1.…" autocapitalize="characters"></label>
+                    <button id="world-party-join-btn" class="btn btn-ghost" type="button">Join room</button>
+                </article>
+                <div class="world-party-boundary"><strong>Host-authoritative</strong><span>Every participant has a separate identity and turn. The host owns the save and provider key; the online room server only coordinates the shared room.</span></div>
+            </section>
+
+            <section id="world-party-room" class="world-party-room hidden">
+                <div class="world-party-roombar">
+                    <div><span id="world-party-role" class="world-party-role">HOST</span><strong id="world-party-room-title">Shared World</strong><small id="world-party-round-label">Round 1</small></div>
+                    <div id="world-party-host-actions" class="world-party-room-actions hidden"><button id="world-party-copy-btn" class="btn btn-ghost btn-small" type="button">Copy invite</button><button id="world-party-end-btn" class="btn btn-ghost btn-small" type="button">End room</button></div>
+                </div>
+                <div id="world-party-invite" class="world-party-invite hidden"><span>Invite link</span><code id="world-party-invite-url"></code></div>
+                <div class="world-party-grid">
+                    <aside><div class="pip-tool-heading"><span>TURN ORDER</span><strong id="world-party-player-count">0 players</strong></div><div id="world-party-players" class="world-party-players"></div></aside>
+                    <main>
+                        <div id="world-party-feed" class="world-party-feed"><div class="world-party-empty">The host’s shared transcript will appear here.</div></div>
+                        <div id="world-party-vote" class="world-party-vote hidden"></div>
+                        <div class="world-party-action-box">
+                            <label for="world-party-action">Your action this round</label>
+                            <textarea id="world-party-action" class="form-textarea" rows="3" maxlength="2000" placeholder="Wait for your turn, then describe one action…"></textarea>
+                            <div><span id="world-party-action-status">Waiting for room state…</span><button id="world-party-submit-btn" class="btn btn-primary" type="button">Submit turn</button></div>
+                        </div>
+                        <button id="world-party-commit-btn" class="btn btn-primary world-party-commit hidden" type="button">Commit party turn · run one API call</button>
+                    </main>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
 <!-- World Directory inspector. Locations and people stay compact in their
      directories; the complete record opens here without losing any fields. -->
 <div id="world-record-overlay" class="modal-overlay hidden" aria-hidden="true">
@@ -4702,8 +4803,9 @@
 <script src="labs-core.js?v=20260822-v161"></script>
 <script src="labs-tasks.js?v=20260822-v161"></script>
 <script src="labs-guide.js?v=20260822-v161"></script>
-<script src="help-system.js?v=20260822-v161"></script>
+<script src="help-system.js?v=20260823-pip-v3"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
-    <script src="app.js?v=20260822-v161"></script>
+<script src="multiplayer.js?v=20260823-online-room-setup-v1"></script>
+    <script src="app.js?v=20260823-online-room-setup-v1"></script>
 </body>
 </html>
