@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out tagged release
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build portable application
         run: ./scripts/build-portable.sh "${GITHUB_REF_NAME#v}"
@@ -23,15 +23,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes_file="docs/releases/${GITHUB_REF_NAME}.md"
-          if [[ -f "$notes_file" ]]; then
+          portable_asset="dist/Horde-Studio-${GITHUB_REF_NAME}-portable.zip#Horde Studio portable app"
+          showcase_asset="Policy Panic at Bramble and Pike.horde_world#Policy Panic at Bramble and Pike.horde_world"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [[ -f "$notes_file" ]]; then
+              gh release edit "$GITHUB_REF_NAME" \
+                --title "Horde Studio ${GITHUB_REF_NAME#v}" \
+                --notes-file "$notes_file"
+            fi
+            gh release upload "$GITHUB_REF_NAME" \
+              "$portable_asset" \
+              "$showcase_asset" \
+              --clobber
+          elif [[ -f "$notes_file" ]]; then
             gh release create "$GITHUB_REF_NAME" \
-              --title "Horde Studio ${GITHUB_REF_NAME}" \
+              --title "Horde Studio ${GITHUB_REF_NAME#v}" \
               --notes-file "$notes_file" \
-              "dist/Horde-Studio-${GITHUB_REF_NAME}-portable.zip#Horde Studio portable app" \
-              "Policy Panic at Bramble and Pike.horde_world#Policy Panic at Bramble and Pike.horde_world"
+              "$portable_asset" \
+              "$showcase_asset"
           else
             gh release create "$GITHUB_REF_NAME" \
-              --title "Horde Studio ${GITHUB_REF_NAME}" \
+              --title "Horde Studio ${GITHUB_REF_NAME#v}" \
               --generate-notes \
-              "dist/Horde-Studio-${GITHUB_REF_NAME}-portable.zip#Horde Studio portable app"
+              "$portable_asset"
           fi
