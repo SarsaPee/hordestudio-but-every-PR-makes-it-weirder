@@ -479,10 +479,12 @@
             <div class="studio-wrap">
                 <div class="studio-nav">
                     <div class="studio-tabs">
-                        <button class="world-studio-tab active" data-tab="w-basics">Basics</button>
+                        <button class="world-studio-tab active" data-tab="w-overview">Overview</button>
+                        <button class="world-studio-tab" data-tab="w-basics">Basics</button>
                         <button class="world-studio-tab" data-tab="w-visuals">Visuals</button>
                         <button class="world-studio-tab" data-tab="w-locations">Locations</button>
-                        <button class="world-studio-tab" data-tab="w-entities">Entities</button>
+                        <button class="world-studio-tab" data-tab="w-entities">People</button>
+                        <button class="world-studio-tab" data-tab="w-items">Items</button>
                         <button class="world-studio-tab" data-tab="w-factions">Factions</button>
                         <button class="world-studio-tab" data-tab="w-sandbox">Sandbox</button>
                         <button class="world-studio-tab" data-tab="w-lore">Global Lore</button>
@@ -504,8 +506,23 @@
                 </div>
 
                 <div class="studio-content-wrap">
+                    <div id="tab-w-overview" class="studio-panel">
+                        <div class="panel-header"><h2>Build your world</h2><p>Start with the essentials. Open advanced systems only when the world needs them.</p></div>
+                        <div class="form-body creator-overview-grid">
+                            <button type="button" class="creator-overview-card primary" data-world-studio-target="w-basics"><span>01</span><strong>Identity &amp; opening</strong><small>Name the world, define its narrator and write the opening scene.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-locations"><span>02</span><strong>Places</strong><small>Create locations, exits, homes and the physical shape of play.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-entities"><span>03</span><strong>People &amp; cast</strong><small>Add persistent characters with identities, knowledge, relationships and schedules.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-sandbox"><span>04</span><strong>Starting lives</strong><small>Define who players can begin as, including world-specific skills and perks.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-ai"><span>05</span><strong>Rules &amp; models</strong><small>Choose narrative-only play or optional RPG rules, checks and model behavior.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-visuals"><span>06</span><strong>Presentation</strong><small>Add optional banners, room art, portraits and visual styling.</small></button>
+                            <details class="creator-advanced-card">
+                                <summary>Advanced world systems</summary>
+                                <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
+                            </details>
+                        </div>
+                    </div>
                     <!-- World Basics -->
-                    <div id="tab-w-basics" class="studio-panel">
+                    <div id="tab-w-basics" class="studio-panel hidden">
                         <div class="panel-header">
                             <div class="world-basics-header-row">
                                 <div>
@@ -662,34 +679,43 @@
                     <!-- Locations -->
                     <div id="tab-w-locations" class="studio-panel hidden">
                         <div class="panel-header">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <h2>Locations & Map</h2>
-                                <button id="add-location-btn" class="btn btn-primary">+ New Location</button>
-                            </div>
-                            <p>Build the rooms and paths that make up your world.</p>
+                            <h2>Locations & Map</h2>
+                            <p>Browse regions and compact location cards. Open a place only when you need its full map, simulation or visual record.</p>
                         </div>
                         <div class="form-body" id="w-locations-list" style="display:flex; flex-direction:column; gap:16px;">
                             <!-- Locations rendered here -->
                         </div>
-                        <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
-                            <button id="add-location-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Location</button>
-                        </div>
                     </div>
 
-                    <!-- Entities -->
+                    <!-- People -->
                     <div id="tab-w-entities" class="studio-panel hidden">
                         <div class="panel-header">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <h2>Entities (NPCs & Items)</h2>
-                                <button id="add-entity-btn" class="btn btn-primary">+ New Entity</button>
+                                <h2>People</h2>
+                                <button id="add-entity-btn" class="btn btn-primary">+ New Person</button>
                             </div>
-                            <p>Define the inhabitants and objects of your world.</p>
+                            <p>Search the cast, browse by household or organization, and open one human record at a time.</p>
                         </div>
                         <div class="form-body" id="w-entities-list" style="display:flex; flex-direction:column; gap:16px;">
                             <!-- Entities rendered here -->
                         </div>
                         <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
-                            <button id="add-entity-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Entity</button>
+                            <button id="add-entity-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Person</button>
+                        </div>
+                    </div>
+
+                    <!-- Items -->
+                    <div id="tab-w-items" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <h2>Items &amp; Objects</h2>
+                                <button id="add-item-btn" class="btn btn-primary">+ New Item</button>
+                            </div>
+                            <p>Keep possessions, evidence, equipment and notable objects separate from the cast. Items still use stable canon links.</p>
+                        </div>
+                        <div class="form-body" id="w-items-list" style="display:flex; flex-direction:column; gap:16px;"></div>
+                        <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
+                            <button id="add-item-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Item</button>
                         </div>
                     </div>
 
@@ -1120,7 +1146,41 @@
                                     <div><label class="form-label">Base die</label><select id="w-dice-sides" class="form-select"><option value="20">d20</option><option value="12">d12</option><option value="10">d10</option><option value="6">d6</option></select></div>
                                     <div><label class="form-label">Stat modifier</label><select id="w-dice-modifier-mode" class="form-select"><option value="per_stat">Per-stat mechanics (recommended)</option><option value="direct">Legacy direct value · clamped ±10</option><option value="ability">Legacy ability formula</option><option value="none">No stat modifier</option></select></div>
                                     <div><label class="form-label">Default difficulty</label><input id="w-dice-default-difficulty" type="number" class="form-input" min="2" max="30" value="11"></div>
+                                    <div><label class="form-label">Roll visibility</label><select id="w-dice-visibility" class="form-select"><option value="visible">Visible to player</option><option value="hidden">Hidden GM roll</option><option value="player_triggered">Player-triggered</option></select></div>
                                     <label class="vh-test-check"><input id="w-dice-criticals" type="checkbox" checked> Natural minimum/maximum are critical</label>
+                                </div>
+                            </div>
+
+                            <div class="form-section" id="w-player-capabilities-section">
+                                <div class="world-kernel-card-head">
+                                    <div>
+                                        <span class="vh-eyebrow">RULES &amp; PLAYER</span>
+                                        <h3>World-specific capabilities</h3>
+                                    </div>
+                                    <label class="vh-test-check"><input id="w-capabilities-customizable" type="checkbox" checked> Players may customize</label>
+                                </div>
+                                <p class="form-hint">These belong to this World, never to the reusable Persona. Use one entry per line: <strong>Name | description | point cost | roll modifier</strong>. The modifier is optional (+2 skills, +1 perks, −1 flaws by default).</p>
+                                <div class="world-capability-grid">
+                                    <div><label class="form-label">Skills</label><textarea id="w-capability-skills" class="form-textarea" rows="5" placeholder="Persuasion | Convince or negotiate | 1 | 2"></textarea></div>
+                                    <div><label class="form-label">Perks</label><textarea id="w-capability-perks" class="form-textarea" rows="5" placeholder="Noble birth | Access to court | 2 | 1"></textarea></div>
+                                    <div><label class="form-label">Flaws</label><textarea id="w-capability-flaws" class="form-textarea" rows="5" placeholder="Wanted | Law enforcement recognizes you | 1 | -1"></textarea></div>
+                                </div>
+                                <div class="world-kernel-config-grid" style="margin-top:12px;">
+                                    <div><label class="form-label">Starting point budget</label><input id="w-capability-budget" type="number" class="form-input" min="0" max="100" value="4"></div>
+                                    <label class="vh-test-check"><input id="w-progression-enabled" type="checkbox"> Enable capability progression</label>
+                                    <div><label class="form-label">Progression notes</label><input id="w-progression-method" class="form-input" maxlength="240" placeholder="Milestones, training, XP…"></div>
+                                </div>
+                            </div>
+                            <div class="form-section" id="w-consequence-policy-section">
+                                <div class="world-kernel-card-head">
+                                    <div><span class="vh-eyebrow">SIMULATION &amp; CONSEQUENCES</span><h3>Persistent outcomes</h3></div>
+                                    <label class="vh-test-check"><input id="w-consequences-enabled" type="checkbox" checked> Track consequences</label>
+                                </div>
+                                <p class="form-hint">Injuries, social fallout, legal trouble, losses and discoveries become explicit timeline records. They must escalate, decay or resolve causally instead of vanishing between messages.</p>
+                                <div class="world-kernel-config-grid">
+                                    <div><label class="form-label">Maximum active records</label><input id="w-consequences-max" type="number" class="form-input" min="10" max="300" value="120"></div>
+                                    <div><label class="form-label">Default escalation</label><input id="w-consequences-escalation" type="number" class="form-input" min="0" max="1000" value="4"><div class="form-hint">Turns before a severe unresolved outcome worsens. 0 disables.</div></div>
+                                    <div><label class="form-label">Default decay</label><input id="w-consequences-decay" type="number" class="form-input" min="0" max="1000" value="8"><div class="form-hint">Turns before a minor unresolved outcome begins fading. 0 disables.</div></div>
                                 </div>
                             </div>
                         </div>
@@ -1286,7 +1346,8 @@
                 <!-- Studio Left Nav -->
                 <div class="studio-nav">
                     <div class="studio-tabs">
-                        <button class="studio-tab active" data-tab="basics">Basics</button>
+                        <button class="studio-tab active" data-tab="overview">Overview</button>
+                        <button class="studio-tab" data-tab="basics">Basics</button>
                         <button class="studio-tab" data-tab="ai">AI Config</button>
                         <button class="studio-tab" data-tab="lore">Lore Book</button>
                         <button class="studio-tab" data-tab="memory">Memory</button>
@@ -1306,8 +1367,19 @@
                 <!-- Studio Content -->
                 <div class="studio-content-wrap">
 
+                    <div id="tab-overview" class="studio-panel">
+                        <div class="panel-header"><h2>Build your character</h2><p>A focused path from identity to a ready conversation. Everything else is optional.</p></div>
+                        <div class="form-body creator-overview-grid">
+                            <button type="button" class="creator-overview-card primary" data-chat-studio-target="basics"><span>01</span><strong>Identity &amp; first message</strong><small>Set the character, prompt, appearance and opening.</small></button>
+                            <button type="button" class="creator-overview-card" data-chat-studio-target="ai"><span>02</span><strong>Conversation model</strong><small>Choose the provider, model, reasoning and generation controls.</small></button>
+                            <button type="button" class="creator-overview-card" data-chat-studio-target="lore"><span>03</span><strong>Knowledge</strong><small>Add selectively recalled lore instead of one giant prompt.</small></button>
+                            <button type="button" class="creator-overview-card" data-chat-studio-target="memory"><span>04</span><strong>Memory</strong><small>Configure what the character retains between messages.</small></button>
+                            <details class="creator-advanced-card"><summary>Optional systems</summary><div><button type="button" data-chat-studio-target="hud">HUD &amp; Meters</button><button type="button" data-chat-studio-target="note">Author's Note</button><button type="button" data-chat-studio-target="builder">AI Builder</button></div></details>
+                        </div>
+                    </div>
+
                     <!-- Basics -->
-                    <div id="tab-basics" class="studio-panel">
+                    <div id="tab-basics" class="studio-panel hidden">
                         <div class="panel-header">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <div>
@@ -1796,6 +1868,16 @@
                         <span><strong id="vh-available-count">0</strong> available</span>
                     </div>
                 </div>
+                <section id="included-humans-section" class="vh-included-section hidden" aria-labelledby="included-humans-title">
+                    <div class="vh-included-heading">
+                        <div>
+                            <span class="vh-eyebrow">Included with Horde Studio</span>
+                            <h2 id="included-humans-title">Built-in humans</h2>
+                        </div>
+                        <p>These originals always remain available as clean templates. Restore one at any time without touching an existing copy.</p>
+                    </div>
+                    <div id="included-humans-grid" class="vh-included-grid"></div>
+                </section>
                 <div id="companions-grid" class="vh-grid"></div>
             </div>
             <div id="vh-clips-discovery-backdrop" class="vh-clips-discovery-backdrop hidden">
@@ -1818,7 +1900,8 @@
                         <span id="cs-studio-human-label">New human</span>
                     </div>
                     <div class="studio-tabs">
-                        <button class="companion-studio-tab active" data-tab="cs-identity">Identity</button>
+                        <button class="companion-studio-tab active" data-tab="cs-overview">Overview</button>
+                        <button class="companion-studio-tab" data-tab="cs-identity">Identity</button>
                         <button class="companion-studio-tab" data-tab="cs-mind">Inner Life</button>
                         <button class="companion-studio-tab" data-tab="cs-life">Active Life</button>
                         <button class="companion-studio-tab" data-tab="cs-social">Social Media</button>
@@ -1829,15 +1912,25 @@
                     <div class="studio-nav-actions">
                         <button id="save-companion-btn" class="btn btn-success btn-full">Save Virtual Human</button>
                         <button id="open-companion-chat-btn" class="btn btn-ghost btn-full" style="color:var(--accent);">💬 Open Chat</button>
-                        <button id="export-companion-btn" class="btn btn-ghost btn-full" title="Share the authored human without conversations or lived history">Share Character</button>
+                        <button id="export-companion-btn" class="btn btn-ghost btn-full" title="Export a clean template or the complete portable human">Export Human</button>
                         <button id="close-companion-studio-btn" class="btn btn-ghost btn-full">← Virtual Human</button>
                         <button id="delete-companion-btn" class="btn btn-danger btn-full">Delete Virtual Human</button>
                     </div>
                 </div>
 
                 <div class="studio-content-wrap">
+                    <div id="tab-cs-overview" class="studio-panel">
+                        <div class="panel-header"><h2>Build a Virtual Human</h2><p>Create the person first, then opt into the deeper life, media and model systems you want.</p></div>
+                        <div class="form-body creator-overview-grid">
+                            <button type="button" class="creator-overview-card primary" data-companion-studio-target="cs-identity"><span>01</span><strong>Identity &amp; appearance</strong><small>Name them, define their voice and set consistent reference images.</small></button>
+                            <button type="button" class="creator-overview-card" data-companion-studio-target="cs-mind"><span>02</span><strong>Mind &amp; relationship</strong><small>Set temperament, boundaries, starting context and emotional architecture.</small></button>
+                            <button type="button" class="creator-overview-card" data-companion-studio-target="cs-life"><span>03</span><strong>Active life</strong><small>Build routines, commitments, friends and autonomous life events.</small></button>
+                            <button type="button" class="creator-overview-card" data-companion-studio-target="cs-models"><span>04</span><strong>Conversation brain</strong><small>Choose text models and reasoning independently from media providers.</small></button>
+                            <details class="creator-advanced-card"><summary>Optional media &amp; voice</summary><div><button type="button" data-companion-studio-target="cs-social">Social Media</button><button type="button" data-companion-studio-target="cs-video">Video &amp; Clips</button><button type="button" data-companion-studio-target="cs-voice">Photos &amp; Voice</button></div></details>
+                        </div>
+                    </div>
                     <!-- Identity -->
-                    <div id="tab-cs-identity" class="studio-panel">
+                    <div id="tab-cs-identity" class="studio-panel hidden">
                         <div class="panel-header">
                             <h2>Identity &amp; Appearance</h2>
                             <p>Who they are, how they look, and how they text.</p>
@@ -2666,7 +2759,7 @@
                                     <div>
                                         <span class="vh-model-kicker">Context</span>
                                         <h3>Memory window &amp; output budget</h3>
-                                        <p class="form-hint">Context controls how much recent conversation can be considered. Max tokens includes hidden thinking when reasoning is enabled.</p>
+                                        <p class="form-hint">Context controls how much recent conversation can be considered. Visible reply length is separate from private state receipts and hidden reasoning.</p>
                                     </div>
                                 </div>
                                 <div class="vh-context-control">
@@ -2679,9 +2772,9 @@
                                 </div>
                                 <div class="vh-parameter-grid">
                                     <label class="vh-parameter-field" data-cs-param="max_tokens">
-                                        <span>Max tokens</span>
+                                        <span>Visible reply limit</span>
                                         <input id="cs-model-max-tokens" class="form-input" type="number" min="128" max="32768" step="128" value="1000">
-                                        <small>Reply + hidden thinking budget</small>
+                                        <small>Hard ceiling for what appears in chat. Private state and reasoning receive a separate reserve.</small>
                                     </label>
                                 </div>
                             </section>
@@ -3658,11 +3751,20 @@
                         </div>
                     </div>
 
-                    <!-- Description -->
-                    <div style="display:flex; flex-direction:column; gap:6px; flex:1;">
-                        <label class="form-label" style="margin:0;">Persona Description</label>
-                        <textarea id="persona-desc" class="form-textarea" style="min-height:180px; resize:vertical; flex:1;" placeholder="Describe who you are playing as..."></textarea>
-                    </div>
+                    <details class="persona-editor-section" open>
+                        <summary>Identity visible to the world</summary>
+                        <div class="persona-identity-grid">
+                            <label><span class="form-label">Age</span><input type="text" id="persona-age" class="form-input" maxlength="40" placeholder="e.g. 27"></label>
+                            <label><span class="form-label">Pronouns</span><input type="text" id="persona-pronouns" class="form-input" maxlength="80" placeholder="e.g. they/them"></label>
+                            <label class="persona-wide"><span class="form-label">Appearance</span><textarea id="persona-appearance" class="form-textarea" rows="3" placeholder="What other people can actually see..."></textarea></label>
+                            <label class="persona-wide"><span class="form-label">Public identity</span><textarea id="persona-public-identity" class="form-textarea" rows="3" placeholder="How this person is known publicly: title, cover identity, celebrity, outsider..."></textarea></label>
+                            <label class="persona-wide"><span class="form-label">Reputation</span><textarea id="persona-reputation" class="form-textarea" rows="3" placeholder="What people have heard, including contradictions and uncertainty..."></textarea></label>
+                        </div>
+                    </details>
+                    <details class="persona-editor-section">
+                        <summary>Additional roleplay notes</summary>
+                        <textarea id="persona-desc" class="form-textarea" style="min-height:140px; resize:vertical; margin-top:12px;" placeholder="Voice, history, preferences or other details that should inform play..."></textarea>
+                    </details>
 
                 </div>
 
@@ -4292,6 +4394,23 @@
                 <p class="form-hint">This is a real starting position, not a cosmetic class: it changes your home, possessions, status, allegiances, duties and opening situation.</p>
                 <div id="sz-origin-list" class="session-origin-list"></div>
             </div>
+            <div id="sz-role-section" class="form-section hidden">
+                <div class="session-role-heading">
+                    <div><span class="vh-eyebrow">YOUR ROLE</span><h3>Make this life yours</h3></div>
+                    <span id="sz-points-status" class="mini-tag"></span>
+                </div>
+                <div class="session-zero-grid">
+                    <div class="form-col"><label class="form-label">Public identity</label><input id="sz-public-identity" class="form-input" maxlength="240" placeholder="How this world knows you"></div>
+                    <div class="form-col"><label class="form-label">Starting reputation</label><input id="sz-reputation" class="form-input" maxlength="240" placeholder="Unknown, respected, notorious…"></div>
+                </div>
+                <div id="sz-attribute-list" class="session-role-options"></div>
+                <div class="session-role-columns">
+                    <div><label class="form-label">Skills</label><div id="sz-skill-list" class="session-role-options"></div></div>
+                    <div><label class="form-label">Perks &amp; flaws</label><div id="sz-trait-list" class="session-role-options"></div></div>
+                    <div><label class="form-label">Starting equipment</label><div id="sz-equipment-list" class="session-role-options"></div></div>
+                </div>
+                <div id="sz-role-summary" class="session-role-summary"></div>
+            </div>
             <div class="session-zero-grid">
                 <div class="form-col">
                     <label class="form-label">Tone</label>
@@ -4340,8 +4459,40 @@
 </div>
 
 <!-- World Audit Modal -->
+<div id="companion-export-overlay" class="modal-bg hidden" aria-hidden="true">
+    <div class="modal modal-md vh-export-modal" role="dialog" aria-modal="true" aria-labelledby="companion-export-title">
+        <div class="modal-hd">
+            <div>
+                <span class="vh-eyebrow">Portable human archive</span>
+                <h2 id="companion-export-title">Export Virtual Human</h2>
+            </div>
+            <button id="close-companion-export-btn" class="modal-close" type="button" aria-label="Close export">✕</button>
+        </div>
+        <div class="modal-body vh-export-body">
+            <p id="companion-export-copy" class="vh-export-copy">Choose what this archive should carry. Your API keys are never exported.</p>
+            <div class="vh-export-options">
+                <button id="export-companion-template-btn" class="vh-export-option" type="button">
+                    <span class="vh-export-option-icon" aria-hidden="true">◇</span>
+                    <span><strong>Character Template</strong><small>For sharing. Includes identity, authored life, starter feed, starter gallery and starter clips. Excludes chats, learned memories and relationship history.</small></span>
+                    <em>Smaller</em>
+                </button>
+                <button id="export-companion-portable-btn" class="vh-export-option featured" type="button">
+                    <span class="vh-export-option-icon" aria-hidden="true">▣</span>
+                    <span><strong>Full Portable Human</strong><small>For moving or backing up a living person. Includes every timeline, current feed, gallery, clips, comments, memories, relationships and simulation state. Local media is embedded.</small></span>
+                    <em>Complete</em>
+                </button>
+            </div>
+            <div id="companion-export-progress" class="vh-export-progress hidden" role="status" aria-live="polite">
+                <span class="spinner"></span><span>Collecting and embedding media…</span>
+            </div>
+            <p class="form-hint">Full archives can be large when they contain video. Provider credentials and temporary object URLs are never included.</p>
+        </div>
+    </div>
+</div>
+
+<!-- World Audit Modal -->
 <div id="world-audit-overlay" class="modal-bg hidden">
-    <div class="modal modal-md">
+    <div class="modal modal-lg world-audit-modal">
         <div class="modal-hd">
             <h2>World Health Check</h2>
             <button id="close-audit-btn" class="modal-close" type="button" aria-label="Close world audit">✕</button>
@@ -4408,6 +4559,27 @@
         <div class="modal-ft" style="display: flex; justify-content: flex-end; gap: 12px;">
             <button id="cancel-world-clock-btn" class="btn btn-ghost">Cancel</button>
             <button id="save-world-clock-btn" class="btn btn-primary">Set Exact Time</button>
+        </div>
+    </div>
+</div>
+
+<!-- World Directory inspector. Locations and people stay compact in their
+     directories; the complete record opens here without losing any fields. -->
+<div id="world-record-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal world-record-modal" role="dialog" aria-modal="true" aria-labelledby="world-record-title">
+        <div class="world-record-head">
+            <div class="world-record-heading">
+                <span id="world-record-kicker">WORLD DIRECTORY</span>
+                <h2 id="world-record-title">Record</h2>
+                <p id="world-record-subtitle"></p>
+            </div>
+            <button id="world-record-close" class="world-record-close" type="button" aria-label="Close inspector">✕</button>
+        </div>
+        <div id="world-record-tabs" class="world-record-tabs" aria-label="Inspector sections"></div>
+        <div id="world-record-body" class="world-record-body"></div>
+        <div class="world-record-footer">
+            <span id="world-record-reference-status">Changes update the shared world record immediately.</span>
+            <button id="world-record-done" class="btn btn-primary" type="button">Done</button>
         </div>
     </div>
 </div>

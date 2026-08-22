@@ -97,6 +97,9 @@ const sources = [
     'findWorldTravelPath',
     'resolveWorldMovementTarget',
     'getExitTravelTime',
+    'getLocationRef',
+    'normalizeWorldTravelMode',
+    'getWorldTravelLeg',
     'getWorldPathTravelTime',
     'movePlayerAlongWorldPath',
     'extractUserMovementTarget'

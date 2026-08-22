@@ -38,8 +38,8 @@ assert(ash.basePhoto.startsWith('data:image/jpeg;base64,'));
 assert.equal(ash.allowVideoClips, true);
 assert.equal(ash.startingVideoClips.length, 2);
 assert.deepEqual(Array.from(ash.startingVideoClips, clip => clip.bundledSrc), [
-    'assets/bundled/ashlyn-social/16.mp4',
-    'assets/bundled/ashlyn-social/17.mp4'
+    'assets/bundled/ashlyn-media/16.mp4',
+    'assets/bundled/ashlyn-media/17.mp4'
 ]);
 for (const clip of ash.startingVideoClips) {
     assert(fs.existsSync(clip.bundledSrc));
@@ -71,11 +71,13 @@ assert(html.indexOf('jane-harlow-human.js') < html.indexOf('app.js?v='));
 
 const source = fs.readFileSync('app.js', 'utf8');
 const portableBuilder = fs.readFileSync('scripts/build-portable.sh', 'utf8');
-assert.match(source, /const HORDE_STUDIO_VERSION = '15\.7\.0'/);
-assert.match(portableBuilder, /VERSION="\$\{1:-15\.7\.0\}"/);
+assert.match(source, /const HORDE_STUDIO_VERSION = '16\.0\.0'/);
+assert.match(portableBuilder, /VERSION="\$\{1:-16\.0\.0\}"/);
 assert.match(portableBuilder, /cp -R "\$ROOT_DIR\/assets\/bundled"/);
 assert.match(source, /includedHumanReceipts/);
 assert.match(source, /companion\.bundledId = bundleId/);
 assert.match(source, /companion\?\.name === candidateName/);
+assert.match(source, /function renderIncludedHumansCatalog\(\)/);
+assert.match(source, /function installIncludedHuman\(bundleId\)/);
 
 console.log('PASS included Virtual Human audit');

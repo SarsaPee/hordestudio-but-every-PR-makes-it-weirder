@@ -15,6 +15,14 @@ import horde_mcp_bridge as bridge
 
 
 class McpBridgeAudit(unittest.TestCase):
+    def test_bundled_companion_media_is_public_and_present(self):
+        media_roots = dict(bridge.STATIC_MEDIA_ROOTS)
+        self.assertIn("/assets/bundled/", media_roots)
+        ashlyn = media_roots["/assets/bundled/"] / "ashlyn-media"
+        self.assertTrue((ashlyn / "01.jpg").is_file())
+        self.assertTrue((ashlyn / "16.mp4").is_file())
+        self.assertNotIn("/assets/bundled/ashlyn-social/", media_roots)
+
     def test_launcher_serves_every_labs_runtime_asset(self):
         expected = {
             "/labs-embedded.js",

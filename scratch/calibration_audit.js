@@ -17,8 +17,8 @@ const { app, functionSource, asyncFunctionSource, buildContext } = require('./ap
 const context = { console: { warn() {}, log() {} } };
 buildContext(vm, [
     'calibrateStructuralFindings', 'applyCalibrationFinding', 'buildCalibrationPrompt',
-    'calibrationFindingsFromStructure', 'calibrationFindingsFromPeople',
-    'calibrationLocationDigest', 'calibrationPeopleDigest', 'parseCalibrationPayload',
+    'calibrationFindingsFromStructure', 'calibrationFindingsFromPeople', 'calibrationFindingsFromItems',
+    'calibrationLocationDigest', 'calibrationPeopleDigest', 'calibrationItemDigest', 'parseCalibrationPayload',
     'structuredModelFor', 'rankStructuredModels', 'structuredModelPricePerMillion',
     'structuredCapabilityBand', 'salvageTruncatedPayload',
     'CALIBRATION_BATCH_SIZES', 'calibrationWorkUnits', 'calibrationBatches', 'calibrationSocietyDigest',
@@ -169,10 +169,11 @@ test('colliding location names are reported', () => {
 test('an already-healthy world is left alone', () => {
     const world = {
         id: 'w', name: 'Tidy', startLocationId: 'a', contextSize: 65536, maxTokens: 2048,
+        regions: [{ id: 'reg_home', name: 'Home', description: 'The whole test area.', tags: ['test'] }],
         dmPrompt: 'short', locations: [
-            { id: 'a', name: 'A', description: 'a', exits: ['to B'] },
-            { id: 'b', name: 'B', description: 'b', exits: ['to A'] }
-        ], entities: []
+            { id: 'a', name: 'A', description: 'a', tags: ['test'], regionId: 'reg_home', mapType: 'area', exits: [{ text: 'to B', targetLocationId: 'b', mode: 'walk', travelTime: 5 }] },
+            { id: 'b', name: 'B', description: 'b', tags: ['test'], regionId: 'reg_home', mapType: 'area', exits: [{ text: 'to A', targetLocationId: 'a', mode: 'walk', travelTime: 5 }] }
+        ], entities: [], groups: []
     };
     assert.deepEqual(context.calibrateStructuralFindings(world, null), [],
         'a well-formed world was told to change something');
@@ -396,7 +397,7 @@ const FULL = {
 
 test('the people prompt describes cast and places, and forbids invention', () => {
     const prompt = context.buildCalibrationPrompt(castWorld(), 'people');
-    assert(/\[e_mara\]/.test(prompt) && /MAJOR/.test(prompt), 'the cast is not described');
+    assert(/\[e_mara\]/.test(prompt) && /depth=core/.test(prompt), 'the cast is not described');
     assert(/\[l_tavern\]/.test(prompt), 'the places are not listed, so it cannot place anyone');
     assert(/has nothing set/.test(prompt), 'the model cannot tell what is already authored');
     assert(/not invent a different character/i.test(prompt), 'nothing stops it rewriting the cast');
@@ -437,14 +438,24 @@ test('a schedule is sorted and only applied when every block is usable', () => {
     assert.deepEqual(dirty.patch.schedule, [{ time: '07:00', locationId: 'l_mill', activity: 'ok' }]);
 });
 
-test('a persona is only offered for major characters', () => {
+test('every person can receive a persona regardless of simulation depth', () => {
     const findings = people(castWorld(), { people: [
         { id: 'e_mara', persona: 'Warm and watchful.' },
         { id: 'e_tom',  persona: 'Gruff and tired.' }
     ] });
-    assert.equal(findings.filter(f => f.type === 'set_persona').length, 1,
-        'a persona was written for a background extra');
-    assert(/Mara/.test(findings[0].title));
+    assert.equal(findings.filter(f => f.type === 'set_persona').length, 2,
+        'a background person was left as a blank mannequin');
+    assert(findings.some(f => /Mara/.test(f.title)) && findings.some(f => /Tom/.test(f.title)));
+});
+
+test('items are enriched in their own pass without human fields', () => {
+    const world = castWorld();
+    const findings = context.calibrationFindingsFromItems(world, { items: [{
+        id: 'e_relic', location: 'l_tavern', tags: ['weapon', 'relic']
+    }] });
+    assert.deepEqual(findings.map(f => f.type).sort(), ['set_entity_location', 'set_entity_tags']);
+    assert(!/persona|schedule|home/i.test(context.buildCalibrationPrompt(world, 'items').split('OUTPUT FORMAT')[1]),
+        'the item schema still treats objects like people');
 });
 
 test('authored values are never overwritten', () => {

@@ -29,7 +29,7 @@ const context = {
     companionMcpToolCatalog: { higgsfield: [], magnific: [] }
 };
 buildContext(vm, [
-    'normalizeCompanion', 'normalizeCompanionTrauma', 'normalizeCompanionMemoryEntry',
+    'normalizeCompanion', 'normalizeCompanionTrauma', 'normalizeCompanionMemoryEntry', 'normalizeCompanionSocialPost',
     'normalizeCompanionVideoJob',
     'normalizeCompanionLifeEvent', 'normalizeCompanionCommitment',
     'normalizeCompanionMessage', 'normalizeCompanionAndThread', 'normalizeCompanionSilenceState',
@@ -79,6 +79,7 @@ buildContext(vm, [
     'formatCompanionUtcOffset', 'companionLocalDateInfo',
     'buildCompanionSystemPrompt', 'buildCompanionMessages',
     'splitCompanionReplyIntoBubbles', 'sanitizeCompanionTextReply',
+    'quarantineCompanionProtocolText', 'companionVisibleReplyLimit',
     'repairCompanionProtocolLeaks', 'normalizeCompanionPhotoStyle',
     'normalizeCompanionPhotoCapturePolicy', 'companionPhotoCapturePlan',
     'applyCompanionGenerationConfig',
@@ -111,7 +112,8 @@ buildContext(vm, [
     'livingClamp', 'livingId', 'isPlainObject', 'safeJsonClone',
     'requirePlainObject', 'requireString', 'requireSafeId', 'requireArray',
     'validateCompanionData', 'validateCompanionTimelineStoreData', 'validateCompanionArchiveData',
-    'buildCompanionShareData', 'buildCompanionArchivePayload', 'companionArchiveFileName', 'restoreCompanionArchive',
+    'buildCompanionShareData', 'portableMediaSource', 'embedCompanionArchiveMedia',
+    'buildCompanionArchivePayload', 'companionArchiveFileName', 'restoreCompanionArchive',
     'COMPANION_SHORT_TERM_LIMIT', 'COMPANION_SILENCE_STAGE_ORDER',
     'extractCompanionToolCalls', 'extractCompanionEmbeddedToolCalls',
     'normalizeCompanionEmbeddedToolValue', 'safeParseJSONRepair',
@@ -827,7 +829,7 @@ test('MCP generation maps the full scene and identity reference to the advertise
     assert.equal(request.args.mode, 'standard');
 });
 
-test('a shareable Virtual Human archive keeps authorship but strips every lived timeline and runtime state', () => {
+test('a shareable Virtual Human template keeps authorship but strips every lived timeline and runtime state', async () => {
     const source = freshCompanion({
         id: 'companion_export_source',
         name: 'Bree Archive',
@@ -865,12 +867,12 @@ test('a shareable Virtual Human archive keeps authorship but strips every lived 
     context.state.companionTimelines = {
         [source.id]: { activeSessionId: session.id, sessions: [session] }
     };
-    const payload = context.buildCompanionArchivePayload(source, 4000);
+    const payload = await context.buildCompanionArchivePayload(source, 'character-template', 4000);
     const imported = context.restoreCompanionArchive(payload, 5000);
     const importedStore = context.state.companionTimelines[imported.id];
     assert.equal(payload._format, 'horde-studio-virtual-human');
-    assert.equal(payload._version, 2);
-    assert.equal(payload._kind, 'character');
+    assert.equal(payload._version, 3);
+    assert.equal(payload._kind, 'character-template');
     assert.equal(payload.timelines, undefined);
     assert(!JSON.stringify(payload).includes('look at this'));
     assert(!JSON.stringify(payload).includes('data:image/jpeg;base64,generated'));
@@ -893,6 +895,29 @@ test('a shareable Virtual Human archive keeps authorship but strips every lived 
     assert.equal(imported.currentLocationDetail, '');
     assert.equal(imported.usage.photosGenerated, 0);
     assert.equal(context.state.companions.length, 2);
+});
+
+test('a full portable Virtual Human archive preserves timelines, social state and chat photos', async () => {
+    const source = freshCompanion({ id: 'portable_source', name: 'Portable Human' });
+    source.socialPosts = [context.normalizeCompanionSocialPost({
+        id: 'post_one', kind: 'photo', text: 'still here', photo: 'data:image/jpeg;base64,cGhvdG8=', likedByPlayer: true
+    })];
+    source.memory.longTerm.push(context.normalizeCompanionMemoryEntry({ text: 'Player remembered this' }));
+    const session = context.normalizeCompanionTimeline({
+        id: 'portable_timeline', name: 'Living timeline',
+        messages: [{ role: 'companion', type: 'photo', text: 'look', photo: 'data:image/jpeg;base64,cGhvdG8=', timestamp: 2000 }],
+        runtime: context.captureCompanionRuntime(source)
+    }, source);
+    context.state.companions = [source];
+    context.state.companionTimelines = { [source.id]: { activeSessionId: session.id, sessions: [session] } };
+    context.state.companionThreads = { [source.id]: session.messages };
+    const payload = await context.buildCompanionArchivePayload(source, 'portable-human', 4000);
+    assert.equal(payload._version, 3);
+    assert.equal(payload._kind, 'portable-human');
+    assert.equal(payload.timelines.sessions.length, 1);
+    assert(JSON.stringify(payload).includes('Player remembered this'));
+    assert(JSON.stringify(payload).includes('data:image/jpeg;base64,cGhvdG8='));
+    assert.equal(payload.companion.socialPosts[0].likedByPlayer, true);
 });
 
 test('legacy version-one personal archives still restore their timeline', () => {
@@ -2331,6 +2356,20 @@ test('an unterminated embedded tool call is quarantined instead of displayed', (
     assert(!embedded.visibleText.includes('private protocol'));
 });
 
+test('python-style private turn receipts are quarantined while visible prose survives', () => {
+    const raw = `[you sent this Wed, Aug 12, 1:08 PM] commithumanturn(state=dict(valencechange=5, memorywrite="player checked in"), photo=None, lifestate=dict(energy=15)) hey man im done with my chores`;
+    const cleaned = context.quarantineCompanionProtocolText(raw);
+    assert.equal(cleaned, 'hey man im done with my chores');
+    assert(!cleaned.includes('commithumanturn'));
+    assert(!cleaned.includes('memorywrite'));
+});
+
+test('visible reply ceiling catches providers that ignore max_tokens', () => {
+    const text = `${'word '.repeat(500)}Final sentence.`;
+    const clipped = context.companionVisibleReplyLimit(text, { maxTokens: 128 });
+    assert(clipped.length <= 128 * 3.2);
+});
+
 test('already-saved protocol bubbles are collapsed back into one clean reply', () => {
     const group = 'response-1';
     const repaired = context.repairCompanionProtocolLeaks([
@@ -2636,13 +2675,15 @@ test('Autonomy Health is advisory and does not mutate the human', () => {
     assert.equal(JSON.stringify(c), before);
 });
 
-let failures = 0;
-for (const { name, fn } of tests) {
-    try { fn(); console.log(`✓ ${name}`); }
-    catch (error) { failures++; console.error(`✗ ${name}\n  ${error.message}`); }
-}
-if (failures) {
-    console.error(`\n${failures} companion check(s) failed.`);
-    process.exit(1);
-}
-console.log(`\n${tests.length} companion checks passed.`);
+(async () => {
+    let failures = 0;
+    for (const { name, fn } of tests) {
+        try { await fn(); console.log(`✓ ${name}`); }
+        catch (error) { failures++; console.error(`✗ ${name}\n  ${error.message}`); }
+    }
+    if (failures) {
+        console.error(`\n${failures} companion check(s) failed.`);
+        process.exit(1);
+    }
+    console.log(`\n${tests.length} companion checks passed.`);
+})();

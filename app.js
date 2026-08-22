@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '15.9.2';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-16T19:19:00+05:00';
+const HORDE_STUDIO_VERSION = '16.0.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-08-22T19:15:00+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -740,7 +740,11 @@ async function fetchVideoModels(providerValue, force = false) {
 
 function normalizeCompanionVideoJob(raw) {
     const job = isPlainObject(raw) ? raw : {};
-    const bundledSrc = String(job.bundledSrc || '').trim();
+    const bundledSrc = String(job.bundledSrc || '').trim()
+        // "social" in a local asset path is blocked by several privacy and
+        // ad-block lists. Keep old saves portable by migrating the original
+        // Ashlyn bundle path at normalization time.
+        .replace(/^assets\/bundled\/ashlyn-social\//i, 'assets/bundled/ashlyn-media/');
     return {
         id: String(job.id || livingId('vh_clip', `${Date.now()}|${Math.random()}`)).slice(0, 100),
         providerJobId: String(job.providerJobId || '').slice(0, 300),
@@ -757,6 +761,7 @@ function normalizeCompanionVideoJob(raw) {
         caption: String(job.caption || '').trim().slice(0, 1200),
         reason: String(job.reason || '').trim().slice(0, 1000),
         assetId: String(job.assetId || '').slice(0, 120),
+        archiveMediaId: String(job.archiveMediaId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 120),
         outputUrl: /^https?:\/\//i.test(String(job.outputUrl || '')) ? String(job.outputUrl).slice(0, 4000) : '',
         // Built-in humans may ship small, portable clips beside their other
         // normalized media. Restrict this to Horde's bundled asset tree so an
@@ -1282,23 +1287,41 @@ function validateCompanionArchiveData(value) {
     if (value._format !== 'horde-studio-virtual-human') {
         throw new Error('Not a Horde Studio Virtual Human archive');
     }
-    if (![1, 2].includes(value._version)) {
+    if (![1, 2, 3].includes(value._version)) {
         throw new Error(`Unsupported Virtual Human archive version: ${value._version ?? 'missing'}`);
     }
     const companion = validateCompanionData(value.companion, 'Archived Virtual Human');
-    // v1 was a personal archive and included lived timelines. v2 is a
-    // shareable character archive; even if a malformed v2 file contains a
-    // timelines property, it is intentionally ignored at the trust boundary.
-    const timelines = value._version === 1
+    const kind = value._version === 3 && value._kind === 'portable-human'
+        ? 'portable-human'
+        : value._version === 1 ? 'legacy-personal-archive' : 'character-template';
+    // v1 was a personal archive, v2 was a clean character, and v3 makes the
+    // distinction explicit. A character-template may never smuggle lived
+    // timelines across the import boundary.
+    const timelines = value._version === 1 || kind === 'portable-human'
         ? validateCompanionTimelineStoreData(value.timelines || {}, 'Archived Virtual Human timelines')
         : { activeSessionId: '', sessions: [] };
+    const media = { videos: [] };
+    if (value._version === 3 && value.media !== undefined) {
+        requirePlainObject(value.media, 'Archived Virtual Human media');
+        requireArray(value.media.videos, 'Archived Virtual Human videos', { optional: true, max: 500 });
+        media.videos = (value.media.videos || []).map((entry, index) => {
+            requirePlainObject(entry, `Archived video ${index + 1}`);
+            requireSafeId(entry.id, `Archived video ${index + 1} id`);
+            requireString(entry.data, `Archived video ${index + 1} data`, { max: 350_000_000 });
+            if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(entry.data)) {
+                throw new Error(`Archived video ${index + 1} is not embedded video data`);
+            }
+            return { id: entry.id, data: entry.data };
+        });
+    }
     return {
         _format: value._format,
         _version: value._version,
-        _kind: value._version === 2 ? 'character' : 'legacy-personal-archive',
+        _kind: kind,
         _exportedAt: typeof value._exportedAt === 'string' ? value._exportedAt.slice(0, 100) : '',
         companion,
-        timelines
+        timelines,
+        media
     };
 }
 
@@ -1664,11 +1687,9 @@ function repairLoadedState() {
         character.memory = (character.memory || []).map(memory => typeof memory === 'string' ? { text: memory, embedding: null } : memory);
         character.chatHud = normalizeChatHudConfig(character.chatHud);
     });
-    state.personas = Array.isArray(state.personas) ? state.personas.filter(p => isPlainObject(p) && typeof p.name === 'string' && typeof (p.text || '') === 'string') : [];
-    state.personas.forEach(persona => {
-        persona.color = /^#[0-9a-f]{6}$/i.test(String(persona.color || ''))
-            ? String(persona.color).toUpperCase() : '#4A90E2';
-    });
+    state.personas = Array.isArray(state.personas)
+        ? state.personas.filter(p => isPlainObject(p) && typeof p.name === 'string').map(normalizePersona)
+        : [];
     state.rooms = Array.isArray(state.rooms) ? state.rooms.filter(r => {
         try { validateRoomData(r); return true; } catch (err) { console.warn('Dropped invalid stored room:', err.message); return false; }
     }) : [];
@@ -1722,6 +1743,16 @@ function repairLoadedState() {
 async function loadState() {
     await HordeDB.init();
     await HordeVectorMemory.init();
+    // Shipped worlds are authored against the same schema users migrate to.
+    // Do this at startup (after the whole script has initialized) rather than
+    // baking a second, divergent compatibility format into starter content.
+    STARTER_WORLDS.forEach((world, index) => {
+        STARTER_WORLDS[index] = upgradeBundledWorldDefinition(world);
+    });
+    if (Array.isArray(globalThis.HORDE_INCLUDED_WORLDS)) {
+        globalThis.HORDE_INCLUDED_WORLDS = globalThis.HORDE_INCLUDED_WORLDS
+            .map(upgradeBundledWorldDefinition);
+    }
     let repairedCompanionIds = false;
     
     // Migration check
@@ -2267,6 +2298,28 @@ async function loadState() {
             backfilled = true;
         }
         if (backfilled) await saveState();
+    }
+
+    // Built-in worlds are part of the product, so they should never ask the
+    // user to run the legacy upgrader. Upgrade installed copies additively and
+    // atomically; authored/custom worlds remain opt-in through World Audit.
+    {
+        const bundledIds = new Set([
+            ...STARTER_WORLDS.map(world => world.id),
+            ...(globalThis.HORDE_INCLUDED_WORLDS || []).map(world => world.id)
+        ].filter(Boolean));
+        let changed = false;
+        state.worlds = state.worlds.map(world => {
+            if (!bundledIds.has(world.id) || worldSchemaVersion(world) >= WORLD_SCHEMA_VERSION) return world;
+            try {
+                changed = true;
+                return upgradeWorldSchemaData(world, { source: 'bundled-install' }).world;
+            } catch (error) {
+                console.error(`Could not upgrade installed bundled world “${world.name || world.id}”:`, error);
+                return world;
+            }
+        });
+        if (changed) await saveState();
     }
 }
 
@@ -5096,6 +5149,9 @@ function setupStudioTabs() {
             if (target) target.classList.remove('hidden');
         };
     });
+    document.querySelectorAll('[data-chat-studio-target]').forEach(button => {
+        button.onclick = () => document.querySelector(`#studio-view .studio-tab[data-tab="${button.dataset.chatStudioTarget}"]`)?.click();
+    });
 }
 
 function setupStudioLogic() {
@@ -5529,12 +5585,14 @@ function createNewCharacter() {
         chatHud: normalizeChatHudConfig({})
     };
     loadStudioData();
+    document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
 }
 
 function editCharacter(id) {
     const char = state.characters.find(c => c.id === id);
     state.editingChar = JSON.parse(JSON.stringify(char)); // Deep clone
     loadStudioData();
+    document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
 }
 
 async function autoSaveStudioChanges() {
@@ -6693,7 +6751,7 @@ function replaceMacros(text, char) {
     if (!text) return text;
     const persona = state.personas.find(p => p.id === state.activePersonaId);
     const userName = persona ? persona.name : 'User';
-    const personaDesc = persona ? (persona.text || '') : '';
+    const personaDesc = personaPromptText(persona);
     const charName = char ? char.name : '';
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -7735,7 +7793,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
 // Every field the engine understands from an update_world_state payload.
 const ENGINE_STATE_KEYS = Object.freeze([
     'location_id', 'location_introduced', 'location_state_updates', 'npc_moves', 'stat_changes',
-    'stat_change_cause', 'transactions', 'checks', 'player_condition_updates', 'inventory_add',
+    'stat_change_cause', 'capability_progress', 'transactions', 'checks', 'player_condition_updates', 'inventory_add',
     'inventory_remove', 'npc_observations', 'npc_introduced', 'npc_goal_updates',
     'npc_disposition_changes', 'npc_relationship_updates', 'npc_status_changes', 'schedule_updates',
     'world_events', 'faction_updates', 'economy_updates', 'player_preference_updates',
@@ -8262,7 +8320,16 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
             const observation = String(event.observation || event.fact || '').trim().slice(0, 400);
             if (observation) {
                 legacyArgs.npc_observations = [...(Array.isArray(legacyArgs.npc_observations) ? legacyArgs.npc_observations : []),
-                    { npc_id: actorId, observation }];
+                    {
+                        npc_id: actorId,
+                        observation,
+                        source_type: event.source_type || (base.witnessed_by.includes(actorId) ? 'witnessed' : 'told'),
+                        source_npc_id: event.source_npc_id || '',
+                        confidence: event.confidence,
+                        visibility: event.visibility || 'private',
+                        contradicted: event.contradicted === true,
+                        allowed_to_share: event.allowed_to_share !== false
+                    }];
             }
             acceptedEvents.push({ ...base, observation });
             return;
@@ -8414,18 +8481,34 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
             }
             const entState = sess.entityStates?.[witnessId];
             if (!entState) return;
-            if (!Array.isArray(entState.observations)) entState.observations = [];
-            if (entState.observations.some(observation => observation.eventId === event.id)) return;
-            entState.observations.push({
+            addNpcKnowledge(world, sess, witnessId, {
                 id: `obs_${event.id}`,
                 eventId: event.id,
                 text: fact.slice(0, 400),
-                source: 'witnessed',
+                sourceType: 'witnessed',
+                evidenceMode: 'direct',
                 confidence: 1,
-                turn
+                visibility: 'private',
+                turn,
+                absoluteMinute: worldTime.absolute_minute
             });
-            entState.observations = entState.observations.slice(-80);
         });
+        if (['condition', 'relationship', 'status', 'inventory', 'discovery'].includes(event.type)) {
+            const severity = event.type === 'condition' ? 65 : event.type === 'relationship' ? 45 : 35;
+            createWorldConsequence(world, sess, {
+                type: event.type,
+                title: fact.slice(0, 160),
+                detail: fact,
+                sourceEventId: event.id,
+                locationId: eventLocationId(event),
+                actorIds: [event.actor_id, ...(event.target_ids || [])].filter(Boolean),
+                severity,
+                escalateAfterTurns: severity >= 50 ? 4 : 0,
+                decayAfterTurns: severity < 50 ? 8 : 0,
+                evidence: String(event.evidence || ''),
+                visibility: event.witnessed_by.includes('player') ? 'public' : 'private'
+            });
+        }
     });
     sess.playerKnownEvents = sess.playerKnownEvents.slice(-800);
 
@@ -8985,7 +9068,7 @@ async function impersonateUser() {
     if (!config) return;
 
     const persona = state.personas.find(p => p.id === state.activePersonaId);
-    const personaDesc = persona ? `${persona.name || 'The player'}: ${persona.text || ''}` : 'An engaged roleplayer.';
+    const personaDesc = persona ? personaPromptText(persona) : 'An engaged roleplayer.';
 
     const history = session.messages.slice(-20)
         .map(m => `${m.role === 'user' ? 'PLAYER' : 'CHARACTER'}: ${m.content}`)
@@ -10687,6 +10770,36 @@ function showConfirmModal(title, msg, onConfirm, okText = 'Confirm', cancelText 
 }
 
 // --- Personas System ---
+function normalizePersona(persona = {}) {
+    return {
+        ...persona,
+        id: String(persona.id || `persona_${Date.now()}`).slice(0, 100),
+        name: String(persona.name || 'Unnamed Persona').slice(0, 120),
+        text: String(persona.text || '').slice(0, 12000),
+        age: String(persona.age || '').slice(0, 40),
+        pronouns: String(persona.pronouns || '').slice(0, 80),
+        appearance: String(persona.appearance || '').slice(0, 2000),
+        publicIdentity: String(persona.publicIdentity || '').slice(0, 2000),
+        reputation: String(persona.reputation || '').slice(0, 2000),
+        color: /^#[0-9a-f]{6}$/i.test(String(persona.color || ''))
+            ? String(persona.color).toUpperCase() : '#4A90E2'
+    };
+}
+
+function personaPromptText(persona) {
+    if (!persona) return '';
+    const p = normalizePersona(persona);
+    return [
+        `Name: ${p.name}`,
+        p.age ? `Age: ${p.age}` : '',
+        p.pronouns ? `Pronouns: ${p.pronouns}` : '',
+        p.appearance ? `Visible appearance: ${p.appearance}` : '',
+        p.publicIdentity ? `Public identity: ${p.publicIdentity}` : '',
+        p.reputation ? `Reputation and what others may have heard: ${p.reputation}` : '',
+        p.text ? `Additional roleplay notes: ${p.text}` : ''
+    ].filter(Boolean).join('\n');
+}
+
 function setupPersonasLogic() {
     const btn = document.getElementById('personas-modal-btn');
     const overlay = document.getElementById('personas-modal-overlay');
@@ -10694,6 +10807,13 @@ function setupPersonasLogic() {
     const nameInput = document.getElementById('persona-name');
     const descInput = document.getElementById('persona-desc');
     const colorInput = document.getElementById('persona-color');
+    const structuredInputs = {
+        age: document.getElementById('persona-age'),
+        pronouns: document.getElementById('persona-pronouns'),
+        appearance: document.getElementById('persona-appearance'),
+        publicIdentity: document.getElementById('persona-public-identity'),
+        reputation: document.getElementById('persona-reputation')
+    };
     
     if (btn) btn.onclick = () => {
         renderPersonasList();
@@ -10702,7 +10822,7 @@ function setupPersonasLogic() {
     if (closeBtn) closeBtn.onclick = () => overlay.classList.add('hidden');
 
     document.getElementById('add-persona-btn').onclick = async () => {
-        const p = { id: 'persona_' + Date.now(), name: 'New Persona', text: '', color: '#4A90E2' };
+        const p = normalizePersona({ id: 'persona_' + Date.now(), name: 'New Persona', text: '', color: '#4A90E2' });
         state.personas.push(p);
         state.activePersonaId = p.id;
         await saveState();
@@ -10723,6 +10843,13 @@ function setupPersonasLogic() {
         const p = state.personas.find(x => x.id === document.getElementById('persona-edit-pane').dataset.id);
         if (p) p.color = /^#[0-9a-f]{6}$/i.test(colorInput.value) ? colorInput.value.toUpperCase() : '#4A90E2';
     };
+    Object.entries(structuredInputs).forEach(([field, input]) => {
+        if (!input) return;
+        input.oninput = () => {
+            const p = state.personas.find(x => x.id === document.getElementById('persona-edit-pane').dataset.id);
+            if (p) p[field] = input.value.slice(0, field === 'age' ? 40 : field === 'pronouns' ? 80 : 2000);
+        };
+    });
 
     document.getElementById('save-persona-btn').onclick = async () => {
         await saveState();
@@ -10828,6 +10955,16 @@ function selectPersona(id) {
     if (document.activeElement !== nameInput) nameInput.value = p.name;
     if (document.activeElement !== descInput) descInput.value = p.text;
     if (colorInput) colorInput.value = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '#4A90E2';
+    const structuredInputs = {
+        age: document.getElementById('persona-age'),
+        pronouns: document.getElementById('persona-pronouns'),
+        appearance: document.getElementById('persona-appearance'),
+        publicIdentity: document.getElementById('persona-public-identity'),
+        reputation: document.getElementById('persona-reputation')
+    };
+    Object.entries(structuredInputs).forEach(([field, input]) => {
+        if (input && document.activeElement !== input) input.value = p[field] || '';
+    });
     
     const preview = document.getElementById('persona-preview');
     if (preview) {
@@ -11171,6 +11308,7 @@ function createNewWorld() {
     };
     applyWorldRuleProfile(state.editingWorld, 'adventure');
     openWorldStudio();
+    document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
 }
 
 function setupWorldStudioTabs() {
@@ -11196,6 +11334,9 @@ function setupWorldStudioTabs() {
             renderWorldStudioPanel(target);
         };
     });
+    document.querySelectorAll('[data-world-studio-target]').forEach(button => {
+        button.onclick = () => document.querySelector(`.world-studio-tab[data-tab="${button.dataset.worldStudioTarget}"]`)?.click();
+    });
 }
 
 function renderWorldStudioPanel(target) {
@@ -11204,6 +11345,7 @@ function renderWorldStudioPanel(target) {
         'w-visuals': renderWorldVisuals,
         'w-locations': renderWorldLocations,
         'w-entities': renderWorldEntities,
+        'w-items': renderWorldItems,
         'w-factions': renderWorldFactions,
         'w-sandbox': renderWorldSandboxStudio,
         'w-lore': renderWorldLore,
@@ -11213,6 +11355,11 @@ function renderWorldStudioPanel(target) {
 }
 
 function setupWorldStudioLogic() {
+
+    const recordOverlay = document.getElementById('world-record-overlay');
+    document.getElementById('world-record-close').onclick = closeWorldRecordInspector;
+    document.getElementById('world-record-done').onclick = closeWorldRecordInspector;
+    recordOverlay.onclick = event => { if (event.target === recordOverlay) closeWorldRecordInspector(); };
 
     document.getElementById('close-world-studio-btn').onclick = () => switchView('worlds');
     document.getElementById('save-world-btn').onclick = saveWorld;
@@ -11289,10 +11436,12 @@ function setupWorldStudioLogic() {
         URL.revokeObjectURL(url);
         showToast(`World exported with ${media.count} embedded media asset${media.count === 1 ? '' : 's'} (${formatByteSize(media.bytes)}).`, 'success');
     };
-    document.getElementById('add-location-btn').onclick = () => addWorldLocation('top');
-    document.getElementById('add-location-btn-bottom').onclick = () => addWorldLocation('bottom');
+    document.getElementById('add-location-btn')?.addEventListener('click', () => addWorldLocation('top'));
+    document.getElementById('add-location-btn-bottom')?.addEventListener('click', () => addWorldLocation('bottom'));
     document.getElementById('add-entity-btn').onclick = addWorldEntity;
     document.getElementById('add-entity-btn-bottom').onclick = addWorldEntity;
+    document.getElementById('add-item-btn').onclick = addWorldItem;
+    document.getElementById('add-item-btn-bottom').onclick = addWorldItem;
     document.getElementById('add-faction-btn').onclick = () => addWorldFaction('top');
     document.getElementById('add-faction-btn-bottom').onclick = () => addWorldFaction('bottom');
     document.getElementById('add-world-origin-btn').onclick = addWorldStartingLife;
@@ -11653,6 +11802,8 @@ function openWorldStudio(worldId = null) {
     updateWorldTokenCount();
     switchView('worldStudio');
 
+    if (worldId) document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
+
     // Preserve the selected authoring tab, but hydrate only that tab. Basics,
     // AI Config, HUD and notes are plain controls already populated above.
     const activeTab = document.querySelector('.world-studio-tab.active')?.dataset.tab || 'w-basics';
@@ -11754,13 +11905,15 @@ async function deleteWorld() {
     switchView('worlds');
 }
 
-function addWorldLocation(position = 'bottom') {
+function addWorldLocation(position = 'bottom', regionId = '', parentLocationId = '', mapType = '') {
+    const region = (state.editingWorld?.regions || []).find(item => item.id === regionId);
     const loc = {
         id: 'loc_' + Date.now(),
         name: '',
-        region: '',
-        mapType: '',
-        parentLocationId: '',
+        regionId: region?.id || '',
+        region: region?.name || '',
+        mapType,
+        parentLocationId,
         mapFloor: '',
         description: '',
         hiddenDescription: '',
@@ -11772,17 +11925,21 @@ function addWorldLocation(position = 'bottom') {
     } else {
         state.editingWorld.locations.push(loc);
     }
-    worldStudioListState.locations.query = loc.id;
+    worldStudioListState.locations.query = '';
     worldStudioListState.locations.page = 0;
-    renderWorldLocations();
-    // Scroll to and highlight the new card
-    const card = document.getElementById(`loc-card-${loc.id}`);
-    if (card) {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        card.style.outline = '2px solid var(--accent)';
-        setTimeout(() => { card.style.outline = ''; }, 1500);
-    }
-    showToast(`New location added at ${position} of list`, 'success');
+    openWorldRecordInspector('location', loc.id);
+    showToast('New location ready to define.', 'success');
+}
+
+function addWorldRegion() {
+    const world = state.editingWorld;
+    if (!world) return;
+    normalizeWorldDirectoryData(world);
+    let id = `reg_${Date.now()}`;
+    while (world.regions.some(region => region.id === id)) id = `reg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    world.regions.push({ id, name: 'New region', description: '', tags: [] });
+    openWorldRecordInspector('region', id);
+    showToast('New region ready. Add its first location when you are ready.', 'success');
 }
 
 function isExitFormat(val) {
@@ -11806,6 +11963,7 @@ function getExitTargetName(exit) {
     if (typeof exit === 'string') {
         text = exit;
     } else if (exit && typeof exit === 'object') {
+        if (exit.targetLocationId) return String(exit.targetLocationId).trim();
         text = typeof exit.text === 'string' ? exit.text : (exit.text !== undefined && exit.text !== null ? String(exit.text) : "");
     }
     const cleanStr = text.trim();
@@ -11824,6 +11982,7 @@ function getExitTargetName(exit) {
 }
 
 function getExitDirection(exit) {
+    if (exit && typeof exit === 'object' && exit.direction) return String(exit.direction).trim();
     const text = typeof exit === 'string' ? exit : String(exit?.text || '');
     const clean = text.trim();
     if (!clean || /^to\s+/i.test(clean)) return '';
@@ -12369,6 +12528,10 @@ function syncExitConnection(sourceLoc, exitText, isOneWay, travelTime, isDeleted
         (l.name && l.name.toLowerCase() === cleanTargetName)
     );
     if (!targetLoc) return;
+    const sourceExit = (sourceLoc.exits || []).find(exit => {
+        const linked = getLocationRef(state.editingWorld, exit?.targetLocationId || getExitTargetName(exit));
+        return linked?.id === targetLoc.id;
+    });
     
     let oppDir = direction ? getOppositeDirection(direction) : null;
     const sourceName = sourceLoc.name || "";
@@ -12392,7 +12555,11 @@ function syncExitConnection(sourceLoc, exitText, isOneWay, travelTime, isDeleted
     } else {
         const reverseExitObj = {
             text: reverseExitText,
+            targetLocationId: sourceLoc.id,
             travelTime: travelTime || 0,
+            mode: normalizeWorldTravelMode(sourceExit?.mode),
+            routeName: String(sourceExit?.routeName || '').slice(0, 160),
+            cost: String(sourceExit?.cost || '').slice(0, 120),
             isOneWay: false
         };
         
@@ -12403,7 +12570,11 @@ function syncExitConnection(sourceLoc, exitText, isOneWay, travelTime, isDeleted
                 targetLoc.exits[existingIndex] = reverseExitObj;
             } else {
                 targetLoc.exits[existingIndex].text = reverseExitText;
+                targetLoc.exits[existingIndex].targetLocationId = sourceLoc.id;
                 targetLoc.exits[existingIndex].travelTime = travelTime || 0;
+                targetLoc.exits[existingIndex].mode = reverseExitObj.mode;
+                targetLoc.exits[existingIndex].routeName = reverseExitObj.routeName;
+                targetLoc.exits[existingIndex].cost = reverseExitObj.cost;
             }
         }
     }
@@ -12604,18 +12775,502 @@ function renderWorldVisuals() {
 }
 
 const WORLD_STUDIO_PAGE_SIZE = 24;
+const WORLD_DIRECTORY_DEPTHS = ['background', 'recurring', 'core'];
+const WORLD_SCHEMA_VERSION = 4;
+const WORLD_SCHEMA_LABEL = 'Roles, knowledge provenance & consequence lifecycle';
+const WORLD_TRAVEL_MODES = Object.freeze({
+    walk: 'Walk', road: 'Road', bus: 'Bus', train: 'Train', boat: 'Boat',
+    horse: 'Horse', carriage: 'Carriage', caravan: 'Caravan', air: 'Air',
+    dragon: 'Dragon', portal: 'Portal', custom: 'Custom'
+});
+
+function normalizeWorldTravelMode(value, fallback = 'walk') {
+    const mode = String(value || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    return mode || fallback;
+}
+
+function formatWorldTravelMode(value) {
+    const mode = normalizeWorldTravelMode(value);
+    return WORLD_TRAVEL_MODES[mode] || mode.replace(/(^|[\s_-])\S/g, match => match.toUpperCase());
+}
+const worldRecordInspector = { kind: '', id: '', tab: 'overview', directory: '' };
+
+function worldDirectorySlug(value, fallback = 'record') {
+    return String(value || fallback).trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 70) || fallback;
+}
+
+function worldSchemaVersion(world) {
+    const value = Number(world?.schemaVersion || world?.directoryVersion || 0);
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function uniqueWorldRecordId(records, preferred, prefix, name, reserved = new Set()) {
+    const source = String(preferred || '').trim().slice(0, 100);
+    const base = source || `${prefix}_${worldDirectorySlug(name, prefix)}`;
+    let id = base;
+    let suffix = 2;
+    while (reserved.has(id)) id = `${base}_${suffix++}`.slice(0, 100);
+    reserved.add(id);
+    return id;
+}
+
+/**
+ * Convert a playable compatibility world into the authored directory schema.
+ * This is deliberately pure: callers receive a clone plus a report, so a
+ * failed validation can never leave half a migration in the live world.
+ */
+function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
+    const before = safeJsonClone(sourceWorld || {});
+    const world = safeJsonClone(sourceWorld || {});
+    const fromVersion = worldSchemaVersion(world);
+    const changes = [];
+    const warnings = [];
+    const idMaps = { regions: {}, locations: {}, entities: {}, groups: {} };
+    const note = (area, detail, count = 1) => changes.push({ area, detail, count });
+    const warn = (area, detail) => warnings.push({ area, detail });
+
+    // Older exports sometimes used parallel people/items/places collections.
+    // Fold them into the canonical arrays without discarding the source fields
+    // until the replacement has validated successfully.
+    const legacyPlaces = Array.isArray(world.places) ? world.places.filter(isPlainObject) : [];
+    world.locations = (Array.isArray(world.locations) ? world.locations : []).filter(isPlainObject);
+    if (legacyPlaces.length) {
+        world.locations.push(...legacyPlaces.map(place => ({ ...place })));
+        note('Locations', `Moved ${legacyPlaces.length} legacy place${legacyPlaces.length === 1 ? '' : 's'} into the location directory.`, legacyPlaces.length);
+    }
+    const legacyPeople = [
+        ...(Array.isArray(world.people) ? world.people : []),
+        ...(Array.isArray(world.npcs) ? world.npcs : [])
+    ].filter(isPlainObject).map(person => ({ ...person, type: 'npc' }));
+    const legacyItems = (Array.isArray(world.items) ? world.items : [])
+        .filter(isPlainObject).map(item => ({ ...item, type: 'item' }));
+    world.entities = (Array.isArray(world.entities) ? world.entities : []).filter(isPlainObject);
+    if (legacyPeople.length || legacyItems.length) {
+        world.entities.push(...legacyPeople, ...legacyItems);
+        if (legacyPeople.length) note('People', `Moved ${legacyPeople.length} legacy character${legacyPeople.length === 1 ? '' : 's'} into People.`, legacyPeople.length);
+        if (legacyItems.length) note('Items', `Moved ${legacyItems.length} legacy object${legacyItems.length === 1 ? '' : 's'} into Items.`, legacyItems.length);
+    }
+
+    const legacyGroups = [
+        ...(Array.isArray(world.groups) ? world.groups : []),
+        ...(Array.isArray(world.households) ? world.households.map(group => ({ ...group, type: 'household' })) : []),
+        ...(Array.isArray(world.families) ? world.families.map(group => ({ ...group, type: 'family' })) : [])
+    ].filter(isPlainObject);
+    world.groups = legacyGroups;
+
+    // IDs are stable links. Keep the first valid occurrence and give missing or
+    // duplicate records deterministic new IDs. Existing references continue to
+    // resolve to the first record instead of being unpredictably redirected.
+    const assignIds = (records, prefix, mapName) => {
+        const used = new Set();
+        let repaired = 0;
+        records.forEach(record => {
+            const oldId = String(record.id || '').trim();
+            const id = uniqueWorldRecordId(records, oldId, prefix, record.name, used);
+            record.id = id;
+            if (oldId && !idMaps[mapName][oldId]) idMaps[mapName][oldId] = id;
+            if (!oldId || oldId !== id) {
+                repaired++;
+                if (oldId && oldId !== id) warn('Canonical IDs', `Duplicate ID “${oldId}” was retained by the first record; “${record.name || id}” received “${id}”. Review references if both records were intentional.`);
+            }
+        });
+        if (repaired) note('Canonical IDs', `Assigned ${repaired} missing or duplicate ${mapName} ID${repaired === 1 ? '' : 's'}.`, repaired);
+    };
+    assignIds(world.locations, 'loc', 'locations');
+    assignIds(world.entities, 'ent', 'entities');
+    assignIds(world.groups, 'grp', 'groups');
+
+    // Build first-class geography from every legacy region label.
+    world.regions = (Array.isArray(world.regions) ? world.regions : []).filter(isPlainObject);
+    assignIds(world.regions, 'reg', 'regions');
+    const regionByName = new Map(world.regions.map(region => [String(region.name || '').trim().toLowerCase(), region]));
+    let createdRegions = 0;
+    world.locations.forEach(location => {
+        const legacyRegion = String(location.region || location.area || '').trim();
+        let region = world.regions.find(entry => entry.id === location.regionId)
+            || regionByName.get(legacyRegion.toLowerCase());
+        if (!region && legacyRegion) {
+            const used = new Set(world.regions.map(entry => entry.id));
+            region = {
+                id: uniqueWorldRecordId(world.regions, '', 'reg', legacyRegion, used),
+                name: legacyRegion,
+                description: '',
+                tags: []
+            };
+            world.regions.push(region);
+            regionByName.set(legacyRegion.toLowerCase(), region);
+            createdRegions++;
+        }
+        location.regionId = region?.id || '';
+        location.region = region?.name || legacyRegion;
+    });
+    if (createdRegions) note('Regions', `Created ${createdRegions} first-class region${createdRegions === 1 ? '' : 's'} from legacy location labels.`, createdRegions);
+
+    const resolveLocation = value => {
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        const mapped = idMaps.locations[raw] || raw;
+        return world.locations.find(location => location.id === mapped)
+            || findFuzzyLocation(raw, world.locations);
+    };
+    let mapRoles = 0;
+    let containment = 0;
+    let canonicalExits = 0;
+    world.locations.forEach(location => {
+        if (!location.mapType) {
+            location.mapType = inferWorldMapType(location);
+            mapRoles++;
+        }
+        const legacyParent = location.parentLocationId || location.insideLocationId
+            || location.inside || location.parentId || location.parent || location.buildingId || location.attachedTo;
+        const parent = resolveLocation(legacyParent);
+        if (!location.parentLocationId && parent && parent.id !== location.id) {
+            location.parentLocationId = parent.id;
+            containment++;
+        }
+        // A room whose old “region” was actually the exact name of a building
+        // can be upgraded safely. Anything less exact remains a review warning.
+        if (!location.parentLocationId && location.mapType === 'room') {
+            const exactBuilding = world.locations.find(candidate => candidate.id !== location.id
+                && ['building', 'area'].includes(candidate.mapType || inferWorldMapType(candidate))
+                && String(candidate.name || '').trim().toLowerCase() === String(location.region || '').trim().toLowerCase());
+            if (exactBuilding) {
+                location.parentLocationId = exactBuilding.id;
+                location.regionId = exactBuilding.regionId || location.regionId;
+                location.region = world.regions.find(region => region.id === location.regionId)?.name || location.region;
+                containment++;
+            }
+        }
+        if (location.parentLocationId) {
+            const canonicalParent = resolveLocation(location.parentLocationId);
+            if (!canonicalParent || canonicalParent.id === location.id) {
+                warn('Containment', `“${location.name || location.id}” has an invalid parent and needs a manual containment choice.`);
+                location.parentLocationId = '';
+            } else {
+                location.parentLocationId = canonicalParent.id;
+                if (canonicalParent.regionId) {
+                    location.regionId = canonicalParent.regionId;
+                    location.region = world.regions.find(region => region.id === canonicalParent.regionId)?.name || location.region;
+                }
+            }
+        }
+        location.exits = (Array.isArray(location.exits) ? location.exits : []).map(exit => {
+            const record = typeof exit === 'string' ? { text: exit } : { ...(exit || {}) };
+            const unresolvedTarget = String(record.targetLocationId || record.target || getExitTargetName(record) || '').trim();
+            const target = resolveLocation(unresolvedTarget);
+            if (target) {
+                if (record.targetLocationId !== target.id) canonicalExits++;
+                record.targetLocationId = target.id;
+                if (!record.text) record.text = `${record.direction ? `${record.direction} ` : ''}to ${target.name}`;
+            } else if (unresolvedTarget) {
+                // Keep the route usable and visible even when its legacy target
+                // cannot be linked automatically. The audit warning lets the
+                // creator repair it without a blank label failing migration.
+                if (!record.text) record.text = `${record.direction ? `${record.direction} ` : ''}to ${unresolvedTarget}`;
+                warn('Travel', `Exit from “${location.name || location.id}” to “${unresolvedTarget}” could not be linked to a location.`);
+            } else if (!String(record.text || '').trim()) {
+                record.text = 'Unlinked exit';
+                warn('Travel', `A blank exit on “${location.name || location.id}” was preserved as “Unlinked exit” and needs a destination.`);
+            }
+            record.mode = normalizeWorldTravelMode(record.mode || record.transport || record.travelMode);
+            record.travelTime = Math.max(0, Math.min(100000, Number(record.travelTime ?? record.minutes ?? record.duration) || 0));
+            record.routeName = String(record.routeName || record.route || '').slice(0, 160);
+            record.cost = String(record.cost || record.fare || '').slice(0, 120);
+            record.isOneWay = record.isOneWay === true || record.oneWay === true;
+            return record;
+        });
+    });
+    if (mapRoles) note('Locations', `Assigned map roles to ${mapRoles} location${mapRoles === 1 ? '' : 's'}.`, mapRoles);
+    if (containment) note('Containment', `Linked ${containment} room or attached place${containment === 1 ? '' : 's'} to a parent location.`, containment);
+    if (canonicalExits) note('Travel', `Converted ${canonicalExits} exit${canonicalExits === 1 ? '' : 's'} to canonical location links while preserving custom transport.`, canonicalExits);
+
+    let canonicalEntityRefs = 0;
+    world.entities.forEach(entity => {
+        entity.type = entity.type === 'item' ? 'item' : 'npc';
+        ['startLocation', 'homeLocation', 'vendorFor'].forEach(field => {
+            const target = resolveLocation(entity[field]);
+            if (target && entity[field] !== target.id) {
+                entity[field] = target.id;
+                canonicalEntityRefs++;
+            }
+        });
+        (Array.isArray(entity.schedule) ? entity.schedule : []).forEach(block => {
+            const target = resolveLocation(block.locationId || block.location);
+            if (target && block.locationId !== target.id) {
+                block.locationId = target.id;
+                canonicalEntityRefs++;
+            }
+        });
+    });
+    (world.groups || []).forEach(group => {
+        group.type = ['household', 'family', 'organization', 'crew', 'other'].includes(group.type) ? group.type : 'other';
+        const home = resolveLocation(group.homeLocationId || group.homeLocation);
+        if (home) group.homeLocationId = home.id;
+    });
+    if (canonicalEntityRefs) note('People & items', `Re-linked ${canonicalEntityRefs} homes, placements, vendors or schedule stops to canonical location IDs.`, canonicalEntityRefs);
+
+    const previousRules = JSON.stringify(world.gameRules || {});
+    normalizeWorldGameRules(world);
+    if (JSON.stringify(world.gameRules || {}) !== previousRules) {
+        note('Rules & player role', 'Normalized world-defined checks, role capabilities, progression and roll visibility without changing authored values.');
+    }
+    world.gameRules.consequences = {
+        enabled: world.gameRules?.consequences?.enabled !== false,
+        maxActive: Math.max(10, Math.min(300, parseInt(world.gameRules?.consequences?.maxActive) || 120)),
+        escalationTurns: Math.max(0, Math.min(1000, parseInt(world.gameRules?.consequences?.escalationTurns) || 4)),
+        decayTurns: Math.max(0, Math.min(1000, parseInt(world.gameRules?.consequences?.decayTurns) || 8))
+    };
+
+    // These collections have now been copied into their canonical homes.
+    ['places', 'people', 'npcs', 'items', 'households', 'families'].forEach(key => { delete world[key]; });
+    world.schemaVersion = WORLD_SCHEMA_VERSION;
+    world.directoryVersion = WORLD_SCHEMA_VERSION;
+    world.schemaLabel = WORLD_SCHEMA_LABEL;
+    world.migrationHistory = (Array.isArray(world.migrationHistory) ? world.migrationHistory : []).slice(-9);
+    if (fromVersion < WORLD_SCHEMA_VERSION) {
+        world.migrationHistory.push({
+            from: fromVersion,
+            to: WORLD_SCHEMA_VERSION,
+            source: String(source || 'manual').slice(0, 40),
+            migratedAt: new Date().toISOString()
+        });
+    }
+    normalizeAuthoredWorld(world);
+
+    // Validation is the commit gate. Callers may show the error, but the source
+    // object remains byte-for-byte untouched.
+    validateWorldData(world, `Upgraded world “${world.name || 'Untitled'}”`);
+    return { world, before, fromVersion, toVersion: WORLD_SCHEMA_VERSION, changes, warnings, idMaps };
+}
+
+function upgradeBundledWorldDefinition(world) {
+    try {
+        return upgradeWorldSchemaData(world, { source: 'bundled' }).world;
+    } catch (error) {
+        console.error(`Bundled world “${world?.name || 'Untitled'}” could not be upgraded:`, error);
+        return world;
+    }
+}
+
+function normalizeWorldDirectoryData(world) {
+    if (!world) return world;
+    world.regions = (Array.isArray(world.regions) ? world.regions : [])
+        .filter(isPlainObject).map((region, index) => ({
+            id: String(region.id || `reg_${worldDirectorySlug(region.name, String(index + 1))}`).slice(0, 100),
+            name: String(region.name || 'Unnamed region').slice(0, 120),
+            description: String(region.description || '').slice(0, 1200),
+            tags: (Array.isArray(region.tags) ? region.tags : []).map(String).filter(Boolean).slice(0, 30)
+        }));
+    const regionByName = new Map(world.regions.map(region => [region.name.trim().toLowerCase(), region]));
+    (world.locations || []).forEach(location => {
+        const legacyName = String(location.region || '').trim();
+        let region = world.regions.find(item => item.id === location.regionId)
+            || regionByName.get(legacyName.toLowerCase());
+        if (!region && legacyName) {
+            const base = `reg_${worldDirectorySlug(legacyName, 'region')}`;
+            let id = base;
+            let suffix = 2;
+            while (world.regions.some(item => item.id === id)) id = `${base}_${suffix++}`;
+            region = { id, name: legacyName.slice(0, 120), description: '', tags: [] };
+            world.regions.push(region);
+            regionByName.set(legacyName.toLowerCase(), region);
+        }
+        location.regionId = region?.id || '';
+        location.region = region?.name || legacyName;
+        location.tags = (Array.isArray(location.tags) ? location.tags : []).map(String).filter(Boolean).slice(0, 30);
+        location.exits = (Array.isArray(location.exits) ? location.exits : []).map(exit => {
+            const record = typeof exit === 'string' ? { text: exit } : { ...(exit || {}) };
+            const target = getLocationRef(world, record.targetLocationId || getExitTargetName(record));
+            if (target) record.targetLocationId = target.id;
+            if (!record.text && target) record.text = `${record.direction ? `${record.direction} ` : ''}to ${target.name}`;
+            record.mode = normalizeWorldTravelMode(record.mode);
+            record.travelTime = Math.max(0, Math.min(100000, Number(record.travelTime) || 0));
+            record.routeName = String(record.routeName || '').slice(0, 160);
+            record.cost = String(record.cost || '').slice(0, 120);
+            record.isOneWay = record.isOneWay === true;
+            return record;
+        });
+    });
+
+    world.groups = (Array.isArray(world.groups) ? world.groups : [])
+        .filter(isPlainObject).map((group, index) => ({
+            id: String(group.id || `grp_${worldDirectorySlug(group.name, String(index + 1))}`).slice(0, 100),
+            name: String(group.name || 'Unnamed group').slice(0, 120),
+            type: ['household', 'family', 'organization', 'crew', 'other'].includes(group.type) ? group.type : 'household',
+            description: String(group.description || '').slice(0, 1200),
+            homeLocationId: getLocationRef(world, group.homeLocationId)?.id || '',
+            tags: (Array.isArray(group.tags) ? group.tags : []).map(String).filter(Boolean).slice(0, 30)
+        }));
+    const groupIds = new Set(world.groups.map(group => group.id));
+    (world.entities || []).forEach(entity => {
+        entity.persona = String(entity.persona || '').slice(0, 6000);
+        const inferredDepth = entity.isMajor ? 'core'
+            : (entity.persona || entity.goal || (entity.schedule || []).length ? 'recurring' : 'background');
+        entity.simulationDepth = WORLD_DIRECTORY_DEPTHS.includes(entity.simulationDepth)
+            ? entity.simulationDepth : inferredDepth;
+        // Keep the old engine flag as a compatibility projection. Persona is no
+        // longer gated by it; the tier only controls context priority.
+        entity.isMajor = entity.simulationDepth === 'core';
+        entity.groupIds = [...new Set((Array.isArray(entity.groupIds) ? entity.groupIds : [])
+            .map(String).filter(id => groupIds.has(id)))].slice(0, 30);
+        if (entity.householdId && groupIds.has(entity.householdId) && !entity.groupIds.includes(entity.householdId)) {
+            entity.groupIds.unshift(entity.householdId);
+        }
+        entity.householdId = entity.groupIds.find(id => world.groups.find(group => group.id === id)?.type === 'household') || '';
+        entity.tags = (Array.isArray(entity.tags) ? entity.tags : []).map(String).filter(Boolean).slice(0, 30);
+    });
+    return world;
+}
+
+function worldDirectoryRecord(kind, id) {
+    const world = state.editingWorld;
+    if (kind === 'region') return (world?.regions || []).find(item => item.id === id);
+    if (kind === 'location') return (world?.locations || []).find(item => item.id === id);
+    return (world?.entities || []).find(item => item.id === id);
+}
+
+function worldLocationLineage(world, location) {
+    const path = [];
+    const seen = new Set([location?.id]);
+    let cursor = location;
+    while (cursor?.parentLocationId) {
+        const parent = getLocationRef(world, cursor.parentLocationId);
+        if (!parent || seen.has(parent.id)) break;
+        path.unshift(parent);
+        seen.add(parent.id);
+        cursor = parent;
+    }
+    return path;
+}
+
+function worldLocationDirectChildren(world, locationId) {
+    return (world?.locations || []).filter(location => location.parentLocationId === locationId)
+        .sort((a, b) => String(a.mapFloor || '').localeCompare(String(b.mapFloor || ''), undefined, { numeric: true })
+            || String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+function worldDirectoryUsedBy(kind, id) {
+    const world = state.editingWorld;
+    if (!world || !id) return [];
+    const found = [];
+    if (kind === 'region') {
+        (world.locations || []).forEach(location => {
+            if (location.regionId === id) found.push(`Contains ${location.name || location.id}`);
+        });
+    } else if (kind === 'location') {
+        (world.locations || []).forEach(location => {
+            if (location.id !== id && location.parentLocationId === id) found.push(`Contains ${location.name}`);
+            if ((location.exits || []).some(exit => getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit))?.id === id)) found.push(`Exit from ${location.name}`);
+        });
+        (world.entities || []).forEach(entity => {
+            if (entity.homeLocation === id) found.push(`Home of ${entity.name}`);
+            if (entity.startLocation === id) found.push(`Starting place of ${entity.name}`);
+            if ((entity.schedule || []).some(block => block.locationId === id)) found.push(`Schedule for ${entity.name}`);
+        });
+        (world.startingLives || []).forEach(life => { if (life.startLocationId === id) found.push(`Starting life: ${life.name}`); });
+    } else {
+        (world.relationships || []).forEach(relation => {
+            if (relation.a === id || relation.b === id) {
+                const otherId = relation.a === id ? relation.b : relation.a;
+                found.push(`Relationship with ${(world.entities || []).find(entity => entity.id === otherId)?.name || otherId}`);
+            }
+        });
+    }
+    return [...new Set(found)];
+}
+
+function setWorldInspectorTab(tab) {
+    worldRecordInspector.tab = tab;
+    document.querySelectorAll('#world-record-tabs .world-record-tab').forEach(button => {
+        const active = button.dataset.tab === tab;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
+    });
+    document.querySelectorAll('#world-record-body [data-inspector-section]').forEach(section => {
+        const visible = section.dataset.inspectorSection === tab;
+        section.classList.toggle('hidden-by-inspector', !visible);
+        section.hidden = !visible;
+    });
+    const body = document.getElementById('world-record-body');
+    if (body) body.scrollTop = 0;
+}
+
+function renderWorldInspectorTabs(kind, record) {
+    const tabs = kind === 'region'
+        ? [['overview', 'Overview'], ['locations', 'Locations'], ['travel', 'Travel links']]
+        : kind === 'location'
+        ? [['overview', 'Overview'], ['map', 'Rooms & map'], ['connections', 'Connections'], ['simulation', 'Opening state'], ['commerce', 'Commerce'], ['secrets', 'Secrets'], ['visuals', 'Visuals']]
+        : record?.type === 'item'
+            ? [['overview', 'Overview'], ['placement', 'Placement'], ['secrets', 'Knowledge & secrets']]
+        : [['overview', 'Overview'], ['persona', 'Persona & voice'], ['relationships', 'Relationships'], ['simulation', 'Life & autonomy'], ['secrets', 'Knowledge & secrets'], ['visuals', 'Visuals']];
+    const host = document.getElementById('world-record-tabs');
+    if (!tabs.some(([id]) => id === worldRecordInspector.tab)) worldRecordInspector.tab = tabs[0][0];
+    host.setAttribute('role', 'tablist');
+    host.innerHTML = tabs.map(([id, label]) => `<button type="button" role="tab" aria-selected="${worldRecordInspector.tab === id}" class="world-record-tab ${worldRecordInspector.tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('');
+    host.querySelectorAll('.world-record-tab').forEach(button => button.onclick = () => setWorldInspectorTab(button.dataset.tab));
+}
+
+function openWorldRecordInspector(kind, id, tab = 'overview', directory = '') {
+    const record = worldDirectoryRecord(kind, id);
+    if (!record) return;
+    worldRecordInspector.kind = kind;
+    worldRecordInspector.id = id;
+    worldRecordInspector.tab = tab;
+    worldRecordInspector.directory = directory || (kind === 'entity' && record.type === 'item' ? 'items' : kind === 'entity' ? 'people' : 'locations');
+    const overlay = document.getElementById('world-record-overlay');
+    overlay.classList.remove('hidden');
+    overlay.setAttribute('aria-hidden', 'false');
+    document.getElementById('world-record-kicker').textContent = kind === 'region' ? 'REGION' : kind === 'location' ? 'LOCATION' : record.type === 'item' ? 'ITEM' : 'PERSON';
+    document.getElementById('world-record-title').textContent = record.name || (kind === 'region' ? 'New region' : kind === 'location' ? 'New location' : record.type === 'item' ? 'New item' : 'New person');
+    const locationLineage = kind === 'location' ? worldLocationLineage(state.editingWorld, record) : [];
+    document.getElementById('world-record-subtitle').textContent = kind === 'region'
+        ? `${(state.editingWorld?.locations || []).filter(location => location.regionId === record.id).length} locations · canonical link ${record.id}`
+        : kind === 'location'
+        ? `${locationLineage.length ? `${locationLineage.map(place => place.name || place.id).join(' › ')} › ` : ''}${formatWorldMapType(record.mapType || inferWorldMapType(record))} · canonical link ${record.id}`
+        : `${record.type === 'npc' ? 'Character' : 'World item'} · canonical link ${record.id}`;
+    renderWorldInspectorTabs(kind, record);
+    if (kind === 'region') renderWorldRegionInspector();
+    else if (kind === 'location') renderWorldLocations(); else renderWorldEntities();
+}
+
+function closeWorldRecordInspector() {
+    const kind = worldRecordInspector.kind;
+    const directory = worldRecordInspector.directory;
+    worldRecordInspector.kind = '';
+    worldRecordInspector.id = '';
+    const overlay = document.getElementById('world-record-overlay');
+    overlay.classList.add('hidden');
+    overlay.setAttribute('aria-hidden', 'true');
+    document.getElementById('world-record-body').innerHTML = '';
+    if (kind === 'location' || kind === 'region') renderWorldLocations();
+    if (kind === 'entity' && directory === 'items') renderWorldItems();
+    else if (kind === 'entity') renderWorldEntities();
+}
+
 const worldStudioListState = {
     worldId: '',
-    locations: { query: '', page: 0 },
-    entities: { query: '', page: 0 }
+    locations: { query: '', page: 0, filter: 'all' },
+    people: { query: '', page: 0, filter: 'all', groupBy: 'household' },
+    items: { query: '', page: 0, filter: 'all', groupBy: 'location' }
 };
+
+function ensureWorldDirectoryState(world) {
+    if (worldStudioListState.worldId === world?.id) return;
+    worldStudioListState.worldId = world?.id || '';
+    worldStudioListState.locations = { query: '', page: 0, filter: 'all' };
+    worldStudioListState.people = { query: '', page: 0, filter: 'all', groupBy: 'household' };
+    worldStudioListState.items = { query: '', page: 0, filter: 'all', groupBy: 'location' };
+}
 
 function getWorldStudioListPage(kind, items, searchText) {
     const worldId = state.editingWorld?.id || '';
     if (worldStudioListState.worldId !== worldId) {
         worldStudioListState.worldId = worldId;
         worldStudioListState.locations = { query: '', page: 0 };
-        worldStudioListState.entities = { query: '', page: 0 };
+        worldStudioListState.people = { query: '', page: 0, filter: 'all', groupBy: 'household' };
+        worldStudioListState.items = { query: '', page: 0, filter: 'all', groupBy: 'location' };
     }
     const view = worldStudioListState[kind];
     const query = view.query.trim().toLowerCase();
@@ -12660,6 +13315,9 @@ function renameWorldLocationId(world, location, requestedId) {
     (world.locations || []).forEach(candidate => {
         if (candidate.parentLocationId === oldId) candidate.parentLocationId = newId;
         candidate.exits = (candidate.exits || []).map(exit => {
+            if (exit && typeof exit === 'object' && exit.targetLocationId === oldId) {
+                return { ...exit, targetLocationId: newId };
+            }
             const text = typeof exit === 'string' ? exit : String(exit?.text || '');
             if (String(getExitTargetName(text) || '').trim() !== oldId) return exit;
             const direction = getExitDirection(text);
@@ -12684,15 +13342,311 @@ function renameWorldLocationId(world, location, requestedId) {
     return newId;
 }
 
+function removeWorldLocationRecord(world, locationId) {
+    if (!world || !locationId) return;
+    world.locations = (world.locations || []).filter(location => location.id !== locationId);
+    world.locations.forEach(location => {
+        if (location.parentLocationId === locationId) location.parentLocationId = '';
+        location.exits = (location.exits || []).filter(exit => {
+            const linked = getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit));
+            return exit?.targetLocationId !== locationId && linked?.id !== locationId;
+        });
+    });
+    (world.entities || []).forEach(entity => {
+        if (entity.startLocation === locationId) entity.startLocation = '';
+        if (entity.homeLocation === locationId) entity.homeLocation = '';
+        entity.schedule = (entity.schedule || []).filter(block => block.locationId !== locationId);
+    });
+    (world.groups || []).forEach(group => {
+        if (group.homeLocationId === locationId) group.homeLocationId = '';
+    });
+    (world.startingLives || []).forEach(life => {
+        if (life.startLocationId === locationId) life.startLocationId = '';
+        life.holdings = (life.holdings || []).filter(holding => holding !== locationId);
+    });
+    (world.factions || []).forEach(faction => {
+        faction.territory = (faction.territory || []).filter(id => id !== locationId);
+    });
+    if (world.startLocationId === locationId) world.startLocationId = world.locations[0]?.id || '';
+}
+
+function worldRegionTravelLinks(world, regionId) {
+    const links = [];
+    (world.locations || []).filter(location => location.regionId === regionId).forEach(origin => {
+        (origin.exits || []).forEach((exit, exitIndex) => {
+            const target = getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit));
+            if (target && target.regionId && target.regionId !== regionId) links.push({ origin, target, exit, exitIndex });
+        });
+    });
+    return links;
+}
+
+function upsertWorldTravelConnection(world, origin, target, details = {}) {
+    if (!world || !origin || !target || origin.id === target.id) return;
+    const mode = normalizeWorldTravelMode(details.mode);
+    const travelTime = Math.max(0, Math.min(100000, Number(details.travelTime) || 0));
+    const makeExit = (from, to) => ({
+        targetLocationId: to.id,
+        text: `to ${to.name || to.id}`,
+        direction: '', mode, travelTime,
+        routeName: String(details.routeName || '').slice(0, 160),
+        cost: String(details.cost || '').slice(0, 120),
+        isOneWay: details.isOneWay === true
+    });
+    const existing = (origin.exits || []).find(exit => getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit))?.id === target.id);
+    if (existing && typeof existing === 'object') Object.assign(existing, makeExit(origin, target));
+    else (origin.exits ||= []).push(makeExit(origin, target));
+    if (!details.isOneWay) {
+        const reverse = (target.exits || []).find(exit => getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit))?.id === origin.id);
+        if (reverse && typeof reverse === 'object') Object.assign(reverse, makeExit(target, origin), { isOneWay: false });
+        else (target.exits ||= []).push({ ...makeExit(target, origin), isOneWay: false });
+    }
+}
+
+function renderWorldRegionLocationTreeHTML(world, locations) {
+    const records = Array.isArray(locations) ? locations : [];
+    const localIds = new Set(records.map(location => location.id));
+    const rendered = new Set();
+    const renderNode = (location, depth = 0, ancestry = new Set()) => {
+        if (!location || rendered.has(location.id) || ancestry.has(location.id)) return '';
+        rendered.add(location.id);
+        const children = records.filter(candidate => candidate.parentLocationId === location.id)
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        const next = new Set(ancestry).add(location.id);
+        return `<div class="world-location-tree-node ${depth ? 'is-child' : ''}">
+            <button type="button" class="world-directory-card ${depth ? 'is-contained-location' : ''}" data-region-location="${escapeHTML(location.id)}">
+                <div class="world-directory-card-copy"><h3>${escapeHTML(location.name || 'Unnamed location')}</h3><p>${escapeHTML(location.description || 'No description yet.')}</p>
+                <div class="world-directory-badges"><span class="world-directory-badge">${escapeHTML(formatWorldMapType(location.mapType || inferWorldMapType(location)))}</span>${depth ? `<span class="world-directory-badge is-containment">↳ contained place</span>` : ''}${children.length ? `<span class="world-directory-badge">contains ${children.length}</span>` : ''}<span class="world-directory-badge">${(location.exits || []).length} exits</span></div></div>
+            </button>${children.length ? `<div class="world-location-tree-children">${children.map(child => renderNode(child, depth + 1, next)).join('')}</div>` : ''}
+        </div>`;
+    };
+    const roots = records.filter(location => !location.parentLocationId || !localIds.has(location.parentLocationId))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    let html = roots.map(location => renderNode(location)).join('');
+    html += records.filter(location => !rendered.has(location.id)).map(location => renderNode(location)).join('');
+    return html;
+}
+
+function renderWorldRegionInspector() {
+    const world = state.editingWorld;
+    const region = worldDirectoryRecord('region', worldRecordInspector.id);
+    const container = document.getElementById('world-record-body');
+    if (!world || !region || !container) return closeWorldRecordInspector();
+    const locations = (world.locations || []).filter(location => location.regionId === region.id);
+    const otherLocations = (world.locations || []).filter(location => location.regionId !== region.id);
+    const travelLinks = worldRegionTravelLinks(world, region.id);
+    container.innerHTML = `<div class="world-region-inspector">
+        <section class="world-inspector-section" data-inspector-section="overview">
+            <div class="world-region-form-grid"><label><span class="form-label">Region name</span><input class="form-input region-name" value="${escapeHTML(region.name)}"></label>
+            <label><span class="form-label">Tags</span><input class="form-input region-tags" value="${escapeHTML((region.tags || []).join(', '))}" placeholder="coastal, urban, dangerous…"></label></div>
+            <label><span class="form-label">Description</span><textarea class="form-textarea region-description" rows="7" placeholder="What makes this region distinct?">${escapeHTML(region.description || '')}</textarea></label>
+            <div class="world-region-stat-row"><span><b>${locations.length}</b> locations</span><span><b>${travelLinks.length}</b> outgoing travel links</span></div>
+            <button type="button" class="btn btn-danger region-delete">Delete region</button>
+        </section>
+        <section class="world-inspector-section" data-inspector-section="locations">
+            <div class="world-region-section-head"><div><h3>Locations in ${escapeHTML(region.name)}</h3><p>Playable places live inside a stable region. Their canonical links survive renames.</p></div><button type="button" class="btn btn-primary region-add-location">+ New location</button></div>
+            <div class="world-directory-grid world-location-tree-grid region-location-grid">${renderWorldRegionLocationTreeHTML(world, locations) || '<div class="world-directory-empty">No locations yet. Create the first place players can actually visit.</div>'}</div>
+        </section>
+        <section class="world-inspector-section" data-inspector-section="travel">
+            <div class="world-region-section-head"><div><h3>Cross-region travel</h3><p>Connect actual departure and arrival places. Transport is author-defined: walking, horse, dragon, train, starship—or anything your world supports.</p></div></div>
+            <div class="world-travel-builder">
+                <label><span>Depart from</span><select class="form-select travel-origin"><option value="">Choose a location…</option>${locations.map(location => `<option value="${escapeHTML(location.id)}">${escapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
+                <label><span>Arrive at</span><select class="form-select travel-target"><option value="">Choose another region's location…</option>${otherLocations.map(location => { const targetRegion = world.regions.find(item => item.id === location.regionId); return `<option value="${escapeHTML(location.id)}">${escapeHTML(targetRegion?.name || 'Unassigned')} · ${escapeHTML(location.name || location.id)}</option>`; }).join('')}</select></label>
+                <label><span>Transport</span><input class="form-input travel-mode" list="world-transport-suggestions" value="walk" placeholder="horse, dragon, train…"><datalist id="world-transport-suggestions">${Object.entries(WORLD_TRAVEL_MODES).map(([id, label]) => `<option value="${id}">${label}</option>`).join('')}</datalist></label>
+                <label><span>Minutes</span><input type="number" min="0" class="form-input travel-minutes" value="15"></label>
+                <label><span>Route / service</span><input class="form-input travel-route" placeholder="A12, Red Line, Ferry 4…"></label>
+                <label><span>Cost (optional)</span><input class="form-input travel-cost" placeholder="$3, two tokens…"></label>
+                <label class="travel-one-way"><input type="checkbox"> One way only</label>
+                <button type="button" class="btn btn-primary travel-connect">Connect locations</button>
+            </div>
+            <div class="world-travel-list">${travelLinks.map(({ origin, target, exit, exitIndex }) => `<article><div><strong>${escapeHTML(origin.name || origin.id)} → ${escapeHTML(target.name || target.id)}</strong><span>${escapeHTML(formatWorldTravelMode(exit.mode))} · ${Number(exit.travelTime) || 0} min${exit.routeName ? ` · ${escapeHTML(exit.routeName)}` : ''}${exit.cost ? ` · ${escapeHTML(exit.cost)}` : ''}</span></div><button type="button" class="tool-btn" data-remove-region-travel="${escapeHTML(origin.id)}:${exitIndex}">Remove</button></article>`).join('') || '<div class="world-directory-empty">No cross-region travel yet. Players cannot naturally leave this region until you connect it.</div>'}</div>
+        </section>
+    </div>`;
+    container.querySelector('.region-name').onchange = event => {
+        const oldName = region.name;
+        region.name = event.target.value.trim() || 'Unnamed region';
+        locations.forEach(location => { if (location.region === oldName || location.regionId === region.id) location.region = region.name; });
+        document.getElementById('world-record-title').textContent = region.name;
+    };
+    container.querySelector('.region-tags').onchange = event => { region.tags = event.target.value.split(',').map(value => value.trim()).filter(Boolean).slice(0, 30); };
+    container.querySelector('.region-description').onchange = event => { region.description = event.target.value.slice(0, 1200); };
+    container.querySelector('.region-add-location').onclick = () => addWorldLocation('bottom', region.id);
+    container.querySelectorAll('[data-region-location]').forEach(button => button.onclick = () => openWorldRecordInspector('location', button.dataset.regionLocation, 'overview', 'locations'));
+    container.querySelector('.travel-connect').onclick = () => {
+        const origin = getLocationRef(world, container.querySelector('.travel-origin').value);
+        const target = getLocationRef(world, container.querySelector('.travel-target').value);
+        if (!origin || !target) return showToast('Choose both a departure and destination location.', 'error');
+        upsertWorldTravelConnection(world, origin, target, {
+            mode: container.querySelector('.travel-mode').value,
+            travelTime: container.querySelector('.travel-minutes').value,
+            routeName: container.querySelector('.travel-route').value,
+            cost: container.querySelector('.travel-cost').value,
+            isOneWay: container.querySelector('.travel-one-way input').checked
+        });
+        renderWorldRegionInspector(); setWorldInspectorTab('travel');
+        showToast('Travel connection added.', 'success');
+    };
+    container.querySelectorAll('[data-remove-region-travel]').forEach(button => button.onclick = () => {
+        const [originId, index] = button.dataset.removeRegionTravel.split(':');
+        const origin = getLocationRef(world, originId);
+        if (origin) {
+            const exit = origin.exits[Number(index)];
+            const target = getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit));
+            origin.exits.splice(Number(index), 1);
+            if (target && !exit?.isOneWay) {
+                target.exits = (target.exits || []).filter(reverse => {
+                    const reverseTarget = getLocationRef(world, reverse?.targetLocationId || getExitTargetName(reverse));
+                    return reverseTarget?.id !== origin.id;
+                });
+            }
+        }
+        renderWorldRegionInspector(); setWorldInspectorTab('travel');
+    });
+    container.querySelector('.region-delete').onclick = () => {
+        if (!confirm(`Delete “${region.name}”? Its ${locations.length} location${locations.length === 1 ? '' : 's'} will remain but become unassigned.`)) return;
+        locations.forEach(location => { location.regionId = ''; location.region = ''; });
+        world.regions = world.regions.filter(item => item.id !== region.id);
+        closeWorldRecordInspector();
+    };
+    setWorldInspectorTab(worldRecordInspector.tab);
+}
+
+function renderWorldLocationDirectory(world, container) {
+    ensureWorldDirectoryState(world);
+    const view = worldStudioListState.locations;
+    const query = view.query.trim().toLowerCase();
+    const filter = view.filter || 'all';
+    const matches = world.locations.filter(location => {
+        const region = world.regions.find(item => item.id === location.regionId);
+        const search = [location.name, location.id, location.region, location.mapType, location.description, ...(location.tags || []), region?.name, region?.description, ...(region?.tags || [])].join(' ').toLowerCase();
+        return (!query || search.includes(query)) && (filter === 'all' || inferWorldMapType(location) === filter);
+    });
+    const typeOptions = ['all', 'transit', 'building', 'room', 'outdoor', 'route', 'area'];
+    const directory = document.createElement('div');
+    directory.className = 'world-directory';
+    directory.innerHTML = `<div class="world-directory-toolbar">
+        <input type="search" class="form-input world-directory-search" value="${escapeHTML(view.query)}" placeholder="Search names, regions, descriptions or tags…" aria-label="Search locations">
+        <select class="form-select world-directory-filter" aria-label="Filter location type">${typeOptions.map(type => `<option value="${type}" ${filter === type ? 'selected' : ''}>${type === 'all' ? 'All types' : formatWorldMapType(type)}</option>`).join('')}</select>
+        <span class="world-directory-summary">${matches.length} of ${world.locations.length} locations</span>
+        <button type="button" class="btn btn-ghost world-new-region">+ Region</button>
+        <button type="button" class="btn btn-primary world-new-location">+ Location</button>
+    </div>
+    <section class="world-region-shelf"><div class="world-region-shelf-head"><div><h3>Regions</h3><p>Organize large worlds, then connect their locations with explicit travel.</p></div></div><div class="world-region-card-grid">${world.regions.map(region => {
+        const regionLocations = world.locations.filter(location => location.regionId === region.id);
+        const links = worldRegionTravelLinks(world, region.id);
+        return `<article class="world-region-card" data-region-card="${escapeHTML(region.id)}"><button type="button" class="world-region-card-main"><span class="world-region-icon">⌖</span><div><h3>${escapeHTML(region.name)}</h3><p>${escapeHTML(region.description || 'No regional description yet.')}</p><div class="world-directory-badges"><span class="world-directory-badge">${regionLocations.length} places</span><span class="world-directory-badge">${links.length} travel links</span></div></div></button><button type="button" class="tool-btn world-region-add-place" title="Add a location inside ${escapeHTML(region.name)}">＋ Location</button></article>`;
+    }).join('') || '<div class="world-directory-empty">No regions yet. Create one to organize locations and cross-region travel.</div>'}</div></section>`;
+    directory.querySelector('.world-new-region').onclick = addWorldRegion;
+    directory.querySelector('.world-new-location').onclick = () => addWorldLocation();
+    directory.querySelectorAll('[data-region-card]').forEach(card => {
+        card.querySelector('.world-region-card-main').onclick = () => openWorldRecordInspector('region', card.dataset.regionCard);
+        card.querySelector('.world-region-add-place').onclick = () => addWorldLocation('bottom', card.dataset.regionCard);
+    });
+    const byRegion = new Map();
+    matches.forEach(location => {
+        const region = world.regions.find(item => item.id === location.regionId);
+        const key = region?.name || location.region || 'Unassigned';
+        if (!byRegion.has(key)) byRegion.set(key, []);
+        byRegion.get(key).push(location);
+    });
+    const regionEntries = [...byRegion.entries()].sort(([a], [b]) => a.localeCompare(b));
+    regionEntries.forEach(([regionName, locations], regionIndex) => {
+        const section = document.createElement('details');
+        section.className = 'world-directory-section';
+        // A large world should scan like a directory, not render as another
+        // endless wall. Searches expand every matching region; otherwise the
+        // first region opens as an orientation point and the rest stay compact.
+        section.open = Boolean(query) || regionEntries.length <= 8 || regionIndex === 0;
+        section.innerHTML = `<summary><strong>${escapeHTML(regionName)}</strong><span>${locations.length} location${locations.length === 1 ? '' : 's'}</span></summary><div class="world-directory-grid"></div>`;
+        const grid = section.querySelector('.world-directory-grid');
+        const makeLocationCard = (location, nested = false) => {
+            const parent = getLocationRef(world, location.parentLocationId);
+            const used = worldDirectoryUsedBy('location', location.id);
+            const image = worldMediaSource(world, location.visuals?.backgroundAssetId);
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = `world-directory-card${nested ? ' is-contained-location' : ''}`;
+            card.dataset.recordId = location.id;
+            card.innerHTML = `<div class="world-directory-card-media" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '⌖'}</div>
+                <div class="world-directory-card-copy"><h3>${escapeHTML(location.name || 'Unnamed location')}</h3>
+                <p>${escapeHTML(location.description || 'No player-facing description yet.')}</p>
+                <div class="world-directory-badges">
+                    <span class="world-directory-badge">${escapeHTML(formatWorldMapType(location.mapType || inferWorldMapType(location)))}</span>
+                    ${parent ? `<span class="world-directory-badge is-containment">↳ inside ${escapeHTML(parent.name)}</span>` : ''}
+                    ${world.startLocationId === location.id ? '<span class="world-directory-badge is-core">★ start</span>' : ''}
+                    <span class="world-directory-badge">${(location.exits || []).length} exits</span>
+                    ${used.length ? `<span class="world-directory-badge">${used.length} links</span>` : ''}
+                </div></div>`;
+            card.onclick = () => openWorldRecordInspector('location', location.id);
+            return card;
+        };
+        const hierarchyMode = !query && filter === 'all';
+        if (hierarchyMode) {
+            grid.classList.add('world-location-tree-grid');
+            const localIds = new Set(locations.map(location => location.id));
+            const rendered = new Set();
+            const renderNode = (location, depth = 0, ancestry = new Set()) => {
+                if (!location || rendered.has(location.id) || ancestry.has(location.id)) return null;
+                rendered.add(location.id);
+                const node = document.createElement('div');
+                node.className = `world-location-tree-node${depth ? ' is-child' : ''}`;
+                node.appendChild(makeLocationCard(location, depth > 0));
+                const nextAncestry = new Set(ancestry).add(location.id);
+                const children = locations.filter(candidate => candidate.parentLocationId === location.id)
+                    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+                if (children.length) {
+                    const branch = document.createElement('div');
+                    branch.className = 'world-location-tree-children';
+                    children.forEach(child => {
+                        const childNode = renderNode(child, depth + 1, nextAncestry);
+                        if (childNode) branch.appendChild(childNode);
+                    });
+                    if (branch.childElementCount) node.appendChild(branch);
+                }
+                return node;
+            };
+            locations.filter(location => !location.parentLocationId || !localIds.has(location.parentLocationId))
+                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+                .forEach(location => { const node = renderNode(location); if (node) grid.appendChild(node); });
+            // Damaged containment cycles still remain editable instead of
+            // disappearing from the directory.
+            locations.filter(location => !rendered.has(location.id)).forEach(location => {
+                const node = renderNode(location); if (node) grid.appendChild(node);
+            });
+        } else {
+            locations.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+                .forEach(location => grid.appendChild(makeLocationCard(location, Boolean(location.parentLocationId))));
+        }
+        directory.appendChild(section);
+    });
+    if (!matches.length) directory.insertAdjacentHTML('beforeend', '<div class="world-directory-empty">No locations match these filters.</div>');
+    const search = directory.querySelector('.world-directory-search');
+    search.oninput = event => {
+        view.query = event.target.value;
+        renderWorldLocations();
+        requestAnimationFrame(() => {
+            const next = container.querySelector('.world-directory-search');
+            if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
+        });
+    };
+    directory.querySelector('.world-directory-filter').onchange = event => { view.filter = event.target.value; renderWorldLocations(); };
+    container.appendChild(directory);
+}
+
 function renderWorldLocations() {
     const world = state.editingWorld;
     if (!world) return;
     normalizeAuthoredWorld(world);   // a malformed shop must not break the panel
-    const container = document.getElementById('w-locations-list');
+    const inspecting = worldRecordInspector.kind === 'location' && worldRecordInspector.id;
+    const container = inspecting ? document.getElementById('world-record-body') : document.getElementById('w-locations-list');
     container.innerHTML = '';
-    const pageData = getWorldStudioListPage('locations', world.locations,
-        loc => [loc.id, loc.name, loc.region, loc.description, loc.hiddenDescription].filter(Boolean).join(' '));
-    appendWorldStudioListToolbar(container, 'locations', pageData, renderWorldLocations, 'locations');
+    if (!inspecting) {
+        renderWorldLocationDirectory(world, container);
+        return;
+    }
+    const selected = world.locations.find(location => location.id === worldRecordInspector.id);
+    if (!selected) return closeWorldRecordInspector();
+    const pageData = { view: worldStudioListState.locations, filtered: [selected], pages: 1, items: [selected] };
     
     // Update global datalist for location references across the entire app
     let datalist = document.getElementById('world-location-datalist');
@@ -12713,9 +13667,8 @@ function renderWorldLocations() {
         regionDatalist.id = 'world-region-datalist';
         document.body.appendChild(regionDatalist);
     }
-    regionDatalist.innerHTML = [...new Set(world.locations.map(location => String(location.region || '').trim()).filter(Boolean))]
-        .sort((a, b) => a.localeCompare(b))
-        .map(region => `<option value="${escapeHTML(region)}"></option>`).join('');
+    regionDatalist.innerHTML = (world.regions || []).slice().sort((a, b) => a.name.localeCompare(b.name))
+        .map(region => `<option value="${escapeHTML(region.name)}"></option>`).join('');
     let floorDatalist = document.getElementById('world-floor-datalist');
     if (!floorDatalist) {
         floorDatalist = document.createElement('datalist');
@@ -12725,7 +13678,8 @@ function renderWorldLocations() {
     floorDatalist.innerHTML = ['Auto', 'Outside', 'Basement', 'Lower ground', 'Ground', 'Mezzanine', '1', '2', '3', 'Roof']
         .map(floor => `<option value="${floor}"></option>`).join('');
     
-    // Group by Region
+    // The directory groups locations by Region. The inspector deliberately
+    // renders one complete record at a time.
     const regions = {};
     pageData.items.forEach(loc => {
         const r = loc.region || 'No Region';
@@ -12737,7 +13691,7 @@ function renderWorldLocations() {
         container.insertAdjacentHTML('beforeend', '<div class="form-hint" style="padding:20px;text-align:center">No locations match this search.</div>');
     }
     Object.keys(regions).sort().forEach(regionName => {
-        if (regionName !== 'No Region') {
+        if (!inspecting && regionName !== 'No Region') {
             const header = document.createElement('div');
             header.className = 'region-group-header';
             header.textContent = regionName;
@@ -12745,6 +13699,8 @@ function renderWorldLocations() {
         }
 
         regions[regionName].forEach((loc, idx) => {
+            const parentLocation = getLocationRef(world, loc.parentLocationId);
+            const childLocations = worldLocationDirectChildren(world, loc.id);
             const div = document.createElement('div');
             div.id = `loc-card-${loc.id}`;
             div.className = 'studio-card';
@@ -12755,7 +13711,7 @@ function renderWorldLocations() {
             div.style.marginBottom = '16px';
 
             div.innerHTML = `
-                <div style="display:flex; gap:12px; margin-bottom:12px;">
+                <div class="world-inspector-section" data-inspector-section="overview" style="display:flex; gap:12px; margin-bottom:12px;">
                     <div style="flex:1">
                         <label class="form-label" style="font-size:0.7rem; opacity:0.6; display:flex; justify-content:space-between; gap:8px;">Location ID <button type="button" class="inline-link-btn edit-loc-id">Edit carefully</button></label>
                         <input type="text" class="form-input loc-id" value="${escapeHTML(loc.id)}" placeholder="Generated automatically" readonly title="Horde Studio generates this stable link. Use Edit carefully only when repairing imported data.">
@@ -12776,18 +13732,24 @@ function renderWorldLocations() {
                     </div>
                 </div>
                 
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                <div class="world-inspector-section" data-inspector-section="overview">
                     <div>
                         <label class="form-label" style="font-size:0.75rem;">Visible Description (to Player)</label>
                         <textarea class="form-textarea loc-desc" rows="3" placeholder="What the player sees...">${escapeHTML(loc.description)}</textarea>
                     </div>
+                </div>
+                <div class="world-inspector-section" data-inspector-section="secrets">
                     <div>
                         <label class="form-label" style="font-size:0.75rem;">Hidden Details (DM Only)</label>
                         <textarea class="form-textarea loc-hidden-desc" rows="3" placeholder="Secret info, list of items, vibes...">${escapeHTML(loc.hiddenDescription || '')}</textarea>
                     </div>
                 </div>
+                <div class="world-inspector-section" data-inspector-section="overview" style="margin-top:10px;">
+                    <label class="form-label" style="font-size:.72rem;">Search tags <span class="form-hint">(comma separated; classification only—not links)</span></label>
+                    <input class="form-input loc-tags" value="${escapeHTML((loc.tags || []).join(', '))}" placeholder="residential, restricted, haunted…">
+                </div>
 
-                <div class="world-media-editor">
+                <div class="world-media-editor world-inspector-section" data-inspector-section="visuals">
                     <div class="world-media-preview" style="${worldMediaSource(world, loc.visuals?.backgroundAssetId) ? `background-image:url('${cssUrl(worldMediaSource(world, loc.visuals.backgroundAssetId))}')` : ''}">
                         ${worldMediaSource(world, loc.visuals?.backgroundAssetId) ? '' : 'No location background'}
                     </div>
@@ -12803,12 +13765,19 @@ function renderWorldLocations() {
                     </div>
                 </div>
 
-                <div class="location-map-metadata">
+                <div class="location-map-metadata world-inspector-section" data-inspector-section="map">
+                    <div class="world-containment-guide">
+                        <strong>Geography vs containment</strong>
+                        <span>A region is a broad geographic area (for example Greenfield). A building is a location in that region; its rooms are child locations inside the building.</span>
+                    </div>
+                    ${parentLocation ? `<button type="button" class="world-containment-parent" data-open-parent="${escapeHTML(parentLocation.id)}">
+                        <span class="world-containment-parent-icon">↰</span><span><small>This place is inside</small><strong>${escapeHTML(parentLocation.name || parentLocation.id)}</strong></span><span>Open parent</span>
+                    </button>` : ''}
                     <div>
                         <label class="form-label" style="font-size:0.7rem;">Map Role</label>
                         <select class="form-select loc-map-type">
                             <option value="" ${!loc.mapType ? 'selected' : ''}>Auto-detect (${escapeHTML(formatWorldMapType(inferWorldMapType(loc)))})</option>
-                            ${['region', 'route', 'building', 'outdoor', 'room', 'area'].map(type =>
+                            ${['transit', 'route', 'building', 'outdoor', 'room', 'area'].map(type =>
                                 `<option value="${type}" ${loc.mapType === type ? 'selected' : ''}>${escapeHTML(formatWorldMapType(type))}</option>`).join('')}
                         </select>
                     </div>
@@ -12816,30 +13785,52 @@ function renderWorldLocations() {
                         <label class="form-label" style="font-size:0.7rem;">Inside / Attached To</label>
                         <select class="form-select loc-map-parent">
                             <option value="">Auto-detect</option>
-                            ${world.locations.filter(candidate => candidate.id !== loc.id).map(candidate =>
+                            ${world.locations.filter(candidate => candidate.id !== loc.id
+                                && !worldLocationLineage(world, candidate).some(ancestor => ancestor.id === loc.id)).map(candidate =>
                                 `<option value="${escapeHTML(candidate.id)}" ${loc.parentLocationId === candidate.id ? 'selected' : ''}>${escapeHTML(candidate.name || candidate.id)}</option>`).join('')}
                         </select>
+                        <small class="form-hint">Use this for rooms, floors, shops inside a mall, or places attached to another place.</small>
                     </div>
                     <div>
                         <label class="form-label" style="font-size:0.7rem;">Floor / Level</label>
                         <input type="text" list="world-floor-datalist" class="form-input loc-map-floor" value="${escapeHTML(loc.mapFloor || '')}" placeholder="Choose or enter a floor…">
                     </div>
+                    <div class="world-contained-places">
+                        <div class="world-contained-places-head">
+                            <div><strong>Inside ${escapeHTML(loc.name || 'this place')}</strong><span>Rooms and contained places belong to this location. Open one to edit its full record.</span></div>
+                            <button type="button" class="tool-btn loc-add-child-room">+ Add room</button>
+                        </div>
+                        <div class="world-contained-place-grid">
+                            ${childLocations.map(child => `<button type="button" class="world-contained-place-card" data-open-child="${escapeHTML(child.id)}">
+                                <span class="world-contained-place-icon">${inferWorldMapType(child) === 'room' ? '▦' : '⌖'}</span>
+                                <span class="world-contained-place-copy"><strong>${escapeHTML(child.name || 'Unnamed room')}</strong><small>${escapeHTML(formatWorldMapType(child.mapType || inferWorldMapType(child)))}${child.mapFloor ? ` · ${escapeHTML(child.mapFloor)}` : ''}</small><em>${escapeHTML(child.description || 'No description yet.')}</em></span>
+                                <span class="world-contained-place-open">Edit →</span>
+                            </button>`).join('') || `<div class="world-contained-place-empty">No rooms yet. Add one here and it will remain visibly nested under this location.</div>`}
+                        </div>
+                    </div>
                 </div>
                 
-                <div style="margin-top:12px;">
+                <div class="world-inspector-section" data-inspector-section="connections" style="margin-top:12px;">
                     <label class="form-label" style="font-size:0.75rem;">Exits</label>
                     <div class="exits-container" style="display:flex; flex-direction:column; gap:8px;">
                         ${(loc.exits || []).map((ex, exIdx) => {
                             const isString = typeof ex === 'string';
-                            const val = isString ? ex : (ex.text || "");
+                            const linkedTarget = !isString ? getLocationRef(world, ex.targetLocationId) : null;
+                            const val = linkedTarget
+                                ? `${getExitDirection(ex) ? `${getExitDirection(ex)} ` : ''}to ${linkedTarget.name}`
+                                : (isString ? ex : (ex.text || ""));
                             const time = isString ? 0 : (ex.travelTime || 0);
                             const oneWay = isString ? false : (ex.isOneWay || false);
+                            const mode = isString ? 'walk' : (ex.mode || 'walk');
+                            const routeName = isString ? '' : (ex.routeName || '');
+                            const cost = isString ? '' : (ex.cost || '');
 
                             return `
-                                <div style="display:flex; gap:8px; align-items:center;">
+                                <div class="world-exit-row">
                                     <div style="flex:2" class="exit-autocomplete-container">
                                         <input type="text" class="form-input exit-val ${checkExitTarget(val) ? 'valid-ref' : (isExitFormat(val) ? 'invalid-ref' : '')}" data-idx="${exIdx}" value="${escapeHTML(val)}" placeholder="e.g. North to The Gate">
                                     </div>
+                                    <input class="form-input exit-mode" data-idx="${exIdx}" aria-label="Transport" value="${escapeHTML(mode)}" placeholder="walk, horse, dragon…">
                                     <div style="display:flex; align-items:center; gap:4px; flex:1">
                                         <label style="font-size:10px; color:var(--text-3);">Time:</label>
                                         <input type="number" class="form-input exit-time" style="width:50px; padding:4px;" value="${time}" data-idx="${exIdx}">
@@ -12851,6 +13842,7 @@ function renderWorldLocations() {
                                     </div>
                                     <button class="tool-btn del-exit" data-idx="${exIdx}">✕</button>
                                 </div>
+                                <div class="world-exit-details"><input class="form-input exit-route" data-idx="${exIdx}" value="${escapeHTML(routeName)}" placeholder="Route or service name (optional)"><input class="form-input exit-cost" data-idx="${exIdx}" value="${escapeHTML(cost)}" placeholder="Cost (optional)"></div>
                                 <span class="ref-hint ${checkExitTarget(val) ? 'valid' : 'invalid'}" style="margin-top:-6px; margin-bottom:4px; display:block;">${checkExitTarget(val) ? '✓ Verified Connection' : (isExitFormat(val) ? '⚠ Broken Connection' : 'Hint: Use \"Direction to Location\"')}</span>
                             `;
                         }).join('')}
@@ -12858,7 +13850,7 @@ function renderWorldLocations() {
                     <button class="btn btn-ghost btn-full add-exit-btn" style="margin-top:8px; font-size:0.75rem;">+ Add Exit</button>
                 </div>
 
-                <div class="secret-group" style="border-color:var(--border);">
+                <div class="secret-group world-inspector-section" data-inspector-section="simulation" style="border-color:var(--border);">
                     <div class="secret-title" style="color:var(--text-2); margin-bottom:6px;">🌡️ Opening state — how this place reads before anything happens</div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                         <div>
@@ -12872,11 +13864,14 @@ function renderWorldLocations() {
                     </div>
                     <label style="display:block; font-size:10px; color:var(--text-3); margin-top:8px;">Standing conditions <span style="opacity:0.7;">— one per line, e.g. "under curfew"</span></label>
                     <textarea class="form-textarea loc-conditions" rows="2" placeholder="under curfew">${escapeHTML((Array.isArray(loc.conditions) ? loc.conditions : []).map(c => typeof c === 'string' ? c : (c && c.label) || '').filter(Boolean).join('\n'))}</textarea>
-                    <div style="border-top:1px solid var(--border); margin-top:10px; padding-top:10px;">
-                        <label style="display:flex; align-items:center; gap:7px; font-size:11px; color:var(--text-2);">
-                            <input type="checkbox" class="loc-sim-settlement" ${loc.simulateSettlement === true ? 'checked' : ''}>
-                            Simulate this as a settlement / community
-                        </label>
+                    <details class="loc-community-settings" ${loc.simulateSettlement === true ? 'open' : ''}>
+                        <summary><span><strong>Living population</strong><small>Advanced · usually leave on Automatic</small></span><span class="world-setting-state">${loc.simulateSettlement === true ? 'Enabled' : loc.simulateSettlement === false ? 'Disabled' : 'Automatic'}</span></summary>
+                        <p class="form-hint">This creates an independent population, economy and political simulation for a town, district, camp or similarly important community. Do not enable it for every building or room—contained places inherit the nearest simulated parent.</p>
+                        <label class="world-community-mode-label"><span>Population simulation</span><select class="form-select loc-community-mode">
+                            <option value="auto" ${loc.simulateSettlement == null ? 'selected' : ''}>Automatic (recommended)</option>
+                            <option value="enabled" ${loc.simulateSettlement === true ? 'selected' : ''}>Enable for this place</option>
+                            <option value="disabled" ${loc.simulateSettlement === false ? 'selected' : ''}>Never simulate this place</option>
+                        </select></label>
                         <div class="loc-society-seed ${loc.simulateSettlement === true ? '' : 'hidden'}" style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:7px; margin-top:8px;">
                             <label style="font-size:10px; color:var(--text-3);">Population<input type="number" class="form-input loc-population" min="1" value="${escapeHTML(String(loc.population ?? 100))}"></label>
                             <label style="font-size:10px; color:var(--text-3);">Food 0–100<input type="number" class="form-input loc-food" min="0" max="100" value="${escapeHTML(String(loc.food ?? 60))}"></label>
@@ -12888,11 +13883,11 @@ function renderWorldLocations() {
                                 </select>
                             </label>
                         </div>
-                    </div>
+                    </details>
                     ${loc.danger == null || loc.danger === '' ? `<div class="form-hint" style="margin-top:4px;">Unset — this place opens unremarkable. Run Calibrate → Society to have these judged from the fiction rather than filling in every location by hand.</div>` : `<button class="btn btn-ghost clear-loc-state" style="margin-top:6px; font-size:0.7rem; padding:3px 8px;">Clear opening state</button>`}
                 </div>
 
-                <div class="secret-group" style="border-color:var(--border);">
+                <div class="secret-group world-inspector-section" data-inspector-section="commerce" style="border-color:var(--border);">
                     <div class="secret-header">
                         <div class="secret-title" style="color:var(--text-2);">🏪 Shop — what can be bought here</div>
                         <button class="tool-btn add-shop-item-btn" style="padding:2px 8px; font-size:10px;">+ Add Item</button>
@@ -12912,7 +13907,7 @@ function renderWorldLocations() {
                         </div>`).join('')}
                 </div>
 
-                <div class="secret-group">
+                <div class="secret-group world-inspector-section" data-inspector-section="secrets">
                     <div class="secret-header">
                         <div class="secret-title">Shadow Ledger (Secrets)</div>
                         <button class="tool-btn add-secret-btn" style="padding:2px 8px; font-size:10px;">+ Add Secret</button>
@@ -12991,9 +13986,13 @@ function renderWorldLocations() {
                 else delete loc.conditions;
                 updateWorldTokenCount();
             };
-            div.querySelector('.loc-sim-settlement').onchange = event => {
-                loc.simulateSettlement = event.target.checked;
-                div.querySelector('.loc-society-seed').classList.toggle('hidden', !event.target.checked);
+            div.querySelector('.loc-community-mode').onchange = event => {
+                if (event.target.value === 'enabled') loc.simulateSettlement = true;
+                else if (event.target.value === 'disabled') loc.simulateSettlement = false;
+                else delete loc.simulateSettlement;
+                div.querySelector('.loc-society-seed').classList.toggle('hidden', loc.simulateSettlement !== true);
+                div.querySelector('.world-setting-state').textContent = loc.simulateSettlement === true
+                    ? 'Enabled' : loc.simulateSettlement === false ? 'Disabled' : 'Automatic';
                 updateWorldTokenCount();
             };
             const bindSocietyNumber = (selector, field, min, max) => {
@@ -13091,7 +14090,20 @@ function renderWorldLocations() {
                 renderWorldStudio();
             };
             div.querySelector('.loc-name').onchange = (e) => { loc.name = e.target.value; renderWorldStudio(); };
-            div.querySelector('.loc-region').onchange = (e) => { loc.region = e.target.value; renderWorldLocations(); };
+            div.querySelector('.loc-region').onchange = (e) => {
+                const name = e.target.value.trim();
+                let region = (world.regions || []).find(item => item.name.toLowerCase() === name.toLowerCase());
+                if (!region && name) {
+                    let id = `reg_${worldDirectorySlug(name, Date.now())}`;
+                    let suffix = 2;
+                    while (world.regions.some(item => item.id === id)) id = `${id}_${suffix++}`;
+                    region = { id, name: name.slice(0, 120), description: '', tags: [] };
+                    world.regions.push(region);
+                }
+                loc.regionId = region?.id || '';
+                loc.region = region?.name || '';
+                renderWorldLocations();
+            };
             div.querySelector('.loc-map-type').onchange = (e) => {
                 loc.mapType = e.target.value;
                 renderWorldLocations();
@@ -13099,21 +14111,46 @@ function renderWorldLocations() {
             };
             div.querySelector('.loc-map-parent').onchange = (e) => {
                 loc.parentLocationId = e.target.value;
+                const parent = getLocationRef(world, loc.parentLocationId);
+                if (parent?.regionId) {
+                    const region = (world.regions || []).find(item => item.id === parent.regionId);
+                    loc.regionId = parent.regionId;
+                    loc.region = region?.name || parent.region || loc.region;
+                }
+                renderWorldLocations();
                 renderWorldArchitectMap();
             };
+            div.querySelector('.loc-add-child-room').onclick = () => {
+                addWorldLocation('bottom', loc.regionId, loc.id, 'room');
+            };
+            div.querySelector('[data-open-parent]')?.addEventListener('click', event => {
+                openWorldRecordInspector('location', event.currentTarget.dataset.openParent, 'map', 'locations');
+            });
+            div.querySelectorAll('[data-open-child]').forEach(button => button.onclick = () => {
+                openWorldRecordInspector('location', button.dataset.openChild, 'overview', 'locations');
+            });
             div.querySelector('.loc-map-floor').onchange = (e) => {
                 loc.mapFloor = e.target.value.trim();
                 renderWorldArchitectMap();
             };
             div.querySelector('.loc-desc').oninput = (e) => { loc.description = e.target.value; updateWorldTokenCount(); };
             div.querySelector('.loc-hidden-desc').oninput = (e) => { loc.hiddenDescription = e.target.value; updateWorldTokenCount(); };
+            div.querySelector('.loc-tags').onchange = e => {
+                loc.tags = [...new Set(e.target.value.split(',').map(tag => tag.trim()).filter(Boolean))].slice(0, 30);
+                updateWorldTokenCount();
+            };
             
             div.querySelectorAll('.exit-val').forEach(inp => {
                 inp.oninput = (e) => {
                     const idx = e.target.dataset.idx;
                     const val = e.target.value;
                     if (typeof loc.exits[idx] === 'string') loc.exits[idx] = val;
-                    else loc.exits[idx].text = val;
+                    else {
+                        loc.exits[idx].text = val;
+                        // While the label is being edited it must not continue
+                        // resolving to the previous canonical destination.
+                        loc.exits[idx].targetLocationId = '';
+                    }
                     
                     const isValid = checkExitTarget(val);
                     e.target.className = `form-input exit-val ${isValid ? 'valid-ref' : (isExitFormat(val) ? 'invalid-ref' : '')}`;
@@ -13179,6 +14216,12 @@ function renderWorldLocations() {
                         
                         if (oldVal) syncExitConnection(loc, oldVal, false, 0, true);
                         if (newVal) syncExitConnection(loc, newVal, isOneWay, travelTime, false);
+                        if (loc.exits[idx] && typeof loc.exits[idx] === 'object') {
+                            const linked = getLocationRef(world, getExitTargetName(newVal));
+                            loc.exits[idx].targetLocationId = linked?.id || '';
+                            loc.exits[idx].direction = getExitDirection(newVal);
+                            loc.exits[idx].text = newVal;
+                        }
                         e.target.dataset.oldVal = newVal;
                     }
                     renderWorldLocations();
@@ -13200,6 +14243,30 @@ function renderWorldLocations() {
                     
                     syncExitConnection(loc, text, isOneWay, travelTime, false);
                     renderWorldLocations();
+                };
+            });
+            div.querySelectorAll('.exit-mode').forEach(input => {
+                input.onchange = event => {
+                    const index = Number(event.target.dataset.idx);
+                    if (typeof loc.exits[index] === 'string') loc.exits[index] = { text: loc.exits[index] };
+                    loc.exits[index].mode = normalizeWorldTravelMode(event.target.value);
+                    syncExitConnection(loc, loc.exits[index].text, loc.exits[index].isOneWay, loc.exits[index].travelTime, false);
+                };
+            });
+            div.querySelectorAll('.exit-route').forEach(input => {
+                input.onchange = event => {
+                    const index = Number(event.target.dataset.idx);
+                    if (typeof loc.exits[index] === 'string') loc.exits[index] = { text: loc.exits[index] };
+                    loc.exits[index].routeName = event.target.value.slice(0, 160);
+                    syncExitConnection(loc, loc.exits[index].text, loc.exits[index].isOneWay, loc.exits[index].travelTime, false);
+                };
+            });
+            div.querySelectorAll('.exit-cost').forEach(input => {
+                input.onchange = event => {
+                    const index = Number(event.target.dataset.idx);
+                    if (typeof loc.exits[index] === 'string') loc.exits[index] = { text: loc.exits[index] };
+                    loc.exits[index].cost = event.target.value.slice(0, 120);
+                    syncExitConnection(loc, loc.exits[index].text, loc.exits[index].isOneWay, loc.exits[index].travelTime, false);
                 };
             });
             div.querySelectorAll('.exit-oneway').forEach(inp => {
@@ -13242,9 +14309,12 @@ function renderWorldLocations() {
             };
 
             div.querySelector('.del-loc').onclick = () => {
-                state.editingWorld.locations.splice(world.locations.indexOf(loc), 1);
+                const usedBy = worldDirectoryUsedBy('location', loc.id);
+                if (usedBy.length && !confirm(`“${loc.name || loc.id}” is linked from ${usedBy.length} world record${usedBy.length === 1 ? '' : 's'}:\n\n${usedBy.slice(0, 8).join('\n')}\n\nDelete it and clear those links?`)) return;
+                removeWorldLocationRecord(state.editingWorld, loc.id);
                 // Nobody holds ground that no longer exists, and nobody sells there.
                 normalizeAuthoredWorld(state.editingWorld);
+                closeWorldRecordInspector();
                 renderWorldLocations();
                 renderWorldEntities();
                 renderWorldFactions();
@@ -13259,14 +14329,22 @@ function renderWorldLocations() {
             container.appendChild(div);
         });
     });
+    if (inspecting) {
+        const links = worldDirectoryUsedBy('location', selected.id);
+        document.getElementById('world-record-reference-status').textContent = links.length
+            ? `Canon Links · used by ${links.slice(0, 3).join(', ')}${links.length > 3 ? ` and ${links.length - 3} more` : ''}.`
+            : 'Canon Links · this location has no incoming references yet.';
+        setWorldInspectorTab(worldRecordInspector.tab);
+    }
 }
 
-function addWorldEntity() {
+function addWorldEntity(type = 'npc') {
     const ent = {
         id: 'ent_' + Date.now(),
         name: '',
-        type: 'npc', // npc or item
+        type,
         isMajor: false,
+        simulationDepth: 'recurring',
         description: '',
         persona: '',
         goal: '',
@@ -13277,10 +14355,15 @@ function addWorldEntity() {
         schedule: []
     };
     state.editingWorld.entities.push(ent);
-    worldStudioListState.entities.query = ent.id;
-    worldStudioListState.entities.page = 0;
-    renderWorldEntities();
+    const directory = type === 'item' ? 'items' : 'people';
+    worldStudioListState[directory].query = '';
+    worldStudioListState[directory].page = 0;
+    openWorldRecordInspector('entity', ent.id, 'overview', directory);
     updateWorldTokenCount();
+}
+
+function addWorldItem() {
+    addWorldEntity('item');
 }
 
 function renderWorldSecrets(owner, container) {
@@ -13341,11 +14424,12 @@ function updateWorldTokenCount() {
     if (el) el.textContent = estTokens.toLocaleString();
 }
 
-const WORLD_MAP_TYPES = new Set(['region', 'route', 'building', 'outdoor', 'room', 'area']);
+const WORLD_MAP_TYPES = new Set(['region', 'transit', 'route', 'building', 'outdoor', 'room', 'area']);
 
 function formatWorldMapType(type) {
     return ({
         region: 'Region / Settlement',
+        transit: 'Transit hub',
         route: 'Street / Path',
         building: 'Building',
         outdoor: 'Yard / Outdoor',
@@ -13358,6 +14442,7 @@ function inferWorldMapType(location) {
     if (WORLD_MAP_TYPES.has(location?.mapType)) return location.mapType;
     const text = `${location?.name || ''} ${location?.description || ''}`.toLowerCase();
     if (/\b(street|road|lane|avenue|boulevard|highway|trail|path|passageway|alley|bridge|canal|river|rail|route)\b/.test(text)) return 'route';
+    if (/\b(bus stop|train station|railway station|metro station|subway station|airport|airfield|ferry terminal|coach station|transit hub)\b/.test(text)) return 'transit';
     if (/\b(house|home|hall|hotel|inn|tavern|shop|store|market|school|hospital|temple|church|cathedral|tower|castle|palace|manor|fort|station|warehouse|factory|library|museum|theatre|theater|building|cottage|cabin|farmhouse|apartment|citadel)\b/.test(text)) return 'building';
     if (/\b(bedroom|bathroom|kitchen|office|study|nursery|cellar|basement|attic|foyer|lobby|corridor|hallway|closet|pantry|dining room|living room|guest room|chamber|suite|workshop|laboratory|lab|room)\b/.test(text)) return 'room';
     if (/\b(backyard|front yard|yard|garden|courtyard|patio|porch|terrace|grounds|balcony|rooftop|park|field|plaza|square|beach|dock|harbor|forest|woods|clearing)\b/.test(text)) return 'outdoor';
@@ -14351,15 +15436,114 @@ function renderWorldArchitectMap() {
     });
 }
 
-function renderWorldEntities() {
+function worldEntityDirectoryGroups(world, entities, groupBy, mode = 'people') {
+    const groups = new Map();
+    const add = (label, entity) => {
+        const key = label || 'Unassigned';
+        if (!groups.has(key)) groups.set(key, []);
+        if (!groups.get(key).includes(entity)) groups.get(key).push(entity);
+    };
+    entities.forEach(entity => {
+        if (groupBy === 'all') return add(mode === 'items' ? 'All items' : 'All people', entity);
+        if (groupBy === 'depth') return add(`${entity.simulationDepth || 'background'} cast`, entity);
+        if (groupBy === 'location') return add(getLocationRef(world, entity.homeLocation || entity.startLocation)?.name || (mode === 'items' ? 'Unplaced items' : 'No linked location'), entity);
+        if (groupBy === 'organization') {
+            const memberships = (entity.groupIds || []).map(id => world.groups.find(group => group.id === id)).filter(group => group && group.type !== 'household');
+            const faction = (world.factions || []).find(item => item.id === entity.factionId);
+            if (memberships.length) memberships.forEach(group => add(group.name, entity));
+            else if (faction) add(faction.name, entity);
+            else add('Unaffiliated', entity);
+            return;
+        }
+        const household = world.groups.find(group => group.id === entity.householdId && group.type === 'household');
+        if (household) return add(household.name, entity);
+        const home = getLocationRef(world, entity.homeLocation);
+        add(home ? `${home.name} household` : 'No household', entity);
+    });
+    return groups;
+}
+
+function renderWorldEntityDirectory(world, container, mode = 'people') {
+    ensureWorldDirectoryState(world);
+    const isItems = mode === 'items';
+    const view = worldStudioListState[mode];
+    const query = view.query.trim().toLowerCase();
+    const filter = view.filter || 'all';
+    const groupBy = view.groupBy || (isItems ? 'location' : 'household');
+    const source = world.entities.filter(entity => isItems ? entity.type === 'item' : entity.type === 'npc');
+    const matches = source.filter(entity => {
+        const linkedGroups = (entity.groupIds || []).map(id => world.groups.find(group => group.id === id)?.name || '').join(' ');
+        const search = [entity.name, entity.id, entity.type, entity.description, entity.persona, entity.goal, linkedGroups, ...(entity.tags || [])].join(' ').toLowerCase();
+        return (!query || search.includes(query))
+            && (filter === 'all' || entity.simulationDepth === filter);
+    });
+    const directory = document.createElement('div');
+    directory.className = 'world-directory';
+    directory.innerHTML = `<div class="world-directory-toolbar">
+        <input type="search" class="form-input world-directory-search" value="${escapeHTML(view.query)}" placeholder="${isItems ? 'Search item names, descriptions, locations or tags…' : 'Search names, personas, groups, goals or tags…'}" aria-label="Search ${isItems ? 'items' : 'people'}">
+        ${isItems ? '' : `<select class="form-select world-directory-filter" aria-label="Filter people"><option value="all">All people</option><option value="core" ${filter === 'core' ? 'selected' : ''}>Core cast</option><option value="recurring" ${filter === 'recurring' ? 'selected' : ''}>Recurring</option><option value="background" ${filter === 'background' ? 'selected' : ''}>Background</option></select>`}
+        <select class="form-select world-directory-group" aria-label="Group ${isItems ? 'items' : 'people'} by">${isItems ? `<option value="location" ${groupBy === 'location' ? 'selected' : ''}>Group: location</option>` : `<option value="household" ${groupBy === 'household' ? 'selected' : ''}>Group: households</option><option value="organization" ${groupBy === 'organization' ? 'selected' : ''}>Group: organizations</option><option value="location" ${groupBy === 'location' ? 'selected' : ''}>Group: home</option><option value="depth" ${groupBy === 'depth' ? 'selected' : ''}>Group: simulation depth</option>`}<option value="all" ${groupBy === 'all' ? 'selected' : ''}>No grouping</option></select>
+        <span class="world-directory-summary">${matches.length} of ${source.length} ${isItems ? 'items' : 'people'}</span>
+    </div>`;
+    const grouped = worldEntityDirectoryGroups(world, matches, groupBy, mode);
+    const groupEntries = [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
+    groupEntries.forEach(([label, entities], groupIndex) => {
+        const section = document.createElement('details');
+        section.className = 'world-directory-section';
+        section.open = Boolean(query) || groupEntries.length <= 8 || groupIndex === 0;
+        section.innerHTML = `<summary><strong>${escapeHTML(label.replace(/^./, char => char.toUpperCase()))}</strong><span>${entities.length} ${isItems ? 'item' : 'person'}${entities.length === 1 ? '' : 's'}</span></summary><div class="world-directory-grid"></div>`;
+        const grid = section.querySelector('.world-directory-grid');
+        entities.sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(entity => {
+            const image = worldMediaSource(world, entity.visuals?.portraitAssetId);
+            const home = getLocationRef(world, entity.homeLocation || entity.startLocation);
+            const depth = entity.simulationDepth || 'background';
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = `world-directory-card ${entity.type === 'npc' ? 'is-person' : ''}`;
+            card.innerHTML = `<div class="world-directory-card-media" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : escapeHTML((entity.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}</div>
+                <div class="world-directory-card-copy"><h3>${escapeHTML(entity.name || 'Unnamed record')}</h3>
+                <p>${escapeHTML(isItems ? (entity.description || 'No item description yet.') : (entity.persona || entity.description || 'No personality or description yet.'))}</p>
+                <div class="world-directory-badges"><span class="world-directory-badge ${depth === 'core' ? 'is-core' : ''}">${escapeHTML(isItems ? 'item' : depth)}</span>${home ? `<span class="world-directory-badge">⌂ ${escapeHTML(home.name)}</span>` : ''}${!isItems && !entity.persona ? '<span class="world-directory-badge is-warning">persona missing</span>' : ''}</div></div>`;
+            card.onclick = () => openWorldRecordInspector('entity', entity.id, 'overview', mode);
+            grid.appendChild(card);
+        });
+        directory.appendChild(section);
+    });
+    if (!matches.length) directory.insertAdjacentHTML('beforeend', `<div class="world-directory-empty">No ${isItems ? 'items' : 'people'} match these filters.</div>`);
+    const search = directory.querySelector('.world-directory-search');
+    search.oninput = event => {
+        view.query = event.target.value;
+        if (isItems) renderWorldItems(); else renderWorldEntities();
+        requestAnimationFrame(() => {
+            const next = container.querySelector('.world-directory-search');
+            if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
+        });
+    };
+    const filterControl = directory.querySelector('.world-directory-filter');
+    if (filterControl) filterControl.onchange = event => { view.filter = event.target.value; if (isItems) renderWorldItems(); else renderWorldEntities(); };
+    directory.querySelector('.world-directory-group').onchange = event => { view.groupBy = event.target.value; if (isItems) renderWorldItems(); else renderWorldEntities(); };
+    container.appendChild(directory);
+}
+
+function renderWorldItems() {
+    renderWorldEntities('items');
+}
+
+function renderWorldEntities(mode = 'people') {
     const world = state.editingWorld;
     if (!world) return;
     normalizeAuthoredWorld(world);   // a malformed relationship list must not break the panel
-    const container = document.getElementById('w-entities-list');
+    const inspecting = worldRecordInspector.kind === 'entity' && worldRecordInspector.id;
+    const activeMode = inspecting ? (worldRecordInspector.directory || (world.entities.find(entity => entity.id === worldRecordInspector.id)?.type === 'item' ? 'items' : 'people')) : mode;
+    const container = inspecting ? document.getElementById('world-record-body') : document.getElementById(activeMode === 'items' ? 'w-items-list' : 'w-entities-list');
     container.innerHTML = '';
-    const pageData = getWorldStudioListPage('entities', world.entities,
-        ent => [ent.id, ent.name, ent.type, ent.description, ent.persona, ent.goal, ent.startLocation, ent.homeLocation, ent.factionId].filter(Boolean).join(' '));
-    appendWorldStudioListToolbar(container, 'entities', pageData, renderWorldEntities, 'entities');
+    if (!inspecting) {
+        renderWorldEntityDirectory(world, container, activeMode);
+        return;
+    }
+    const selected = world.entities.find(entity => entity.id === worldRecordInspector.id);
+    if (!selected) return closeWorldRecordInspector();
+    const pageData = { view: worldStudioListState[activeMode], filtered: [selected], pages: 1, items: [selected] };
     if (!pageData.items.length) {
         container.insertAdjacentHTML('beforeend', '<div class="form-hint" style="padding:20px;text-align:center">No entities match this search.</div>');
     }
@@ -14373,29 +15557,29 @@ function renderWorldEntities() {
         div.style.border = '1px solid var(--border)';
 
         div.innerHTML = `
-            <div style="display:flex; gap:12px; margin-bottom:12px; align-items:center;">
-                <input type="text" class="form-input ent-name" style="flex:1" value="${escapeHTML(ent.name)}" placeholder="Entity Name">
-                <select class="form-select ent-type" style="width:100px;">
-                    <option value="npc" ${ent.type === 'npc' ? 'selected' : ''}>NPC</option>
-                    <option value="item" ${ent.type === 'item' ? 'selected' : ''}>Item</option>
-                </select>
+            <div class="world-inspector-section" data-inspector-section="overview" style="display:flex; gap:12px; margin-bottom:12px; align-items:center;">
+                <input type="text" class="form-input ent-name" style="flex:1" value="${escapeHTML(ent.name)}" placeholder="${ent.type === 'item' ? 'Item name' : 'Person name'}">
+                <span class="mini-tag" style="padding:8px 12px;">${ent.type === 'item' ? 'Object' : 'Person'}</span>
                 ${ent.type === 'npc' ? `
-                    <div style="display:flex; align-items:center; gap:8px; background:var(--surface3); padding:8px 12px; border-radius:10px; border:1px solid var(--border);">
-                        <label style="font-size:11px; font-weight:700; color:var(--text-2); text-transform:uppercase;">Major Character</label>
-                        <input type="checkbox" class="ent-major" ${ent.isMajor ? 'checked' : ''}>
-                    </div>
+                    <select class="form-select ent-simulation-depth" style="width:170px;" title="Controls simulation and context priority; every person keeps a persona.">
+                        <option value="background" ${ent.simulationDepth === 'background' ? 'selected' : ''}>Background</option>
+                        <option value="recurring" ${ent.simulationDepth === 'recurring' ? 'selected' : ''}>Recurring</option>
+                        <option value="core" ${ent.simulationDepth === 'core' ? 'selected' : ''}>Core cast</option>
+                    </select>
                 ` : ''}
                 <button class="tool-btn tool-btn-danger del-ent">✕</button>
             </div>
 
             <div style="display:flex; flex-direction:column; gap:12px;">
-                <div>
-                    <label class="form-label" style="font-size:0.75rem;">Basic Description</label>
-                    <textarea class="form-textarea ent-desc" rows="2" placeholder="Physical features, items they carry, etc.">${escapeHTML(ent.description)}</textarea>
+                <div class="world-inspector-section" data-inspector-section="overview">
+                    <label class="form-label" style="font-size:0.75rem;">${ent.type === 'item' ? 'Description & purpose' : 'Appearance & public impression'}</label>
+                    <textarea class="form-textarea ent-desc" rows="2" placeholder="${ent.type === 'item' ? 'What the object looks like, what it does and why it matters…' : 'What another person notices: appearance, role, visible condition and reputation…'}">${escapeHTML(ent.description)}</textarea>
+                    <label class="form-label" style="font-size:.72rem;margin-top:10px;">Search tags <span class="form-hint">(classification only—not relationships)</span></label>
+                    <input class="form-input ent-tags" value="${escapeHTML((ent.tags || []).join(', '))}" placeholder="${ent.type === 'item' ? 'evidence, key, weapon, fragile…' : 'student, wealthy, guard, suspicious…'}">
                 </div>
 
                 ${ent.type === 'npc' ? `
-                    <div class="world-media-editor">
+                    <div class="world-media-editor world-inspector-section" data-inspector-section="visuals">
                         <div class="world-media-preview is-portrait" style="${worldMediaSource(world, ent.visuals?.portraitAssetId) ? `background-image:url('${cssUrl(worldMediaSource(world, ent.visuals.portraitAssetId))}')` : ''}">
                             ${worldMediaSource(world, ent.visuals?.portraitAssetId) ? '' : escapeHTML((ent.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}
                         </div>
@@ -14410,7 +15594,7 @@ function renderWorldEntities() {
                             </div>
                         </div>
                     </div>
-                    <div style="display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px; align-items:end;">
+                    <div class="world-inspector-section" data-inspector-section="visuals" style="display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px; align-items:end;">
                         <div>
                             <label class="form-label" style="font-size:.75rem;">Dialogue Color</label>
                             <input class="ent-dialogue-color" type="color" value="${escapeHTML(ent.visuals?.dialogueColor || '#E63946')}" style="width:100%; height:42px; padding:3px; border:1px solid var(--border); border-radius:9px; background:var(--surface);">
@@ -14419,14 +15603,15 @@ function renderWorldEntities() {
                     </div>
                 ` : ''}
                 
-                ${ent.isMajor && ent.type === 'npc' ? `
-                    <div>
-                        <label class="form-label" style="font-size:0.75rem; color:var(--red);">Major Persona / Backstory (Full Context Injection)</label>
-                        <textarea class="form-textarea ent-persona" rows="4" placeholder="Deep personality traits, secrets, long-term goals...">${escapeHTML(ent.persona || '')}</textarea>
+                ${ent.type === 'npc' ? `
+                    <div class="world-inspector-section" data-inspector-section="persona">
+                        <label class="form-label" style="font-size:0.75rem; color:var(--red);">Persona &amp; voice</label>
+                        <textarea class="form-textarea ent-persona" rows="6" placeholder="Temperament, values, contradictions, mannerisms, speech rhythm, boundaries and how they behave under pressure…">${escapeHTML(ent.persona || '')}</textarea>
+                        <p class="form-hint">Every person has a persona. Simulation depth controls priority—not whether their personality exists.</p>
                     </div>
                 ` : ''}
                 ${ent.type === 'npc' ? `
-                    <div style="display:grid; grid-template-columns:minmax(0, 1fr) 150px; gap:12px;">
+                    <div class="world-inspector-section" data-inspector-section="simulation" style="display:grid; grid-template-columns:minmax(0, 1fr) 150px; gap:12px;">
                         <div>
                             <label class="form-label" style="font-size:0.75rem; color:var(--accent);">Starting Living World Agenda</label>
                             <textarea class="form-textarea ent-goal" rows="2" placeholder="A persistent goal this character pursues off-screen...">${escapeHTML(ent.goal || ent.agenda || '')}</textarea>
@@ -14444,7 +15629,7 @@ function renderWorldEntities() {
 
                     <!-- Agenda depth: the fields the living world actually
                          simulates. Written by calibration, but never invisible. -->
-                    <div style="margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:8px;">
+                    <div class="world-inspector-section" data-inspector-section="simulation" style="margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:8px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
                             <label class="form-label" style="font-size:0.72rem; margin:0;">Beats — the concrete things they do, one per line</label>
                             <button class="btn btn-ghost ent-generate-beats" data-idx="${idx}" style="font-size:0.65rem; padding:3px 8px; white-space:nowrap;">✨ Generate</button>
@@ -14474,7 +15659,7 @@ function renderWorldEntities() {
                 ` : ''}
             </div>
 
-            <div style="display:flex; gap: 12px; margin-top:12px;">
+            ${ent.type === 'npc' ? `<div class="world-inspector-section" data-inspector-section="overview" style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:12px;">
                 <div style="flex:1;">
                     <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Sells at <span style="opacity:0.7;">(vendor)</span></label>
                     <select class="form-select ent-vendor">
@@ -14492,16 +15677,25 @@ function renderWorldEntities() {
                     </select>
                 </div>
                 <div style="flex:1;">
-                    <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Initial Location</label>
-                    <input type="text" list="world-location-datalist" class="form-input ent-loc ${validateLocationRef(ent.startLocation) ? 'valid-ref' : (ent.startLocation ? 'invalid-ref' : '')}" value="${escapeHTML(ent.startLocation || '')}" placeholder="Select...">
+                    <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Initial Location · Canon Link</label>
+                    <select class="form-select ent-loc"><option value="">No initial location</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
                 </div>
                 <div style="flex:1;">
-                    <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Home Location</label>
-                    <input type="text" list="world-location-datalist" class="form-input ent-home ${validateLocationRef(ent.homeLocation) ? 'valid-ref' : (ent.homeLocation ? 'invalid-ref' : '')}" value="${escapeHTML(ent.homeLocation || '')}" placeholder="Select...">
+                    <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Home Location · Canon Link</label>
+                    <select class="form-select ent-home"><option value="">No home location</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.homeLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
                 </div>
-            </div>
+            </div>` : `<div class="world-inspector-section" data-inspector-section="placement" style="margin-top:12px;">
+                <label class="form-label">Located at · Canon Link</label>
+                <select class="form-select ent-loc"><option value="">Unplaced item</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
+                <p class="form-hint">This is where the object exists at the start of a new session. It is not a person, household member or autonomous actor.</p>
+            </div>`}
+            ${ent.type === 'npc' ? `<div class="world-inspector-section" data-inspector-section="relationships" style="margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:12px;">
+                <label class="form-label">Households, families &amp; organizations</label>
+                <div class="canon-link-row ent-group-links">${world.groups.length ? world.groups.map(group => `<label class="canon-link"><input type="checkbox" class="ent-group" value="${escapeHTML(group.id)}" ${(ent.groupIds || []).includes(group.id) ? 'checked' : ''}> ${escapeHTML(group.name)} · ${escapeHTML(group.type)}</label>`).join('') : '<span class="form-hint">No groups yet. Create one below, then reuse it across the cast.</span>'}</div>
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) 150px auto;gap:8px;margin-top:10px;"><input class="form-input ent-new-group-name" placeholder="New household or group name"><select class="form-select ent-new-group-type"><option value="household">Household</option><option value="family">Family</option><option value="organization">Organization</option><option value="crew">Crew / team</option><option value="other">Other</option></select><button type="button" class="tool-btn ent-create-group">+ Create</button></div>
+            </div>` : ''}
             ${ent.type === 'npc' ? `
-            <div class="secret-group" style="border-color:var(--border);">
+            <div class="secret-group world-inspector-section" data-inspector-section="relationships" style="border-color:var(--border);">
                 <div class="secret-header">
                     <div class="secret-title" style="color:var(--text-2);">🫱 Standing with others</div>
                     <select class="form-select ent-add-relation" style="max-width:200px; font-size:11px; padding:3px 6px;">
@@ -14535,7 +15729,7 @@ function renderWorldEntities() {
                 })()}
             </div>` : ''}
 
-            <div class="secret-group">
+            <div class="secret-group world-inspector-section" data-inspector-section="secrets">
                 <div class="secret-header">
                     <div class="secret-title">Shadow Ledger (Secrets)</div>
                     <button class="tool-btn add-secret-btn" style="padding:2px 8px; font-size:10px;">+ Add Secret</button>
@@ -14554,8 +15748,11 @@ function renderWorldEntities() {
         };
 
         div.querySelector('.ent-name').oninput = (e) => { ent.name = e.target.value; updateWorldTokenCount(); };
-        div.querySelector('.ent-type').onchange = (e) => { ent.type = e.target.value; renderWorldEntities(); };
         div.querySelector('.ent-desc').oninput = (e) => { ent.description = e.target.value; updateWorldTokenCount(); };
+        div.querySelector('.ent-tags').onchange = e => {
+            ent.tags = [...new Set(e.target.value.split(',').map(tag => tag.trim()).filter(Boolean))].slice(0, 30);
+            updateWorldTokenCount();
+        };
         
         if (ent.type === 'npc') {
             ent.visuals = isPlainObject(ent.visuals) ? ent.visuals : {};
@@ -14599,13 +15796,12 @@ function renderWorldEntities() {
                 pruneWorldMediaAssets(world);
                 renderWorldEntities();
             };
-            div.querySelector('.ent-major').onchange = (e) => { 
-                ent.isMajor = e.target.checked; 
-                renderWorldEntities(); 
+            div.querySelector('.ent-simulation-depth').onchange = (e) => {
+                ent.simulationDepth = WORLD_DIRECTORY_DEPTHS.includes(e.target.value) ? e.target.value : 'background';
+                ent.isMajor = ent.simulationDepth === 'core';
+                updateWorldTokenCount();
             };
-            if (ent.isMajor) {
-                div.querySelector('.ent-persona').oninput = (e) => { ent.persona = e.target.value; updateWorldTokenCount(); };
-            }
+            div.querySelector('.ent-persona').oninput = (e) => { ent.persona = e.target.value; updateWorldTokenCount(); };
             div.querySelector('.ent-goal').oninput = (e) => { ent.goal = e.target.value; updateWorldTokenCount(); };
             div.querySelector('.ent-goal-autonomy').onchange = (e) => { ent.goalAutonomy = e.target.value; };
 
@@ -14634,11 +15830,34 @@ function renderWorldEntities() {
                 generateAgendaBeats(ent, event.currentTarget);
         }
         
-        div.querySelector('.ent-vendor').onchange = (e) => {
+        const vendorControl = div.querySelector('.ent-vendor');
+        if (vendorControl) vendorControl.onchange = (e) => {
             if (e.target.value) ent.vendorFor = e.target.value;
             else delete ent.vendorFor;
         };
         if (ent.type === 'npc') {
+            div.querySelectorAll('.ent-group').forEach(input => {
+                input.onchange = () => {
+                    ent.groupIds = [...div.querySelectorAll('.ent-group:checked')].map(item => item.value);
+                    ent.householdId = ent.groupIds.find(id => world.groups.find(group => group.id === id)?.type === 'household') || '';
+                    updateWorldTokenCount();
+                };
+            });
+            div.querySelector('.ent-create-group').onclick = () => {
+                const nameInput = div.querySelector('.ent-new-group-name');
+                const name = nameInput.value.trim();
+                if (!name) return showToast('Name the household or group first.', 'info');
+                const type = div.querySelector('.ent-new-group-type').value;
+                const base = `grp_${worldDirectorySlug(name, 'group')}`;
+                let id = base;
+                let suffix = 2;
+                while (world.groups.some(group => group.id === id)) id = `${base}_${suffix++}`;
+                world.groups.push({ id, name: name.slice(0, 120), type, description: '', homeLocationId: ent.homeLocation || '', tags: [] });
+                ent.groupIds = [...new Set([...(ent.groupIds || []), id])];
+                if (type === 'household') ent.householdId = id;
+                renderWorldEntities();
+                updateWorldTokenCount();
+            };
             div.querySelector('.ent-add-relation').onchange = (e) => {
                 const otherId = e.target.value;
                 if (!otherId) return;
@@ -14673,18 +15892,23 @@ function renderWorldEntities() {
             });
         }
 
-        div.querySelector('.ent-faction').onchange = (e) => {
+        const factionControl = div.querySelector('.ent-faction');
+        if (factionControl) factionControl.onchange = (e) => {
             if (e.target.value) ent.factionId = e.target.value;
             else delete ent.factionId;
             renderWorldFactions();   // member counts on the faction cards
         };
-        div.querySelector('.ent-loc').oninput = (e) => { ent.startLocation = e.target.value; updateWorldTokenCount(); };
-        div.querySelector('.ent-home').oninput = (e) => { ent.homeLocation = e.target.value; updateWorldTokenCount(); };
+        div.querySelector('.ent-loc').onchange = (e) => { ent.startLocation = e.target.value; updateWorldTokenCount(); };
+        const homeControl = div.querySelector('.ent-home');
+        if (homeControl) homeControl.onchange = (e) => { ent.homeLocation = e.target.value; updateWorldTokenCount(); };
         div.querySelector('.del-ent').onclick = () => {
+            const usedBy = worldDirectoryUsedBy('entity', ent.id);
+            if (usedBy.length && !confirm(`“${ent.name || ent.id}” has ${usedBy.length} authored connection${usedBy.length === 1 ? '' : 's'}:\n\n${usedBy.slice(0, 8).join('\n')}\n\nDelete this record and clear those connections?`)) return;
             state.editingWorld.entities.splice(idx, 1);
             // Their standings and their faction membership go with them, or the
             // other cards would list a relationship with a raw id.
             normalizeAuthoredWorld(state.editingWorld);
+            closeWorldRecordInspector();
             renderWorldEntities();
             renderWorldFactions();
             updateWorldTokenCount();
@@ -14692,6 +15916,13 @@ function renderWorldEntities() {
 
         container.appendChild(div);
     });
+    if (inspecting) {
+        const links = worldDirectoryUsedBy('entity', selected.id);
+        document.getElementById('world-record-reference-status').textContent = links.length
+            ? `Canon Links · ${links.slice(0, 3).join(', ')}${links.length > 3 ? ` and ${links.length - 3} more` : ''}.`
+            : 'Canon Links · no authored relationships reference this record yet.';
+        setWorldInspectorTab(worldRecordInspector.tab);
+    }
 }
 
 // A score read back as words, using the same thresholds the living world uses
@@ -14971,6 +16202,8 @@ function addWorldStartingLife() {
         inventory: [],
         obligations: [],
         privileges: [],
+        skills: [],
+        perks: [],
         legalStatus: 'free',
         holdings: [],
         statOverrides: {},
@@ -15047,6 +16280,8 @@ function renderWorldSandboxStudio() {
                 ${statControls}
                 <textarea class="form-textarea origin-obligations" rows="3" placeholder="Obligations, one per line">${escapeHTML((life.obligations || []).join('\n'))}</textarea>
                 <textarea class="form-textarea origin-privileges" rows="3" placeholder="Privileges, one per line">${escapeHTML((life.privileges || []).join('\n'))}</textarea>
+                <textarea class="form-textarea origin-skills" rows="3" placeholder="World-specific skills, one per line">${escapeHTML((life.skills || []).join('\n'))}</textarea>
+                <textarea class="form-textarea origin-perks" rows="3" placeholder="Starting perks, one per line">${escapeHTML((life.perks || []).join('\n'))}</textarea>
                 <textarea class="form-textarea origin-holdings" rows="3" placeholder="Holdings, comma separated">${escapeHTML((life.holdings || []).join(', '))}</textarea>
                 <textarea class="form-textarea origin-outfit origin-wide" rows="2" placeholder="Starting clothing / visible status">${escapeHTML(life.outfit || '')}</textarea>
                 <textarea class="form-textarea origin-intro origin-wide" rows="4" placeholder="Optional exact opening narration for this life">${escapeHTML(life.intro || '')}</textarea>
@@ -15067,6 +16302,8 @@ function renderWorldSandboxStudio() {
         bind('.origin-inventory', 'inventory', value => value.split(',').map(item => item.trim()).filter(Boolean).slice(0, 60));
         bind('.origin-obligations', 'obligations', value => value.split('\n').map(item => item.trim()).filter(Boolean).slice(0, 30));
         bind('.origin-privileges', 'privileges', value => value.split('\n').map(item => item.trim()).filter(Boolean).slice(0, 30));
+        bind('.origin-skills', 'skills', value => value.split('\n').map(item => item.trim()).filter(Boolean).slice(0, 40));
+        bind('.origin-perks', 'perks', value => value.split('\n').map(item => item.trim()).filter(Boolean).slice(0, 40));
         bind('.origin-holdings', 'holdings', value => value.split(',').map(item => item.trim()).filter(Boolean).slice(0, 30));
         bind('.origin-outfit', 'outfit', value => value.slice(0, 300));
         bind('.origin-intro', 'intro', value => value.slice(0, 6000));
@@ -15181,7 +16418,21 @@ function loadWorldGameRuleControls(world) {
     if (document.getElementById('w-dice-sides')) document.getElementById('w-dice-sides').value = String(dice.sides);
     if (document.getElementById('w-dice-modifier-mode')) document.getElementById('w-dice-modifier-mode').value = dice.modifierMode;
     if (document.getElementById('w-dice-default-difficulty')) document.getElementById('w-dice-default-difficulty').value = dice.defaultDifficulty;
+    if (document.getElementById('w-dice-visibility')) document.getElementById('w-dice-visibility').value = dice.visibility;
     if (document.getElementById('w-dice-criticals')) document.getElementById('w-dice-criticals').checked = dice.criticals;
+    const capabilities = normalizeWorldCapabilities(world);
+    if (document.getElementById('w-capabilities-customizable')) document.getElementById('w-capabilities-customizable').checked = capabilities.customizable;
+    if (document.getElementById('w-capability-budget')) document.getElementById('w-capability-budget').value = capabilities.startingPointBudget;
+    if (document.getElementById('w-capability-skills')) document.getElementById('w-capability-skills').value = worldCapabilityLines(capabilities.skills);
+    if (document.getElementById('w-capability-perks')) document.getElementById('w-capability-perks').value = worldCapabilityLines(capabilities.perks);
+    if (document.getElementById('w-capability-flaws')) document.getElementById('w-capability-flaws').value = worldCapabilityLines(capabilities.flaws);
+    if (document.getElementById('w-progression-enabled')) document.getElementById('w-progression-enabled').checked = capabilities.progression.enabled;
+    if (document.getElementById('w-progression-method')) document.getElementById('w-progression-method').value = capabilities.progression.method;
+    const consequencePolicy = rules.consequences || {};
+    if (document.getElementById('w-consequences-enabled')) document.getElementById('w-consequences-enabled').checked = consequencePolicy.enabled !== false;
+    if (document.getElementById('w-consequences-max')) document.getElementById('w-consequences-max').value = consequencePolicy.maxActive || 120;
+    if (document.getElementById('w-consequences-escalation')) document.getElementById('w-consequences-escalation').value = consequencePolicy.escalationTurns ?? 4;
+    if (document.getElementById('w-consequences-decay')) document.getElementById('w-consequences-decay').value = consequencePolicy.decayTurns ?? 8;
     document.querySelectorAll('[data-rule-detail]').forEach(container => {
         const enabled = !!rules.modules[container.dataset.ruleDetail];
         container.style.opacity = enabled ? '1' : '0.42';
@@ -15222,12 +16473,33 @@ function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
         ? 'lethal' : 'fail_forward';
     world.gameRules.currencyName = String(document.getElementById('w-rules-currency-name')?.value || 'coin').trim().slice(0, 60) || 'coin';
     world.gameRules.dice = normalizeWorldDiceConfig({ gameRules: { dice: {
-        resolution: document.getElementById('w-dice-resolution')?.value,
+        resolution: document.getElementById('w-dice-visibility')?.value === 'player_triggered'
+            ? 'player' : document.getElementById('w-dice-resolution')?.value,
         sides: document.getElementById('w-dice-sides')?.value,
         modifierMode: document.getElementById('w-dice-modifier-mode')?.value,
         defaultDifficulty: document.getElementById('w-dice-default-difficulty')?.value,
+        visibility: document.getElementById('w-dice-visibility')?.value,
         criticals: document.getElementById('w-dice-criticals')?.checked !== false
     } } });
+    world.gameRules.capabilities = {
+        customizable: document.getElementById('w-capabilities-customizable')?.checked !== false,
+        startingPointBudget: document.getElementById('w-capability-budget')?.value,
+        skills: parseWorldCapabilityLines(document.getElementById('w-capability-skills')?.value, 'skill'),
+        perks: parseWorldCapabilityLines(document.getElementById('w-capability-perks')?.value, 'perk'),
+        flaws: parseWorldCapabilityLines(document.getElementById('w-capability-flaws')?.value, 'flaw'),
+        progression: {
+            enabled: document.getElementById('w-progression-enabled')?.checked === true,
+            method: document.getElementById('w-progression-method')?.value || ''
+        }
+    };
+    normalizeWorldCapabilities(world);
+    world.gameRules.consequences = {
+        enabled: document.getElementById('w-consequences-enabled')?.checked !== false,
+        maxActive: document.getElementById('w-consequences-max')?.value,
+        escalationTurns: document.getElementById('w-consequences-escalation')?.value,
+        decayTurns: document.getElementById('w-consequences-decay')?.value
+    };
+    normalizeWorldGameRules(world);
     world.hudConfig.enableSchedules = !!world.gameRules.modules.schedules;
 }
 
@@ -15527,6 +16799,7 @@ async function resolveWorldCheckFromModal() {
         id: pending?.id || `manual_${Math.max(1, sess.turnCount || 1)}_${Date.now()}`,
         label,
         stat_id: pending?.stat_id || document.getElementById('world-check-stat')?.value || '',
+        capability_id: pending?.capability_id || '',
         difficulty: pending?.difficulty || parseInt(document.getElementById('world-check-difficulty')?.value) || dice.defaultDifficulty,
         modifier: pending?.modifier ?? (parseInt(document.getElementById('world-check-modifier')?.value) || 0),
         failure_cost: pending?.failure_cost || undefined,
@@ -15543,8 +16816,9 @@ async function resolveWorldCheckFromModal() {
         .filter(item => item.id !== check.id);
     sess.pendingCheck = sess.pendingChecks[0] || null;
     closeWorldCheckModal();
-    const modifierText = result.statModifier || result.situationalModifier
-        ? ` + modifiers ${result.statModifier + result.situationalModifier >= 0 ? '+' : ''}${result.statModifier + result.situationalModifier}` : '';
+    const combinedModifier = result.statModifier + (result.capabilityModifier || 0) + result.situationalModifier;
+    const modifierText = combinedModifier
+        ? ` + modifiers ${combinedModifier >= 0 ? '+' : ''}${combinedModifier}` : '';
     addWorldMessage('system', `[WORLD KERNEL — AUTHORITATIVE CHECK RESULT]\n${result.label}: d${result.sides} rolled ${result.roll}${modifierText} = ${result.total} against difficulty ${result.difficulty}. Result: ${result.success ? 'SUCCESS' : 'FAILURE'}${result.critical ? ` (${result.critical.toUpperCase()} CRITICAL)` : ''}. The selected ${result.success ? 'success' : 'failure'} consequence has already been committed${outcomeResult?.ledgerEntry ? `: ${outcomeResult.ledgerEntry}` : ''}. Narrate this exact outcome now; do not request or invent another roll for this action.`, { location: sess.playerLocation, deferPersist: true });
     await saveState();
     renderWorldPlayState();
@@ -16065,6 +17339,7 @@ function resetWorldTimeline(world, sess) {
         economy: { currency: rules.currencyName, markets: seedMarketsFromWorld(world) },
         playstyle: { turnsObserved: 0, signals: {}, preferences: {}, dominant: [], summary: 'No clear playstyle pattern yet.' },
         worldNews: [],
+        consequences: [],
         lastLivingWorldTick: 0,
         lastLivingWorldMinute: 0,
         lastWorldAgentTurn: 0,
@@ -16287,20 +17562,115 @@ function normalizeWorldDiceConfig(world) {
     if (world) world.gameRules = isPlainObject(world.gameRules) ? world.gameRules : {};
     const raw = isPlainObject(world?.gameRules?.dice) ? world.gameRules.dice : {};
     const sides = [6, 10, 12, 20].includes(parseInt(raw.sides)) ? parseInt(raw.sides) : 20;
+    const requestedVisibility = ['visible', 'hidden', 'player_triggered'].includes(raw.visibility) ? raw.visibility
+        : (raw.resolution === 'player' ? 'player_triggered' : 'visible');
     const config = {
         // Existing worlds historically resolved checks immediately. Preserve
         // that behavior until an author deliberately switches to player rolls.
-        resolution: ['player', 'automatic'].includes(raw.resolution) ? raw.resolution : 'automatic',
+        resolution: requestedVisibility === 'player_triggered' ? 'player'
+            : (['player', 'automatic'].includes(raw.resolution) ? raw.resolution : 'automatic'),
         sides,
         // `per_stat` is the safe modern mode. Legacy global formulas remain
         // import-compatible, but new and edited worlds use each stat's own
         // roll configuration instead of turning HP, money, XP, etc. into +10.
         modifierMode: ['per_stat', 'direct', 'ability', 'none'].includes(raw.modifierMode) ? raw.modifierMode : 'per_stat',
         defaultDifficulty: Math.max(2, Math.min(sides + 10, parseInt(raw.defaultDifficulty) || Math.ceil(sides * 0.55))),
+        visibility: requestedVisibility,
         criticals: raw.criticals !== false
     };
     if (world) world.gameRules.dice = config;
     return config;
+}
+
+function normalizeWorldCapabilityEntry(raw, index, kind) {
+    const value = typeof raw === 'string' ? { name: raw } : (isPlainObject(raw) ? raw : {});
+    const name = String(value.name || value.label || '').trim().slice(0, 100);
+    if (!name) return null;
+    const id = String(value.id || `${kind}_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || index + 1}`)
+        .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    return {
+        id,
+        name,
+        description: String(value.description || '').trim().slice(0, 300),
+        cost: Math.max(0, Math.min(20, parseInt(value.cost) || 1)),
+        modifier: Math.max(-10, Math.min(10, value.modifier !== '' && value.modifier != null && Number.isFinite(Number(value.modifier))
+            ? Math.trunc(Number(value.modifier)) : kind === 'flaw' ? -1 : kind === 'perk' ? 1 : 2))
+    };
+}
+
+function parseWorldCapabilityLines(text, kind) {
+    return String(text || '').split('\n').map((line, index) => {
+        const [name, description = '', cost = '1', modifier = ''] = line.split('|').map(part => part.trim());
+        return normalizeWorldCapabilityEntry({ name, description, cost, modifier }, index, kind);
+    }).filter(Boolean).slice(0, 100);
+}
+
+function worldCapabilityLines(entries) {
+    return (Array.isArray(entries) ? entries : []).map(entry => {
+        const normalized = normalizeWorldCapabilityEntry(entry, 0, 'capability');
+        return normalized ? `${normalized.name}${normalized.description ? ` | ${normalized.description}` : ''} | ${normalized.cost} | ${normalized.modifier}` : '';
+    }).filter(Boolean).join('\n');
+}
+
+function resolveWorldCheckCapability(world, sess, requested) {
+    const key = String(requested || '').trim().toLowerCase();
+    if (!key) return null;
+    const capabilities = normalizeWorldCapabilities(world);
+    const all = [
+        ...capabilities.skills.map(entry => ({ ...entry, kind: 'skill' })),
+        ...capabilities.perks.map(entry => ({ ...entry, kind: 'perk' })),
+        ...capabilities.flaws.map(entry => ({ ...entry, kind: 'flaw' }))
+    ];
+    const definition = all.find(entry => entry.id.toLowerCase() === key || entry.name.toLowerCase() === key);
+    if (!definition) return null;
+    const identity = isPlainObject(sess?.playerIdentity) ? sess.playerIdentity : {};
+    const selected = definition.kind === 'skill' ? identity.skills
+        : definition.kind === 'perk' ? identity.perks : identity.flaws;
+    const owns = (Array.isArray(selected) ? selected : []).some(value => {
+        const selectedKey = String(value || '').trim().toLowerCase();
+        return selectedKey === definition.id.toLowerCase() || selectedKey === definition.name.toLowerCase();
+    });
+    const ranks = isPlainObject(identity.capabilityRanks) ? identity.capabilityRanks : {};
+    const rank = owns ? Math.max(1, Math.min(10, parseInt(ranks[definition.id] ?? ranks[definition.name]) || 1)) : 0;
+    return {
+        ...definition,
+        selected: owns,
+        rank,
+        appliedModifier: owns ? Math.max(-10, Math.min(10, definition.modifier + (rank - 1))) : 0
+    };
+}
+
+function normalizeWorldCapabilities(world) {
+    if (!world) return { customizable: true, startingPointBudget: 4, skills: [], perks: [], flaws: [], progression: { enabled: false, method: '' } };
+    world.gameRules = isPlainObject(world.gameRules) ? world.gameRules : {};
+    const raw = isPlainObject(world.gameRules.capabilities) ? world.gameRules.capabilities : {};
+    const authoredSkills = Array.isArray(raw.skills) ? raw.skills : [];
+    const authoredPerks = Array.isArray(raw.perks) ? raw.perks : [];
+    const authoredFlaws = Array.isArray(raw.flaws) ? raw.flaws : [];
+    const inferred = (field, source, kind) => {
+        const entries = source.length ? source : [...new Set((world.startingLives || []).flatMap(life => life?.[field] || []))];
+        const used = new Set();
+        return entries.map((entry, index) => normalizeWorldCapabilityEntry(entry, index, kind)).filter(entry => {
+            if (!entry || used.has(entry.id)) return false;
+            used.add(entry.id);
+            return true;
+        }).slice(0, 100);
+    };
+    const inferredBudget = Math.max(4, ...(world.startingLives || []).map(life =>
+        (life?.skills?.length || 0) + (life?.perks?.length || 0) - (life?.flaws?.length || 0)));
+    const requestedBudget = raw.startingPointBudget == null ? inferredBudget : Number(raw.startingPointBudget);
+    world.gameRules.capabilities = {
+        customizable: raw.customizable !== false,
+        startingPointBudget: Math.max(0, Math.min(100, Number.isFinite(requestedBudget) ? Math.trunc(requestedBudget) : inferredBudget)),
+        skills: inferred('skills', authoredSkills, 'skill'),
+        perks: inferred('perks', authoredPerks, 'perk'),
+        flaws: inferred('flaws', authoredFlaws, 'flaw'),
+        progression: {
+            enabled: raw.progression?.enabled === true,
+            method: String(raw.progression?.method || '').trim().slice(0, 240)
+        }
+    };
+    return world.gameRules.capabilities;
 }
 
 function worldStatRollConfig(stat) {
@@ -16433,9 +17803,17 @@ function normalizeWorldGameRules(world) {
         zeroHpMode: raw.zeroHpMode === 'lethal' ? 'lethal' : 'fail_forward',
         currencyStatId,
         currencyName: String(raw.currencyName || currencyDefinition?.name || 'coin').trim().slice(0, 60) || 'coin',
-        dice: diceRaw
+        dice: diceRaw,
+        capabilities: isPlainObject(raw.capabilities) ? raw.capabilities : {},
+        consequences: {
+            enabled: raw.consequences?.enabled !== false,
+            maxActive: Math.max(10, Math.min(300, parseInt(raw.consequences?.maxActive) || 120)),
+            escalationTurns: Math.max(0, Math.min(1000, parseInt(raw.consequences?.escalationTurns) || 4)),
+            decayTurns: Math.max(0, Math.min(1000, parseInt(raw.consequences?.decayTurns) || 8))
+        }
     };
     normalizeWorldDiceConfig(world);
+    normalizeWorldCapabilities(world);
     world.hudConfig.enableSchedules = modules.schedules;
     return world.gameRules;
 }
@@ -16731,19 +18109,21 @@ function performAuthoritativeChecks(world, sess, checks) {
         if (existing) {
             const replay = { ...existing, replayed: true };
             results.push(replay);
-            showToast(`↻ ${existing.label}: keeping ${existing.roll} → ${existing.total}`, 'info');
+            if (dice.visibility !== 'hidden') showToast(`↻ ${existing.label}: keeping ${existing.roll} → ${existing.total}`, 'info');
             return;
         }
         const statId = String(raw?.stat_id || '').trim();
         const definition = definitions.find(stat => stat.id.toLowerCase() === statId.toLowerCase());
         const statModifier = worldCheckModifier(world, sess, definition?.id || '');
+        const capability = resolveWorldCheckCapability(world, sess, raw?.capability_id);
+        const capabilityModifier = capability?.appliedModifier || 0;
         const situationalModifier = Math.max(-5, Math.min(5, Math.trunc(Number(raw?.modifier) || 0)));
         const difficulty = Math.max(2, Math.min(dice.sides + 10,
             Math.trunc(Number(raw?.difficulty) || dice.defaultDifficulty)));
 
         if (dice.resolution === 'player' && !Number.isFinite(Number(raw?.provided_roll)) && raw?.force_resolve !== true) {
             const pendingRequest = {
-                id: checkId, label, stat_id: definition?.id || '', modifier: situationalModifier,
+                id: checkId, label, stat_id: definition?.id || '', capability_id: capability?.id || '', modifier: situationalModifier,
                 difficulty, failure_cost: isPlainObject(raw?.failure_cost)
                     ? JSON.parse(JSON.stringify(raw.failure_cost)) : null,
                 on_success: isPlainObject(raw?.on_success) ? safeJsonClone(raw.on_success) : null,
@@ -16754,7 +18134,7 @@ function performAuthoritativeChecks(world, sess, checks) {
             if (!sess.pendingChecks.some(item => item.id === checkId)) sess.pendingChecks.push(pendingRequest);
             sess.pendingChecks = sess.pendingChecks.slice(0, 10);
             sess.pendingCheck = sess.pendingChecks[0] || pendingRequest;
-            results.push({ id: checkId, label, statId: definition?.id || '', difficulty, pending: true, success: null });
+            results.push({ id: checkId, label, statId: definition?.id || '', capabilityId: capability?.id || '', difficulty, pending: true, success: null });
             showToast(`🎲 Check requested: ${label} · roll d${dice.sides} vs ${difficulty}`, 'info');
             return;
         }
@@ -16763,7 +18143,7 @@ function performAuthoritativeChecks(world, sess, checks) {
         const roll = Number.isFinite(provided)
             ? Math.max(1, Math.min(dice.sides, Math.trunc(provided)))
             : 1 + Math.floor(stableWorldRoll(`${world.id}|${sess.id}|${turn}|${checkId}`) * dice.sides);
-        const total = roll + statModifier + situationalModifier;
+        const total = roll + statModifier + capabilityModifier + situationalModifier;
         const criticalSuccess = dice.criticals && roll === dice.sides;
         const criticalFailure = dice.criticals && roll === 1;
         const success = criticalSuccess || (!criticalFailure && total >= difficulty);
@@ -16771,8 +18151,12 @@ function performAuthoritativeChecks(world, sess, checks) {
             id: checkId,
             label,
             statId: definition?.id || '',
+            capabilityId: capability?.id || '',
+            capabilityName: capability?.name || '',
+            capabilitySelected: capability?.selected === true,
             roll,
             statModifier,
+            capabilityModifier,
             situationalModifier,
             total,
             difficulty,
@@ -16829,9 +18213,36 @@ function performAuthoritativeChecks(world, sess, checks) {
         if (Array.isArray(sess.pendingChecks)) sess.pendingChecks = sess.pendingChecks.filter(item => item.id !== checkId);
         sess.pendingCheck = sess.pendingChecks?.[0] || null;
         results.push(result);
-        showToast(`${success ? '✓' : '×'} ${label}: ${roll}${statModifier || situationalModifier ? ` → ${total}` : ''} vs ${difficulty}`, success ? 'success' : 'info');
+        if (dice.visibility !== 'hidden') {
+            showToast(`${success ? '✓' : '×'} ${label}: ${roll}${statModifier || situationalModifier ? ` → ${total}` : ''} vs ${difficulty}`, success ? 'success' : 'info');
+        }
     });
     if (sess.checkHistory.length > 100) sess.checkHistory.splice(0, sess.checkHistory.length - 100);
+    return results;
+}
+
+function applyWorldCapabilityProgress(world, sess, updates) {
+    const progression = normalizeWorldCapabilities(world).progression;
+    const results = [];
+    if (!Array.isArray(updates)) return results;
+    if (!progression.enabled) return updates.slice(0, 20).map(raw => ({
+        capabilityId: String(raw?.capability_id || '').slice(0, 80), success: false, reason: 'progression_disabled'
+    }));
+    sess.playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
+    sess.playerIdentity.capabilityRanks = isPlainObject(sess.playerIdentity.capabilityRanks)
+        ? sess.playerIdentity.capabilityRanks : {};
+    updates.slice(0, 20).forEach(raw => {
+        const capability = resolveWorldCheckCapability(world, sess, raw?.capability_id);
+        if (!capability) return results.push({ capabilityId: String(raw?.capability_id || '').slice(0, 80), success: false, reason: 'unknown_capability' });
+        if (!capability.selected) return results.push({ capabilityId: capability.id, success: false, reason: 'capability_not_selected' });
+        const change = Math.max(-5, Math.min(5, Math.trunc(Number(raw?.change) || 0)));
+        if (!change) return results.push({ capabilityId: capability.id, success: false, reason: 'zero_change' });
+        const previous = capability.rank;
+        const rank = Math.max(1, Math.min(10, previous + change));
+        sess.playerIdentity.capabilityRanks[capability.id] = rank;
+        results.push({ capabilityId: capability.id, name: capability.name, previous, rank, change: rank - previous,
+            reason: String(raw?.reason || '').trim().slice(0, 240), success: rank !== previous });
+    });
     return results;
 }
 
@@ -17343,6 +18754,7 @@ async function createNewWorldSession() {
         revealedSecrets: [],
         bonusTimeMinutes: 0,
         scheduledEvents: JSON.parse(JSON.stringify(Array.isArray(world.scheduledEvents) ? world.scheduledEvents : [])),
+        consequences: [],
         locationStates: seedLocationStatesFromWorld(world),
         npcRelationships: seedRelationshipsFromWorld(world),
         npcScheduleOverrides: {},
@@ -17406,6 +18818,85 @@ async function createNewWorldSession() {
  * Prefs live on the session and are injected into every DM generation.
  * `onDone` runs after the modal closes (used to chain the init turn).
  */
+function sessionRoleSelections(world, sess) {
+    const selected = id => [...document.querySelectorAll(`#${id} input[type="checkbox"]:checked`)].map(input => input.value);
+    const stats = {};
+    document.querySelectorAll('#sz-attribute-list [data-stat-id]').forEach(input => {
+        if (Number.isFinite(Number(input.value))) stats[input.dataset.statId] = Number(input.value);
+    });
+    return {
+        publicIdentity: String(document.getElementById('sz-public-identity')?.value || '').trim().slice(0, 240),
+        reputation: String(document.getElementById('sz-reputation')?.value || '').trim().slice(0, 240),
+        skills: selected('sz-skill-list'),
+        perks: selected('sz-trait-list').filter(value => !value.startsWith('flaw:')),
+        flaws: selected('sz-trait-list').filter(value => value.startsWith('flaw:')).map(value => value.slice(5)),
+        inventory: selected('sz-equipment-list'),
+        stats
+    };
+}
+
+function renderSessionRoleSetup(world, sess, persona) {
+    const section = document.getElementById('sz-role-section');
+    if (!section || !world || !sess) return;
+    const rules = normalizeWorldGameRules(world);
+    const capabilities = normalizeWorldCapabilities(world);
+    const life = (world.startingLives || []).find(item => item.id === sess.originId) || null;
+    const hasSetup = rules.modules.stats || capabilities.skills.length || capabilities.perks.length
+        || capabilities.flaws.length || (life?.inventory || []).length;
+    section.classList.toggle('hidden', !hasSetup);
+    if (!hasSetup) return;
+    const publicIdentity = document.getElementById('sz-public-identity');
+    const reputation = document.getElementById('sz-reputation');
+    publicIdentity.value = sess.playerIdentity?.publicIdentity || persona?.publicIdentity || life?.role || '';
+    reputation.value = sess.playerIdentity?.reputation || persona?.reputation || '';
+    publicIdentity.disabled = !capabilities.customizable;
+    reputation.disabled = !capabilities.customizable;
+
+    const byName = values => new Set((values || []).map(value => String(value).toLowerCase()));
+    const lifeSkills = byName(life?.skills);
+    const lifePerks = byName(life?.perks);
+    const lifeFlaws = byName(life?.flaws);
+    const option = (entry, checked, prefix = '') => `<label class="session-role-option"><input type="checkbox" value="${escapeHTML(prefix + entry.name)}" ${checked ? 'checked' : ''} ${capabilities.customizable ? '' : 'disabled'}><span><strong>${escapeHTML(entry.name)}</strong>${entry.description ? `<small>${escapeHTML(entry.description)}</small>` : ''}</span><b>${prefix ? '+' : '−'}${entry.cost}</b></label>`;
+    document.getElementById('sz-skill-list').innerHTML = capabilities.skills.length
+        ? capabilities.skills.map(entry => option(entry, lifeSkills.has(entry.name.toLowerCase()))).join('')
+        : '<span class="form-hint">This World defines no selectable skills.</span>';
+    document.getElementById('sz-trait-list').innerHTML = capabilities.perks.map(entry => option(entry, lifePerks.has(entry.name.toLowerCase())))
+        .concat(capabilities.flaws.map(entry => option(entry, lifeFlaws.has(entry.name.toLowerCase()), 'flaw:'))).join('')
+        || '<span class="form-hint">This World defines no perks or flaws.</span>';
+    document.getElementById('sz-equipment-list').innerHTML = (life?.inventory || []).length
+        ? life.inventory.map(item => `<label class="session-role-option"><input type="checkbox" value="${escapeHTML(item)}" checked ${capabilities.customizable ? '' : 'disabled'}><span>${escapeHTML(item)}</span></label>`).join('')
+        : '<span class="form-hint">No optional starting equipment.</span>';
+
+    const attributeList = document.getElementById('sz-attribute-list');
+    const rollable = rules.modules.stats ? (world.hudConfig?.stats || []).filter(stat => worldStatRollConfig(stat).enabled).slice(0, 20) : [];
+    attributeList.innerHTML = rollable.length
+        ? `<label class="form-label">Attributes</label>${rollable.map(stat => {
+            const baseline = Number(life?.statOverrides?.[stat.id] ?? stat.value) || 0;
+            const max = stat.max > 0 ? stat.max : baseline + capabilities.startingPointBudget;
+            return `<label class="session-role-option"><span><strong>${escapeHTML(stat.name)}</strong><small>${stat.min}–${max}</small></span><input class="form-input" data-stat-id="${escapeHTML(stat.id)}" data-base="${baseline}" type="number" min="${stat.min}" max="${max}" value="${baseline}" ${capabilities.customizable ? '' : 'disabled'}></label>`;
+        }).join('')}` : '';
+
+    const updateSummary = () => {
+        const selection = sessionRoleSelections(world, sess);
+        const lookup = new Map([...capabilities.skills, ...capabilities.perks].map(item => [item.name, item.cost]));
+        const flawLookup = new Map(capabilities.flaws.map(item => [item.name, item.cost]));
+        let spent = [...selection.skills, ...selection.perks].reduce((sum, name) => sum + (lookup.get(name) || 1), 0);
+        spent -= selection.flaws.reduce((sum, name) => sum + (flawLookup.get(name) || 1), 0);
+        document.querySelectorAll('#sz-attribute-list [data-stat-id]').forEach(input => {
+            spent += Math.max(0, (Number(input.value) || 0) - (Number(input.dataset.base) || 0));
+        });
+        const remaining = capabilities.startingPointBudget - spent;
+        const points = document.getElementById('sz-points-status');
+        points.textContent = capabilities.customizable ? `${remaining} point${Math.abs(remaining) === 1 ? '' : 's'} left` : 'Preset locked';
+        points.style.color = remaining < 0 ? 'var(--red)' : '';
+        document.getElementById('sz-role-summary').innerHTML = `<strong>${escapeHTML(life?.name || 'Custom role')}</strong> · ${escapeHTML(selection.publicIdentity || life?.role || 'unwritten public identity')}<br>${selection.skills.length ? `Skills: ${escapeHTML(selection.skills.join(', '))}. ` : ''}${selection.perks.length ? `Perks: ${escapeHTML(selection.perks.join(', '))}. ` : ''}${selection.flaws.length ? `Flaws: ${escapeHTML(selection.flaws.join(', '))}. ` : ''}${selection.inventory.length ? `Equipment: ${escapeHTML(selection.inventory.join(', '))}.` : ''}`;
+        return remaining;
+    };
+    section.querySelectorAll('input').forEach(input => input.addEventListener('input', updateSummary));
+    section.dataset.pointsValid = 'true';
+    section._remainingPoints = updateSummary;
+}
+
 function openSessionZero(onDone) {
     const overlay = document.getElementById('world-session-zero-overlay');
     const sess = getCurrentWorldSession();
@@ -17448,9 +18939,10 @@ function openSessionZero(onDone) {
     personaSelect.value = state.personas.some(persona => persona.id === storedPersonaId) ? storedPersonaId : '';
     const renderPersonaPreview = () => {
         const selected = state.personas.find(persona => persona.id === personaSelect.value);
-        personaPreview.textContent = selected?.text?.trim()
-            ? `${selected.name}\n${selected.text}`
+        personaPreview.textContent = selected && personaPromptText(selected).trim()
+            ? personaPromptText(selected)
             : 'No Persona selected. The Starting Life will be the only identity source.';
+        renderSessionRoleSetup(world, sess, selected);
     };
     personaSelect.onchange = () => { renderPersonaPreview(); saveStatus.textContent = 'Unsaved identity change'; };
     renderPersonaPreview();
@@ -17486,16 +18978,19 @@ function openSessionZero(onDone) {
                         <span class="session-origin-meta">${escapeHTML(life.socialRank || 'wanderer')}${location ? ` · ${escapeHTML(location.name)}` : ''}</span>
                         <strong>${escapeHTML(life.name)}</strong>
                         <small>${escapeHTML(life.description || life.role || '')}</small>
+                        ${(life.skills?.length || life.perks?.length) ? `<small class="session-origin-capabilities">${escapeHTML([...(life.skills || []).slice(0, 3), ...(life.perks || []).slice(0, 2)].join(' · '))}</small>` : ''}
                     </span>`;
                 card.onclick = () => {
                     applyStartingLifeToSession(world, sess, life.id);
                     renderOrigins();
+                    renderSessionRoleSetup(world, sess, state.personas.find(persona => persona.id === personaSelect.value) || null);
                     saveStatus.textContent = `Starting as ${life.name}`;
                 };
                 originList.appendChild(card);
             });
         };
         renderOrigins();
+        renderSessionRoleSetup(world, sess, state.personas.find(persona => persona.id === personaSelect.value) || null);
     }
 
     overlay.classList.remove('hidden');
@@ -17553,12 +19048,50 @@ function openSessionZero(onDone) {
         }
         s.storyPrefs = readPreferences();
         s.personaId = personaSelect.value || '';
+        const selectedPersona = state.personas.find(persona => persona.id === s.personaId) || null;
+        const roleSection = document.getElementById('sz-role-section');
+        if (roleSection && !roleSection.classList.contains('hidden') && typeof roleSection._remainingPoints === 'function'
+            && roleSection._remainingPoints() < 0) {
+            saveStatus.textContent = 'Spend within the starting-point budget';
+            showToast('Your role uses more points than this World allows.', 'error');
+            saving = false;
+            skipButton.disabled = false;
+            saveButton.disabled = false;
+            closeButton.disabled = false;
+            return false;
+        }
+        const role = sessionRoleSelections(world, s);
+        s.playerIdentity = isPlainObject(s.playerIdentity) ? s.playerIdentity : {};
+        s.playerIdentity.personaName = selectedPersona?.name || '';
+        s.playerIdentity.age = selectedPersona?.age || '';
+        s.playerIdentity.pronouns = selectedPersona?.pronouns || '';
+        s.playerIdentity.appearance = selectedPersona?.appearance || '';
+        s.playerIdentity.publicIdentity = role.publicIdentity || selectedPersona?.publicIdentity || '';
+        s.playerIdentity.reputation = role.reputation || selectedPersona?.reputation || '';
+        if (!document.getElementById('sz-role-section')?.classList.contains('hidden')) {
+            s.playerIdentity.skills = [...role.skills];
+            s.playerIdentity.perks = [...role.perks];
+            s.playerIdentity.flaws = [...role.flaws];
+            const chosenCapabilities = [...role.skills, ...role.perks, ...role.flaws];
+            s.playerIdentity.capabilityRanks = Object.fromEntries(chosenCapabilities.map(name => [name, 1]));
+            s.inventory = [...role.inventory];
+            Object.entries(role.stats).forEach(([id, value]) => { s.playerStats[id] = value; });
+        }
+        s.personaSnapshot = selectedPersona ? normalizePersona(JSON.parse(JSON.stringify(selectedPersona))) : null;
+        s.setupSnapshot = {
+            version: 1,
+            createdAt: Date.now(),
+            persona: s.personaSnapshot ? JSON.parse(JSON.stringify(s.personaSnapshot)) : null,
+            originId: s.originId || '',
+            playerIdentity: JSON.parse(JSON.stringify(s.playerIdentity)),
+            playerStats: JSON.parse(JSON.stringify(s.playerStats || {})),
+            inventory: [...(s.inventory || [])]
+        };
         s.setupComplete = true;
         try {
             if (seedLife && isFirstRun && lifeSeedEnabled.checked && !s.lifeSeed?.initialized) {
                 saveStatus.textContent = 'Initializing home and social life…';
                 lifeSeedStatus.textContent = 'Building a validated household, routine and social graph from your selections…';
-                const selectedPersona = state.personas.find(persona => persona.id === s.personaId) || null;
                 const result = await initializeTimelineLife(world, s, selectedPersona);
                 lifeSeedStatus.textContent = result.summary;
             }
@@ -19262,10 +20795,8 @@ function applyUserDirectedMovement(world, sess, userInput, microCandidate = null
     console.log(`Horde Engine: User-Initiated Move — ${targetLoc.name}`);
     showToast(`Heading to ${targetLoc.name}...`, 'info');
     rollForScenePopulation(sess.playerLocation, false);
-    const routeNames = result.path
-        .map(id => world.locations.find(location => location.id === id)?.name)
-        .filter(Boolean);
-    return `\n[SYSTEM: The player has just arrived at ${targetLoc.name}${routeNames.length > 2 ? ` by the valid route ${routeNames.join(' → ')}` : ''}. Narrate the arrival and describe who they see there immediately.]`;
+    const routeDescription = (result.travelLegs || []).map(describeWorldTravelLeg).filter(Boolean).join('; ');
+    return `\n[SYSTEM: The player has just arrived at ${targetLoc.name}${routeDescription ? ` after travelling via ${routeDescription}` : ''}. ${result.travelMinutes ? `${result.travelMinutes} minutes elapsed.` : ''} Narrate the journey or arrival in a way that respects the transport mode, route, fare and elapsed time. Describe who they see there immediately.]`;
 }
 
 function candidateEvidenceMovementPhrase(candidate) {
@@ -19489,7 +21020,10 @@ async function executeWorldTurn(commandOrReroll = null) {
         const locHidden = loc?.hiddenDescription ? `\n[DM-ONLY DETAILS (Secret facts/Vibes)]: ${loc.hiddenDescription}` : "";
         const locExits = loc ? (loc.exits || []).map(ex => {
             if (typeof ex === 'string') return ex;
-            return `${ex.text}${ex.travelTime ? ` (takes ${ex.travelTime}m)` : ''}${ex.isOneWay ? ' [One-Way]' : ''}`;
+            const target = getLocationRef(world, ex.targetLocationId || getExitTargetName(ex));
+            const label = target ? `${getExitDirection(ex) ? `${getExitDirection(ex)} ` : ''}to ${target.name}` : ex.text;
+            const routeDetails = [formatWorldTravelMode(ex.mode), ex.routeName || '', ex.travelTime ? `${ex.travelTime}m` : '', ex.cost ? `fare ${ex.cost}` : ''].filter(Boolean);
+            return `${label}${routeDetails.length ? ` (${routeDetails.join(' · ')})` : ''}${ex.isOneWay ? ' [One-Way]' : ''}`;
         }).join(', ') : "None";
 
     const archiveQuery = [userInput, locName, locDesc,
@@ -19536,7 +21070,9 @@ async function executeWorldTurn(commandOrReroll = null) {
         const entState = sess.entityStates[npc.id] || {};
         const obs = getObservationWindow(npc.id);
         const description = npc.description ? `\nPHYSICAL DESCRIPTION: ${npc.description}` : "";
-        const personaStr = (npc.isMajor && npc.persona) ? `\nPERSONALITY & PERSONA: ${npc.persona}` : "";
+        const depth = WORLD_DIRECTORY_DEPTHS.includes(npc.simulationDepth)
+            ? npc.simulationDepth : (npc.isMajor ? 'core' : 'background');
+        const personaStr = npc.persona ? `\nPERSONALITY & VOICE: ${npc.persona}` : "";
         const activity = ruleModules.schedules && entState.currentActivity ? `\nCurrently: ${entState.currentActivity}` : "";
         const dispo = entState.disposition !== undefined ? entState.disposition : 50;
         const dispoStr = ruleModules.relationships
@@ -19562,7 +21098,13 @@ async function executeWorldTurn(commandOrReroll = null) {
             boundaryStr = `\nKNOWLEDGE BOUNDARY — ${npc.name} did NOT witness and does NOT know about:${wasAsleep ? `\n  - anything that happened while they were asleep (they may have been woken by a loud noise — they know the NOISE, not its cause or story)` : ''}${unwitnessed.length ? '\n  - ' + unwitnessed.join('\n  - ') : ''}\n  They can learn these ONLY by being told or shown on-screen. When they enter a scene, they arrive ignorant and curious — asking, not explaining.`;
         }
 
-        npcContext += `\n[NPC: ${npc.name}]${npc.isMajor ? ' (MAJOR CHARACTER)' : ''}${description}${personaStr}${activity}${dispoStr}${priorRelationship}${goalStr}${boundaryStr}\nRecent observations in this scene: ${obs.slice(-5).map(o => o.text).join(' | ')}\n`;
+        const groundedKnowledge = obs.slice(-7).map(o => {
+            const source = o.sourceType || o.source || 'unknown';
+            const certainty = Math.round(livingClamp(o.confidence == null ? 0.5 : o.confidence, 0, 1) * 100);
+            const qualifier = o.contradicted ? 'CONTRADICTED' : `${source}, ${certainty}% confidence`;
+            return `${o.text} [${qualifier}]`;
+        });
+        npcContext += `\n[NPC: ${npc.name}] [SIMULATION: ${depth.toUpperCase()}]${description}${personaStr}${activity}${dispoStr}${priorRelationship}${goalStr}${boundaryStr}\nGrounded knowledge: ${groundedKnowledge.join(' | ') || 'No persistent facts yet.'}\nNever upgrade hearsay, suspicion or belief into witnessed fact without new evidence.\n`;
     });
 
     // Absence manifest: every named NPC that is NOT in this scene (capped to keep tokens sane)
@@ -19624,7 +21166,28 @@ async function executeWorldTurn(commandOrReroll = null) {
     }).join(' | ') || 'Disabled';
 
     const persona = getTimelinePersona(sess);
-    let personaContext = persona ? `\n\n[PLAYER PERSONA: ${persona.name}]\n${persona.text || ''}` : "";
+    let personaContext = persona ? `\n\n[PLAYER PERSONA — AUTHORITATIVE PLAYER IDENTITY]\n${personaPromptText(persona)}` : "";
+    const playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
+    const worldCapabilities = normalizeWorldCapabilities(world);
+    const describeSelectedCapabilities = (names, definitions) => (Array.isArray(names) ? names : []).map(name => {
+        const key = String(name || '').toLowerCase();
+        const definition = definitions.find(entry => entry.id.toLowerCase() === key || entry.name.toLowerCase() === key);
+        return definition ? `${definition.name} [${definition.id}; ${definition.modifier >= 0 ? '+' : ''}${definition.modifier}]` : String(name);
+    });
+    const capabilityLines = [
+        playerIdentity.role ? `Starting role: ${playerIdentity.role}` : '',
+        playerIdentity.socialRank ? `Social rank: ${playerIdentity.socialRank}` : '',
+        playerIdentity.publicIdentity ? `Public identity: ${playerIdentity.publicIdentity}` : '',
+        playerIdentity.reputation ? `Reputation: ${playerIdentity.reputation}` : '',
+        playerIdentity.skills?.length ? `World-specific skills: ${describeSelectedCapabilities(playerIdentity.skills, worldCapabilities.skills).join('; ')}` : '',
+        playerIdentity.perks?.length ? `Perks: ${describeSelectedCapabilities(playerIdentity.perks, worldCapabilities.perks).join('; ')}` : '',
+        playerIdentity.flaws?.length ? `Flaws: ${describeSelectedCapabilities(playerIdentity.flaws, worldCapabilities.flaws).join('; ')}` : '',
+        playerIdentity.privileges?.length ? `Privileges: ${playerIdentity.privileges.join('; ')}` : '',
+        playerIdentity.obligations?.length ? `Obligations: ${playerIdentity.obligations.join('; ')}` : ''
+    ].filter(Boolean);
+    if (capabilityLines.length) personaContext += `\n\n[STARTING LIFE & CAPABILITIES — WORLD-SPECIFIC CANON]\n${capabilityLines.join('\n')}\nDo not grant abilities that are absent merely because the player attempts them. Use this world's configured check mode when an uncertain action matters.`;
+    const progression = worldCapabilities.progression;
+    if (progression.enabled) personaContext += `\nProgression is enabled${progression.method ? `: ${progression.method}` : ''}. Only award improvement through an explicit canonical consequence; never silently inflate capabilities.`;
     if (sess.lifeSeed?.initialized) {
         const seededHome = getLocationRef(world, sess.lifeSeed.homeLocationId);
         personaContext += `\n\n[INITIALIZED ACTIVE LIFE — AUTHORITATIVE STRUCTURED CANON]\nHome: ${seededHome?.name || 'not fixed'}\n${(sess.lifeSeed.people || []).map(person => `- ${person.name}: ${person.relationship}${person.role ? `; ${person.role}` : ''}`).join('\n')}\nThese people and relationships existed before the opening scene. They have their own locations, routines, memories and agency; never replace them with newly invented substitutes.`;
@@ -19633,7 +21196,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     // Relationship Synchronizer: Cross-reference Persona with present NPCs
     if (persona && presentNPCs.length > 0) {
         let relNotes = "";
-        const pDesc = (persona.text || "").toLowerCase();
+        const pDesc = personaPromptText(persona).toLowerCase();
         presentNPCs.forEach(npc => {
             const npcName = (npc.name || "").toLowerCase();
             if (npcName && pDesc.includes(npcName)) {
@@ -19770,7 +21333,7 @@ Player Condition: ${ruleModules.health || ruleModules.conditions
         : 'Disabled for this world'}
 Rules Profile: ${gameRules.profileId}. Enabled modules: ${WORLD_RULE_MODULE_KEYS.filter(key => ruleModules[key]).join(', ') || 'none'}. Disabled modules: ${WORLD_RULE_MODULE_KEYS.filter(key => !ruleModules[key]).join(', ') || 'none'}.
 Special rules: vital stat "${ruleModules.health ? (gameRules.vitalStatId || 'none') : 'disabled'}"; zero-health mode "${ruleModules.health ? gameRules.zeroHpMode : 'disabled'}"; currency stat "${ruleModules.commerce ? (gameRules.currencyStatId || 'none') : 'disabled'}" (${gameRules.currencyName}).
-Check Engine: ${ruleModules.checks ? `d${diceConfig.sides}, ${diceConfig.resolution} resolution, default difficulty ${diceConfig.defaultDifficulty}, stat modifier ${diceConfig.modifierMode}. Submit at most ONE check and put every result-dependent persistent mutation inside its on_success/on_failure object; completed top-level consequences beside a check are rejected. ${diceConfig.resolution === 'player' ? 'End at the moment of uncertainty. The player must resolve the queued check before any other action; the next response receives the canonical result.' : 'The engine resolves it immediately; never invent a roll.'}` : 'Disabled — resolve through fiction without dice.'}
+Check Engine: ${ruleModules.checks ? `d${diceConfig.sides}, ${diceConfig.resolution} resolution, ${diceConfig.visibility} visibility, default difficulty ${diceConfig.defaultDifficulty}, stat modifier ${diceConfig.modifierMode}. Submit at most ONE check and put every result-dependent persistent mutation inside its on_success/on_failure object; completed top-level consequences beside a check are rejected. ${diceConfig.resolution === 'player' ? 'End at the moment of uncertainty. The player must resolve the queued check before any other action; the next response receives the canonical result.' : 'The engine resolves it immediately; never invent a roll.'}${diceConfig.visibility === 'hidden' ? ' Keep the die, target and modifier out of narration; reveal only fictional consequences.' : ''}` : 'Disabled — resolve through fiction without dice.'}
 Player Outfit: ${sess.outfit || 'Standard attire'}
 ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPrompt}${societyPrompt}`;
     
@@ -20057,6 +21620,12 @@ ${modularMandate}
                                     condition: { type: "string" },
                                     minutes_elapsed: { type: "integer" },
                                     observation: { type: "string" },
+                                    source_type: { type: "string", enum: ["witnessed", "told", "public", "suspected", "believed"] },
+                                    source_npc_id: { type: "string" },
+                                    confidence: { type: "number" },
+                                    visibility: { type: "string", enum: ["public", "private"] },
+                                    contradicted: { type: "boolean" },
+                                    allowed_to_share: { type: "boolean" },
                                     next_status: { type: "string", enum: ["alive", "dead", "gone"] },
                                     witnessed_by: { type: "array", items: { type: "string" }, description: "IDs of characters who directly witnessed this event. Include 'player' when applicable." },
                                     cause: { type: "string" },
@@ -20099,6 +21668,20 @@ ${modularMandate}
                             }, {})
                         },
                         stat_change_cause: { type: "string", description: "Short factual cause for damage, healing, or another stat change; required when a vital stat may reach zero." },
+                        capability_progress: {
+                            type: "array",
+                            maxItems: 10,
+                            items: {
+                                type: "object",
+                                properties: {
+                                    capability_id: { type: "string", description: "Exact selected skill, perk or flaw ID." },
+                                    change: { type: "integer", minimum: -5, maximum: 5 },
+                                    reason: { type: "string", description: "Concrete training, milestone or consequence that earned this change." }
+                                },
+                                required: ["capability_id", "change", "reason"]
+                            },
+                            description: "Change a selected capability rank only when this world's progression is enabled and the fiction explicitly earned it."
+                        },
                         transactions: {
                             type: "array",
                             items: {
@@ -20123,6 +21706,7 @@ ${modularMandate}
                                     id: { type: "string" },
                                     label: { type: "string" },
                                     stat_id: { type: "string", description: "Optional roll-enabled ability/skill stat. Never use health, money, XP, level, stress or another resource unless the author explicitly marked it rollable." },
+                                    capability_id: { type: "string", description: "Optional exact world capability ID or name from the player's selected skills, perks or flaws. The engine applies its authored modifier only when this player actually selected it." },
                                     difficulty: { type: "integer", minimum: 2, maximum: 30 },
                                     modifier: { type: "integer", minimum: -5, maximum: 5, description: "Situational modifier only." },
                                     failure_cost: {
@@ -20170,7 +21754,13 @@ ${modularMandate}
                                 type: "object",
                                 properties: {
                                     npc_id: { type: "string" },
-                                    observation: { type: "string", description: "A permanent fact this NPC has learned or witnessed." }
+                                    observation: { type: "string", description: "A permanent fact this NPC has learned or witnessed." },
+                                    source_type: { type: "string", enum: ["witnessed", "told", "public", "suspected", "believed"], description: "How the NPC knows this. Never mark hearsay as witnessed." },
+                                    source_npc_id: { type: "string", description: "Who told them, when source_type is told." },
+                                    confidence: { type: "number", description: "Confidence from 0 to 1." },
+                                    visibility: { type: "string", enum: ["public", "private"] },
+                                    contradicted: { type: "boolean" },
+                                    allowed_to_share: { type: "boolean", description: "Whether this NPC may pass the fact on through gossip." }
                                 }
                             },
                             description: "Update the persistent memory/observations of specific NPCs."
@@ -20511,6 +22101,7 @@ ${modularMandate}
         removeToolFields(['location_id', 'npc_moves', 'outfit_update', 'inventory_add',
             'inventory_remove', 'player_condition_updates']);
         if (!ruleModules.stats) removeToolFields(['stat_changes', 'stat_change_cause']);
+        if (!normalizeWorldCapabilities(world).progression.enabled) removeToolFields(['capability_progress']);
         if (!ruleModules.inventory) removeToolFields(['inventory_add', 'inventory_remove']);
         if (!ruleModules.commerce) removeToolFields(['transactions']);
         if (!ruleModules.checks) removeToolFields(['checks']);
@@ -20793,6 +22384,7 @@ ${modularMandate}
                         stat_updates: actionResult?.statResult || null,
                         transactions: transactionResults,
                         checks: checkResults,
+                        capability_progress: actionResult?.capabilityProgressResults || [],
                         player_conditions: conditionResults,
                         disabled_actions: moduleRejections,
                         receipt_audit: committed.audit,
@@ -22020,7 +23612,7 @@ function resolveNpcId(world, llmNpcId, sess = null) {
 
 const CHECK_GUARDED_ACTION_FIELDS = Object.freeze([
     'location_id', 'location_introduced', 'time_skip_minutes', 'transactions',
-    'inventory_add', 'inventory_remove', 'stat_changes', 'player_condition_updates',
+    'inventory_add', 'inventory_remove', 'stat_changes', 'capability_progress', 'player_condition_updates',
     'outfit_update', 'player_identity_update', 'quests_update', 'npc_moves',
     'npc_introduced', 'npc_goal_updates', 'npc_disposition_changes',
     'npc_relationship_updates', 'npc_observations', 'world_events',
@@ -22056,6 +23648,7 @@ function processStructuredActions(args) {
     let transactionResults = [];
     let checkResults = [];
     let checkOutcomeResults = [];
+    let capabilityProgressResults = [];
     let conditionResults = [];
     const moduleRejections = [];
     const rejectDisabledField = (field, module) => {
@@ -22087,6 +23680,10 @@ function processStructuredActions(args) {
             }
         });
         args = guarded;
+    }
+
+    if (Array.isArray(args.capability_progress) && args.capability_progress.length) {
+        capabilityProgressResults = applyWorldCapabilityProgress(world, sess, args.capability_progress);
     }
 
     // --- DYNAMIC WORLD GROWTH: register new locations FIRST so a move to
@@ -22727,11 +24324,17 @@ function processStructuredActions(args) {
             const rid = resolveNpcId(world, obs.npc_id, sess);
             if (!rid) return console.warn(`Horde Engine: npc_observations — unknown NPC "${obs.npc_id}"`);
             if (!sess.entityStates[rid]) sess.entityStates[rid] = { location: sess.playerLocation };
-            if (!sess.entityStates[rid].observations) sess.entityStates[rid].observations = [];
-            sess.entityStates[rid].observations.push({
+            addNpcKnowledge(world, sess, rid, {
                 id: 'obs_' + Date.now() + Math.floor(Math.random() * 1000),
                 text: String(obs.observation),
-                turn: sess.turnCount || 1
+                sourceType: obs.source_type || 'told',
+                sourceNpcId: resolveNpcId(world, obs.source_npc_id, sess) || '',
+                confidence: obs.confidence,
+                visibility: obs.visibility,
+                contradicted: obs.contradicted === true,
+                allowedToShare: obs.allowed_to_share !== false,
+                turn: sess.turnCount || 1,
+                absoluteMinute: getWorldTimeData(world, sess).currentTotalMinutes
             });
             console.log(`Horde Engine: NPC Memory — ${rid} learned: ${obs.observation}`);
         });
@@ -22772,6 +24375,7 @@ function processStructuredActions(args) {
         transactionResults,
         checkResults,
         checkOutcomeResults,
+        capabilityProgressResults,
         conditionResults,
         moduleRejections,
         playerState: safeJsonClone(normalizePlayerRulesState(world, sess))
@@ -22922,6 +24526,31 @@ function getExitTravelTime(world, fromId, toId) {
     return 0;
 }
 
+function getWorldTravelLeg(world, fromId, toId) {
+    const from = getLocationRef(world, fromId);
+    const to = getLocationRef(world, toId);
+    if (!from || !to) return null;
+    const exit = (from.exits || []).find(candidate => {
+        const target = getLocationRef(world, candidate?.targetLocationId || getExitTargetName(candidate));
+        return target?.id === to.id;
+    });
+    const details = exit && typeof exit === 'object' ? exit : {};
+    return {
+        from, to,
+        mode: normalizeWorldTravelMode(details.mode),
+        travelTime: Math.max(0, Number(details.travelTime) || 0),
+        routeName: String(details.routeName || '').trim(),
+        cost: String(details.cost || '').trim()
+    };
+}
+
+function describeWorldTravelLeg(leg) {
+    if (!leg) return '';
+    const mode = formatWorldTravelMode(leg.mode);
+    const details = [mode, leg.routeName, leg.travelTime ? `${leg.travelTime} min` : '', leg.cost ? `fare ${leg.cost}` : ''].filter(Boolean);
+    return `${leg.from.name} → ${leg.to.name}${details.length ? ` (${details.join(' · ')})` : ''}`;
+}
+
 function applyTravelTime(world, sess, fromId, toId) {
     const t = getExitTravelTime(world, fromId, toId);
     if (t > 0) {
@@ -22947,7 +24576,8 @@ function movePlayerAlongWorldPath(world, sess, targetLocation, options = {}) {
     if (path.length === 1) return { ok: true, moved: false, reason: 'already_there', path };
 
     const previousLocation = sess.playerLocation;
-    const travelMinutes = getWorldPathTravelTime(world, path);
+    const travelLegs = path.slice(1).map((toId, index) => getWorldTravelLeg(world, path[index], toId)).filter(Boolean);
+    const travelMinutes = travelLegs.reduce((total, leg) => total + leg.travelTime, 0);
     sess.playerLocation = targetLocation.id;
     if (travelMinutes > 0) {
         sess.bonusTimeMinutes = (sess.bonusTimeMinutes || 0) + travelMinutes;
@@ -22960,7 +24590,8 @@ function movePlayerAlongWorldPath(world, sess, targetLocation, options = {}) {
         previousLocation,
         destination: targetLocation.id,
         path,
-        travelMinutes
+        travelMinutes,
+        travelLegs
     };
 }
 
@@ -23418,6 +25049,10 @@ function normalizeWorldSandboxConfig(world) {
                     .map(item => String(item || '').trim()).filter(Boolean).slice(0, 30),
                 privileges: (Array.isArray(life.privileges) ? life.privileges : String(life.privileges || '').split('\n'))
                     .map(item => String(item || '').trim()).filter(Boolean).slice(0, 30),
+                skills: (Array.isArray(life.skills) ? life.skills : String(life.skills || '').split('\n'))
+                    .map(item => String(item || '').trim()).filter(Boolean).slice(0, 40),
+                perks: (Array.isArray(life.perks) ? life.perks : String(life.perks || '').split('\n'))
+                    .map(item => String(item || '').trim()).filter(Boolean).slice(0, 40),
                 legalStatus: String(life.legalStatus || 'free').slice(0, 100),
                 holdings: (Array.isArray(life.holdings) ? life.holdings : String(life.holdings || '').split(','))
                     .map(item => String(item || '').trim()).filter(Boolean).slice(0, 30),
@@ -23544,6 +25179,7 @@ function normalizeAuthoredWorld(world) {
             delete entity.vendorFor;
         }
     });
+    normalizeWorldDirectoryData(world);
     // After locations and entities, so a membership, a standing or a claim on
     // ground that names something gone clears rather than reaching an export.
     normalizeWorldFactions(world);
@@ -23562,6 +25198,137 @@ function normalizeAuthoredWorld(world) {
     normalizeWorldKernelConfig(world);
     world.worldAgent = normalizeWorldAgentConfig(world);
     return world;
+}
+
+const WORLD_KNOWLEDGE_SOURCES = new Set(['witnessed', 'told', 'public', 'suspected', 'believed', 'life_seed', 'unknown']);
+const WORLD_CONSEQUENCE_STATES = new Set(['created', 'active', 'escalating', 'decaying', 'resolved']);
+
+function normalizeNpcKnowledgeEntry(raw, defaults = {}) {
+    const item = typeof raw === 'string' ? { text: raw } : (isPlainObject(raw) ? raw : {});
+    const sourceType = WORLD_KNOWLEDGE_SOURCES.has(item.sourceType || item.source)
+        ? (item.sourceType || item.source) : (defaults.sourceType || 'unknown');
+    const confidence = livingClamp(item.confidence == null
+        ? (sourceType === 'witnessed' ? 1 : sourceType === 'told' ? 0.72 : 0.55)
+        : item.confidence, 0, 1);
+    const turn = Math.max(0, parseInt(item.turn ?? defaults.turn) || 0);
+    const text = String(item.text || item.observation || defaults.text || '').trim().slice(0, 500);
+    if (!text) return null;
+    return {
+        id: String(item.id || defaults.id || livingId('obs', `${turn}_${text}`)).slice(0, 100),
+        eventId: String(item.eventId || item.event_id || defaults.eventId || '').slice(0, 100),
+        text,
+        sourceType,
+        source: sourceType,
+        sourceNpcId: String(item.sourceNpcId || item.source_npc_id || defaults.sourceNpcId || '').slice(0, 100),
+        evidenceMode: String(item.evidenceMode || item.evidence_mode || defaults.evidenceMode
+            || (sourceType === 'witnessed' ? 'direct' : sourceType === 'told' ? 'hearsay' : 'inference')).slice(0, 40),
+        confidence,
+        visibility: ['public', 'private'].includes(item.visibility) ? item.visibility : (defaults.visibility || 'private'),
+        contradicted: item.contradicted === true,
+        allowedToShare: item.allowedToShare !== false && item.allowed_to_share !== false,
+        learnedAt: {
+            turn,
+            absoluteMinute: Math.max(0, parseInt(item.learnedAt?.absoluteMinute ?? item.absoluteMinute ?? defaults.absoluteMinute) || 0)
+        },
+        turn
+    };
+}
+
+function addNpcKnowledge(world, sess, npcRef, raw, defaults = {}) {
+    const npcId = resolveNpcId(world, npcRef, sess) || String(npcRef || '');
+    const entState = sess?.entityStates?.[npcId];
+    if (!npcId || !entState) return null;
+    const entry = normalizeNpcKnowledgeEntry(raw, defaults);
+    if (!entry) return null;
+    if (!Array.isArray(entState.observations)) entState.observations = [];
+    const duplicate = entState.observations.find(item =>
+        (entry.eventId && item.eventId === entry.eventId) || String(item.text || '').toLowerCase() === entry.text.toLowerCase());
+    if (duplicate) {
+        if (entry.confidence > Number(duplicate.confidence || 0)) Object.assign(duplicate, entry);
+        return duplicate;
+    }
+    entState.observations.push(entry);
+    entState.observations = entState.observations.slice(-100);
+    return entry;
+}
+
+function normalizeWorldConsequences(world, sess) {
+    if (!Array.isArray(sess.consequences)) sess.consequences = [];
+    const locationIds = new Set((world.locations || []).map(location => location.id));
+    const entityIds = new Set((world.entities || []).map(entity => entity.id));
+    sess.consequences = sess.consequences.slice(-300).map((raw, index) => {
+        const item = isPlainObject(raw) ? raw : { detail: String(raw || '') };
+        const state = WORLD_CONSEQUENCE_STATES.has(item.state) ? item.state : 'created';
+        const createdTurn = Math.max(1, parseInt(item.createdTurn) || 1);
+        return {
+            id: String(item.id || livingId('consequence', `${createdTurn}_${index}_${item.title || item.detail}`)).slice(0, 100),
+            type: String(item.type || 'world').slice(0, 60),
+            title: String(item.title || item.detail || 'Unresolved consequence').slice(0, 160),
+            detail: String(item.detail || item.title || '').slice(0, 600),
+            state,
+            createdTurn,
+            updatedTurn: Math.max(createdTurn, parseInt(item.updatedTurn) || createdTurn),
+            locationId: locationIds.has(item.locationId) ? item.locationId : '',
+            actorIds: [...new Set((Array.isArray(item.actorIds) ? item.actorIds : [])
+                .filter(id => id === 'player' || entityIds.has(id)))].slice(0, 20),
+            sourceEventId: String(item.sourceEventId || '').slice(0, 100),
+            severity: livingClamp(item.severity == null ? 35 : item.severity, 0, 100),
+            escalateAfterTurns: Math.max(0, parseInt(item.escalateAfterTurns) || 0),
+            decayAfterTurns: Math.max(0, parseInt(item.decayAfterTurns) || 0),
+            resolvedTurn: item.resolvedTurn == null ? null : Math.max(createdTurn, parseInt(item.resolvedTurn) || createdTurn),
+            evidence: String(item.evidence || '').slice(0, 400),
+            visibility: ['public', 'private', 'hidden'].includes(item.visibility) ? item.visibility : 'private'
+        };
+    });
+    return sess.consequences;
+}
+
+function createWorldConsequence(world, sess, raw) {
+    const policy = normalizeWorldGameRules(world).consequences;
+    if (policy?.enabled === false) return null;
+    normalizeWorldConsequences(world, sess);
+    const turn = Math.max(1, parseInt(sess.turnCount) || 1);
+    const sourceEventId = String(raw?.sourceEventId || '').slice(0, 100);
+    const existing = sourceEventId && sess.consequences.find(item => item.sourceEventId === sourceEventId);
+    if (existing) return existing;
+    const entry = {
+        ...raw,
+        state: raw?.state || 'created',
+        createdTurn: turn,
+        updatedTurn: turn,
+        escalateAfterTurns: raw?.escalateAfterTurns == null ? policy.escalationTurns : raw.escalateAfterTurns,
+        decayAfterTurns: raw?.decayAfterTurns == null ? policy.decayTurns : raw.decayAfterTurns
+    };
+    sess.consequences.push(entry);
+    normalizeWorldConsequences(world, sess);
+    const maxActive = Math.max(10, parseInt(policy?.maxActive) || 120);
+    const resolved = sess.consequences.filter(item => item.state === 'resolved');
+    const active = sess.consequences.filter(item => item.state !== 'resolved');
+    sess.consequences = [...resolved.slice(-100), ...active.slice(-maxActive)];
+    return sess.consequences[sess.consequences.length - 1];
+}
+
+function advanceWorldConsequences(world, sess, turn) {
+    const consequences = normalizeWorldConsequences(world, sess);
+    let changed = 0;
+    consequences.forEach(item => {
+        if (item.state === 'resolved') return;
+        const age = turn - item.createdTurn;
+        let next = item.state;
+        if (item.state === 'created') next = 'active';
+        if (item.escalateAfterTurns > 0 && age >= item.escalateAfterTurns && item.severity >= 50) next = 'escalating';
+        if (item.decayAfterTurns > 0 && age >= item.decayAfterTurns && item.severity < 50) next = 'decaying';
+        if (next === 'decaying' && age >= item.decayAfterTurns + 3) {
+            next = 'resolved';
+            item.resolvedTurn = turn;
+        }
+        if (next !== item.state) {
+            item.state = next;
+            item.updatedTurn = turn;
+            changed++;
+        }
+    });
+    return changed;
 }
 
 function normalizeLivingWorldState(world, sess) {
@@ -23604,6 +25371,11 @@ function normalizeLivingWorldState(world, sess) {
     if (!Array.isArray(sess.playstyle.dominant)) sess.playstyle.dominant = [];
     if (!sess.playstyle.summary) sess.playstyle.summary = 'No clear playstyle pattern yet.';
     if (!Array.isArray(sess.worldNews)) sess.worldNews = [];
+    normalizeWorldConsequences(world, sess);
+    Object.values(sess.entityStates || {}).forEach(entState => {
+        entState.observations = (Array.isArray(entState.observations) ? entState.observations : [])
+            .map(item => normalizeNpcKnowledgeEntry(item)).filter(Boolean).slice(-100);
+    });
     normalizeWorldSocietyState(world, sess);
     // Knowledge tracking arrived after some timelines were saved; items with no
     // record of who knows them are treated as already-circulating common talk
@@ -23615,6 +25387,13 @@ function normalizeLivingWorldState(world, sess) {
             ? [...new Set(entry.knownBy.map(id => String(id || '')).filter(Boolean))].slice(0, 40)
             : null;
         entry.playerWitnessed = entry.playerWitnessed === true;
+        entry.transmissions = (Array.isArray(entry.transmissions) ? entry.transmissions : []).slice(-80).map(record => ({
+            from: String(record?.from || '').slice(0, 100),
+            to: String(record?.to || '').slice(0, 100),
+            turn: Math.max(0, parseInt(record?.turn) || 0),
+            locationId: String(record?.locationId || '').slice(0, 100),
+            confidence: livingClamp(record?.confidence == null ? 0.7 : record.confidence, 0, 1)
+        }));
         return entry;
     });
     sess.lastLivingWorldTick = Math.max(0, parseInt(sess.lastLivingWorldTick) || 0);
@@ -23856,6 +25635,7 @@ function stableWorldRoll(seed) {
 }
 
 function getTimelinePersona(sess) {
+    if (isPlainObject(sess?.personaSnapshot)) return sess.personaSnapshot;
     const selectedId = sess?.personaId !== undefined ? sess.personaId : state.activePersonaId;
     return state.personas.find(persona => persona.id === selectedId) || null;
 }
@@ -24130,6 +25910,8 @@ function applyStartingLifeToSession(world, sess, originId) {
         legalStatus: life.legalStatus,
         privileges: [...life.privileges],
         obligations: [...life.obligations],
+        skills: [...life.skills],
+        perks: [...life.perks],
         holdings: [...life.holdings]
     };
     if (getLocationRef(world, life.startLocationId)) sess.playerLocation = life.startLocationId;
@@ -24376,7 +26158,16 @@ function witnessesAt(npcIndex, sess, locationId, actorId, turn, chance = 0.35) {
 // rotating window keyed on the turn, so everywhere still gets its turn to talk.
 const LIVING_GOSSIP_ITEMS = 12;
 const LIVING_GOSSIP_ROOMS = 40;
-function spreadWorldKnowledge(npcIndex, sess, turn) {
+function spreadWorldKnowledge(world, npcIndex, sess, turn) {
+    // Backward-compatible direct calls from older extensions/tests used
+    // (npcIndex, session, turn). The canonical tick supplies the world so a
+    // transmission can also become provenance-backed NPC knowledge.
+    if (world instanceof Map) {
+        turn = sess;
+        sess = npcIndex;
+        npcIndex = world;
+        world = null;
+    }
     if (!Array.isArray(sess.worldNews) || !sess.worldNews.length) return 0;
     const circulating = sess.worldNews.slice(-LIVING_GOSSIP_ITEMS)
         .filter(item => Array.isArray(item.knownBy) && item.knownBy.length > 0 && item.knownBy.length < 40);
@@ -24400,8 +26191,27 @@ function spreadWorldKnowledge(npcIndex, sess, turn) {
             for (const listenerId of npcIds) {
                 if (knows.has(listenerId) || item.knownBy.length >= 40) continue;
                 if (stableWorldRoll(`${sess.id}|gossip|${item.id}|${listenerId}|${locationId}|${turn}`) < 0.4) {
+                    const speakerId = npcIds.find(id => knows.has(id));
                     item.knownBy.push(listenerId);
                     knows.add(listenerId);
+                    if (!Array.isArray(item.transmissions)) item.transmissions = [];
+                    const priorConfidence = Number(sess.entityStates?.[speakerId]?.observations
+                        ?.find(observation => observation.eventId === item.eventId || observation.eventId === item.id)?.confidence || 0.8);
+                    const confidence = livingClamp(priorConfidence * 0.82, 0.2, 0.95);
+                    item.transmissions.push({ from: speakerId, to: listenerId, turn, locationId, confidence });
+                    item.transmissions = item.transmissions.slice(-80);
+                    if (world) addNpcKnowledge(world, sess, listenerId, {
+                        id: `obs_gossip_${item.id}_${listenerId}`,
+                        eventId: item.eventId || item.id,
+                        text: item.text,
+                        sourceType: 'told',
+                        sourceNpcId: speakerId,
+                        evidenceMode: 'hearsay',
+                        confidence,
+                        visibility: 'private',
+                        allowedToShare: true,
+                        turn
+                    });
                     spread++;
                 }
             }
@@ -25053,7 +26863,8 @@ function runLivingWorldTick(world, sess) {
 
     // Word travels between characters who share a room. This is the step that
     // eventually carries a remote fact within earshot of the player.
-    const rumoursSpread = clockCatchUpOnly ? 0 : spreadWorldKnowledge(npcIndex, sess, turn);
+    const rumoursSpread = clockCatchUpOnly ? 0 : spreadWorldKnowledge(world, npcIndex, sess, turn);
+    const consequenceChanges = clockCatchUpOnly ? 0 : advanceWorldConsequences(world, sess, turn);
 
     // A catch-up pass only adds events; it must not erase the turn's tallies.
     Object.assign(sess.livingWorldActivity, clockCatchUpOnly ? {
@@ -25069,7 +26880,8 @@ function runLivingWorldTick(world, sess) {
         relationships: relationshipCount,
         places: placeCount,
         society: societyResult.changed || 0,
-        conflicts: societyResult.conflicts || 0
+        conflicts: societyResult.conflicts || 0,
+        consequences: consequenceChanges
     });
     return {
         advanced: true,
@@ -25083,7 +26895,8 @@ function runLivingWorldTick(world, sess) {
         relationships: relationshipCount,
         places: placeCount,
         society: societyResult.changed || 0,
-        conflicts: societyResult.conflicts || 0
+        conflicts: societyResult.conflicts || 0,
+        consequences: consequenceChanges
     };
 }
 
@@ -25117,6 +26930,13 @@ function getLivingWorldPrompt(world, sess, presentNPCs = []) {
         .sort((a, b) => (a.dueTurn ?? 999999) - (b.dueTurn ?? 999999))
         .slice(0, 6);
     if (upcoming.length) lines.push(`Future events: ${upcoming.map(event => `${event.title} (turn ${event.dueTurn ?? '?'})`).join('; ')}.`);
+    const activeConsequences = (sess.consequences || [])
+        .filter(item => item.state !== 'resolved' && item.visibility !== 'hidden').slice(-8);
+    if (activeConsequences.length) {
+        lines.push(`Active consequences: ${activeConsequences.map(item =>
+            `${item.title} [${item.state}, severity ${item.severity}/100]${item.detail && item.detail !== item.title ? ` — ${item.detail}` : ''}`
+        ).join(' | ')}. Do not silently erase these; escalate, decay or resolve them only through causally relevant play.`);
+    }
     const activeFactions = sess.factions.filter(faction => !['defeated', 'disbanded'].includes(faction.status)).slice(0, 8);
     if (activeFactions.length) {
         // Who stands with whom matters to how scenes play, so state it rather
@@ -25882,6 +27702,59 @@ function estimateWorldPromptTokens(world, preset) {
     return Math.ceil(characters / 3.2);
 }
 
+function worldDirectoryHealth(world) {
+    const locations = Array.isArray(world?.locations) ? world.locations : [];
+    const regions = Array.isArray(world?.regions) ? world.regions : [];
+    const people = (world?.entities || []).filter(entity => entity?.type === 'npc');
+    const items = (world?.entities || []).filter(entity => entity?.type === 'item');
+    const groups = Array.isArray(world?.groups) ? world.groups : [];
+    const issues = [];
+    const count = (list, test) => list.filter(test).length;
+    const thinRegions = count(regions, region => !String(region.description || '').trim() || !(region.tags || []).length);
+    const thinLocations = count(locations, location => !String(location.description || '').trim() || !(location.tags || []).length);
+    const unstructuredLocations = count(locations, location => !location.regionId || !location.mapType);
+    const thinPeople = count(people, person => !String(person.description || '').trim() || !String(person.persona || '').trim());
+    const unplacedPeople = count(people, person => !person.startLocation || !person.homeLocation);
+    const unsimulatedPeople = count(people, person => !(person.schedule || []).length || !String(person.goal || '').trim());
+    const ungroupedPeople = count(people, person => !(person.groupIds || []).length && !person.householdId);
+    const thinItems = count(items, item => !String(item.description || '').trim() || !item.startLocation);
+    const thinGroups = count(groups, group => !String(group.description || '').trim() || !(group.tags || []).length);
+    const emptyRegions = count(regions, region => !locations.some(location => location.regionId === region.id));
+    const buildingLikeRegions = count(regions, region =>
+        /\b(?:house|shop|store|inn|tavern|keep|castle|tower|office|school|hospital|station|temple|church|building)\b/i.test(region.name || '')
+        && locations.filter(location => location.regionId === region.id).some(location => ['room', 'area'].includes(location.mapType)));
+    const invalidContainment = count(locations, location => {
+        if (!location.parentLocationId) return false;
+        const parent = getLocationRef(world, location.parentLocationId);
+        return !parent || parent.id === location.id || (parent.regionId && location.regionId && parent.regionId !== location.regionId);
+    });
+    const incompleteTravel = locations.reduce((total, location) => total + (location.exits || []).filter(exit => {
+        const target = getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit));
+        return !target || !String(exit?.mode || '').trim() || !(Number(exit?.travelTime) > 0);
+    }).length, 0);
+    const isolatedRegions = regions.length > 1 ? count(regions, region => {
+        const hasLocations = locations.some(location => location.regionId === region.id);
+        return hasLocations && worldRegionTravelLinks(world, region.id).length === 0;
+    }) : 0;
+    if (thinRegions) issues.push({ area: 'Regions', count: thinRegions, detail: 'missing a regional description or search tags', pass: 'Structure' });
+    if (thinLocations) issues.push({ area: 'Locations', count: thinLocations, detail: 'missing a player-facing description or search tags', pass: 'Structure' });
+    if (unstructuredLocations) issues.push({ area: 'Map', count: unstructuredLocations, detail: 'still rely on inferred region or map roles', pass: 'Structure' });
+    if (thinPeople) issues.push({ area: 'People', count: thinPeople, detail: 'missing a public impression or persona', pass: 'People' });
+    if (unplacedPeople) issues.push({ area: 'People', count: unplacedPeople, detail: 'missing a starting place or home', pass: 'People' });
+    if (unsimulatedPeople) issues.push({ area: 'Living world', count: unsimulatedPeople, detail: 'missing a schedule or off-screen agenda', pass: 'People' });
+    if (ungroupedPeople) issues.push({ area: 'Households', count: ungroupedPeople, detail: 'not linked to a household, family or organization', pass: 'People' });
+    if (thinItems) issues.push({ area: 'Items', count: thinItems, detail: 'missing a description or starting location', pass: 'Items' });
+    if (thinGroups) issues.push({ area: 'Groups', count: thinGroups, detail: 'missing a description or classification tags', pass: 'People' });
+    if (emptyRegions) issues.push({ area: 'Regions', count: emptyRegions, detail: 'contain no playable locations', pass: 'Structure' });
+    if (buildingLikeRegions) issues.push({ area: 'Hierarchy', count: buildingLikeRegions, detail: 'look like buildings modeled as regions; keep the geographic region and make rooms child locations instead', pass: 'Structure' });
+    if (invalidContainment) issues.push({ area: 'Hierarchy', count: invalidContainment, detail: 'have a missing, self-referential or cross-region parent location', pass: 'Structure' });
+    if (isolatedRegions) issues.push({ area: 'Travel', count: isolatedRegions, detail: 'cannot be reached from another region through a canonical location link', pass: 'Structure' });
+    if (incompleteTravel) issues.push({ area: 'Travel', count: incompleteTravel, detail: 'connections lack a valid target, mode or positive travel time', pass: 'Structure' });
+    const possible = Math.max(1, locations.length * 3 + regions.length * 3 + people.length * 4 + items.length * 2 + groups.length * 2);
+    const missing = thinRegions + thinLocations + unstructuredLocations + thinPeople + unplacedPeople + unsimulatedPeople + ungroupedPeople + thinItems + thinGroups + emptyRegions + buildingLikeRegions + invalidContainment + isolatedRegions + incompleteTravel;
+    return { score: Math.max(0, Math.round((1 - missing / possible) * 100)), issues, counts: { regions: regions.length, locations: locations.length, people: people.length, items: items.length, groups: groups.length } };
+}
+
 function calibrateStructuralFindings(world, preset) {
     const findings = [];
     const locations = Array.isArray(world.locations) ? world.locations : [];
@@ -26059,6 +27932,19 @@ function calibrateStructuralFindings(world, preset) {
         }
     });
 
+    // Older worlds load safely, but safe defaults are not the same thing as a
+    // fully authored directory. Report those semantic gaps in useful batches
+    // instead of creating hundreds of noisy one-record warnings.
+    const directoryHealth = worldDirectoryHealth(world);
+    const directoryNouns = { Regions: 'region', Locations: 'location', Map: 'location', Travel: 'connection', People: 'person', 'Living world': 'person', Households: 'person', Items: 'item', Groups: 'group' };
+    directoryHealth.issues.forEach((issue, index) => add({
+        id: `directory_gap_${index}_${issue.area.toLowerCase().replace(/\W+/g, '_')}`,
+        type: 'report_directory_gap',
+        severity: issue.count > 20 ? 'warning' : 'suggestion',
+        title: `${issue.count} ${directoryNouns[issue.area] || 'directory record'}${issue.count === 1 ? '' : 's'} need enrichment`,
+        detail: `${issue.detail}. Run the ${issue.pass} pass to propose missing details, then review them before applying.`
+    }));
+
     return findings;
 }
 
@@ -26162,6 +28048,86 @@ function applyCalibrationFinding(world, finding) {
             if (!entity || String(entity.persona || '').trim()) return false;
             entity.persona = finding.patch.persona;
             return true;
+        }
+        case 'set_entity_tags': {
+            const entity = (world.entities || []).find(e => e.id === finding.patch.entityId);
+            if (!entity || (entity.tags || []).length) return false;
+            entity.tags = [...new Set((finding.patch.tags || []).map(tag => String(tag).trim()).filter(Boolean))].slice(0, 30);
+            return entity.tags.length > 0;
+        }
+        case 'set_entity_depth': {
+            const entity = (world.entities || []).find(e => e.id === finding.patch.entityId);
+            if (!entity || !WORLD_DIRECTORY_DEPTHS.includes(finding.patch.simulationDepth)) return false;
+            const legacyDefault = !entity.simulationDepth
+                || (entity.simulationDepth === 'background' && !entity.isMajor);
+            if (!legacyDefault) return false;
+            entity.simulationDepth = finding.patch.simulationDepth;
+            entity.isMajor = entity.simulationDepth === 'core';
+            return true;
+        }
+        case 'set_entity_group': {
+            const entity = (world.entities || []).find(e => e.id === finding.patch.entityId);
+            if (!entity || !finding.patch.name) return false;
+            if (!Array.isArray(world.groups)) world.groups = [];
+            const name = String(finding.patch.name).trim().slice(0, 120);
+            let group = world.groups.find(item => String(item.name || '').trim().toLowerCase() === name.toLowerCase());
+            if (!group) {
+                const base = `grp_${worldDirectorySlug(name, 'group')}`;
+                let id = base;
+                let suffix = 2;
+                while (world.groups.some(item => item.id === id)) id = `${base}_${suffix++}`;
+                group = {
+                    id, name,
+                    type: ['household', 'family', 'organization', 'crew', 'other'].includes(finding.patch.groupType)
+                        ? finding.patch.groupType : 'other',
+                    description: String(finding.patch.description || '').trim().slice(0, 1200),
+                    homeLocationId: getLocationRef(world, finding.patch.homeLocationId)?.id || '',
+                    tags: [...new Set((finding.patch.tags || []).map(String).map(tag => tag.trim()).filter(Boolean))].slice(0, 30)
+                };
+                world.groups.push(group);
+            }
+            entity.groupIds = Array.isArray(entity.groupIds) ? entity.groupIds : [];
+            if (entity.groupIds.includes(group.id)) return false;
+            entity.groupIds.push(group.id);
+            if (group.type === 'household' && !entity.householdId) entity.householdId = group.id;
+            return true;
+        }
+        case 'set_location_tags': {
+            const location = locations.find(l => l.id === finding.patch.locationId);
+            if (!location || (location.tags || []).length) return false;
+            location.tags = [...new Set((finding.patch.tags || []).map(String).map(tag => tag.trim()).filter(Boolean))].slice(0, 30);
+            return location.tags.length > 0;
+        }
+        case 'set_location_description': {
+            const location = locations.find(l => l.id === finding.patch.locationId);
+            if (!location || String(location.description || '').trim()) return false;
+            location.description = String(finding.patch.description || '').trim().slice(0, 4000);
+            return Boolean(location.description);
+        }
+        case 'set_location_region': {
+            const location = locations.find(l => l.id === finding.patch.locationId);
+            if (!location || location.regionId || !finding.patch.name) return false;
+            if (!Array.isArray(world.regions)) world.regions = [];
+            const name = String(finding.patch.name).trim().slice(0, 120);
+            let region = world.regions.find(item => item.id === finding.patch.regionId
+                || String(item.name || '').trim().toLowerCase() === name.toLowerCase());
+            if (!region) {
+                const base = `reg_${worldDirectorySlug(name, 'region')}`;
+                let id = base;
+                let suffix = 2;
+                while (world.regions.some(item => item.id === id)) id = `${base}_${suffix++}`;
+                region = { id, name, description: '', tags: [] };
+                world.regions.push(region);
+            }
+            location.regionId = region.id;
+            location.region = region.name;
+            return true;
+        }
+        case 'set_item_description': {
+            const item = (world.entities || []).find(e => e.id === finding.patch.entityId && e.type === 'item');
+            if (!item || String(item.description || '').trim()) return false;
+            item.description = String(finding.patch.description || '').trim().slice(0, 4000);
+            return Boolean(item.description);
         }
         case 'set_schedule': {
             const entity = (world.entities || []).find(e => e.id === finding.patch.entityId);
@@ -26438,7 +28404,11 @@ const CALIBRATION_PASSES = Object.freeze({
     },
     people: {
         label: 'People',
-        blurb: 'Where each character lives and starts, how they speak, their daily routine, and the agenda they pursue when you are not watching.'
+        blurb: 'Where each character lives and starts, how they speak, who they belong with, their daily routine, and the agenda they pursue when you are not watching.'
+    },
+    items: {
+        label: 'Items',
+        blurb: 'Separately enriches objects with a useful description, placement and search tags—without treating them like people.'
     },
     society: {
         label: 'Society',
@@ -26566,6 +28536,7 @@ function calibrationPairCandidates(world) {
 const CALIBRATION_BATCH_SIZES = Object.freeze({
     structure: 40,   // a line or two of JSON each
     people: 10,      // persona + schedule + beats + pool: the longest answers
+    items: 24,       // description + placement + tags are compact
     society: 15      // a judged pair plus a place, each a short object
 });
 
@@ -26576,6 +28547,7 @@ const CALIBRATION_BATCH_SIZES = Object.freeze({
 function calibrationWorkUnits(world, pass) {
     if (pass === 'structure') return (world?.locations || []).slice();
     if (pass === 'people') return (world?.entities || []).filter(entity => entity?.type === 'npc');
+    if (pass === 'items') return (world?.entities || []).filter(entity => entity?.type === 'item');
     if (pass === 'society') {
         // Three kinds of unit share the pass, batched together so each call
         // carries a slice of each. Whoever has no faction is a unit too: they
@@ -26662,11 +28634,23 @@ function calibrationPeopleDigest(world, batch) {
         if ((entity.schedule || []).length) has.push(`schedule=${entity.schedule.length} blocks`);
         if (entity.goal) has.push('agenda=written');
         if ((entity.goalSteps || []).length) has.push(`beats=${entity.goalSteps.length}`);
-        const bits = [`- [${entity.id}] "${entity.name}"${entity.isMajor ? ' (MAJOR)' : ''}`];
+        if ((entity.groupIds || []).length) has.push(`groups=${entity.groupIds.join(',')}`);
+        if ((entity.tags || []).length) has.push(`tags=${entity.tags.join(',')}`);
+        const bits = [`- [${entity.id}] "${entity.name}" | depth=${entity.simulationDepth || (entity.isMajor ? 'core' : 'unset')}`];
         bits.push(has.length ? `already has: ${has.join(', ')}` : 'has nothing set');
         const about = String(entity.description || '').replace(/\s+/g, ' ').slice(0, 300);
         if (about) bits.push(`— ${about}`);
         return bits.join(' | ');
+    }).join('\n');
+}
+
+function calibrationItemDigest(world, batch) {
+    return (batch || (world.entities || []).filter(entity => entity.type === 'item')).map(item => {
+        const has = [];
+        if (item.description) has.push('description=written');
+        if (item.startLocation) has.push(`placed=${item.startLocation}`);
+        if ((item.tags || []).length) has.push(`tags=${item.tags.join(',')}`);
+        return `- [${item.id}] "${item.name}" | ${has.length ? `already has: ${has.join(', ')}` : 'has nothing set'}`;
     }).join('\n');
 }
 
@@ -26715,7 +28699,10 @@ ${pairs ? `\nPAIRS TO JUDGE:\n${pairs}` : ''}${places ? `\nPLACES WITH NOTHING S
 For each character, supply ONLY what is missing — anything listed under "already has" is the author's and must not be replaced:
 - start: the location id where they are when play begins
 - home: the location id they belong to and return to (often the same)
-- persona: how they speak and carry themselves, 2-3 sentences, second person absent. Only for characters marked MAJOR.
+- persona: how they speak, behave and carry themselves. Give every person one: 2-3 sentences for core/recurring cast, one sharp sentence for background cast. Second person absent.
+- depth: background | recurring | core — how much simulation/context attention they deserve
+- tags: 2-6 short search terms that describe role, occupation, temperament or story function
+- group: where the fiction clearly implies a reusable household, family, organization or crew, give {name,type,description,tags}. Omit it for genuinely unaffiliated people.
 - schedule: 2-5 blocks of {time "HH:MM" (24h), location id, short activity}. A believable day, in order, using places that exist.
 - goal: one private aim they pursue off-screen, drawn from who they are
 - beats: 4-5 concrete steps toward it, in order, each ONE observable past-tense action a bystander could report ("asked the mason about the old seal", "was seen carrying a lantern down to the cellar"). Never vague, never internal.
@@ -26728,7 +28715,7 @@ Draw everything from the description you are given. Do not invent a different ch
 OUTPUT FORMAT — this is strict:
 Your entire reply is one JSON object and nothing else. The first character you write must be {. Do not restate the task or reason in the open; put justification in each item's "why" field.
 
-{"people":[{"id":"<id>","start":"<loc id>","home":"<loc id>","persona":"<text>","schedule":[{"time":"HH:MM","location":"<loc id>","activity":"<short>"}],"goal":"<text>","beats":["<text>"],"next_goals":["<text>"],"autonomy":"medium","difficulty":50,"why":"<short>"}]}
+{"people":[{"id":"<id>","start":"<loc id>","home":"<loc id>","persona":"<text>","depth":"recurring","tags":["<tag>"],"group":{"name":"<text>","type":"household|family|organization|crew|other","description":"<short>","tags":["<tag>"]},"schedule":[{"time":"HH:MM","location":"<loc id>","activity":"<short>"}],"goal":"<text>","beats":["<text>"],"next_goals":["<text>"],"autonomy":"medium","difficulty":50,"why":"<short>"}]}
 
 Omit any field you have no opinion on.
 
@@ -26740,21 +28727,48 @@ ${places}
 CHARACTERS:
 ${calibrationPeopleDigest(world, batch)}`;
     }
+    if (pass === 'items') {
+        const places = (world.locations || [])
+            .map(location => `- [${location.id}] "${location.name}"`)
+            .join('\n');
+        return `You are enriching the object directory of a roleplay world. Items are objects, not people: do not give them personas, schedules, homes, emotions or relationships.
+
+For every listed item, supply ONLY what is missing:
+- description: one concrete player-facing sentence explaining what it looks like and why it matters
+- location: the id of the place where it begins, but only when the fiction supports a placement
+- tags: 2-6 short search terms covering kind, use, owner or story relevance
+
+OUTPUT FORMAT — strict JSON only. The first character must be {.
+{"items":[{"id":"<id>","description":"<text>","location":"<loc id>","tags":["<tag>"],"why":"<short>"}]}
+
+Omit fields the world already has or that the fiction cannot support. Never invent an item or location id.
+
+WORLD: ${world.name}
+${world.description ? `PREMISE: ${String(world.description).slice(0, 400)}\n` : ''}
+PLACES:
+${places}
+
+ITEMS:
+${calibrationItemDigest(world, batch)}`;
+    }
     if (pass !== 'structure') return '';
     return `You are laying out the map of a roleplay world so its engine can run it.
 
 For each location decide, ONLY where the world has not already said:
+- description: one concise player-facing sentence for a blank location
+- region: an existing region id, or a short reusable region name when none exists
 - role: one of region, route, building, outdoor, room, area
 - inside: the id of the place that physically contains it (a bathroom is inside a house; a house is not inside anything). Omit for top-level places.
 - floor: a storey number when a building has more than one ("2", "-1" for a cellar). Omit otherwise.
 - connect_to: for any place NOTHING leads to, the id of the location it should connect to, judged from the fiction.
+- tags: 2-6 short search terms for the place, its function and atmosphere
 
 Also estimate walking time in whole minutes for each connection that has none. Be realistic and modest: a door between two rooms of one house is 0-1 minutes; crossing a village 5-15; travelling between settlements 30-240. Never propose a time for a connection that already has one.
 
 OUTPUT FORMAT — this is strict:
 Your entire reply is one JSON object and nothing else. The first character you write must be {. Do not restate the task, do not reason in the open, do not add commentary before or after. If you want to justify a decision, put it in that item's "why" field — that is what it is for.
 
-{"locations":[{"id":"<id>","role":"<role>","inside":"<id or omit>","floor":"<string or omit>","connect_to":"<id or omit>","why":"<short>"}],
+{"locations":[{"id":"<id>","description":"<text>","region":"<region id or name>","role":"<role>","inside":"<id or omit>","floor":"<string or omit>","connect_to":"<id or omit>","tags":["<tag>"],"why":"<short>"}],
  "travel":[{"from":"<id>","to":"<id>","minutes":<integer>}]}
 
 Omit any array you are not using, and omit any field you have no opinion on. Never invent locations that are not listed.
@@ -26762,7 +28776,10 @@ Omit any array you are not using, and omit any field you have no opinion on. Nev
 WORLD: ${world.name}
 ${world.description ? `PREMISE: ${String(world.description).slice(0, 400)}\n` : ''}
 LOCATIONS:
-${calibrationLocationDigest(world, batch)}`;
+${calibrationLocationDigest(world, batch)}
+
+EXISTING REGIONS:
+${(world.regions || []).length ? world.regions.map(region => `- [${region.id}] "${region.name}"`).join('\n') : '(none — create only broad reusable regions the listed places clearly imply)'}`;
 }
 
 // Turn a pass's reply into reviewable findings. Anything the world already
@@ -26776,6 +28793,38 @@ function calibrationFindingsFromStructure(world, payload) {
         const location = byId.get(String(entry?.id || ''));
         if (!location) return;
         const why = String(entry?.why || '').slice(0, 200);
+
+        const description = String(entry?.description || '').trim();
+        if (description && !String(location.description || '').trim()) {
+            findings.push({
+                tier: 'structure', id: `description_${location.id}`, type: 'set_location_description', severity: 'suggestion',
+                title: `Describe "${location.name}"`, detail: description.slice(0, 240),
+                patch: { locationId: location.id, description }
+            });
+        }
+
+        const regionRef = String(entry?.region || '').trim();
+        if (regionRef && !location.regionId) {
+            const existingRegion = (world.regions || []).find(region => region.id === regionRef
+                || String(region.name || '').trim().toLowerCase() === regionRef.toLowerCase());
+            findings.push({
+                tier: 'structure', id: `region_${location.id}`, type: 'set_location_region', severity: 'suggestion',
+                title: `Group "${location.name}" under ${existingRegion?.name || regionRef}`,
+                detail: why || 'Regions keep large location directories browsable and reusable.',
+                patch: { locationId: location.id, regionId: existingRegion?.id || '', name: existingRegion?.name || regionRef }
+            });
+        }
+
+        const tags = [...new Set((Array.isArray(entry?.tags) ? entry.tags : [])
+            .map(tag => String(tag || '').trim()).filter(Boolean))].slice(0, 30);
+        if (tags.length && !(location.tags || []).length) {
+            findings.push({
+                tier: 'structure', id: `tags_${location.id}`, type: 'set_location_tags', severity: 'suggestion',
+                title: `Make "${location.name}" searchable`,
+                detail: tags.join(' · '),
+                patch: { locationId: location.id, tags }
+            });
+        }
 
         const role = String(entry?.role || '').trim().toLowerCase();
         if (role && WORLD_MAP_TYPES.has(role) && !location.mapType) {
@@ -26882,11 +28931,44 @@ function calibrationFindingsFromPeople(world, payload) {
         }
 
         const persona = String(entry?.persona || '').trim();
-        if (persona && entity.isMajor && !String(entity.persona || '').trim()) {
+        if (persona && !String(entity.persona || '').trim()) {
             push('set_persona', 'persona', 'suggestion',
                 `Give ${entity.name} a voice`,
                 persona.slice(0, 180) + (persona.length > 180 ? '…' : ''),
                 { entityId: entity.id, persona: persona.slice(0, 4000) });
+        }
+
+        const depth = String(entry?.depth || '').trim().toLowerCase();
+        if (WORLD_DIRECTORY_DEPTHS.includes(depth)
+            && (!entity.simulationDepth || (entity.simulationDepth === 'background' && !entity.isMajor))) {
+            push('set_entity_depth', 'depth', 'suggestion',
+                `${entity.name}: ${depth} cast`,
+                'Controls simulation and context priority; it does not gate persona editing.',
+                { entityId: entity.id, simulationDepth: depth });
+        }
+
+        const tags = [...new Set((Array.isArray(entry?.tags) ? entry.tags : [])
+            .map(tag => String(tag || '').trim()).filter(Boolean))].slice(0, 30);
+        if (tags.length && !(entity.tags || []).length) {
+            push('set_entity_tags', 'tags', 'suggestion',
+                `Tag ${entity.name} for search`, tags.join(' · '), { entityId: entity.id, tags });
+        }
+
+        const proposedGroup = isPlainObject(entry?.group) ? entry.group : null;
+        if (proposedGroup && !(entity.groupIds || []).length) {
+            const groupName = String(proposedGroup.name || '').trim();
+            const groupType = String(proposedGroup.type || '').trim().toLowerCase();
+            if (groupName && ['household', 'family', 'organization', 'crew', 'other'].includes(groupType)) {
+                push('set_entity_group', 'group', 'suggestion',
+                    `${entity.name} belongs to ${groupName}`,
+                    String(proposedGroup.description || why || 'A reusable cast group inferred from the fiction.').slice(0, 240),
+                    {
+                        entityId: entity.id, name: groupName, groupType,
+                        description: String(proposedGroup.description || '').trim(),
+                        homeLocationId: home?.id || '',
+                        tags: Array.isArray(proposedGroup.tags) ? proposedGroup.tags : []
+                    });
+            }
         }
 
         // Schedules only count if every block is usable — a half-valid routine
@@ -26934,6 +29016,49 @@ function calibrationFindingsFromPeople(world, payload) {
                 `${entity.name}: ${beats.length} beats for their existing agenda`,
                 beats.slice(0, 2).join('; ') + (beats.length > 2 ? '…' : ''),
                 { entityId: entity.id, beats, pool });
+        }
+    });
+    return findings;
+}
+
+function calibrationFindingsFromItems(world, payload) {
+    const findings = [];
+    const items = new Map((world.entities || [])
+        .filter(entity => entity?.type === 'item').map(entity => [String(entity.id), entity]));
+    const locations = new Map();
+    (world.locations || []).forEach(location => {
+        locations.set(String(location.id).toLowerCase(), location);
+        if (location.name) locations.set(String(location.name).trim().toLowerCase(), location);
+    });
+    (Array.isArray(payload?.items) ? payload.items : []).forEach(entry => {
+        const item = items.get(String(entry?.id || ''));
+        if (!item) return;
+        const description = String(entry?.description || '').trim();
+        const why = String(entry?.why || '').trim().slice(0, 240);
+        if (description && !String(item.description || '').trim()) {
+            findings.push({
+                tier: 'items', id: `item_description_${item.id}`, type: 'set_item_description', severity: 'suggestion',
+                title: `Describe ${item.name}`, detail: description.slice(0, 240),
+                patch: { entityId: item.id, description }
+            });
+        }
+        const location = locations.get(String(entry?.location || '').trim().toLowerCase());
+        if (location && !item.startLocation) {
+            findings.push({
+                tier: 'items', id: `item_location_${item.id}`, type: 'set_entity_location', severity: 'warning',
+                title: `Place ${item.name} at ${location.name}`,
+                detail: why || 'An unplaced item exists in the directory but cannot enter a scene.',
+                patch: { entityId: item.id, locationId: location.id }
+            });
+        }
+        const tags = [...new Set((Array.isArray(entry?.tags) ? entry.tags : [])
+            .map(tag => String(tag || '').trim()).filter(Boolean))].slice(0, 30);
+        if (tags.length && !(item.tags || []).length) {
+            findings.push({
+                tier: 'items', id: `item_tags_${item.id}`, type: 'set_entity_tags', severity: 'suggestion',
+                title: `Tag ${item.name} for search`, detail: tags.join(' · '),
+                patch: { entityId: item.id, tags }
+            });
         }
     });
     return findings;
@@ -27177,6 +29302,7 @@ async function runCalibrationBatch(world, pass, batch, carriedFactions) {
     const wasCutShort = payload.__truncated === true;
     delete payload.__truncated;
     const findings = pass === 'people' ? calibrationFindingsFromPeople(world, payload)
+        : pass === 'items' ? calibrationFindingsFromItems(world, payload)
         : pass === 'society' ? calibrationFindingsFromSociety(world, payload, carriedFactions)
         : calibrationFindingsFromStructure(world, payload);
     return { findings, truncated: wasCutShort };
@@ -27195,7 +29321,7 @@ function parseCalibrationPayload(raw) {
     // relationships/places/factions/memberships, none of which were listed
     // here — so a complete, perfectly valid Society reply was rejected as
     // unusable and reported as a model failure. It could never have worked.
-    const PAYLOAD_KEYS = ['locations', 'travel', 'people',
+    const PAYLOAD_KEYS = ['locations', 'travel', 'people', 'items',
         'relationships', 'places', 'factions', 'memberships'];
     const usable = value => value && typeof value === 'object' && !Array.isArray(value)
         && PAYLOAD_KEYS.some(key => Array.isArray(value[key]));
@@ -27313,6 +29439,153 @@ function salvageTruncatedPayload(text, usable) {
 // audit panel. Applying one finding used to rebuild the panel and destroy the
 // rest of the list, forcing another paid run to get them back.
 let calibrationPassState = null;   // { worldId, findings, applied:Set<number>, dismissed:Set<number> }
+let worldMigrationPreviewState = null; // { worldId, sourceVersion, result }
+
+function downloadLegacyWorldBackup(world) {
+    if (!world) return;
+    const backup = safeJsonClone(world);
+    backup._format = 'horde-world';
+    backup._version = 2;
+    backup._migrationBackup = {
+        createdAt: new Date().toISOString(),
+        schemaVersion: worldSchemaVersion(world),
+        targetSchemaVersion: WORLD_SCHEMA_VERSION
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${String(world.name || 'world').replace(/[^a-z0-9_-]+/gi, '_')}_pre_upgrade.horde_world`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    showToast('Pre-upgrade world backup downloaded.', 'success');
+}
+
+function normalizeMigratedWorldInstance(world, instance) {
+    if (!isPlainObject(instance)) return instance;
+    const canonical = value => getLocationRef(world, value)?.id || value;
+    (Array.isArray(instance.sessions) ? instance.sessions : []).forEach(session => {
+        if (!isPlainObject(session)) return;
+        session.playerLocation = canonical(session.playerLocation);
+        (Array.isArray(session.scheduledEvents) ? session.scheduledEvents : []).forEach(event => {
+            if (event?.locationId) event.locationId = canonical(event.locationId);
+        });
+        Object.values(isPlainObject(session.npcScheduleOverrides) ? session.npcScheduleOverrides : {}).forEach(override => {
+            if (override?.locationId) override.locationId = canonical(override.locationId);
+        });
+        if (isPlainObject(session.locationStates)) {
+            const canonicalStates = {};
+            Object.entries(session.locationStates).forEach(([key, value]) => {
+                canonicalStates[canonical(key)] = value;
+            });
+            session.locationStates = canonicalStates;
+        }
+    });
+    return instance;
+}
+
+function worldMigrationPreview(world) {
+    if (!world) return null;
+    if (worldMigrationPreviewState?.worldId === world.id
+        && worldMigrationPreviewState?.sourceVersion === worldSchemaVersion(world)) {
+        return worldMigrationPreviewState.result;
+    }
+    try {
+        const result = upgradeWorldSchemaData(world, { source: 'world-audit-preview' });
+        worldMigrationPreviewState = { worldId: world.id, sourceVersion: worldSchemaVersion(world), result };
+        return result;
+    } catch (error) {
+        return { error };
+    }
+}
+
+function renderWorldMigrationSection(world) {
+    const version = worldSchemaVersion(world);
+    const current = version >= WORLD_SCHEMA_VERSION;
+    const history = Array.isArray(world.migrationHistory) ? world.migrationHistory.at(-1) : null;
+    if (current) {
+        return `<div class="world-migration-card current">
+            <div class="world-migration-icon">✓</div>
+            <div><span class="vh-eyebrow">WORLD SCHEMA ${WORLD_SCHEMA_VERSION}</span><h3>Current world format</h3>
+            <p>${escapeHTML(WORLD_SCHEMA_LABEL)}${history?.migratedAt ? ` · upgraded ${escapeHTML(new Date(history.migratedAt).toLocaleDateString())}` : ''}</p></div>
+        </div>`;
+    }
+    const result = worldMigrationPreview(world);
+    if (result?.error) {
+        return `<div class="world-migration-card blocked"><div class="world-migration-icon">!</div><div>
+            <span class="vh-eyebrow">LEGACY WORLD</span><h3>Upgrade preview could not be built</h3>
+            <p>${escapeHTML(result.error.message || 'This world contains invalid legacy data.')}</p></div></div>`;
+    }
+    const changed = (result?.changes || []).reduce((sum, item) => sum + Math.max(1, Number(item.count) || 1), 0);
+    return `<section class="world-migration-card legacy" aria-labelledby="world-migration-title">
+        <div class="world-migration-icon">↥</div>
+        <div class="world-migration-content">
+            <span class="vh-eyebrow">LEGACY WORLD · SCHEMA ${version || 'UNVERSIONED'}</span>
+            <h3 id="world-migration-title">Upgrade to the new world directory</h3>
+            <p>A transactional migration creates canonical regions, rooms, travel links, People, Items and Groups. Ambiguous geography is reported, never guessed.</p>
+            <div class="world-migration-summary">
+                ${(result?.changes || []).length ? result.changes.map(item => `<span><b>${item.count || 1}</b> ${escapeHTML(item.area)}<small>${escapeHTML(item.detail)}</small></span>`).join('') : '<span><b>0</b> structural rewrites<small>The schema receipt and validation gate will still be added.</small></span>'}
+            </div>
+            ${(result?.warnings || []).length ? `<details class="world-migration-warnings"><summary>${result.warnings.length} decision${result.warnings.length === 1 ? '' : 's'} still need your review</summary>${result.warnings.map(item => `<p><b>${escapeHTML(item.area)}:</b> ${escapeHTML(item.detail)}</p>`).join('')}</details>` : ''}
+            <div class="world-migration-actions">
+                <button id="world-migration-backup-btn" class="btn btn-ghost" type="button">Download original</button>
+                <button id="world-migration-apply-btn" class="btn btn-primary" type="button">Upgrade &amp; save${changed ? ` · ${changed} changes` : ''}</button>
+            </div>
+            <p class="form-hint">The new world is validated before it replaces anything. If validation or saving fails, Horde Studio restores the original automatically.</p>
+        </div>
+    </section>`;
+}
+
+function wireWorldMigrationControls(world) {
+    const backupButton = document.getElementById('world-migration-backup-btn');
+    if (backupButton) backupButton.onclick = () => downloadLegacyWorldBackup(world);
+    const applyButton = document.getElementById('world-migration-apply-btn');
+    if (!applyButton) return;
+    applyButton.onclick = async () => {
+        const result = worldMigrationPreview(world);
+        if (!result || result.error) return showToast(result?.error?.message || 'Upgrade preview failed.', 'error');
+        if (!confirm(`Upgrade “${world.name || 'this world'}” to schema ${WORLD_SCHEMA_VERSION}? Downloading the original first is recommended.`)) return;
+        applyButton.disabled = true;
+        applyButton.textContent = 'Upgrading…';
+        const worldIndex = state.worlds.findIndex(entry => entry.id === world.id);
+        const previousStored = worldIndex >= 0 ? safeJsonClone(state.worlds[worldIndex]) : null;
+        const previousDraft = safeJsonClone(state.editingWorld);
+        const previousInstance = state.worldInstances?.[world.id] ? safeJsonClone(state.worldInstances[world.id]) : null;
+        const previousWorldMediaDirty = worldMediaDirty;
+        try {
+            const migrated = safeJsonClone(result.world);
+            validateWorldData(migrated, 'Migrated world');
+            state.editingWorld = migrated;
+            if (worldIndex >= 0) state.worlds[worldIndex] = safeJsonClone(migrated);
+            else state.worlds.push(safeJsonClone(migrated));
+            if (state.worldInstances?.[world.id]) normalizeMigratedWorldInstance(migrated, state.worldInstances[world.id]);
+            worldMigrationPreviewState = null;
+            worldMediaDirty = true;
+            await saveState();
+            renderWorldStudio();
+            renderWorldAudit();
+            showToast(`World upgraded safely to schema ${WORLD_SCHEMA_VERSION}.`, 'success');
+        } catch (error) {
+            console.error('World migration rolled back:', error);
+            state.editingWorld = previousDraft;
+            if (worldIndex >= 0 && previousStored) state.worlds[worldIndex] = previousStored;
+            else state.worlds = state.worlds.filter(entry => entry.id !== world.id);
+            if (previousInstance) state.worldInstances[world.id] = previousInstance;
+            else if (state.worldInstances) delete state.worldInstances[world.id];
+            worldMediaDirty = previousWorldMediaDirty;
+            worldMigrationPreviewState = null;
+            // saveState writes several IndexedDB records. If an unexpected
+            // storage error happened after one write, persist the restored
+            // snapshot as a best-effort compensating transaction so a reload
+            // cannot expose a half-applied migration.
+            try { await saveState(); }
+            catch (rollbackError) { console.error('World migration rollback could not be persisted:', rollbackError); }
+            renderWorldStudio();
+            renderWorldAudit();
+            showToast(`Upgrade rolled back: ${error.message || 'validation failed'}`, 'error');
+        }
+    };
+}
 
 // Handlers are attached here rather than inline, because the page's CSP blocks
 // inline event attributes outright.
@@ -27528,6 +29801,77 @@ function renderCalibrationPassFindings(world, host) {
     };
 }
 
+function simulateWorldAutonomyHealth(world, days = 7) {
+    const horizon = Math.max(1, Math.min(30, parseInt(days) || 7));
+    const findings = [];
+    const npcIds = new Set((world.entities || []).filter(entity => entity.type === 'npc').map(entity => entity.id));
+    const locationIds = new Set((world.locations || []).map(location => location.id));
+    let evaluatedMoves = 0;
+    let impossibleMoves = 0;
+    let repeatedBeats = 0;
+    let missingKnowledge = 0;
+    let eventCollisions = 0;
+
+    (world.entities || []).filter(entity => entity.type === 'npc').forEach(npc => {
+        const schedule = (Array.isArray(npc.schedule) ? npc.schedule : [])
+            .map(block => ({ ...block, locationId: getLocationRef(world, block.locationId || block.location)?.id || '' }))
+            .filter(block => block.locationId).sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+        for (let day = 0; day < horizon; day++) {
+            for (let index = 1; index < schedule.length; index++) {
+                evaluatedMoves++;
+                const from = schedule[index - 1];
+                const to = schedule[index];
+                if (from.locationId === to.locationId) continue;
+                const path = findWorldTravelPath(world, from.locationId, to.locationId);
+                if (!path?.length) impossibleMoves++;
+            }
+        }
+        const beats = (npc.goalSteps || []).map(step => String(step || '').trim().toLowerCase()).filter(Boolean);
+        repeatedBeats += beats.length - new Set(beats).size;
+        if (!(npc.persona || npc.description)) missingKnowledge++;
+    });
+
+    const scheduled = (world.scheduledEvents || []).map(event => `${event.dueTurn ?? ''}|${event.dueMinute ?? ''}|${event.locationId || ''}|${event.title || ''}`);
+    eventCollisions = scheduled.length - new Set(scheduled).size;
+    if (impossibleMoves) findings.push({ severity: 'critical', text: `${impossibleMoves} of ${evaluatedMoves} simulated schedule transitions have no travel path.` });
+    if (repeatedBeats) findings.push({ severity: 'warning', text: `${repeatedBeats} repeated NPC agenda beats may create echoing off-screen updates.` });
+    if (missingKnowledge) findings.push({ severity: 'warning', text: `${missingKnowledge} NPCs lack enough authored identity for stable behavior.` });
+    if (eventCollisions) findings.push({ severity: 'warning', text: `${eventCollisions} scheduled events are exact duplicates.` });
+    const directory = worldDirectoryHealth(world);
+    directory.issues.slice(0, 8).forEach(issue => findings.push({
+        severity: issue.area === 'Travel' || issue.area === 'Hierarchy' ? 'critical' : 'warning',
+        text: `${issue.count} ${issue.area.toLowerCase()} record(s) ${issue.detail}.`
+    }));
+    const score = Math.max(0, Math.min(100, 100
+        - impossibleMoves * 8 - repeatedBeats * 3 - missingKnowledge * 2 - eventCollisions * 4
+        - Math.max(0, 100 - directory.score) * 0.35));
+    return {
+        days: horizon,
+        score: Math.round(score),
+        findings,
+        stats: {
+            npcs: npcIds.size,
+            locations: locationIds.size,
+            scheduleTransitions: evaluatedMoves,
+            providerCalls: 0,
+            impossibleMoves
+        }
+    };
+}
+
+function renderWorldAutonomyHealthResult(world, host) {
+    const report = simulateWorldAutonomyHealth(world, 7);
+    host.innerHTML = `<div class="world-health-card" style="margin-top:12px;">
+        <div class="world-health-score"><strong>${report.score}</strong><span>/100</span></div>
+        <div><h3>7-day autonomy forecast</h3>
+        <p>${report.stats.npcs} people · ${report.stats.locations} places · ${report.stats.scheduleTransitions} schedule transitions · ${report.stats.providerCalls} model calls</p>
+        ${report.findings.length ? `<div class="world-health-gaps">${report.findings.map(item =>
+            `<span><b>${item.severity === 'critical' ? '!' : '•'}</b> ${escapeHTML(item.text)}</span>`).join('')}</div>`
+            : '<p class="world-health-complete">No spam loops, impossible travel, duplicate events or major directory gaps were detected.</p>'}
+        <p class="form-hint">This is a deterministic dry run. It never edits the world, spends credits or calls a model.</p></div>
+    </div>`;
+}
+
 function renderWorldAudit() {
     const world = state.editingWorld;
     const container = document.getElementById('audit-results-container');
@@ -27535,6 +29879,7 @@ function renderWorldAudit() {
 
     const report = validateWorldReferences(world);
     const lint = buildWorldLintReport(world);
+    const directoryHealth = worldDirectoryHealth(world);
 
     const sevStyle = { critical: 'var(--red)', warning: 'var(--warning, #F4A261)', suggestion: 'var(--text-3)' };
     const lintHtml = lint.length ? `
@@ -27571,36 +29916,44 @@ function renderWorldAudit() {
     // call. Shown before the AI audit because it costs nothing and fixes the
     // faults that stop a world working at all.
     const calibration = calibrateStructuralFindings(world, getAllPresets().find(p => p.id === world.activePresetId));
-    const fixable = calibration.filter(f => f.type !== 'report_orphan' && f.type !== 'report_duplicate_name');
+    const directlyFixableTypes = new Set(['set_start_location', 'raise_context_size', 'add_reciprocal_exit', 'set_map_type', 'set_containment', 'set_floor', 'connect_location']);
+    const fixable = calibration.filter(f => directlyFixableTypes.has(f.type));
+    const directoryHealthHtml = `${renderWorldMigrationSection(world)}<div class="world-health-card">
+        <div class="world-health-score"><strong>${directoryHealth.score}</strong><span>/100</span></div>
+        <div><h3>Directory readiness</h3><p>${directoryHealth.counts.locations} locations · ${directoryHealth.counts.people} people · ${directoryHealth.counts.items} items · ${directoryHealth.counts.groups} groups</p>
+        ${directoryHealth.issues.length ? `<div class="world-health-gaps">${directoryHealth.issues.map(issue => `<span><b>${issue.count}</b> ${escapeHTML(issue.area)} · ${escapeHTML(issue.detail)}</span>`).join('')}</div>` : '<p class="world-health-complete">Every new-format directory field is represented.</p>'}</div>
+    </div>`;
     const calibrationSection = `
         <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                 <div>
                     <h3 style="margin:0;">🎛️ Calibrate World</h3>
-                    <p class="form-hint" style="margin:4px 0 0;">No API call. Repairs the facts the engine needs but a hand-built world usually lacks: a real starting location, a context window big enough for this world's own text, and exits that only exist on one side (rooms you can walk into but never out of). Nothing changes until you apply it.</p>
+                    <p class="form-hint" style="margin:4px 0 0;">No API call. Repairs deterministic engine facts and reports new-directory gaps across locations, people, groups and items. Nothing changes until you apply it.</p>
                 </div>
                 ${fixable.length ? `<button id="calibrate-apply-all-btn" class="btn btn-primary" style="white-space:nowrap;">Apply ${fixable.length} fix${fixable.length === 1 ? '' : 'es'}</button>` : ''}
             </div>
             ${calibration.length ? `
-                <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
+                <details class="world-audit-findings" ${calibration.length <= 8 ? 'open' : ''}>
+                    <summary>Review ${calibration.length} deterministic finding${calibration.length === 1 ? '' : 's'}</summary>
+                <div style="display:flex; flex-direction:column; gap:8px; margin-top:12px; max-height:min(52vh,620px); overflow:auto; padding-right:4px;">
                     ${calibration.map((f, index) => `
                         <div style="background:var(--surface2); padding:10px 12px; border-radius:8px; border-left:4px solid ${sevStyle[f.severity] || 'var(--text-3)'}; font-size:0.82rem; display:flex; gap:10px; align-items:flex-start;">
                             <div style="flex:1;">
                                 <div style="font-weight:bold;">${escapeHTML(f.title)}</div>
                                 <div style="color:var(--text-3); margin-top:2px;">${escapeHTML(f.detail)}</div>
                             </div>
-                            ${(f.type !== 'report_orphan' && f.type !== 'report_duplicate_name')
+                            ${directlyFixableTypes.has(f.type)
                                 ? `<button class="btn btn-ghost calibrate-one-btn" data-index="${index}" style="font-size:0.7rem; padding:4px 8px; white-space:nowrap;">Apply</button>`
                                 : `<span class="mini-tag" style="white-space:nowrap;">needs your call</span>`}
                         </div>`).join('')}
-                </div>`
+                </div></details>`
             : `<div style="margin-top:12px; color:var(--text-3); font-size:0.85rem;">Nothing to repair — this world's structure is already sound.</div>`}
 
             <div style="margin-top:18px; padding-top:14px; border-top:1px dashed var(--border);">
                 ${Object.entries(CALIBRATION_PASSES).map(([key, pass]) => `
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
                         <div>
-                            <strong style="font-size:0.9rem;">✨ ${escapeHTML(pass.label)} pass <span class="mini-tag">1 API call</span></strong>
+                            <strong style="font-size:0.9rem;">✨ ${escapeHTML(pass.label)} pass <span class="mini-tag">batched</span></strong>
                             <p class="form-hint" style="margin:4px 0 0;">${escapeHTML(pass.blurb)} Fills only what this world has not already said, and proposes everything for review first.</p>
                         </div>
                         <button class="btn btn-ghost calibrate-pass-run" data-pass="${escapeHTML(key)}" style="white-space:nowrap;">Run</button>
@@ -27609,12 +29962,22 @@ function renderWorldAudit() {
             </div>
         </div>`;
 
+    const autonomySection = `
+        <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                <div><h3 style="margin:0;">🫀 Autonomy Health</h3>
+                <p class="form-hint" style="margin:4px 0 0;">Fast-forward seven days without changing canon. Checks schedule travel, repetition, identity gaps, event collisions and directory integrity.</p></div>
+                <button id="run-autonomy-health-btn" class="btn btn-ghost" style="white-space:nowrap;">Simulate 7 days</button>
+            </div>
+            <div id="autonomy-health-results"></div>
+        </div>`;
+
     const aiSection = `
         <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
                 <div>
                     <h3 style="margin:0;">🤖 AI Deep Audit</h3>
-                    <p class="form-hint" style="margin:4px 0 0;">One API call. A QA agent reads the whole world for semantic problems the lint can't see: info in the wrong field, lorebook keywords that don't match their text, self-spoiling secrets, contradictions. Each finding comes with an Apply button — nothing changes without your click.</p>
+                    <p class="form-hint" style="margin:4px 0 0;">A QA agent reads the complete world directory for semantic problems the lint can't see: geography, containment, travel, people, starting lives, lore and contradictions. Large worlds are safely audited in indexed batches. Each finding is proposed for review—nothing changes without your click.</p>
                 </div>
                 <button id="run-ai-audit-btn" class="btn btn-primary" style="white-space:nowrap;">✨ Run</button>
             </div>
@@ -27627,14 +29990,18 @@ function renderWorldAudit() {
                 <div style="font-size:3rem; margin-bottom:15px;">✅</div>
                 <h3>Structure is Healthy</h3>
                 <p style="color:var(--text-3);">All references linked, every room reachable, every secret complete.</p>
-            </div>${structuredSection}${calibrationSection}${aiSection}`;
+            </div>${directoryHealthHtml}${structuredSection}${calibrationSection}${autonomySection}${aiSection}`;
         const btn = document.getElementById('run-ai-audit-btn');
         if (btn) btn.onclick = runAIWorldAudit;
+        wireWorldMigrationControls(world);
         wireCalibrationControls(world, calibration, container);
+        document.getElementById('run-autonomy-health-btn')?.addEventListener('click', () =>
+            renderWorldAutonomyHealthResult(world, document.getElementById('autonomy-health-results')));
         return;
     }
 
     container.innerHTML = `
+        ${directoryHealthHtml}
         ${structuredSection}
         ${report.broken.length > 0 ? `
         <div style="margin-bottom:20px;">
@@ -27662,12 +30029,16 @@ function renderWorldAudit() {
         </div>
         ${lintHtml}
         ${calibrationSection}
+        ${autonomySection}
         ${aiSection}
     `;
 
     const aiBtn = document.getElementById('run-ai-audit-btn');
     if (aiBtn) aiBtn.onclick = runAIWorldAudit;
+    wireWorldMigrationControls(world);
     wireCalibrationControls(world, calibration, container);
+    document.getElementById('run-autonomy-health-btn')?.addEventListener('click', () =>
+        renderWorldAutonomyHealthResult(world, document.getElementById('autonomy-health-results')));
 
     container.querySelectorAll('.fix-ref-btn').forEach(btn => {
         btn.onclick = () => {
@@ -27706,35 +30077,83 @@ function renderWorldAudit() {
  * fixes only apply on explicit click, and only to whitelisted fields.
  */
 const AI_AUDIT_FIELD_WHITELIST = {
-    location: ['name', 'description', 'hiddenDescription', 'region'],
-    entity: ['name', 'description', 'persona'],
+    region: ['name', 'description'],
+    location: ['name', 'description', 'hiddenDescription', 'region', 'regionId', 'parentLocationId', 'mapType', 'mapFloor'],
+    entity: ['name', 'description', 'persona', 'homeLocation', 'startLocation', 'goal'],
+    group: ['name', 'description', 'homeLocationId'],
     lore: ['keyword', 'text'],
     world: ['description', 'dmPrompt', 'authorNote', 'intro'],
     secret: ['label', 'hint', 'truth']
 };
 
 function serializeWorldForAudit(world) {
-    const clip = (s, n = 400) => (s || '').slice(0, n);
+    const clip = (s, n = 2400) => (s || '').slice(0, n);
     return JSON.stringify({
         name: world.name,
-        description: clip(world.description),
-        dmPrompt: clip(world.dmPrompt, 600),
-        authorNote: clip(world.authorNote),
-        intro: clip(world.intro),
+        description: clip(world.description, 6000),
+        dmPrompt: clip(world.dmPrompt, 12000),
+        authorNote: clip(world.authorNote, 6000),
+        intro: clip(world.intro, 6000),
         startLocationId: world.startLocationId,
+        regions: (world.regions || []).map(region => ({
+            id: region.id, name: region.name, description: clip(region.description), tags: region.tags || []
+        })),
         locations: (world.locations || []).map(l => ({
-            id: l.id, name: l.name, region: l.region,
+            id: l.id, name: l.name, regionId: l.regionId, region: l.region,
+            mapType: l.mapType, parentLocationId: l.parentLocationId, floor: l.mapFloor, tags: l.tags || [],
             description: clip(l.description), hiddenDescription: clip(l.hiddenDescription),
-            exits: (l.exits || []).map(ex => typeof ex === 'string' ? ex : ex.text),
+            exits: (l.exits || []).map(ex => typeof ex === 'string' ? { text: ex } : ({
+                text: ex.text, targetLocationId: ex.targetLocationId,
+                transport: ex.mode, minutes: ex.travelTime, route: ex.routeName,
+                cost: ex.cost, oneWay: ex.isOneWay === true
+            })),
             secrets: (l.secrets || []).map(s => ({ label: s.label, hint: clip(s.hint, 200), truth: clip(s.truth, 200) }))
         })),
         entities: (world.entities || []).map(e => ({
-            id: e.id, name: e.name, type: e.type, isMajor: e.isMajor,
-            description: clip(e.description), persona: clip(e.persona),
+            id: e.id, name: e.name, type: e.type, simulationDepth: e.simulationDepth,
+            description: clip(e.description), persona: clip(e.persona, 6000), tags: e.tags || [],
             homeLocation: e.homeLocation, startLocation: e.startLocation,
+            groupIds: e.groupIds || [], goal: clip(e.goal), schedule: e.schedule || [],
             secrets: (e.secrets || []).map(s => ({ label: s.label, hint: clip(s.hint, 200), truth: clip(s.truth, 200) }))
         })),
-        lorebook: (world.lorebook || []).map(l => ({ keyword: l.keyword, text: clip(l.text) }))
+        groups: (world.groups || []).map(group => ({
+            id: group.id, name: group.name, type: group.type, homeLocationId: group.homeLocationId,
+            description: clip(group.description), tags: group.tags || []
+        })),
+        factions: world.factions || [],
+        relationships: world.relationships || [],
+        startingLives: world.startingLives || [],
+        lorebook: (world.lorebook || []).map(l => ({ keyword: l.keyword, text: clip(l.text, 6000) })),
+        rules: world.rules || world.gameRules || {},
+        hudConfig: world.hudConfig || {}
+    });
+}
+
+function buildWorldAuditPayloads(world) {
+    const full = serializeWorldForAudit(world);
+    const contextTokens = Math.max(8192, Number(world?.contextSize) || 32768);
+    const safeChars = Math.max(18000, (contextTokens - 6500) * 3);
+    if (full.length <= safeChars) return [full];
+    const index = JSON.stringify({
+        world: world.name,
+        regions: (world.regions || []).map(item => ({ id: item.id, name: item.name })),
+        locations: (world.locations || []).map(item => ({ id: item.id, name: item.name, regionId: item.regionId, parentLocationId: item.parentLocationId, mapType: item.mapType })),
+        entities: (world.entities || []).map(item => ({ id: item.id, name: item.name, type: item.type, homeLocation: item.homeLocation, startLocation: item.startLocation, groupIds: item.groupIds || [] })),
+        groups: (world.groups || []).map(item => ({ id: item.id, name: item.name, homeLocationId: item.homeLocationId }))
+    });
+    const locations = world.locations || [];
+    const entities = world.entities || [];
+    const lorebook = world.lorebook || [];
+    const size = 35;
+    const count = Math.max(Math.ceil(locations.length / size), Math.ceil(entities.length / size), Math.ceil(lorebook.length / size), 1);
+    return Array.from({ length: count }, (_, batch) => {
+        const slice = {
+            ...world,
+            locations: locations.slice(batch * size, (batch + 1) * size),
+            entities: entities.slice(batch * size, (batch + 1) * size),
+            lorebook: lorebook.slice(batch * size, (batch + 1) * size)
+        };
+        return `CANONICAL WHOLE-WORLD INDEX (use this to validate links across batches):\n${index}\n\nDETAILED BATCH ${batch + 1}/${count}:\n${serializeWorldForAudit(slice)}`;
     });
 }
 
@@ -27778,10 +30197,14 @@ async function runAIWorldAudit() {
 
     // Reasoning models (DeepSeek Pro etc.) sometimes burn the budget on hidden
     // thinking or wrap JSON in prose. Attempt, then one strict retry.
-    const callAudit = async (extraNudge) => {
+    const callAudit = async (payload, extraNudge) => {
         const messages = [
-                    { role: 'system', content: `You are a meticulous QA agent for a roleplay world engine. Audit the world data for INTERNAL problems only:
+                    { role: 'system', content: `You are a meticulous whole-world QA agent for a persistent roleplay simulation. Read every supplied directory—not just prose—and audit INTERNAL problems only:
 - Misplaced info: content in the wrong field (exit lists inside descriptions, personality text in physical descriptions, DM-only secrets leaked into player-visible description)
+- Geography and containment: regions must be broad geographic areas; buildings are locations in regions; rooms/floors are child locations whose parentLocationId points to their containing building. Flag buildings incorrectly modeled as regions, orphan rooms, cycles, impossible containment and region/parent disagreements
+- Travel: every route must connect real locations, use a positive plausible duration and preserve its author-defined transport (horse, dragon, train, portal, etc.). Never assume a modern setting
+- People and society: homes, schedules, groups, factions, relationships and starting lives must resolve to canonical IDs and agree with one another
+- Rules and starts: starting lives, starting location, capabilities, HUD/rules and intro must describe compatible initial facts
 - Lorebook: keywords that don't match their entry text; entries contradicting locations/NPCs/other lore
 - Secrets: hints that spoil their own truth; truths contradicting established world facts
 - Contradictions between any two elements (geography, names, timeline, tone vs dmPrompt)
@@ -27789,36 +30212,45 @@ async function runAIWorldAudit() {
 - Leftover placeholder text ("TODO", "xxx", lorem)
 Do NOT invent new content beyond minimal corrections. Do NOT flag stylistic preferences. If the world is clean, return an empty findings array.
 Return ONLY JSON:
-{"findings":[{"severity":"critical|warning|suggestion","issue":"<one sentence>","target_type":"location|entity|lore|world|secret","target_id":"<location/entity id, lore keyword, or owner id for secrets>","secret_label":"<secrets only>","field":"<field to change>","new_value":"<full corrected field text — ONLY when a safe textual fix exists, else omit>","fix_description":"<what the author should do>"}]}` },
-                    { role: 'user', content: `Audit this world:\n\n${serializeWorldForAudit(world)}` }
+{"findings":[{"severity":"critical|warning|suggestion","issue":"<one sentence>","target_type":"region|location|entity|group|lore|world|secret","target_id":"<canonical id, lore keyword, or owner id for secrets>","secret_label":"<secrets only>","field":"<field to change>","new_value":"<full corrected scalar field value — ONLY when a safe fix exists, else omit>","fix_description":"<what the author should do>"}]}` },
+                    { role: 'user', content: `Audit this world:\n\n${payload}` }
         ];
         if (extraNudge) messages.push({ role: 'user', content: extraNudge });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
         const response = await fetch(apiBase() + '/chat/completions', {
             method: 'POST',
+            signal: controller.signal,
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({
                 model: structuredModelFor(world),
                 max_tokens: 4000, // reasoning models eat budget before emitting content
                 messages
             })
-        });
+        }).finally(() => clearTimeout(timeout));
         if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || response.statusText);
         const msg = (await response.json()).choices?.[0]?.message;
         return msg?.content || '';
     };
 
     try {
-        let findings = null;
-        try {
-            findings = parseAuditFindings(await callAudit(null));
-        } catch (firstErr) {
-            // Retry once, strict: no prose, no fences, JSON only
-            console.warn('AI Audit attempt 1 unparseable — retrying strict:', firstErr.message);
-            results.innerHTML = '<div style="text-align:center; padding:16px; color:var(--text-3);">First pass returned no usable JSON — retrying in strict mode...</div>';
-            findings = parseAuditFindings(await callAudit(
-                '[SYSTEM: Your previous reply contained no parseable JSON (it may have been consumed by internal reasoning or wrapped in prose). Respond NOW with ONLY the JSON object — no markdown fences, no commentary, no reasoning. Begin your response with {"findings": ]'
-            ));
+        const payloads = buildWorldAuditPayloads(world);
+        let findings = [];
+        for (let index = 0; index < payloads.length; index += 1) {
+            results.innerHTML = `<div style="text-align:center; padding:16px; color:var(--text-3);">Reading world section ${index + 1} of ${payloads.length}…</div>`;
+            let batchFindings;
+            try {
+                batchFindings = parseAuditFindings(await callAudit(payloads[index], null));
+            } catch (firstErr) {
+                console.warn(`AI Audit section ${index + 1} unparseable — retrying strict:`, firstErr.message);
+                results.innerHTML = `<div style="text-align:center; padding:16px; color:var(--text-3);">Section ${index + 1} returned malformed output — repairing it once…</div>`;
+                batchFindings = parseAuditFindings(await callAudit(payloads[index],
+                    '[SYSTEM: Your previous reply contained no parseable JSON. Respond NOW with ONLY the JSON object — no markdown fences, commentary or reasoning. Begin exactly with {"findings":['));
+            }
+            findings.push(...batchFindings);
         }
+        findings = findings.filter((finding, index, list) => index === list.findIndex(other =>
+            `${other.issue}|${other.target_type}|${other.target_id}|${other.field}` === `${finding.issue}|${finding.target_type}|${finding.target_id}|${finding.field}`));
 
         if (!findings.length) {
             results.innerHTML = '<div style="text-align:center; padding:16px;">✅ <b>The agent found no semantic issues.</b></div>';
@@ -27871,16 +30303,38 @@ function applyAIWorldFix(world, f) {
     const val = String(f.new_value);
 
     if (f.target_type === 'world') { world[f.field] = val; openWorldStudio(); return true; }
+    if (f.target_type === 'region') {
+        const region = (world.regions || []).find(item => item.id === f.target_id);
+        if (!region) return false;
+        region[f.field] = val;
+        if (f.field === 'name') (world.locations || []).forEach(location => {
+            if (location.regionId === region.id) location.region = val;
+        });
+        return true;
+    }
     if (f.target_type === 'location') {
         const loc = world.locations.find(l => l.id === f.target_id) || findFuzzyLocation(f.target_id, world.locations);
         if (!loc) return false;
+        if (f.field === 'regionId' && val && !(world.regions || []).some(region => region.id === val)) return false;
+        if (f.field === 'parentLocationId') {
+            const parent = getLocationRef(world, val);
+            if (val && (!parent || parent.id === loc.id || (parent.regionId && loc.regionId && parent.regionId !== loc.regionId))) return false;
+        }
+        if (f.field === 'mapType' && !['transit', 'route', 'building', 'outdoor', 'room', 'area'].includes(val)) return false;
         loc[f.field] = val; return true;
     }
     if (f.target_type === 'entity') {
         const id = resolveNpcId(world, f.target_id);
         const ent = world.entities.find(e => e.id === (id || f.target_id));
         if (!ent) return false;
+        if (['homeLocation', 'startLocation'].includes(f.field) && val && !getLocationRef(world, val)) return false;
         ent[f.field] = val; return true;
+    }
+    if (f.target_type === 'group') {
+        const group = (world.groups || []).find(item => item.id === f.target_id);
+        if (!group) return false;
+        if (f.field === 'homeLocationId' && val && !getLocationRef(world, val)) return false;
+        group[f.field] = val; return true;
     }
     if (f.target_type === 'lore') {
         const entry = (world.lorebook || []).find(l => (l.keyword || '').toLowerCase() === (f.target_id || '').toLowerCase());
@@ -31909,7 +34363,7 @@ RULES:
 3. ${options.channel === 'call'
         ? 'THIS IS A LIVE VOICE CALL. Output only words this person actually says aloud to the caller. Never narrate actions, write stage directions, use asterisks, invent the caller’s side, or describe the scene. Use natural spoken cadence, interruptions and contractions—not texting abbreviations.'
         : 'THIS IS TEXTING, NOT ROLEPLAY PROSE. Output only words this person actually types into a messaging app. Never use asterisks for actions, stage directions, third-person narration, scene descriptions, dialogue tags, or lines such as "*smiles*", "she sighs", or "I walk over to you." If a physical fact matters, mention it the way someone would in a text ("making coffee rn"), without acting it out.'}
-4. Text like a person: short bursts are fine, imperfect grammar is fine, do not write essays unless the moment calls for it.
+4. Text like a person: short bursts are fine, imperfect grammar is fine, do not write essays unless the moment calls for it. The author's visible-reply ceiling is ${Math.max(128, Number(companion.maxTokens) || 1000)} tokens. That ceiling applies only to the public words you type or say; the private commit_human_turn receipt has a separate engine reserve. Stay well below the ceiling when a brief answer is natural.
 5. MEDIA PERMISSIONS: ${companion.allowPhotos ? `Photos are enabled. If asked for a selfie/photo, decide freely based on your mood, boundaries, relationship, trust, current activity and what was requested. You may comply with send_photo, postpone, negotiate, or refuse; a request never compels you. If you agree, actually call send_photo—never claim an unseen image was sent. Make the capture physically possible: while alone use a front-camera selfie, a nearby mirror, or a timer/propped phone; only say another person took it when that person is actually present. Name that person in photographer when known. Current author capture policy: ${COMPANION_PHOTO_CAPTURE_POLICIES[normalizeCompanionPhotoCapturePolicy(companion.photoCapturePolicy)].label}.` : 'Photos are disabled by the user to avoid image-generation charges. Never call send_photo or claim to have sent an image; naturally say you cannot send one if asked.'}
 ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_note when speaking feels more natural than typing, including during an autonomous check-in.' : 'Voice notes are disabled by the user. Never call send_voice_note or claim to have recorded one.'}
 6. ${companion.webAccess ? 'You may search the live web when current information is genuinely needed, then use share_link for a specific meme, article or video you want this person to see. Never pretend you searched if you did not.' : 'You do not have live web access. Never claim to have searched for or just seen current online content.'}
@@ -32609,6 +35063,100 @@ function extractCompanionEmbeddedToolCalls(rawText) {
 }
 
 /**
+ * Last-resort protocol firewall. A few providers print function calls using
+ * Python/repr syntax instead of native tool_calls or XML. That text is never
+ * safe to render. Remove balanced call expressions and duplicated prompt
+ * timing headers, while preserving ordinary prose before or after them.
+ */
+function quarantineCompanionProtocolText(rawText) {
+    let source = String(rawText || '')
+        .replace(/(?:\[you sent this[^\]]*\]\s*){1,}/gi, '')
+        .replace(/(?:\[player sent this[^\]]*\]\s*){1,}/gi, '');
+    const objectPayload = safeParseJSONRepair(source);
+    if (isPlainObject(objectPayload)
+        && (objectPayload.state || objectPayload.life_state || objectPayload.photo || objectPayload.voice_note
+            || objectPayload.memory_write || objectPayload.relationship_event)) {
+        source = String(objectPayload.visible_reply || objectPayload.reply || objectPayload.message || '');
+    }
+    const marker = /\b(?:commit_?human_?turn|commithumanturn|companion_?state|send_?photo|send_?voice_?note|publish_?social_?post)\s*\(/ig;
+    let match;
+    let guard = 0;
+    while ((match = marker.exec(source)) && guard++ < 12) {
+        let depth = 0;
+        let quote = '';
+        let escaped = false;
+        let end = -1;
+        for (let index = source.indexOf('(', match.index); index < source.length; index += 1) {
+            const char = source[index];
+            if (escaped) { escaped = false; continue; }
+            if (quote && char === '\\') { escaped = true; continue; }
+            if (char === '"' || char === "'") {
+                if (!quote) quote = char;
+                else if (quote === char) quote = '';
+                continue;
+            }
+            if (quote) continue;
+            if (char === '(') depth += 1;
+            if (char === ')' && --depth === 0) { end = index + 1; break; }
+        }
+        // If the model truncated inside the private call, discard from the
+        // marker onward. Otherwise join any genuine visible suffix back on.
+        source = `${source.slice(0, match.index)} ${end < 0 ? '' : source.slice(end)}`;
+        marker.lastIndex = 0;
+    }
+    const dangling = source.search(/\b(?:valence_?change|relationship_?change|memory_?write|life_?state|emotion_?appraisal)\s*=/i);
+    if (dangling >= 0) source = source.slice(0, dangling);
+    return source.replace(/\s{2,}/g, ' ').trim();
+}
+
+function companionVisibleReplyLimit(text, companion) {
+    const budget = Math.max(128, Number(companion?.maxTokens) || 1000);
+    // This is deliberately conservative. It is a display firewall for
+    // providers that ignore max_tokens, not a tokenizer replacement.
+    const maxChars = Math.max(240, Math.floor(budget * 3.2));
+    const source = String(text || '').trim();
+    if (source.length <= maxChars) return source;
+    const clipped = source.slice(0, maxChars);
+    const boundary = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('? '), clipped.lastIndexOf('! '), clipped.lastIndexOf('\n'));
+    return (boundary > maxChars * 0.55 ? clipped.slice(0, boundary + 1) : clipped).trim();
+}
+
+function companionProviderOutputBudget(companion) {
+    const visible = Math.max(128, Number(companion?.maxTokens) || 1000);
+    // The state receipt is private engine output and must not consume the
+    // author's visible reply allowance. Thinking models also need headroom.
+    const reserve = companion?.reasoning ? 3200 : 1800;
+    const effectiveModel = String(companion?.model || state.globalSettings.defaultModel || '').trim();
+    const catalogModel = Array.isArray(companionTextModelCatalog)
+        ? companionTextModelCatalog.find(item => item.id === effectiveModel)
+        : null;
+    const physicalLimit = Math.max(256, Number(catalogModel?.maxOutput) || 32768);
+    return Math.min(physicalLimit, visible + reserve);
+}
+
+function companionRequestTimeoutMs(companion, repair = false) {
+    if (repair) return 180000;
+    return companion?.reasoning ? 10 * 60 * 1000 : 3 * 60 * 1000;
+}
+
+async function fetchCompanionCompletion(url, init, companion, repair = false) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), companionRequestTimeoutMs(companion, repair));
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error(!repair && companion?.reasoning
+                ? 'The thinking model exceeded the 10-minute generation window. Try lower reasoning effort or a faster model.'
+                : 'The model did not respond within 3 minutes. Try again or choose a faster model.');
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+/**
  * Turn a raw tool_calls array into the normalized actions the send loop
  * applies. Pure and separately testable — the actual fetch response shape
  * only needs to be trusted once, here.
@@ -33074,14 +35622,130 @@ function buildCompanionShareData(companion, nowMs = Date.now()) {
     return safeJsonClone(shareable);
 }
 
-function buildCompanionArchivePayload(companion, nowMs = Date.now()) {
+function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Could not encode media.'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+function dataUrlToBlob(source) {
+    const match = String(source || '').match(/^data:([^;,]+);base64,(.+)$/s);
+    if (!match) throw new Error('Archive media is not valid base64 data.');
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type: match[1] });
+}
+
+async function portableMediaSource(source, expectedPrefix, warnings) {
+    const value = String(source || '').trim();
+    if (!value) return '';
+    if (value.startsWith(`data:${expectedPrefix}/`)) return value;
+    try {
+        const response = await fetch(value);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        if (!blob.type.startsWith(`${expectedPrefix}/`)) throw new Error(`received ${blob.type || 'unknown media'}`);
+        return await blobToDataUrl(blob);
+    } catch (error) {
+        warnings.push(`${expectedPrefix} media could not be embedded (${error.message || error})`);
+        return value;
+    }
+}
+
+async function embedCompanionArchiveMedia(companion, timelines) {
+    const warnings = [];
+    const imageCache = new Map();
+    const videoCache = new Map();
+    const videos = [];
+    const embedImageField = async (holder, key) => {
+        if (!holder?.[key]) return;
+        const source = String(holder[key]);
+        if (!imageCache.has(source)) imageCache.set(source, portableMediaSource(source, 'image', warnings));
+        holder[key] = await imageCache.get(source);
+    };
+    const embedPostList = async posts => {
+        for (const post of Array.isArray(posts) ? posts : []) await embedImageField(post, 'photo');
+    };
+    const embedVideoJob = async job => {
+        if (!job) return;
+        await embedImageField(job, 'poster');
+        const key = job.assetId ? `asset:${job.assetId}`
+            : job.bundledSrc ? `bundled:${job.bundledSrc}`
+                : job.outputUrl ? `url:${job.outputUrl}` : '';
+        if (!key) return;
+        if (!videoCache.has(key)) {
+            videoCache.set(key, (async () => {
+                try {
+                    let blob = job.assetId ? await HordeDB.get(`companionVideoAsset:${job.assetId}`) : null;
+                    if (!(blob instanceof Blob)) {
+                        const source = job.bundledSrc || job.outputUrl;
+                        const response = await fetch(source);
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        blob = await response.blob();
+                    }
+                    if (!blob.type.startsWith('video/')) throw new Error(`received ${blob.type || 'unknown media'}`);
+                    const id = `video_${videos.length + 1}`;
+                    videos.push({ id, data: await blobToDataUrl(blob) });
+                    return id;
+                } catch (error) {
+                    warnings.push(`clip could not be embedded (${error.message || error})`);
+                    return '';
+                }
+            })());
+        }
+        const mediaId = await videoCache.get(key);
+        if (!mediaId) return;
+        job.archiveMediaId = mediaId;
+        job.assetId = '';
+        job.outputUrl = '';
+        job.bundledSrc = '';
+    };
+    const embedRuntime = async runtime => {
+        if (!runtime) return;
+        await embedPostList(runtime.socialPosts);
+        for (const job of Array.isArray(runtime.videoJobs) ? runtime.videoJobs : []) await embedVideoJob(job);
+    };
+
+    await embedImageField(companion, 'profilePhoto');
+    await embedImageField(companion, 'basePhoto');
+    await embedPostList(companion.startingSocialPosts);
+    await embedPostList(companion.socialPosts);
+    for (const job of Array.isArray(companion.startingVideoClips) ? companion.startingVideoClips : []) await embedVideoJob(job);
+    for (const job of Array.isArray(companion.videoJobs) ? companion.videoJobs : []) await embedVideoJob(job);
+    for (const timeline of Array.isArray(timelines?.sessions) ? timelines.sessions : []) {
+        await embedRuntime(timeline.runtime);
+        for (const message of Array.isArray(timeline.messages) ? timeline.messages : []) {
+            await embedImageField(message, 'photo');
+            if (message.audio) message.audio = await portableMediaSource(message.audio, 'audio', warnings);
+        }
+    }
+    return { videos, warnings: [...new Set(warnings)] };
+}
+
+async function buildCompanionArchivePayload(companion, kind = 'character-template', nowMs = Date.now()) {
     if (!companion) throw new Error('No Virtual Human selected');
+    const portable = kind === 'portable-human';
+    if (portable) persistCompanionRuntime(companion);
+    const archivedCompanion = portable
+        ? safeJsonClone(normalizeCompanion(companion))
+        : buildCompanionShareData(companion, nowMs);
+    const timelines = portable
+        ? safeJsonClone(ensureCompanionTimelineStore(companion.id))
+        : { activeSessionId: '', sessions: [] };
+    const media = await embedCompanionArchiveMedia(archivedCompanion, timelines);
     return {
         _format: 'horde-studio-virtual-human',
-        _version: 2,
-        _kind: 'character',
+        _version: 3,
+        _kind: portable ? 'portable-human' : 'character-template',
         _exportedAt: new Date().toISOString(),
-        companion: buildCompanionShareData(companion, nowMs)
+        companion: archivedCompanion,
+        ...(portable ? { timelines } : {}),
+        ...(media.videos.length ? { media: { videos: media.videos } } : {}),
+        ...(media.warnings.length ? { _mediaWarnings: media.warnings } : {})
     };
 }
 
@@ -33093,18 +35757,58 @@ function companionArchiveFileName(name) {
     return `${stem}.horde_human`;
 }
 
+let companionExportTargetId = '';
+
+function closeCompanionExportModal() {
+    const overlay = document.getElementById('companion-export-overlay');
+    overlay?.classList.add('hidden');
+    overlay?.setAttribute('aria-hidden', 'true');
+    companionExportTargetId = '';
+}
+
 function exportCompanionArchive(companionId = state.editingCompanionId || state.activeCompanionId) {
     const companion = getCompanion(companionId);
     if (!companion) return showToast('No Virtual Human selected to export.', 'error');
-    const payload = buildCompanionArchivePayload(companion);
+    companionExportTargetId = companion.id;
+    const title = document.getElementById('companion-export-title');
+    const copy = document.getElementById('companion-export-copy');
+    if (title) title.textContent = `Export ${companion.name || 'Virtual Human'}`;
+    if (copy) copy.textContent = 'Choose a clean shareable template or preserve this person exactly as they are now.';
+    const overlay = document.getElementById('companion-export-overlay');
+    overlay?.classList.remove('hidden');
+    overlay?.setAttribute('aria-hidden', 'false');
+}
+
+async function downloadCompanionArchive(kind) {
+    const companion = getCompanion(companionExportTargetId);
+    if (!companion) return showToast('No Virtual Human selected to export.', 'error');
+    const progress = document.getElementById('companion-export-progress');
+    const buttons = [document.getElementById('export-companion-template-btn'), document.getElementById('export-companion-portable-btn')];
+    progress?.classList.remove('hidden');
+    buttons.forEach(button => { if (button) button.disabled = true; });
+    let payload;
+    try {
+        payload = await buildCompanionArchivePayload(companion, kind);
+    } catch (error) {
+        console.error('Virtual Human export failed:', error);
+        showToast(`Virtual Human export failed: ${error.message}`, 'error');
+        return;
+    } finally {
+        progress?.classList.add('hidden');
+        buttons.forEach(button => { if (button) button.disabled = false; });
+    }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = companionArchiveFileName(companion.name);
+    anchor.download = companionArchiveFileName(`${companion.name}${kind === 'portable-human' ? '_portable' : '_template'}`);
     anchor.click();
-    URL.revokeObjectURL(url);
-    showToast(`Exported a clean, shareable copy of ${companion.name || 'this Virtual Human'} — chats and lived history were not included.`, 'success');
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    closeCompanionExportModal();
+    const warningCount = payload._mediaWarnings?.length || 0;
+    showToast(kind === 'portable-human'
+        ? `Exported ${companion.name || 'this Virtual Human'} with timelines, social life and media${warningCount ? ` (${warningCount} external item${warningCount === 1 ? '' : 's'} remained linked)` : ''}.`
+        : `Exported a clean template of ${companion.name || 'this Virtual Human'} with authored starter media.`, warningCount ? 'info' : 'success');
 }
 
 function restoreCompanionArchive(rawArchive, nowMs = Date.now()) {
@@ -33118,7 +35822,7 @@ function restoreCompanionArchive(rawArchive, nowMs = Date.now()) {
         ...archive.companion,
         id: companionId
     });
-    if (archive._version === 2) {
+    if (archive._version === 2 || (archive._version === 3 && archive._kind === 'character-template')) {
         applyCompanionRuntime(companion, freshCompanionRuntime(companion, nowMs));
     }
     const sourceSessions = Array.isArray(archive.timelines.sessions)
@@ -33148,16 +35852,45 @@ function restoreCompanionArchive(rawArchive, nowMs = Date.now()) {
     return companion;
 }
 
+async function hydrateCompanionArchiveMedia(companion, media) {
+    const entries = Array.isArray(media?.videos) ? media.videos : [];
+    if (!entries.length) return;
+    const assetIds = new Map();
+    for (const entry of entries) {
+        const blob = dataUrlToBlob(entry.data);
+        const assetId = livingId('vh_video_asset', `${companion.id}|${entry.id}|${Date.now()}`);
+        await HordeDB.set(`companionVideoAsset:${assetId}`, blob);
+        assetIds.set(entry.id, assetId);
+    }
+    const hydrateJobs = jobs => (Array.isArray(jobs) ? jobs : []).forEach(job => {
+        const assetId = assetIds.get(job.archiveMediaId);
+        if (!assetId) return;
+        job.assetId = assetId;
+        job.archiveMediaId = '';
+        job.outputUrl = '';
+        job.bundledSrc = '';
+    });
+    hydrateJobs(companion.startingVideoClips);
+    hydrateJobs(companion.videoJobs);
+    const store = state.companionTimelines[companion.id];
+    (store?.sessions || []).forEach(timeline => hydrateJobs(timeline.runtime?.videoJobs));
+    const active = getActiveCompanionTimeline(companion.id);
+    if (active) applyCompanionRuntime(companion, active.runtime);
+}
+
 function importCompanionArchiveFile(file) {
     if (!file) return;
-    if (file.size > 100 * 1024 * 1024) {
-        showToast('Import failed: Virtual Human archive is larger than 100 MB.', 'error');
+    if (file.size > 512 * 1024 * 1024) {
+        showToast('Import failed: Virtual Human archive is larger than 512 MB.', 'error');
         return;
     }
     const reader = new FileReader();
     reader.onload = async event => {
         try {
-            const companion = restoreCompanionArchive(JSON.parse(event.target.result));
+            const rawArchive = JSON.parse(event.target.result);
+            const archive = validateCompanionArchiveData(rawArchive);
+            const companion = restoreCompanionArchive(archive);
+            await hydrateCompanionArchiveMedia(companion, archive.media);
             await saveState();
             renderCompanionsGrid();
             openCompanionStudio(companion.id);
@@ -33234,7 +35967,7 @@ function sanitizeCompanionTextReply(text, companionName = '') {
 
 function repairCompanionProtocolLeaks(messages, companionName = '') {
     const source = Array.isArray(messages) ? messages : [];
-    const protocolPattern = /uncensored[_-]?tool[_-]?call|<\/?tool[_-]?call|<\/?arg[_-]?(?:key|value)>/i;
+    const protocolPattern = /uncensored[_-]?tool[_-]?call|<\/?tool[_-]?call|<\/?arg[_-]?(?:key|value)>|\b(?:commit_?human_?turn|commithumanturn|companion_?state)\s*\(|\b(?:valence_?change|relationship_?change|memory_?write|life_?state)\s*=/i;
     const groups = new Map();
     source.forEach((message, index) => {
         if (message?.role !== 'companion' || message.type !== 'text') return;
@@ -33247,7 +35980,7 @@ function repairCompanionProtocolLeaks(messages, companionName = '') {
         const combined = entries.map(entry => String(entry.message.text || '')).join('\n');
         if (!protocolPattern.test(combined)) return;
         const embedded = extractCompanionEmbeddedToolCalls(combined);
-        const cleaned = sanitizeCompanionTextReply(embedded.visibleText, companionName);
+        const cleaned = sanitizeCompanionTextReply(quarantineCompanionProtocolText(embedded.visibleText), companionName);
         const bubbles = splitCompanionReplyIntoBubbles(cleaned);
         const base = entries[0].message;
         replacements.set(entries[0].index, bubbles.map((text, bubbleIndex) => normalizeCompanionMessage({
@@ -33264,7 +35997,7 @@ function repairCompanionProtocolLeaks(messages, companionName = '') {
     return source.flatMap((message, index) => replacements.has(index) ? replacements.get(index) : [message]);
 }
 
-async function repairCompanionTurnCommit(companion, promptMessages, visibleReply) {
+async function repairCompanionTurnCommit(companion, promptMessages, visibleReply, options = {}) {
     try {
         const textProvider = companionTextProviderId(companion);
         const repairMessages = [
@@ -33272,8 +36005,8 @@ async function repairCompanionTurnCommit(companion, promptMessages, visibleReply
             { role: 'assistant', content: visibleReply || '[No visible text; the response may consist only of media.]' },
             {
                 role: 'user',
-                content: `[PRIVATE SIMULATION RECEIPT REPAIR — DO NOT WRITE ANOTHER VISIBLE MESSAGE]
-Call commit_human_turn once for the response immediately above. Preserve what it actually did. Explicitly decide photo, voice_note and video_clip; use video_clip=none unless the player explicitly sent a [CLIP REQUEST id]. Report the emotional state change. Do not invent media that the visible response did not agree to send.`
+                content: `[PRIVATE SIMULATION RECEIPT REPAIR${options.recoverVisible ? ' AND VISIBLE REPLY RECOVERY' : ' — DO NOT WRITE ANOTHER VISIBLE MESSAGE'}]
+${options.recoverVisible ? 'The previous completion contained only malformed private protocol. Write one clean, natural visible reply to the player now, with no JSON, function syntax, timing headers or engine language; then call commit_human_turn natively.' : 'Call commit_human_turn once for the response immediately above. Preserve what it actually did.'} Explicitly decide photo, voice_note and video_clip; use video_clip=none unless the player explicitly sent a [CLIP REQUEST id]. Report the emotional state change. Do not invent media that the visible response did not agree to send.`
                     + ` Choose one conversation_goal. Keep profile claims, direct statements and observed patterns distinct. Add no unsupported relationship jump, secret, boundary event or milestone.`
             }
         ];
@@ -33282,12 +36015,12 @@ Call commit_human_turn once for the response immediately above. Preserve what it
             messages: sanitizeMessagesForProvider(repairMessages, textProvider),
             tools: [COMPANION_TURN_COMMIT_TOOL],
             tool_choice: { type: 'function', function: { name: 'commit_human_turn' } }
-        }, companion, { maxTokens: Math.min(700, companion.maxTokens || 700) });
-        const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
+        }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
+        const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
             body: JSON.stringify(body)
-        });
+        }, companion, true);
         if (!response.ok) return null;
         const message = (await response.json())?.choices?.[0]?.message || {};
         const embedded = extractCompanionEmbeddedToolCalls(message.content);
@@ -33295,11 +36028,13 @@ Call commit_human_turn once for the response immediately above. Preserve what it
             ...(Array.isArray(message.tool_calls) ? message.tool_calls : []),
             ...embedded.toolCalls
         ]);
-        if (repaired.commit) return repaired;
+        const recoveredVisible = companionVisibleReplyLimit(sanitizeCompanionTextReply(
+            quarantineCompanionProtocolText(embedded.visibleText), companion.name), companion);
+        if (repaired.commit) return { ...repaired, visibleReply: recoveredVisible };
         const parsed = safeParseJSONRepair(embedded.visibleText);
-        return isPlainObject(parsed) ? extractCompanionToolCalls([{
+        return isPlainObject(parsed) ? { ...extractCompanionToolCalls([{
             function: { name: 'commit_human_turn', arguments: JSON.stringify(parsed) }
-        }]) : null;
+        }]), visibleReply: recoveredVisible } : null;
     } catch (error) {
         console.warn('Virtual Human receipt repair failed:', error);
         return null;
@@ -33853,20 +36588,21 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         messages: sanitizeMessagesForProvider(promptMessages, textProvider),
         tools,
         tool_choice: 'auto'
-    }, companion);
+    }, companion, { maxTokens: companionProviderOutputBudget(companion) });
     if (companion.webAccess && textProvider === 'openrouter') body.max_tool_calls = 4;
-    const response = await fetch(providerApiBase(textProvider) + '/chat/completions', {
+    const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
         body: JSON.stringify(body)
-    });
+    }, companion);
     if (!response.ok) {
         const errText = await response.text().catch(() => '');
         throw new Error(humanizeApiError(new Error(errText || `Request failed (${response.status})`)));
     }
     const choice = (await response.json())?.choices?.[0] || {};
     const embeddedTools = extractCompanionEmbeddedToolCalls(choice.message?.content);
-    const replyText = sanitizeCompanionTextReply(embeddedTools.visibleText, companion.name);
+    let replyText = companionVisibleReplyLimit(sanitizeCompanionTextReply(
+        quarantineCompanionProtocolText(embeddedTools.visibleText), companion.name), companion);
     let actions = extractCompanionToolCalls([
         ...(Array.isArray(choice.message?.tool_calls) ? choice.message.tool_calls : []),
         ...embeddedTools.toolCalls
@@ -33885,9 +36621,12 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         commitSource = 'legacy_tools';
     }
     if (!actions.commit) {
-        const repaired = await repairCompanionTurnCommit(companion, promptMessages, replyText);
+        const repaired = await repairCompanionTurnCommit(companion, promptMessages, replyText, {
+            recoverVisible: !replyText && !actions.photo && !actions.voice
+        });
         if (repaired?.commit) {
             actions = repaired;
+            if (!replyText && repaired.visibleReply) replyText = repaired.visibleReply;
             commitSource = 'repair';
         }
     }
@@ -34872,7 +37611,9 @@ function normalizeGeneratedImageSource(value, requestedMediaType = 'image/png', 
     }
     // Bundled showcase media is deliberately kept as small project assets
     // instead of duplicating megabytes of base64 in every installed record.
-    if (/^(?:\.\/)?assets\/bundled\/[a-z0-9_./-]+$/i.test(source)) return source;
+    if (/^(?:\.\/)?assets\/bundled\/[a-z0-9_./-]+$/i.test(source)) {
+        return source.replace(/^(?:\.\/)?assets\/bundled\/ashlyn-social\//i, 'assets/bundled/ashlyn-media/');
+    }
     if (/^\/\//.test(source)) return `https:${source}`;
     if (/^http:\/\//i.test(source)) return source.replace(/^http:/i, 'https:');
     if (/^https:\/\//i.test(source)) return source;
@@ -36430,6 +39171,11 @@ function bindCompanionDiscoveryClipViewer(root, items) {
         video.addEventListener('playing', () => card.classList.remove('needs-play', 'is-buffering'));
         video.addEventListener('waiting', () => card.classList.add('is-buffering'));
         video.addEventListener('canplay', () => card.classList.remove('is-buffering'));
+        video.addEventListener('error', () => {
+            card.classList.remove('is-buffering', 'needs-play');
+            card.classList.add('media-unavailable');
+            card.querySelector('.vh-discovery-video-slot')?.insertAdjacentHTML('beforeend', '<div class="companion-media-error"><strong>Clip unavailable</strong><span>This bundled file could not be loaded. Reload after starting Horde Studio locally.</span></div>');
+        }, { once: true });
         video.addEventListener('pause', () => { if (!video.ended) card.classList.add('needs-play'); });
         video.addEventListener('ended', () => { video.currentTime = 0; if (card === activeCard) activate(card); });
         card.querySelector('[data-discovery-play]')?.addEventListener('click', () => {
@@ -36493,6 +39239,7 @@ function renderCompanionDiscoveryClips() {
         const slot = content.querySelectorAll('.vh-discovery-video-slot')[index];
         const src = await companionVideoJobSource(job);
         if (src && slot?.isConnected) slot.innerHTML = `<video playsinline muted preload="auto" src="${escapeHTML(src)}"${job.poster ? ` poster="${escapeHTML(job.poster)}"` : ''}></video>`;
+        else if (slot?.isConnected) slot.innerHTML = '<div class="companion-media-error"><strong>Clip unavailable</strong><span>No playable media source was found.</span></div>';
     })).then(() => { if (content.isConnected) bindCompanionDiscoveryClipViewer(content, items); });
 }
 
@@ -36967,6 +39714,7 @@ function setupCatalogModelSearchFields() {
 function renderCompanionsGrid() {
     const grid = document.getElementById('companions-grid');
     if (!grid) return;
+    renderIncludedHumansCatalog();
     grid.innerHTML = '';
     const query = String(document.getElementById('vh-search')?.value || '').trim().toLowerCase();
     const now = Date.now();
@@ -37027,7 +39775,7 @@ function renderCompanionsGrid() {
             <div class="vh-card-actions">
                 <button class="btn btn-primary" type="button" data-vh-chat>Open chat</button>
                 <button class="btn btn-ghost" type="button" data-vh-edit title="Edit in Virtual Human Studio">Edit</button>
-                <button class="btn btn-ghost" type="button" data-vh-export title="Export a clean character copy without chats or lived history">Share</button>
+                <button class="btn btn-ghost" type="button" data-vh-export title="Export a clean template or complete portable human">Export</button>
             </div>`;
         card.querySelector('[data-vh-chat]').onclick = () => {
             const issues = companionReadinessIssues(companion);
@@ -37051,12 +39799,63 @@ function renderCompanionsGrid() {
     });
 }
 
+function includedHumanCandidates() {
+    return (Array.isArray(globalThis.HORDE_INCLUDED_HUMANS) ? globalThis.HORDE_INCLUDED_HUMANS : [])
+        .filter(candidate => candidate?.bundledId && candidate?.companion?.name);
+}
+
+async function installIncludedHuman(bundleId) {
+    const candidate = includedHumanCandidates().find(item => item.bundledId === bundleId);
+    if (!candidate) return showToast('That built-in human is unavailable in this package.', 'error');
+    try {
+        const companion = restoreCompanionArchive(candidate);
+        companion.bundledId = candidate.bundledId;
+        const receipts = Array.isArray(state.globalSettings.includedHumanReceipts)
+            ? state.globalSettings.includedHumanReceipts : [];
+        state.globalSettings.includedHumanReceipts = [...new Set([...receipts, candidate.bundledId])];
+        await saveState();
+        renderCompanionsGrid();
+        showToast(`${companion.name} was added as a fresh built-in copy.`, 'success');
+    } catch (error) {
+        console.error('Could not restore included Virtual Human:', error);
+        showToast(`Could not add the built-in human: ${error.message}`, 'error');
+    }
+}
+
+function renderIncludedHumansCatalog() {
+    const section = document.getElementById('included-humans-section');
+    const grid = document.getElementById('included-humans-grid');
+    if (!section || !grid) return;
+    const included = includedHumanCandidates();
+    section.classList.toggle('hidden', !included.length);
+    grid.innerHTML = '';
+    included.forEach(candidate => {
+        const authored = normalizeCompanion(candidate.companion);
+        const installed = state.companions.some(companion =>
+            companion?.bundledId === candidate.bundledId
+            || companion?.name === authored.name);
+        const card = document.createElement('article');
+        card.className = 'vh-included-card';
+        card.innerHTML = `
+            <div class="vh-included-avatar" style="${companionAvatarStyle(authored)}"></div>
+            <div class="vh-included-copy">
+                <strong>${escapeHTML(authored.name)}</strong>
+                <span>${escapeHTML(authored.occupation || authored.personality || 'Included Virtual Human')}</span>
+            </div>
+            <button class="btn ${installed ? 'btn-ghost' : 'btn-primary'}" type="button">
+                ${installed ? 'Add fresh copy' : 'Add to library'}
+            </button>`;
+        card.querySelector('button').onclick = () => installIncludedHuman(candidate.bundledId);
+        grid.appendChild(card);
+    });
+}
+
 // --- UI: Virtual Human Studio -------------------------------------------------
 
 function openCompanionStudio(id) {
     state.editingCompanionId = id;
     renderCompanionStudioForm();
-    activateCompanionStudioTab('cs-identity');
+    activateCompanionStudioTab('cs-overview');
 }
 
 function resetNewCompanionStudioState() {
@@ -37095,6 +39894,12 @@ function setupCompanionStudioTabs() {
         tab.onclick = () => {
             commitCompanionStudioForm();
             activateCompanionStudioTab(tab.dataset.tab);
+        };
+    });
+    document.querySelectorAll('[data-companion-studio-target]').forEach(button => {
+        button.onclick = () => {
+            commitCompanionStudioForm();
+            activateCompanionStudioTab(button.dataset.companionStudioTarget);
         };
     });
     const videoToggle = document.getElementById('cs-video-enabled');
@@ -37933,8 +40738,15 @@ function renderCompanionModelConfiguration(companion) {
     const knownParams = Array.isArray(model?.supportedParams) ? model.supportedParams : companion.supportedParams;
     const hasKnownParams = Array.isArray(knownParams) && knownParams.length > 0;
     const supported = new Set(knownParams || []);
-    if (model?.maxOutput && companion.maxTokens > model.maxOutput) {
-        companion.maxTokens = Math.max(128, model.maxOutput);
+    // A native tool receipt still has to fit beside the authored visible
+    // message. Do not let the reply slider consume the model's entire output
+    // window or otherwise-valid turns will be cut off halfway through state.
+    const receiptReserve = companion.reasoning ? 3200 : 1800;
+    const maximumVisible = model?.maxOutput
+        ? Math.max(128, Number(model.maxOutput) - Math.min(receiptReserve, Math.floor(Number(model.maxOutput) * 0.65)))
+        : 32768;
+    if (companion.maxTokens > maximumVisible) {
+        companion.maxTokens = maximumVisible;
     }
     let visibleCount = 0;
     Object.entries(COMPANION_PARAMETER_FIELDS).forEach(([apiName, [inputId, field]]) => {
@@ -37968,7 +40780,10 @@ function renderCompanionModelConfiguration(companion) {
     updateCompanionContextControl(companion);
 
     const maxTokens = document.getElementById('cs-model-max-tokens');
-    if (maxTokens) maxTokens.max = String(model?.maxOutput || 32768);
+    if (maxTokens) {
+        maxTokens.max = String(maximumVisible);
+        maxTokens.value = String(companion.maxTokens);
+    }
     const summary = document.getElementById('cs-param-support-summary');
     if (summary) {
         summary.textContent = companionAllParamsUnlocked
@@ -39104,6 +41919,13 @@ function applyBuiltCompanionLife(companion, built, atMs = Date.now()) {
 }
 
 function setupCompanionsLogic() {
+    const exportOverlay = document.getElementById('companion-export-overlay');
+    document.getElementById('close-companion-export-btn')?.addEventListener('click', closeCompanionExportModal);
+    document.getElementById('export-companion-template-btn')?.addEventListener('click', () => downloadCompanionArchive('character-template'));
+    document.getElementById('export-companion-portable-btn')?.addEventListener('click', () => downloadCompanionArchive('portable-human'));
+    exportOverlay?.addEventListener('click', event => {
+        if (event.target === exportOverlay) closeCompanionExportModal();
+    });
     const clipsBackdrop = document.getElementById('vh-clips-discovery-backdrop');
     document.getElementById('open-vh-clips-btn')?.addEventListener('click', openCompanionDiscoveryClips);
     document.getElementById('close-vh-clips-btn')?.addEventListener('click', closeCompanionDiscoveryClips);
@@ -39112,6 +41934,7 @@ function setupCompanionsLogic() {
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && !clipsBackdrop?.classList.contains('hidden')) closeCompanionDiscoveryClips();
+        if (event.key === 'Escape' && !exportOverlay?.classList.contains('hidden')) closeCompanionExportModal();
     });
     const companionImportButton = document.getElementById('import-companion-btn');
     const companionImportInput = document.getElementById('import-companion-input');
@@ -40448,6 +43271,11 @@ function bindCompanionClipViewer(companion, content, readyJobs) {
         video.addEventListener('playing', () => card.classList.remove('needs-play', 'is-buffering'));
         video.addEventListener('waiting', () => card.classList.add('is-buffering'));
         video.addEventListener('canplay', () => card.classList.remove('is-buffering'));
+        video.addEventListener('error', () => {
+            card.classList.remove('is-buffering', 'needs-play');
+            card.classList.add('media-unavailable');
+            card.querySelector('[data-clip-video-slot]')?.insertAdjacentHTML('beforeend', '<div class="companion-media-error"><strong>Clip unavailable</strong><span>This media file could not be loaded.</span></div>');
+        }, { once: true });
         video.addEventListener('ended', () => {
             video.currentTime = 0;
             if (card === activeCard) setPlaying(card);
@@ -40840,6 +43668,15 @@ function openCompanionSocialImage(companion, post) {
 }
 
 function bindCompanionSocialImageOpeners(companion, root) {
+    root.querySelectorAll('img').forEach(image => {
+        image.addEventListener('error', () => {
+            const host = image.closest('.companion-social-photo-open, .companion-social-gallery > button');
+            if (!host || host.classList.contains('media-unavailable')) return;
+            host.classList.add('media-unavailable');
+            image.hidden = true;
+            host.insertAdjacentHTML('beforeend', '<span class="companion-social-image-error">Photo unavailable</span>');
+        }, { once: true });
+    });
     root.querySelectorAll('[data-open-social-photo]').forEach(button => {
         button.onclick = () => {
             const post = companion.socialPosts.find(item => item.id === button.dataset.openSocialPhoto);
@@ -40924,6 +43761,7 @@ function renderCompanionSocialPanel(companion) {
             if (!slot) return;
             const src = await companionVideoJobSource(job);
             if (src && slot.isConnected) slot.innerHTML = `<video playsinline muted preload="auto" src="${escapeHTML(src)}"${job.poster ? ` poster="${escapeHTML(job.poster)}"` : ''}></video>`;
+            else if (slot.isConnected) slot.innerHTML = '<div class="companion-media-error"><strong>Clip unavailable</strong><span>No playable media source was found.</span></div>';
         })).then(() => { if (content.isConnected) bindCompanionClipViewer(companion, content, readyJobs); });
         return;
     }

@@ -81,6 +81,58 @@ test('World Studio navigation fits laptop heights with a safe short-window fallb
     assert(css.includes('overflow-y: auto'));
 });
 
+test('large worlds use searchable card directories and full-record modals', () => {
+    assert(html.includes('id="world-record-overlay"'));
+    assert(html.includes('data-tab="w-entities">People</button>'));
+    assert(html.includes('data-tab="w-items">Items</button>'));
+    assert(html.includes('id="w-items-list"'));
+    assert(app.includes('function renderWorldLocationDirectory('));
+    assert(app.includes('function renderWorldEntityDirectory('));
+    assert(app.includes("renderWorldEntities('items')"));
+    assert(app.includes("filter(entity => entity?.type === 'item')"));
+    assert(app.includes("groupBy: 'household'"));
+    assert(app.includes('Persona &amp; voice'));
+    assert(app.includes('ent-simulation-depth'));
+    assert(css.includes('.modal.world-record-modal'));
+    assert(css.includes('.world-directory-toolbar'));
+});
+
+test('world inspectors use explicit tab ownership instead of DOM position guesses', () => {
+    assert(app.includes('data-inspector-section="connections"'));
+    assert(app.includes('data-inspector-section="commerce"'));
+    assert(app.includes("['placement', 'Placement']"));
+    assert(!app.includes("sectionText.includes('EXITS')"));
+});
+
+test('world references use stable canonical ids behind editable names', () => {
+    assert(app.includes('function normalizeWorldDirectoryData('));
+    assert(app.includes('record.targetLocationId = target.id'));
+    assert(app.includes('value="${escapeHTML(location.id)}"'));
+    assert(app.includes('function removeWorldLocationRecord('));
+});
+
+test('large worlds expose first-class regions and canonical transit links', () => {
+    assert(app.includes('function renderWorldRegionInspector('));
+    assert(app.includes('function upsertWorldTravelConnection('));
+    assert(app.includes("transit: 'Transit hub'"));
+    assert(app.includes('const WORLD_TRAVEL_MODES'));
+    assert(app.includes('function describeWorldTravelLeg('));
+    assert(app.includes('Narrate the journey or arrival in a way that respects the transport mode'));
+});
+
+test('location authoring presents rooms as a real containment hierarchy', () => {
+    assert(app.includes('function worldLocationLineage('));
+    assert(app.includes('function worldLocationDirectChildren('));
+    assert(app.includes('function renderWorldRegionLocationTreeHTML('));
+    assert(app.includes("['map', 'Rooms & map']"));
+    assert(app.includes('class="world-contained-place-grid"'));
+    assert(app.includes('data-open-child='));
+    assert(app.includes('Do not enable it for every building or room'));
+    assert(app.includes("option value=\"auto\""));
+    assert(css.includes('.world-location-tree-children'));
+    assert(css.includes('.world-contained-place-card'));
+});
+
 test('message composers use one rounded focus treatment instead of nested outlines', () => {
     assert(css.includes('.input-row:focus-within { border-color: var(--red); }'));
     assert(css.includes('.input-row > .msg-input:focus-visible'));

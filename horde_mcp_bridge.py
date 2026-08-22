@@ -110,6 +110,14 @@ STATIC_FILES = {
     "/start-horde-studio.sh": ("start-horde-studio.sh", "application/octet-stream"),
 }
 
+# Portable builds keep authored showcase media outside the single-file app.
+# Serve only these explicit public trees; never expose arbitrary files from the
+# application directory through the localhost bridge.
+STATIC_MEDIA_ROOTS = (
+    ("/assets/bundled/", APP_DIR / "assets" / "bundled"),
+    ("/assets/worlds/", APP_DIR / "assets" / "worlds"),
+)
+
 if os.name == "nt":
     CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Horde Studio"
 elif os.uname().sysname == "Darwin":
@@ -1119,14 +1127,32 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def serve_app_file(self, path: str) -> bool:
         entry = STATIC_FILES.get(path) or STATIC_FILES.get(urllib.parse.quote(urllib.parse.unquote(path), safe="/"))
-        if not entry:
-            return False
-        filename, content_type = entry
-        target = APP_DIR / filename
+        if entry:
+            filename, content_type = entry
+            target = APP_DIR / filename
+        else:
+            decoded = urllib.parse.unquote(path)
+            target = None
+            content_type = "application/octet-stream"
+            for url_prefix, root in STATIC_MEDIA_ROOTS:
+                if not decoded.startswith(url_prefix):
+                    continue
+                relative = decoded[len(url_prefix):].lstrip("/")
+                candidate = (root / relative).resolve()
+                try:
+                    candidate.relative_to(root.resolve())
+                except ValueError:
+                    self.respond(403, {"error": "Static media path is outside the public asset tree."})
+                    return True
+                target = candidate
+                content_type = mimetypes.guess_type(candidate.name)[0] or content_type
+                break
+            if target is None:
+                return False
         try:
             raw = target.read_bytes()
         except OSError:
-            self.respond(500, {"error": f"Missing application file: {filename}"})
+            self.respond(404, {"error": "Application asset not found."})
             return True
         self.respond_bytes(200, raw, content_type)
         return True

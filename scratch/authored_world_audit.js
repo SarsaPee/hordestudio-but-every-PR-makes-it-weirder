@@ -25,7 +25,7 @@ const { app, functionSource, buildContext } = require('./app_source.js');
 const context = { console: { warn() {}, log() {} } };
 buildContext(vm, ['normalizeAuthoredWorld', 'normalizeWorldShops', 'normalizeWorldFactions',
     'normalizeWorldRelationships', 'calibrateStructuralFindings', 'estimateWorldPromptTokens',
-    'relationshipKey', 'livingClamp'], context);
+    'relationshipKey', 'livingClamp', 'removeWorldLocationRecord'], context);
 
 const tests = [];
 function test(name, fn) { tests.push({ name, fn }); }
@@ -112,6 +112,29 @@ test('deleting a place clears the vendor and the claim on it', () => {
     assert.equal(raw.factions[0].territory.length, 0, 'a faction still holds ground that is gone');
 });
 
+test('the directory deletion transaction clears every canonical place link', () => {
+    const raw = world();
+    raw.locations[1].parentLocationId = 'l_inn';
+    raw.locations[1].exits = [{ targetLocationId: 'l_inn', text: 'to The Inn' }];
+    raw.entities[0].startLocation = 'l_inn';
+    raw.entities[0].homeLocation = 'l_inn';
+    raw.entities[0].schedule = [{ day: 'mon', locationId: 'l_inn' }];
+    raw.startLocationId = 'l_inn';
+    raw.startingLives = [{ name: 'Innkeeper', startLocationId: 'l_inn', holdings: ['l_inn'] }];
+    raw.groups = [{ id: 'g', name: 'Inn household', type: 'household', homeLocationId: 'l_inn' }];
+    context.removeWorldLocationRecord(raw, 'l_inn');
+    assert.equal(raw.locations.some(location => location.id === 'l_inn'), false);
+    assert.equal(raw.locations[0].parentLocationId, '');
+    assert.equal(raw.locations[0].exits.length, 0);
+    assert.equal(raw.entities[0].startLocation, '');
+    assert.equal(raw.entities[0].homeLocation, '');
+    assert.equal(raw.entities[0].schedule.length, 0);
+    assert.equal(raw.groups[0].homeLocationId, '');
+    assert.equal(raw.startingLives[0].startLocationId, '');
+    assert.equal(raw.startingLives[0].holdings.length, 0);
+    assert.equal(raw.startLocationId, 'l_road');
+});
+
 test('deleting a faction clears the membership into it', () => {
     const raw = world();
     raw.factions = [];
@@ -175,8 +198,8 @@ test('the repair runs on load, import, save, export and delete', () => {
         'an exported world is never repaired, so damage travels to whoever opens it');
     assert(/entities\.splice\(idx, 1\);[\s\S]{0,200}?normalizeAuthoredWorld/.test(app),
         'deleting a person leaves their standings behind');
-    assert(/locations\.splice\(world\.locations\.indexOf\(loc\), 1\);[\s\S]{0,200}?normalizeAuthoredWorld/.test(app),
-        'deleting a place leaves vendors and territory behind');
+    assert(/removeWorldLocationRecord\(state\.editingWorld, loc\.id\);[\s\S]{0,300}?normalizeAuthoredWorld/.test(app),
+        'deleting a place bypasses the canonical-link cleanup transaction');
 });
 
 // --- what the audit now tells the author -------------------------------------

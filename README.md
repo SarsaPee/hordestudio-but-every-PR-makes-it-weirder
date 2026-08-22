@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# Horde Studio 13
+# Horde Studio 16
 
 ### Build characters. Shape worlds. Simulate lives.
 
@@ -14,7 +14,7 @@ Characters & group rooms · Living sandbox worlds · Autonomous virtual humans �
 
 ## What is Horde Studio?
 
-**Horde Studio 13** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, and virtual-human simulation into one application.
+**Horde Studio 16** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, and virtual-human simulation into one application.
 
 It is designed for stories that need to **remember, react, and evolve**. Build a cast, create a world around them, carry consequences across sessions, or simulate an AI person with routines, relationships, moods, memories, and multiple timelines.
 

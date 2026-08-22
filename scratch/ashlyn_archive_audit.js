@@ -33,7 +33,7 @@ assert.equal(ash.lifeProfile.wildcardDeck.length, 18);
 assert(ash.profilePhoto.startsWith('data:image/jpeg;base64,'));
 assert(ash.basePhoto.startsWith('data:image/jpeg;base64,'));
 assert(ash.basePhoto.length > ash.profilePhoto.length);
-assert.match(ash.relationshipContext, /complete stranger/i);
+assert.match(ash.relationshipContext, /complete stranger|never spoken/i);
 assert.match(ash.intimacyBoundaries, /does not accept coercion/i);
 assert(!JSON.stringify(archive).includes('horde-studio-virtual-human-timelines'));
 
