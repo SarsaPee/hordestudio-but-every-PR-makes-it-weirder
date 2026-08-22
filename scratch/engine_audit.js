@@ -381,13 +381,13 @@ test('world map models hierarchy and simplifies dense connection meshes', () => 
     assert(css.includes('.location-map-metadata'));
 });
 
-test('API keys are not exported or persisted', () => {
+test('API keys are not exported and device persistence remains opt-in', () => {
     const exportStart = app.indexOf('function exportFullBackup');
     const exportEnd = app.indexOf('function importFullBackup', exportStart);
     assert(!/apiKey\s*:\s*state\.apiKey/.test(app.slice(exportStart, exportEnd)));
     assert(/globalSettings:\s*redactGlobalSettingsCredentials\(state\.globalSettings\)/.test(app.slice(exportStart, exportEnd)),
         'nested local and Labs credentials can leak through globalSettings');
-    const saveStart = app.indexOf('async function saveState');
+    const saveStart = app.indexOf('async function persistStateSnapshot');
     const saveEnd = app.indexOf('// Global Error Handler', saveStart);
     assert(/apiKey:\s*state\.globalSettings\.rememberApiKey\s*\?[\s\S]*:\s*''/.test(app.slice(saveStart, saveEnd)));
 });

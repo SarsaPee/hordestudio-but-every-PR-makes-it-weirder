@@ -358,7 +358,7 @@
 
     HordeLabs.registerTask('life_beat', {
         mode: 'humans', minimumTier: 'small', maxInputChars: 6500, maxOutputTokens: 150,
-        background: true,
+        background: true, needleCompatible: false,
         system: `You propose at most three private micro-beats between deterministic life anchors. A beat must be ordinary, plausible, caused by supplied schedule/personality/context, and must not create relationships, purchases, injuries, travel, secrets, promises, messages, or major events. Use supplied place and person IDs only. Return an empty list when no beat adds meaningful continuity.`,
         schema: object({
             beats: { type: 'array', maxItems: 3, items: object({
@@ -383,6 +383,69 @@
             }
             return { ok: true, reason: 'Life beats are anchored and use established people and places.', value: {
                 beats, confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
+            } };
+        }
+    });
+
+    HordeLabs.registerTask('pip_route', {
+        mode: 'universal', minimumTier: 'micro', maxInputChars: 1400, maxOutputTokens: 72,
+        // Pip actions are reversible navigation suggestions, never state
+        // mutation. Semantic validation and exact evidence still apply, so a
+        // lower per-task gate is appropriate while world and Human state tasks
+        // continue to obey the user's stricter global threshold.
+        needleConfidence: 0.2,
+        needleInput: envelope => String(envelope.text || ''),
+        needleTools: [
+            ['answer_help', 'The user asks for an explanation of a Horde Studio feature.'],
+            ['diagnose_labs', 'The user reports a TinyBrain, local cognition or Horde Labs failure.'],
+            ['diagnose_provider', 'The user reports an API, provider, model connection or media generation failure.'],
+            ['open_settings', 'The user explicitly asks to open Horde Studio Settings.'],
+            ['open_labs', 'The user explicitly asks to open Horde Labs or TinyBrain configuration.'],
+            ['navigate', 'The user asks to open a named Horde Studio section.']
+        ].map(([name, description]) => ({
+            name, description,
+            parameters: {
+                type: 'object',
+                properties: {
+                    evidence: { type: 'string', description: 'A short exact phrase copied from the user request.' },
+                    ...(name === 'navigate' ? { destination: { type: 'string', enum: ['chat', 'humans', 'worlds', 'pip', 'personas', 'customize'], description: 'The named section to open.' } } : {})
+                },
+                required: name === 'navigate' ? ['evidence', 'destination'] : ['evidence']
+            }
+        })),
+        system: `Route one Horde Studio help request; do not answer it. Choose answer_help for an explanation, diagnose_labs for a TinyBrain/Labs failure, diagnose_provider for an API/provider failure, open_settings when the user explicitly asks to open settings, open_labs when they explicitly ask to open Labs, or navigate when they ask to open a named section. Copy a short exact phrase from the request as evidence.`,
+        // Destination is intentionally optional. Needle is evidence-grounded and
+        // correctly omits arguments the user did not supply; requiring an empty
+        // placeholder made otherwise valid routes refuse the entire call.
+        schema: {
+            type: 'object',
+            properties: {
+                action: { type: 'string', enum: ['answer_help', 'diagnose_labs', 'diagnose_provider', 'open_settings', 'open_labs', 'navigate'], description: 'The single safest help action supported by the request.' },
+                destination: { type: 'string', enum: ['chat', 'humans', 'worlds', 'pip', 'personas', 'customize', 'settings', 'labs'], description: 'Named Horde Studio section, only for navigate.' },
+                evidence: { type: 'string', description: 'A short exact phrase copied from the user request.' }
+            },
+            required: ['action', 'evidence']
+        },
+        validate(candidate, envelope) {
+            if (!plainObject(candidate)) return { ok: false, reason: 'Missing Pip route.' };
+            const actions = ['answer_help', 'diagnose_labs', 'diagnose_provider', 'open_settings', 'open_labs', 'navigate'];
+            const destinations = ['', 'chat', 'humans', 'worlds', 'pip', 'personas', 'customize', 'settings', 'labs'];
+            const proposedAction = candidate.action || candidate._needleTool;
+            const action = actions.includes(proposedAction) ? proposedAction : 'answer_help';
+            const destination = destinations.includes(candidate.destination) ? candidate.destination : '';
+            const evidence = String(candidate.evidence || '').trim().slice(0, 180);
+            const source = String(envelope.text || '').toLowerCase();
+            const aligned = action === 'answer_help'
+                || (action === 'open_settings' && /\bsettings?\b/.test(source))
+                || (action === 'open_labs' && /\b(?:labs?|tiny\s*brain|local cognition)\b/.test(source))
+                || (action === 'diagnose_labs' && /\b(?:labs?|tiny\s*brain|local cognition)\b/.test(source) && /\b(?:error|fail|broken|not work|invalid|timeout|problem)\b/.test(source))
+                || (action === 'diagnose_provider' && /\b(?:api|provider|model|image|photo|voice|video|tts|openrouter|gptproto|nanogpt|nvidia|bedrock|comfy)\b/.test(source) && /\b(?:error|fail|broken|not work|invalid|timeout|connection|decode|load)\b/.test(source))
+                || (action === 'navigate' && destination && source.includes(destination === 'humans' ? 'human' : destination));
+            if (!aligned) return { ok: false, reason: 'Pip route did not align with the literal request.' };
+            if (action === 'navigate' && !destination) return { ok: false, reason: 'Navigation route needs a known destination.' };
+            return { ok: true, reason: 'Pip request was routed without executing it.', value: {
+                action, destination, evidence: evidenceExists(evidence, envelope) ? evidence : '',
+                confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || 0))
             } };
         }
     });

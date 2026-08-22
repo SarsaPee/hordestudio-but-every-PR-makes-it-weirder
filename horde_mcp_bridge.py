@@ -63,19 +63,34 @@ HOST = os.environ.get("HORDE_SERVER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HORDE_SERVER_PORT", "43127"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
+BRIDGE_BUILD = "20260822-tinybrain2-v7"
+APP_INSTANCE_ID = hashlib.sha256(str(APP_DIR).encode("utf-8")).hexdigest()[:16]
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
 
-ALLOWED_ORIGINS = {
-    "http://localhost:4173", "http://127.0.0.1:4173",
-    "http://localhost:8000", "http://127.0.0.1:8000",
-    f"http://{HOST}:{PORT}",
-}
-for net in ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
-            "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
-            "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-            "192.168."):
-    ALLOWED_ORIGINS.add(f"http://{net}0.1:{PORT}")
-ALLOWED_ORIGINS.add(f"http://10.0.0.1:{PORT}")
+def allowed_origins(port: int) -> set[str]:
+    origins = {
+        "http://localhost:4173", "http://127.0.0.1:4173",
+        "http://localhost:8000", "http://127.0.0.1:8000",
+        f"http://{HOST}:{port}",
+    }
+    for net in ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+                "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
+                "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+                "192.168."):
+        origins.add(f"http://{net}0.1:{port}")
+    origins.add(f"http://10.0.0.1:{port}")
+    return origins
+
+
+ALLOWED_ORIGINS = allowed_origins(PORT)
+
+
+def select_runtime_port(port: int) -> None:
+    """Keep URLs and origin checks aligned when a stale release owns 43127."""
+    global PORT, CALLBACK_URL, ALLOWED_ORIGINS
+    PORT = port
+    CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
+    ALLOWED_ORIGINS = allowed_origins(PORT)
 PROVIDERS = {
     "higgsfield": {
         "label": "Higgsfield",
@@ -96,8 +111,15 @@ STATIC_FILES = {
     "/presets.js": ("presets.js", "text/javascript"),
     "/boot-diagnostics.js": ("boot-diagnostics.js", "text/javascript"),
     "/policy-panic-world.js": ("policy-panic-world.js", "text/javascript"),
+    # Advertised built-in Virtual Humans. Source/development launches load
+    # these as sidecars; portable releases additionally inline them so the
+    # public archive cannot accidentally omit either definition.
+    "/ashlyn-reynolds-human.js": ("ashlyn-reynolds-human.js", "text/javascript"),
+    "/jane-harlow-human.js": ("jane-harlow-human.js", "text/javascript"),
     "/labs-embedded.js": ("labs-embedded.js", "text/javascript"),
     "/labs-embedded-worker.js": ("labs-embedded-worker.js", "text/javascript"),
+    "/labs-needle.js": ("labs-needle.js", "text/javascript"),
+    "/labs-needle-worker.js": ("labs-needle-worker.js", "text/javascript"),
     "/labs-core.js": ("labs-core.js", "text/javascript"),
     "/labs-tasks.js": ("labs-tasks.js", "text/javascript"),
     "/labs-ui.js": ("labs-ui.js", "text/javascript"),
@@ -1188,6 +1210,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/health":
                 return self.respond(200, {"ok": True, "service": "Horde Studio MCP Bridge", "version": 2,
+                                          "build": BRIDGE_BUILD, "appInstance": APP_INSTANCE_ID,
                                           "alwaysOn": always_on_runtime.status()})
             if parsed.path == "/always-on/status":
                 if not self.client_is_loopback():
@@ -1222,6 +1245,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         try:
             parsed_path = urllib.parse.urlparse(self.path).path
+            if parsed_path == "/shutdown":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Server shutdown is loopback-only."})
+                always_on_runtime.stop()
+                self.respond(200, {"ok": True, "stopping": True})
+                # Finish the HTTP response before ending serve_forever so the
+                # browser can show an intentional stopped state, not a network
+                # failure. This does not delete settings, saves or model caches.
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
             if parsed_path.startswith("/always-on/") and not self.client_is_loopback():
                 return self.respond(403, {"error": "Always-on control is loopback-only."})
             if parsed_path == "/always-on/sync":
@@ -1307,28 +1340,39 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    configured_port = PORT
+    server = None
+    for candidate in range(configured_port, configured_port + 20):
+        select_runtime_port(candidate)
+        app_url = f"http://{HOST}:{PORT}/"
+        try:
+            server = ThreadingHTTPServer((LISTEN_HOST, PORT), BridgeHandler)
+            break
+        except OSError as error:
+            if error.errno not in {errno.EADDRINUSE, 48, 98, 10048}:
+                raise
+            try:
+                status, _, raw = http_request(app_url + "health", timeout=3)
+                health = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                health, status = {}, 0
+            same_release = status == 200 \
+                and health.get("service") == "Horde Studio MCP Bridge" \
+                and health.get("appInstance") == APP_INSTANCE_ID \
+                and health.get("build") == BRIDGE_BUILD
+            if same_release:
+                print(f"This Horde Studio release is already running on {app_url}")
+                if "--open" in sys.argv:
+                    import webbrowser
+                    webbrowser.open(app_url)
+                return
+            # An older release, a different extracted copy, or another app owns
+            # this port. Never open it and pretend it is the current build.
+            continue
+    if server is None:
+        raise RuntimeError("Horde Studio could not find a free local port between 43127 and 43146.")
     app_url = f"http://{HOST}:{PORT}/"
     listen_info = f"{LISTEN_HOST}:{PORT}" if LISTEN_HOST != HOST else str(PORT)
-    try:
-        server = ThreadingHTTPServer((LISTEN_HOST, PORT), BridgeHandler)
-    except OSError as error:
-        if error.errno not in {errno.EADDRINUSE, 48, 98, 10048}:
-            raise
-        try:
-            status, _, raw = http_request(app_url + "health", timeout=3)
-            health = json.loads(raw.decode("utf-8")) if raw else {}
-        except Exception:
-            health, status = {}, 0
-        if status != 200 or health.get("service") != "Horde Studio MCP Bridge":
-            raise RuntimeError(
-                f"Port {PORT} is already used by another application. Close it, then start Horde Studio again."
-            ) from error
-        print(f"Horde Studio is already running on {app_url}")
-        print(f"Listen on: {listen_info}")
-        if "--open" in sys.argv:
-            import webbrowser
-            webbrowser.open(app_url)
-        return
     print(f"Horde Studio bridge listening on {listen_info}")
     print(f"Open in browser: {app_url}")
     print(f"OAuth callback: {CALLBACK_URL}")
@@ -1336,7 +1380,13 @@ def main() -> None:
     if "--open" in sys.argv:
         import webbrowser
         threading.Timer(0.45, lambda: webbrowser.open(app_url)).start()
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping Horde Studio…")
+    finally:
+        always_on_runtime.stop()
+        server.server_close()
 
 
 if __name__ == "__main__":

@@ -44,24 +44,24 @@ async function run() {
     assert.ok(Labs.tasks().some(task => task.id === 'memory_relevance'), 'Tiny Brain has an allowlisted memory retrieval task');
     assert.equal(Labs.normalizeConfig({ baseUrl: 'https://evil.example/v1' }).baseUrl, 'http://127.0.0.1:11434/v1', 'remote cognition endpoints are blocked');
 
-    Labs.configure({ enabled: false, model: 'smollm2:360m', policies: { chat: 'assist' } }, { onDiagnostic: row => diagnostics.push(row) });
+    Labs.configure({ enabled: false, runtime: 'connected', model: 'smollm2:360m', policies: { chat: 'assist' } }, { onDiagnostic: row => diagnostics.push(row) });
     let result = await Labs.propose('social_signal', { message: 'missed you', text: 'missed you' }, { mode: 'chat' });
     assert.equal(result.skipped, true, 'off is a no-call fallback');
     assert.equal(fetchCalls.length, 0, 'off performs no fetch');
 
-    Labs.configure({ enabled: true, model: 'smollm2:360m', policies: { chat: 'shadow' } });
+    Labs.configure({ enabled: true, runtime: 'connected', model: 'smollm2:360m', policies: { chat: 'shadow' } });
     result = await Labs.propose('social_signal', { message: 'missed you', text: 'missed you' }, { mode: 'chat' });
     assert.equal(result.ok, true);
     assert.equal(result.accepted, false, 'shadow never affects play');
     assert.equal(result.shadow, true);
 
-    Labs.configure({ enabled: true, model: 'smollm2:360m', policies: { chat: 'assist' } });
+    Labs.configure({ enabled: true, runtime: 'connected', model: 'smollm2:360m', policies: { chat: 'assist' } });
     result = await Labs.propose('social_signal', { message: 'missed you again', text: 'missed you again' }, { mode: 'chat' });
     assert.equal(result.accepted, true, 'assist accepts validator-approved output');
     assert.equal(result.candidate.signals.warmth, 2);
 
     nextContent = JSON.stringify({ memoryIds: ['memory_2'], confidence: .86 });
-    Labs.configure({ enabled: true, model: 'smollm2:360m', policies: { humans: 'assist' } });
+    Labs.configure({ enabled: true, runtime: 'connected', model: 'smollm2:360m', policies: { humans: 'assist' } });
     result = await Labs.propose('memory_relevance', {
         text: 'what was that cafe called?', currentMessage: 'what was that cafe called?',
         allowedMemoryIds: ['memory_1', 'memory_2'],
@@ -103,7 +103,7 @@ async function run() {
         phase: 'completed', outfitOperation: 'none', outfitText: '', durationMinutes: 0,
         evidence: 'I enter the bathroom', confidence: .94
     });
-    Labs.configure({ enabled: true, model: 'smollm2:135m', policies: { worlds: 'assist' } });
+    Labs.configure({ enabled: true, runtime: 'connected', model: 'smollm2:135m', policies: { worlds: 'assist' } });
     result = await Labs.propose('world_micro_frame', {
         text: 'I cross her "wait" I enter the bathroom',
         allowedActorIds: ['player'], allowedTargetIds: ['player'], allowedLocationIds: ['house', 'bathroom']
@@ -134,14 +134,14 @@ async function run() {
         events: [{ actorId: 'npc_unknown', kind: 'move', targetId: '', locationId: 'hall', phase: 'completed', evidence: 'walk out', confidence: .9 }],
         ambiguous: false, confidence: .9
     });
-    Labs.configure({ enabled: true, model: 'qwen3:0.6b', policies: { worlds: 'assist' } });
+    Labs.configure({ enabled: true, runtime: 'connected', model: 'qwen3:0.6b', policies: { worlds: 'assist' } });
     result = await Labs.propose('event_lens', {
         text: 'I walk out', allowedActorIds: ['player'], allowedTargetIds: ['player'], allowedLocationIds: ['room', 'hall']
     }, { mode: 'worlds' });
     assert.equal(result.ok, false, 'unknown actors are rejected');
     assert.match(result.reason, /unknown actor/i);
 
-    Labs.configure({ enabled: true, model: 'mystery-local-model', policies: { worlds: 'assist' } });
+    Labs.configure({ enabled: true, runtime: 'connected', model: 'mystery-local-model', policies: { worlds: 'assist' } });
     result = await Labs.propose('event_lens', {
         text: 'I walk out', allowedActorIds: ['player'], allowedTargetIds: ['player'], allowedLocationIds: ['room', 'hall']
     }, { mode: 'worlds' });
@@ -155,7 +155,7 @@ async function run() {
     assert.equal(diagnostics.length, diagnosticCountAfterFirstTierSkip, 'identical tier mismatch diagnostics are deduplicated');
 
     nextContent = 'not json';
-    Labs.configure({ enabled: true, model: 'smollm2:360m', policies: { chat: 'assist' } });
+    Labs.configure({ enabled: true, runtime: 'connected', model: 'smollm2:360m', policies: { chat: 'assist' } });
     result = await Labs.propose('social_signal', { message: 'different malformed request', text: 'different malformed request' }, { mode: 'chat' });
     assert.equal(result.ok, false, 'malformed local output falls back without throwing');
     assert.ok(diagnostics.length >= 4, 'private diagnostics are recorded');

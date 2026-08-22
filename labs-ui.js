@@ -5,10 +5,13 @@
     let draft = null;
     let models = [];
     let embeddedInstalled = false;
+    let needleInstalled = false;
+    let needleAdapterPromise = null;
     let guideBusy = false;
     let guideEpoch = 0;
     const guideHistory = [];
     const EMBEDDED_MARKER_KEY = 'horde_labs_embedded_model_v1';
+    const NEEDLE_MARKER_KEY = 'horde_labs_needle2_v1';
 
     const FILE_RUNTIME_MESSAGE = 'Embedded Tiny Brain needs Horde Studio’s local app server. Close this file:// tab and run “Start Horde Studio” from the app folder, then install it from the http://127.0.0.1:43127 page that opens.';
 
@@ -28,10 +31,59 @@
         } catch (_) {}
     }
 
+    function needleMarker() {
+        try { return JSON.parse(localStorage.getItem(NEEDLE_MARKER_KEY) || 'null')?.version === '2.0.3'; }
+        catch (_) { return false; }
+    }
+
+    function setNeedleMarker(installed) {
+        try {
+            if (installed) localStorage.setItem(NEEDLE_MARKER_KEY, JSON.stringify({ version: '2.0.3', installedAt: Date.now() }));
+            else localStorage.removeItem(NEEDLE_MARKER_KEY);
+        } catch (_) {}
+    }
+
     const byId = id => document.getElementById(id);
     const escapeHTML = value => String(value ?? '').replace(/[&<>'"]/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
     }[char]));
+
+    function validNeedleAdapter(adapter = window.HordeLabsNeedle) {
+        return !!adapter
+            && typeof adapter.install === 'function'
+            && typeof adapter.status === 'function'
+            && typeof adapter.remove === 'function'
+            && typeof adapter.completeStructured === 'function';
+    }
+
+    function loadNeedleAdapter() {
+        if (validNeedleAdapter()) return Promise.resolve(window.HordeLabsNeedle);
+        if (needleAdapterPromise) return needleAdapterPromise;
+        needleAdapterPromise = new Promise((resolve, reject) => {
+            const finish = () => {
+                if (validNeedleAdapter()) return resolve(window.HordeLabsNeedle);
+                reject(new Error('TinyBrain 2 runtime adapter loaded without its required API. Download a complete current portable release.'));
+            };
+            const existing = document.querySelector('script[data-horde-needle-adapter]');
+            if (existing) {
+                existing.addEventListener('load', finish, { once: true });
+                existing.addEventListener('error', () => reject(new Error('TinyBrain 2 runtime adapter could not be loaded. Download a complete current portable release.')), { once: true });
+                setTimeout(finish, 0);
+                return;
+            }
+            const script = document.createElement('script');
+            script.src = new URL('labs-needle.js?v=20260822-v161', document.baseURI).href;
+            script.async = true;
+            script.dataset.hordeNeedleAdapter = 'true';
+            script.addEventListener('load', finish, { once: true });
+            script.addEventListener('error', () => reject(new Error('TinyBrain 2 runtime adapter is missing. Keep index.html, labs-needle.js, labs-needle-worker.js and the launcher together.')), { once: true });
+            document.head.appendChild(script);
+        }).catch(error => {
+            needleAdapterPromise = null;
+            throw error;
+        });
+        return needleAdapterPromise;
+    }
 
     function configFromForm() {
         return window.HordeLabs.normalizeConfig({
@@ -41,6 +93,7 @@
             apiKey: byId('labs-api-key').value,
             model: byId('labs-model-search').value,
             embeddedDevice: byId('labs-embedded-device').value,
+            needleConfidence: Number(byId('labs-needle-confidence').value) / 100,
             budget: byId('labs-budget').value,
             policies: {
                 chat: byId('labs-policy-chat').value,
@@ -62,6 +115,8 @@
         byId('labs-api-key').value = draft.apiKey;
         byId('labs-model-search').value = draft.model;
         byId('labs-embedded-device').value = draft.embeddedDevice;
+        byId('labs-needle-confidence').value = Math.round(draft.needleConfidence * 100);
+        byId('labs-needle-confidence-value').textContent = `${Math.round(draft.needleConfidence * 100)}%`;
         document.querySelectorAll('input[name="labs-runtime"]').forEach(input => { input.checked = input.value === draft.runtime; });
         byId('labs-budget').value = draft.budget;
         byId('labs-policy-chat').value = draft.policies.chat;
@@ -73,29 +128,35 @@
     }
 
     function renderRuntime() {
-        const embedded = (document.querySelector('input[name="labs-runtime"]:checked')?.value || 'connected') === 'embedded';
-        ['labs-connected-setup', 'labs-connected-actions', 'labs-connected-model'].forEach(id => byId(id).classList.toggle('hidden', embedded));
+        const runtime = document.querySelector('input[name="labs-runtime"]:checked')?.value || 'needle';
+        const embedded = runtime === 'embedded';
+        const needle = runtime === 'needle';
+        ['labs-connected-setup', 'labs-connected-actions', 'labs-connected-model'].forEach(id => byId(id).classList.toggle('hidden', embedded || needle));
         byId('labs-embedded-setup').classList.toggle('hidden', !embedded);
+        byId('labs-needle-setup').classList.toggle('hidden', !needle);
         document.querySelectorAll('.labs-runtime-card').forEach(card => card.classList.toggle('selected', card.querySelector('input')?.checked));
         renderStatus(configFromForm());
         if (embedded) void refreshEmbeddedStatus();
+        if (needle) void refreshNeedleStatus();
     }
 
     function renderStatus(config = configFromForm(), connection) {
         const enabled = config.enabled;
         const embedded = config.runtime === 'embedded';
-        const configured = embedded ? embeddedInstalled : !!config.model;
+        const needle = config.runtime === 'needle';
+        const configured = needle ? needleInstalled : embedded ? embeddedInstalled : !!config.model;
         const dot = byId('labs-status-dot');
         dot.className = `labs-status-dot ${enabled && configured ? 'ready' : enabled ? 'waiting' : ''}`;
         byId('labs-status-label').textContent = !enabled ? 'Local cognition is off'
             : connection?.ok ? `Connected · ${connection.latencyMs} ms`
-            : configured ? (embedded ? 'Embedded Tiny Brain is ready' : 'Ready to use local cognition')
-            : embedded ? 'Install the Embedded Tiny Brain' : 'Choose a local model';
+            : configured ? (needle ? 'TinyBrain 2 is ready' : embedded ? 'Legacy Tiny Brain is ready' : 'Ready to use local cognition')
+            : needle ? 'Install TinyBrain 2' : embedded ? 'Install the legacy Tiny Brain' : 'Choose a local model';
         byId('labs-status-copy').textContent = !enabled
             ? 'Normal Horde Studio behavior is unchanged.'
+            : needle ? 'Needle routes structured events locally. Horde validates every proposal before it can assist.'
             : embedded ? 'Cognition stays on this device. Your main text, image and voice settings are untouched.'
             : 'Only enabled modes may call this local server. Cloud text, image and voice settings are untouched.';
-        const tier = window.HordeLabs.capabilityTier(embedded ? 'smollm2-135m' : config.model);
+        const tier = window.HordeLabs.capabilityTier(needle ? 'needle2' : embedded ? 'smollm2-135m' : config.model);
         byId('labs-tier-badge').textContent = configured ? `${tier === 'unknown' ? 'Unrated' : tier} tier` : 'No model';
         const capabilityBox = byId('labs-capability-summary');
         if (capabilityBox) {
@@ -103,7 +164,7 @@
             const labels = {
                 world_micro_frame: 'World Sensor', social_signal: 'Social cues', status_update: 'Chat meters',
                 memory_gate: 'Memory gate', event_lens: 'Multi-event lens',
-                continuity_sentinel: 'Continuity audit', life_beat: 'Life beats'
+                continuity_sentinel: 'Continuity audit', life_beat: 'Life beats', pip_route: 'Pip routing'
             };
             capabilityBox.innerHTML = configured ? capabilities.map(item =>
                 `<span class="${item.available ? 'available' : 'unavailable'}" title="${item.available ? 'Available' : `Needs ${item.minimumTier} tier`}">${item.available ? '✓' : '—'} ${escapeHTML(labels[item.id] || item.id.replaceAll('_', ' '))}</span>`
@@ -111,6 +172,9 @@
         }
         byId('labs-sidebar-state').textContent = enabled ? (configured ? 'On' : 'Setup') : 'Off';
         byId('labs-sidebar-state').classList.toggle('active', enabled && configured);
+        const pipSummary = byId('pip-labs-summary');
+        if (pipSummary) pipSummary.textContent = !configured ? 'Not configured' : !enabled ? 'Ready · currently off'
+            : needle ? 'TinyBrain 2 · active' : embedded ? 'Legacy brain · active' : 'Connected model · active';
         renderPipRuntime(config, configured);
         renderPolicyHelp();
     }
@@ -119,12 +183,16 @@
         const badge = byId('pip-runtime-state');
         if (!badge) return;
         const embedded = config.runtime === 'embedded';
+        const needle = config.runtime === 'needle';
         badge.textContent = !configured ? 'BUILT-IN ONLY'
+            : needle ? 'TINYBRAIN 2 · READY'
             : embedded ? 'SMOLLM2 · READY'
             : 'LOCAL MODEL · READY';
         badge.classList.toggle('ready', configured);
         badge.title = !configured
             ? 'Pip answers product questions from the verified built-in handbook. Configure a Tiny Brain only for ordinary conversation.'
+            : needle
+                ? 'Pip uses TinyBrain 2 to route help and diagnostic requests. Answers remain grounded in the local handbook.'
             : embedded
                 ? 'Pip uses the embedded SmolLM2 model for casual chat. Horde Studio answers still come directly from the handbook.'
                 : `Pip uses ${config.model || 'the selected local model'} through ${config.baseUrl} for casual chat. Product facts stay handbook-grounded.`;
@@ -150,6 +218,66 @@
             model: 'HuggingFaceTB/SmolLM2-135M-Instruct', dtype: 'q4',
             device: preference === 'auto' ? (navigator.gpu ? 'webgpu' : 'wasm') : preference
         };
+    }
+
+    function showNeedleState(installed, copy) {
+        needleInstalled = installed;
+        byId('labs-needle-state').textContent = installed ? 'Installed' : 'Not installed';
+        byId('labs-needle-install-btn').classList.toggle('hidden', installed);
+        byId('labs-needle-remove-btn').classList.toggle('hidden', !installed);
+        if (copy) byId('labs-needle-status').textContent = copy;
+        renderStatus(configFromForm());
+    }
+
+    async function refreshNeedleStatus() {
+        if (location.protocol === 'file:') return showNeedleState(false, FILE_RUNTIME_MESSAGE);
+        if (needleMarker()) showNeedleState(true, 'Installed. Verifying the three cached runtime assets…');
+        try {
+            const adapter = await loadNeedleAdapter();
+            const result = await adapter.status();
+            setNeedleMarker(result.cached === true);
+            showNeedleState(result.cached === true, result.cached
+                ? 'Ready. Needle runtime, WASM engine and 45M model are present in this browser cache.'
+                : 'Install downloads approximately 14 MB of model weights plus the small WASM runtime.');
+        } catch (error) {
+            showNeedleState(false, `Could not inspect TinyBrain 2: ${error.message}`);
+        }
+    }
+
+    async function installNeedle() {
+        const button = byId('labs-needle-install-btn');
+        if (location.protocol === 'file:') return showNeedleState(false, FILE_RUNTIME_MESSAGE);
+        busy(button, true, 'Installing…');
+        byId('labs-needle-status').textContent = 'Downloading the official Needle runtime and model…';
+        try {
+            const adapter = await loadNeedleAdapter();
+            const result = await adapter.install({}, progress => {
+                const percent = Number(progress.percent) || 0;
+                byId('labs-needle-progress-fill').style.width = `${percent}%`;
+                byId('labs-needle-status').textContent = `${String(progress.stage || 'downloading').replaceAll('_', ' ')}${percent ? ` · ${percent}%` : ''}`;
+            });
+            setNeedleMarker(true);
+            byId('labs-needle-progress-fill').style.width = '100%';
+            showNeedleState(true, `TinyBrain 2 ${result.version || ''} installed and loaded. Keep policies in Shadow while calibrating.`);
+            host.toast?.('TinyBrain 2 installed.', 'success');
+        } catch (error) {
+            setNeedleMarker(false);
+            showNeedleState(false, `Install failed: ${error.message}`);
+            host.toast?.(`TinyBrain 2 install failed: ${error.message}`, 'error');
+        } finally { busy(button, false); }
+    }
+
+    async function removeNeedle() {
+        const button = byId('labs-needle-remove-btn');
+        busy(button, true, 'Removing…');
+        try {
+            const adapter = await loadNeedleAdapter();
+            await adapter.remove();
+            setNeedleMarker(false);
+            byId('labs-needle-progress-fill').style.width = '0%';
+            showNeedleState(false, 'TinyBrain 2 runtime and model removed from this browser.');
+        } catch (error) { host.toast?.(`Could not remove TinyBrain 2: ${error.message}`, 'error'); }
+        finally { busy(button, false); }
     }
 
     function showEmbeddedState(installed, copy) {
@@ -292,6 +420,37 @@
         byId('labs-guide-input')?.focus();
     }
 
+    function renderPipActions(route) {
+        const box = byId('pip-response-actions');
+        if (!box) return;
+        const actions = [];
+        if (route?.action === 'open_labs' || route?.action === 'diagnose_labs') {
+            actions.push(['labs', route.action === 'diagnose_labs' ? 'Open Labs trust dashboard' : 'Configure TinyBrain 2']);
+        }
+        if (route?.action === 'open_settings' || route?.action === 'diagnose_provider') {
+            actions.push(['settings', route.action === 'diagnose_provider' ? 'Open provider diagnostics' : 'Open Settings']);
+        }
+        if (route?.action === 'navigate' && route.destination) actions.push([route.destination, `Open ${route.destination}`]);
+        box.innerHTML = actions.map(([action, label]) => `<button type="button" class="btn btn-ghost btn-small" data-pip-action="${escapeHTML(action)}">${escapeHTML(label)}</button>`).join('');
+        box.classList.toggle('hidden', actions.length === 0);
+        box.querySelectorAll('[data-pip-action]').forEach(button => button.onclick = () => performPipAction(button.dataset.pipAction));
+    }
+
+    function performPipAction(action) {
+        if (action === 'labs') return open();
+        host?.navigate?.(action);
+    }
+
+    async function routePipQuestion(question, config) {
+        if (!config.enabled || config.runtime !== 'needle' || !needleInstalled) return null;
+        try {
+            const result = await window.HordeLabs.propose('pip_route', { text: String(question).slice(0, 1000) }, {
+                mode: 'universal', policy: 'audit', priority: 120
+            });
+            return result?.accepted ? result.candidate : null;
+        } catch (_) { return null; }
+    }
+
     // Emergency core manual: Pip keeps these answers in its own runtime as
     // well as the full versioned handbook. A missing, stale or blocked
     // labs-guide.js must degrade breadth—not erase Pip's product identity.
@@ -422,6 +581,16 @@
         const assistantRecord = { role: 'assistant', text: grounded };
         guideHistory.push(assistantRecord);
         const replyBody = appendGuideMessage('assistant', grounded);
+        renderPipActions(null);
+
+        // Needle never writes Pip's prose. It privately routes the request to
+        // a relevant, user-confirmed UI action while the handbook supplies the
+        // factual answer immediately.
+        if (config.runtime === 'needle') {
+            const route = await routePipQuestion(question, config);
+            renderPipActions(route);
+            if (status && route) status.textContent = `TinyBrain 2 routed this as ${route.action.replaceAll('_', ' ')} · handbook answer remained authoritative.`;
+        }
 
         if (greeting) {
             if (status) status.textContent = 'Pip is here. Replies and help-note retrieval stay on this device.';
@@ -433,6 +602,7 @@
                 : `Verified Horde Studio core answer · ${CORE_GUIDE.length} emergency topics · full handbook unavailable.`;
             return;
         }
+        if (config.runtime === 'needle') return;
         const embeddedReady = embeddedInstalled || embeddedMarker();
         const connectedReady = Boolean(config.model);
         if ((config.runtime === 'embedded' && !embeddedReady) || (config.runtime === 'connected' && !connectedReady)) {
@@ -530,10 +700,12 @@
         if (draft.runtime === 'embedded' && embeddedMarker()) {
             showEmbeddedState(true, 'Installed. Checking the browser model cache…');
         }
+        if (draft.runtime === 'needle' && needleMarker()) showNeedleState(true, 'Installed. Verifying the cached runtime…');
         renderDiagnostics();
         byId('labs-overlay').classList.remove('hidden');
         byId('labs-overlay').setAttribute('aria-hidden', 'false');
         if (draft.runtime === 'embedded') void refreshEmbeddedStatus();
+        if (draft.runtime === 'needle') void refreshNeedleStatus();
     }
 
     function mount(options) {
@@ -551,6 +723,8 @@
         byId('labs-discover-btn').onclick = discover;
         byId('labs-embedded-install-btn').onclick = installEmbedded;
         byId('labs-embedded-remove-btn').onclick = removeEmbedded;
+        byId('labs-needle-install-btn').onclick = installNeedle;
+        byId('labs-needle-remove-btn').onclick = removeNeedle;
         byId('labs-guide-send-btn').onclick = () => askGuide();
         byId('pip-clear-chat-btn').onclick = clearGuideChat;
         byId('labs-guide-input').addEventListener('keydown', event => {
@@ -562,6 +736,13 @@
         document.querySelectorAll('[data-guide-question]').forEach(button => {
             button.onclick = () => void askGuide(button.dataset.guideQuestion || '');
         });
+        document.querySelectorAll('[data-pip-action]').forEach(button => {
+            button.onclick = () => performPipAction(button.dataset.pipAction || '');
+        });
+        byId('labs-needle-confidence').addEventListener('input', event => {
+            byId('labs-needle-confidence-value').textContent = `${event.target.value}%`;
+            renderStatus(configFromForm());
+        });
         document.querySelectorAll('input[name="labs-runtime"]').forEach(input => input.onchange = renderRuntime);
         byId('labs-clear-diagnostics-btn').onclick = async () => {
             await host.clearDiagnostics?.();
@@ -571,6 +752,7 @@
             const next = configFromForm();
             if (next.enabled && next.runtime === 'connected' && !next.model) return host.toast?.('Choose a local cognition model before enabling Labs.', 'error');
             if (next.enabled && next.runtime === 'embedded' && !embeddedInstalled) return host.toast?.('Install the Embedded Tiny Brain before enabling it.', 'error');
+            if (next.enabled && next.runtime === 'needle' && !needleInstalled) return host.toast?.('Install TinyBrain 2 before enabling Labs.', 'error');
             await host.setConfig(next);
             draft = next;
             renderStatus(next);

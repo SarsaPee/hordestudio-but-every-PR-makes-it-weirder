@@ -1,5 +1,8 @@
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const vm = require('node:vm');
 const { buildContext } = require('./app_source.js');
 
@@ -71,13 +74,35 @@ assert(html.indexOf('jane-harlow-human.js') < html.indexOf('app.js?v='));
 
 const source = fs.readFileSync('app.js', 'utf8');
 const portableBuilder = fs.readFileSync('scripts/build-portable.sh', 'utf8');
-assert.match(source, /const HORDE_STUDIO_VERSION = '16\.0\.0'/);
-assert.match(portableBuilder, /VERSION="\$\{1:-16\.0\.0\}"/);
+const localBridge = fs.readFileSync('horde_mcp_bridge.py', 'utf8');
+assert.match(source, /const HORDE_STUDIO_VERSION = '16\.1\.0'/);
+assert.match(portableBuilder, /VERSION="\$\{1:-16\.1\.0\}"/);
 assert.match(portableBuilder, /cp -R "\$ROOT_DIR\/assets\/bundled"/);
+assert.match(portableBuilder, /embed-portable-humans\.py/);
+assert.match(localBridge, /"\/ashlyn-reynolds-human\.js": \("ashlyn-reynolds-human\.js", "text\/javascript"\)/);
+assert.match(localBridge, /"\/jane-harlow-human\.js": \("jane-harlow-human\.js", "text\/javascript"\)/);
 assert.match(source, /includedHumanReceipts/);
+assert.match(source, /const reseedEmptyLibrary = state\.companions\.length === 0/);
 assert.match(source, /companion\.bundledId = bundleId/);
 assert.match(source, /companion\?\.name === candidateName/);
 assert.match(source, /function renderIncludedHumansCatalog\(\)/);
 assert.match(source, /function installIncludedHuman\(bundleId\)/);
+
+// Release integrity must be tested against the packaged HTML, not merely
+// against optional source sidecars that may never reach a user's machine.
+const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'horde-human-package-'));
+const packagedIndex = path.join(tempDirectory, 'index.html');
+fs.copyFileSync('index.html', packagedIndex);
+childProcess.execFileSync('python3', [
+    'scripts/embed-portable-humans.py', process.cwd(), packagedIndex
+]);
+const packagedHtml = fs.readFileSync(packagedIndex, 'utf8');
+assert.match(packagedHtml, /data-horde-bundled-human="ashlyn-reynolds-v1"/);
+assert.match(packagedHtml, /data-horde-bundled-human="jane-harlow-v1"/);
+assert.doesNotMatch(packagedHtml, /src="ashlyn-reynolds-human\.js/);
+assert.doesNotMatch(packagedHtml, /src="jane-harlow-human\.js/);
+assert.match(packagedHtml, /Ashlyn [“\"]Ash[”\"] Reynolds/);
+assert.match(packagedHtml, /Jane Harlow/);
+fs.rmSync(tempDirectory, { recursive: true, force: true });
 
 console.log('PASS included Virtual Human audit');

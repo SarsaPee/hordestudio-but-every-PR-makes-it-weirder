@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${1:-16.0.0}"
+VERSION="${1:-16.1.0}"
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 APP_DIR="$BUILD_DIR/Horde Studio"
@@ -23,17 +23,18 @@ for file in \
   boot-diagnostics.js \
   labs-embedded.js \
   labs-embedded-worker.js \
+  labs-needle.js \
+  labs-needle-worker.js \
   labs-core.js \
   labs-tasks.js \
   labs-guide.js \
   labs-ui.js \
   help-system.js \
   policy-panic-world.js \
-  ashlyn-reynolds-human.js \
-  jane-harlow-human.js \
   favicon.svg \
   horde_mcp_bridge.py \
   README.md \
+  THIRD_PARTY_NOTICES.md \
   MCP_SETUP.md \
   "Start Horde Studio.command" \
   "Start Horde Studio.bat" \
@@ -41,6 +42,12 @@ for file in \
 do
   cp "$ROOT_DIR/$file" "$APP_DIR/"
 done
+
+# These two authored humans are advertised as built-ins, so do not leave them
+# as optional sidecar scripts that an incomplete copy, stale cache or failed
+# upload can omit. The release artifact carries their definitions directly in
+# index.html and therefore starts with both people from a single core file.
+python3 "$ROOT_DIR/scripts/embed-portable-humans.py" "$ROOT_DIR" "$APP_DIR/index.html"
 
 # Bundled Virtual Humans and Worlds can reference normalized media by relative
 # path. Keep those runtime assets portable without shipping heavy marketing or

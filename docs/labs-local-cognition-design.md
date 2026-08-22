@@ -1,6 +1,6 @@
 # Horde Labs: Local Cognition Fabric
 
-Status: design specification
+Status: implemented foundation with ongoing task calibration
 Scope: Chat Library, Worlds, and Virtual Humans
 Principle: existing play remains the default; local cognition is optional, private, bounded, and reversible.
 
@@ -8,7 +8,7 @@ Principle: existing play remains the default; local cognition is optional, priva
 
 Horde Labs should not be a fourth game mode or another model dropdown. It should be an optional cognitive fabric underneath all three existing experiences.
 
-A 270M–700M model is not a credible replacement for the main narrator, world DM, or Virtual Human conversation model. It can, however, perform small repeated cognition jobs surprisingly well when Horde Studio supplies:
+A tiny model is not a credible replacement for the main narrator, world DM, or Virtual Human conversation model. It can, however, perform small repeated cognition jobs surprisingly well when Horde Studio supplies:
 
 - a tiny bounded input;
 - a narrow vocabulary of canonical IDs;
@@ -60,10 +60,11 @@ always available     tiny task + strict schema
 
 #### A. Cognition Runtime Adapter
 
-One interface supports two execution families:
+One interface supports three execution families:
 
 - **Connected runtime:** Ollama, LM Studio, llama.cpp, KoboldCpp, or another loopback OpenAI-compatible server.
-- **Embedded Tiny Brain:** WebGPU/WASM worker with a model downloaded once and cached in browser storage.
+- **TinyBrain 2 (recommended):** Cactus Needle 2, a roughly 14 MB WASM structured tool router downloaded once and cached in browser storage. It selects tools and extracts arguments; it does not write prose.
+- **TinyBrain 1 (legacy):** the older SmolLM2 WebGPU/WASM compatibility runtime for free-form local generation.
 
 The adapter exposes `health`, `models`, `capabilities`, `warm`, `completeStructured`, `cancel`, and `unload`. Horde Studio detects schema support but always validates the returned object itself.
 

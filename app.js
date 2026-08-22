@@ -7,7 +7,7 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '16.0.0';
+const HORDE_STUDIO_VERSION = '16.1.0';
 const HORDE_STUDIO_RELEASED_AT = '2026-08-22T19:15:00+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
@@ -473,7 +473,16 @@ function setupComfyWorkflowProfileControls() {
 }
 
 function mcpBridgeBase() {
-    return normalizeMcpBridgeUrl(state.globalSettings?.mcpBridgeUrl);
+    const configured = normalizeMcpBridgeUrl(state.globalSettings?.mcpBridgeUrl);
+    // The launcher may choose the next free loopback port when an older Horde
+    // Studio release is still running. In that case this page's own origin is
+    // the authoritative bridge unless the user explicitly configured another
+    // local endpoint.
+    if (configured === HORDE_MCP_BRIDGE_DEFAULT && /^https?:$/.test(location.protocol)
+        && /^(?:localhost|127\.0\.0\.1|\[?::1\]?)$/i.test(location.hostname)) {
+        return location.origin;
+    }
+    return configured;
 }
 
 async function mcpBridgeRequest(path, options = {}) {
@@ -1064,6 +1073,11 @@ let state = {
     systemPresets: [], // User-imported presets
     regexScripts: [], // User regex find/replace rules
     worlds: [],
+    // Last-known manifests retained when a world disappears from the next
+    // save. This is deliberately separate from the visible library so a bad
+    // migration/validator cannot silently turn a recoverable world into data
+    // loss.
+    worldRecoverySnapshots: {},
     activeWorldId: null,
     worldInstances: {}, // worldId -> current state
     editingWorld: null,
@@ -1074,6 +1088,9 @@ let state = {
     editingCompanionId: null,
     labsDiagnostics: []
 };
+
+let lastPersistedWorldManifests = [];
+const worldLoadWarnings = new Map();
 
 function getAllPresets() {
     return [...DEFAULT_SYSTEM_PRESETS, ...(state.systemPresets || [])];
@@ -1697,12 +1714,26 @@ function repairLoadedState() {
         room.characterIds = room.characterIds || [];
         room.lorebook = room.lorebook || [];
     });
-    state.worlds = Array.isArray(state.worlds) ? state.worlds.filter(w => {
-        try { validateWorldData(w); return true; } catch (err) { console.warn('Dropped invalid stored world:', err.message); return false; }
-    }) : [];
+    // Never silently discard authored worlds. Older releases filtered any
+    // world that failed a newly tightened validator, then a later unrelated
+    // save persisted the shortened array. Preserve the record, repair only the
+    // minimum container shape required by the library/Studio, and surface a
+    // warning instead. Import/export validation remains strict.
+    worldLoadWarnings.clear();
+    state.worlds = Array.isArray(state.worlds) ? state.worlds.filter(isPlainObject) : [];
+    state.worlds.forEach((world, index) => {
+        if (typeof world.id !== 'string' || !world.id.trim()) world.id = `world_recovered_${Date.now()}_${index}`;
+        if (typeof world.name !== 'string' || !world.name.trim()) world.name = `Recovered World ${index + 1}`;
+        world.locations = Array.isArray(world.locations) ? world.locations.filter(isPlainObject) : [];
+        world.entities = Array.isArray(world.entities) ? world.entities.filter(isPlainObject) : [];
+        world.lorebook = Array.isArray(world.lorebook) ? world.lorebook.filter(isPlainObject) : [];
+        try { validateWorldData(world); }
+        catch (err) {
+            worldLoadWarnings.set(world.id, err.message || 'This world needs repair.');
+            console.warn(`Preserved stored world "${world.name}" despite validation warning:`, err.message);
+        }
+    });
     state.worlds.forEach(world => {
-        world.entities = world.entities || [];
-        world.lorebook = world.lorebook || [];
         world.hudConfig = {
             showClock: true,
             showQuests: true,
@@ -1868,6 +1899,9 @@ async function loadState() {
         state.systemPresets = await HordeDB.get('systemPresets') || [];
         state.regexScripts = await HordeDB.get('regexScripts') || [];
         state.worlds = await HordeDB.get('worlds') || [];
+        lastPersistedWorldManifests = safeJsonClone(state.worlds);
+        state.worldRecoverySnapshots = await HordeDB.get('worldRecoverySnapshots') || {};
+        if (!isPlainObject(state.worldRecoverySnapshots)) state.worldRecoverySnapshots = {};
         const storedWorldMedia = await HordeDB.get('worldMediaAssets') || {};
         state.worlds.forEach(world => {
             const separateAssets = Array.isArray(storedWorldMedia[world.id]) ? storedWorldMedia[world.id] : null;
@@ -2049,10 +2083,18 @@ async function loadState() {
         const offered = Array.isArray(state.globalSettings.includedHumanReceipts)
             ? state.globalSettings.includedHumanReceipts
             : [];
+        // A completely empty human library is never a meaningful deletion
+        // receipt. Older builds could persist the receipts while failing to
+        // persist the restored companions (or a user could reset only the
+        // companion store), leaving an advertised fresh install with nobody
+        // in it. On an empty library, reinstall every available built-in.
+        // Once the user has any humans, receipts continue to respect an
+        // intentional deletion and the catalog still offers manual restore.
+        const reseedEmptyLibrary = state.companions.length === 0;
         let changed = !Array.isArray(state.globalSettings.includedHumanReceipts);
         for (const candidate of included) {
             const bundleId = String(candidate?.bundledId || '').trim().slice(0, 100);
-            if (!bundleId || offered.includes(bundleId)) continue;
+            if (!bundleId || (offered.includes(bundleId) && !reseedEmptyLibrary)) continue;
             try {
                 const candidateName = String(candidate?.companion?.name || '').trim();
                 const alreadyInstalled = state.companions.some(companion =>
@@ -2062,7 +2104,7 @@ async function loadState() {
                     const companion = restoreCompanionArchive(candidate);
                     companion.bundledId = bundleId;
                 }
-                offered.push(bundleId);
+                if (!offered.includes(bundleId)) offered.push(bundleId);
                 changed = true;
             } catch (error) {
                 console.error(`Could not install included Virtual Human ${bundleId}:`, error);
@@ -2337,6 +2379,22 @@ async function persistStateSnapshot() {
             ...world,
             mediaAssets: []
         }));
+        const visibleWorldIds = new Set(storedWorlds.map(world => world.id));
+        const recovery = isPlainObject(state.worldRecoverySnapshots)
+            ? state.worldRecoverySnapshots : {};
+        lastPersistedWorldManifests.forEach(previous => {
+            if (!isPlainObject(previous) || !previous.id || visibleWorldIds.has(previous.id)) return;
+            recovery[previous.id] = {
+                capturedAt: new Date().toISOString(),
+                reason: 'World was absent from a later save',
+                world: safeJsonClone(previous)
+            };
+        });
+        state.worldRecoverySnapshots = Object.fromEntries(
+            Object.entries(recovery)
+                .sort((a, b) => String(b[1]?.capturedAt || '').localeCompare(String(a[1]?.capturedAt || '')))
+                .slice(0, 30)
+        );
         const records = {
             // Credentials are tab-session only unless the user opts in to
             // "Remember key on this device". Persisting '' erases stored copies.
@@ -2360,6 +2418,7 @@ async function persistStateSnapshot() {
             systemPresets: state.systemPresets,
             regexScripts: state.regexScripts,
             worlds: storedWorlds,
+            worldRecoverySnapshots: state.worldRecoverySnapshots,
             worldInstances: state.worldInstances,
             activeWorldId: state.activeWorldId,
             companions: state.companions,
@@ -2379,6 +2438,7 @@ async function persistStateSnapshot() {
             worldMediaDirty = false;
         }
         await HordeDB.setMultiple(records);
+        lastPersistedWorldManifests = safeJsonClone(storedWorlds);
         writeGlobalSettingsMirror(records.globalSettings);
     } catch (err) {
         if (savingWorldMedia) worldMediaDirty = true;
@@ -4441,7 +4501,21 @@ function setupHordeLabs() {
                 ? 'Horde Labs saved. Start in Shadow to calibrate your local model.'
                 : 'Horde Labs is off. Normal engine behavior is unchanged.', 'success');
         },
-        toast: showToast
+        toast: showToast,
+        navigate: destination => {
+            if (destination === 'labs') return window.HordeLabsUI?.open?.();
+            const modalButtons = {
+                personas: 'personas-modal-btn',
+                customize: 'customize-modal-btn',
+                settings: 'global-settings-btn'
+            };
+            if (modalButtons[destination]) {
+                document.getElementById(modalButtons[destination])?.click();
+                return;
+            }
+            const view = { chat: 'library', humans: 'companions', worlds: 'worlds', pip: 'pip' }[destination];
+            if (view) switchView(view);
+        }
     });
     document.getElementById('labs-modal-btn').onclick = () => window.HordeLabsUI.open();
     document.getElementById('pip-configure-btn').onclick = () => window.HordeLabsUI.open();
@@ -9742,6 +9816,30 @@ function setupGlobalSettings() {
     document.getElementById('global-settings-btn').onclick = showGlobalSettings;
     document.getElementById('close-modal-btn').onclick = hideGlobalSettings;
     setupSettingsNavigation();
+    document.getElementById('stop-horde-server-btn').onclick = () => {
+        showConfirmModal(
+            'Stop Horde Studio server?',
+            'This stops the local server, bridge integrations and Always-on Virtual Humans. Your current browser tab may remain visible, but its local services will be offline. Saves, settings and downloaded model cache are not deleted. Run the launcher again whenever you want to restart it.',
+            async () => {
+                const button = document.getElementById('stop-horde-server-btn');
+                const status = document.getElementById('stop-horde-server-status');
+                button.disabled = true;
+                button.textContent = 'Stopping…';
+                try {
+                    await mcpBridgeRequest('/shutdown', { method: 'POST', body: {}, timeoutMs: 5000 });
+                    status.textContent = 'Server stopped. Run the Horde Studio launcher to start it again.';
+                    showToast('Horde Studio server stopped. Your data is safe.', 'success');
+                } catch (error) {
+                    button.disabled = false;
+                    button.textContent = 'Stop Horde Studio server';
+                    status.textContent = `Could not stop this server: ${error.message}`;
+                    showToast(status.textContent, 'error');
+                }
+            },
+            'Stop server',
+            'Keep running'
+        );
+    };
     document.getElementById('save-global-settings').onclick = async () => {
         state.apiKey = document.getElementById('global-api-key').value.trim();
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
@@ -11438,8 +11536,11 @@ function setupWorldStudioLogic() {
     };
     document.getElementById('add-location-btn')?.addEventListener('click', () => addWorldLocation('top'));
     document.getElementById('add-location-btn-bottom')?.addEventListener('click', () => addWorldLocation('bottom'));
-    document.getElementById('add-entity-btn').onclick = addWorldEntity;
-    document.getElementById('add-entity-btn-bottom').onclick = addWorldEntity;
+    // Do not assign addWorldEntity directly as an event handler. Browsers pass
+    // the click event as the first argument, which used to become `entity.type`
+    // and produced records that were neither people nor items.
+    document.getElementById('add-entity-btn').onclick = () => addWorldEntity('npc');
+    document.getElementById('add-entity-btn-bottom').onclick = () => addWorldEntity('npc');
     document.getElementById('add-item-btn').onclick = addWorldItem;
     document.getElementById('add-item-btn-bottom').onclick = addWorldItem;
     document.getElementById('add-faction-btn').onclick = () => addWorldFaction('top');
@@ -11680,8 +11781,18 @@ function setupWorldImport() {
 
                     const world = validateWorldData(rawWorld);
 
-                    // Assign new ID to prevent collision
-                    world.id = 'world_' + Date.now();
+                    // A portable export can also repair an orphaned library
+                    // entry. If sessions still exist for its original ID and
+                    // no visible world owns that ID, keep it so timelines,
+                    // state and media reconnect. Ordinary imports still get a
+                    // fresh ID to avoid collisions.
+                    const originalId = world.id;
+                    const hasVisibleCollision = state.worlds.some(item => item.id === originalId);
+                    const hasOrphanedRuntime = !!(originalId && (state.worldInstances?.[originalId]
+                        || state.activeWorldId === originalId
+                        || state.worldRecoverySnapshots?.[originalId]));
+                    world.id = hasOrphanedRuntime && !hasVisibleCollision
+                        ? originalId : 'world_' + Date.now();
                     world.locations.forEach((location, index) => {
                         if (!location.id) location.id = `loc_${Date.now()}_${index}`;
                         location.exits = Array.isArray(location.exits) ? location.exits : [];
@@ -11699,10 +11810,12 @@ function setupWorldImport() {
                     normalizeAuthoredWorld(world);
                     const importedMedia = worldMediaSummary(world);
                     state.worlds.push(world);
+                    if (state.worldRecoverySnapshots?.[world.id]) delete state.worldRecoverySnapshots[world.id];
                     worldMediaDirty = true;
                     await saveState();
                     renderWorlds();
-                    showToast(`Imported "${world.name}" with ${importedMedia.count} media asset${importedMedia.count === 1 ? '' : 's'}.`, 'success');
+                    const recovered = world.id === originalId && hasOrphanedRuntime;
+                    showToast(`${recovered ? 'Recovered' : 'Imported'} "${world.name}"${recovered ? ' and reconnected its existing sessions' : ''} with ${importedMedia.count} media asset${importedMedia.count === 1 ? '' : 's'}.`, 'success');
                 } catch (err) {
                     showToast('Failed to import world: ' + err.message, 'error');
                 }
@@ -13104,6 +13217,10 @@ function normalizeWorldDirectoryData(world) {
         }));
     const groupIds = new Set(world.groups.map(group => group.id));
     (world.entities || []).forEach(entity => {
+        // Repair malformed legacy records, including the v16 New Person click
+        // regression where a PointerEvent was serialized into `type`.
+        const authoredType = typeof entity.type === 'string' ? entity.type.trim().toLowerCase() : '';
+        entity.type = ['item', 'object', 'prop'].includes(authoredType) ? 'item' : 'npc';
         entity.persona = String(entity.persona || '').slice(0, 6000);
         const inferredDepth = entity.isMajor ? 'core'
             : (entity.persona || entity.goal || (entity.schedule || []).length ? 'recurring' : 'background');
@@ -14339,10 +14456,13 @@ function renderWorldLocations() {
 }
 
 function addWorldEntity(type = 'npc') {
+    // Only the two canonical authored entity types are valid. This also makes
+    // the function safe if it is ever called by an event listener directly.
+    const entityType = type === 'item' ? 'item' : 'npc';
     const ent = {
         id: 'ent_' + Date.now(),
         name: '',
-        type,
+        type: entityType,
         isMajor: false,
         simulationDepth: 'recurring',
         description: '',
@@ -14355,7 +14475,7 @@ function addWorldEntity(type = 'npc') {
         schedule: []
     };
     state.editingWorld.entities.push(ent);
-    const directory = type === 'item' ? 'items' : 'people';
+    const directory = entityType === 'item' ? 'items' : 'people';
     worldStudioListState[directory].query = '';
     worldStudioListState[directory].page = 0;
     openWorldRecordInspector('entity', ent.id, 'overview', directory);
@@ -16654,7 +16774,7 @@ function renderWorlds() {
     grid.innerHTML = '';
     
     const searchVal = document.getElementById('world-search')?.value.toLowerCase() || '';
-    let list = state.worlds.filter(w => w.name.toLowerCase().includes(searchVal));
+    let list = state.worlds.filter(w => String(w.name || '').toLowerCase().includes(searchVal));
     const visibleCount = document.getElementById('world-visible-count');
     const totalCount = document.getElementById('world-total-count');
     if (visibleCount) visibleCount.textContent = list.length;
@@ -16668,6 +16788,7 @@ function renderWorlds() {
             <div class="char-card-banner" style="height: 100px; ${bannerStyle}"></div>
             <div class="char-card-body">
                 <div class="char-card-name">${escapeHTML(world.name)}</div>
+                ${worldLoadWarnings.has(world.id) ? `<div class="world-library-warning">Needs repair · ${escapeHTML(worldLoadWarnings.get(world.id))}</div>` : ''}
                 <div class="char-card-desc">${escapeHTML(world.description || 'No description')}</div>
                 <div style="display:flex; gap:8px; margin-top:12px;">
                     <button class="btn btn-ghost btn-full enter-world-btn">Enter World →</button>
@@ -16686,8 +16807,40 @@ function renderWorlds() {
         grid.appendChild(card);
     });
 
-    if (list.length === 0) {
-        grid.innerHTML = '<div class="empty-state"><h3>No Worlds Found</h3><p>Click "+ Create New World" to begin your masterpiece</p></div>';
+    const recoverable = Object.values(state.worldRecoverySnapshots || {})
+        .filter(snapshot => isPlainObject(snapshot?.world)
+            && !state.worlds.some(world => world.id === snapshot.world.id)
+            && String(snapshot.world.name || '').toLowerCase().includes(searchVal));
+    recoverable.forEach(snapshot => {
+        const world = snapshot.world;
+        const card = document.createElement('div');
+        card.className = 'char-card world-recovery-card';
+        card.innerHTML = `<div class="char-card-banner world-recovery-banner">↶</div>
+            <div class="char-card-body">
+                <div class="char-card-name">${escapeHTML(world.name || 'Recovered World')}</div>
+                <div class="char-card-desc">Safety copy from ${escapeHTML(snapshot.capturedAt ? new Date(snapshot.capturedAt).toLocaleString() : 'an earlier save')}.</div>
+                <button class="btn btn-primary btn-full recover-world-card-btn">Restore World</button>
+            </div>`;
+        card.querySelector('.recover-world-card-btn').onclick = async () => {
+            if (state.worlds.some(item => item.id === world.id)) return;
+            const restored = safeJsonClone(world);
+            const storedMedia = await HordeDB.get('worldMediaAssets') || {};
+            if (Array.isArray(storedMedia[restored.id])) restored.mediaAssets = storedMedia[restored.id];
+            state.worlds.push(restored);
+            delete state.worldRecoverySnapshots[restored.id];
+            worldMediaDirty = true;
+            await saveState();
+            renderWorlds();
+            showToast(`Restored "${restored.name}" and reconnected its existing sessions.`, 'success');
+        };
+        grid.appendChild(card);
+    });
+
+    if (list.length === 0 && recoverable.length === 0) {
+        const hasFilter = !!searchVal.trim();
+        grid.innerHTML = `<div class="empty-state"><h3>${hasFilter ? 'No Worlds Match This Search' : 'No Worlds Found'}</h3><p>${hasFilter ? 'Clear the search to show every saved world.' : 'Import a world or click "+ Create New World" to begin.'}</p>${hasFilter ? '<button class="btn btn-ghost clear-world-search-btn">Clear Search</button>' : ''}</div>`;
+        const clear = grid.querySelector('.clear-world-search-btn');
+        if (clear) clear.onclick = () => { document.getElementById('world-search').value = ''; renderWorlds(); };
     }
 }
 
@@ -39827,8 +39980,20 @@ function renderIncludedHumansCatalog() {
     const grid = document.getElementById('included-humans-grid');
     if (!section || !grid) return;
     const included = includedHumanCandidates();
-    section.classList.toggle('hidden', !included.length);
+    // Never turn a packaging failure into a blank, apparently legitimate
+    // library. Portable releases inline these definitions; seeing this state
+    // means the package is incomplete or an old index was copied alone.
+    section.classList.remove('hidden');
     grid.innerHTML = '';
+    if (!included.length) {
+        grid.innerHTML = `<article class="vh-included-card vh-included-error" role="alert">
+            <div class="vh-included-copy">
+                <strong>Built-in humans did not load</strong>
+                <span>This copy of Horde Studio is incomplete. Use the portable release rather than copying index.html by itself.</span>
+            </div>
+        </article>`;
+        return;
+    }
     included.forEach(candidate => {
         const authored = normalizeCompanion(candidate.companion);
         const installed = state.companions.some(companion =>

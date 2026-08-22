@@ -27,6 +27,8 @@ class McpBridgeAudit(unittest.TestCase):
         expected = {
             "/labs-embedded.js",
             "/labs-embedded-worker.js",
+            "/labs-needle.js",
+            "/labs-needle-worker.js",
             "/labs-core.js",
             "/labs-tasks.js",
             "/labs-ui.js",
@@ -44,7 +46,11 @@ class McpBridgeAudit(unittest.TestCase):
         request.return_value = (
             200,
             {"Content-Type": "application/json"},
-            json.dumps({"service": "Horde Studio MCP Bridge"}).encode(),
+            json.dumps({
+                "service": "Horde Studio MCP Bridge",
+                "build": bridge.BRIDGE_BUILD,
+                "appInstance": bridge.APP_INSTANCE_ID,
+            }).encode(),
         )
         with mock.patch.object(sys, "argv", ["horde_mcp_bridge.py"]):
             bridge.main()

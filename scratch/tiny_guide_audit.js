@@ -27,7 +27,7 @@ assert(html.includes('id="labs-guide-messages"'));
 assert(html.includes('id="pip-sidebar-btn"'), 'Pip is permanently visible in the primary sidebar');
 assert(html.includes('id="pip-view"'), 'Pip has a dedicated primary workspace');
 assert(!html.includes('<h3>3. Chat with Tiny Guide</h3>'), 'Pip is not embedded inside Labs settings');
-assert(html.includes('labs-guide.js?v=20260810-pip-providers-v2'));
+assert(html.includes('labs-guide.js?v=20260822-v161'));
 assert(html.includes('id="pip-clear-chat-btn"'), 'Pip has a visible clear-chat action');
 assert(ui.includes('window.HordeLabs.completeText'));
 assert(app.includes("pip: document.getElementById('pip-view')"), 'primary navigation owns the Pip workspace');

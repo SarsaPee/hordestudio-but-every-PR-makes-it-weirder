@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 2;
+    const VERSION = 3;
     const TASKS = new Map();
     const queue = [];
     let running = false;
@@ -13,12 +13,13 @@
 
     const DEFAULT_CONFIG = Object.freeze({
         enabled: false,
-        runtime: 'connected',
+        runtime: 'needle',
         baseUrl: 'http://127.0.0.1:11434/v1',
         apiKey: '',
         model: '',
         embeddedModel: 'HuggingFaceTB/SmolLM2-135M-Instruct',
         embeddedDevice: 'auto',
+        needleConfidence: 0.85,
         budget: 'balanced',
         policies: { chat: 'off', worlds: 'off', humans: 'off' },
         diagnosticsEnabled: true,
@@ -73,12 +74,13 @@
         const policy = value => ['off', 'shadow', 'assist', 'audit'].includes(value) ? value : 'off';
         return {
             enabled: source.enabled === true,
-            runtime: source.runtime === 'embedded' ? 'embedded' : 'connected',
+            runtime: ['needle', 'embedded', 'connected'].includes(source.runtime) ? source.runtime : 'needle',
             baseUrl: normalizeLoopbackBase(source.baseUrl),
             apiKey: String(source.apiKey || '').slice(0, 500),
             model: String(source.model || '').trim().slice(0, 300),
             embeddedModel: 'HuggingFaceTB/SmolLM2-135M-Instruct',
             embeddedDevice: ['auto', 'webgpu', 'wasm'].includes(source.embeddedDevice) ? source.embeddedDevice : 'auto',
+            needleConfidence: clamp(source.needleConfidence ?? 0.85, 0.5, 0.99),
             budget: ['eco', 'balanced', 'responsive'].includes(source.budget) ? source.budget : 'balanced',
             policies: {
                 chat: policy(policies.chat),
@@ -131,6 +133,11 @@
             cacheMs: Math.round(clamp(definition.cacheMs || 0, 0, 86400000)),
             background: definition.background === true,
             parseOutput: typeof definition.parseOutput === 'function' ? definition.parseOutput : null,
+            needleInput: typeof definition.needleInput === 'function' ? definition.needleInput : null,
+            needleTools: Array.isArray(definition.needleTools) ? definition.needleTools : null,
+            needleConfidence: Number.isFinite(Number(definition.needleConfidence))
+                ? clamp(Number(definition.needleConfidence), 0.1, 0.99) : null,
+            needleCompatible: definition.needleCompatible !== false,
             validate: typeof definition.validate === 'function'
                 ? definition.validate : (() => ({ ok: true, value: null }))
         }));
@@ -225,6 +232,26 @@
         // useful for cache hashes, but could push the actual player text behind
         // a large allowlist and then truncate the most important field.
         const input = JSON.stringify(envelope).slice(0, Math.min(task.maxInputChars, budget.promptTokens * 4));
+        if (settings.runtime === 'needle') {
+            if (typeof window.HordeLabsNeedle?.completeStructured !== 'function') throw new Error('TinyBrain 2 runtime is unavailable.');
+            const result = await window.HordeLabsNeedle.completeStructured({
+                name: task.id,
+                description: task.system,
+                schema: task.schema,
+                tools: task.needleTools,
+                // Needle has a deliberately bounded context. Player/event text
+                // is inserted first by Horde call sites; keep the capsule small
+                // enough that allowlists do not displace the evidence.
+                input: String(typeof task.needleInput === 'function' ? task.needleInput(envelope) : input).slice(0, 2200),
+                maxTokens: Math.min(task.maxOutputTokens, budget.outputTokens)
+            }, signal);
+            if (!result.matched) throw new Error('TinyBrain 2 found no supported structured event.');
+            const confidenceGate = task.needleConfidence ?? settings.needleConfidence;
+            if (Number(result.confidence) < confidenceGate) {
+                throw new Error(`TinyBrain 2 confidence ${Number(result.confidence || 0).toFixed(2)} is below the ${confidenceGate.toFixed(2)} safety gate.`);
+            }
+            return { ...result.candidate, _needleConfidence: Number(result.confidence) || 0 };
+        }
         if (settings.runtime === 'embedded') {
             if (!window.HordeLabsEmbedded) throw new Error('Embedded Tiny Brain runtime is unavailable.');
             const result = await window.HordeLabsEmbedded.completeStructured({
@@ -300,7 +327,9 @@
         // the isolated worker a realistic deadline; failures still fall back.
         const timeoutMs = settings.runtime === 'embedded'
             ? Math.max(configuredTimeout, job.background ? 60000 : 30000)
-            : configuredTimeout;
+            : settings.runtime === 'needle'
+                ? Math.max(configuredTimeout, job.background ? 15000 : 8000)
+                : configuredTimeout;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         let candidate;
@@ -322,7 +351,8 @@
             recordDiagnostic({
                 mode: job.mode, task: task.id, policy: job.policy, accepted,
                 valid: validation.ok === true, reason, latencyMs: Date.now() - startedAt,
-                inputHash: job.cacheKey, confidence: clamp(candidate?.confidence, 0, 1)
+                inputHash: job.cacheKey, confidence: clamp(candidate?._needleConfidence ?? candidate?.confidence, 0, 1),
+                runtime: settings.runtime
             });
             return {
                 ok: validation.ok === true,
@@ -353,12 +383,15 @@
         if (!task) return { ok: false, skipped: true, reason: 'Unknown cognition task.' };
         if (!settings.enabled || policy === 'off') return { ok: false, skipped: true, reason: 'Local cognition is off.' };
         if (settings.runtime === 'connected' && (!settings.model || !settings.baseUrl)) return { ok: false, skipped: true, reason: 'Local cognition is not configured.' };
+        if (settings.runtime === 'needle' && typeof window.HordeLabsNeedle?.completeStructured !== 'function') return { ok: false, skipped: true, reason: 'TinyBrain 2 runtime is unavailable.' };
+        if (settings.runtime === 'needle' && task.needleCompatible === false) return { ok: false, skipped: true, reason: `${task.id} needs generative local cognition and is not a TinyBrain 2 routing task.` };
         if (!plainObject(envelope)) return { ok: false, skipped: true, reason: 'Cognition envelope must be an object.' };
         // An unrecognised model is allowed to attempt Micro classifiers, but it
         // must never bypass the Small/Extended gates merely because its name is
         // unfamiliar. The previous `unknown: 99` made unknown mean strongest.
         const ranks = { unknown: 1, micro: 1, small: 2, extended: 3 };
-        const effectiveModel = settings.runtime === 'embedded' ? 'smollm2-135m' : settings.model;
+        const effectiveModel = settings.runtime === 'needle' ? 'needle2-45m-small'
+            : settings.runtime === 'embedded' ? 'smollm2-135m' : settings.model;
         const tier = capabilityTier(effectiveModel);
         if (ranks[tier] < ranks[task.minimumTier]) {
             const reason = `${task.id} needs a ${task.minimumTier}-tier model; ${effectiveModel} was detected as ${tier}.`;
@@ -430,6 +463,9 @@
 
     async function completeText(options = {}) {
         const settings = normalizeConfig(options.config || currentConfig());
+        if (settings.runtime === 'needle') {
+            throw new Error('TinyBrain 2 is a structured router, not a conversational model. Pip uses it for help routing and diagnostics only.');
+        }
         if (settings.runtime === 'connected' && (!settings.model || !settings.baseUrl)) {
             throw new Error('Choose a local model before opening Tiny Guide.');
         }
@@ -481,6 +517,7 @@
 
     function capabilityTier(model) {
         const id = String(model || '').toLowerCase();
+        if (/needle2|tinybrain2/.test(id)) return 'small';
         if (/135m|150m|160m|270m|350m|360m|0\.1b|0\.13b|0\.15b|0\.16b|0\.2b|0\.27b|0\.3b|0\.35b|0\.36b|0\.4b/.test(id)) return 'micro';
         if (/0\.5b|0\.6b|0\.7b|500m|600m|700m/.test(id)) return 'small';
         if (/1b|1\.5b|1\.7b|2b|3b|4b/.test(id)) return 'extended';
@@ -489,12 +526,13 @@
 
     function taskCapabilities(rawConfig) {
         const settings = normalizeConfig(rawConfig || currentConfig());
-        const model = settings.runtime === 'embedded' ? 'smollm2-135m' : settings.model;
+        const model = settings.runtime === 'needle' ? 'needle2-45m-small'
+            : settings.runtime === 'embedded' ? 'smollm2-135m' : settings.model;
         const tier = capabilityTier(model);
         const ranks = { unknown: 1, micro: 1, small: 2, extended: 3 };
         return [...TASKS.values()].map(task => ({
             id: task.id, mode: task.mode, minimumTier: task.minimumTier,
-            available: ranks[tier] >= ranks[task.minimumTier], tier
+            available: (settings.runtime !== 'needle' || task.needleCompatible) && ranks[tier] >= ranks[task.minimumTier], tier
         }));
     }
 

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# Horde Studio 16
+# Horde Studio 16.1
 
 ### Build characters. Shape worlds. Simulate lives.
 
@@ -14,7 +14,7 @@ Characters & group rooms · Living sandbox worlds · Autonomous virtual humans �
 
 ## What is Horde Studio?
 
-**Horde Studio 16** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, and virtual-human simulation into one application.
+**Horde Studio 16.1** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, and virtual-human simulation into one application.
 
 It is designed for stories that need to **remember, react, and evolve**. Build a cast, create a world around them, carry consequences across sessions, or simulate an AI person with routines, relationships, moods, memories, and multiple timelines.
 
@@ -94,7 +94,7 @@ Create an AI person designed to feel like they have a life beyond the current me
 - Browser-based local storage through IndexedDB
 - Localhost-only Python bridge
 - Bring your own model and media providers
-- Optional **Horde Labs** cognition through a tiny local server or the in-app Embedded Tiny Brain
+- Optional **Horde Labs** cognition through a local server, the in-app **TinyBrain 2 / Needle** structured router, or the legacy embedded runtime
 - Validated local assists for social cues, world continuity, life beats, status briefs, and chat meters
 - Exportable characters, worlds, timelines, and backups
 - Provider credentials kept outside normal Horde Studio exports

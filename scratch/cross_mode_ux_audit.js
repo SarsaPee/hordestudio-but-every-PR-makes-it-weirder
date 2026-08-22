@@ -71,7 +71,7 @@ test('library artwork has a deliberate text fallback and release assets are cach
     assert(app.includes("char-card-avatar${char.avatar ? ' has-image' : ''}"));
     assert(app.includes("message-avatar${avatarUrl ? ' has-image' : ''}"));
     assert(css.includes('.char-card-avatar.has-image'));
-    assert(html.includes('20260810-pip-providers-v2'));
+    assert(html.includes('20260822-v161'));
 });
 
 test('World Studio navigation fits laptop heights with a safe short-window fallback', () => {
@@ -95,6 +95,14 @@ test('large worlds use searchable card directories and full-record modals', () =
     assert(app.includes('ent-simulation-depth'));
     assert(css.includes('.modal.world-record-modal'));
     assert(css.includes('.world-directory-toolbar'));
+});
+
+test('World Studio creates canonical people instead of storing click events as entity types', () => {
+    assert(app.includes("document.getElementById('add-entity-btn').onclick = () => addWorldEntity('npc')"));
+    assert(app.includes("document.getElementById('add-entity-btn-bottom').onclick = () => addWorldEntity('npc')"));
+    assert(app.includes("const entityType = type === 'item' ? 'item' : 'npc'"));
+    assert(app.includes("entity.type = ['item', 'object', 'prop'].includes(authoredType) ? 'item' : 'npc'"));
+    assert(!app.includes("document.getElementById('add-entity-btn').onclick = addWorldEntity"));
 });
 
 test('world inspectors use explicit tab ownership instead of DOM position guesses', () => {

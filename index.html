@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260816-v1591-memory-hotfix-v1">
+    <link rel="stylesheet" href="style.css?v=20260822-v161">
 </head>
 <body>
 <div id="app">
@@ -153,32 +153,48 @@
                     <div class="pip-identity">
                         <div class="pip-avatar" aria-hidden="true">🧠</div>
                         <div>
-                            <span class="vh-eyebrow">Private, grounded product help</span>
+                            <span class="vh-eyebrow">Horde Studio command center</span>
                             <h1 class="page-title">Pip</h1>
-                            <p class="page-subtitle">Your tiny local Horde Studio guide. Ask how something works, where a setting lives, or which provider controls what.</p>
+                            <p class="page-subtitle">Search the handbook, diagnose your setup and jump directly to the control you need.</p>
                         </div>
                     </div>
                     <div class="pip-header-actions">
                         <span id="pip-runtime-state" class="labs-tier-badge pip-runtime-state">BUILT-IN ONLY</span>
                         <button id="pip-clear-chat-btn" class="btn btn-ghost" type="button">Clear chat</button>
-                        <button id="pip-configure-btn" class="btn btn-ghost" type="button">Configure Tiny Brain</button>
+                        <button id="pip-configure-btn" class="btn btn-ghost" type="button">Configure TinyBrain 2</button>
                     </div>
                 </header>
 
-                <div class="pip-chat-card">
-                    <div id="labs-guide-messages" class="labs-guide-messages pip-messages" aria-live="polite"></div>
-                    <div class="labs-guide-prompts pip-prompts" aria-label="Suggested questions">
-                        <button type="button" data-guide-question="What can you do, Pip?">What can you do?</button>
-                        <button type="button" data-guide-question="How are you today?">Just chat</button>
-                        <button type="button" data-guide-question="What is the difference between Shadow, Assist and Audit?">Labs modes</button>
-                        <button type="button" data-guide-question="Can I use OpenRouter for text and GPTProto for images?">Provider setup</button>
-                        <button type="button" data-guide-question="How do World movement and travel time work?">World movement</button>
+                <div class="pip-workspace">
+                    <aside class="pip-tools" aria-label="Pip tools">
+                        <div class="pip-tool-heading"><span>DEVICE STATUS</span><strong>Private</strong></div>
+                        <button class="pip-status-card" type="button" data-pip-action="labs">
+                            <span>Local cognition</span><strong id="pip-labs-summary">Not configured</strong><small>Inspect TinyBrain 2 and policies</small>
+                        </button>
+                        <button class="pip-status-card" type="button" data-pip-action="settings">
+                            <span>Providers</span><strong>Connections &amp; models</strong><small>Open provider configuration</small>
+                        </button>
+                        <div class="pip-tool-heading pip-tool-heading-spaced"><span>QUICK HELP</span></div>
+                        <button type="button" class="pip-topic" data-guide-question="Diagnose my TinyBrain and Labs setup">Run Labs diagnosis</button>
+                        <button type="button" class="pip-topic" data-guide-question="How do I test and troubleshoot a provider connection?">Provider diagnosis</button>
+                        <button type="button" class="pip-topic" data-guide-question="How do World movement and travel time work?">World movement</button>
+                        <button type="button" class="pip-topic" data-guide-question="How do Virtual Humans remember me and know time?">Virtual Human memory</button>
+                    </aside>
+                    <div class="pip-chat-card">
+                        <div class="pip-search-label">ASK OR SEARCH HORDE STUDIO</div>
+                        <div class="labs-guide-composer pip-composer pip-search-composer">
+                            <textarea id="labs-guide-input" class="form-textarea" rows="2" maxlength="1200" placeholder="Describe a problem, feature, or setting…" aria-label="Ask Pip about Horde Studio"></textarea>
+                            <button id="labs-guide-send-btn" class="btn btn-primary" type="button">Ask Pip</button>
+                        </div>
+                        <div class="labs-guide-prompts pip-prompts" aria-label="Suggested questions">
+                            <button type="button" data-guide-question="What can you do, Pip?">What can you do?</button>
+                            <button type="button" data-guide-question="What is the difference between Shadow, Assist and Audit?">Labs modes</button>
+                            <button type="button" data-guide-question="Can I use OpenRouter for text and GPTProto for images?">Provider setup</button>
+                        </div>
+                        <div id="labs-guide-messages" class="labs-guide-messages pip-messages" aria-live="polite"></div>
+                        <div id="pip-response-actions" class="pip-response-actions hidden" aria-live="polite"></div>
+                        <p id="labs-guide-status" class="form-hint">Product answers come from Pip’s versioned local handbook. TinyBrain 2 routes requests and diagnostics without writing canonical state.</p>
                     </div>
-                    <div class="labs-guide-composer pip-composer">
-                        <textarea id="labs-guide-input" class="form-textarea" rows="2" maxlength="1200" placeholder="Ask Pip about Horde Studio…" aria-label="Ask Pip about Horde Studio"></textarea>
-                        <button id="labs-guide-send-btn" class="btn btn-primary" type="button">Ask Pip</button>
-                    </div>
-                    <p id="labs-guide-status" class="form-hint">Horde Studio questions use Pip’s verified built-in handbook. The Tiny Brain is reserved for ordinary conversation.</p>
                 </div>
             </div>
         </section>
@@ -3543,6 +3559,10 @@
                     <a class="btn btn-ghost" href="start-horde-studio.sh" download>Linux / Chromebook launcher</a>
                 </div>
                 <code id="launcher-command" class="vh-image-request-preview">python3 horde_mcp_bridge.py --open</code>
+                <div class="settings-inline-actions" style="margin-top:14px;">
+                    <button id="stop-horde-server-btn" class="btn btn-danger" type="button">Stop Horde Studio server</button>
+                    <span id="stop-horde-server-status" class="form-hint" aria-live="polite">Stops the local server and background agency without deleting any data.</span>
+                </div>
             </section>
             <section class="mcp-settings-card always-on-settings-card" aria-labelledby="always-on-settings-title">
                 <div class="mcp-settings-head">
@@ -4608,7 +4628,8 @@
                 <div class="labs-section-title"><div><h3>1. Connect a tiny brain</h3><p>Runs only against this device. Your main text, image and voice providers remain separate.</p></div><span id="labs-tier-badge" class="labs-tier-badge">No model</span></div>
                 <div class="labs-runtime-grid">
                     <label class="labs-runtime-card selected"><input type="radio" name="labs-runtime" value="connected" checked><strong>Connected local server</strong><span>Ollama, LM Studio, llama.cpp, KoboldCpp or OpenAI-compatible localhost.</span></label>
-                    <label class="labs-runtime-card"><input type="radio" name="labs-runtime" value="embedded"><strong>Embedded Tiny Brain</strong><span>Install once inside Horde Studio. Runs privately with WebGPU or CPU/WASM and remains cached in this browser.</span></label>
+                    <label class="labs-runtime-card labs-runtime-recommended"><input type="radio" name="labs-runtime" value="needle"><strong>TinyBrain 2 · Needle <em>Recommended</em></strong><span>45M structured router. Grammar-safe tool calls, confidence gating and about a 14 MB model download.</span></label>
+                    <label class="labs-runtime-card"><input type="radio" name="labs-runtime" value="embedded"><strong>TinyBrain 1 · Legacy</strong><span>SmolLM2 free-form compatibility runtime. Larger download and less reliable structured output.</span></label>
                 </div>
                 <div id="labs-connected-setup" class="labs-connection-grid">
                     <label><span>Local server URL</span><input id="labs-base-url" class="form-input" value="http://127.0.0.1:11434/v1" spellcheck="false"></label>
@@ -4619,6 +4640,22 @@
                     <button id="labs-test-btn" class="btn btn-ghost" type="button">Test connection</button>
                 </div>
                 <label id="labs-connected-model" class="labs-model-field"><span>Tiny cognition model</span><input id="labs-model-search" class="form-input" list="labs-model-list" placeholder="Connect, then search or select a model" autocomplete="off"><datalist id="labs-model-list"></datalist><small id="labs-model-help">Recommended: a 270M–700M instruct model. Larger models work, but are not required.</small></label>
+                <div id="labs-needle-setup" class="labs-embedded-setup hidden">
+                    <div class="labs-embedded-model-card">
+                        <div><span class="labs-embedded-icon">🧠</span></div>
+                        <div><strong>TinyBrain 2 · Needle 2</strong><span>Apache-2.0 · 45M parameters · approximately 14 MB · structured routing only. It cannot write roleplay or chat replies.</span></div>
+                        <span id="labs-needle-state" class="labs-tier-badge">Not installed</span>
+                    </div>
+                    <div class="labs-needle-safety">
+                        <label><span>Confidence gate <strong id="labs-needle-confidence-value">85%</strong></span><input id="labs-needle-confidence" type="range" min="70" max="99" value="85"></label>
+                        <p>Below this score Horde rejects the proposal and keeps its deterministic fallback. Grammar validity never bypasses world-state validation.</p>
+                    </div>
+                    <div class="labs-embedded-controls">
+                        <div><button id="labs-needle-install-btn" class="btn btn-primary" type="button">Download &amp; install TinyBrain 2</button><button id="labs-needle-remove-btn" class="btn btn-ghost hidden" type="button">Remove downloaded model</button></div>
+                    </div>
+                    <div class="labs-install-progress"><div id="labs-needle-progress-fill"></div></div>
+                    <p id="labs-needle-status" class="form-hint">Nothing downloads until Install. Start in Shadow mode and review the Trust dashboard before enabling Assist.</p>
+                </div>
                 <div id="labs-embedded-setup" class="labs-embedded-setup hidden">
                     <div class="labs-embedded-model-card">
                         <div><span class="labs-embedded-icon">🧠</span></div>
@@ -4660,12 +4697,13 @@
 <script src="policy-panic-world.js"></script>
 <script src="ashlyn-reynolds-human.js?v=20260814-ashlyn-clips-v1"></script>
 <script src="jane-harlow-human.js?v=20260814-bundled-humans-v1"></script>
+    <script src="labs-needle.js?v=20260822-v161" data-horde-needle-adapter="true"></script>
 <script src="labs-embedded.js?v=20260810-pip-conversation-v2"></script>
-<script src="labs-core.js?v=20260810-v128"></script>
-<script src="labs-tasks.js?v=20260816-v1591-memory-hotfix-v1"></script>
-<script src="labs-guide.js?v=20260810-pip-providers-v2"></script>
-<script src="help-system.js?v=20260816-v1591-memory-hotfix-v1"></script>
-<script src="labs-ui.js?v=20260810-pip-core-fallback-v3"></script>
-    <script src="app.js?v=20260816-v1591-memory-hotfix-v1"></script>
+<script src="labs-core.js?v=20260822-v161"></script>
+<script src="labs-tasks.js?v=20260822-v161"></script>
+<script src="labs-guide.js?v=20260822-v161"></script>
+<script src="help-system.js?v=20260822-v161"></script>
+<script src="labs-ui.js?v=20260822-v161"></script>
+    <script src="app.js?v=20260822-v161"></script>
 </body>
 </html>
