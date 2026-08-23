@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260823-online-room-setup-v1">
+    <link rel="stylesheet" href="style.css?v=20260823-v166-rpg-release">
 </head>
 <body>
 <div id="app">
@@ -79,7 +79,6 @@
                     <p class="page-subtitle">Start a conversation, return to an existing cast, or build a shared room.</p>
                 </div>
                 <div class="header-actions landing-actions">
-                    <button class="btn btn-ghost open-multiplayer-hub" type="button" data-multiplayer-type="chat">◎ Play Together</button>
                     <button id="import-nexus-btn" class="btn btn-ghost" title="Import a .horde, .nexus or SillyTavern .png file">Import Archive</button>
                     <button id="create-new-char-btn" class="btn btn-primary">+ New Character</button>
                     <button id="create-new-room-btn" class="btn btn-primary hidden">+ New Room</button>
@@ -120,6 +119,47 @@
             </div>
         </section>
 
+        <!-- ────────── MULTIPLAYER CAMPAIGN (isolated from single-player) ────────── -->
+        <section id="multiplayer-session-view" class="view hidden multiplayer-session-view">
+            <div class="mp-session-shell">
+                <header class="mp-session-header">
+                    <div class="mp-session-identity">
+                        <button id="mp-session-back" class="btn btn-ghost btn-small" type="button">← Multiplayer</button>
+                        <span id="mp-session-system" class="mp-system-pill">CUSTOM</span>
+                        <div><span class="vh-eyebrow">MULTIPLAYER CAMPAIGN</span><h1 id="mp-session-title">Shared campaign</h1><p id="mp-session-subtitle">Waiting for room state…</p></div>
+                    </div>
+                    <div class="mp-session-actions">
+                        <button id="mp-session-invite" class="btn btn-ghost" type="button">Invite players</button>
+                        <button id="mp-session-party" class="btn btn-ghost" type="button">Party</button>
+                        <button id="mp-session-campaign" class="btn btn-ghost" type="button">Character &amp; state</button>
+                        <button id="mp-session-dice" class="btn btn-ghost" type="button">🎲 Dice</button>
+                        <button id="mp-session-gm" class="btn btn-ghost hidden" type="button">GM Console</button>
+                        <button id="mp-session-reroll" class="btn btn-ghost" type="button">Vote to reroll</button>
+                        <button id="mp-session-leave" class="btn btn-ghost" type="button">Leave</button>
+                    </div>
+                </header>
+                <div class="mp-session-layout">
+                    <aside class="mp-party-rail">
+                        <div class="mp-panel-heading"><span>TURN ORDER</span><strong id="mp-session-player-count">0 players</strong></div>
+                        <div id="mp-session-roster" class="mp-session-roster"></div>
+                    </aside>
+                    <main class="mp-table">
+                        <div id="mp-session-vote" class="mp-session-vote hidden"></div>
+                        <div id="mp-session-transcript" class="mp-session-transcript" aria-live="polite"></div>
+                        <div class="mp-composer">
+                            <div><span id="mp-session-turn-status">Waiting for room…</span><span id="mp-session-round">Round 1</span></div>
+                            <textarea id="mp-session-input" class="form-textarea" rows="3" maxlength="4000" placeholder="Describe your action when it is your turn…"></textarea>
+                            <div class="mp-composer-actions"><button id="mp-session-commit" class="btn btn-ghost hidden" type="button">Resolve round</button><button id="mp-session-submit" class="btn btn-primary" type="button">Submit turn</button></div>
+                        </div>
+                    </main>
+                    <aside class="mp-campaign-rail">
+                        <div class="mp-rail-tabs" role="tablist"><button class="active" data-mp-panel="scene" type="button">Scene</button><button data-mp-panel="character" type="button">Character</button><button data-mp-panel="rules" type="button">Rules</button><button data-mp-panel="log" type="button">Log</button></div>
+                        <div id="mp-session-panel" class="mp-session-panel"></div>
+                    </aside>
+                </div>
+            </div>
+        </section>
+
         <!-- ────────── WORLDS VIEW ────────── -->
         <section id="worlds-view" class="view hidden landing-view">
             <div class="landing-shell">
@@ -130,7 +170,6 @@
                     <p class="page-subtitle">Enter a living setting or build an expansive, persistent RPG engine.</p>
                 </div>
                 <div class="header-actions landing-actions">
-                    <button class="btn btn-ghost open-multiplayer-hub" type="button" data-multiplayer-type="world">◎ Play Together</button>
                     <button id="import-world-btn" class="btn btn-ghost">Import World</button>
                     <button id="create-new-world-btn" class="btn btn-primary">+ Create New World</button>
                 </div>
@@ -185,9 +224,13 @@
                         </div>
                     </details>
                 </div>
+                <section class="multiplayer-campaign-library" aria-labelledby="multiplayer-campaign-heading">
+                    <div class="multiplayer-section-heading"><div><span>CAMPAIGNS</span><h2 id="multiplayer-campaign-heading">Your multiplayer table</h2></div><p>Independent saves. Nothing here changes a single-player Chat or World.</p></div>
+                    <div id="multiplayer-campaign-list" class="multiplayer-campaign-list"></div>
+                </section>
                 <div class="multiplayer-hub-grid">
                     <section class="multiplayer-host-panel">
-                        <div class="multiplayer-section-heading"><div><span>HOST</span><h2>Choose what to play</h2></div><p>The selected local timeline remains authoritative.</p></div>
+                        <div class="multiplayer-section-heading"><div><span>NEW CAMPAIGN</span><h2>Choose a template</h2></div><p>Horde Studio copies its premise into a new multiplayer save. The original stays untouched.</p></div>
                         <div class="multiplayer-type-tabs" role="tablist" aria-label="Experience type">
                             <button id="multiplayer-chat-tab" class="active" type="button" data-multiplayer-tab="chat">Chat Library</button>
                             <button id="multiplayer-world-tab" type="button" data-multiplayer-tab="world">Worlds</button>
@@ -205,7 +248,7 @@
                         <div class="multiplayer-transport-card"><strong>Online over the internet</strong><span>The host sets up a free room server once, then shares a simple <code>HS1…</code> invite code with everyone else.</span></div>
                     </aside>
                 </div>
-                <div class="multiplayer-shared-state-note"><strong>Shared-party Worlds</strong><span>Players remain distinct, but this release uses one shared scene, clock and HUD. It does not yet simulate separate player locations or private inventories.</span></div>
+                <div class="multiplayer-shared-state-note"><strong>System-agnostic tabletop foundation</strong><span>Use fantasy, cyberpunk, horror, superhero, custom dice pools, or narrative play. Every participant has a separate identity and character-sheet foundation; the campaign owns its rules and save.</span></div>
             </div>
         </section>
 
@@ -275,7 +318,6 @@
                         <button class="tool-btn" id="download-chat-btn" title="Download Transcript">💾 Save</button>
                         <button class="tool-btn tool-btn-danger" id="clear-history-btn" title="Clear conversation">🗑️ Clear</button>
                         <button class="tool-btn" id="open-in-studio-btn" title="Open character in Studio">⚙️ Studio</button>
-                        <button class="tool-btn chat-multiplayer-btn" id="chat-multiplayer-btn" title="Host this chat or join a multiplayer room">◎ Multiplayer</button>
                     </div>
                 </header>
                 <div id="vector-fallback-banner" class="fallback-banner hidden">
@@ -350,7 +392,6 @@
                                 </div>
                                 
                                 <button class="tool-btn" id="world-studio-btn" title="Open World in Studio">⚙️ Studio</button>
-                                <button class="tool-btn world-party-btn" id="world-multiplayer-btn" title="Host or join a turn-based shared World session">🌐 Multiplayer</button>
                                 <button class="tool-btn world-hud-toggle" id="world-hud-toggle" title="Show or hide world status">◫ HUD</button>
                                 <button class="tool-btn tool-btn-danger" id="world-exit-btn" title="Exit World">✕ Exit</button>
                             </div>
@@ -367,6 +408,7 @@
                                     <button class="tool-btn" id="world-toggle-headers-btn" title="Toggle Message Metadata">👁️ Metadata</button>
                                     <button class="tool-btn" id="world-presentation-btn" title="Switch between Classic and Cinematic presentation">🎨 View</button>
                                     <button class="tool-btn" id="world-system-btn" title="Inject System Instruction">🖥️ System</button>
+                                    <button class="tool-btn" id="world-mechanics-toggle-btn" title="Pause or restore optional RPG mechanics without deleting character data">⚙ Mechanics</button>
                                     <button class="tool-btn" id="world-summarize-btn" title="Summarize World History">✨ Summarize</button>
                                     <button class="tool-btn" id="world-open-vector-memory-btn" title="Inspect World Vector Memories">🧠 Memory</button>
                                     <button class="tool-btn" id="world-download-btn" title="Download Transcript">💾 Save</button>
@@ -1149,11 +1191,11 @@
                                 <label class="form-label">Authoritative Game Rules</label>
                                 <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:15px; margin-bottom:15px;">
                                     <div>
-                                        <label style="font-size:0.7rem; opacity:0.7;">Rules Profile</label>
+                                        <label style="font-size:0.7rem; opacity:0.7;">Mechanical depth / rule pack</label>
                                         <select id="w-rules-profile" class="form-select">
                                             <option value="custom">Custom / Existing World</option>
-                                            <option value="pure_narrative">Pure Narrative</option>
-                                            <option value="slice_of_life">Slice of Life</option>
+                                            <option value="pure_narrative">Off · Pure Narrative</option>
+                                            <option value="slice_of_life">Light · Slice of Life</option>
                                             <option value="mystery">Mystery</option>
                                             <option value="adventure">Adventure</option>
                                             <option value="full_rpg">Full RPG Simulation</option>
@@ -1167,6 +1209,7 @@
                                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="conditions"> Conditions & injuries</label>
                                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="checks"> Dice checks</label>
                                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="inventory"> Inventory</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="equipment"> Equipment &amp; item bonuses</label>
                                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="commerce"> Money & commerce</label>
                                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="quests"> Quest engine</label>
                                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="relationships"> Relationship scores</label>
@@ -1188,6 +1231,13 @@
                                     <div data-rule-detail="commerce">
                                         <label style="font-size:0.7rem; opacity:0.7;">Currency Stat</label>
                                         <select id="w-rules-currency-stat" class="form-select"></select>
+                                    </div>
+                                    <div data-rule-detail="equipment" style="grid-column:1/-1;">
+                                        <label style="font-size:0.7rem; opacity:0.7;">Equipment Slots</label>
+                                        <input id="w-rules-equipment-slots" class="form-input" placeholder="head, body, main-hand, off-hand, accessory">
+                                        <div class="form-hint">Weapons, armor, clothing and tools may add check, stat or skill bonuses while equipped.</div>
+                                        <div class="world-item-library-head"><strong>World item library</strong><button id="w-rules-add-item" class="btn btn-ghost btn-small" type="button">+ New item</button></div>
+                                        <div id="w-rules-item-catalog" class="world-item-catalog"></div>
                                     </div>
                                     <div data-rule-detail="commerce">
                                         <label style="font-size:0.7rem; opacity:0.7;">Currency Name</label>
@@ -4635,7 +4685,7 @@
 <div id="world-multiplayer-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal world-party-modal" role="dialog" aria-modal="true" aria-labelledby="world-party-title">
         <header class="world-party-head">
-            <div><span class="vh-eyebrow">SHARED SESSION</span><h2 id="world-party-title">Play Together</h2><p id="world-party-subtitle">One host, one API call, one shared turn at a time.</p></div>
+            <div><span class="vh-eyebrow">MULTIPLAYER CAMPAIGN</span><h2 id="world-party-title">Create Multiplayer Campaign</h2><p id="world-party-subtitle">Create an independent online tabletop save from a template.</p></div>
             <button id="world-party-close-btn" class="labs-close-btn" type="button" aria-label="Close multiplayer setup">✕</button>
         </header>
         <div class="world-party-body">
@@ -4647,6 +4697,18 @@
                 </div>
                 <article class="world-party-choice world-party-host-choice">
                     <span class="world-party-choice-icon">♛</span><div><h3 id="world-party-host-heading">Host this timeline</h3><p>Your browser owns the save and makes the only model call after everyone submits.</p></div>
+                    <label><span>Campaign name</span><input id="world-party-campaign-name" class="form-input" maxlength="80" placeholder="Friday night campaign"></label>
+                    <label><span>Rules system</span><select id="world-party-rules-preset" class="form-select"><option value="custom">System agnostic / custom</option><option value="d20">D20 fantasy</option><option value="cyberpunk-d10">Cyberpunk-style D10</option><option value="dice-pool">Dice pool</option><option value="narrative">Narrative / fiction first</option></select></label>
+                    <label><span>Mechanical depth</span><select id="world-party-mechanics-mode" class="form-select"><option value="off">Off · narrative inventory only</option><option value="light">Light · sheets, checks and gear bonuses</option><option value="full" selected>Full · progression, effects and requirements</option></select><small>Change this later without deleting character builds or items.</small></label>
+                    <label><span>Table rules / sourcebook guidance (optional)</span><textarea id="world-party-custom-rules" class="form-textarea" rows="3" maxlength="8000" placeholder="Paste the rules that matter for this campaign: dice notation, checks, combat, advancement, house rules…"></textarea><small>Use any tabletop system. Horde Studio does not force fantasy, classes, levels, or a particular kind of die.</small></label>
+                    <details class="mp-system-builder"><summary>Customize character mechanics</summary><div>
+                        <label><span>Attributes · comma separated</span><input id="world-party-attributes" class="form-input" placeholder="Strength, Dexterity, Wisdom…"></label>
+                        <label><span>Skills · comma separated</span><input id="world-party-skills" class="form-input" placeholder="Stealth, Medicine, Persuasion…"></label>
+                        <label><span>Resources · Name:max, one per line</span><textarea id="world-party-resources" class="form-textarea" rows="3" placeholder="HP:20&#10;Mana:8&#10;Stress:6"></textarea></label>
+                        <label><span>Equipment slots · comma separated</span><input id="world-party-slots" class="form-input" placeholder="Head, Body, Main hand, Off hand…"></label>
+                        <div class="mp-system-builder-row"><label><span>Default die</span><input id="world-party-die" class="form-input" placeholder="d20"></label><label><span>Base difficulty</span><input id="world-party-target" class="form-input" type="number" min="1" max="100" placeholder="10"></label><label><span>Progression</span><select id="world-party-progression" class="form-select"><option value="xp">XP & levels</option><option value="milestone">Milestones</option><option value="points">Advancement points</option></select></label></div>
+                        <small>These fields create real synchronized sheets and checks. Leave them blank to use the selected rules pack.</small>
+                    </div></details>
                     <label><span>Your display name</span><input id="world-party-host-name" class="form-input" maxlength="48" value="Host"></label>
                     <div id="world-party-host-persona" class="world-party-persona-summary"></div>
                     <button id="world-party-host-btn" class="btn btn-primary" type="button">Create LAN room</button>
@@ -4805,7 +4867,9 @@
 <script src="labs-guide.js?v=20260822-v161"></script>
 <script src="help-system.js?v=20260823-pip-v3"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
-<script src="multiplayer.js?v=20260823-online-room-setup-v1"></script>
-    <script src="app.js?v=20260823-online-room-setup-v1"></script>
+<script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
+<script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
+<script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
+    <script src="app.js?v=20260823-v166-rpg-release"></script>
 </body>
 </html>

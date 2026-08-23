@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${1:-16.5.0}"
+VERSION="${1:-16.6.0}"
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 APP_DIR="$BUILD_DIR/Horde Studio"
@@ -30,7 +30,11 @@ for file in \
   labs-guide.js \
   labs-ui.js \
   help-system.js \
+  rpg-mechanics.js \
+  multiplayer-engine.js \
   multiplayer.js \
+  ashlyn-reynolds-human.js \
+  jane-harlow-human.js \
   policy-panic-world.js \
   favicon.svg \
   horde_mcp_bridge.py \
@@ -44,11 +48,11 @@ do
   cp "$ROOT_DIR/$file" "$APP_DIR/"
 done
 
-# These two authored humans are advertised as built-ins, so do not leave them
-# as optional sidecar scripts that an incomplete copy, stale cache or failed
-# upload can omit. The release artifact carries their definitions directly in
-# index.html and therefore starts with both people from a single core file.
-python3 "$ROOT_DIR/scripts/embed-portable-humans.py" "$ROOT_DIR" "$APP_DIR/index.html"
+# Built-in humans follow the same boot path as the rest of the application.
+# Packaging must copy both definitions and must never rewrite them into inline
+# scripts (which CSP correctly blocks). Treat either missing file as a fatal
+# release error rather than shipping an apparently empty Human library.
+python3 "$ROOT_DIR/scripts/verify-portable-humans.py" "$APP_DIR"
 
 # Bundled Virtual Humans and Worlds can reference normalized media by relative
 # path. Keep those runtime assets portable without shipping heavy marketing or

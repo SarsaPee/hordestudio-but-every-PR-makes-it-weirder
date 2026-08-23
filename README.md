@@ -1,8 +1,8 @@
-![Horde Studio — living worlds, Virtual Humans, Horde Labs, chat HUDs, and creative workflows](assets/readme/horde-studio-v12-poster.jpg)
+![Horde Studio 16.6 — Any World. Any Party. Your Rules.](assets/marketing/v16.6.0/horde-studio-v16.6.0-launch-poster.png)
 
 <div align="center">
 
-# Horde Studio 16.5
+# Horde Studio 16.6
 
 ### Build characters. Shape worlds. Simulate lives.
 
@@ -14,7 +14,7 @@ Characters & group rooms · Living sandbox worlds · Autonomous virtual humans �
 
 ## What is Horde Studio?
 
-**Horde Studio 16.5** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, virtual-human simulation, and host-powered multiplayer into one application.
+**Horde Studio 16.6** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, virtual-human simulation, and host-powered multiplayer into one application.
 
 It is designed for stories that need to **remember, react, and evolve**. Build a cast, create a world around them, carry consequences across sessions, or simulate an AI person with routines, relationships, moods, memories, and multiple timelines.
 
@@ -54,6 +54,22 @@ Virtual Humans maintain their own clock, routine, mood, relationship state, memo
 
 ## Core experiences
 
+### Optional RPG systems — new in 16.6
+
+![Horde Studio 16.6 optional RPG systems](assets/marketing/v16.6.0/horde-studio-v16.6.0-rpg-systems.png)
+
+Worlds and dedicated Multiplayer campaigns now share one system-agnostic mechanics engine. Use **Off** for pure narrative, **Light** for equipment and checks, or **Full** for progression, requirements, resources and persistent effects.
+
+- Weapons, armor, clothing, consumables, tools, cyberware and custom items
+- Equipment slots, damage, armor, charges, durability, rarity and requirements
+- Gear modifiers for attributes, skills, defenses, resources and checks
+- Visible base and effective values on character sheets
+- Buffs, debuffs, status effects and progression in Full mode
+- Non-destructive live mechanics switching in Worlds and Multiplayer
+- Backward-compatible migration for existing text inventories
+
+The rules layer is optional. Disabling it pauses mechanics without deleting the party's builds, equipment or authored state.
+
 ### Characters & Group Rooms
 
 Create individual AI characters or bring a full cast into a shared room.
@@ -74,6 +90,15 @@ Build a playable setting instead of a disposable chat background.
 - Autonomous NPC goals, faction activity, movement, markets, and world-state changes
 - Persistent timelines that preserve the consequences of play
 - World audit and calibration tools for catching inconsistent state
+
+### Dedicated Multiplayer
+
+- Multiplayer campaigns remain separate from single-player saves and UI
+- One host owns canonical state and supplies the AI connection
+- Every player has an independent persona, sheet, inventory and turn
+- LAN rooms and bring-your-own Internet WebSocket relays
+- Round-robin play, reconnecting guests, permissions and party votes
+- Synchronized rules, equipment, resources, effects, encounters and progression
 
 ### Virtual Humans
 
@@ -291,6 +316,9 @@ Horde Studio 10+/
 ├── index.html                  # Application shell and views
 ├── style.css                   # Complete visual system
 ├── app.js                      # State, UI, chat, worlds, and simulations
+├── rpg-mechanics.js            # Shared optional RPG and equipment rules
+├── multiplayer-engine.js       # Canonical multiplayer campaign state
+├── multiplayer.js              # LAN/Internet party UI and synchronization
 ├── presets.js                  # Included system presets
 ├── horde_mcp_bridge.py         # Local server, MCP auth, and image relay
 ├── MCP_SETUP.md                # Detailed bridge and media setup

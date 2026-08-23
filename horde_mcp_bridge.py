@@ -18,6 +18,7 @@ import errno
 import hashlib
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import re
@@ -126,6 +127,7 @@ STATIC_FILES = {
     "/labs-guide.js": ("labs-guide.js", "text/javascript"),
     "/help-system.js": ("help-system.js", "text/javascript"),
     "/multiplayer.js": ("multiplayer.js", "text/javascript"),
+    "/multiplayer-engine.js": ("multiplayer-engine.js", "text/javascript"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/worlds/policy-panic.horde_world": ("Policy Panic at Bramble and Pike.horde_world", "application/json"),
     "/Start%20Horde%20Studio.command": ("Start Horde Studio.command", "application/octet-stream"),
@@ -483,6 +485,52 @@ class MultiplayerRuntime:
         return text[:48] or fallback
 
     @staticmethod
+    def _clean_public_value(value: Any, depth: int = 0) -> Any:
+        """Bound JSON sent through a room without flattening authored RPG state."""
+        if depth > 7:
+            return None
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value if math.isfinite(float(value)) else 0
+        if isinstance(value, str):
+            return value[:12000]
+        if isinstance(value, list):
+            return [MultiplayerRuntime._clean_public_value(item, depth + 1) for item in value[:500]]
+        if isinstance(value, dict):
+            blocked = {"apikey", "api_key", "token", "playertoken", "invitetoken", "authorization", "password", "secret"}
+            return {str(key)[:100]: MultiplayerRuntime._clean_public_value(item, depth + 1)
+                    for key, item in list(value.items())[:500]
+                    if str(key).lower().replace("-", "_") not in blocked}
+        return str(value)[:1000]
+
+    @staticmethod
+    def _clean_sheet(value: Any) -> dict[str, Any]:
+        source = value if isinstance(value, dict) else {}
+        allowed = {"schemaVersion", "characterId", "name", "pronouns", "archetype", "ancestry", "background", "portrait", "publicIdentity",
+                   "reputation", "appearance", "level", "xp", "advancement", "attributes", "skills",
+                   "resources", "defenses", "conditions", "effects", "inventory", "equipment", "abilities",
+                   "perks", "currencies", "notes", "location", "status", "revision"}
+        cleaned = {key: MultiplayerRuntime._clean_public_value(source.get(key)) for key in allowed if key in source}
+        cleaned["name"] = MultiplayerRuntime._clean_name(source.get("name"), "Adventurer")
+        # Portraits are public party media, but cap them so a room cannot become a media archive.
+        cleaned["portrait"] = str(source.get("portrait") or "")[:750000]
+        return cleaned
+
+    @staticmethod
+    def _clean_game_state(value: Any) -> dict[str, Any]:
+        source = value if isinstance(value, dict) else {}
+        allowed = {"schemaVersion", "revision", "phase", "scene", "rules", "npcs", "encounters", "quests",
+                   "clocks", "sharedInventory", "journal", "rolls", "transactions", "lastReceiptId", "updatedAt"}
+        cleaned = {key: MultiplayerRuntime._clean_public_value(source.get(key)) for key in allowed if key in source}
+        raw_characters = source.get("characters") if isinstance(source.get("characters"), dict) else {}
+        cleaned["characters"] = {str(player_id)[:100]: MultiplayerRuntime._clean_sheet(sheet)
+                                 for player_id, sheet in list(raw_characters.items())[:40]}
+        cleaned["rolls"] = (cleaned.get("rolls") or [])[-200:]
+        cleaned["transactions"] = (cleaned.get("transactions") or [])[-500:]
+        return cleaned
+
+    @staticmethod
     def _clean_snapshot(value: Any) -> dict[str, Any]:
         """Allow only the visible transcript fields guests are meant to see."""
         if not isinstance(value, dict):
@@ -497,11 +545,82 @@ class MultiplayerRuntime:
                 role = "system"
             text = str(item.get("text") or "").strip()[:12000]
             if text:
-                history.append({"role": role, "text": text})
+                history.append({"role": role, "text": text,
+                                "name": MultiplayerRuntime._clean_name(item.get("name"), "") if item.get("name") else "",
+                                **({"rollId": str(item.get("rollId"))[:100]} if item.get("rollId") else {})})
         experience_type = str(value.get("experienceType") or "world").strip().lower()
         if experience_type not in {"world", "chat"}:
             experience_type = "world"
         experience_name = str(value.get("experienceName") or value.get("worldName") or "Shared Session")[:120]
+        source_hud = value.get("hud") if isinstance(value.get("hud"), dict) else {}
+        source_location = source_hud.get("location") if isinstance(source_hud.get("location"), dict) else {}
+        def clean_number(raw: Any) -> float:
+            try:
+                number = float(raw or 0)
+                return number if math.isfinite(number) else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+        stats = []
+        for stat in (source_hud.get("stats") if isinstance(source_hud.get("stats"), list) else [])[:30]:
+            if not isinstance(stat, dict):
+                continue
+            stats.append({
+                "id": str(stat.get("id") or stat.get("name") or "")[:80],
+                "name": str(stat.get("name") or stat.get("id") or "Stat")[:80],
+                "value": clean_number(stat.get("value")),
+                "min": clean_number(stat.get("min")),
+                "max": clean_number(stat.get("max")),
+                "color": str(stat.get("color") or "#E63946")[:24],
+            })
+        quests = []
+        for quest in (source_hud.get("quests") if isinstance(source_hud.get("quests"), list) else [])[:20]:
+            if isinstance(quest, dict):
+                quests.append({"title": str(quest.get("title") or "Quest")[:160],
+                               "status": str(quest.get("status") or "active")[:40]})
+        hud = {
+            "location": {"name": str(source_location.get("name") or value.get("location") or "Unknown")[:160],
+                         "description": str(source_location.get("description") or "")[:1200]},
+            "clock": str(source_hud.get("clock") or "")[:160],
+            "period": str(source_hud.get("period") or "")[:80],
+            "weather": str(source_hud.get("weather") or "")[:160],
+            "stats": stats,
+            "outfit": str(source_hud.get("outfit") or "")[:1200],
+            "inventory": [str(item)[:160] for item in
+                          (source_hud.get("inventory") if isinstance(source_hud.get("inventory"), list) else [])[:80]],
+            "ledger": str(source_hud.get("ledger") or "")[:6000],
+            "quests": quests,
+            "present": [str(item)[:160] for item in
+                        (source_hud.get("present") if isinstance(source_hud.get("present"), list) else [])[:40]],
+        }
+        source_meta = value.get("campaignMeta") if isinstance(value.get("campaignMeta"), dict) else {}
+        source_system = source_meta.get("system") if isinstance(source_meta.get("system"), dict) else {}
+        campaign_meta = {
+            "id": str(source_meta.get("id") or "")[:100],
+            "name": str(source_meta.get("name") or experience_name)[:120],
+            "system": {
+                "id": str(source_system.get("id") or "custom")[:60],
+                "name": str(source_system.get("name") or "Custom / system agnostic")[:120],
+                "resolution": str(source_system.get("resolution") or "Host adjudication")[:500],
+                "initiative": str(source_system.get("initiative") or "Round robin")[:120],
+                "die": str(source_system.get("die") or source_system.get("dice") or "")[:120],
+                "mode": str(source_system.get("mode") or "roll-over")[:40],
+                "target": float(source_system.get("target") or 10),
+                "explode": bool(source_system.get("explode")),
+                "progression": ({
+                    "kind": str(source_system.get("progression", {}).get("kind") or "xp")[:40],
+                    "maxLevel": max(1, min(1000, int(source_system.get("progression", {}).get("maxLevel") or 20))),
+                    "base": max(1, float(source_system.get("progression", {}).get("base") or 100)),
+                    "curve": max(.1, min(10, float(source_system.get("progression", {}).get("curve") or 1.4))),
+                } if isinstance(source_system.get("progression"), dict) else {
+                    "kind": str(source_system.get("progression") or "xp")[:40], "maxLevel": 20, "base": 100, "curve": 1.4
+                }),
+                "attributes": [(str(row)[:80] if isinstance(row, str) else {"id": str(row.get("id") or row.get("name") or "")[:60], "name": str(row.get("name") or row.get("id") or "")[:80], "base": float(row.get("base") or 0)}) for row in (source_system.get("attributes") if isinstance(source_system.get("attributes"), list) else [])[:40] if isinstance(row, (str, dict))],
+                "skills": [(str(row)[:80] if isinstance(row, str) else {"id": str(row.get("id") or row.get("name") or "")[:60], "name": str(row.get("name") or row.get("id") or "")[:80], "attribute": str(row.get("attribute") or "")[:60], "base": float(row.get("base") or 0)}) for row in (source_system.get("skills") if isinstance(source_system.get("skills"), list) else [])[:100] if isinstance(row, (str, dict))],
+                "resources": [{"id": str(row.get("id") or "")[:60], "name": str(row.get("name") or row.get("id") or "")[:80], "min": float(row.get("min") or 0), "max": float(row.get("max") or 0)} for row in (source_system.get("resources") if isinstance(source_system.get("resources"), list) else [])[:40] if isinstance(row, dict)],
+                "slots": [str(value)[:60] for value in (source_system.get("slots") if isinstance(source_system.get("slots"), list) else [])[:30]],
+                "rulesText": str(source_system.get("rulesText") or "")[:4000],
+            },
+        }
         return {
             "experienceType": experience_type,
             "experienceName": experience_name,
@@ -509,6 +628,9 @@ class MultiplayerRuntime:
             "sessionName": str(value.get("sessionName") or "Shared Timeline")[:120],
             "location": str(value.get("location") or "Unknown")[:160],
             "turn": max(0, min(int(value.get("turn") or 0), 1_000_000_000)),
+            "hud": hud,
+            "campaignMeta": campaign_meta,
+            "gameState": MultiplayerRuntime._clean_game_state(value.get("gameState")),
             "history": history,
         }
 
@@ -587,12 +709,15 @@ class MultiplayerRuntime:
                 "players": {host_id: {"id": host_id, "name": host_name,
                                         "token": host_token, "joinedAt": now,
                                         "lastSeen": now, "isHost": True,
-                                        "persona": self._clean_persona(body.get("persona"))}},
+                                        "persona": self._clean_persona(body.get("persona")),
+                                        "sheet": self._clean_sheet(body.get("sheet"))}},
                 "round": {"number": 1, "status": "collecting", "submissions": {},
                            "activePlayerId": host_id},
                 "proposal": None,
                 "snapshot": self._clean_snapshot(body.get("snapshot")),
             }
+            self.rooms[room_code]["snapshot"].setdefault("gameState", {}).setdefault("characters", {})[host_id] = \
+                self.rooms[room_code]["players"][host_id]["sheet"]
             lan_url = f"http://{self._lan_ip()}:{self.port}/"
             invite_url = (f"{lan_url}?multiplayer={room_code}"
                           f"#invite={urllib.parse.quote(invite_token)}")
@@ -638,8 +763,11 @@ class MultiplayerRuntime:
             room["players"][player_id] = {
                 "id": player_id, "name": self._clean_name(body.get("displayName")),
                 "token": player_token, "joinedAt": now, "lastSeen": now, "isHost": False,
-                "persona": self._clean_persona(body.get("persona"))
+                "persona": self._clean_persona(body.get("persona")),
+                "sheet": self._clean_sheet(body.get("sheet"))
             }
+            room.setdefault("snapshot", {}).setdefault("gameState", {}).setdefault("characters", {})[player_id] = \
+                room["players"][player_id]["sheet"]
             room["updatedAt"] = now
             room["revision"] += 1
             return {"ok": True, "roomCode": room["code"], "playerId": player_id,
@@ -673,10 +801,11 @@ class MultiplayerRuntime:
                     "worldName": room["worldName"],
                     "sessionName": room["sessionName"], "revision": room["revision"],
                     "isHost": viewer["isHost"], "hostPlayerId": room["hostPlayerId"],
-                    "permissions": (["submit", "vote", "commit", "resolve", "close"]
-                                    if viewer["isHost"] else ["submit", "vote"]),
+                    "permissions": (["submit", "vote", "commit", "resolve", "close", "sheet", "roll", "gm"]
+                                    if viewer["isHost"] else ["submit", "vote", "sheet", "roll"]),
                     "players": [{"id": p["id"], "name": p["name"],
                                  "persona": p.get("persona", {}), "isHost": p["isHost"],
+                                 "sheet": p.get("sheet", {}),
                                  "online": self._now() - p["lastSeen"] < 45000} for p in players],
                     "round": {"number": round_state["number"], "status": round_state["status"],
                               "activePlayerId": round_state["activePlayerId"],
@@ -701,6 +830,119 @@ class MultiplayerRuntime:
             room["revision"] += 1
             return {"ok": True, "roundStatus": round_state["status"],
                     "activePlayerId": round_state["activePlayerId"]}
+
+    def update_sheet(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body)
+            actor = self._player(room, body)
+            target_id = str(body.get("targetPlayerId") or actor["id"])
+            if target_id != actor["id"] and not actor["isHost"]:
+                raise PermissionError("Only the host can edit another party member's sheet.")
+            target = room["players"].get(target_id)
+            if not target:
+                raise ValueError("That party member is no longer in the room.")
+            target["sheet"] = self._clean_sheet(body.get("sheet"))
+            snapshot = room.setdefault("snapshot", {})
+            game = snapshot.setdefault("gameState", {})
+            game.setdefault("characters", {})[target_id] = target["sheet"]
+            game["revision"] = max(1, int(game.get("revision") or 0) + 1)
+            room["updatedAt"] = self._now(); room["revision"] += 1
+            return {"ok": True, "playerId": target_id, "revision": room["revision"]}
+
+    @staticmethod
+    def _roll_dice(expression: str) -> tuple[str, list[int], int, int]:
+        match = re.fullmatch(r"\s*(\d{0,2})d(\d{1,4})(?:\s*([+-])\s*(\d+))?\s*", expression.lower())
+        if not match:
+            raise ValueError("Use dice notation such as d20, 2d6+3, or 4d10-1.")
+        count = max(1, min(int(match.group(1) or 1), 40)); sides = max(2, min(int(match.group(2)), 1000))
+        modifier = (-1 if match.group(3) == "-" else 1) * int(match.group(4) or 0)
+        dice = [1 + secrets.randbelow(sides) for _ in range(count)]
+        normalized = f"{count}d{sides}{'+' if modifier > 0 else ''}{modifier if modifier else ''}"
+        return normalized, dice, modifier, sum(dice) + modifier
+
+    def roll(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body); player = self._player(room, body)
+            snapshot = room.setdefault("snapshot", {}); game = snapshot.setdefault("gameState", {})
+            rules = game.get("rules") if isinstance(game.get("rules"), dict) else {}
+            sheet = player.get("sheet") if isinstance(player.get("sheet"), dict) else {}
+            attribute = str(body.get("attribute") or ""); skill = str(body.get("skill") or "")
+            bonus = float(body.get("bonus") or 0)
+            bonus += float((sheet.get("attributes") or {}).get(attribute) or 0)
+            bonus += float((sheet.get("skills") or {}).get(skill) or 0)
+            active = list(sheet.get("effects") or []) + [entry for entry in (sheet.get("conditions") or []) if isinstance(entry, dict)]
+            for entry in active:
+                modifiers = entry.get("modifiers") if isinstance(entry.get("modifiers"), dict) else {}
+                bonus += float(modifiers.get("checks") or 0)
+                bonus += float((modifiers.get("attributes") or {}).get(attribute) or 0)
+                bonus += float((modifiers.get("skills") or {}).get(skill) or 0)
+            inventory = sheet.get("inventory") if isinstance(sheet.get("inventory"), list) else []
+            for item_id in (sheet.get("equipment") or {}).values():
+                item = next((entry for entry in inventory if isinstance(entry, dict) and entry.get("id") == item_id), None)
+                if not item:
+                    continue
+                modifiers = item.get("modifiers") if isinstance(item.get("modifiers"), dict) else {}
+                bonus += float(modifiers.get("checks") or 0)
+                bonus += float((modifiers.get("attributes") or {}).get(attribute) or 0)
+                bonus += float((modifiers.get("skills") or {}).get(skill) or 0)
+            requested_dice = body.get("dice")
+            dice_expression = str(requested_dice or rules.get("die") or "d20")
+            if rules.get("mode") == "success-pool" and not requested_dice:
+                die_match = re.fullmatch(r"\s*(?:1)?d(\d{1,4})\s*", str(rules.get("die") or "d6").lower())
+                sides = max(2, min(int(die_match.group(1)) if die_match else 6, 1000))
+                dice_expression = f"{max(1, min(int(bonus), 40))}d{sides}"
+            expression, dice, modifier, total = self._roll_dice(dice_expression)
+            explosions = 0
+            parsed = re.fullmatch(r"(\d+)d(\d+)(?:[+-]\d+)?", expression)
+            if rules.get("explode") and parsed and int(parsed.group(1)) == 1:
+                sides = int(parsed.group(2)); last = dice[-1]
+                while last == sides and explosions < 10:
+                    last = 1 + secrets.randbelow(sides); dice.append(last); total += last; explosions += 1
+            total += bonus; difficulty = float(body.get("difficulty") or rules.get("target") or 10)
+            result = {"id": "roll_" + secrets.token_hex(8), "at": self._now(), "expression": expression,
+                      "dice": dice, "modifier": modifier, "bonus": bonus, "total": total,
+                      "difficulty": difficulty,
+                      "label": str(body.get("label") or "Check")[:120], "playerId": player["id"],
+                      "attribute": attribute[:80], "skill": skill[:80], "visibility": "public"}
+            if explosions:
+                result["explosions"] = explosions
+            if rules.get("mode") == "success-pool":
+                result["poolSize"] = len(dice); result["total"] = sum(dice)
+                result["successes"] = len([value for value in dice if value >= difficulty])
+                result["success"] = result["successes"] >= max(1, int(body.get("required") or 1))
+            elif rules.get("mode") == "bands":
+                result["outcome"] = "strong" if total >= 10 else "mixed" if total >= 7 else "complication"
+            else:
+                result["success"] = total >= difficulty
+                if parsed and int(parsed.group(1)) == 1 and int(parsed.group(2)) == 20:
+                    result["critical"] = dice[0] == 20; result["fumble"] = dice[0] == 1
+                    if result["critical"]: result["success"] = True
+                    if result["fumble"]: result["success"] = False
+            game.setdefault("rolls", []).append(result); game["rolls"] = game["rolls"][-200:]
+            if rules.get("mode") == "success-pool":
+                roll_text = f"{player['name']} — {result['label']}: {result['poolSize']} dice {dice} · {result['successes']} successes · {'SUCCESS' if result.get('success') else 'FAILURE'}"
+            else:
+                roll_text = f"{player['name']} — {result['label']}: {expression} {dice} + {bonus:g} = {total:g} · {result.get('outcome') or ('SUCCESS' if result.get('success') else 'FAILURE')}"
+            snapshot.setdefault("history", []).append({"role": "system", "name": "DICE", "rollId": result["id"], "text": roll_text})
+            snapshot["history"] = snapshot["history"][-120:]
+            room["updatedAt"] = self._now(); room["revision"] += 1
+            return {"ok": True, "roll": result, "revision": room["revision"]}
+
+    def gm_update(self, body: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            room = self._room(body); player = self._player(room, body)
+            if not player["isHost"]:
+                raise PermissionError("Only the host can publish authoritative campaign state.")
+            snapshot = body.get("snapshot")
+            if not isinstance(snapshot, dict):
+                raise ValueError("A complete campaign snapshot is required.")
+            room["snapshot"] = self._clean_snapshot(snapshot)
+            game_characters = room["snapshot"].get("gameState", {}).get("characters", {})
+            for player_id, sheet in game_characters.items():
+                if player_id in room["players"]:
+                    room["players"][player_id]["sheet"] = self._clean_sheet(sheet)
+            room["updatedAt"] = self._now(); room["revision"] += 1
+            return {"ok": True, "revision": room["revision"]}
 
     def commit(self, body: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
@@ -1536,6 +1778,8 @@ class MultiplayerHandler(BaseHTTPRequestHandler):
                 "/multiplayer/submit": multiplayer_runtime.submit,
                 "/multiplayer/propose": multiplayer_runtime.propose,
                 "/multiplayer/vote": multiplayer_runtime.vote,
+                "/multiplayer/sheet": multiplayer_runtime.update_sheet,
+                "/multiplayer/roll": multiplayer_runtime.roll,
             }
             if parsed.path in routes:
                 return self.respond(200, routes[parsed.path](body))
@@ -1718,9 +1962,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return self.respond(200, multiplayer_runtime.create_room(self.read_json()))
             if parsed_path in {"/multiplayer/join", "/multiplayer/state", "/multiplayer/submit", "/multiplayer/propose",
                                "/multiplayer/vote", "/multiplayer/commit", "/multiplayer/resolve",
-                               "/multiplayer/close"}:
+                               "/multiplayer/close", "/multiplayer/sheet", "/multiplayer/roll", "/multiplayer/gm"}:
                 body = self.read_json()
-                host_only = parsed_path in {"/multiplayer/commit", "/multiplayer/resolve", "/multiplayer/close"}
+                host_only = parsed_path in {"/multiplayer/commit", "/multiplayer/resolve", "/multiplayer/close", "/multiplayer/gm"}
                 if host_only and not self.client_is_loopback():
                     return self.respond(403, {"error": "Host control is loopback-only."})
                 if parsed_path == "/multiplayer/join":
@@ -1733,6 +1977,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     result = multiplayer_runtime.propose(body)
                 elif parsed_path == "/multiplayer/vote":
                     result = multiplayer_runtime.vote(body)
+                elif parsed_path == "/multiplayer/sheet":
+                    result = multiplayer_runtime.update_sheet(body)
+                elif parsed_path == "/multiplayer/roll":
+                    result = multiplayer_runtime.roll(body)
+                elif parsed_path == "/multiplayer/gm":
+                    result = multiplayer_runtime.gm_update(body)
                 elif parsed_path == "/multiplayer/commit":
                     result = multiplayer_runtime.commit(body)
                 elif parsed_path == "/multiplayer/resolve":
