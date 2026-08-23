@@ -128,6 +128,7 @@ STATIC_FILES = {
     "/help-system.js": ("help-system.js", "text/javascript"),
     "/multiplayer.js": ("multiplayer.js", "text/javascript"),
     "/multiplayer-engine.js": ("multiplayer-engine.js", "text/javascript"),
+    "/rpg-mechanics.js": ("rpg-mechanics.js", "text/javascript"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/worlds/policy-panic.horde_world": ("Policy Panic at Bramble and Pike.horde_world", "application/json"),
     "/Start%20Horde%20Studio.command": ("Start Horde Studio.command", "application/octet-stream"),

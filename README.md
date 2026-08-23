@@ -27,6 +27,23 @@ Horde Studio is **local-first**: the application runs on your computer and store
 
 ## See it in action
 
+### Real in-app screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/marketing/v16.6.0/reddit-pack/screenshots/08-living-world-gameplay.png" alt="Horde Studio living World gameplay with persistent location, time, character stats and outfit state" /></td>
+    <td width="50%"><img src="assets/marketing/v16.6.0/reddit-pack/screenshots/06-virtual-human-social.png" alt="Horde Studio Virtual Human conversation with an optional persistent social feed" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Living Worlds</strong><br />Location, time, outfits, meters, mechanics and consequences stay attached to play.</td>
+    <td align="center"><strong>Virtual Humans</strong><br />Texting timelines connect to schedules, memory, delayed replies and an optional public life.</td>
+  </tr>
+</table>
+
+![Horde Studio dedicated multiplayer campaign hub](assets/marketing/v16.6.0/reddit-pack/screenshots/04-multiplayer-hub.png)
+
+Dedicated Multiplayer keeps party identities, campaign state and the host's model connection separate from single-player saves.
+
 ### Virtual humans who have somewhere else to be
 
 ![A Horde Studio Virtual Human conversation with real-time status, autonomous messages, timelines, and an in-chat generated photo](assets/readme/virtual-human-chat.png)

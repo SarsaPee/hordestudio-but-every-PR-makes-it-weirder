@@ -1,61 +1,57 @@
-# Reddit release pack — Horde Studio 16.6
+# Horde Studio 16.6 — Reddit post
 
-## Suggested title
+## Title
 
-**Horde Studio 16.6 — I added a real optional RPG engine to persistent Worlds and host-powered Multiplayer**
+**I built the AI roleplay frontend I wanted when character chat stopped being enough — Horde Studio v16.6**
 
-## Main post
+## Post
 
-Hey everyone — Horde Studio 16.6 is out.
+I like character-card chat. What kept breaking the illusion for me was everything outside the chat window.
 
-Horde Studio started as a local-first frontend for character chat, but the goal has grown into something much bigger: persistent AI stories where characters remember, worlds evolve, and a group can share one canonical campaign without everyone needing an API key.
+The town did not really exist. The NPC who left the room could appear again for no reason. Time, inventory, clothing, relationships and consequences quietly reset whenever the model lost the thread. A character could claim to be asleep, then answer instantly at 2 a.m. like nothing happened.
 
-Version 16.6 is the RPG systems release.
+So I built **Horde Studio**: a free, open-source, local-first frontend for character chat, persistent AI worlds, simulated people and shared roleplay campaigns.
 
-Worlds and Multiplayer now share a proper optional mechanics engine. You can run pure narrative roleplay with everything switched off, use Light mode for character sheets, gear and checks, or enable Full mode for progression, requirements, resources, buffs, debuffs and lasting status effects.
+If SillyTavern is the flexible character-chat workbench, Horde Studio is my attempt to build the simulation layer around it. It imports SillyTavern character cards and presets, but it is aimed at people who want the **person and the world to keep existing after the last message**.
 
-Items are no longer just names in a text list. Weapons, armor, clothing, tools, consumables, cyberware and custom items can have equipment slots, damage, armor, charges, durability, requirements and stat modifiers. Equipped gear changes the effective values shown on the character sheet and contributes to validated dice checks.
+### Living Worlds
 
-The system is genre-agnostic. A creator can use it for fantasy, cyberpunk, horror, superheroes, slice-of-life, mystery or a custom tabletop ruleset. Horde Studio does not force classes, levels, fantasy terminology or even dice on you.
+A World is not just a system prompt and background. It can contain regions, buildings, rooms, routes, NPCs, schedules, factions, quests, inventories, outfits, time, weather and persistent state. NPCs can pursue agendas off-screen. The engine tracks who moved, what changed and what should still be true on the next turn.
 
-For Multiplayer, the host owns the canonical save and makes the single AI call for each committed round. Guests bring their own personas, not API credentials. Rules changes synchronize with the party, and the campaign save stays separate from single-player.
+Play a medieval sandbox, 2005 suburban life sim, workplace comedy, cyberpunk campaign, horror mystery or your own setting. Different starting lives can give you a different home, status, equipment, social circle and opening situation in the same world.
 
-The important part: all of this is optional. Switching mechanics off pauses their effects without deleting the party's builds or inventory, so a campaign can move between freeform scenes and mechanically resolved play without being rebuilt.
+### Virtual Humans
 
-Horde Studio remains free, open source and local-first. You bring your own cloud provider or local OpenAI-compatible model.
+These are built for texting simulation rather than instant-response roleplay. They have schedules, moods, memories, evolving relationships and their own clock. They may reply late, double-text, leave you on read, remember that you disappeared for days, refuse a photo, send a voice note, or post to an optional social feed with galleries and clips.
 
-### New in 16.6
+Jane Harlow and Ashlyn Reynolds are included as complete editable examples.
 
-- Shared RPG engine across Worlds and Multiplayer
-- Off, Light and Full mechanics modes
-- Rich weapons, armor, clothing, consumables and custom items
-- Equipment slots and gear-based stat/check bonuses
-- Attributes, skills, defenses, resources and progression
-- Buffs, debuffs, requirements and lasting status effects
-- Live World mechanics toggle with non-destructive state preservation
-- Host-authoritative LAN and Internet Multiplayer campaigns
-- TinyBrain 2 structured state assistance
-- Legacy inventory migration and expanded release audits
-- Portable package now verifies both shared mechanics engines are included
+### Optional RPG mechanics
 
-GitHub: https://github.com/ddkhan24/hordestudio
+Stay completely freeform, or enable Light/Full mechanics with world-specific attributes, skills, checks, equipment, damage, armor, resources, progression, buffs, debuffs and status effects. It is genre-agnostic rather than hardcoded for fantasy.
+
+### Host-powered multiplayer
+
+Friends join through LAN or an Internet room. The host owns the canonical campaign save and makes the model call, so guests do not need API keys. Every player keeps a separate persona, sheet, inventory and turn. Multiplayer campaigns stay separate from single-player saves.
+
+### Bring your own stack
+
+Use OpenRouter for text and another provider for images or voice. Connect local OpenAI-compatible servers, ComfyUI and custom endpoints. Horde Studio runs locally in the browser and stores primary saves on your device.
+
+### Is it a SillyTavern replacement?
+
+Not for every workflow. SillyTavern is mature, deeply configurable and has a huge ecosystem. Horde Studio is for the itch where a chat interface is no longer enough: persistent simulation, autonomous people, structured worlds, optional game mechanics and a shared table.
+
+It is active development. Multiplayer is new, and I would rather hear where it falls short than pretend it is finished.
+
+### Install
+
+Download the portable ZIP, extract the complete folder, run the launcher for your OS, then connect a provider or local model. Do not copy or open `index.html` by itself.
+
+Release: https://github.com/ddkhan24/hordestudio/releases/tag/v16.6.0
+
+Source: https://github.com/ddkhan24/hordestudio
 
 Discord: https://discord.gg/9eyjcMbsST
 
-I would especially love feedback from people who actually run tabletop campaigns: what system or genre would you try first, and what is still missing before your group could run a full campaign in it?
-
-## Short Discord version
-
-**Horde Studio 16.6 is live — Any World. Any Party. Your Rules.**
-
-Worlds and Multiplayer now share a real optional RPG engine: rich equipment, gear bonuses, attributes, skills, defenses, resources, dice checks, progression, buffs and debuffs. Run it Off for pure narrative, Light for checks and gear, or Full for complete mechanics. Host-powered multiplayer still uses one canonical save and one host API connection.
-
-Download: https://github.com/ddkhan24/hordestudio/releases/tag/v16.6.0
-
-## Recommended image order
-
-1. `horde-studio-v16.6.0-launch-poster.png` — lead image
-2. `horde-studio-v16.6.0-rpg-systems.png` — mechanics explainer
-3. `horde-studio-v16.6.0-reddit-portrait.png` — alternate portrait/social crop
-4. `cross-genre-party-key-art.png` — clean artwork without copy
-5. `rpg-systems-key-art.png` — clean mechanics artwork without copy
+All carousel images are genuine in-app screens. **What would Horde Studio need before you would move a long-running roleplay or tabletop campaign into it?**
