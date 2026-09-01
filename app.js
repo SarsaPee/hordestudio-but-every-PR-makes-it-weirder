@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '16.6.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-08-23T18:00:00+05:00';
+const HORDE_STUDIO_VERSION = '16.7.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-09-01T13:22:39+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -87,6 +87,13 @@ const HordeVectorMemory = {
     maxCacheEntries: 500,
     saveTimer: null,
 
+    namespace() {
+        const settings = (typeof state !== 'undefined' && state.globalSettings) || {};
+        const base = String(settings.embeddingBaseUrl || settings.localBaseUrl || 'default').replace(/\/$/, '');
+        const model = String(settings.embeddingModel || 'openai/text-embedding-3-small').trim();
+        return `${base}|${model}`;
+    },
+
     async init() {
         try {
             const cached = await HordeDB.get('embedding_cache');
@@ -128,7 +135,9 @@ const HordeVectorMemory = {
 
     async getCachedEmbedding(text) {
         if (!text) return null;
-        const key = this.hashText(text);
+        // Cache entries are provider/model scoped. Text-only keys silently mixed
+        // incompatible vector spaces after an embedding model was changed.
+        const key = `${this.namespace()}|${this.hashText(text)}`;
         if (this.cache.has(key)) {
             return this.cache.get(key);
         }
@@ -169,56 +178,99 @@ const HordeVectorMemory = {
 
     async search(memoryList, queryText, limit = 4, threshold = 0.35) {
         if (!memoryList || memoryList.length === 0) return [];
-        
-        // 1. Attempt Vector Search
+
+        const words = memorySearchTerms(queryText);
+        let queryVec = null;
         if (!this.isFallbackActive) {
-            try {
-                const queryVec = await this.getCachedEmbedding(queryText);
-                if (queryVec) {
-                    // Filter blocks that have valid embeddings and compute similarities
-                    const scored = memoryList
-                        .filter(m => m && Array.isArray(m.embedding) && m.embedding.length > 0)
-                        .map(m => {
-                            const similarity = cosineSimilarity(queryVec, m.embedding);
-                            return { block: m, score: similarity, type: 'vector' };
-                        })
-                        .filter(res => res.score >= threshold);
-                    
-                    if (scored.length > 0) {
-                        scored.sort((a, b) => b.score - a.score);
-                        console.log(`HordeVectorMemory: Vector search retrieved ${scored.length} results. Top score: ${scored[0].score.toFixed(3)}`);
-                        return scored.slice(0, limit).map(res => res.block);
-                    }
-                }
-            } catch (err) {
-                console.warn("Vector search failed, falling back to keyword search:", err);
+            try { queryVec = await this.getCachedEmbedding(queryText); }
+            catch (err) {
+                console.warn("Vector search failed, falling back to hybrid keyword search:", err);
                 this.triggerFallback(true);
             }
         }
 
-        // 2. Fallback: Keyword matching search
-        console.log("HordeVectorMemory: Performing keyword-based fallback search.");
-        const words = queryText.toLowerCase()
-            .replace(/[^\w\s]/g, ' ')
-            .split(/\s+/)
-            .filter(w => w.length > 4); // Only match substantial words
-        
-        if (words.length === 0) return [];
+        const namespace = this.namespace();
+        // Lazily rebuild only relevant stale records after a model/provider
+        // change. This avoids a surprise bulk embedding bill while ensuring
+        // frequently recalled memories migrate themselves back to semantic search.
+        if (queryVec) {
+            const stale = memoryList.filter(block => block?.text
+                && (!Array.isArray(block.embedding) || block.embeddingNamespace && block.embeddingNamespace !== namespace))
+                .map(block => ({ block, lexical: memoryLexicalScore(block.text, words) }))
+                .filter(item => item.lexical > 0 || item.block.pinned)
+                .sort((a, b) => b.lexical - a.lexical)
+                .slice(0, Math.max(2, Math.min(12, limit * 2)));
+            for (const item of stale) {
+                const embedding = await this.getCachedEmbedding(item.block.text);
+                if (!embedding) break;
+                item.block.embedding = embedding;
+                item.block.embeddingNamespace = namespace;
+            }
+        }
+        const now = Date.now();
+        const scored = memoryList.map((block, index) => {
+            if (!block) return null;
+            const text = String(block.text || block.summary || '').trim();
+            if (!text || block.status === 'superseded') return null;
+            const lexical = memoryLexicalScore(text, words);
+            const vectorAllowed = Array.isArray(queryVec)
+                && Array.isArray(block.embedding)
+                && (!block.embeddingNamespace || block.embeddingNamespace === namespace);
+            const semantic = vectorAllowed ? cosineSimilarity(queryVec, block.embedding) : 0;
+            const importance = Math.max(0, Math.min(1, Number(block.importance) || 0.5));
+            const ageDays = Math.max(0, (now - (Number(block.updatedAt || block.createdAt) || now)) / 86400000);
+            const recency = 1 / (1 + ageDays / 30);
+            const durableBoost = block.pinned ? 0.35
+                : ['state', 'thread', 'relationship'].includes(block.type) && block.status !== 'resolved' ? 0.12 : 0;
+            const vectorMatch = semantic >= threshold;
+            const keywordMatch = lexical > 0;
+            const alwaysRelevant = block.status === 'active' && ['state', 'thread'].includes(block.type)
+                && importance >= 0.65;
+            if (!vectorMatch && !keywordMatch && !block.pinned && !alwaysRelevant) return null;
+            return {
+                block,
+                index,
+                score: semantic * 0.68 + lexical * 0.20 + importance * 0.07 + recency * 0.05 + durableBoost,
+                semantic,
+                lexical
+            };
+        }).filter(Boolean);
 
-        const scored = memoryList.map(m => {
-            if (!m || !m.text) return { block: m, score: 0 };
-            const mTextLower = m.text.toLowerCase();
-            let matches = 0;
-            words.forEach(w => {
-                if (mTextLower.includes(w)) matches++;
-            });
-            return { block: m, score: matches, type: 'keyword' };
-        }).filter(res => res.score > 0);
-
-        scored.sort((a, b) => b.score - a.score);
-        return scored.slice(0, limit).map(res => res.block);
+        scored.sort((a, b) => b.score - a.score || b.semantic - a.semantic || b.index - a.index);
+        const selected = [];
+        const seen = new Set();
+        for (const result of scored) {
+            const key = memoryDedupeKey(result.block);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            selected.push(result.block);
+            if (selected.length >= limit) break;
+        }
+        if (scored.length) {
+            console.log(`HordeVectorMemory: Hybrid recall selected ${selected.length} of ${scored.length} candidates.`);
+        }
+        return selected;
     }
 };
+
+function memorySearchTerms(value) {
+    return [...new Set(String(value || '').toLocaleLowerCase()
+        .match(/[\p{L}\p{N}]{3,}/gu) || [])]
+        .filter(word => !['the', 'and', 'that', 'this', 'with', 'from', 'have', 'your', 'what', 'when', 'where'].includes(word))
+        .slice(0, 80);
+}
+
+function memoryLexicalScore(text, terms) {
+    if (!terms.length) return 0;
+    const lower = String(text || '').toLocaleLowerCase();
+    const matches = terms.reduce((count, term) => count + (lower.includes(term) ? 1 : 0), 0);
+    return Math.min(1, matches / Math.max(2, Math.min(terms.length, 8)));
+}
+
+function memoryDedupeKey(memory) {
+    if (memory?.key) return `${memory.type || 'memory'}:${String(memory.key).toLocaleLowerCase()}`;
+    return String(memory?.text || memory?.summary || '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().slice(0, 240);
+}
 
 let generationController = null;
 let worldTurnInProgress = false; // re-entry guard for executeWorldTurn
@@ -1009,7 +1061,7 @@ let state = {
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
         memoryThreshold: 0.35,
-        memoryTopK: 4,
+        memoryTopK: 8,
         localGenerationTimeoutSeconds: 300,
         embeddingBaseUrl: '',
         embeddingApiKey: '',
@@ -1060,7 +1112,8 @@ let state = {
     activeRoomId: null,
     characters: [],
     activeCharId: null,
-    chats: {}, 
+    chats: {},
+    chatContinuities: {}, // continuityId -> durable structured RP memory
     activeSessionId: {}, // sessionId -> activeSessionId
     editingChar: null,
     editingRoom: null,
@@ -1532,8 +1585,17 @@ function validateBackupData(value) {
         requireSafeId(item.id, `Backup preset ${index + 1} id`, { optional: true });
         validatePresetData(item.data, `Backup preset ${index + 1}`);
     });
-    ['chats', 'activeSessionId', 'globalSettings', 'theme', 'worldInstances'].forEach(key => {
+    ['chats', 'chatContinuities', 'activeSessionId', 'globalSettings', 'theme', 'worldInstances'].forEach(key => {
         if (value[key] !== undefined) requirePlainObject(value[key], `Backup ${key}`);
+    });
+    Object.entries(value.chatContinuities || {}).forEach(([continuityId, continuity]) => {
+        requirePlainObject(continuity, `Chat continuity ${continuityId}`);
+        requireArray(continuity.records, `Chat continuity ${continuityId} records`, { optional: true, max: 50000 });
+        (continuity.records || []).forEach((record, index) => {
+            requirePlainObject(record, `Chat continuity ${continuityId} memory ${index + 1}`);
+            requireString(record.text, `Chat continuity ${continuityId} memory ${index + 1} text`);
+            requireArray(record.embedding, `Chat continuity ${continuityId} memory ${index + 1} embedding`, { optional: true, max: 10000 });
+        });
     });
     Object.entries(value.chats || {}).forEach(([ownerId, sessions]) => {
         requireArray(sessions, `Chat sessions for ${ownerId}`, { max: 5000 });
@@ -1619,7 +1681,7 @@ function repairLoadedState() {
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
         memoryThreshold: 0.35,
-        memoryTopK: 4,
+        memoryTopK: 8,
         localGenerationTimeoutSeconds: 300,
         embeddingBaseUrl: '',
         embeddingApiKey: '',
@@ -1655,7 +1717,7 @@ function repairLoadedState() {
     state.globalSettings.editFontColor = cssColor(state.globalSettings.editFontColor, '#ffffff');
     state.globalSettings.editBgColor = cssColor(state.globalSettings.editBgColor, '#2b2b36');
     state.globalSettings.memoryThreshold = Math.max(0, Math.min(1, Number(state.globalSettings.memoryThreshold) || 0.35));
-    state.globalSettings.memoryTopK = Math.max(1, Math.min(100, Math.round(Number(state.globalSettings.memoryTopK) || 4)));
+    state.globalSettings.memoryTopK = Math.max(1, Math.min(100, Math.round(Number(state.globalSettings.memoryTopK) || 8)));
     const timeoutSeconds = Number(state.globalSettings.localGenerationTimeoutSeconds);
     state.globalSettings.localGenerationTimeoutSeconds = Number.isFinite(timeoutSeconds)
         ? Math.max(0, Math.min(3600, Math.round(timeoutSeconds))) : 300;
@@ -1693,6 +1755,7 @@ function repairLoadedState() {
         return [key, /^#[0-9A-Fa-f]{6}$/.test(loadedTheme[key] || '') ? loadedTheme[key] : fallback];
     }));
     state.chats = isPlainObject(state.chats) ? state.chats : {};
+    state.chatContinuities = isPlainObject(state.chatContinuities) ? state.chatContinuities : {};
     state.activeSessionId = isPlainObject(state.activeSessionId) ? state.activeSessionId : {};
     state.worldInstances = isPlainObject(state.worldInstances) ? state.worldInstances : {};
     state.characters = Array.isArray(state.characters) ? state.characters.filter(c => {
@@ -1701,7 +1764,15 @@ function repairLoadedState() {
     state.characters.forEach(character => {
         character.tags = character.tags || [];
         character.lorebook = character.lorebook || [];
-        character.memory = (character.memory || []).map(memory => typeof memory === 'string' ? { text: memory, embedding: null } : memory);
+        character.memory = (character.memory || []).map((memory, index) => {
+            const raw = typeof memory === 'string' ? { text: memory } : memory;
+            if (!raw?.id || !raw?.createdAt) chatMemoryMigrationDirty = true;
+            return normalizeChatMemoryRecord(raw, {
+                id: `character_memory_${character.id}_${index}_${HordeVectorMemory.hashText(raw?.text || '')}`,
+                createdAt: Number(character.createdAt) || Date.now(),
+                type: 'biography', scope: 'character', characterIds: [character.id]
+            });
+        });
         character.chatHud = normalizeChatHudConfig(character.chatHud);
     });
     state.personas = Array.isArray(state.personas)
@@ -1714,6 +1785,7 @@ function repairLoadedState() {
         room.characterIds = room.characterIds || [];
         room.lorebook = room.lorebook || [];
     });
+    repairChatMemoryState();
     // Never silently discard authored worlds. Older releases filtered any
     // world that failed a newly tightened validator, then a later unrelated
     // save persisted the shortened array. Preserve the record, repair only the
@@ -1864,7 +1936,7 @@ async function loadState() {
         }
         state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
-        if (state.globalSettings.memoryTopK === undefined) state.globalSettings.memoryTopK = 4;
+        if (state.globalSettings.memoryTopK === undefined) state.globalSettings.memoryTopK = 8;
         // Remember-key opt-in: default ON for users who already had a stored key
         // (preserves their existing behavior), OFF for everyone else.
         if (state.globalSettings.rememberApiKey === undefined) state.globalSettings.rememberApiKey = !!legacyStoredApiKey;
@@ -1888,6 +1960,7 @@ async function loadState() {
         if (state.globalSettings.embeddingModel === undefined) state.globalSettings.embeddingModel = '';
         state.characters = await HordeDB.get('characters') || [];
         state.chats = await HordeDB.get('chats') || {};
+        state.chatContinuities = await HordeDB.get('chatContinuities') || {};
         state.activeSessionId = await HordeDB.get('activeSessionId') || {};
         state.personas = await HordeDB.get('personas') || [];
         state.activePersonaId = await HordeDB.get('activePersonaId') || null;
@@ -1959,6 +2032,10 @@ async function loadState() {
 
     // Apply the same shape checks after both IndexedDB loading and legacy migration.
     repairLoadedState();
+    if (chatMemoryMigrationDirty) {
+        await saveState();
+        chatMemoryMigrationDirty = false;
+    }
     
     // Duplicate IDs from the old "New Virtual Human" template caused two
     // cards to share timelines and made deleting either card remove both.
@@ -2410,6 +2487,7 @@ async function persistStateSnapshot() {
             globalSettings: globalSettingsForDevicePersistence(state.globalSettings),
             characters: state.characters,
             chats: state.chats,
+            chatContinuities: state.chatContinuities,
             activeSessionId: state.activeSessionId,
             personas: state.personas,
             activePersonaId: state.activePersonaId,
@@ -5884,7 +5962,10 @@ async function addMemoryBlock() {
             throw new Error('Failed to generate vector embedding.');
         }
         if (state.editingChar && state.editingChar.id === targetId) {
-            state.editingChar.memory.push({ text, embedding });
+            state.editingChar.memory.push(normalizeChatMemoryRecord({
+                text, embedding, embeddingNamespace: embedding ? HordeVectorMemory.namespace() : '',
+                type: 'biography', scope: 'character', characterIds: [targetId], importance: 0.7
+            }));
             document.getElementById('memory-block-text').value = '';
             await autoSaveStudioChanges();
             renderMemoryList();
@@ -5942,6 +6023,8 @@ window.toggleEditMemory = async (idx, btn) => {
         state.editingChar.memory[idx].text = newText;
         try {
             state.editingChar.memory[idx].embedding = await getEmbedding(newText);
+            state.editingChar.memory[idx].embeddingNamespace = HordeVectorMemory.namespace();
+            state.editingChar.memory[idx].updatedAt = Date.now();
         } catch (e) {
             console.warn('Re-embed failed, keeping text only:', e);
             delete state.editingChar.memory[idx].embedding;
@@ -6058,6 +6141,282 @@ async function saveStudioCharacter() {
     return true;
 }
 
+// --- Persistent RP Memory -------------------------------------------------
+// Chat transcripts remain the immutable source of truth. A continuity is a
+// derived, portable memory layer that may be shared by several sessions when
+// the player explicitly chooses "Continue continuity".
+const CHAT_MEMORY_VERSION = 2;
+const CHAT_MEMORY_TYPES = new Set(['episode', 'fact', 'relationship', 'state', 'thread', 'biography', 'manual_summary']);
+const CHAT_MEMORY_STATUSES = new Set(['active', 'resolved', 'superseded', 'disputed']);
+let chatMemoryMigrationDirty = false;
+
+function newChatMemoryId(prefix = 'memory') {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    return uuid ? `${prefix}_${uuid}` : `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeMemoryStringList(value, max = 100) {
+    return [...new Set((Array.isArray(value) ? value : [])
+        .map(item => String(item || '').trim()).filter(Boolean))].slice(0, max);
+}
+
+function normalizeChatMemoryRecord(raw, defaults = {}) {
+    const source = isPlainObject(raw) ? raw : { text: String(raw || '') };
+    const text = String(source.text || source.summary || defaults.text || '').trim().slice(0, 12000);
+    const type = CHAT_MEMORY_TYPES.has(source.type) ? source.type
+        : CHAT_MEMORY_TYPES.has(defaults.type) ? defaults.type : 'episode';
+    const status = CHAT_MEMORY_STATUSES.has(source.status) ? source.status : 'active';
+    const createdAt = Math.max(0, Number(source.createdAt) || Number(defaults.createdAt) || Date.now());
+    const record = {
+        id: String(source.id || defaults.id || newChatMemoryId('memory')).slice(0, 180),
+        type,
+        key: String(source.key || defaults.key || '').trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}:._-]+/gu, '_').slice(0, 240),
+        text,
+        scope: ['timeline', 'relationship', 'character', 'canon'].includes(source.scope)
+            ? source.scope : (defaults.scope || 'timeline'),
+        status,
+        importance: Math.max(0, Math.min(1, Number(source.importance ?? defaults.importance ?? 0.55))),
+        confidence: Math.max(0, Math.min(1, Number(source.confidence ?? defaults.confidence ?? 0.85))),
+        pinned: source.pinned === true,
+        continuityId: String(source.continuityId || defaults.continuityId || '').slice(0, 180),
+        personaId: String(source.personaId || defaults.personaId || '').slice(0, 180),
+        characterIds: normalizeMemoryStringList(source.characterIds || defaults.characterIds),
+        witnessedBy: normalizeMemoryStringList(source.witnessedBy || defaults.witnessedBy),
+        sourceSessionId: String(source.sourceSessionId || defaults.sourceSessionId || '').slice(0, 180),
+        sourceMessageIds: normalizeMemoryStringList(source.sourceMessageIds || defaults.sourceMessageIds, 500),
+        startIndex: Number.isFinite(Number(source.startIndex)) ? Math.max(0, Number(source.startIndex)) : defaults.startIndex,
+        endIndex: Number.isFinite(Number(source.endIndex)) ? Math.max(0, Number(source.endIndex)) : defaults.endIndex,
+        createdAt,
+        updatedAt: Math.max(createdAt, Number(source.updatedAt) || createdAt)
+    };
+    if (Array.isArray(source.embedding) && source.embedding.length) {
+        record.embedding = source.embedding;
+        record.embeddingNamespace = String(source.embeddingNamespace || defaults.embeddingNamespace || HordeVectorMemory.namespace());
+    }
+    return record;
+}
+
+function chatOwnerId() {
+    return state.activeRoomId || state.activeCharId || '';
+}
+
+function continuityIdFor(ownerId) {
+    return newChatMemoryId(`continuity_${String(ownerId || 'chat').replace(/[^A-Za-z0-9_-]/g, '_')}`);
+}
+
+function ensureChatMessageIds(session) {
+    if (!session || !Array.isArray(session.messages)) return;
+    session.messages.forEach((message, index) => {
+        if (!message.id) {
+            message.id = `${session.id || 'session'}_message_${index}_${Date.now().toString(36)}`;
+            chatMemoryMigrationDirty = true;
+        }
+    });
+}
+
+function ensureChatContinuity(session, ownerId = chatOwnerId()) {
+    if (!session) return null;
+    if (!isPlainObject(state.chatContinuities)) state.chatContinuities = {};
+    if (!session.continuityId) {
+        session.continuityId = continuityIdFor(ownerId);
+        chatMemoryMigrationDirty = true;
+    }
+    let continuity = state.chatContinuities[session.continuityId];
+    if (!isPlainObject(continuity)) {
+        continuity = {
+            id: session.continuityId,
+            version: CHAT_MEMORY_VERSION,
+            ownerId: String(ownerId || ''),
+            personaId: String(state.activePersonaId || ''),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            records: []
+        };
+        state.chatContinuities[session.continuityId] = continuity;
+        chatMemoryMigrationDirty = true;
+    }
+    continuity.version = CHAT_MEMORY_VERSION;
+    continuity.ownerId = String(continuity.ownerId || ownerId || '');
+    continuity.records = (Array.isArray(continuity.records) ? continuity.records : [])
+        .map(record => normalizeChatMemoryRecord(record, { continuityId: continuity.id }))
+        .filter(record => record.text);
+    return continuity;
+}
+
+function repairChatMemoryState() {
+    if (!isPlainObject(state.chatContinuities)) state.chatContinuities = {};
+    Object.entries(state.chats || {}).forEach(([ownerId, sessions]) => {
+        if (!Array.isArray(sessions) || sessions.some(item => item?.role)) return;
+        sessions.forEach(session => {
+            if (!isPlainObject(session)) return;
+            ensureChatMessageIds(session);
+            const continuity = ensureChatContinuity(session, ownerId);
+            const legacy = Array.isArray(session.episodicMemories) ? session.episodicMemories : [];
+            legacy.forEach((memory, index) => {
+                const text = String(memory?.text || memory || '').trim();
+                if (!text) return;
+                const record = normalizeChatMemoryRecord(memory, {
+                    id: `legacy_${HordeVectorMemory.hashText(text)}_${memory?.startIndex ?? index}`,
+                    type: 'episode',
+                    continuityId: continuity.id,
+                    sourceSessionId: session.id,
+                    startIndex: memory?.startIndex,
+                    endIndex: memory?.endIndex
+                });
+                if (!continuity.records.some(existing => existing.id === record.id)) continuity.records.push(record);
+            });
+            // The continuity record is now authoritative. Do not keep a second
+            // copy of every high-dimensional vector inside the transcript key.
+            if (legacy.length) {
+                session.episodicMemories = [];
+                chatMemoryMigrationDirty = true;
+            }
+            if (session.memoryVersion !== CHAT_MEMORY_VERSION) {
+                session.memoryVersion = CHAT_MEMORY_VERSION;
+                chatMemoryMigrationDirty = true;
+            }
+        });
+    });
+}
+
+function getSessionForOwner(ownerId) {
+    const sessions = Array.isArray(state.chats?.[ownerId]) ? state.chats[ownerId] : [];
+    return sessions.find(session => session.id === state.activeSessionId?.[ownerId]) || sessions[0] || null;
+}
+
+function cloneChatContinuity(source, ownerId) {
+    const id = continuityIdFor(ownerId);
+    const now = Date.now();
+    const clone = {
+        id,
+        version: CHAT_MEMORY_VERSION,
+        ownerId: String(ownerId || source?.ownerId || ''),
+        personaId: String(state.activePersonaId || source?.personaId || ''),
+        createdAt: now,
+        updatedAt: now,
+        forkedFrom: String(source?.id || ''),
+        records: (source?.records || []).filter(record => record.status !== 'superseded').map(record => ({
+            ...safeJsonClone(record), id: newChatMemoryId('memory'), continuityId: id, updatedAt: now
+        }))
+    };
+    state.chatContinuities[id] = clone;
+    return clone;
+}
+
+function upsertContinuityMemoryRecords(continuity, inputs, defaults = {}) {
+    if (!continuity) return [];
+    const inserted = [];
+    continuity.records = Array.isArray(continuity.records) ? continuity.records : [];
+    for (const input of inputs || []) {
+        const record = normalizeChatMemoryRecord(input, { ...defaults, continuityId: continuity.id });
+        if (!record.text) continue;
+        const duplicate = continuity.records.find(existing =>
+            existing.id === record.id
+            || (existing.sourceSessionId === record.sourceSessionId
+                && existing.startIndex === record.startIndex && existing.endIndex === record.endIndex
+                && memoryDedupeKey(existing) === memoryDedupeKey(record)));
+        if (duplicate) continue;
+
+        if (record.key && ['fact', 'relationship', 'state', 'thread'].includes(record.type)) {
+            continuity.records.forEach(existing => {
+                if (existing.status === 'active' && existing.type === record.type && existing.key === record.key) {
+                    existing.status = 'superseded';
+                    existing.updatedAt = record.updatedAt;
+                }
+            });
+        }
+        continuity.records.push(record);
+        inserted.push(record);
+    }
+    continuity.updatedAt = Date.now();
+    return inserted;
+}
+
+async function hydrateChatMemoryEmbedding(record) {
+    if (!record?.text) return record;
+    const embedding = await HordeVectorMemory.getCachedEmbedding(record.text);
+    if (embedding) {
+        record.embedding = embedding;
+        record.embeddingNamespace = HordeVectorMemory.namespace();
+        record.updatedAt = Date.now();
+    }
+    return record;
+}
+
+function invalidateMemoryEmbeddingsForNamespaceChange(previousNamespace) {
+    const nextNamespace = HordeVectorMemory.namespace();
+    if (!previousNamespace || previousNamespace === nextNamespace) return 0;
+    let cleared = 0;
+    const clearRecord = record => {
+        if (!record || !record.embedding) return;
+        delete record.embedding;
+        delete record.embeddingNamespace;
+        cleared++;
+    };
+    (state.characters || []).forEach(character => (character.memory || []).forEach(clearRecord));
+    Object.values(state.chatContinuities || {}).forEach(continuity => (continuity.records || []).forEach(clearRecord));
+    Object.values(state.worldInstances || {}).forEach(instance =>
+        (instance.sessions || []).forEach(session => (session.episodicMemories || []).forEach(clearRecord)));
+    HordeVectorMemory.cache.clear();
+    HordeVectorMemory.scheduleCacheSave();
+    return cleared;
+}
+
+function chatMemoryVisibleTo(record, targetChar, isRoom) {
+    if (!record || record.status === 'superseded') return false;
+    const personaId = String(state.activePersonaId || '');
+    if (record.scope === 'relationship' && record.personaId && personaId && record.personaId !== personaId) return false;
+    if (!isRoom || !targetChar) return true;
+    const witnesses = normalizeMemoryStringList(record.witnessedBy);
+    if (witnesses.length) {
+        const name = String(targetChar.name || '').toLocaleLowerCase();
+        return witnesses.some(value => value === targetChar.id || value.toLocaleLowerCase() === name);
+    }
+    if (record.type === 'episode') return String(record.text || '').toLocaleLowerCase().includes(String(targetChar.name || '').toLocaleLowerCase());
+    return record.scope === 'canon';
+}
+
+function chatMemoryQuery(messages, userText, config, targetChar) {
+    const recent = (messages || []).slice(-6).map(message => canonicalMsgText(message)).join('\n');
+    const participants = state.activeRoomId ? getRoomCharacters(config).map(character => character.name).join(', ') : targetChar?.name || '';
+    return `${userText || ''}\n${recent}\nParticipants: ${participants}`.slice(-12000);
+}
+
+function memoryTextWithinBudget(records, tokenBudget) {
+    let remainingChars = Math.max(0, Math.floor(tokenBudget * 3.5));
+    const parts = [];
+    for (const record of records || []) {
+        const label = String(record.type || 'memory').replace('_', ' ').toUpperCase();
+        const line = `[${label}${record.status === 'resolved' ? ' · RESOLVED' : ''}] ${String(record.text || '').trim()}`;
+        if (!line.trim() || remainingChars < 40) break;
+        const fitted = line.length <= remainingChars ? line : trimToLastSentence(line.slice(0, remainingChars));
+        parts.push(fitted);
+        remainingChars -= fitted.length + 2;
+    }
+    return parts.join('\n\n');
+}
+
+function recordImmediateChatMemory(session, config, text, targetChar) {
+    if (!session?.messages || !text) return null;
+    const continuity = ensureChatContinuity(session, config?.id || chatOwnerId());
+    const source = session.messages.slice(-2);
+    const [record] = upsertContinuityMemoryRecords(continuity, [{
+        type: 'episode',
+        key: `milestone:${HordeVectorMemory.hashText(text)}`,
+        text,
+        importance: 0.82,
+        scope: 'timeline',
+        characterIds: targetChar?.id ? [targetChar.id] : [],
+        witnessedBy: targetChar?.id ? [targetChar.id] : [],
+        sourceSessionId: session.id,
+        sourceMessageIds: source.map(message => message.id).filter(Boolean)
+    }], { personaId: state.activePersonaId || '' });
+    if (record) hydrateChatMemoryEmbedding(record)
+        .then(() => HordeDB.set('chatContinuities', state.chatContinuities))
+        .catch(error => console.warn('Immediate memory embedding failed:', error));
+    return record || null;
+}
+
 // --- Chat View Logic ---
 function setupChatLogic() {
     const sendBtn = document.getElementById('send-btn');
@@ -6122,7 +6481,7 @@ function setupChatLogic() {
             
             // Re-create a fresh session (this handles intro automatically)
             if (state.chats[sessionId].length === 0) {
-                await createNewSession();
+                await createNewSession('fresh');
             } else {
                 state.activeSessionId[sessionId] = state.chats[sessionId][0].id;
                 await saveState();
@@ -6137,7 +6496,7 @@ function setupChatLogic() {
         if (!session) return;
         const roll = Math.floor(Math.random() * 6) + 1;
         const rollMsg = `*You rolled a ${roll} on a 6-sided dice.*`;
-        session.messages.push({ role: 'user', content: rollMsg });
+        session.messages.push({ id: newChatMemoryId('message'), role: 'user', content: rollMsg });
         await saveState();
         appendMessageUI('user', rollMsg);
     };
@@ -6176,11 +6535,12 @@ function setupChatLogic() {
 
     document.getElementById('summarize-chat-btn').onclick = summarizeStory;
     // (summarize-memory-btn is wired in setupStudioLogic — it lives in the Studio memory tab)
-    document.getElementById('new-session-btn').onclick = createNewSession;
+    document.getElementById('new-session-btn').onclick = () => createNewSession();
     document.getElementById('rename-session-btn').onclick = renameCurrentSession;
-    document.getElementById('session-select').onchange = (e) => {
+    document.getElementById('session-select').onchange = async (e) => {
         const id = state.activeRoomId || state.activeCharId;
         state.activeSessionId[id] = e.target.value;
+        await saveState();
         renderChat();
     };
 
@@ -6234,15 +6594,35 @@ function getCurrentSession() {
         }
     }
 
+    if (session) {
+        ensureChatMessageIds(session);
+        ensureChatContinuity(session, id);
+    }
+
     return session;
 }
 
-async function createNewSession() {
+async function createNewSession(requestedMode = '') {
     const id = state.activeRoomId || state.activeCharId;
+    if (!id) return;
+    if (!Array.isArray(state.chats[id])) state.chats[id] = [];
+    const previous = getSessionForOwner(id);
+    const modeSelect = document.getElementById('new-session-continuity-mode');
+    const mode = ['continue', 'fork', 'fresh'].includes(requestedMode)
+        ? requestedMode : (modeSelect?.value || 'continue');
+    let continuityId = continuityIdFor(id);
+    if (previous && mode === 'continue') {
+        continuityId = ensureChatContinuity(previous, id).id;
+    } else if (previous && mode === 'fork') {
+        continuityId = cloneChatContinuity(ensureChatContinuity(previous, id), id).id;
+    }
     const newSess = {
         id: 'session_' + Date.now(),
         name: 'New Session ' + (state.chats[id].length + 1),
-        messages: []
+        messages: [],
+        continuityId,
+        memoryVersion: CHAT_MEMORY_VERSION,
+        lastConsolidatedIndex: 0
     };
     
     // If it's a character (not a room), add the intro message
@@ -6254,10 +6634,12 @@ async function createNewSession() {
     }
     
     state.chats[id].push(newSess);
+    ensureChatContinuity(newSess, id);
     state.activeSessionId[id] = newSess.id;
     await saveState();
     renderChat();
-    showToast('New session started');
+    const continuityLabel = mode === 'fresh' ? 'fresh continuity' : mode === 'fork' ? 'forked continuity' : 'shared continuity';
+    showToast(`New session started · ${continuityLabel}`);
 }
 
 function characterGreetingMessage(char) {
@@ -6267,6 +6649,7 @@ function characterGreetingMessage(char) {
         .filter(value => value && !seen.has(value) && seen.add(value));
     const content = versions[0] || '';
     return {
+        id: newChatMemoryId('message'),
         role: 'assistant',
         content,
         charId: char?.id,
@@ -7101,6 +7484,8 @@ function loreKeywordMatches(haystack, keyword) {
 async function buildContext(config, targetChar, messages, userText) {
     const isRoom = !!state.activeRoomId;
     const activePersona = state.personas.find(p => p.id === state.activePersonaId);
+    const memoryQuery = chatMemoryQuery(messages, userText, config, targetChar);
+    const memoryBudgetTokens = Math.max(500, Math.min(2600, Math.floor((config.contextSize || 8192) * 0.16)));
     
     // 1. Gather auxiliary data (Lore, Memory)
     let worldTruths = '';
@@ -7138,13 +7523,13 @@ async function buildContext(config, targetChar, messages, userText) {
     charKnowledge = relevantLore.filter(l => l.weight !== 'truth').map(l => l.text).join('\n');
 
     // Memory Scan (Vector/Keyword Hybrid Search)
-    if (targetChar.memory && targetChar.memory.length > 0 && userText) {
+    if (targetChar.memory && targetChar.memory.length > 0 && memoryQuery.trim()) {
         const thresh = state.globalSettings.memoryThreshold !== undefined ? state.globalSettings.memoryThreshold : 0.35;
-        const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 4;
+        const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 8;
         try {
-            const memoryResults = await HordeVectorMemory.search(targetChar.memory, userText, topk, thresh);
+            const memoryResults = await HordeVectorMemory.search(targetChar.memory, memoryQuery, topk, thresh);
             if (memoryResults && memoryResults.length > 0) {
-                relevantMemory = memoryResults.map(m => m.text).join('\n\n');
+                relevantMemory = memoryTextWithinBudget(memoryResults, Math.floor(memoryBudgetTokens * 0.25));
             }
         } catch (e) {
             console.error("Vector memory search in buildContext failed:", e);
@@ -7155,18 +7540,20 @@ async function buildContext(config, targetChar, messages, userText) {
     let relevantEpisodic = '';
 
     // Episodic Memory Scan (Past Chat Events)
-    if (session && session.episodicMemories && session.episodicMemories.length > 0 && userText) {
+    if (session && memoryQuery.trim()) {
         const thresh = state.globalSettings.memoryThreshold !== undefined ? state.globalSettings.memoryThreshold : 0.35;
-        const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 4;
+        const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 8;
         try {
-            const episodicResults = await HordeVectorMemory.search(session.episodicMemories, userText, topk, thresh);
+            const continuity = ensureChatContinuity(session, config.id);
+            const candidates = [
+                ...(continuity?.records || []),
+                ...(session.episodicMemories || []).map(memory => normalizeChatMemoryRecord(memory, {
+                    type: 'episode', continuityId: continuity?.id || '', sourceSessionId: session.id
+                }))
+            ].filter(memory => chatMemoryVisibleTo(memory, targetChar, isRoom));
+            const episodicResults = await HordeVectorMemory.search(candidates, memoryQuery, Math.max(topk, 6), thresh);
             if (episodicResults && episodicResults.length > 0) {
-                // ANTI-HIVEMIND: in rooms, episodic summaries are session-wide — only
-                // give this character summaries of scenes they appear in.
-                const filtered = isRoom
-                    ? episodicResults.filter(m => (m.text || '').toLowerCase().includes(targetChar.name.toLowerCase()))
-                    : episodicResults;
-                relevantEpisodic = filtered.map(m => m.text).join('\n\n');
+                relevantEpisodic = memoryTextWithinBudget(episodicResults, Math.floor(memoryBudgetTokens * 0.55));
             }
         } catch (e) {
             console.error("Episodic memory search in buildContext failed:", e);
@@ -7204,13 +7591,18 @@ async function buildContext(config, targetChar, messages, userText) {
     }
 
     // --- MEMORY MATRIX (Associative Retrieval) ---
-    const ledger = session ? (session.ledger || "") : "";
+    const ledgerArchiveRecall = session ? retrieveWorldLedgerArchive(session, memoryQuery, 6) : '';
+    const ledger = session ? [session.ledger || '', ledgerArchiveRecall].filter(Boolean).join('\n') : "";
     // ANTI-HIVEMIND: in rooms, each character only receives chronicle lines that
     // involve them by name — private developments stay private.
     let visibleLedger = ledger;
     if (isRoom && ledger) {
         const tn = targetChar.name.toLowerCase();
         visibleLedger = ledger.split('\n').filter(l => !l.trim() || l.toLowerCase().includes(tn)).join('\n').trim();
+    }
+    const ledgerCharBudget = Math.floor(memoryBudgetTokens * 0.20 * 3.5);
+    if (visibleLedger.length > ledgerCharBudget) {
+        visibleLedger = visibleLedger.slice(-ledgerCharBudget).replace(/^[^\n]*\n?/, '').trim();
     }
     const ledgerPrompt = visibleLedger ? `\n\n### PERSISTENT CHRONICLE (THE STORY SO FAR)\n${visibleLedger}` : "";
 
@@ -7349,6 +7741,11 @@ Getting this right creates dramatic irony — the reader knowing more than the c
             }
         });
     }
+
+    systemPromptText += `\n\n[LONG-TERM MEMORY WRITEBACK]
+When this response permanently changes story canon—a promise, discovery, relationship shift, lasting condition, important possession change, departure, death, or unresolved obligation—append exactly one concise factual line in this form:
+[MEMORY]: sentence
+Do not emit a memory line for ordinary dialogue, repeated information, mood, description, or routine movement. The application removes this line before displaying the response.`;
 
     if (!preset) {
         const coreInstr = isRoom
@@ -7494,7 +7891,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
         const p = state.personas.find(x => x.id === state.activePersonaId);
         if (p && p.name) prefix = `[${p.name}]: `;
         
-        session.messages.push({ role: 'user', content: prefix + text });
+        session.messages.push({ id: newChatMemoryId('message'), role: 'user', content: prefix + text });
         await saveState();
         renderChat();
         return; // Don't trigger API if no character was selected
@@ -7539,7 +7936,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
                 pushText = prefix + text;
             }
             
-            session.messages.push({ role: 'user', content: pushText });
+            session.messages.push({ id: newChatMemoryId('message'), role: 'user', content: pushText });
             await saveState();
             appendMessageUI('user', pushText);
         }
@@ -7767,7 +8164,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
         if (!isRoom) await updateChatHudFromTurn(targetChar, session, text, fullContent, hudDirective);
         const hudAfterTurn = !isRoom ? safeJsonClone(ensureChatHudState(targetChar, session).state) : null;
 
-        const newAiMsg = { role: 'assistant', content: fullContent, charId: targetChar.id,
+        const newAiMsg = { id: newChatMemoryId('message'), role: 'assistant', content: fullContent, charId: targetChar.id,
             hudBefore: hudBeforeTurn || undefined, hudAfter: hudAfterTurn || undefined };
         if (extractedChronicle) newAiMsg.ledgerEntry = extractedChronicle; // for ghost-cleanup on reroll/delete
         if (rerollVersions) {
@@ -7777,6 +8174,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
             newAiMsg.versionLedgerEntries = [...(rerollLedgerEntries || rerollVersions.map(() => null)), extractedChronicle || null];
         }
         session.messages.push(newAiMsg);
+        if (extractedChronicle) recordImmediateChatMemory(session, config, extractedChronicle, targetChar);
         await saveState();
         renderChat(); // Refresh to bind message actions
 
@@ -7790,7 +8188,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
             console.log('Generation aborted by user');
             fullContent = scrubNarrativeArtifacts(fullContent);
             if (fullContent && fullContent !== pre_ai_prefix) {
-                const partialMsg = { role: 'assistant', content: fullContent, charId: targetChar.id };
+                const partialMsg = { id: newChatMemoryId('message'), role: 'assistant', content: fullContent, charId: targetChar.id };
                 if (rerollVersions) {
                     partialMsg.versions = [...rerollVersions, fullContent];
                     partialMsg.currentVersion = partialMsg.versions.length - 1;
@@ -7802,6 +8200,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
                 // Aborted reroll with nothing streamed — restore the previous response
                 if (!isRoom && rerollHudAfter) session.chatHudState = safeJsonClone(rerollHudAfter);
                 const restoredMsg = {
+                    id: newChatMemoryId('message'),
                     role: 'assistant',
                     content: rerollVersions[rerollVersions.length - 1],
                     charId: targetChar.id,
@@ -7832,6 +8231,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
         if (isReroll && rerollVersions) {
             if (!isRoom && rerollHudAfter) session.chatHudState = safeJsonClone(rerollHudAfter);
             const restoredMsg = {
+                id: newChatMemoryId('message'),
                 role: 'assistant',
                 content: rerollVersions[rerollVersions.length - 1],
                 charId: targetChar.id,
@@ -9857,6 +10257,7 @@ function setupGlobalSettings() {
         );
     };
     document.getElementById('save-global-settings').onclick = async () => {
+        const previousEmbeddingNamespace = HordeVectorMemory.namespace();
         state.apiKey = document.getElementById('global-api-key').value.trim();
         if (state.apiKey) sessionStorage.setItem('horde_api_key', state.apiKey);
         else sessionStorage.removeItem('horde_api_key');
@@ -9885,7 +10286,7 @@ function setupGlobalSettings() {
         state.globalSettings.editBgColor = cssColor(document.getElementById('edit-bg-color').value, '#2b2b36');
         const threshold = Number(document.getElementById('global-memory-threshold').value);
         state.globalSettings.memoryThreshold = Number.isFinite(threshold) ? Math.max(0, Math.min(1, threshold)) : 0.35;
-        state.globalSettings.memoryTopK = Math.max(1, Math.min(100, parseInt(document.getElementById('global-memory-topk').value) || 4));
+        state.globalSettings.memoryTopK = Math.max(1, Math.min(100, parseInt(document.getElementById('global-memory-topk').value) || 8));
         state.globalSettings.consolidationModel = document.getElementById('global-consolidation-model').value.trim() || 'google/gemini-flash-1.5-8b';
         state.globalSettings.rememberApiKey = document.getElementById('remember-api-key').checked;
         state.globalSettings.slopStripper = document.getElementById('global-slop-stripper').checked;
@@ -9931,6 +10332,10 @@ function setupGlobalSettings() {
             document.getElementById('global-embedding-url').value);
         state.globalSettings.embeddingApiKey = document.getElementById('global-embedding-key').value.trim().slice(0, 500);
         state.globalSettings.embeddingModel = document.getElementById('global-embedding-model').value.trim().slice(0, 200);
+        const invalidatedEmbeddings = invalidateMemoryEmbeddingsForNamespaceChange(previousEmbeddingNamespace);
+        if (invalidatedEmbeddings) {
+            showToast(`Embedding model changed · ${invalidatedEmbeddings} memories will re-index safely`, 'info');
+        }
         state.globalSettings.localTtsBaseUrl = normalizeOpenAICompatibleBase(
             document.getElementById('global-local-tts-url').value, 'http://127.0.0.1:8000/v1');
         state.globalSettings.localTtsApiKey = document.getElementById('global-local-tts-key').value.trim().slice(0, 500);
@@ -10430,6 +10835,7 @@ async function exportFullBackup() {
         globalSettings: redactGlobalSettingsCredentials(state.globalSettings),
         characters: state.characters,
         chats: state.chats,
+        chatContinuities: state.chatContinuities,
         activeSessionId: state.activeSessionId,
         personas: state.personas,
         activePersonaId: state.activePersonaId,
@@ -10475,7 +10881,8 @@ function importFullBackup(file) {
                     if (data.companionTimelines === undefined) data.companionTimelines = {};
                     if (data.activeCompanionId === undefined) data.activeCompanionId = null;
                     if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
-                    const keys = ['globalSettings', 'characters', 'chats', 'activeSessionId',
+                    if (data.chatContinuities === undefined) data.chatContinuities = {};
+                    const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
                         'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
                         'worlds', 'worldInstances', 'activeWorldId', 'companions',
                         'companionThreads', 'companionTimelines', 'activeCompanionId'];
@@ -10601,7 +11008,7 @@ function showGlobalSettings() {
 
         // Load memory sensitivity defaults/current values
         const thresh = state.globalSettings.memoryThreshold !== undefined ? state.globalSettings.memoryThreshold : 0.35;
-        const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 4;
+        const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 8;
         
         document.getElementById('global-memory-threshold').value = thresh;
         document.getElementById('global-memory-threshold-val').textContent = parseFloat(thresh).toFixed(2);
@@ -10745,10 +11152,10 @@ async function summarizeStory() {
     }
 
     // Regular chat path
-    const isRoom = !!state.activeRoomId;
-    const sessionId = isRoom ? state.activeRoomId : (state.activeCharId || state.editingChar?.id);
-
-    const session = getCurrentSession();
+    const invokedFromStudio = state.view === 'studio' && !!state.editingChar?.id;
+    const isRoom = !invokedFromStudio && !!state.activeRoomId;
+    const sessionId = invokedFromStudio ? state.editingChar.id : (isRoom ? state.activeRoomId : state.activeCharId);
+    const session = getSessionForOwner(sessionId);
 
     if (!session || !session.messages || session.messages.length < 2) {
         return showToast('Not enough history to summarize', 'info');
@@ -10799,6 +11206,7 @@ async function summarizeStory() {
             },
             body: JSON.stringify({
                 model: config.model || state.globalSettings.defaultModel,
+                max_tokens: 900,
                 messages: [
                     { 
                         role: 'system', 
@@ -10835,14 +11243,31 @@ async function summarizeStory() {
             // "Confirm" in this context will save to memory
             showToast('Embedding summary...', 'info');
             try {
-                const embedding = await getEmbedding(`[AUTO-SUMMARY]: ${summary}`);
-                state.editingChar = state.editingChar || JSON.parse(JSON.stringify(config));
-                state.editingChar.memory.push({ text: `[AUTO-SUMMARY]: ${summary}`, embedding });
-                const index = state.characters.findIndex(c => c.id === state.editingChar.id);
-                if (index !== -1) {
-                    state.characters[index] = JSON.parse(JSON.stringify(state.editingChar));
-                    await saveState();
+                const blocks = summaryToMemoryRecords(summary);
+                if (invokedFromStudio) {
+                    const index = state.characters.findIndex(character => character.id === config.id);
+                    if (index === -1) throw new Error('The character being edited no longer exists');
+                    const additions = [];
+                    for (const block of blocks) {
+                        const record = normalizeChatMemoryRecord(block, {
+                            type: 'biography', scope: 'character', characterIds: [config.id], importance: 0.72
+                        });
+                        await hydrateChatMemoryEmbedding(record);
+                        additions.push(record);
+                    }
+                    state.characters[index].memory = [...(state.characters[index].memory || []), ...additions];
+                    if (state.editingChar?.id === config.id) state.editingChar.memory = safeJsonClone(state.characters[index].memory);
+                } else {
+                    const continuity = ensureChatContinuity(session, config.id);
+                    const inserted = upsertContinuityMemoryRecords(continuity, blocks, {
+                        type: 'manual_summary', scope: 'timeline', sourceSessionId: session.id,
+                        sourceMessageIds: trimmedMessages.map(message => message.id).filter(Boolean),
+                        startIndex: startIdx, endIndex: allMessages.length,
+                        personaId: state.activePersonaId || ''
+                    });
+                    for (const record of inserted) await hydrateChatMemoryEmbedding(record);
                 }
+                await saveState();
                 showToast('Summary added to memory!', 'success');
                 if (state.view === 'studio') renderMemoryList();
             } catch (err) {
@@ -10853,6 +11278,24 @@ async function summarizeStory() {
     } catch (err) {
         showToast('Summarization failed: ' + err.message, 'error');
     }
+}
+
+function summaryToMemoryRecords(summary) {
+    const raw = String(summary || '').trim();
+    const lines = raw.split('\n').map(line => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
+        .filter(line => line && !/^#{1,6}\s/.test(line));
+    const records = [{
+        type: 'manual_summary', key: `manual:${HordeVectorMemory.hashText(raw)}`,
+        text: raw.slice(0, 6000), importance: 0.78, confidence: 0.9, pinned: true
+    }];
+    lines.filter(line => line.length >= 25 && line.length <= 1200).slice(0, 12).forEach((line, index) => {
+        records.push({
+            type: /promise|goal|must|owe|unresolved|seek|plan/i.test(line) ? 'thread' : 'fact',
+            key: `manual_detail:${HordeVectorMemory.hashText(line)}:${index}`,
+            text: line, importance: 0.68, confidence: 0.85
+        });
+    });
+    return records;
 }
 
 // --- Custom Modal Helper ---
@@ -16085,8 +16528,11 @@ function addWorldFaction(position = 'top') {
     const faction = normalizeWorldFaction({ name: `New Faction ${world.factions.length + 1}` }, world.factions.length);
     if (position === 'bottom') world.factions.push(faction);
     else world.factions.unshift(faction);
-    renderWorldFactions();
+    // Entity rendering normalizes the authored world and can replace faction
+    // records. Run it first so faction controls always bind to the canonical
+    // objects that Save World will persist.
     renderWorldEntities();   // the membership dropdowns gain the new faction
+    renderWorldFactions();
     updateWorldTokenCount();
 }
 
@@ -16251,7 +16697,7 @@ function renderWorldFactions() {
         };
         // Renaming changes the label everywhere it is referenced, so redraw once
         // the author is done rather than on every keystroke.
-        div.querySelector('.faction-name').onchange = () => { renderWorldFactions(); renderWorldEntities(); };
+        div.querySelector('.faction-name').onchange = () => { renderWorldEntities(); renderWorldFactions(); };
         div.querySelector('.faction-status').onchange = (e) => { faction.status = e.target.value; };
         div.querySelector('.faction-desc').oninput = (e) => {
             faction.description = e.target.value.slice(0, 600);
@@ -16310,8 +16756,8 @@ function renderWorldFactions() {
                 if (entity.factionId === faction.id) delete entity.factionId;
             });
             if (!world.factions.length) delete world.factions;
-            renderWorldFactions();
             renderWorldEntities();
+            renderWorldFactions();
             updateWorldTokenCount();
         };
 
@@ -16412,7 +16858,7 @@ function renderWorldSandboxStudio() {
                 <select class="form-select origin-faction"><option value="">No starting allegiance</option>${factionOptions}</select>
                 <input class="form-input origin-faction-rep" type="number" min="-100" max="100" value="${life.factionReputation}" placeholder="Faction reputation">
                 <textarea class="form-textarea origin-desc origin-wide" rows="2" placeholder="What this life feels like and what makes its opening distinct.">${escapeHTML(life.description)}</textarea>
-                <input class="form-input origin-inventory origin-wide" value="${escapeHTML((life.inventory || []).map(item => window.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', '))}" placeholder="Starting possessions, comma separated">
+                <input class="form-input origin-inventory origin-wide" value="${escapeHTML((life.inventory || []).map(item => globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', '))}" placeholder="Starting possessions, comma separated">
                 ${statControls}
                 <textarea class="form-textarea origin-obligations" rows="3" placeholder="Obligations, one per line">${escapeHTML((life.obligations || []).join('\n'))}</textarea>
                 <textarea class="form-textarea origin-privileges" rows="3" placeholder="Privileges, one per line">${escapeHTML((life.privileges || []).join('\n'))}</textarea>
@@ -16529,7 +16975,7 @@ function addWorldStat() {
 }
 
 function worldItemModifierLines(item) {
-    const modifiers = window.HordeRpgMechanics?.modifiers(item?.modifiers || {}) || {};
+    const modifiers = globalThis.HordeRpgMechanics?.modifiers(item?.modifiers || {}) || {};
     const lines = [];
     ['checks', 'damage', 'armor'].forEach(key => { if (Number(modifiers[key])) lines.push(`${key}=${modifiers[key]}`); });
     ['attributes', 'skills', 'stats', 'defenses', 'resources'].forEach(group => {
@@ -16552,12 +16998,12 @@ function parseWorldItemModifiers(value) {
 
 function renderWorldItemCatalogControls(world = state.editingWorld) {
     const container = document.getElementById('w-rules-item-catalog');
-    if (!container || !world || !window.HordeRpgMechanics) return;
+    if (!container || !world || !globalThis.HordeRpgMechanics) return;
     const rules = normalizeWorldGameRules(world);
     container.innerHTML = rules.itemCatalog.length ? rules.itemCatalog.map(item => `
         <article class="world-item-card" data-world-item-id="${escapeHTML(item.id)}">
             <div><span>${escapeHTML(item.type)}${item.slot ? ` · ${escapeHTML(item.slot)}` : ''}</span><strong>${escapeHTML(item.name)}</strong>
-            <small>${escapeHTML([item.damage && `Damage ${item.damage}`, item.armor && `Armor ${item.armor}`, window.HordeRpgMechanics.describeModifiers(item)].filter(Boolean).join(' · ') || item.description || 'Narrative item')}</small></div>
+            <small>${escapeHTML([item.damage && `Damage ${item.damage}`, item.armor && `Armor ${item.armor}`, globalThis.HordeRpgMechanics.describeModifiers(item)].filter(Boolean).join(' · ') || item.description || 'Narrative item')}</small></div>
             <div><button class="btn btn-ghost btn-small" data-world-item-edit type="button">Edit</button><button class="btn btn-ghost btn-small" data-world-item-delete type="button">Remove</button></div>
         </article>`).join('') : '<div class="form-hint">No authored items yet. Old text inventories still work; add cards when equipment needs real stats or bonuses.</div>';
     container.querySelectorAll('[data-world-item-id]').forEach(card => {
@@ -16574,12 +17020,12 @@ function renderWorldItemCatalogControls(world = state.editingWorld) {
 }
 
 function openWorldItemEditor(world, value = null) {
-    if (!world || !window.HordeRpgMechanics) return;
+    if (!world || !globalThis.HordeRpgMechanics) return;
     const rules = normalizeWorldGameRules(world);
-    const item = window.HordeRpgMechanics.normalizeItem(value || { name: 'New item', type: 'custom' });
+    const item = globalThis.HordeRpgMechanics.normalizeItem(value || { name: 'New item', type: 'custom' });
     let overlay = document.getElementById('world-item-editor-overlay');
     if (!overlay) { overlay = document.createElement('div'); overlay.id = 'world-item-editor-overlay'; overlay.className = 'modal-overlay'; document.body.appendChild(overlay); }
-    const options = window.HordeRpgMechanics.TYPES.map(type => `<option value="${type}" ${item.type === type ? 'selected' : ''}>${type}</option>`).join('');
+    const options = globalThis.HordeRpgMechanics.TYPES.map(type => `<option value="${type}" ${item.type === type ? 'selected' : ''}>${type}</option>`).join('');
     const slots = [...new Set(['', ...(rules.equipmentSlots || []), item.slot].filter(value => value !== undefined))]
         .map(slot => `<option value="${escapeHTML(slot)}" ${item.slot === slot ? 'selected' : ''}>${escapeHTML(slot || 'Not equipable')}</option>`).join('');
     overlay.innerHTML = `<div class="modal world-item-editor-modal" role="dialog" aria-modal="true"><header><div><span class="vh-eyebrow">WORLD ITEM</span><h2>${value ? 'Edit item' : 'Create item'}</h2><p>One reusable definition for inventories, shops, rewards and loadouts.</p></div><button class="labs-close-btn" data-item-close type="button">✕</button></header><div class="world-item-editor-grid">
@@ -16599,7 +17045,7 @@ function openWorldItemEditor(world, value = null) {
         const read = selector => overlay.querySelector(selector)?.value;
         const name = String(read('[data-item-name]') || '').trim();
         if (!name) return showToast('Give the item a name.', 'error');
-        const saved = window.HordeRpgMechanics.normalizeItem({ ...item, name, type: read('[data-item-type]'), slot: read('[data-item-slot]'), quantity: read('[data-item-quantity]'), damage: read('[data-item-damage]'), damageType: read('[data-item-damage-type]'), armor: read('[data-item-armor]'), value: read('[data-item-value]'), weight: read('[data-item-weight]'), rarity: read('[data-item-rarity]'), description: read('[data-item-description]'), modifiers: parseWorldItemModifiers(read('[data-item-modifiers]')), requirements: { ...item.requirements, level: read('[data-item-level]'), text: read('[data-item-requirement-text]') } });
+        const saved = globalThis.HordeRpgMechanics.normalizeItem({ ...item, name, type: read('[data-item-type]'), slot: read('[data-item-slot]'), quantity: read('[data-item-quantity]'), damage: read('[data-item-damage]'), damageType: read('[data-item-damage-type]'), armor: read('[data-item-armor]'), value: read('[data-item-value]'), weight: read('[data-item-weight]'), rarity: read('[data-item-rarity]'), description: read('[data-item-description]'), modifiers: parseWorldItemModifiers(read('[data-item-modifiers]')), requirements: { ...item.requirements, level: read('[data-item-level]'), text: read('[data-item-requirement-text]') } });
         const index = rules.itemCatalog.findIndex(entry => entry.id === item.id);
         if (index >= 0) rules.itemCatalog[index] = saved; else rules.itemCatalog.push(saved);
         world.gameRules.itemCatalog = rules.itemCatalog; close(); renderWorldItemCatalogControls(world); updateWorldTokenCount();
@@ -17391,7 +17837,7 @@ function buildWorldMultiplayerSnapshot(context) {
                 max: Number(stat.max ?? 0), color: String(stat.color || '#E63946').slice(0, 24)
             })) : [],
             outfit: String(sess.outfit || 'Standard attire.').slice(0, 1200),
-            inventory: modules.inventory ? (sess.inventory || []).map(item => (window.HordeRpgMechanics?.itemName(item) || String(item || '')).slice(0, 160)).filter(Boolean).slice(0, 80) : [],
+            inventory: modules.inventory ? (sess.inventory || []).map(item => (globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).slice(0, 160)).filter(Boolean).slice(0, 80) : [],
             ledger: world.hudConfig?.showLedger === false ? '' : String(sess.ledger || '').slice(0, 6000),
             quests: modules.quests ? (sess.quests || []).filter(quest => quest.status === 'active').slice(0, 20).map(quest => ({
                 title: String(quest.title || 'Quest').slice(0, 160), status: String(quest.status || 'active').slice(0, 40)
@@ -17461,7 +17907,7 @@ function applyMultiplayerSnapshot(context, snapshot, type) {
     document.getElementById('world-ledger-content').textContent = hud.ledger || 'No public milestones recorded yet.';
     document.getElementById('world-ledger-status').textContent = 'Synchronized from the host.';
     const inventory = document.getElementById('world-inventory-list');
-    inventory.innerHTML = (hud.inventory || []).map(item => `<span class="inv-chip"><span class="inv-chip-name">${escapeHTML(window.HordeRpgMechanics?.itemName(item) || item)}</span></span>`).join('') || '<span style="color:var(--text-3);font-size:.8rem">Empty</span>';
+    inventory.innerHTML = (hud.inventory || []).map(item => `<span class="inv-chip"><span class="inv-chip-name">${escapeHTML(globalThis.HordeRpgMechanics?.itemName(item) || item)}</span></span>`).join('') || '<span style="color:var(--text-3);font-size:.8rem">Empty</span>';
     const present = document.getElementById('world-present-list');
     present.innerHTML = (hud.present || []).map(name => `<div class="world-present-npc" style="padding:8px;background:var(--surface2);border-radius:6px">${escapeHTML(name)}</div>`).join('') || '<div style="color:var(--text-3);font-size:.8rem">No one here</div>';
     document.getElementById('world-exits-list').innerHTML = '<div style="color:var(--text-3);font-size:.75rem">Travel is resolved through the shared party turn.</div>';
@@ -18464,6 +18910,7 @@ function normalizeWorldGameRules(world) {
     const inferredCurrency = stats.find(looksLikeCurrency)?.id || '';
     const currencyStatId = exactStatId(raw.currencyStatId) || inferredCurrency;
     const currencyDefinition = stats.find(stat => stat.id === currencyStatId);
+    const rpgMechanics = globalThis.HordeRpgMechanics;
     world.gameRules = {
         profileId,
         modules,
@@ -18473,7 +18920,7 @@ function normalizeWorldGameRules(world) {
         currencyName: String(raw.currencyName || currencyDefinition?.name || 'coin').trim().slice(0, 60) || 'coin',
         equipmentSlots: [...new Set((Array.isArray(raw.equipmentSlots) ? raw.equipmentSlots : ['head', 'body', 'main-hand', 'off-hand', 'accessory'])
             .map(slot => String(slot || '').trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean))].slice(0, 30),
-        itemCatalog: window.HordeRpgMechanics ? window.HordeRpgMechanics.normalizeInventory(raw.itemCatalog) : (Array.isArray(raw.itemCatalog) ? raw.itemCatalog : []),
+        itemCatalog: rpgMechanics ? rpgMechanics.normalizeInventory(raw.itemCatalog) : (Array.isArray(raw.itemCatalog) ? raw.itemCatalog : []),
         pausedMechanicalModules: isPlainObject(raw.pausedMechanicalModules)
             ? Object.fromEntries(WORLD_OPTIONAL_RPG_MODULE_KEYS.map(key => [key, !!raw.pausedMechanicalModules[key]])) : null,
         dice: diceRaw,
@@ -18504,11 +18951,11 @@ function normalizePlayerRulesState(world, sess) {
         .map(condition => String(condition || '').trim().slice(0, 120))
         .filter(Boolean))].slice(0, 50);
     sess.checkHistory = (Array.isArray(sess.checkHistory) ? sess.checkHistory : []).slice(-100);
-    if (window.HordeRpgMechanics) {
+    if (globalThis.HordeRpgMechanics) {
         const catalog = rules.itemCatalog || [];
-        sess.inventory = window.HordeRpgMechanics.normalizeInventory((sess.inventory || []).map(value => {
+        sess.inventory = globalThis.HordeRpgMechanics.normalizeInventory((sess.inventory || []).map(value => {
             if (typeof value !== 'string') return value;
-            return window.HordeRpgMechanics.findItem(catalog, value) || value;
+            return globalThis.HordeRpgMechanics.findItem(catalog, value) || value;
         }));
     }
     sess.equipment = isPlainObject(sess.equipment) ? sess.equipment : {};
@@ -18534,10 +18981,10 @@ function normalizePlayerRulesState(world, sess) {
 
 function worldEquipmentModifiers(world, sess) {
     const rules = normalizeWorldGameRules(world);
-    if (!rules.modules.equipment || !window.HordeRpgMechanics) return window.HordeRpgMechanics?.modifiers({}) || { stats: {}, skills: {}, checks: 0 };
+    if (!rules.modules.equipment || !globalThis.HordeRpgMechanics) return globalThis.HordeRpgMechanics?.modifiers({}) || { stats: {}, skills: {}, checks: 0 };
     normalizePlayerRulesState(world, sess);
     const equippedIds = new Set(Object.values(sess.equipment || {}).filter(Boolean));
-    return window.HordeRpgMechanics.combinedModifiers((sess.inventory || []).filter(item => item?.equipped || equippedIds.has(item?.id)));
+    return globalThis.HordeRpgMechanics.combinedModifiers((sess.inventory || []).filter(item => item?.equipped || equippedIds.has(item?.id)));
 }
 
 function worldOptionalRpgEnabled(world) {
@@ -18675,7 +19122,7 @@ function applyPlayerStatChanges(world, sess, changes, options = {}) {
 }
 
 function findInventoryMatchIndices(inventory, item, quantity = 1) {
-    const itemName = value => window.HordeRpgMechanics?.itemName(value) || String(value || '');
+    const itemName = value => globalThis.HordeRpgMechanics?.itemName(value) || String(value || '');
     const query = questTextKey(itemName(item));
     if (!query || !Array.isArray(inventory)) return [];
     const exact = [];
@@ -18844,10 +19291,10 @@ function performAuthoritativeChecks(world, sess, checks) {
         const capabilityModifier = capability?.appliedModifier || 0;
         const situationalModifier = Math.max(-5, Math.min(5, Math.trunc(Number(raw?.modifier) || 0)));
         let equipmentModifier = 0;
-        if (rules.modules.equipment && window.HordeRpgMechanics) {
+        if (rules.modules.equipment && globalThis.HordeRpgMechanics) {
             const equippedIds = new Set(Object.values(sess.equipment || {}).filter(Boolean));
             const equipped = (sess.inventory || []).filter(item => item?.equipped || equippedIds.has(item?.id));
-            const bonuses = window.HordeRpgMechanics.combinedModifiers(equipped);
+            const bonuses = globalThis.HordeRpgMechanics.combinedModifiers(equipped);
             equipmentModifier = Number(bonuses.checks || 0)
                 + Number(bonuses.stats?.[definition?.id] || bonuses.stats?.[definition?.name] || 0)
                 + Number(bonuses.skills?.[capability?.id] || bonuses.skills?.[capability?.name] || 0);
@@ -20226,8 +20673,8 @@ function renderWorldPlayState() {
         invList.innerHTML = '<div style="color:var(--text-3); font-size:0.8rem;">Empty</div>';
     } else {
         sess.inventory.forEach((item, idx) => {
-            const itemName = window.HordeRpgMechanics?.itemName(item) || String(item || 'Item');
-            const detail = window.HordeRpgMechanics?.describeModifiers(item) || '';
+            const itemName = globalThis.HordeRpgMechanics?.itemName(item) || String(item || 'Item');
+            const detail = globalThis.HordeRpgMechanics?.describeModifiers(item) || '';
             const equipped = !!item?.equipped || Object.values(sess.equipment || {}).includes(item?.id);
             const chip = document.createElement('span');
             chip.className = `inv-chip${equipped ? ' equipped' : ''}`;
@@ -21273,7 +21720,7 @@ async function getMemoryMatrixContext(world, sess, userInput) {
 
     // 2. Perform hybrid search
     const thresh = state.globalSettings.memoryThreshold !== undefined ? state.globalSettings.memoryThreshold : 0.35;
-    const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 4;
+    const topk = state.globalSettings.memoryTopK !== undefined ? state.globalSettings.memoryTopK : 8;
     
     let retrieved = [];
     const kernelMemoryMode = normalizeWorldKernelConfig(world).memoryMode;
@@ -22087,8 +22534,8 @@ NPCs NOT Present (ABSENT): ${absentNpcManifest || 'None'}${referencedNpcContext}
   ↳ ABSENT characters must NOT appear, speak, or act in this scene. If the story needs one of them here, move them with 'npc_moves' AND narrate their arrival — characters walk in, they do not materialize.${deadNpcManifest ? `
 Dead / Departed (PERMANENT — they can NEVER appear again): ${deadNpcManifest}
   ↳ The dead stay dead. They may be mourned, mentioned, or found as remains — never walking, talking, or acting. Only an explicit resurrection story event (with 'npc_status_changes' setting them alive) can undo this.` : ''}
-Inventory: ${ruleModules.inventory ? (sess.inventory.map(item => window.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', ') || 'None') : 'Disabled for this world'}
-Equipped: ${ruleModules.equipment ? Object.entries(sess.equipment || {}).filter(([, itemId]) => itemId).map(([slot, itemId]) => `${slot}: ${window.HordeRpgMechanics?.itemName((sess.inventory || []).find(item => item?.id === itemId)) || 'unknown item'}`).join(', ') || 'None' : 'Disabled for this world'}
+Inventory: ${ruleModules.inventory ? (sess.inventory.map(item => globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', ') || 'None') : 'Disabled for this world'}
+Equipped: ${ruleModules.equipment ? Object.entries(sess.equipment || {}).filter(([, itemId]) => itemId).map(([slot, itemId]) => `${slot}: ${globalThis.HordeRpgMechanics?.itemName((sess.inventory || []).find(item => item?.id === itemId)) || 'unknown item'}`).join(', ') || 'None' : 'Disabled for this world'}
 Player Stats: ${statContext}
 Player Condition: ${ruleModules.health || ruleModules.conditions
         ? `${playerRulesState.status}${playerRulesState.conditions.length ? ` — ${playerRulesState.conditions.join(', ')}` : ''}`
@@ -24556,9 +25003,9 @@ function processStructuredActions(args) {
     
     if (modules.inventory && args.inventory_add && Array.isArray(args.inventory_add)) {
         args.inventory_add.forEach(value => {
-            const item = window.HordeRpgMechanics?.normalizeItem(value) || value;
-            const name = window.HordeRpgMechanics?.itemName(item) || String(item || '');
-            if (!window.HordeRpgMechanics?.findItem(sess.inventory, name)) {
+            const item = globalThis.HordeRpgMechanics?.normalizeItem(value) || value;
+            const name = globalThis.HordeRpgMechanics?.itemName(item) || String(item || '');
+            if (!globalThis.HordeRpgMechanics?.findItem(sess.inventory, name)) {
                 sess.inventory.push(item);
                 showToast(`Item taken: ${name}`, 'info');
             }
@@ -24570,13 +25017,13 @@ function processStructuredActions(args) {
             const target = String(item || '').trim().toLowerCase();
             if (!target) return;
             // Fuzzy match: the LLM may say "potion" for "healing potion"
-            const nameOf = value => (window.HordeRpgMechanics?.itemName(value) || String(value || '')).toLowerCase();
+            const nameOf = value => (globalThis.HordeRpgMechanics?.itemName(value) || String(value || '')).toLowerCase();
             let idx = sess.inventory.findIndex(i => nameOf(i) === target);
             if (idx === -1) idx = sess.inventory.findIndex(i => nameOf(i).includes(target) || target.includes(nameOf(i)));
             if (idx !== -1) {
                 const removed = sess.inventory.splice(idx, 1)[0];
                 Object.keys(sess.equipment || {}).forEach(slot => { if (sess.equipment[slot] === removed?.id) sess.equipment[slot] = null; });
-                showToast(`Item removed: ${window.HordeRpgMechanics?.itemName(removed) || removed}`, 'info');
+                showToast(`Item removed: ${globalThis.HordeRpgMechanics?.itemName(removed) || removed}`, 'info');
             }
         });
     }
@@ -26877,7 +27324,10 @@ function addWorldNews(sess, text, metadata = {}) {
         // "don't reveal remote facts" becomes a mechanic instead of a request.
         knownBy: [...new Set((Array.isArray(metadata.knownBy) ? metadata.knownBy : [])
             .map(id => String(id || '')).filter(Boolean))].slice(0, 40),
-        playerWitnessed: metadata.playerWitnessed === true
+        playerWitnessed: metadata.playerWitnessed === true,
+        // New records start canonical so re-entering the same turn is a true
+        // no-op instead of lazily adding this field on the second tick.
+        transmissions: []
     };
     sess.worldNews.push(item);
     if (sess.worldNews.length > 80) sess.worldNews.splice(0, sess.worldNews.length - 80);
@@ -31215,19 +31665,13 @@ function bumpMemoryEpoch(session) {
 
 function invalidateEpisodicFrom(session, msgIndex) {
     bumpMemoryEpoch(session);
-    if (!session || !Array.isArray(session.episodicMemories) || session.episodicMemories.length === 0) {
-        // No archived memories — just guard the boundary against drift.
-        if (session && (session.lastConsolidatedIndex || 0) > msgIndex) {
-            session.lastConsolidatedIndex = msgIndex;
-        }
-        return false;
-    }
+    if (!session) return false;
 
     let rewindTo = session.lastConsolidatedIndex || 0;
     let droppedAny = false;
     const kept = [];
 
-    for (const m of session.episodicMemories) {
+    for (const m of (session.episodicMemories || [])) {
         const start = (m.startIndex ?? 0);
         const end = (m.endIndex ?? Infinity); // exclusive
         // Memory is stale if its coverage includes msgIndex or extends past it.
@@ -31241,7 +31685,42 @@ function invalidateEpisodicFrom(session, msgIndex) {
 
     if (droppedAny) {
         session.episodicMemories = kept;
-        session.lastConsolidatedIndex = Math.min(session.lastConsolidatedIndex || 0, rewindTo);
+    }
+
+    // Chat v2 memories live in the continuity store, outside the transcript.
+    // Remove every derived record whose provenance touches the rewritten tail.
+    const continuity = state.chatContinuities?.[session.continuityId];
+    if (continuity && Array.isArray(continuity.records)) {
+        const invalidMessageIds = new Set((session.messages || []).slice(msgIndex).map(message => message.id).filter(Boolean));
+        const before = continuity.records.length;
+        continuity.records = continuity.records.filter(memory => {
+            if (memory.sourceSessionId !== session.id) return true;
+            const coveredByIndex = Number.isFinite(Number(memory.endIndex)) && Number(memory.endIndex) > msgIndex;
+            const coveredById = (memory.sourceMessageIds || []).some(id => invalidMessageIds.has(id));
+            if (!coveredByIndex && !coveredById) return true;
+            rewindTo = Math.min(rewindTo, Number(memory.startIndex) || 0);
+            return false;
+        });
+        if (continuity.records.length !== before) {
+            droppedAny = true;
+            continuity.updatedAt = Date.now();
+            // If the removed record had superseded a prior state, restore the
+            // newest surviving value for that key.
+            const newestByKey = new Map();
+            continuity.records.forEach(memory => {
+                if (!memory.key || !['fact', 'relationship', 'state', 'thread'].includes(memory.type)) return;
+                const key = `${memory.type}:${memory.key}`;
+                const current = newestByKey.get(key);
+                if (!current || Number(memory.updatedAt) > Number(current.updatedAt)) newestByKey.set(key, memory);
+            });
+            newestByKey.forEach(memory => {
+                if (memory.status === 'superseded') memory.status = 'active';
+            });
+        }
+    }
+
+    if ((session.lastConsolidatedIndex || 0) > msgIndex || droppedAny) {
+        session.lastConsolidatedIndex = Math.min(session.lastConsolidatedIndex || 0, rewindTo, msgIndex);
     }
     return droppedAny;
 }
@@ -31265,7 +31744,48 @@ function trimToLastSentence(text) {
     return t + '…';
 }
 
+const memoryConsolidationJobs = new WeakMap();
+
 async function consolidateSessionEpisodicMemory(session, config) {
+    if (!session) return;
+    const existing = memoryConsolidationJobs.get(session);
+    if (existing) return existing;
+    const job = consolidateSessionEpisodicMemoryRun(session, config)
+        .finally(() => memoryConsolidationJobs.delete(session));
+    memoryConsolidationJobs.set(session, job);
+    return job;
+}
+
+function parseStructuredChatMemory(rawText) {
+    const raw = String(rawText || '').trim();
+    const fenced = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const firstBrace = fenced.indexOf('{');
+    const lastBrace = fenced.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+        try {
+            const parsed = JSON.parse(fenced.slice(firstBrace, lastBrace + 1));
+            const summary = String(parsed.summary || '').trim();
+            const memories = (Array.isArray(parsed.memories) ? parsed.memories : []).slice(0, 16)
+                .filter(isPlainObject).map(memory => ({
+                    type: CHAT_MEMORY_TYPES.has(memory.type) ? memory.type : 'fact',
+                    key: String(memory.key || '').slice(0, 240),
+                    text: String(memory.text || '').slice(0, 4000),
+                    importance: memory.importance,
+                    confidence: memory.confidence,
+                    status: memory.status,
+                    scope: memory.scope,
+                    characterIds: memory.characterIds,
+                    witnessedBy: memory.witnessedBy
+                })).filter(memory => memory.text.trim());
+            if (summary || memories.length) return { summary, memories };
+        } catch (error) {
+            console.warn('Structured memory JSON was invalid; preserving it as an episode.', error);
+        }
+    }
+    return { summary: raw.replace(/^\[EPISODIC ARCHIVE\]:?\s*/i, ''), memories: [] };
+}
+
+async function consolidateSessionEpisodicMemoryRun(session, config) {
     if (!session) return;
     // Race guard: remember the epoch at read time; if a reroll/edit/restore
     // rewrites history while our API calls are in flight, we must not commit.
@@ -31293,6 +31813,8 @@ async function consolidateSessionEpisodicMemory(session, config) {
     const MAX_SLICE = 40;
     const chunkEnd = Math.min(lastIdx + MAX_SLICE, currentLen);
     const slice = messages.slice(lastIdx, chunkEnd);
+    const isChatMemory = Array.isArray(session.messages);
+    if (isChatMemory) ensureChatMessageIds(session);
     
     console.log(`Consolidation: Archiving messages ${lastIdx}–${chunkEnd} (${slice.length} msgs)`);
 
@@ -31331,11 +31853,15 @@ async function consolidateSessionEpisodicMemory(session, config) {
             },
             body: JSON.stringify({
                 model: consolidationModel,
-                max_tokens: 500, // headroom so summaries finish (was 300 → cut off mid-sentence)
+                max_tokens: isChatMemory ? 1100 : 500,
                 messages: [
                     {
                         role: 'system',
-                        content: `You are "Horde Chronos" — a narrative memory archivist.
+                        content: isChatMemory ? `You are Horde Chronos, a precise long-term memory archivist for roleplay.
+Return ONLY valid JSON with this shape:
+{"summary":"2-4 factual sentences describing the scene","memories":[{"type":"fact|relationship|state|thread","key":"stable_subject:attribute","text":"one atomic durable fact","importance":0.0,"confidence":0.0,"status":"active|resolved|disputed","scope":"timeline|relationship|canon","characterIds":["names or ids"],"witnessedBy":["names or ids"]}]}
+Record only durable changes: decisions, promises, relationships, discoveries, secrets, injuries, possessions, locations, goals, identities, and unresolved threads. Each memory must contain one fact. Use the same key when a newer fact replaces an older state. Mark concluded threads resolved. Distinguish narrator canon from what characters personally witnessed. Do not invent details and do not include ordinary banter or transient mood.`
+                            : `You are "Horde Chronos" — a narrative memory archivist.
 Summarize the roleplay segment below in AT MOST 3 short sentences (roughly 60 words). Capture only the key events, decisions, secrets revealed, and status changes. Third person, factual, no embellishment. Finish every sentence — never trail off.
 Begin your response with: [EPISODIC ARCHIVE]:`
                     },
@@ -31350,8 +31876,10 @@ Begin your response with: [EPISODIC ARCHIVE]:`
         }
 
         const data = await response.json();
-        let summary = data.choices?.[0]?.message?.content?.trim();
-        if (!summary) throw new Error('Consolidation model returned empty content');
+        let rawMemory = data.choices?.[0]?.message?.content?.trim();
+        if (!rawMemory) throw new Error('Consolidation model returned empty content');
+        const extracted = isChatMemory ? parseStructuredChatMemory(rawMemory) : { summary: rawMemory, memories: [] };
+        let summary = extracted.summary || rawMemory;
 
         // Safety net: if the model still overran the budget, trim to the last
         // COMPLETE sentence so we never archive a mid-word fragment like "…while".
@@ -31361,10 +31889,6 @@ Begin your response with: [EPISODIC ARCHIVE]:`
         
         console.log(`Consolidation OK: ${summary.slice(0, 100)}...`);
         
-        // Cache vector embedding for this block
-        const embedding = await HordeVectorMemory.getCachedEmbedding(summary);
-        
-        session.episodicMemories = session.episodicMemories || [];
         // Stamp the covered message range so this memory can be invalidated if
         // any of its source messages are later edited, rerolled, or deleted.
         // Commit gate: history was rewritten while we were summarizing —
@@ -31374,14 +31898,54 @@ Begin your response with: [EPISODIC ARCHIVE]:`
             return;
         }
 
-        session.episodicMemories.push({ text: summary, embedding, createdAt: Date.now(), startIndex: lastIdx, endIndex: chunkEnd });
+        let totalMemories = 0;
+        let pendingEmbeddings = [];
+        if (isChatMemory) {
+            const continuity = ensureChatContinuity(session, config?.id || chatOwnerId());
+            const sourceMessageIds = slice.map(message => message.id).filter(Boolean);
+            const participantIds = [...new Set(slice.map(message => message.charId).filter(Boolean))];
+            const records = [{
+                type: 'episode', key: `scene:${session.id}:${lastIdx}:${chunkEnd}`, text: summary,
+                importance: 0.62, confidence: 0.9, scope: 'timeline', characterIds: participantIds,
+                witnessedBy: participantIds
+            }, ...extracted.memories];
+            const inserted = upsertContinuityMemoryRecords(continuity, records, {
+                sourceSessionId: session.id,
+                sourceMessageIds,
+                startIndex: lastIdx,
+                endIndex: chunkEnd,
+                personaId: state.activePersonaId || ''
+            });
+            pendingEmbeddings = inserted;
+            totalMemories = continuity.records.filter(record => record.status !== 'superseded').length;
+        } else {
+            const embedding = await HordeVectorMemory.getCachedEmbedding(summary);
+            session.episodicMemories = session.episodicMemories || [];
+            session.episodicMemories.push({
+                text: summary, embedding,
+                embeddingNamespace: embedding ? HordeVectorMemory.namespace() : '',
+                createdAt: Date.now(), startIndex: lastIdx, endIndex: chunkEnd
+            });
+            totalMemories = session.episodicMemories.length;
+        }
         session.lastConsolidatedIndex = chunkEnd;
 
         await saveState();
 
+        // Raw structured records are already durable. Vector enrichment is a
+        // second phase, so closing the app or losing the embedding provider can
+        // never erase the memory itself.
+        if (pendingEmbeddings.length) {
+            for (const record of pendingEmbeddings) {
+                try { await hydrateChatMemoryEmbedding(record); }
+                catch (error) { console.warn('Memory vector enrichment failed; hybrid text recall remains active.', error); }
+            }
+            await HordeDB.set('chatContinuities', state.chatContinuities);
+        }
+
         // FIX 4: Visible feedback so you know it actually ran
-        showToast(`🧠 Memory archived (${session.episodicMemories.length} total)`, 'info');
-        console.log(`Consolidation saved. Total memories: ${session.episodicMemories.length}`);
+        showToast(`🧠 Memory archived (${totalMemories} active)`, 'info');
+        console.log(`Consolidation saved. Total active memories: ${totalMemories}`);
     } catch (e) {
         // Do NOT update lastConsolidatedIndex on failure — will retry next turn
         console.warn(`Consolidation failed (will retry next turn):`, e.message);
@@ -31491,6 +32055,8 @@ function setupVectorMemoryViewerEvents() {
                     // Full rebuild: clear stale memories and re-consolidate from scratch
                     // (otherwise we'd duplicate the entire archive on top of old entries).
                     session.episodicMemories = [];
+                    const continuity = ensureChatContinuity(session, config.id);
+                    continuity.records = continuity.records.filter(memory => memory.sourceSessionId !== session.id);
                     session.lastConsolidatedIndex = 0;
                     while (session.messages.length - (session.lastConsolidatedIndex || 0) >= 8) {
                         await consolidateSessionEpisodicMemory(session, config);
@@ -31558,9 +32124,10 @@ async function renderVectorMemoryList(filterQuery = "") {
             }
         } else {
             const session = getCurrentSession();
-            if (session && session.episodicMemories) {
-                currentEpisodicStore = session.episodicMemories;
-                candidates = session.episodicMemories.map(m => ({ text: m.text, embedding: m.embedding, source: 'episodic', ref: m }));
+            if (session) {
+                const continuity = ensureChatContinuity(session, chatOwnerId());
+                currentEpisodicStore = continuity.records;
+                candidates = continuity.records.map(m => ({ ...m, source: 'continuity', ref: m }));
             }
         }
     } else {
@@ -31652,7 +32219,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             // Check cache for candidates missing embeddings to be fast
             for (const cand of candidates) {
                 if (!cand.embedding) {
-                    const key = HordeVectorMemory.hashText(cand.text);
+                    const key = `${HordeVectorMemory.namespace()}|${HordeVectorMemory.hashText(cand.text)}`;
                     if (HordeVectorMemory.cache.has(key)) {
                         cand.embedding = HordeVectorMemory.cache.get(key);
                     }
@@ -31663,14 +32230,20 @@ async function renderVectorMemoryList(filterQuery = "") {
             if (queryVec && !HordeVectorMemory.isFallbackActive) {
                 displayList = candidates.map(cand => {
                     let score = 0;
-                    if (Array.isArray(cand.embedding) && cand.embedding.length > 0) {
+                    if (Array.isArray(cand.embedding) && cand.embedding.length > 0
+                        && (!cand.embeddingNamespace || cand.embeddingNamespace === HordeVectorMemory.namespace())) {
                         score = cosineSimilarity(queryVec, cand.embedding);
                     }
                     return {
                         text: cand.text,
                         score: score,
                         cached: !!cand.embedding,
-                        ref: cand.ref
+                        ref: cand.ref,
+                        type: cand.type,
+                        status: cand.status,
+                        importance: cand.importance,
+                        sourceSessionId: cand.sourceSessionId,
+                        pinned: cand.pinned
                     };
                 });
                 displayList.sort((a, b) => b.score - a.score);
@@ -31679,7 +32252,7 @@ async function renderVectorMemoryList(filterQuery = "") {
                 const cLower = filterQuery.toLowerCase();
                 displayList = candidates.map(cand => {
                     const score = cand.text.toLowerCase().includes(cLower) ? 0.99 : 0.0;
-                    return { text: cand.text, score, cached: false, ref: cand.ref };
+                    return { ...cand, text: cand.text, score, cached: false, ref: cand.ref };
                 });
                 displayList.sort((a, b) => b.score - a.score);
             }
@@ -31688,7 +32261,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             const cLower = filterQuery.toLowerCase();
             displayList = candidates.map(cand => {
                 const score = cand.text.toLowerCase().includes(cLower) ? 0.99 : 0.0;
-                return { text: cand.text, score, cached: false, ref: cand.ref };
+                return { ...cand, text: cand.text, score, cached: false, ref: cand.ref };
             });
             displayList.sort((a, b) => b.score - a.score);
         }
@@ -31697,7 +32270,12 @@ async function renderVectorMemoryList(filterQuery = "") {
             text: c.text,
             score: null,
             cached: !!c.embedding,
-            ref: c.ref
+            ref: c.ref,
+            type: c.type,
+            status: c.status,
+            importance: c.importance,
+            sourceSessionId: c.sourceSessionId,
+            pinned: c.pinned
         }));
     }
     
@@ -31745,15 +32323,25 @@ async function renderVectorMemoryList(filterQuery = "") {
 
         const actionBtns = editable ? `
             <div style="display:flex; gap:6px;">
+                <button class="tool-btn epi-pin-btn" title="Keep this memory in recall" style="font-size:11px; padding:2px 8px;">${item.ref?.pinned ? '★ Pinned' : '☆ Pin'}</button>
                 <button class="tool-btn epi-edit-btn" title="Edit memory" style="font-size:11px; padding:2px 8px;">✎ Edit</button>
                 <button class="tool-btn tool-btn-danger epi-del-btn" title="Delete memory" style="font-size:11px; padding:2px 8px;">✕</button>
             </div>` : '';
+
+        const metadata = item.ref ? [
+            String(item.ref.type || 'episode').replace('_', ' '),
+            item.ref.status || 'active',
+            `importance ${Math.round((Number(item.ref.importance) || 0.5) * 100)}%`,
+            item.ref.sourceSessionId ? `source ${item.ref.sourceSessionId}` : '',
+            Number.isFinite(Number(item.ref.startIndex)) ? `messages ${item.ref.startIndex}–${item.ref.endIndex ?? '?'}` : ''
+        ].filter(Boolean).join(' · ') : '';
 
         card.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border2); padding-bottom:6px;">
                 <div style="display:flex; gap:8px; align-items:center;">${cacheTag}${scoreTag}</div>
                 ${actionBtns}
             </div>
+            ${metadata ? `<div style="font-size:0.68rem; color:var(--text-3); text-transform:uppercase; letter-spacing:.04em;">${escapeHTML(metadata)}</div>` : ''}
             <div class="epi-text" style="font-size:0.9rem; line-height:1.5; color:var(--text); white-space:pre-wrap;">${escaped}</div>
             ${editable ? `<textarea class="form-textarea epi-edit-box" rows="6" style="display:none;">${escaped}</textarea>` : ''}
         `;
@@ -31764,6 +32352,14 @@ async function renderVectorMemoryList(filterQuery = "") {
             const box = card.querySelector('.epi-edit-box');
             const editBtn = card.querySelector('.epi-edit-btn');
             const delBtn = card.querySelector('.epi-del-btn');
+            const pinBtn = card.querySelector('.epi-pin-btn');
+
+            pinBtn.onclick = async () => {
+                ref.pinned = !ref.pinned;
+                ref.updatedAt = Date.now();
+                await saveState();
+                renderVectorMemoryList(filterQuery);
+            };
 
             delBtn.onclick = async () => {
                 const i = currentEpisodicStore.indexOf(ref);
@@ -31787,6 +32383,8 @@ async function renderVectorMemoryList(filterQuery = "") {
                     ref.text = newText;
                     try {
                         ref.embedding = await getEmbedding(newText);
+                        ref.embeddingNamespace = HordeVectorMemory.namespace();
+                        ref.updatedAt = Date.now();
                     } catch (e) {
                         console.warn('Re-embed failed, keeping text only:', e);
                         delete ref.embedding;
@@ -35958,6 +36556,21 @@ function extractCompanionToolCalls(toolCalls) {
     };
 }
 
+/**
+ * A model turn is not complete until it has something the player can actually
+ * receive. OpenAI-compatible providers may legitimately return only tool_calls
+ * with message.content=null; the private receipt is useful, but it is not a
+ * chat reply and must not consume the player's pending message by itself.
+ */
+function companionHasDeliverableReply(replyText, actions, companion, links = []) {
+    if (String(replyText || '').trim()) return true;
+    if (Array.isArray(links) && links.length) return true;
+    if (/^https?:\/\//i.test(String(actions?.link?.url || ''))) return true;
+    if (companion?.allowVoiceNotes && String(actions?.voice?.text || '').trim()) return true;
+    if (companion?.allowPhotos && String(actions?.photo?.scene || '').trim()) return true;
+    return false;
+}
+
 // --- Persistence ------------------------------------------------------------
 
 function captureCompanionRuntime(companion) {
@@ -36774,21 +37387,26 @@ function repairCompanionProtocolLeaks(messages, companionName = '') {
 async function repairCompanionTurnCommit(companion, promptMessages, visibleReply, options = {}) {
     try {
         const textProvider = companionTextProviderId(companion);
+        const recoverVisibleOnly = options.recoverVisible === true && options.preserveCommit === true;
         const repairMessages = [
             ...promptMessages,
             { role: 'assistant', content: visibleReply || '[No visible text; the response may consist only of media.]' },
             {
                 role: 'user',
-                content: `[PRIVATE SIMULATION RECEIPT REPAIR${options.recoverVisible ? ' AND VISIBLE REPLY RECOVERY' : ' — DO NOT WRITE ANOTHER VISIBLE MESSAGE'}]
-${options.recoverVisible ? 'The previous completion contained only malformed private protocol. Write one clean, natural visible reply to the player now, with no JSON, function syntax, timing headers or engine language; then call commit_human_turn natively.' : 'Call commit_human_turn once for the response immediately above. Preserve what it actually did.'} Explicitly decide photo, voice_note and video_clip; use video_clip=none unless the player explicitly sent a [CLIP REQUEST id]. Report the emotional state change. Do not invent media that the visible response did not agree to send.`
-                    + ` Choose one conversation_goal. Keep profile claims, direct statements and observed patterns distinct. Add no unsupported relationship jump, secret, boundary event or milestone.`
+                content: recoverVisibleOnly
+                    ? `[VISIBLE REPLY RECOVERY — PRIVATE INSTRUCTION, NOT A PLAYER MESSAGE]
+The private commit_human_turn receipt was recorded successfully, but the completion contained no player-visible reply or deliverable media. Return only one clean, natural reply to the player's latest actual message. Do not call tools, output JSON, mention this recovery, add timing headers, or expose engine language.`
+                    : `[PRIVATE SIMULATION RECEIPT REPAIR — DO NOT WRITE ANOTHER VISIBLE MESSAGE]
+Call commit_human_turn once for the response immediately above. Preserve what it actually did. Explicitly decide photo, voice_note and video_clip; use video_clip=none unless the player explicitly sent a [CLIP REQUEST id]. Report the emotional state change. Do not invent media that the visible response did not agree to send. Choose one conversation_goal. Keep profile claims, direct statements and observed patterns distinct. Add no unsupported relationship jump, secret, boundary event or milestone.`
             }
         ];
         const body = applyCompanionGenerationConfig({
             model: companion.model || state.globalSettings.defaultModel,
             messages: sanitizeMessagesForProvider(repairMessages, textProvider),
-            tools: [COMPANION_TURN_COMMIT_TOOL],
-            tool_choice: { type: 'function', function: { name: 'commit_human_turn' } }
+            ...(recoverVisibleOnly ? {} : {
+                tools: [COMPANION_TURN_COMMIT_TOOL],
+                tool_choice: { type: 'function', function: { name: 'commit_human_turn' } }
+            })
         }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
         const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
             method: 'POST',
@@ -36804,6 +37422,7 @@ ${options.recoverVisible ? 'The previous completion contained only malformed pri
         ]);
         const recoveredVisible = companionVisibleReplyLimit(sanitizeCompanionTextReply(
             quarantineCompanionProtocolText(embedded.visibleText), companion.name), companion);
+        if (recoverVisibleOnly) return recoveredVisible ? { visibleReply: recoveredVisible } : null;
         if (repaired.commit) return { ...repaired, visibleReply: recoveredVisible };
         const parsed = safeParseJSONRepair(embedded.visibleText);
         return isPlainObject(parsed) ? { ...extractCompanionToolCalls([{
@@ -37395,9 +38014,7 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         commitSource = 'legacy_tools';
     }
     if (!actions.commit) {
-        const repaired = await repairCompanionTurnCommit(companion, promptMessages, replyText, {
-            recoverVisible: !replyText && !actions.photo && !actions.voice
-        });
+        const repaired = await repairCompanionTurnCommit(companion, promptMessages, replyText);
         if (repaired?.commit) {
             actions = repaired;
             if (!replyText && repaired.visibleReply) replyText = repaired.visibleReply;
@@ -37416,6 +38033,17 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         };
         actions.state = actions.commit.state;
         commitSource = 'frozen_no_receipt';
+    }
+    const annotationCanDeliver = (Array.isArray(choice.message?.annotations) ? choice.message.annotations : [])
+        .some(annotation => annotation?.type === 'url_citation'
+            && /^https?:\/\//i.test(String(annotation.url_citation?.url || '')));
+    if (!companionHasDeliverableReply(replyText, actions, companion,
+        annotationCanDeliver ? [{ mediaType: 'link' }] : [])) {
+        const recovered = await repairCompanionTurnCommit(companion, promptMessages, '', {
+            recoverVisible: true,
+            preserveCommit: true
+        });
+        if (recovered?.visibleReply) replyText = recovered.visibleReply;
     }
     if (actions.photo) actions.commit.photo = { ...actions.commit.photo, ...actions.photo, decision: 'send' };
     if (actions.voice) actions.commit.voice_note = { ...actions.commit.voice_note, ...actions.voice, decision: 'send' };
@@ -37482,6 +38110,13 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         }]
         : [];
     const links = sharedLink.length ? sharedLink : annotationLinks;
+
+    if (!companionHasDeliverableReply(replyText, actions, companion, links)) {
+        // Throw before applying the receipt. Deferred replies already restore a
+        // retry gate in their caller, so a provider cannot silently consume the
+        // inbox batch as answered when it returned no usable content.
+        throw new Error('The conversation model returned no visible reply or deliverable media.');
+    }
 
     const lastCompanionAt = messages.reduce((latest, message) =>
         message.role === 'companion' && !message.invalidated ? Math.max(latest, Number(message.timestamp) || 0) : latest, 0);
@@ -44742,6 +45377,10 @@ function renderCompanionThread() {
             ? `${life.label}${experience.replyDelays ? ' · replies may be delayed' : ' · replies stay immediate'}`
             : life.label;
     statusEl.className = `companion-chat-status ${life.availability}`;
+    if (Number(nextPending?.replyDueAt) > nowMs) {
+        const expected = companionClockParts(nextPending.replyDueAt, companion);
+        statusEl.textContent = `${life.label} · reply expected around ${expected.time}`;
+    }
     if (dynamics.cooldownUntil > nowMs && dynamics.anger >= 55) {
         statusEl.textContent = `${life.label} · taking space`;
         statusEl.className = 'companion-chat-status mood';

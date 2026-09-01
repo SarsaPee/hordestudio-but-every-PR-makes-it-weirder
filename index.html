@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260823-v166-rpg-release">
+    <link rel="stylesheet" href="style.css?v=20260901-v167-memory-release">
 </head>
 <body>
 <div id="app">
@@ -303,6 +303,11 @@
                     <div class="chat-toolbar chat-toolbar-wrap">
                         <div class="session-selector-wrap">
                             <select id="session-select" class="tool-select"></select>
+                            <select id="new-session-continuity-mode" class="tool-select" title="How the next session should use long-term story memory" aria-label="New session continuity">
+                                <option value="continue">Continue memory</option>
+                                <option value="fork">Fork memory</option>
+                                <option value="fresh">Fresh memory</option>
+                            </select>
                             <button class="tool-btn" id="new-session-btn" title="New Session">➕ New</button>
                             <button class="tool-btn" id="rename-session-btn" title="Rename Session">✏️ Rename</button>
                         </div>
@@ -322,7 +327,7 @@
                 </header>
                 <div id="vector-fallback-banner" class="fallback-banner hidden">
                     <span class="banner-icon">⚠️</span>
-                    <span class="banner-text">OpenRouter Embeddings API failed (or credit exhausted). Using primitive keyword-matching fallback for long-term character memory.</span>
+                    <span class="banner-text">The embedding service is temporarily unavailable. Long-term memory is still using local keyword, recency, importance, and story-state recall.</span>
                     <button class="banner-close" data-dismiss-fallback="vector-fallback-banner" type="button" aria-label="Dismiss notice">✕</button>
                 </div>
                 <div class="messages-wrap" id="messages-container">
@@ -3722,21 +3727,21 @@
                 <div class="form-row" style="margin-top:12px;">
                     <div class="form-col" style="flex:1">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <label class="form-label">Cosine Similarity Threshold</label>
+                            <label class="form-label">Semantic Similarity Threshold</label>
                             <span id="global-memory-threshold-val" style="font-family:monospace; font-size:0.85rem; font-weight:700; color:var(--red);">0.35</span>
                         </div>
                         <input type="range" id="global-memory-threshold" min="0.10" max="0.90" step="0.05" value="0.35" class="form-range" style="width:100%; accent-color:var(--red); cursor:pointer;">
-                        <span class="form-hint">Minimum vector similarity score required to retrieve a memory block. Higher is more strict.</span>
+                        <span class="form-hint">Minimum semantic score. Exact keywords, pinned canon, current state, and active story threads can still be recalled below it.</span>
                     </div>
                 </div>
                 <div class="form-row" style="margin-top:16px;">
                     <div class="form-col" style="flex:1">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <label class="form-label">Top-K Memory Limit</label>
-                            <span id="global-memory-topk-val" style="font-family:monospace; font-size:0.85rem; font-weight:700; color:var(--red);">4</span>
+                            <span id="global-memory-topk-val" style="font-family:monospace; font-size:0.85rem; font-weight:700; color:var(--red);">8</span>
                         </div>
-                        <input type="range" id="global-memory-topk" min="1" max="10" step="1" value="4" class="form-range" style="width:100%; accent-color:var(--red); cursor:pointer;">
-                        <span class="form-hint">Maximum number of relevant memory blocks injected into the prompt.</span>
+                        <input type="range" id="global-memory-topk" min="1" max="12" step="1" value="8" class="form-range" style="width:100%; accent-color:var(--red); cursor:pointer;">
+                        <span class="form-hint">Maximum recalled blocks. Memory has its own capped prompt budget so it cannot crowd out recent dialogue.</span>
                     </div>
                 </div>
                 <div class="form-row" style="margin-top:16px;">
@@ -4379,15 +4384,15 @@
 <div id="vector-memory-modal-overlay" class="modal-bg hidden">
     <div class="modal modal-lg" style="height: 80vh; max-height: 800px; display:flex; flex-direction:column;">
         <div class="modal-hd">
-            <h2>🧠 Vector Memory Inspector</h2>
+            <h2>🧠 Story Memory Inspector</h2>
             <button id="close-vector-memory-btn" class="modal-close" type="button" aria-label="Close memory search">✕</button>
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px;">
-            <p class="form-hint" style="margin-top:0;">Inspect, search, and test similarity matching against the active session's vector memory blocks.</p>
+            <p class="form-hint" style="margin-top:0;">Inspect durable facts, relationships, state, open threads, and scene memories in the active continuity.</p>
             
             <!-- Tabs Header -->
             <div style="display:flex; border-bottom:1px solid var(--border2); padding-bottom:8px; gap:16px;">
-                <button id="vector-tab-episodic" class="tab-btn active-tab" style="background:none; border:none; color:var(--accent); font-weight:bold; cursor:pointer; padding:4px 8px; font-size:0.9rem;">📚 Episodic Summaries</button>
+                <button id="vector-tab-episodic" class="tab-btn active-tab" style="background:none; border:none; color:var(--accent); font-weight:bold; cursor:pointer; padding:4px 8px; font-size:0.9rem;">📚 Story Continuity</button>
                 <button id="vector-tab-biography" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">📖 Character Bio & Lore</button>
             </div>
             
@@ -4865,11 +4870,11 @@
 <script src="labs-core.js?v=20260822-v161"></script>
 <script src="labs-tasks.js?v=20260822-v161"></script>
 <script src="labs-guide.js?v=20260822-v161"></script>
-<script src="help-system.js?v=20260823-pip-v3"></script>
+<script src="help-system.js?v=20260901-v167-memory-release"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
-    <script src="app.js?v=20260823-v166-rpg-release"></script>
+    <script src="app.js?v=20260901-v167-memory-release"></script>
 </body>
 </html>

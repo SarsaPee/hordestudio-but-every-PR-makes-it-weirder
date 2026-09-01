@@ -47,13 +47,25 @@ function matchTemplateEnd(start) {
     let depth = 0;
     for (let i = start + 1; i < app.length; i++) {
         if (app[i] === '\\') { i++; continue; }
-        if (app[i] === '$' && app[i + 1] === '{') { depth++; i++; continue; }
-        if (depth) {
-            if (app[i] === '}') depth--;
-            else if (app[i] === '`') i = matchTemplateEnd(i);
+        if (!depth) {
+            if (app[i] === '$' && app[i + 1] === '{') { depth = 1; i++; continue; }
+            if (app[i] === '`') return i;
             continue;
         }
-        if (app[i] === '`') return i;
+        const next = app[i + 1];
+        if (app[i] === '/' && next === '/') { i = app.indexOf('\n', i); if (i < 0) break; continue; }
+        if (app[i] === '/' && next === '*') { i = app.indexOf('*/', i + 2) + 1; continue; }
+        if (app[i] === '"' || app[i] === "'") {
+            const quote = app[i];
+            for (i++; i < app.length; i++) {
+                if (app[i] === '\\') { i++; continue; }
+                if (app[i] === quote) break;
+            }
+            continue;
+        }
+        if (app[i] === '`') { i = matchTemplateEnd(i); continue; }
+        if (app[i] === '{') depth++;
+        else if (app[i] === '}') depth--;
     }
     return app.length - 1;
 }
@@ -117,25 +129,10 @@ function matchSpan(startIndex, openChar, closeChar, label, searchFrom = startInd
             lastSignificant = char;
             continue;
         }
-        // A template literal can contain `${ ... }` holding arbitrary code —
-        // including another template literal. Scanning to the next backtick
-        // ends the string early on a nested one, which silently truncated the
-        // function and dropped it from the index entirely.
+        // Template interpolation can contain object literals and more nested
+        // templates. Use the same lexer-aware matcher as statement extraction.
         if (char === '`') {
-            let depth = 0;                     // open `${` interpolations
-            for (i++; i < app.length; i++) {
-                if (app[i] === '\\') { i++; continue; }
-                if (app[i] === '$' && app[i + 1] === '{') { depth++; i++; continue; }
-                if (depth) {
-                    if (app[i] === '}') depth--;
-                    else if (app[i] === '`') {
-                        // A nested template inside the interpolation.
-                        i = matchTemplateEnd(i);
-                    }
-                    continue;
-                }
-                if (app[i] === '`') break;
-            }
+            i = matchTemplateEnd(i);
             lastSignificant = '`';
             continue;
         }
@@ -198,7 +195,7 @@ function constInitializerIsInert(source) {
     if (/\b(document|window|localStorage|sessionStorage|indexedDB|navigator|state)\b/.test(withoutObjectKeys)) return false;
     // A call is fine only if it is one of the shapes we recognise as inert.
     const calls = body.match(/\b[A-Za-z_$][\w$.]*\s*\(/g) || [];
-    return calls.every(call => /^(Object\.freeze|Object\.entries|Object\.keys|Object\.values|Object\.fromEntries|Set|Map|Array|String|Number|Boolean|RegExp|Symbol)\s*\($/.test(call));
+    return calls.every(call => /^(Object\.freeze|Object\.entries|Object\.keys|Object\.values|Object\.fromEntries|[A-Za-z_$][\w$]*\.map|Set|Map|Array|String|Number|Boolean|RegExp|Symbol)\s*\($/.test(call));
 }
 
 // name -> { kind, index, source }. Built once; every suite shares it.
@@ -290,7 +287,13 @@ function resolveDependencies(seeds, options = {}) {
             continue;
         }
         chosen.set(name, found);
-        const identifiers = found.source.match(/\b[A-Za-z_$][\w$]*\b/g) || [];
+        // Comments are prose, not dependencies. A guard comment mentioning a
+        // large function once caused a one-line boolean to pull the entire
+        // runtime into a VM and fail with an unrelated parse error.
+        const dependencySource = found.source
+            .replace(/\/\/[^\n]*/g, '')
+            .replace(/\/\*[\s\S]*?\*\//g, '');
+        const identifiers = dependencySource.match(/\b[A-Za-z_$][\w$]*\b/g) || [];
         identifiers.forEach(identifier => {
             if (identifier === name) return;
             if (KEYWORDS.has(identifier) || AMBIENT.has(identifier)) return;

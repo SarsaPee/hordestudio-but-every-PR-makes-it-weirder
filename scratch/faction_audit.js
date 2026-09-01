@@ -221,6 +221,21 @@ test('choosing a membership persists it, and clearing it removes the field', () 
     assert(/delete ent\.factionId/.test(app), 'clearing membership leaves a stale id behind');
 });
 
+test('faction controls are always rendered after entity normalization', () => {
+    const assertSafeOrder = (source, label) => {
+        const entitiesAt = source.lastIndexOf('renderWorldEntities(');
+        const factionsAt = source.lastIndexOf('renderWorldFactions(');
+        assert(entitiesAt >= 0 && factionsAt > entitiesAt,
+            `${label} binds faction controls before entity rendering replaces their backing objects`);
+    };
+    assertSafeOrder(functionSource('addWorldFaction'), 'creating a faction');
+    const factionPanel = functionSource('renderWorldFactions');
+    const renameHandler = factionPanel.match(/faction-name'\)\.onchange\s*=\s*\(\)\s*=>\s*\{([^}]+)\}/)?.[1] || '';
+    const deleteHandler = factionPanel.match(/del-faction'\)\.onclick\s*=\s*\(\)\s*=>\s*\{([\s\S]+?)updateWorldTokenCount\(\)/)?.[1] || '';
+    assertSafeOrder(renameHandler, 'renaming a faction');
+    assertSafeOrder(deleteHandler, 'deleting a faction');
+});
+
 let failures = 0;
 for (const { name, fn } of tests) {
     try { fn(); console.log(`✓ ${name}`); }

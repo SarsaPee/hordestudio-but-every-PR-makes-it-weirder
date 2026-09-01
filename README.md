@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# Horde Studio 16.6
+# Horde Studio 16.7
 
 ### Build characters. Shape worlds. Simulate lives.
 
@@ -14,7 +14,7 @@ Characters & group rooms · Living sandbox worlds · Autonomous virtual humans �
 
 ## What is Horde Studio?
 
-**Horde Studio 16.6** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, virtual-human simulation, and host-powered multiplayer into one application.
+**Horde Studio 16.7** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, virtual-human simulation, and host-powered multiplayer into one application.
 
 It is designed for stories that need to **remember, react, and evolve**. Build a cast, create a world around them, carry consequences across sessions, or simulate an AI person with routines, relationships, moods, memories, and multiple timelines.
 
@@ -70,6 +70,17 @@ Virtual Humans maintain their own clock, routine, mood, relationship state, memo
 ---
 
 ## Core experiences
+
+### Persistent story memory — new in 16.7
+
+Character chats now keep a durable story continuity separate from individual chat sessions. Facts, relationships, current state, unresolved threads, and important scenes survive long-running roleplay without flooding the model with the entire transcript.
+
+- Continue, fork, or start fresh when creating a chat session
+- Hybrid semantic and local lexical recall with recency, importance, pinned-canon, state, and open-thread weighting
+- Structured provenance so edited, rerolled, or deleted messages can invalidate memories they created
+- Contradiction handling that supersedes stale canon instead of silently keeping both versions
+- A dedicated Story Memory inspector for searching, pinning, editing, archiving, and deleting durable memories
+- Backward-compatible migration for existing episodic summaries and embedding caches
 
 ### Optional RPG systems — new in 16.6
 

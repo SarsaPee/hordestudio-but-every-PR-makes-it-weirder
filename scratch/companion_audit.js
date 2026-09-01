@@ -115,7 +115,7 @@ buildContext(vm, [
     'buildCompanionShareData', 'portableMediaSource', 'embedCompanionArchiveMedia',
     'buildCompanionArchivePayload', 'companionArchiveFileName', 'restoreCompanionArchive',
     'COMPANION_SHORT_TERM_LIMIT', 'COMPANION_SILENCE_STAGE_ORDER',
-    'extractCompanionToolCalls', 'extractCompanionEmbeddedToolCalls',
+    'extractCompanionToolCalls', 'extractCompanionEmbeddedToolCalls', 'companionHasDeliverableReply',
     'normalizeCompanionEmbeddedToolValue', 'safeParseJSONRepair',
     'COMPANION_TOOLS', 'COMPANION_WEB_SEARCH_TOOL', 'companionToolsFor',
     'COMPANION_IMAGE_PARAMETER_DEFS',
@@ -2415,6 +2415,32 @@ test('no tool calls at all extracts cleanly to nothing', () => {
     assert.equal(actions.link, null);
     assert.doesNotThrow(() => context.extractCompanionToolCalls(null));
     assert.doesNotThrow(() => context.extractCompanionToolCalls(undefined));
+});
+
+test('a tool-only turn receipt is not mistaken for a visible human reply', () => {
+    const companion = freshCompanion({ allowPhotos: true, allowVoiceNotes: true });
+    const commitOnly = context.extractCompanionToolCalls([{
+        function: {
+            name: 'commit_human_turn',
+            arguments: JSON.stringify({
+                state: { mood_label: 'neutral' },
+                photo: { decision: 'none' },
+                voice_note: { decision: 'none' },
+                video_clip: { decision: 'none' }
+            })
+        }
+    }]);
+    assert.equal(context.companionHasDeliverableReply('', commitOnly, companion), false);
+    assert.equal(context.companionHasDeliverableReply('hey, sorry—just saw this', commitOnly, companion), true);
+    assert.equal(context.companionHasDeliverableReply('', { ...commitOnly, voice: { text: 'calling you back' } }, companion), true);
+    assert.match(functionSource('sendCompanionMessage'), /preserveCommit:\s*true/,
+        'tool-only responses do not enter visible-text recovery');
+    assert.match(functionSource('sendCompanionMessage'), /returned no visible reply or deliverable media/,
+        'an empty recovery result is still silently committed');
+});
+
+test('a delayed reply exposes its expected time instead of looking disconnected', () => {
+    assert.match(functionSource('renderCompanionThread'), /reply expected around/);
 });
 
 test('slightly malformed tool JSON is repaired rather than dropped', () => {

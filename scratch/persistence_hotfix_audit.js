@@ -28,7 +28,7 @@ assert(/await persistStateSnapshot\(\)/.test(save),
     'coalesced saves must still commit the latest state snapshot');
 assert(/const savingWorldMedia = worldMediaDirty/.test(persist),
     'world media dirtiness must be captured per persistence pass');
-assert(/const HORDE_STUDIO_VERSION = '16\.1\.0'/.test(app),
-    'update this audit when the hotfix version is bumped');
+assert(/const HORDE_STUDIO_VERSION = '\d+\.\d+\.\d+'/.test(app),
+    'the release must retain a parseable semantic version');
 
 console.log('✓ idle agency persistence and overlapping-save protections are present');

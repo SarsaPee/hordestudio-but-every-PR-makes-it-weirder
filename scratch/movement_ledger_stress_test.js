@@ -46,6 +46,7 @@ const functionNames = [
     'findWorldTravelPath',
     'resolveWorldMovementTarget',
     'getExitTravelTime',
+    'normalizeWorldTravelMode',
     'getWorldPathTravelTime',
     'movePlayerAlongWorldPath',
     'extractUserMovementTarget',
@@ -105,6 +106,7 @@ const context = {
 vm.createContext(context);
 const composedSource = [
     sourceBlock('function getExitTargetName', 'function checkExitTarget'),
+    sourceBlock('const WORLD_TRAVEL_MODES', 'const worldRecordInspector'),
     sourceBlock('function getExitTravelTime', '// An NPC moved by the narrative'),
     sourceBlock('function extractUserMovementTarget', 'async function executeWorldTurn'),
     sourceBlock('function normalizeWorldLedgerEntry', 'async function recoverWorldLedgerEntry'),
@@ -202,7 +204,8 @@ const session = { playerLocation: 'Hub', bonusTimeMinutes: 0 };
 const arrival = context.applyUserDirectedMovement(world, session, 'I make my way to the Gate to Hell and look around.');
 assert.equal(session.playerLocation, 'gate');
 assert.equal(session.bonusTimeMinutes, 12);
-assert(arrival.includes('Old Hub → Crossroads → Gate to Hell'));
+assert.match(arrival, /Old Hub → Crossroads[\s\S]*Crossroads → Gate to Hell/,
+    'the arrival receipt must retain every leg of a multi-stop route');
 
 session.playerLocation = 'Hub';
 session.bonusTimeMinutes = 0;

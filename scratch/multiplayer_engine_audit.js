@@ -34,7 +34,9 @@ assert.equal(state.characters.p1.equipment['main-hand'], 'blade');
 assert.equal(state.npcs.wolf.name, 'Dire wolf');
 assert.deepEqual(state.encounters[0].initiative, ['p1', 'wolf']);
 
-const checkResult = Engine.check(state, 'p1', { attribute: 'Strength', skill: 'Athletics', difficulty: 1 });
+// Use a non-d20 die here so the engine's intentional natural-1 fumble rule
+// cannot make this bonus-wiring audit randomly fail one run in twenty.
+const checkResult = Engine.check(state, 'p1', { attribute: 'Strength', skill: 'Athletics', difficulty: 1, dice: 'd2' });
 assert.equal(checkResult.effectBonus, 2);
 assert.equal(checkResult.equipmentBonus, 1);
 assert.equal(checkResult.success, true);

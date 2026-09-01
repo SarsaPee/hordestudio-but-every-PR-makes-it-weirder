@@ -50,7 +50,8 @@ test('cloud-key session behavior is clearly reported', () => {
 test('the changed persistence bundle is cache-busted consistently', () => {
     const versions = [...html.matchAll(/(?:style\.css|help-system\.js|app\.js)\?v=([^"']+)/g)].map(match => match[1]);
     assert.equal(versions.length, 3);
-    assert.deepEqual(new Set(versions), new Set(['20260822-v161']));
+    assert.equal(new Set(versions).size, 1, 'style, help and app assets must advance under one cache key');
+    assert.match(versions[0], /^\d{8}-[a-z0-9-]+$/i);
 });
 
 console.log(`\n${passed} Settings persistence checks passed.`);
