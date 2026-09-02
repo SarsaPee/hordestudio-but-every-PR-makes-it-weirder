@@ -21,7 +21,7 @@
     "runtime/memory-graph.js",
     "integrations/horde-16.7-hooks.js"
   ],
-  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn", "progressive_promotion", "semantic_traversal", "vehicle_authoring", "timeline_fork_browser", "hierarchical_memory", "vector_retrieval", "persona_drafting", "world_agent_review"],
+  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn", "scene_boundary_review", "sequence_closure_reconciliation", "persistent_questions", "progressive_promotion", "semantic_traversal", "vehicle_authoring", "timeline_fork_browser", "hierarchical_memory", "vector_retrieval", "provider_aware_background_jobs", "persona_drafting", "world_agent_review"],
   "hooks": [
     "world configuration normalization",
     "timeline protocol normalization",
@@ -39,6 +39,9 @@
     "global consolidation and embedding-cache controls",
     "persona generation stream and provenance",
     "semantic temporal evidence",
+    "persistent question lifecycle and explicit repair workflow",
+    "scene-boundary proposals and sequence closure reconciliation",
+    "weighted context-pressure diagnostics and provider-aware background dispatch",
     "sequence/scene/turn hierarchy and author-approved transition planning"
   ],
   "integrationManifest": "patches/16.7-integration-manifest.md"
