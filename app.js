@@ -22536,6 +22536,7 @@ function openSessionZero(onDone) {
     const originSection = document.getElementById('sz-origin-section');
     const originList = document.getElementById('sz-origin-list');
     const personaSelect = document.getElementById('sz-persona-select');
+    const controlledEntitySelect = document.getElementById('sz-controlled-entity');
     const personaPreview = document.getElementById('sz-persona-preview');
     const lifeSeedOption = document.getElementById('sz-life-seed-option');
     const lifeSeedEnabled = document.getElementById('sz-life-seed-enabled');
@@ -22560,6 +22561,11 @@ function openSessionZero(onDone) {
     personaSelect.innerHTML = '<option value="">No Persona — use only the Starting Life</option>'
         + state.personas.map(persona => `<option value="${escapeHTML(persona.id)}">${escapeHTML(persona.name || 'Unnamed Persona')}</option>`).join('');
     personaSelect.value = state.personas.some(persona => persona.id === storedPersonaId) ? storedPersonaId : '';
+    controlledEntitySelect.innerHTML = '<option value="player">Create / control this player character</option>'
+        + (world?.entities || []).filter(entity => entity.type === 'npc').map(entity =>
+            `<option value="${escapeHTML(entity.id)}">Play ${escapeHTML(entity.name || entity.id)}</option>`).join('');
+    controlledEntitySelect.value = (sess.controlledEntityId && (world?.entities || []).some(entity => entity.id === sess.controlledEntityId))
+        ? sess.controlledEntityId : 'player';
     const renderPersonaPreview = () => {
         const selected = state.personas.find(persona => persona.id === personaSelect.value);
         personaPreview.textContent = selected && personaPromptText(selected).trim()
@@ -22568,6 +22574,7 @@ function openSessionZero(onDone) {
         renderSessionRoleSetup(world, sess, selected);
     };
     personaSelect.onchange = () => { renderPersonaPreview(); saveStatus.textContent = 'Unsaved identity change'; };
+    controlledEntitySelect.onchange = () => { saveStatus.textContent = 'Unsaved controlled-character change'; };
     renderPersonaPreview();
     const alreadyInitialized = !!sess.lifeSeed?.initialized;
     personaSelect.disabled = alreadyInitialized;
@@ -22671,7 +22678,10 @@ function openSessionZero(onDone) {
         }
         s.storyPrefs = readPreferences();
         s.personaId = personaSelect.value || '';
+        s.controlledEntityId = controlledEntitySelect.value || 'player';
         const selectedPersona = state.personas.find(persona => persona.id === s.personaId) || null;
+        const controlledEntity = s.controlledEntityId !== 'player'
+            ? (world.entities || []).find(entity => entity.id === s.controlledEntityId && entity.type === 'npc') : null;
         const roleSection = document.getElementById('sz-role-section');
         if (roleSection && !roleSection.classList.contains('hidden') && typeof roleSection._remainingPoints === 'function'
             && roleSection._remainingPoints() < 0) {
@@ -22691,6 +22701,12 @@ function openSessionZero(onDone) {
         s.playerIdentity.appearance = selectedPersona?.appearance || '';
         s.playerIdentity.publicIdentity = role.publicIdentity || selectedPersona?.publicIdentity || '';
         s.playerIdentity.reputation = role.reputation || selectedPersona?.reputation || '';
+        if (controlledEntity) {
+            s.controlledEntitySnapshot = safeJsonClone(controlledEntity);
+            s.playerIdentity.personaName = controlledEntity.name || s.playerIdentity.personaName;
+            s.playerIdentity.appearance = controlledEntity.description || s.playerIdentity.appearance;
+            s.playerIdentity.publicIdentity = controlledEntity.name || s.playerIdentity.publicIdentity;
+        } else delete s.controlledEntitySnapshot;
         if (!document.getElementById('sz-role-section')?.classList.contains('hidden')) {
             s.playerIdentity.skills = [...role.skills];
             s.playerIdentity.perks = [...role.perks];
@@ -22711,6 +22727,9 @@ function openSessionZero(onDone) {
             inventory: [...(s.inventory || [])]
         };
         s.setupComplete = true;
+        const sidecarProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, s);
+        const hierarchy = sidecarProtocol && window.HordeSidecarTimeline?.ensureHierarchy?.(sidecarProtocol, s);
+        if (hierarchy?.sequence) hierarchy.sequence.controlledEntityId = s.controlledEntityId;
         try {
             if (seedLife && isFirstRun && lifeSeedEnabled.checked && !s.lifeSeed?.initialized) {
                 saveStatus.textContent = 'Initializing home and social life…';
@@ -24999,6 +25018,9 @@ async function executeWorldTurn(commandOrReroll = null) {
 
     const persona = getTimelinePersona(sess);
     let personaContext = persona ? `\n\n[PLAYER PERSONA — AUTHORITATIVE PLAYER IDENTITY]\n${personaPromptText(persona)}` : "";
+    const controlledEntity = sess.controlledEntityId && sess.controlledEntityId !== 'player'
+        ? (world.entities || []).find(entity => entity.id === sess.controlledEntityId && entity.type === 'npc') : null;
+    if (controlledEntity) personaContext += `\n\n[CONTROLLED CHARACTER — PLAYABLE CANONICAL ENTITY]\nID: ${controlledEntity.id}\nName: ${controlledEntity.name}\nDossier: ${controlledEntity.description || ''}\nPortrayal: ${controlledEntity.persona || ''}\nThis is the entity the player controls for this sequence. Preserve their established knowledge and state; do not treat them as a generic player placeholder.`;
     const playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
     const worldCapabilities = normalizeWorldCapabilities(world);
     const describeSelectedCapabilities = (names, definitions) => (Array.isArray(names) ? names : []).map(name => {
