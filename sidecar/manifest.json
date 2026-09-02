@@ -16,9 +16,10 @@
   "loadOrder": [
     "runtime/mode-config.js",
     "runtime/timeline-model.js",
+    "runtime/promotion-model.js",
     "integrations/horde-16.7-hooks.js"
   ],
-  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn"],
+  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn", "progressive_promotion"],
   "hooks": [
     "world configuration normalization",
     "timeline protocol normalization",

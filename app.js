@@ -10702,8 +10702,11 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     recordSidecarTrace(world, sess, { kind: 'reconciliation', prompt: sidecarPrompt, reply: message, model });
     if (!toolCall) throw new Error('Sidecar returned no commit_world_turn tool call.');
     const receipt = parseWorldToolArguments(toolCall.function?.arguments || '{}');
-    const committed = commitWorldTurnReceipt(world, sess, receipt, options.receiptContext || {}, 'sidecar');
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(protocol, receipt, {
+        source: 'narrator_handoff', narration, handoff, turnId: receipt.turn_id || ''
+    }) || [];
+    const committed = commitWorldTurnReceipt(world, sess, receipt, options.receiptContext || {}, 'sidecar');
     if (protocol) {
         recordSidecarCoreAnswers(world, sess, handoff);
         recordSidecarTemporalEvidence(world, sess, handoff, preClock);
@@ -10713,7 +10716,8 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const turnId = receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`;
         const turnRecord = { id: turnId, status: 'active',
             createdAt: new Date().toISOString(), narration: narration.slice(0, 24000), handoff,
-            preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit) };
+            preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit),
+            provisionalIntroductions: stagedIntroductions.map(entry => entry.id) };
         window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
         protocol.turns.push(turnRecord);
         protocol.turns = protocol.turns.slice(-500);
@@ -10742,7 +10746,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
     const packet = protocol.packet || buildSidecarScenePacket(world, sess);
     const openQuestions = (protocol.questions || []).filter(question => question.status === 'open').slice(-20);
-    const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay: do not write narration, advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers. It must be a complete native commit_world_turn receipt. Do not use it for time, movement, traversal, automatic presence, or speculative facts. If no state change is requested, use null.\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
+    const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay: do not write narration, advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts. Implied people and places are evidence-backed provisional records, not canonical entities: explain their status, but only propose promotion when the author explicitly asks.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers. It must be a complete native commit_world_turn receipt. Do not use it for time, movement, traversal, automatic presence, or speculative facts. If no state change is requested, use null.\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nIMPLIED RECORDS AWAITING REVIEW:\n${JSON.stringify([...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])].filter(record => record.status !== 'promoted').slice(-20))}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
     const body = {
         model, stream: false,
         max_tokens: Math.max(400, Number(tracker.maxTokens) || 1200),
@@ -18891,6 +18895,81 @@ async function planAndApproveWorldSequence() {
     }
 }
 
+async function promoteImpliedWorldRecord() {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        showToast('Implied-record promotion is available in Sidecar worlds.', 'info');
+        return;
+    }
+    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+    window.HordeSidecarPromotion?.ensure(protocol);
+    const candidates = [...protocol.provisionalLocations, ...protocol.provisionalEntities]
+        .filter(record => record.status !== 'promoted');
+    if (!candidates.length) {
+        showToast('There are no implied locations or characters awaiting review.', 'info');
+        return;
+    }
+    const menu = candidates.map((record, index) => `${index + 1}. ${record.kind === 'location' ? 'Place' : 'Character'} — ${record.name}`).join('\n');
+    const choice = Number(prompt(`Promote which implied record?\n\n${menu}\n\nEnter a number.`, ''));
+    const record = candidates[choice - 1];
+    if (!record) return;
+    const visibleLocations = sessionLocations(world, sess);
+    const locationMatch = record.kind === 'location' ? findFuzzyLocation(record.name, visibleLocations) : null;
+    const entityMatch = record.kind === 'entity'
+        ? world.entities.find(entity => isVisibleToSession(entity, sess) && String(entity.name || '').trim().toLowerCase() === record.name.toLowerCase())
+        : null;
+    if (locationMatch || entityMatch) {
+        const existing = locationMatch || entityMatch;
+        queueSidecarQuestion(world, sess,
+            `${record.name} may already refer to the tracked ${record.kind === 'location' ? 'location' : 'character'} “${existing.name}”. Should this implied reference be linked to that existing record, or does it describe something distinct?`,
+            JSON.stringify({ provisionalId: record.id, canonicalCandidateId: existing.id, evidence: record.evidence?.slice(-2) || [] }), {
+                id: `reconcile.promotion.${record.id}`, origin: 'progressive_promotion', target: 'user', pressure: 'medium'
+            });
+        record.candidateCanonicalIds = [...new Set([...(record.candidateCanonicalIds || []), existing.id])];
+        record.status = 'needs_resolution';
+        await saveState();
+        renderWorldPlayState();
+        showToast('A possible duplicate was found, so Sidecar kept this as a question instead of creating a duplicate.', 'info');
+        return;
+    }
+    showConfirmModal(`Promote ${record.name}`, `Create a persistent ${record.kind === 'location' ? 'location' : 'character'} from the details established in recent narration? This does not retroactively change the scene.`, async () => {
+        window.HordeSidecarPromotion?.markPromotionRequested(protocol, record.id);
+        const frame = buildWorldSceneFrame(world, sess);
+        const receipt = {
+            summary: `Promoted implied ${record.kind} ${record.name} from established narrative evidence.`,
+            scene: { player_location_id: frame.player_location_id, player_location_changed: false, present_character_ids: frame.present_character_ids },
+            events: [], entity_updates: [], state_updates: {}
+        };
+        if (record.kind === 'location') {
+            receipt.location_introduced = [{
+                id: `loc_${record.id.replace(/^provisional_location_/, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`.slice(0, 100),
+                name: record.name, description: record.description || 'A location established in recent narration.', region: record.region || '',
+                map_type: record.mapType || undefined, parent_location_id: record.parentHint || undefined,
+                connects_to: record.parentHint || undefined, floor: record.floor || undefined
+            }];
+        } else {
+            receipt.npc_introduced = [{ name: record.name, description: record.description || 'A character established in recent narration.', persona: record.persona || '', home_location: record.parentHint || undefined }];
+        }
+        const commit = commitWorldTurnReceipt(world, sess, receipt, {
+            playerStartLocationId: sess.playerLocation,
+            playerMovementAuthorized: false,
+            narrativeText: ''
+        }, 'sidecar_conversation');
+        const canonical = record.kind === 'location'
+            ? world.locations.find(location => location.name === record.name && location.sessionOrigin === sess.id)
+            : world.entities.find(entity => entity.name === record.name && entity.sessionOrigin === sess.id);
+        if (!canonical) throw new Error('The native reducer did not create the requested record.');
+        window.HordeSidecarPromotion?.markPromoted(protocol, record.id, canonical.id);
+        protocol.refinements.push({ id: `promotion_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), source: 'direct_user_refinement',
+            userText: `Promoted implied ${record.kind}: ${record.name}`, committed: true, audit: safeJsonClone(commit.audit), provisionalId: record.id, canonicalId: canonical.id });
+        protocol.packet = buildSidecarScenePacket(world, sess);
+        await saveState();
+        renderWorldPlayState();
+        showToast(`${record.name} is now a persistent ${record.kind === 'location' ? 'location' : 'character'}.`, 'success');
+    });
+}
+
 function renderWorldItemCatalogControls(world = state.editingWorld) {
     const container = document.getElementById('w-rules-item-catalog');
     if (!container || !world || !globalThis.HordeRpgMechanics) return;
@@ -20251,6 +20330,9 @@ function setupWorldPlayLogic() {
         await saveState();
         renderWorldPlayState();
         showToast('Sequence closed. Plan and approve the next sequence before resuming narration.', 'success');
+    };
+    document.getElementById('world-promote-implied-btn').onclick = () => {
+        void promoteImpliedWorldRecord();
     };
 
     document.getElementById('world-continue-btn').onclick = () => {
@@ -23099,7 +23181,7 @@ function renderWorldPlayState() {
         if (worldInput) worldInput.placeholder = conversationMode.value === 'sidecar'
             ? 'Ask Sidecar about continuity, questions, or a refinement…'
             : 'What do you do?...';
-        ['world-plan-sequence-btn', 'world-close-sequence-btn'].forEach(id => {
+        ['world-plan-sequence-btn', 'world-close-sequence-btn', 'world-promote-implied-btn'].forEach(id => {
             const button = document.getElementById(id);
             if (!button) return;
             button.disabled = !sidecarAvailable;

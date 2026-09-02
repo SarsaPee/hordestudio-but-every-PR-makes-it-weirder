@@ -29,6 +29,11 @@ it never contains copied Horde Studio application files.
   active sequence and scene. Closing a sequence is explicit; the next one is
   created only after the author asks for and approves an out-of-world planning
   packet generated with the Narrator configuration.
+- `runtime/promotion-model.js` stages newly implied places and characters as
+  evidence-backed provisional records during normal Sidecar reconciliation.
+  They cannot silently become canonical. The author may explicitly promote a
+  record through the native reducer; likely canonical duplicates instead become
+  stable reconciliation questions.
 
 Not yet bundled as reusable modules: full migration wizard rollback UI,
 progressive entity promotion, traversal/vehicle adapters, hierarchical memory
