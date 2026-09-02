@@ -6235,7 +6235,7 @@ function setupLibraryFilters() {
         state.libFilter.search = search.value.toLowerCase();
         renderLibrary();
     };
-    
+
     sort.onchange = () => {
         state.libFilter.sort = sort.value;
         renderLibrary();
@@ -10400,6 +10400,7 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
 }
 
 function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 'tool_call') {
+    const sidecarSource = source === 'sidecar' || source === 'sidecar_conversation';
     const validation = validateWorldTurnReceipt(world, sess, rawReceipt, context);
     const hasConditionalCheck = Array.isArray(validation.legacyArgs?.checks) && validation.legacyArgs.checks.length > 0;
     if (hasConditionalCheck) {
@@ -10429,9 +10430,9 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     // Claims are checked against accepted, actor-scoped receipt evidence, but
     // stay staged until the native reducer has handled the same receipt.
     const preparedDossierClaims = window.HordeDossierClaims?.prepareCommit?.(world, sess, validation, {
-        origin: source === 'sidecar' ? 'sidecar' : 'narrator'
+        origin: sidecarSource ? 'sidecar' : 'narrator'
     }) || { enabled: false, claims: [], rejected: [] };
-    const actionResult = processStructuredActions(validation.legacyArgs, world, sess, { sidecar: source === 'sidecar' });
+    const actionResult = processStructuredActions(validation.legacyArgs, world, sess, { sidecar: sidecarSource });
     applyWorldEntityPatches(world, sess, validation.entityPatches);
     // Recover an omitted NPC movement only when two independent channels
     // agree: the structured ending checksum names the NPC and the visible
@@ -10443,7 +10444,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         ? detectNarratedPresence(world, sess, context.narrativeText)
         : [];
     const recoveredPresence = [];
-    if (source !== 'sidecar') recoverablePresence.forEach(hit => {
+    if (!sidecarSource) recoverablePresence.forEach(hit => {
         if (!assertedCast.has(hit.id)) return;
         const entState = sess.entityStates?.[hit.id];
         if (!entState || isNpcPinned(sess, entState)) return;
@@ -10456,7 +10457,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         recoveredPresence.push(hit.id);
     });
     validation.recoveredPresence = recoveredPresence;
-    if (source !== 'sidecar' && sess.playerLocation !== previousLocation) rollForScenePopulation(sess.playerLocation, false);
+    if (!sidecarSource && sess.playerLocation !== previousLocation) rollForScenePopulation(sess.playerLocation, false);
     if (hasConditionalCheck && actionResult.checkResults.some(result => !result.pending && !result.reason)) {
         const resolvedFrame = buildWorldSceneFrame(world, sess);
         validation.sceneAssertion = {
@@ -10525,7 +10526,12 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         activities: frame.activities,
         temporalContinuity: handoff ? String(handoff.match(/ANSWER\s+core\.time\s*(?::|\n)\s*-?\s*([^\n]+)/i)?.[1] || '').slice(0, 600) : '',
         sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
-        pendingQuestions: questions
+        pendingQuestions: questions,
+        recentAuthorialRefinements: (protocol?.refinements || []).slice(-6).map(refinement => ({
+            text: String(refinement.userText || '').slice(0, 1200),
+            committed: refinement.committed === true,
+            createdAt: refinement.createdAt || ''
+        }))
     };
 }
 
@@ -10598,6 +10604,97 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         protocol.turns = protocol.turns.slice(-500);
     }
     return { committed, receipt, packet: protocol?.packet || null };
+}
+
+function parseSidecarConversationResponse(content) {
+    const raw = String(content || '').trim();
+    const parsed = safeParseJSONRepair(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!isPlainObject(parsed)) return { reply: raw || 'Sidecar did not return a usable reply.', resolutions: [], proposedReceipt: null };
+    return {
+        reply: String(parsed.reply || '').trim() || 'I have recorded the discussion.',
+        resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions.slice(0, 12) : [],
+        proposedReceipt: isPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null
+    };
+}
+
+async function runSidecarConversation(world, sess, userText, options = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) throw new Error('Sidecar protocol is unavailable for this timeline.');
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const tracker = config.tracker || {};
+    const narratorModel = world.model || state.globalSettings.defaultModel;
+    const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
+    const packet = protocol.packet || buildSidecarScenePacket(world, sess);
+    const openQuestions = (protocol.questions || []).filter(question => question.status === 'open').slice(-20);
+    const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay: do not write narration, advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers. It must be a complete native commit_world_turn receipt. Do not use it for time, movement, traversal, automatic presence, or speculative facts. If no state change is requested, use null.\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
+    const body = {
+        model, stream: false,
+        max_tokens: Math.max(400, Number(tracker.maxTokens) || 1200),
+        temperature: 0.2,
+        messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Respond as Sidecar.' }]
+    };
+    if (tracker.reasoning === true) body.reasoning_effort = 'low';
+    const sidecarWorld = { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
+    const response = await fetch(apiBase() + '/chat/completions', {
+        method: 'POST', signal: options.signal,
+        headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld))
+    });
+    if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar conversation failed (${response.status})`);
+    const data = await response.json();
+    const result = parseSidecarConversationResponse(data?.choices?.[0]?.message?.content || '');
+    const authorEntry = { id: `sidecar_author_${Date.now().toString(36)}`, role: 'user', text: String(userText || '').trim(), createdAt: new Date().toISOString() };
+    const sidecarEntry = { id: `sidecar_reply_${Date.now().toString(36)}`, role: 'sidecar', text: result.reply, createdAt: new Date().toISOString(), provenance: { source: 'direct_user_refinement' } };
+    let commit = null;
+    if (result.proposedReceipt) {
+        try {
+            commit = commitWorldTurnReceipt(world, sess, result.proposedReceipt, {
+                playerStartLocationId: sess.playerLocation,
+                playerMovementAuthorized: false,
+                narrativeText: ''
+            }, 'sidecar_conversation');
+            sidecarEntry.commitAudit = safeJsonClone(commit.audit);
+        } catch (error) {
+            sidecarEntry.commitError = error.message || String(error);
+            sidecarEntry.text += '\n\nI could not apply that refinement because it did not pass canonical validation. I left state unchanged.';
+        }
+    }
+    result.resolutions.forEach(resolution => {
+        const question = protocol.questions.find(item => item.id === String(resolution.question_id || ''));
+        if (!question || !['resolved', 'deferred'].includes(resolution.status)) return;
+        question.status = resolution.status;
+        question.answer = String(resolution.answer || '').slice(0, 3000);
+        question.resolvedAt = new Date().toISOString();
+        question.provenance = { ...(isPlainObject(question.provenance) ? question.provenance : {}), resolution: 'direct_user_refinement' };
+    });
+    protocol.conversations.push(authorEntry, sidecarEntry);
+    protocol.conversations = protocol.conversations.slice(-200);
+    protocol.refinements.push({ id: `refinement_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), userText: authorEntry.text,
+        source: 'direct_user_refinement', committed: !!commit, audit: commit ? safeJsonClone(commit.audit) : null });
+    protocol.refinements = protocol.refinements.slice(-200);
+    protocol.packet = buildSidecarScenePacket(world, sess);
+    recordSidecarTrace(world, sess, { kind: 'conversation', prompt, reply: data?.choices?.[0]?.message || {}, model });
+    return { ...result, commit, packet: protocol.packet };
+}
+
+function renderSidecarConversation(world, sess) {
+    const panel = document.getElementById('world-sidecar-conversation');
+    const log = document.getElementById('world-sidecar-conversation-log');
+    const mode = document.getElementById('world-conversation-mode');
+    if (!panel || !log || !mode) return;
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const enabled = mode.value === 'sidecar' && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    panel.classList.toggle('hidden', !enabled);
+    if (!enabled) return;
+    const entries = (protocol?.conversations || []).slice(-80);
+    log.innerHTML = entries.map(entry => {
+        const author = entry.role === 'user';
+        return `<div style="margin:0 0 9px; padding:8px 9px; border-radius:7px; background:${author ? 'var(--surface)' : 'rgba(108, 92, 231, 0.12)'}; border-left:3px solid ${author ? 'var(--accent)' : '#6c5ce7'};">
+            <div style="font-size:0.66rem; color:var(--text-3); font-weight:800; text-transform:uppercase; margin-bottom:3px;">${author ? 'Author → Sidecar' : 'Sidecar'}</div>
+            <div style="font-size:0.82rem; color:var(--text-2);">${parseHordeMarkdown(String(entry.text || ''))}</div>
+        </div>`;
+    }).join('') || '<div style="color:var(--text-3); font-size:0.8rem;">Ask Sidecar about the current world, open continuity questions, or an explicit authorial refinement.</div>';
+    log.scrollTop = log.scrollHeight;
 }
 
 function extractInlineWorldTurnReceipt(text) {
@@ -19558,20 +19655,64 @@ function setupWorldPlayLogic() {
     
     const sendBtn = document.getElementById('world-send-btn');
     const input = document.getElementById('world-user-input');
-    
-    sendBtn.onclick = () => {
-        // If a turn is streaming, this button acts as Stop
+    const conversationMode = document.getElementById('world-conversation-mode');
+
+    conversationMode.onchange = async () => {
+        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const sess = getCurrentWorldSession();
+        if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+            conversationMode.value = 'narrator';
+            return;
+        }
+        const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+        protocol.inputMode = conversationMode.value === 'sidecar' ? 'sidecar' : 'narrator';
+        input.placeholder = protocol.inputMode === 'sidecar'
+            ? 'Ask Sidecar about continuity, questions, or a refinement…'
+            : 'What do you do?...';
+        await saveState();
+        renderWorldPlayState();
+    };
+
+    const sendWorldInput = async () => {
         if (worldTurnInProgress) {
             if (worldGenController) worldGenController.abort();
             return;
         }
-        executeWorldTurn();
+        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const sess = getCurrentWorldSession();
+        const sidecarSelected = conversationMode?.value === 'sidecar'
+            && world && sess && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        if (!sidecarSelected) return executeWorldTurn();
+        const text = input.value.trim();
+        if (!text) return;
+        worldTurnInProgress = true;
+        input.value = '';
+        sendBtn.classList.add('stop');
+        sendBtn.innerHTML = '⏹';
+        const typing = document.getElementById('world-dm-typing');
+        const typingLabel = document.getElementById('world-dm-typing-label');
+        if (typing) typing.style.display = 'flex';
+        if (typingLabel) typingLabel.textContent = 'Sidecar is reviewing continuity…';
+        try {
+            await runSidecarConversation(world, sess, text);
+            await saveState();
+            renderWorldPlayState();
+        } catch (error) {
+            showToast(`Sidecar conversation failed: ${humanizeApiError(error) || error.message || error}`, 'error');
+        } finally {
+            if (typing) typing.style.display = 'none';
+            worldTurnInProgress = false;
+            sendBtn.classList.remove('stop');
+            sendBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+        }
     };
+
+    sendBtn.onclick = () => { void sendWorldInput(); };
     input.onkeydown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             if (worldTurnInProgress) return; // don't queue while generating
-            executeWorldTurn();
+            void sendWorldInput();
         }
     };
 
@@ -22620,6 +22761,22 @@ function renderWorldPlayState() {
         appendWorldMessageUI(msg, idx);
     });
     container.scrollTop = container.scrollHeight;
+    const sidecarProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const conversationMode = document.getElementById('world-conversation-mode');
+    if (conversationMode) {
+        const sidecarAvailable = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        const requested = sidecarProtocol?.inputMode === 'sidecar' ? 'sidecar' : 'narrator';
+        conversationMode.value = sidecarAvailable ? requested : 'narrator';
+        conversationMode.disabled = !sidecarAvailable;
+        conversationMode.title = sidecarAvailable
+            ? 'Choose whether the input addresses the narrator or the out-of-world Sidecar tracker'
+            : 'Sidecar conversations are available after this world is migrated to Sidecar mode.';
+        const worldInput = document.getElementById('world-user-input');
+        if (worldInput) worldInput.placeholder = conversationMode.value === 'sidecar'
+            ? 'Ask Sidecar about continuity, questions, or a refinement…'
+            : 'What do you do?...';
+    }
+    renderSidecarConversation(world, sess);
 
     // Update Context Meter (Audit: Robust & Persistent)
     const historyText = (sess.history || []).map(m => m.text || "").join(' ');

@@ -387,6 +387,10 @@
                                     <button class="tool-btn tool-btn-danger" id="world-del-session-btn" type="button" title="Delete Current Session" aria-label="Delete current session">🗑️</button>
                                 </div>
                                 <div class="toolbar-divider"></div>
+                                <select id="world-conversation-mode" class="tool-select" title="Choose whether the input addresses the narrator or the out-of-world Sidecar tracker" aria-label="World conversation mode">
+                                    <option value="narrator">Narrator</option>
+                                    <option value="sidecar">Sidecar</option>
+                                </select>
                                 
                                 <div id="world-context-meter-wrap" style="display:flex; align-items:center; gap:8px; background:var(--surface2); padding:4px 10px; border-radius:10px; border:1px solid var(--border);">
                                     <span style="font-size:0.6rem; color:var(--text-3); font-weight:800;">CTX</span>
@@ -433,6 +437,10 @@
                     <div class="messages-wrap" id="world-messages-container">
                         <!-- Narrative and Dialogue -->
                     </div>
+                    <section id="world-sidecar-conversation" class="hidden" style="margin:0 16px 10px; border:1px solid var(--border); border-radius:10px; background:var(--surface2); overflow:hidden;">
+                        <div style="padding:8px 10px; font-size:0.75rem; font-weight:800; color:var(--text-2); border-bottom:1px solid var(--border);">🎭 Sidecar conversation <span style="font-weight:400; color:var(--text-3);">Out of world — does not advance the scene</span></div>
+                        <div id="world-sidecar-conversation-log" style="max-height:240px; overflow:auto; padding:10px;"></div>
+                    </section>
                     <!-- DM Typing Indicator (persistent, outside messages container) -->
                     <div id="world-dm-typing" style="display:none; padding: 8px 16px; align-items:center; gap:10px;">
                         <div style="display:flex; gap:4px; align-items:center;">
