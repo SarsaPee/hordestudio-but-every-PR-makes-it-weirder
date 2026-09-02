@@ -9900,6 +9900,41 @@ label[data-help] > span:first-child::after,
 
 .world-v3-gm-bubble .msg-text { margin: 8px 0 12px; color: #c8ddd8; }
 
+/* Sidecar is readable in the transcript first. Raw packets remain available
+   for diagnosis, but normal play sees a compact theatrical handoff. */
+.world-sidecar-backstage { margin-top:12px; border:1px solid rgba(85,230,189,.22); border-radius:12px; overflow:hidden; background:linear-gradient(135deg,rgba(85,230,189,.055),rgba(126,124,255,.035)); }
+.world-sidecar-backstage>summary { display:flex; align-items:center; gap:9px; padding:10px 12px; cursor:pointer; list-style:none; color:#d7f7ee; }
+.world-sidecar-backstage>summary::-webkit-details-marker { display:none; }
+.world-sidecar-backstage>summary:hover { background:rgba(85,230,189,.06); }
+.sidecar-backstage-mark { display:grid; width:28px; height:28px; place-items:center; border-radius:9px; background:rgba(85,230,189,.12); }
+.world-sidecar-backstage summary span:nth-child(2) { display:grid; gap:2px; min-width:0; }
+.world-sidecar-backstage summary b { font-size:.74rem; letter-spacing:.02em; }
+.world-sidecar-backstage summary small { color:var(--text-3); font-size:.62rem; }
+.world-sidecar-backstage summary i { margin-left:auto; padding:4px 7px; border:1px solid rgba(85,230,189,.24); border-radius:999px; color:#72ead4; font-size:.56rem; font-style:normal; font-weight:800; white-space:nowrap; }
+.sidecar-backstage-body { display:grid; gap:9px; padding:0 10px 11px; border-top:1px solid rgba(255,255,255,.06); }
+.sidecar-backstage-section { padding:10px; border:1px solid rgba(255,255,255,.07); border-radius:10px; background:rgba(6,13,15,.42); }
+.sidecar-backstage-section>header { display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; }
+.sidecar-backstage-section>header>span { display:grid; flex:0 0 22px; width:22px; height:22px; place-items:center; border-radius:7px; color:#8cebd6; background:rgba(85,230,189,.1); font-size:.7rem; }
+.sidecar-backstage-section header div { display:grid; gap:2px; }
+.sidecar-backstage-section header b { color:var(--text); font-size:.69rem; }
+.sidecar-backstage-section header small { color:var(--text-3); font-size:.62rem; line-height:1.35; }
+.sidecar-handoff-copy { display:grid; gap:6px; color:#bed7d1; font-size:.72rem; line-height:1.52; white-space:pre-wrap; }
+.sidecar-handoff-copy strong { display:block; color:#71e8d0; font-size:.61rem; letter-spacing:.09em; text-transform:uppercase; }
+.sidecar-backstage-list { display:grid; gap:6px; }
+.sidecar-backstage-list div { padding:7px 8px; border-left:2px solid rgba(85,230,189,.42); background:rgba(255,255,255,.025); }
+.sidecar-backstage-list b,.sidecar-backstage-list span { display:block; }
+.sidecar-backstage-list b { color:var(--text-2); font-size:.68rem; }
+.sidecar-backstage-list span { margin-top:2px; color:var(--text-3); font-size:.62rem; }
+.sidecar-backstage-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+.sidecar-backstage-chips span { padding:4px 6px; border-radius:7px; color:#a9ddd0; background:rgba(85,230,189,.08); font-size:.6rem; }
+.sidecar-packet-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:6px; }
+.sidecar-packet-grid span { display:grid; gap:2px; padding:7px; border-radius:8px; background:rgba(126,124,255,.07); color:#d5d4ff; font-size:.65rem; }
+.sidecar-packet-grid small { color:var(--text-3); font-size:.55rem; font-weight:800; text-transform:uppercase; letter-spacing:.08em; }
+.sidecar-backstage-questions { padding:8px 9px; border-radius:8px; color:#ffd388; background:rgba(243,189,89,.08); font-size:.66rem; }
+.sidecar-backstage-raw { color:var(--text-3); font-size:.61rem; }
+.sidecar-backstage-raw summary { cursor:pointer; }
+.sidecar-backstage-raw pre { max-height:280px; overflow:auto; margin:7px 0 0; padding:9px; border-radius:8px; color:#a6c9c2; background:#080d11; font-size:.65rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+
 @media (max-width: 720px) {
     .world-v3-summary-grid,
     .world-v3-relationships { grid-template-columns: 1fr; }

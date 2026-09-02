@@ -1,5 +1,74 @@
 window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 
+/*
+ * Sidecar runtime.  This deliberately lives in app.js: Sidecar and the world
+ * engine share one browser runtime and communicate through direct state, not
+ * separately loaded globals.  sidecar/ remains an archival/upstream source
+ * bundle only; it is never requested by the running application.
+ */
+(function installIntegratedSidecarRuntime(global) {
+    'use strict';
+    const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
+    const clean = (value, max = 240) => String(value || '').trim().slice(0, max);
+    const stamp = () => new Date().toISOString();
+    const key = value => clean(value, 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const identifier = kind => `${kind}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    const mode = value => value === 'sidecar' || value === 'inline_legacy' ? value : 'inline_legacy';
+    const numeric = (value, fallback, max) => { const parsed = Math.trunc(Number(value)); return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, max) : fallback; };
+    function worldConfig(world, options = {}) {
+        if (!object(world)) return null;
+        const current = object(world.sidecarConfig) ? world.sidecarConfig : {}, tracker = object(current.tracker) ? current.tracker : {}, debug = object(current.debug) ? current.debug : {};
+        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), tracker: { inheritNarrator: tracker.inheritNarrator !== false, model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, reasoning: tracker.reasoning === true, maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) } };
+        return world.sidecarConfig;
+    }
+    function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], traversalState: {}, packet: null, memoryGraph: {}, jobs: [], diagnostics: {}, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
+    function timelineProtocol(world, timeline, options = {}) {
+        if (!object(timeline)) return null;
+        const config = worldConfig(world, options) || { mode: 'inline_legacy', debug: {} }, current = object(timeline.sidecar) ? timeline.sidecar : {};
+        const protocol = { ...emptyProtocol(mode(config.mode)), ...current };
+        protocol.schemaVersion = 1; protocol.mode = mode(current.mode || (object(timeline.sidecar) ? config.mode : (options.newWorld ? 'sidecar' : 'inline_legacy')));
+        ['sequences','scenes','turns','takes','questions','requests','proposals','backgroundProposals','refinements','conversations','provisionalLocations','provisionalEntities','jobs'].forEach(field => { if (!Array.isArray(protocol[field])) protocol[field] = []; });
+        ['takeIndex','temporalState','traversalState','memoryGraph','diagnostics','migration','coreAnswers'].forEach(field => { if (!object(protocol[field])) protocol[field] = {}; });
+        protocol.inputMode = protocol.inputMode === 'sidecar' ? 'sidecar' : 'narrator'; protocol.activeSequenceId = clean(protocol.activeSequenceId, 120); protocol.activeSceneId = clean(protocol.activeSceneId, 120); protocol.packet = object(protocol.packet) ? protocol.packet : null;
+        const debug = object(protocol.debug) ? protocol.debug : {}; protocol.debug = { enabled: debug.enabled === true || config.debug?.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, config.debug?.retainTraceCount || 20, 200), traces: Array.isArray(debug.traces) ? debug.traces.slice(-200) : [] };
+        timeline.sidecar = protocol; return protocol;
+    }
+    function current(protocol, field, id) { return (protocol[field] || []).find(item => item?.id === id) || null; }
+    function entityId(timeline) { return clean(timeline?.controlledEntityId || timeline?.playerEntityId || 'player', 120) || 'player'; }
+    function createSequence(protocol, timeline, options = {}) { const previous = current(protocol, 'sequences', protocol.activeSequenceId); if (previous?.status === 'active') { previous.status = 'closed'; previous.closedAt = stamp(); previous.closeReason = clean(options.closePreviousReason || 'new_sequence', 160); } const sequence = { id: identifier('sequence'), timelineId: clean(timeline?.id,120), status: options.status === 'planning' ? 'planning' : 'active', title: clean(options.title || `Sequence ${(protocol.sequences || []).length + 1}`,180) || 'Untitled sequence', controlledEntityId: clean(options.controlledEntityId || entityId(timeline),120), createdAt: stamp(), startedAt: options.status === 'planning' ? '' : stamp(), closedAt: '', startTurnId: clean(options.startTurnId,160), endTurnId: '', predecessorSequenceId: clean(options.predecessorSequenceId || previous?.id,120), transitionMode: options.transitionMode === 'discontinuous' ? 'discontinuous' : 'continuous', planning: object(options.planning) ? options.planning : { status: options.status === 'planning' ? 'draft' : 'approved', authorIntent: '' }, continuationTail: Array.isArray(options.continuationTail) ? options.continuationTail.slice(-6) : [], closure: null, provenance: { source: clean(options.source || 'sidecar',80), createdAt: stamp() } }; protocol.sequences.push(sequence); protocol.activeSequenceId = sequence.id; return sequence; }
+    function createScene(protocol, options = {}) { const scene = { id: identifier('scene'), timelineId: clean(options.timelineId,120), sequenceIds: Array.isArray(options.sequenceIds) ? options.sequenceIds.map(value => clean(value,120)).filter(Boolean) : [], status: options.status === 'closed' ? 'closed' : 'active', title: clean(options.title || 'Current scene',180) || 'Current scene', mode: options.mode === 'discontinuous' ? 'discontinuous' : 'continuous', openedAt: stamp(), closedAt: '', startTurnId: clean(options.startTurnId,160), endTurnId: '', source: clean(options.source || 'sidecar',80), boundaryEvidence: clean(options.boundaryEvidence,2000), continuation: object(options.continuation) ? options.continuation : {}, provisionalReview: { status: 'pending', reviewedAt: '' } }; protocol.scenes.push(scene); protocol.activeSceneId = scene.id; return scene; }
+    function hierarchy(protocol, timeline, options = {}) { if (!protocol || !timeline) return null; let sequence = current(protocol,'sequences',protocol.activeSequenceId); if (!sequence || sequence.status === 'closed') { if (protocol.sequences.length && options.createWhenMissing !== true) return null; sequence = createSequence(protocol,timeline,{title: protocol.sequences.length ? `Sequence ${protocol.sequences.length+1}` : 'Opening sequence', controlledEntityId: entityId(timeline), source:'migration'}); } let scene = current(protocol,'scenes',protocol.activeSceneId); if (!scene || scene.status === 'closed') { if (protocol.scenes.length && options.createWhenMissing !== true) return null; scene = createScene(protocol,{timelineId:timeline.id,sequenceIds:[sequence.id],title:protocol.scenes.length?'Current scene':'Opening scene',source:'migration'}); } if (!Array.isArray(scene.sequenceIds)) scene.sequenceIds=[]; if (!scene.sequenceIds.includes(sequence.id)) scene.sequenceIds.push(sequence.id); protocol.activeSequenceId=sequence.id; protocol.activeSceneId=scene.id; return {sequence,scene}; }
+    function beginPlanning(protocol,timeline,authorIntent='') { const active=hierarchy(protocol,timeline); const planning={id:identifier('sequence_plan'),status:'draft',authorIntent:clean(authorIntent,4000),createdAt:stamp(),predecessorSequenceId:active?.sequence?.id||'',constraints:[],openQuestions:(protocol.questions||[]).filter(question=>question.status==='open').map(question=>question.id).slice(-20),proposedStartPacket:null,revisionCount:0,provenance:{source:'direct_user_refinement'}}; protocol.sequencePlanning=planning; return planning; }
+    function approvePlanning(protocol,timeline,packet={},options={}) { const planning=object(protocol?.sequencePlanning)?protocol.sequencePlanning:null; if(!planning)return null; const previous=hierarchy(protocol,timeline), prior=previous?.scene; if(prior?.status==='active'&&options.closePriorScene===true){prior.status='closed';prior.closedAt=stamp();prior.provisionalReview={status:'pending',reviewedAt:''};} const tail=(protocol.turns||[]).filter(turn=>turn.sequenceId===previous?.sequence?.id).slice(-4).map(turn=>({id:turn.id,narration:clean(turn.narration,1200)})); const sequence=createSequence(protocol,timeline,{title:options.title||packet.title||'New sequence',controlledEntityId:options.controlledEntityId||previous?.sequence?.controlledEntityId||entityId(timeline),transitionMode:options.transitionMode||packet.transitionMode||'continuous',planning:{...planning,status:'approved',approvedAt:stamp(),proposedStartPacket:packet},continuationTail:options.transitionMode==='discontinuous'?[]:tail,source:'direct_user_refinement'}); const scene=createScene(protocol,{timelineId:timeline.id,sequenceIds:[sequence.id],title:packet.sceneTitle||packet.title||(sequence.transitionMode==='continuous'?'Continuing scene':'New scene'),mode:sequence.transitionMode,continuation:packet,source:'direct_user_refinement'}); protocol.sequencePlanning={...planning,status:'approved',approvedAt:stamp(),sequenceId:sequence.id,sceneId:scene.id}; return {sequence,scene,planning:protocol.sequencePlanning}; }
+    function closeSequence(protocol,timeline,reason='author_closed') { const active=hierarchy(protocol,timeline); if(!active)return null; const {sequence,scene}=active; sequence.status='closed';sequence.closedAt=stamp();sequence.closeReason=clean(reason,240);sequence.endTurnId=(protocol.turns||[]).filter(turn=>turn.sequenceId===sequence.id).at(-1)?.id||'';sequence.closure={closedAt:sequence.closedAt,unresolvedQuestionIds:(protocol.questions||[]).filter(question=>question.status==='open').map(question=>question.id).slice(-40),provisionalLocationIds:(protocol.provisionalLocations||[]).filter(location=>location.status!=='resolved').map(location=>location.id).slice(-40),provisionalEntityIds:(protocol.provisionalEntities||[]).filter(entity=>entity.status!=='resolved').map(entity=>entity.id).slice(-40),status:'reconciliation_pending'}; if(scene.status==='active'){scene.status='closed';scene.closedAt=stamp();scene.endTurnId=sequence.endTurnId;scene.provisionalReview={status:'pending',reviewedAt:''};} protocol.activeSequenceId='';protocol.activeSceneId='';return sequence; }
+    function recordTimelineTurn(protocol,timeline,turn){const active=hierarchy(protocol,timeline);if(!active||!turn)return turn;turn.sequenceId=active.sequence.id;turn.sceneId=active.scene.id;turn.controlledEntityId=active.sequence.controlledEntityId;active.sequence.endTurnId=turn.id;active.scene.endTurnId=turn.id;return turn;}
+    function pressure(protocol,timeline,options={}) { const f=object(options.factors)?options.factors:{}, values={contextRatio:Math.max(0,Math.min(1,Number(options.contextRatio)||0)),historyCount:Math.max(0,Number(options.historyCount)||0),sceneTurns:(protocol.turns||[]).filter(turn=>turn.sceneId===protocol.activeSceneId).length,openQuestions:(protocol.questions||[]).filter(question=>question.status==='open').length,blockingQuestions:Math.max(0,Number(f.blockingQuestions)||0),activeCast:Math.max(0,Number(f.activeCast)||0),retrievedMemoryCount:Math.max(0,Number(f.retrievedMemoryCount)||0),canonicalChars:Math.max(0,Number(f.canonicalChars)||0),sceneChars:Math.max(0,Number(f.sceneChars)||0),sequenceTurns:Math.max(0,Number(f.sequenceTurns)||0),reconciliationFriction:Math.max(0,Number(f.reconciliationFriction)||0),sourceRetirement:Math.max(0,Number(f.sourceRetirement)||0)}, weights={contextRatio:45,historyCount:.08,sceneTurns:2,openQuestions:2,blockingQuestions:5,activeCast:1.5,retrievedMemoryCount:.5,canonicalChars:.002,sceneChars:.002,sequenceTurns:.5,reconciliationFriction:3,sourceRetirement:2,...(object(options.weights)?options.weights:{})}; const score=Math.min(100,Math.round(Object.entries(values).reduce((total,[name,value])=>total+value*Number(weights[name]||0),0))), threshold=object(options.thresholds)?options.thresholds:{},watch=Math.max(1,Math.min(99,Number(threshold.watch)||45)),refresh=Math.max(watch+1,Math.min(100,Number(threshold.refresh)||70));return {score,recommendation:score>=refresh?'recommend_refresh':score>=watch?'watch':'clear',factors:values,weights,thresholds:{watch,refresh},generatedAt:stamp()}; }
+    function stage(protocol,kind,raw,evidence={}) { if(!protocol)return null; const field=kind==='location'?'provisionalLocations':'provisionalEntities';if(!Array.isArray(protocol[field]))protocol[field]=[];const name=clean(raw?.name,180);if(!name)return null;let entry=protocol[field].find(record=>record.status!=='promoted'&&key(record.name)===key(name));if(!entry){entry={id:identifier(kind==='location'?'provisional_location':'provisional_entity'),kind,name,status:'implicit',createdAt:stamp(),updatedAt:stamp(),evidence:[],candidateCanonicalIds:[],promotionRequested:false,promotedCanonicalId:''};protocol[field].push(entry);}const proof={at:stamp(),source:clean(evidence.source||'narrator_handoff',80),turnId:clean(evidence.turnId,160),narration:clean(evidence.narration,3000),handoff:clean(evidence.handoff,3000),proposed:raw};entry.evidence=[...(entry.evidence||[]),proof].slice(-20);entry.updatedAt=proof.at;entry.description=clean(raw?.description,1800)||entry.description||'';entry.parentHint=clean(raw?.parent_location_id||raw?.connects_to||raw?.home_location,180)||entry.parentHint||'';if(kind==='location'){entry.region=clean(raw?.region,180)||entry.region||'';entry.mapType=clean(raw?.map_type,40)||entry.mapType||'';entry.floor=clean(raw?.floor,80)||entry.floor||'';}else entry.persona=clean(raw?.persona,1800)||entry.persona||'';return entry; }
+    function stageIntroductions(protocol,receipt,evidence={}) { if(!protocol||!object(receipt))return [];const staged=[];[['location_introduced','location'],['npc_introduced','entity']].forEach(([field,kind])=>{if(Array.isArray(receipt[field])){receipt[field].forEach(raw=>{const entry=stage(protocol,kind,raw,evidence);if(entry)staged.push(entry);});delete receipt[field];}});return staged; }
+    function promotionFlag(protocol,provisionalId,source='direct_user_refinement'){const entry=[...(protocol?.provisionalLocations||[]),...(protocol?.provisionalEntities||[])].find(record=>record.id===provisionalId);if(!entry)return null;entry.promotionRequested=true;entry.promotionRequestedAt=stamp();entry.promotionProvenance={source};entry.status='promotion_requested';return entry;}
+    function promoted(protocol,provisionalId,canonicalId){const entry=[...(protocol?.provisionalLocations||[]),...(protocol?.provisionalEntities||[])].find(record=>record.id===provisionalId);if(!entry)return null;entry.status='promoted';entry.promotedCanonicalId=clean(canonicalId,160);entry.promotedAt=stamp();return entry;}
+    function normalizeTraversal(world){if(!object(world))return null;const source=object(world.traversalConfig)?world.traversalConfig:{}, methods=Array.isArray(source.methods)?source.methods:[];world.traversalConfig={schemaVersion:1,methods:methods.map((raw,index)=>{const coverageType=raw?.coverageType==='route_based'?'route_based':'point_to_point';return{id:clean(raw?.id||`traversal_${index+1}`,100)||`traversal_${index+1}`,name:clean(raw?.name||`Traversal ${index+1}`,140)||`Traversal ${index+1}`,enabled:raw?.enabled!==false,coverageType,exclusions:Array.isArray(raw?.exclusions)?raw.exclusions.map(value=>clean(value,160)).filter(Boolean).slice(0,100):[],routeStops:coverageType==='route_based'&&Array.isArray(raw?.routeStops)?raw.routeStops.map(value=>clean(value,160)).filter(Boolean).slice(0,500):[],tags:Array.isArray(raw?.tags)?raw.tags.map(value=>clean(value,80)).filter(Boolean).slice(0,32):[],provider:clean(raw?.provider,140),notes:clean(raw?.notes,1200)}})};return world.traversalConfig;}
+    function normalizeVehicle(entity){if(!object(entity)||String(entity.type||'').toLowerCase()!=='vehicle')return null;const raw=object(entity.vehicle)?entity.vehicle:{};entity.vehicle={persistent:raw.persistent!==false,parkedAnchorId:clean(raw.parkedAnchorId||entity.startLocation,160),ownerEntityId:clean(raw.ownerEntityId||raw.owners?.[0]?.entityId||raw.owners?.[0],160),owners:Array.isArray(raw.owners)?raw.owners.map(entry=>({entityId:clean(entry?.entityId||entry,160),role:'owner'})).filter(entry=>entry.entityId).slice(0,20):[],access:Array.isArray(raw.access)?raw.access.map(entry=>({entityId:clean(entry?.entityId,160),role:['owner','driver','passenger','guest'].includes(entry?.role)?entry.role:'guest'})).filter(entry=>entry.entityId).slice(0,80):[],interiorHint:clean(raw.interiorHint||entity.description,1800),tags:Array.isArray(raw.tags)?raw.tags.map(value=>clean(value,80)).filter(Boolean).slice(0,32):[]};if(entity.vehicle.ownerEntityId&&!entity.vehicle.owners.some(entry=>entry.entityId===entity.vehicle.ownerEntityId))entity.vehicle.owners.unshift({entityId:entity.vehicle.ownerEntityId,role:'owner'});return entity.vehicle;}
+    function resolveLocation(world,ref){const needle=clean(ref,180).toLowerCase();return(world?.locations||[]).find(location=>String(location?.id||'').toLowerCase()===needle||String(location?.name||'').trim().toLowerCase()===needle)||null;}
+    function anchor(world,ref){let location=resolveLocation(world,ref);const seen=new Set();while(location&&!seen.has(location.id)){seen.add(location.id);if(String(location.mapType||'').toLowerCase()!=='room')return location;location=resolveLocation(world,location.parentLocationId);}return null;}
+    function coverage(world,methodId,originRef,destinationRef){const method=normalizeTraversal(world)?.methods.find(entry=>entry.id===methodId&&entry.enabled);if(!method)return{ok:false,reason:'unknown_or_disabled_method'};const origin=anchor(world,originRef),destination=anchor(world,destinationRef);if(!origin||!destination)return{ok:false,reason:'no_eligible_pickup_or_dropoff',origin,destination,method};const exclusions=new Set(method.exclusions.map(value=>value.toLowerCase()));if(exclusions.has(origin.id.toLowerCase())||exclusions.has(destination.id.toLowerCase()))return{ok:false,reason:'method_exclusion',origin,destination,method};if(method.coverageType==='route_based'){const from=method.routeStops.indexOf(origin.id)>=0?method.routeStops.indexOf(origin.id):method.routeStops.indexOf(origin.name),to=method.routeStops.indexOf(destination.id)>=0?method.routeStops.indexOf(destination.id):method.routeStops.indexOf(destination.name);if(from<0||to<0||from===to)return{ok:false,reason:'route_stop_not_authored',origin,destination,method};return{ok:true,origin,destination,method,route:method.routeStops.slice(Math.min(from,to),Math.max(from,to)+1)};}return{ok:true,origin,destination,method,route:[]};}
+    function traversalState(protocol){if(!protocol)return null;if(!object(protocol.traversalState))protocol.traversalState={};if(!Array.isArray(protocol.traversalState.journeys))protocol.traversalState.journeys=[];if(!Array.isArray(protocol.traversalState.recentRuntimeContainers))protocol.traversalState.recentRuntimeContainers=[];return protocol.traversalState;}
+    function createJourney(protocol,world,options={}){const state=traversalState(protocol);if(!state)return null;const result=options.methodId?coverage(world,options.methodId,options.originId,options.destinationId):null;if(result&&!result.ok)return{error:result.reason,coverage:result};const vehicle=options.vehicleId?(world.entities||[]).find(entity=>entity.id===options.vehicleId&&entity.type==='vehicle'):null,runtime=vehicle?null:{id:identifier('runtime_vehicle'),kind:clean(options.runtimeKind||'rideshare',80)||'rideshare',createdAt:stamp(),interiorHint:clean(options.interiorHint,1800),persistent:false},journey={id:identifier('journey'),status:'prepared',createdAt:stamp(),updatedAt:stamp(),methodId:clean(options.methodId,120),vehicleEntityId:vehicle?.id||'',runtimeContainer:runtime,originAnchorId:result?.origin?.id||clean(options.originId,160),destinationAnchorId:result?.destination?.id||clean(options.destinationId,160),occupants:Array.isArray(options.occupants)?options.occupants.map(value=>clean(value,160)).filter(Boolean).slice(0,20):[],provenance:{source:clean(options.source||'sidecar',80),evidence:clean(options.evidence,2000)},temporalEvidence:clean(options.temporalEvidence,1200)};state.journeys.push(journey);state.journeys=state.journeys.slice(-80);return journey;}
+    function reconcileVehicleEvents(protocol,world,receipt,options={}){const state=traversalState(protocol);if(!state)return[];const changes=[];(receipt?.events||[]).forEach(event=>{if(event?.type!=='movement'||event?.movement_mode!=='vehicle')return;const actorId=clean(event.actor_id,160),vehicleId=clean(event.vehicle_id||event.vehicleId,160),status=clean(event.status,40)||'completed';if(['intended','attempted','in_progress'].includes(status)){let journey=state.journeys.find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey){journey=createJourney(protocol,world,{vehicleId,originId:event.from_location_id||options.playerLocationId,destinationId:event.to_location_id||'',occupants:[actorId],source:'narrator_handoff',evidence:event.evidence||event.cause||'',runtimeKind:vehicleId?'':'rideshare'});if(journey?.id)changes.push({type:'journey_prepared',journeyId:journey.id});}return;}if(status!=='completed')return;const journey=[...state.journeys].reverse().find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey)return;journey.status='completed';journey.completedAt=stamp();journey.destinationAnchorId=clean(event.to_location_id||journey.destinationAnchorId,160);if(journey.vehicleEntityId){const vehicle=(world.entities||[]).find(entity=>entity.id===journey.vehicleEntityId),data=normalizeVehicle(vehicle);if(data)data.parkedAnchorId=journey.destinationAnchorId||data.parkedAnchorId;}else if(journey.runtimeContainer){state.recentRuntimeContainers.push({...journey.runtimeContainer,departedAt:stamp(),journeyId:journey.id});state.recentRuntimeContainers=state.recentRuntimeContainers.slice(-20);}changes.push({type:'journey_completed',journeyId:journey.id});});return changes;}
+    function graph(protocol){if(!protocol)return null;const prior=object(protocol.memoryGraph)?protocol.memoryGraph:{};protocol.memoryGraph={schemaVersion:1,worldHistory:Array.isArray(prior.worldHistory)?prior.worldHistory:[],episodes:Array.isArray(prior.episodes)?prior.episodes:[],scenes:Array.isArray(prior.scenes)?prior.scenes:[],sequences:Array.isArray(prior.sequences)?prior.sequences:[],cognition:Array.isArray(prior.cognition)?prior.cognition:[],locationReferences:Array.isArray(prior.locationReferences)?prior.locationReferences:[],lastEpisodeTurnCount:Math.max(0,Number(prior.lastEpisodeTurnCount)||0),...prior};return protocol.memoryGraph;}
+    function jobs(protocol){if(!protocol)return[];if(!Array.isArray(protocol.jobs))protocol.jobs=[];return protocol.jobs;}
+    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record)return record;record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
+    function queueEpisode(protocol,options={}){const memory=graph(protocol), pending=jobs(protocol);if(!memory)return null;const active=memory.worldHistory.filter(record=>record.status==='active'),size=Math.max(1,Math.min(20,Number(options.batchSize)||5)),cadence=Math.max(1,Math.min(50,Number(options.cadenceTurns)||size));if(active.length-memory.lastEpisodeTurnCount<cadence)return null;const source=active.slice(memory.lastEpisodeTurnCount,memory.lastEpisodeTurnCount+size);if(source.length<size)return null;const ids=source.map(record=>record.turnId),previous=pending.find(job=>job.type==='episode_consolidation'&&job.status!=='completed'&&Array.isArray(job.sourceTurnIds)&&job.sourceTurnIds.join('|')===ids.join('|'));if(previous)return previous;const job={id:identifier('memory_job'),type:'episode_consolidation',status:'queued',createdAt:stamp(),attempts:0,sourceTurnIds:ids,dependencies:[],priority:'background',sourceRange:{start:source[0].id,end:source.at(-1).id},retryAt:'',diagnostics:[],provenance:{source:'sidecar_memory_dispatcher'}};pending.push(job);return job;}
+    function completeEpisode(protocol,jobId,output={}){const memory=graph(protocol),pending=jobs(protocol),job=pending.find(entry=>entry.id===jobId);if(!memory||!job)return null;const records=memory.worldHistory.filter(record=>(job.sourceTurnIds||[]).includes(record.turnId)),sceneIds=[...new Set(records.map(record=>record.sceneId).filter(Boolean))],sequenceIds=[...new Set(records.map(record=>record.sequenceId).filter(Boolean))],episode={id:identifier('episode'),kind:'episode',status:'active',createdAt:stamp(),jobId,sourceTurnIds:Array.isArray(job.sourceTurnIds)?job.sourceTurnIds:[],sequenceIds:sceneIds.length?sequenceIds:(Array.isArray(output.sequenceIds)?output.sequenceIds:[]),sceneIds:sceneIds.length?sceneIds:(Array.isArray(output.sceneIds)?output.sceneIds:[]),summary:clean(output.summary,8000),objectiveHistory:clean(output.objectiveHistory,8000),text:clean([output.summary,output.objectiveHistory].filter(Boolean).join('\n'),12000),perceptionCoverage:Array.isArray(output.perceptionCoverage)?output.perceptionCoverage:[],locationReferences:Array.isArray(output.locationReferences)?output.locationReferences:[],provenance:{source:'episode_consolidation',rawSourcePinned:true}};memory.episodes.push(episode);memory.episodes=memory.episodes.slice(-500);memory.locationReferences.push(...episode.locationReferences.map(reference=>({id:identifier('location_reference'),...reference,episodeId:episode.id,status:reference.locationId?'assigned':'unresolved',createdAt:stamp()})));memory.locationReferences=memory.locationReferences.slice(-1000);memory.lastEpisodeTurnCount+=job.sourceTurnIds.length;job.status='completed';job.completedAt=stamp();job.outputId=episode.id;return episode;}
+    function failJob(protocol,jobId,error){const job=jobs(protocol).find(entry=>entry.id===jobId);if(!job)return null;job.attempts=(Number(job.attempts)||0)+1;job.diagnostics=[...(job.diagnostics||[]),{at:stamp(),error:clean(error,1200)}].slice(-12);if(job.attempts>=3)job.status='blocked';else{job.status='queued';job.retryAt=new Date(Date.now()+Math.min(300000,1000*(2**job.attempts))).toISOString();}return job;}
+    global.HordeSidecarMode=Object.freeze({SCHEMA_VERSION:1,MODES:Object.freeze({INLINE_LEGACY:'inline_legacy',SIDECAR:'sidecar'}),normalizeMode:mode,normalizeWorldConfig:worldConfig,normalizeTimelineProtocol:timelineProtocol,isSidecarTimeline:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar'});
+    global.HordeSidecarTimeline=Object.freeze({ensureHierarchy:hierarchy,beginPlanning,approvePlanning,closeActiveSequence:closeSequence,recordTurn:recordTimelineTurn,contextPressure:pressure});
+    global.HordeSidecarPromotion=Object.freeze({ensure:protocol=>protocol,stage,stageReceiptIntroductions:stageIntroductions,markPromotionRequested:promotionFlag,markPromoted:promoted});
+    global.HordeSidecarTraversal=Object.freeze({normalizeWorldTraversal:normalizeTraversal,normalizeVehicle,accessibleVehicles:(world,id)=>(world?.entities||[]).filter(entity=>String(entity?.type||'').toLowerCase()==='vehicle'&&(normalizeVehicle(entity)?.ownerEntityId===clean(id,160)||normalizeVehicle(entity)?.access.some(entry=>entry.entityId===clean(id,160)))),resolveEligibleAnchor:anchor,evaluateCoverage:coverage,ensureState:traversalState,createJourney,reconcileVehicleEvents});
+    global.HordeSidecarMemoryGraph=Object.freeze({graph,ensureJobs:jobs,recordTurn:recordMemoryTurn,queueEpisode,completeEpisode,failJob});
+    global.HordeSidecarHooks=Object.freeze({normalizeWorldTimeline:(world,timeline,options={})=>{const protocol=timelineProtocol(world,timeline,options);normalizeTraversal(world);(world?.entities||[]).forEach(normalizeVehicle);return protocol;},isSidecarWorld:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar',ensureNarrativeHierarchy:(world,timeline)=>{const protocol=timelineProtocol(world,timeline);return protocol?.mode==='sidecar'?hierarchy(protocol,timeline):null;}});
+})(window);
+
 // --- Horde Persistence (IndexedDB) ---
 const DB_NAME = 'HordeStudioDB';
 const DB_VERSION = 1;
@@ -11646,6 +11715,86 @@ function renderSidecarConversation(world, sess) {
     log.scrollTop = log.scrollHeight;
 }
 
+// The old V3 toolbar survived the 17.0 UI migration without its panel
+// controller.  Keep its familiar controls, but make them a thin, observable
+// view over the active Sidecar timeline instead of reviving the old parallel
+// V3 world-state system.
+function closeWorldSidecarInspector() {
+    document.getElementById('world-sidecar-inspector-overlay')?.remove();
+}
+
+function sidecarInspectorJson(value, fallback = 'Nothing has been recorded yet.') {
+    if (value == null) return `<div class="form-hint">${escapeHTML(fallback)}</div>`;
+    return `<pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:48vh; overflow:auto; margin:0; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text-2); font-size:.74rem;">${escapeHTML(JSON.stringify(value, null, 2))}</pre>`;
+}
+
+function openWorldSidecarInspector(view = 'scene') {
+    closeWorldSidecarInspector();
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return;
+    const isSidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    // Scene State and Backstage are part of the transcript.  The user should
+    // inspect the handoff beside the turn it explains, not in a second generic
+    // JSON window. Keep the modal only for legacy migration and true actions.
+    if (isSidecar && (view === 'scene' || view === 'backstage')) {
+        const cards = [...document.querySelectorAll('.world-sidecar-backstage')];
+        const card = cards.at(-1);
+        if (card) {
+            card.open = true;
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+        }
+        showToast('No committed Sidecar handoff exists yet for this timeline.', 'info');
+        return;
+    }
+    const protocol = isSidecar ? window.HordeSidecarHooks.normalizeWorldTimeline(world, sess) : null;
+    const packet = isSidecar ? (protocol.packet || buildSidecarScenePacket(world, sess)) : null;
+    const latestTurn = isSidecar ? (protocol.turns || []).at(-1) : null;
+    const title = view === 'line' ? 'World GM · private Sidecar line'
+        : view === 'backstage' ? 'Backstage handoff'
+        : view === 'migration' ? 'Enable Sidecar for this world'
+        : 'Scene State';
+    const overlay = document.createElement('div');
+    overlay.id = 'world-sidecar-inspector-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.style.zIndex = '1100';
+    const legacy = `<section style="display:grid; gap:12px; padding:4px 0;">
+        <div class="fallback-banner" style="display:block; margin:0;"><span class="banner-icon">◌</span><span class="banner-text"><strong>This timeline is using Inline Legacy.</strong> Sidecar packets, private Sidecar conversation, scene reconciliation and Sidecar-only controls are intentionally unavailable until this timeline is migrated.</span></div>
+        <div class="form-hint">The existing narration history and canonical receipts will be retained. Derived vectors are rebuilt after migration; this does not create a new world.</div>
+        <div><button class="btn btn-primary" id="world-sidecar-inspector-migrate">Open Sidecar migration wizard</button></div>
+    </section>`;
+    let body = legacy;
+    if (isSidecar) {
+        const tabs = `<div style="display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px;">
+            <button class="tool-btn sidecar-inspector-tab" data-view="scene">Scene state</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="backstage">Backstage</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="questions">Questions</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="line">Private Sidecar line</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="timelines">Timelines</button>
+        </div>`;
+        if (view === 'line') body = `${tabs}<p class="form-hint">This is an out-of-world conversation with the tracker. It does not create a roleplay turn or advance time, movement, traversal, or scenes.</p><button class="btn btn-primary" id="world-sidecar-inspector-open-line">Open private Sidecar line</button>`;
+        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
+        else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
+        else if (view === 'timelines') body = `${tabs}<p class="form-hint">Forks are immutable copies of a selected committed revision. Superseded takes stay auditable but do not leak into the active timeline.</p><button class="btn btn-primary" id="world-sidecar-inspector-timelines">Open timeline and fork browser</button>`;
+        else body = `${tabs}${sidecarInspectorJson(packet, 'The next-turn scene packet has not been prepared yet.')}`;
+    }
+    overlay.innerHTML = `<div class="modal" style="width:min(900px, calc(100vw - 36px)); max-height:86vh; display:flex; flex-direction:column;"><div class="modal-header"><h2>${escapeHTML(title)}</h2><button class="modal-close" id="close-world-sidecar-inspector">×</button></div><div class="modal-body" style="overflow:auto;">${body}</div></div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', event => { if (event.target === overlay) closeWorldSidecarInspector(); });
+    document.getElementById('close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
+    document.getElementById('world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });
+    document.querySelectorAll('.sidecar-inspector-tab').forEach(button => button.addEventListener('click', () => openWorldSidecarInspector(button.dataset.view)));
+    document.getElementById('world-sidecar-inspector-open-line')?.addEventListener('click', () => {
+        closeWorldSidecarInspector();
+        const mode = document.getElementById('world-conversation-mode');
+        if (mode) { mode.value = 'sidecar'; mode.dispatchEvent(new Event('change')); }
+        renderSidecarConversation(world, sess);
+        document.getElementById('world-user-input')?.focus();
+    });
+    document.getElementById('world-sidecar-inspector-timelines')?.addEventListener('click', () => { closeWorldSidecarInspector(); openWorldTimelineBrowser(); });
+}
+
 async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
     const config = normalizeWorldAgentConfig(world);
     const response = await fetch(apiBase() + '/chat/completions', {
@@ -21894,7 +22043,7 @@ function setupWorldPlayLogic() {
 
     // Parity Features
     document.getElementById('world-new-session-btn').onclick = createNewWorldSession;
-    document.getElementById('world-fork-session-btn').onclick = forkCurrentWorldTimeline;
+    document.getElementById('world-fork-session-btn').onclick = () => forkCurrentWorldTimeline(null, null, { useDefaultName: true });
     document.getElementById('world-timeline-browser-btn')?.addEventListener('click', openWorldTimelineBrowser);
     document.getElementById('close-world-timeline-browser-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
     document.getElementById('close-world-timeline-browser-ft-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
@@ -21969,7 +22118,8 @@ function setupWorldPlayLogic() {
     };
     document.getElementById('world-v3-end-scene-btn')?.addEventListener('click', async () => {
         const world = state.worlds.find(item => item.id === state.activeWorldId); const sess = getCurrentWorldSession();
-        if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return showToast('Scene review is available in Sidecar worlds.', 'info');
+        if (!world || !sess) return;
+        if (!window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return openWorldSidecarInspector('migration');
         try {
             const review = await requestSceneBoundaryReview(world, sess, { reason: 'author_requested' });
             if (!review.shouldClose) return showToast('Sidecar found no material scene boundary yet.', 'info');
@@ -21979,6 +22129,9 @@ function setupWorldPlayLogic() {
             });
         } catch (error) { showToast(`Scene review failed: ${error.message || error}`, 'error'); }
     });
+    document.getElementById('world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarInspector('line'));
+    document.getElementById('world-v3-panel-btn')?.addEventListener('click', () => openWorldSidecarInspector('scene'));
+    document.getElementById('world-backstage-btn')?.addEventListener('click', () => openWorldSidecarInspector('backstage'));
     document.getElementById('world-promote-implied-btn').onclick = () => {
         void promoteImpliedWorldRecord();
     };
@@ -23697,18 +23850,22 @@ async function createNewWorldSession() {
     showToast('New Timeline Created');
 }
 
-async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount = null) {
+async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount = null, options = {}) {
     const world = state.worlds.find(item => item.id === state.activeWorldId);
     const inst = state.worldInstances?.[state.activeWorldId];
     const source = sourceSessionId ? (inst?.sessions || []).find(session => session.id === sourceSessionId) : getCurrentWorldSession();
     if (!world || !inst || !source) return;
     const maxTurn = Number(source.turnCount || 0);
     const requestedTurn = targetTurnCount == null ? maxTurn : Math.max(0, Math.min(maxTurn, Number(targetTurnCount) || maxTurn));
-    const name = prompt('Name this timeline fork:', `Fork of ${source.name || 'current timeline'}${requestedTurn < maxTurn ? ` · turn ${requestedTurn}` : ''}`);
+    const defaultName = `Fork of ${source.name || 'current timeline'}${requestedTurn < maxTurn ? ` · turn ${requestedTurn}` : ''}`;
+    // Native prompt dialogs are unreliable in embedded/local Chromium shells.
+    // A one-click fork gets a truthful default name and can be renamed through
+    // the existing timeline toolbar immediately afterwards.
+    const name = options.useDefaultName ? defaultName : prompt('Name this timeline fork:', defaultName);
     if (name === null) return;
     const fork = safeJsonClone(source);
     fork.id = `wsess_${Date.now()}`;
-    fork.name = String(name || '').trim() || `Fork of ${source.name || 'timeline'}`;
+    fork.name = String(name || '').trim() || defaultName;
     fork.createdAt = new Date().toISOString();
     fork.forkedFrom = { sessionId: source.id, turnCount: requestedTurn, createdAt: fork.createdAt };
     if (requestedTurn < maxTurn) {
@@ -23767,7 +23924,7 @@ function renderWorldTimelineBrowser() {
     });
     host.querySelectorAll('.timeline-fork-btn').forEach(button => button.onclick = async () => {
         const turnInput = [...host.querySelectorAll('.timeline-fork-turn')].find(input => input.dataset.sessionId === button.dataset.sessionId);
-        await forkCurrentWorldTimeline(button.dataset.sessionId, Number(turnInput?.value));
+        await forkCurrentWorldTimeline(button.dataset.sessionId, Number(turnInput?.value), { useDefaultName: true });
         renderWorldTimelineBrowser();
     });
 }
@@ -25174,6 +25331,31 @@ function renderWorldPlayerMessageHtml(sess, text) {
     </div>`;
 }
 
+function renderSidecarBackstageCard(backstage, turnNumber) {
+    if (!backstage) return '';
+    const receipt = backstage.receipt || {};
+    const packet = backstage.packet || {};
+    const events = Array.isArray(receipt.events) ? receipt.events.slice(0, 8) : [];
+    const changes = [
+        ...(Array.isArray(receipt.entity_updates) ? receipt.entity_updates.map(change => change.activity || change.label || change.entity_id) : []),
+        ...(Array.isArray(receipt.state_updates) ? receipt.state_updates.map(change => change.label || change.type) : [])
+    ].filter(Boolean).slice(0, 8);
+    const handoff = String(backstage.handoff || '').trim();
+    const formatHandoff = handoff
+        ? escapeHTML(handoff).replace(/^(SCENE READING|ANSWER [^\n:]+|REQUEST|ACCEPTED PLAYER DETAILS)\s*:?[ \t]*(.*)$/gim, '<strong class="sidecar-backstage-label">$1</strong><span>$2</span>')
+        : '';
+    return `<details class="world-sidecar-backstage" data-sidecar-turn="${Number(turnNumber) || 0}">
+        <summary><span class="sidecar-backstage-mark">🎭</span><span><b>Backstage handoff</b><small>Narrator → Sidecar → next beat${turnNumber ? ` · Turn ${turnNumber}` : ''}</small></span><i>${backstage.unresolved ? 'Needs reconciliation' : 'Committed continuity'}</i></summary>
+        <div class="sidecar-backstage-body">
+            ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Narrator’s handoff notes</b><small>What the narrated beat means for continuity.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
+            ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Sidecar’s canonical reading</b><small>${escapeHTML(receipt.summary || 'Reconciled from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
+            ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next-beat pacing</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next narrator turn receives this reconciled scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(String(packet.activeLocation))}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}</div></section>` : ''}
+            ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
+            <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${escapeHTML(JSON.stringify({ handoff: backstage.handoff || null, receipt: backstage.receipt || null, packet: backstage.packet || null }, null, 2))}</pre></details>
+        </div>
+    </details>`;
+}
+
 function appendWorldMessageUI(msg, index = null) {
     const container = document.getElementById('world-messages-container');
     const div = document.createElement('div');
@@ -25254,15 +25436,9 @@ function appendWorldMessageUI(msg, index = null) {
     const metaHtml = metaParts.length
         ? `<div class="world-msg-meta">${metaParts.join(' &nbsp;·&nbsp; ')}</div>`
         : '';
-    const backstage = msg.sidecarBackstage;
-    const backstageHtml = backstage ? `
-        <details class="world-sidecar-backstage" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); padding:7px 9px; font-size:0.76rem;">
-            <summary style="cursor:pointer; color:var(--text-2); font-weight:700;">🎭 Backstage handoff${backstage.unresolved ? ' · needs reconciliation' : ''}</summary>
-            ${backstage.handoff ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Narrator → Sidecar · scene handoff</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(backstage.handoff)}</pre></details>` : ''}
-            ${backstage.receipt ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Sidecar → Canon · reconciliation receipt</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(JSON.stringify(backstage.receipt, null, 2))}</pre></details>` : ''}
-            ${backstage.packet ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Sidecar → Narrator · next-beat packet</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(JSON.stringify(backstage.packet, null, 2))}</pre></details>` : ''}
-            ${backstage.questionCount ? `<div style="margin-top:8px; color:var(--warning, #ffb347);">${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'}</div>` : ''}
-        </details>` : '';
+    const turnNumber = msg.role === 'dm' && index !== null
+        ? activeSession.history.slice(0, index + 1).filter(entry => entry.role === 'dm').length : 0;
+    const backstageHtml = renderSidecarBackstageCard(msg.sidecarBackstage, turnNumber);
 
     // Version nav restores that take's world-state snapshot — only safe on the
     // LAST entry. Allowing it mid-history rewound stats/NPCs/ledger underneath
@@ -25291,6 +25467,7 @@ function appendWorldMessageUI(msg, index = null) {
             <div class="msg-actions" style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
                 ${index !== null ? `
                 <button class="msg-edit-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">✎ Edit</button>
+                ${msg.role === 'dm' ? `<button class="msg-fork-btn" data-fork-turn="${turnNumber}" title="Create a new timeline from this committed turn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">⑂ Fork</button>` : ''}
                 <button class="msg-del-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">🗑️ Delete</button>
                 ` : ''}
             </div>
@@ -25299,10 +25476,13 @@ function appendWorldMessageUI(msg, index = null) {
 
     if (index !== null) {
         const editBtn = div.querySelector('.msg-edit-btn');
+        const forkBtn = div.querySelector('.msg-fork-btn');
         const delBtn = div.querySelector('.msg-del-btn');
         const editArea = div.querySelector('.msg-edit-area');
         const textDiv = div.querySelector('.msg-text');
         const sess = getCurrentWorldSession();
+
+        forkBtn?.addEventListener('click', () => forkCurrentWorldTimeline(sess.id, Number(forkBtn.dataset.forkTurn), { useDefaultName: true }));
 
         if (msg.role === 'dm' && versions.length > 1 && isLastEntry) {
             div.querySelector('.prev-ver').onclick = async () => {

@@ -113,15 +113,6 @@ STATIC_FILES = {
     "/style.css": ("style.css", "text/css"),
     "/app.js": ("app.js", "text/javascript"),
     "/video-worlds.js": ("video-worlds.js", "text/javascript"),
-    # The Sidecar bundle is deliberately modular in the clean fork.  These
-    # explicit public assets keep the bridge's allowlist strict while letting
-    # World Studio load the runtime rather than silently receiving a 404.
-    "/world-runtime-mode.js": ("sidecar/runtime/mode-config.js", "text/javascript"),
-    "/world-runtime-timeline.js": ("sidecar/runtime/timeline-model.js", "text/javascript"),
-    "/world-runtime-promotion.js": ("sidecar/runtime/promotion-model.js", "text/javascript"),
-    "/world-runtime-traversal.js": ("sidecar/runtime/traversal-vehicle-model.js", "text/javascript"),
-    "/world-runtime-memory.js": ("sidecar/runtime/memory-graph.js", "text/javascript"),
-    "/world-runtime-hooks.js": ("sidecar/integrations/horde-16.7-hooks.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
     "/boot-diagnostics.js": ("boot-diagnostics.js", "text/javascript"),
     "/policy-panic-world.js": ("policy-panic-world.js", "text/javascript"),
