@@ -924,6 +924,12 @@ function localGenerationIdleTimeoutMs() {
     return seconds === 0 ? 0 : Math.round(seconds * 1000);
 }
 
+function cloudGenerationIdleTimeoutMs() {
+    const raw = Number(state.globalSettings?.cloudGenerationTimeoutSeconds);
+    const seconds = Number.isFinite(raw) ? Math.max(0, Math.min(600, raw)) : 45;
+    return seconds === 0 ? 0 : Math.round(seconds * 1000);
+}
+
 function embeddingApiBase() {
     const separate = normalizeOpenAICompatibleBase(state.globalSettings?.embeddingBaseUrl);
     return separate || apiBase();
@@ -1778,6 +1784,7 @@ let state = {
         memoryThreshold: 0.35,
         memoryTopK: 8,
         localGenerationTimeoutSeconds: 300,
+        cloudGenerationTimeoutSeconds: 45,
         embeddingBaseUrl: '',
         embeddingApiKey: '',
         localTtsBaseUrl: 'http://127.0.0.1:8000/v1',
@@ -2444,6 +2451,7 @@ function repairLoadedState() {
         memoryThreshold: 0.35,
         memoryTopK: 8,
         localGenerationTimeoutSeconds: 300,
+        cloudGenerationTimeoutSeconds: 45,
         embeddingBaseUrl: '',
         embeddingApiKey: '',
         localTtsBaseUrl: 'http://127.0.0.1:8000/v1',
@@ -2483,6 +2491,9 @@ function repairLoadedState() {
     const timeoutSeconds = Number(state.globalSettings.localGenerationTimeoutSeconds);
     state.globalSettings.localGenerationTimeoutSeconds = Number.isFinite(timeoutSeconds)
         ? Math.max(0, Math.min(3600, Math.round(timeoutSeconds))) : 300;
+    const cloudTimeoutSeconds = Number(state.globalSettings.cloudGenerationTimeoutSeconds);
+    state.globalSettings.cloudGenerationTimeoutSeconds = Number.isFinite(cloudTimeoutSeconds)
+        ? Math.max(0, Math.min(600, Math.round(cloudTimeoutSeconds))) : 45;
     state.globalSettings.embeddingBaseUrl = normalizeOpenAICompatibleBase(state.globalSettings.embeddingBaseUrl);
     state.globalSettings.embeddingApiKey = String(state.globalSettings.embeddingApiKey || '').slice(0, 500);
     state.globalSettings.localTtsBaseUrl = normalizeOpenAICompatibleBase(
@@ -2721,6 +2732,7 @@ async function loadState() {
         if (state.globalSettings.localBaseUrl === undefined) state.globalSettings.localBaseUrl = '';
         if (state.globalSettings.localApiKey === undefined) state.globalSettings.localApiKey = '';
         if (state.globalSettings.localGenerationTimeoutSeconds === undefined) state.globalSettings.localGenerationTimeoutSeconds = 300;
+        if (state.globalSettings.cloudGenerationTimeoutSeconds === undefined) state.globalSettings.cloudGenerationTimeoutSeconds = 45;
         if (state.globalSettings.embeddingBaseUrl === undefined) state.globalSettings.embeddingBaseUrl = '';
         if (state.globalSettings.embeddingApiKey === undefined) state.globalSettings.embeddingApiKey = '';
         if (state.globalSettings.localTtsBaseUrl === undefined) state.globalSettings.localTtsBaseUrl = 'http://127.0.0.1:8000/v1';
@@ -11661,6 +11673,8 @@ function setupGlobalSettings() {
         state.globalSettings.localApiKey = document.getElementById('global-local-key').value.trim().slice(0, 500);
         state.globalSettings.localGenerationTimeoutSeconds = Math.max(0, Math.min(3600,
             parseInt(document.getElementById('global-local-generation-timeout').value) || 0));
+        state.globalSettings.cloudGenerationTimeoutSeconds = Math.max(0, Math.min(600,
+            parseInt(document.getElementById('global-cloud-generation-timeout').value) || 0));
         state.globalSettings.embeddingBaseUrl = normalizeOpenAICompatibleBase(
             document.getElementById('global-embedding-url').value);
         state.globalSettings.embeddingApiKey = document.getElementById('global-embedding-key').value.trim().slice(0, 500);
@@ -12293,6 +12307,8 @@ function showGlobalSettings() {
         document.getElementById('global-local-key').value = state.globalSettings.localApiKey || '';
         document.getElementById('global-local-generation-timeout').value = String(
             state.globalSettings.localGenerationTimeoutSeconds ?? 300);
+        document.getElementById('global-cloud-generation-timeout').value = String(
+            state.globalSettings.cloudGenerationTimeoutSeconds ?? 45);
         document.getElementById('global-embedding-url').value = state.globalSettings.embeddingBaseUrl || '';
         document.getElementById('global-embedding-key').value = state.globalSettings.embeddingApiKey || '';
         document.getElementById('global-embedding-model').value = state.globalSettings.embeddingModel || '';
@@ -24106,8 +24122,8 @@ ${modularMandate}
 
         const controller = new AbortController();
         worldGenController = controller; // expose for the user Stop button
-        const configuredLocalIdleTimeout = isLocalProvider() ? localGenerationIdleTimeoutMs() : 45000;
-        const armGenerationIdleTimeout = (overrideMs = configuredLocalIdleTimeout) => {
+        const configuredIdleTimeout = isLocalProvider() ? localGenerationIdleTimeoutMs() : cloudGenerationIdleTimeoutMs();
+        const armGenerationIdleTimeout = (overrideMs = configuredIdleTimeout) => {
             if (timeoutId) clearTimeout(timeoutId);
             activeIdleTimeoutMs = Math.max(0, Number(overrideMs) || 0);
             if (!activeIdleTimeoutMs) {
@@ -25171,7 +25187,7 @@ ${modularMandate}
             if (dmTyping) { dmTyping.style.display = 'flex'; if (dmTypingLabel) dmTypingLabel.textContent = 'DM lost their train of thought — retrying...'; }
             try {
                 // Non-streaming call can't reset the idle timer — give it its own window
-                armGenerationIdleTimeout(isLocalProvider() ? configuredLocalIdleTimeout : 90000);
+                armGenerationIdleTimeout(isLocalProvider() ? configuredIdleTimeout : Math.max(90000, configuredIdleTimeout));
                 const rescueBody = {
                     model: modelId,
                     stream: false,
