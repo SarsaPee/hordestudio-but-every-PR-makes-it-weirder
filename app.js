@@ -10861,6 +10861,12 @@ function parseSidecarEpisodeOutput(content) {
     };
 }
 
+function parseSidecarHierarchyOutput(content) {
+    const parsed = safeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!isPlainObject(parsed) || !String(parsed.summary || '').trim()) return null;
+    return { summary: String(parsed.summary).trim().slice(0, 12000), keyFacts: String(parsed.keyFacts || parsed.key_facts || '').trim().slice(0, 8000) };
+}
+
 function parseSidecarCognitionOutput(content) {
     const parsed = safeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
     if (!isPlainObject(parsed)) return null;
@@ -10932,6 +10938,8 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8) {
         && episodeCandidates.some(candidate => Array.isArray(candidate.record.embedding));
     const derivedCandidates = prerequisitesMet ? [
         ...(graph.cognition || []).filter(record => record.status === 'active').map(record => ({ kind: 'cognition', text: record.text, record })),
+        ...(graph.scenes || []).filter(record => record.status === 'active' && record.vectorText).map(record => ({ kind: 'scene', text: record.vectorText || record.summary, record })),
+        ...(graph.sequences || []).filter(record => record.status === 'active' && record.vectorText).map(record => ({ kind: 'sequence', text: record.vectorText || record.summary, record })),
         ...(graph.locationReferences || []).filter(record => record.status !== 'resolved').map(record => ({ kind: 'unresolved_place', text: `${record.name || ''} ${record.evidence || ''}`, record })),
         ...(world.locations || []).map(record => ({ kind: 'location', text: sidecarLocationEmbeddingText(world, record), record }))
     ] : [];
@@ -10953,7 +10961,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
     const startMemoryEpoch = Number(sess._memEpoch) || 0;
     const memoryDefaults = state.globalSettings || {};
     window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: Number(memoryDefaults.episodeChunkTurns) || 5, cadenceTurns: Number(memoryDefaults.episodeCadenceTurns) || 5 });
-    const runnable = (protocol.jobs || []).filter(job => ['episode_consolidation', 'cognition_consolidation'].includes(job.type) && job.status === 'queued'
+    const runnable = (protocol.jobs || []).filter(job => ['episode_consolidation', 'scene_consolidation', 'sequence_consolidation', 'cognition_consolidation'].includes(job.type) && job.status === 'queued'
         && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now())).slice(0, Math.max(1, Math.min(12, Number(memoryDefaults.consolidationConcurrency) || 6)));
     if (!runnable.length) return;
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
@@ -11000,6 +11008,37 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
             } catch (error) {
                 window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
             }
+            return;
+        }
+        if (job.type === 'scene_consolidation' || job.type === 'sequence_consolidation') {
+            const targetId = job.type === 'scene_consolidation' ? job.sceneId : job.sequenceId;
+            const episodes = (graph.episodes || []).filter(episode => (job.episodeIds || []).includes(episode.id) && episode.status === 'active');
+            if (!episodes.length) { window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'No active episode evidence remains.'); return; }
+            const label = job.type === 'scene_consolidation' ? 'scene' : 'sequence';
+            const prompt = `[SIDECAR ${label.toUpperCase()} CONSOLIDATION]\nCompress the supplied episode summaries into one durable ${label}-level memory. Preserve only supported facts and unresolved uncertainty; do not invent events, locations, character knowledge, or outcomes. Return JSON only: {"summary":"compact event-based summary","keyFacts":"durable facts and open threads"}.\n\nEPISODES:\n${JSON.stringify(episodes.map(episode => ({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, sourceTurnIds: episode.sourceTurnIds })))}\n\nTARGET ${label.toUpperCase()} ID: ${targetId}`;
+            try {
+                const response = await fetch(apiBase() + '/chat/completions', {
+                    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                    body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                        ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}), messages: [{ role: 'system', content: prompt }, { role: 'user', content: `Consolidate this ${label}.` }] },
+                        { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
+                });
+                if (!response.ok) throw new Error(`${label} consolidation failed (${response.status})`);
+                const output = parseSidecarHierarchyOutput((await response.json())?.choices?.[0]?.message?.content || '');
+                if (!output) throw new Error(`${label} consolidation returned no usable JSON.`);
+                if ((Number(sess._memEpoch) || 0) !== startMemoryEpoch) return;
+                const collection = job.type === 'scene_consolidation' ? graph.scenes : graph.sequences;
+                const record = collection.find(item => item[`${label}Id`] === targetId);
+                if (record) {
+                    record.summary = output.summary;
+                    record.keyFacts = output.keyFacts;
+                    record.vectorText = [output.summary, output.keyFacts].filter(Boolean).join('\n');
+                    record.updatedAt = new Date().toISOString();
+                    record.provenance = { ...(record.provenance || {}), source: `${label}_consolidation`, evidenceEpisodeIds: episodes.map(episode => episode.id) };
+                    await vectorizeSidecarMemoryRecords([record]);
+                }
+                job.status = 'completed'; job.completedAt = new Date().toISOString(); job.outputId = record?.id || '';
+            } catch (error) { window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error)); }
             return;
         }
         const source = graph.worldHistory.filter(record => job.sourceTurnIds.includes(record.turnId) && record.status === 'active');
@@ -35557,9 +35596,9 @@ async function renderVectorMemoryList(filterQuery = "") {
             const graph = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)
                 ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol) : null;
             if (graph) {
-                currentEpisodicStore = [...graph.worldHistory, ...graph.episodes];
+                currentEpisodicStore = [...graph.worldHistory, ...graph.episodes, ...(graph.scenes || []), ...(graph.sequences || [])];
                 candidates = currentEpisodicStore.filter(record => record.status === 'active').map(record => ({
-                    text: record.kind === 'episode' ? `[EPISODE] ${record.text || record.summary || ''}` : `[WORLD HISTORY] ${record.text || record.narration || ''}`,
+                    text: record.kind === 'episode' ? `[EPISODE] ${record.text || record.summary || ''}` : record.kind === 'scene' ? `[SCENE] ${record.text || record.summary || ''}` : record.kind === 'sequence' ? `[SEQUENCE] ${record.text || record.summary || ''}` : `[WORLD HISTORY] ${record.text || record.narration || ''}`,
                     embedding: record.embedding, embeddingNamespace: record.embeddingNamespace, source: record.kind || 'world_history', ref: record
                 }));
             } else if (sess && sess.episodicMemories) {

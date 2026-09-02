@@ -111,6 +111,23 @@
         };
         episode.sceneIds.forEach(sceneId => upsertContainer('scene', sceneId, memory.scenes));
         episode.sequenceIds.forEach(sequenceId => upsertContainer('sequence', sequenceId, memory.sequences));
+        // Compression above Episode is an explicit background job. Keep the
+        // source episode IDs pinned so a failed/rewound job can be retried
+        // without losing the deterministic retrieval path.
+        episode.sceneIds.forEach(sceneId => {
+            if (!jobs.some(entry => entry.type === 'scene_consolidation' && entry.sceneId === sceneId && entry.status !== 'completed')) {
+                jobs.push({ id: id('memory_job'), type: 'scene_consolidation', status: 'queued', createdAt: now(), attempts: 0,
+                    sceneId, episodeIds: [episode.id], sourceTurnIds: episode.sourceTurnIds.slice(), dependencies: [job.id], priority: 'background', retryAt: '', diagnostics: [],
+                    provenance: { source: 'episode_hierarchy' } });
+            }
+        });
+        episode.sequenceIds.forEach(sequenceId => {
+            if (!jobs.some(entry => entry.type === 'sequence_consolidation' && entry.sequenceId === sequenceId && entry.status !== 'completed')) {
+                jobs.push({ id: id('memory_job'), type: 'sequence_consolidation', status: 'queued', createdAt: now(), attempts: 0,
+                    sequenceId, episodeIds: [episode.id], sourceTurnIds: episode.sourceTurnIds.slice(), dependencies: [job.id], priority: 'background', retryAt: '', diagnostics: [],
+                    provenance: { source: 'episode_hierarchy' } });
+            }
+        });
         episode.perceptionCoverage.forEach(coverage => {
             const characterId = clean(coverage?.characterId, 160);
             const access = clean(coverage?.access, 80).toLowerCase();
