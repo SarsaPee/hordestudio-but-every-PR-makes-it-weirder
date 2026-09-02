@@ -31692,8 +31692,16 @@ function calibrationFindingsFromSociety(world, payload, carriedFactions) {
     });
 
     // A faction is proposed by name, since the model has no id to give.
-    const existingNames = new Set((world.factions || []).map(faction =>
-        String(faction.name || '').trim().toLowerCase()));
+    // A calibration response sometimes echoes a canonical faction id in the
+    // name field. Treat ids and names as the same identity namespace here so
+    // that a reply such as "fac_mm_bi" cannot mint a second empty faction.
+    const existingNames = new Set();
+    (world.factions || []).forEach(faction => {
+        const name = String(faction.name || '').trim().toLowerCase();
+        const id = String(faction.id || '').trim().toLowerCase();
+        if (name) existingNames.add(name);
+        if (id) existingNames.add(id);
+    });
     // Factions proposed in an earlier batch of the same run. Without these, a
     // member found in batch 6 could not be joined to a guild proposed in
     // batch 5, because nothing is applied to the world until the author says so.
