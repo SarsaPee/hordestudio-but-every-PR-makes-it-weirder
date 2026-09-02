@@ -650,6 +650,8 @@ const HordeVectorMemory = {
 
     async init() {
         try {
+            const configuredLimit = typeof state !== 'undefined' ? Number(state.globalSettings?.embeddingCacheLimit) : 10000;
+            this.maxCacheEntries = Math.max(100, Math.min(100000, configuredLimit || 10000));
             const cached = await HordeDB.get('embedding_cache');
             if (cached && typeof cached === 'object') {
                 this.cache = new Map(Object.entries(cached));
@@ -701,6 +703,8 @@ const HordeVectorMemory = {
         if (this.isFallbackActive) this.triggerFallback(false);
 
         try {
+            const configuredLimit = typeof state !== 'undefined' ? Number(state.globalSettings?.embeddingCacheLimit) : this.maxCacheEntries || 10000;
+            this.maxCacheEntries = Math.max(100, Math.min(100000, configuredLimit || this.maxCacheEntries || 10000));
             const emb = await getEmbedding(text);
             this.cache.set(key, emb);
             while (this.cache.size > this.maxCacheEntries) {
@@ -1789,6 +1793,14 @@ let state = {
         editBgColor: '#2b2b36',
         memoryThreshold: 0.35,
         memoryTopK: 8,
+        consolidationMaxTokens: 1400,
+        consolidationTemperature: 0,
+        consolidationReasoning: false,
+        episodeChunkTurns: 5,
+        episodeCadenceTurns: 5,
+        verbatimTurnWindow: 5,
+        consolidationConcurrency: 6,
+        embeddingCacheLimit: 10000,
         localGenerationTimeoutSeconds: 300,
         cloudGenerationTimeoutSeconds: 45,
         embeddingBaseUrl: '',
@@ -2508,6 +2520,14 @@ function repairLoadedState() {
     state.globalSettings.editBgColor = cssColor(state.globalSettings.editBgColor, '#2b2b36');
     state.globalSettings.memoryThreshold = Math.max(0, Math.min(1, Number(state.globalSettings.memoryThreshold) || 0.35));
     state.globalSettings.memoryTopK = Math.max(1, Math.min(100, Math.round(Number(state.globalSettings.memoryTopK) || 8)));
+    state.globalSettings.consolidationMaxTokens = Math.max(300, Math.min(12000, Math.round(Number(state.globalSettings.consolidationMaxTokens) || 1400)));
+    state.globalSettings.consolidationTemperature = Math.max(0, Math.min(2, Number(state.globalSettings.consolidationTemperature) || 0));
+    state.globalSettings.consolidationReasoning = state.globalSettings.consolidationReasoning === true;
+    state.globalSettings.episodeChunkTurns = Math.max(1, Math.min(50, Math.round(Number(state.globalSettings.episodeChunkTurns) || 5)));
+    state.globalSettings.episodeCadenceTurns = Math.max(1, Math.min(50, Math.round(Number(state.globalSettings.episodeCadenceTurns) || 5)));
+    state.globalSettings.verbatimTurnWindow = Math.max(0, Math.min(30, Math.round(Number(state.globalSettings.verbatimTurnWindow) || 5)));
+    state.globalSettings.consolidationConcurrency = Math.max(1, Math.min(12, Math.round(Number(state.globalSettings.consolidationConcurrency) || 6)));
+    state.globalSettings.embeddingCacheLimit = Math.max(100, Math.min(100000, Math.round(Number(state.globalSettings.embeddingCacheLimit) || 10000)));
     const timeoutSeconds = Number(state.globalSettings.localGenerationTimeoutSeconds);
     state.globalSettings.localGenerationTimeoutSeconds = Number.isFinite(timeoutSeconds)
         ? Math.max(0, Math.min(3600, Math.round(timeoutSeconds))) : 300;
@@ -2736,6 +2756,14 @@ async function loadState() {
         state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
         if (state.globalSettings.memoryTopK === undefined) state.globalSettings.memoryTopK = 8;
+        if (state.globalSettings.consolidationMaxTokens === undefined) state.globalSettings.consolidationMaxTokens = 1400;
+        if (state.globalSettings.consolidationTemperature === undefined) state.globalSettings.consolidationTemperature = 0;
+        if (state.globalSettings.consolidationReasoning === undefined) state.globalSettings.consolidationReasoning = false;
+        if (state.globalSettings.episodeChunkTurns === undefined) state.globalSettings.episodeChunkTurns = 5;
+        if (state.globalSettings.episodeCadenceTurns === undefined) state.globalSettings.episodeCadenceTurns = 5;
+        if (state.globalSettings.verbatimTurnWindow === undefined) state.globalSettings.verbatimTurnWindow = 5;
+        if (state.globalSettings.consolidationConcurrency === undefined) state.globalSettings.consolidationConcurrency = 6;
+        if (state.globalSettings.embeddingCacheLimit === undefined) state.globalSettings.embeddingCacheLimit = 10000;
         // Remember-key opt-in: default ON for users who already had a stored key
         // (preserves their existing behavior), OFF for everyone else.
         if (state.globalSettings.rememberApiKey === undefined) state.globalSettings.rememberApiKey = !!legacyStoredApiKey;
@@ -10856,9 +10884,12 @@ function sidecarLocationEmbeddingText(world, location) {
         Array.isArray(location?.tags) && location.tags.length ? `Tags: ${location.tags.join(', ')}` : ''].filter(Boolean).join('\n').slice(0, 6000);
 }
 
-async function vectorizeSidecarMemoryRecords(records) {
-    const pending = records.filter(record => record && record.text && !Array.isArray(record.embedding));
+async function vectorizeSidecarMemoryRecords(records, options = {}) {
+    const namespace = HordeVectorMemory.namespace();
+    const pending = records.filter(record => record && (record.text || record.vectorText)
+        && (!Array.isArray(record.embedding) || (record.embeddingNamespace && record.embeddingNamespace !== namespace)));
     let cursor = 0;
+    let completed = 0;
     async function worker() {
         while (cursor < pending.length) {
             const record = pending[cursor++];
@@ -10866,7 +10897,9 @@ async function vectorizeSidecarMemoryRecords(records) {
                 record.embedding = await HordeVectorMemory.getCachedEmbedding(record.vectorText || record.text);
                 record.embeddingNamespace = HordeVectorMemory.namespace();
                 record.vectorizedAt = new Date().toISOString();
-            } catch (error) { record.vectorError = String(error?.message || error).slice(0, 300); }
+                completed++;
+                options.onProgress?.({ completed, attempted: pending.length, record });
+            } catch (error) { record.vectorError = String(error?.message || error).slice(0, 300); options.onProgress?.({ completed, attempted: pending.length, record, error }); }
         }
     }
     await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
@@ -10902,9 +10935,10 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
     const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
     if (!graph) return;
     const startMemoryEpoch = Number(sess._memEpoch) || 0;
-    window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: 5 });
+    const memoryDefaults = state.globalSettings || {};
+    window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: Number(memoryDefaults.episodeChunkTurns) || 5, cadenceTurns: Number(memoryDefaults.episodeCadenceTurns) || 5 });
     const runnable = (protocol.jobs || []).filter(job => ['episode_consolidation', 'cognition_consolidation'].includes(job.type) && job.status === 'queued'
-        && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now())).slice(0, 6);
+        && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now())).slice(0, Math.max(1, Math.min(12, Number(memoryDefaults.consolidationConcurrency) || 6)));
     if (!runnable.length) return;
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
@@ -10928,7 +10962,8 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
             try {
                 const response = await fetch(apiBase() + '/chat/completions', {
                     method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-                    body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 1200, temperature: 0.2,
+                    body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                        ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                         messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this character cognition.' }] },
                         { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
                 });
@@ -10960,7 +10995,8 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
         try {
             const response = await fetch(apiBase() + '/chat/completions', {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-                body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 1400, temperature: 0,
+                body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                    ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                     messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this episode.' }] },
                     { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
             });
@@ -10969,6 +11005,13 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
             if (!output) throw new Error('Episode consolidation returned no usable JSON.');
             if ((Number(sess._memEpoch) || 0) !== startMemoryEpoch) return;
             window.HordeSidecarMemoryGraph.completeEpisode(protocol, job.id, output);
+            const completedEpisode = (graph.episodes || []).find(record => record.jobId === job.id);
+            const sourceForVectors = graph.worldHistory.filter(record => job.sourceTurnIds.includes(record.turnId) && record.status === 'active');
+            sourceForVectors.forEach(record => { record.vectorText = record.text || record.narration; });
+            if (completedEpisode) completedEpisode.vectorText = completedEpisode.text || completedEpisode.summary;
+            // Cognition and location vectors are downstream products: make the
+            // committed world-history and episode evidence available first.
+            await vectorizeSidecarMemoryRecords([...sourceForVectors, ...(completedEpisode ? [completedEpisode] : [])]);
             protocol.packet = buildSidecarScenePacket(world, sess);
         } catch (error) {
             window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
@@ -12240,6 +12283,14 @@ function setupGlobalSettings() {
         state.globalSettings.memoryThreshold = Number.isFinite(threshold) ? Math.max(0, Math.min(1, threshold)) : 0.35;
         state.globalSettings.memoryTopK = Math.max(1, Math.min(100, parseInt(document.getElementById('global-memory-topk').value) || 8));
         state.globalSettings.consolidationModel = document.getElementById('global-consolidation-model').value.trim() || 'google/gemini-flash-1.5-8b';
+        state.globalSettings.consolidationMaxTokens = Math.max(300, Math.min(12000, parseInt(document.getElementById('global-consolidation-max-tokens').value, 10) || 1400));
+        state.globalSettings.consolidationTemperature = Math.max(0, Math.min(2, Number(document.getElementById('global-consolidation-temperature').value) || 0));
+        state.globalSettings.consolidationReasoning = document.getElementById('global-consolidation-reasoning').checked;
+        state.globalSettings.episodeChunkTurns = Math.max(1, Math.min(50, parseInt(document.getElementById('global-episode-chunk-turns').value, 10) || 5));
+        state.globalSettings.episodeCadenceTurns = Math.max(1, Math.min(50, parseInt(document.getElementById('global-episode-cadence-turns').value, 10) || 5));
+        state.globalSettings.verbatimTurnWindow = Math.max(0, Math.min(30, parseInt(document.getElementById('global-verbatim-turn-window').value, 10) || 0));
+        state.globalSettings.consolidationConcurrency = Math.max(1, Math.min(12, parseInt(document.getElementById('global-consolidation-concurrency').value, 10) || 6));
+        state.globalSettings.embeddingCacheLimit = Math.max(100, Math.min(100000, parseInt(document.getElementById('global-embedding-cache-limit').value, 10) || 10000));
         state.globalSettings.rememberApiKey = document.getElementById('remember-api-key').checked;
         state.globalSettings.slopStripper = document.getElementById('global-slop-stripper').checked;
         state.globalSettings.immersionMode = document.getElementById('global-immersion-mode').checked;
@@ -12973,6 +13024,14 @@ function showGlobalSettings() {
         document.getElementById('global-memory-topk').value = topk;
         document.getElementById('global-memory-topk-val').textContent = topk;
         document.getElementById('global-consolidation-model').value = state.globalSettings.consolidationModel || 'google/gemini-flash-1.5-8b';
+        document.getElementById('global-consolidation-max-tokens').value = state.globalSettings.consolidationMaxTokens || 1400;
+        document.getElementById('global-consolidation-temperature').value = state.globalSettings.consolidationTemperature ?? 0;
+        document.getElementById('global-consolidation-reasoning').checked = state.globalSettings.consolidationReasoning === true;
+        document.getElementById('global-episode-chunk-turns').value = state.globalSettings.episodeChunkTurns || 5;
+        document.getElementById('global-episode-cadence-turns').value = state.globalSettings.episodeCadenceTurns || 5;
+        document.getElementById('global-verbatim-turn-window').value = state.globalSettings.verbatimTurnWindow ?? 5;
+        document.getElementById('global-consolidation-concurrency').value = state.globalSettings.consolidationConcurrency || 6;
+        document.getElementById('global-embedding-cache-limit').value = state.globalSettings.embeddingCacheLimit || 10000;
         refreshMcpSettingsStatus();
     }
 }
@@ -35214,6 +35273,9 @@ function setupVectorMemoryViewerEvents() {
             if (!graph || !['cognition', 'locations', 'unresolved'].includes(currentVectorTab)) {
                 return showToast('Choose NPC Cognition, Locations, or Unresolved Places in a Sidecar world.', 'info');
             }
+            if (!graph.worldHistory.some(record => Array.isArray(record.embedding)) || !graph.episodes.some(record => Array.isArray(record.embedding))) {
+                return showToast('Vectorization cannot continue yet. Vectorize committed World History and at least one Episode first.', 'error');
+            }
             const characterId = characterFilter?.value || '';
             const records = currentVectorTab === 'cognition'
                 ? graph.cognition.filter(record => !characterId || record.characterId === characterId)
@@ -35225,7 +35287,11 @@ function setupVectorMemoryViewerEvents() {
             vectorizeListedBtn.disabled = true;
             vectorizeListedBtn.textContent = 'Vectorizing…';
             try {
-                const result = await vectorizeSidecarMemoryRecords(records);
+                const result = await vectorizeSidecarMemoryRecords(records, { onProgress: progress => {
+                    vectorizeListedBtn.textContent = `Vectorizing ${progress.completed}/${progress.attempted}…`;
+                    const status = document.getElementById('vector-memory-status');
+                    if (status) status.textContent = `Vectorization progress: ${progress.completed}/${progress.attempted}`;
+                } });
                 await saveState();
                 renderVectorMemoryList(queryInput?.value.trim() || '');
                 showToast(`Vectorized ${result.completed}/${result.attempted} derived records.`, 'success');
@@ -35462,6 +35528,17 @@ async function renderVectorMemoryList(filterQuery = "") {
         }
     }
     
+    const statusEl = document.getElementById('vector-memory-status');
+    if (statusEl && isWorld) {
+        const sess = getCurrentWorldSession();
+        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+        const scoped = currentVectorTab === 'cognition' && document.getElementById('vector-character-filter')?.value
+            ? candidates.filter(candidate => candidate.ref?.characterId === document.getElementById('vector-character-filter').value) : candidates;
+        const missing = scoped.filter(candidate => !Array.isArray(candidate.ref?.embedding)).length;
+        const stale = scoped.filter(candidate => candidate.ref?.embeddingNamespace && candidate.ref.embeddingNamespace !== HordeVectorMemory.namespace()).length;
+        const prerequisites = graph ? `Prerequisites: ${graph.worldHistory.filter(record => Array.isArray(record.embedding)).length}/${graph.worldHistory.length} World History and ${graph.episodes.filter(record => Array.isArray(record.embedding)).length}/${graph.episodes.length} Episodes embedded.` : '';
+        statusEl.textContent = `${scoped.length} record${scoped.length === 1 ? '' : 's'} in this view · ${missing} missing · ${stale} stale${prerequisites ? ` · ${prerequisites}` : ''}`;
+    } else if (statusEl) statusEl.textContent = `${candidates.length} record${candidates.length === 1 ? '' : 's'} in this view.`;
     if (candidates.length === 0) {
         listContainer.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-3); font-style:italic;">No vector memories indexed in this category yet. Summarize the chat or proceed with roleplay to generate them!</div>`;
         return;

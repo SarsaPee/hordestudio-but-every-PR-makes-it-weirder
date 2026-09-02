@@ -39,6 +39,7 @@
             sequenceId: clean(turn.sequenceId, 160), sceneId: clean(turn.sceneId, 160),
             status: turn.status === 'superseded' ? 'superseded' : 'active', createdAt: now(),
             narration: clean(turn.narration, 24000), sceneReading: clean(turn.handoff, 6000),
+            text: clean(turn.narration, 24000),
             provenance: { source: 'committed_sidecar_turn', receipt: turn.receipt?.turn_id || turn.id }
         };
         memory.worldHistory.push(record);
@@ -52,6 +53,8 @@
         if (!memory) return null;
         const active = memory.worldHistory.filter(record => record.status === 'active');
         const batchSize = Math.max(1, Math.min(20, Number(options.batchSize) || 5));
+        const cadenceTurns = Math.max(1, Math.min(50, Number(options.cadenceTurns) || batchSize));
+        if (active.length - memory.lastEpisodeTurnCount < cadenceTurns) return null;
         const pending = active.slice(memory.lastEpisodeTurnCount, memory.lastEpisodeTurnCount + batchSize);
         if (pending.length < batchSize) return null;
         const sourceTurnIds = pending.map(record => record.turnId);
@@ -81,6 +84,7 @@
             sequenceIds: sequenceIds.length ? sequenceIds : (Array.isArray(output.sequenceIds) ? output.sequenceIds : []),
             sceneIds: sceneIds.length ? sceneIds : (Array.isArray(output.sceneIds) ? output.sceneIds : []),
             summary: clean(output.summary, 8000), objectiveHistory: clean(output.objectiveHistory, 8000),
+            text: clean([output.summary, output.objectiveHistory].filter(Boolean).join('\n'), 12000),
             perceptionCoverage: Array.isArray(output.perceptionCoverage) ? output.perceptionCoverage : [],
             locationReferences: Array.isArray(output.locationReferences) ? output.locationReferences : [],
             provenance: { source: 'episode_consolidation', rawSourcePinned: true }
