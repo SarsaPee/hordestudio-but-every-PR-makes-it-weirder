@@ -36,15 +36,22 @@
         if (!isObject(entity) || String(entity.type || '').toLowerCase() !== 'vehicle') return null;
         const raw = isObject(entity.vehicle) ? entity.vehicle : {};
         entity.vehicle = {
-            persistent: raw.persistent !== false,
-            parkedAnchorId: clean(raw.parkedAnchorId || entity.startLocation, 160),
-            ownerEntityId: clean(raw.ownerEntityId, 160),
+        persistent: raw.persistent !== false,
+        parkedAnchorId: clean(raw.parkedAnchorId || entity.startLocation, 160),
+            ownerEntityId: clean(raw.ownerEntityId || raw.owners?.[0]?.entityId || raw.owners?.[0], 160),
+            owners: Array.isArray(raw.owners) ? raw.owners.map(entry => ({
+                entityId: clean(entry?.entityId || entry, 160),
+                role: 'owner'
+            })).filter(entry => entry.entityId).slice(0, 20) : [],
             access: Array.isArray(raw.access) ? raw.access.map(entry => ({
                 entityId: clean(entry?.entityId, 160), role: ['owner', 'driver', 'passenger', 'guest'].includes(entry?.role) ? entry.role : 'guest'
             })).filter(entry => entry.entityId).slice(0, 80) : [],
             interiorHint: clean(raw.interiorHint || entity.description, 1800),
             tags: Array.isArray(raw.tags) ? raw.tags.map(value => clean(value, 80)).filter(Boolean).slice(0, 32) : []
         };
+        if (entity.vehicle.ownerEntityId && !entity.vehicle.owners.some(entry => entry.entityId === entity.vehicle.ownerEntityId)) {
+            entity.vehicle.owners.unshift({ entityId: entity.vehicle.ownerEntityId, role: 'owner' });
+        }
         return entity.vehicle;
     }
 
