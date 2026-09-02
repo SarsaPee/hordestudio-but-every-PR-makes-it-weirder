@@ -11075,6 +11075,8 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
     });
     await Promise.all(scheduled.map(async job => {
         job.status = 'running'; job.startedAt = new Date().toISOString();
+        const jobProvider = normalizedProviderId(job.provider || state.globalSettings?.apiProvider || 'openrouter');
+        const jobWorld = { ...world, model: job.model || model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
         if (job.type === 'cognition_consolidation') {
             const episode = (graph.episodes || []).find(record => record.id === job.episodeId && record.status === 'active');
             const character = job.characterId === 'player'
@@ -11088,12 +11090,12 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
                 .map(record => ({ text: record.text, epistemicStatus: record.epistemicStatus }));
             const prompt = `[SIDECAR CHARACTER COGNITION]\nWrite only experiential memories for ${character.name} [${character.id}]. This is private character cognition, never objective canon. Return JSON only: {"memories":[{"text":"first-person memory","epistemicStatus":"self_action|direct_observation|disclosure|interpretation|belief|influence","importance":0.0,"confidence":0.0,"sourceTurnIds":["turn id"]}]}.\nKeep witnessed actions distinct from self-actions; disclosures must identify who told them; interpretations and suspicions must remain uncertain. Do not create a memory merely because the character was present, and do not infer interiority beyond the available character grounding.\n\nCHARACTER GROUNDING:\n${JSON.stringify({ id: character.id, name: character.name, persona: character.persona || '', description: character.description || '', access: job.access })}\n\nEPISODE:\n${JSON.stringify({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, perceptionCoverage: episode.perceptionCoverage })}\n\nRELEVANT PRIOR COGNITION:\n${JSON.stringify(prior)}`;
             try {
-                const response = await fetch(apiBase() + '/chat/completions', {
-                    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
+                    method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
                     body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                         ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                         messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this character cognition.' }] },
-                        { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
+                        jobWorld, { scope: 'sidecar' }))
                 });
                 if (!response.ok) throw new Error(`Cognition consolidation failed (${response.status})`);
                 const output = parseSidecarCognitionOutput((await response.json())?.choices?.[0]?.message?.content || '');
@@ -11121,11 +11123,11 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
             const label = job.type === 'scene_consolidation' ? 'scene' : 'sequence';
             const prompt = `[SIDECAR ${label.toUpperCase()} CONSOLIDATION]\nCompress the supplied episode summaries into one durable ${label}-level memory. Preserve only supported facts and unresolved uncertainty; do not invent events, locations, character knowledge, or outcomes. Return JSON only: {"summary":"compact event-based summary","keyFacts":"durable facts and open threads"}.\n\nEPISODES:\n${JSON.stringify(episodes.map(episode => ({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, sourceTurnIds: episode.sourceTurnIds })))}\n\nTARGET ${label.toUpperCase()} ID: ${targetId}`;
             try {
-                const response = await fetch(apiBase() + '/chat/completions', {
-                    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
+                    method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
                     body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                         ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}), messages: [{ role: 'system', content: prompt }, { role: 'user', content: `Consolidate this ${label}.` }] },
-                        { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
+                        jobWorld, { scope: 'sidecar' }))
                 });
                 if (!response.ok) throw new Error(`${label} consolidation failed (${response.status})`);
                 const output = parseSidecarHierarchyOutput((await response.json())?.choices?.[0]?.message?.content || '');
@@ -11152,12 +11154,12 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
         }
         const prompt = `[SIDECAR EPISODE CONSOLIDATION]\nYou consolidate a committed group of roleplay turns. Do not invent facts, promote implied places, or grant character knowledge from authorial context. Return JSON only:\n{\n  "summary":"objective episode summary",\n  "objectiveHistory":"durable factual history only",\n  "perceptionCoverage":[{"characterId":"canonical ID when known","access":"visual|auditory|informational|absent","detail":"what this participant had access to"}],\n  "locationReferences":[{"name":"particular referenced place","locationId":"canonical ID or empty","status":"assigned|unresolved","evidence":"short contextual clue"}]\n}\nAn ordinary generic desire such as “somewhere quiet” is not a location reference. Only record a particular place if the full episode context identifies one or establishes that it is unresolved.\n\nCOMMITTED SOURCE TURNS:\n${JSON.stringify(source.map(record => ({ turnId: record.turnId, sequenceId: record.sequenceId, sceneId: record.sceneId, narration: record.narration, handoff: record.sceneReading })))} `;
         try {
-            const response = await fetch(apiBase() + '/chat/completions', {
-                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+            const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
+                method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
                 body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                     ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                     messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this episode.' }] },
-                    { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
+                    jobWorld, { scope: 'sidecar' }))
             });
             if (!response.ok) throw new Error(`Episode consolidation failed (${response.status})`);
             const output = parseSidecarEpisodeOutput((await response.json())?.choices?.[0]?.message?.content || '');
