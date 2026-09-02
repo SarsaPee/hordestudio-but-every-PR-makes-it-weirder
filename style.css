@@ -7999,6 +7999,7 @@ label[data-help] > span:first-child::after,
     .world-item-wide, .mp-item-wide { grid-column:auto; }
     .mp-item-card { grid-template-columns:1fr auto; }
     .mp-item-card [data-sheet-item-delete] { grid-column:2; }
+}
 
 /* OpenRouter provider routing ------------------------------------------------
    Shared by Settings and every text-model AI Config. */
