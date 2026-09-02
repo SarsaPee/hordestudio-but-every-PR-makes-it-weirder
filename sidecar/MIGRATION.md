@@ -1,16 +1,13 @@
 # Legacy to Sidecar migration contract
 
-Migration is selected-world and user-triggered by selecting Sidecar in World
-Studio and saving. The current integration creates a per-timeline migration
-record with source counts and compatibility warnings, preserves the canonical
-history/receipts in place, clears message embeddings and derived episodic
-material, and starts Sidecar from that unchanged canonical source.
-
-The migration record is an audit/compatibility backup, not yet a full rollback
-wizard. Legacy worlds remain Inline Legacy unless their author deliberately
-switches and saves the world. A later UI increment must add confirmation,
-backup export/restore and selected-timeline controls before this is presented
-as a complete migration wizard.
+Migration is a selected-world, user-triggered operation exposed by the World
+Studio migration wizard. The wizard lists Inline Legacy timelines with their
+history/receipt counts and warnings, lets the author select a subset, creates a
+per-world rollback backup, and migrates only those timelines. Raw history and
+canonical receipts remain in place; message embeddings and derived episodic
+material are cleared and rebuilt under Sidecar. The latest five backups remain
+available for explicit restore. Other worlds and unselected timelines are not
+changed.
 
 Migration does not advance time, reinterpret history, convert relationships,
 promote locations or change canonical world state.

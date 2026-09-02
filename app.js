@@ -11107,7 +11107,7 @@ function renderSidecarConversation(world, sess) {
         <div style="margin:0 0 9px; padding:9px; border-radius:7px; background:rgba(255,180,70,.08); border:1px solid var(--border);">
             <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${escapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : proposal.status === 'sidecar_reviewed' ? `Sidecar reviewed · ${proposal.reviewOutcome || 'no automatic commit'}` : 'awaiting review')}</div>
             <div style="font-size:.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML((proposal.summary || []).join('\n') || 'No readable proposal summary.')}</div>
-            <div style="display:flex; gap:6px; margin-top:7px;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}${proposal.status !== 'sidecar_reviewed' ? `<button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button>` : ''}</div>
+            <div style="display:flex; gap:6px; margin-top:7px; flex-wrap:wrap;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}${proposal.status !== 'sidecar_reviewed' ? `<button class="tool-btn sidecar-proposal-revise" data-proposal-id="${escapeHTML(proposal.id)}">Refine proposal</button><button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button>` : ''}</div>
         </div>`).join('');
     log.innerHTML = proposalCards + entries.map(entry => {
         const author = entry.role === 'user';
@@ -11128,7 +11128,57 @@ function renderSidecarConversation(world, sess) {
         proposal.status = 'dismissed'; proposal.reviewedAt = new Date().toISOString(); proposal.reviewProvenance = 'direct_user_refinement';
         protocol.packet = buildSidecarScenePacket(world, sess); await saveState(); renderSidecarConversation(world, sess);
     });
+    log.querySelectorAll('.sidecar-proposal-revise').forEach(button => button.onclick = async () => {
+        const proposal = protocol.backgroundProposals.find(item => item.id === button.dataset.proposalId);
+        if (!proposal) return;
+        const guidance = prompt('How should Sidecar refine this World Agent proposal? It will remain a proposal until reviewed.', 'Make the proposal more relevant to the current scene and remove anything unsupported.') || '';
+        if (!guidance.trim()) return;
+        button.disabled = true;
+        try {
+            const revised = await reviseWorldAgentProposal(world, sess, proposal, guidance);
+            if (revised) showToast('World Agent proposal revised for Sidecar review.', 'success');
+        } catch (error) {
+            showToast(`Proposal revision failed: ${error.message || error}`, 'error');
+        } finally {
+            renderSidecarConversation(world, sess);
+        }
+    });
     log.scrollTop = log.scrollHeight;
+}
+
+async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
+    const config = normalizeWorldAgentConfig(world);
+    const response = await fetch(apiBase() + '/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(applyOpenRouterRouting({
+            model: config.model || structuredModelFor(world), max_tokens: 1400,
+            messages: [
+                { role: 'system', content: 'You revise a background World Agent proposal. Return ONLY JSON with the same proposal shape. Keep it grounded in the supplied digest, never affect the player, never create unsupported entities, and do not narrate prose.' },
+                { role: 'user', content: JSON.stringify({ guidance, currentProposal: proposal, digest: buildWorldAgentDigest(world, sess) }) }
+            ]
+        }, world, { scope: 'worldAgent' }))
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error?.message || response.statusText);
+    const content = (await response.json())?.choices?.[0]?.message?.content || '';
+    const parsed = parseWorldAgentPayload(content);
+    if (!parsed || (!parsed.actions && !parsed.world_events && !parsed.npc_goal_updates && !parsed.npc_moves && !parsed.faction_updates && !parsed.location_state_updates && !parsed.npc_relationship_updates)) throw new Error('World Agent returned no usable proposal.');
+    const sanitized = sanitizeWorldAgentActions(parsed);
+    const target = protocolForSidecarTimeline(world, sess);
+    if (!target) throw new Error('Sidecar timeline unavailable.');
+    proposal.actions = safeJsonClone(sanitized.actions);
+    proposal.dropped = sanitized.dropped;
+    proposal.summary = (Array.isArray(parsed.developments) ? parsed.developments : proposal.summary || []).map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
+    proposal.status = 'pending_sidecar_review';
+    proposal.revisedAt = new Date().toISOString();
+    proposal.revisionGuidance = String(guidance).slice(0, 1000);
+    proposal.revisionProvenance = { source: 'world_agent_revision', model: config.model || structuredModelFor(world) };
+    target.packet = buildSidecarScenePacket(world, sess);
+    await saveState();
+    return proposal;
+}
+
+function protocolForSidecarTimeline(world, sess) {
+    return window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess) || null;
 }
 
 function extractInlineWorldTurnReceipt(text) {
@@ -14452,17 +14502,7 @@ function renderWorldSidecarConfigEditor(world) {
         const sessions = state.worldInstances?.[world.id]?.sessions || [];
         migrate.classList.toggle('hidden', config.mode === 'sidecar');
         migrate.onclick = async () => {
-            const details = sessions.map(session => {
-                const warnings = [
-                    (session.pendingChecks || []).length ? 'pending checks' : '', session.unresolvedDestination ? 'unresolved destination' : '',
-                    (session.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length) ? 'rejected legacy proposals' : ''
-                ].filter(Boolean);
-                return `• ${session.name || session.id}: ${session.history?.length || 0} messages, ${session.worldTurnReceipts?.length || 0} receipts${warnings.length ? ` — ${warnings.join(', ')}` : ''}`;
-            }).join('\n') || '• No existing timelines: this world will start directly in Sidecar mode.';
-            if (!confirm(`SIDECAR MIGRATION REVIEW\n\n${details}\n\nThe selected world receives a backup. Raw history and canonical records remain. Only derived embeddings and episodic caches are rebuilt. Continue?`)) return;
-            document.getElementById('w-sidecar-mode').value = 'sidecar';
-            await saveWorld();
-            renderWorldSidecarConfigEditor(state.editingWorld);
+            openSidecarMigrationWizard(world.id);
         };
     }
     const report = document.getElementById('w-sidecar-migration-report');
@@ -14579,11 +14619,13 @@ function openWorldStudio(worldId = null) {
     }
 }
 
-function migrateWorldTimelinesToSidecar(world, legacyConfig = null) {
+function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}) {
     const instance = state.worldInstances?.[world?.id];
     const sessions = Array.isArray(instance?.sessions) ? instance.sessions : [];
+    const selected = Array.isArray(options.selectedSessionIds) ? new Set(options.selectedSessionIds.map(String)) : null;
     const reports = [];
     sessions.forEach(sess => {
+        if (selected && !selected.has(String(sess.id))) return;
         const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         if (!protocol || protocol.mode === 'sidecar') return;
         const warnings = [];
@@ -14610,6 +14652,56 @@ function migrateWorldTimelinesToSidecar(world, legacyConfig = null) {
         reports.push({ id: sess.id, warnings });
     });
     return reports;
+}
+
+function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
+    const world = state.worlds.find(item => item.id === worldId) || state.editingWorld;
+    const overlay = document.getElementById('sidecar-migration-wizard-overlay');
+    const list = document.getElementById('sidecar-migration-wizard-list');
+    const status = document.getElementById('sidecar-migration-wizard-status');
+    if (!world || !overlay || !list) return;
+    const sessions = state.worldInstances?.[world.id]?.sessions || [];
+    const inline = sessions.filter(sess => {
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        return protocol?.mode !== 'sidecar';
+    });
+    list.innerHTML = inline.length ? inline.map(sess => {
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const warnings = [
+            (sess.pendingChecks || []).length ? 'pending checks' : '',
+            sess.unresolvedDestination ? 'unresolved destination' : '',
+            (sess.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length) ? 'rejected legacy proposals' : ''
+        ].filter(Boolean);
+        return `<label class="world-migration-card" style="display:flex; align-items:flex-start; gap:10px; padding:10px; cursor:pointer;"><input type="checkbox" class="sidecar-migration-session" data-session-id="${escapeHTML(sess.id)}" checked><span style="flex:1;"><strong>${escapeHTML(sess.name || sess.id)}</strong><small style="display:block; color:var(--text-3);">${sess.history?.length || 0} messages · ${sess.worldTurnReceipts?.length || 0} receipts · ${protocol?.mode === 'sidecar' ? 'already Sidecar' : 'Inline Legacy'}${warnings.length ? ` · <span style="color:var(--warning)">${escapeHTML(warnings.join(', '))}</span>` : ''}</small></span></label>`;
+    }).join('') : '<div class="form-hint">No Inline Legacy timelines are waiting for migration.</div>';
+    status.textContent = inline.length ? `${inline.length} timeline${inline.length === 1 ? '' : 's'} available. Select the timelines to migrate.` : 'The world is already fully migrated.';
+    overlay.classList.remove('hidden');
+    const close = () => overlay.classList.add('hidden');
+    document.getElementById('close-sidecar-migration-wizard-btn').onclick = close;
+    document.getElementById('cancel-sidecar-migration-btn').onclick = close;
+    document.getElementById('sidecar-migration-select-all-btn').onclick = () => {
+        const boxes = [...list.querySelectorAll('.sidecar-migration-session')];
+        const shouldSelect = boxes.some(box => !box.checked);
+        boxes.forEach(box => { box.checked = shouldSelect; });
+    };
+    document.getElementById('run-sidecar-migration-btn').onclick = async () => {
+        const selectedIds = [...list.querySelectorAll('.sidecar-migration-session:checked')].map(box => box.dataset.sessionId);
+        if (!selectedIds.length) return showToast('Select at least one Inline timeline to migrate.', 'info');
+        const selectedSessions = sessions.filter(sess => selectedIds.includes(String(sess.id)));
+        const backupList = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
+        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: safeJsonClone(world), runtime: safeJsonClone(state.worldInstances?.[world.id] || null), note: 'Selected-timeline migration backup.' });
+        world.sidecarMigrationBackups = backupList.slice(-5);
+        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } });
+        const reports = migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds });
+        const index = state.worlds.findIndex(item => item.id === world.id);
+        if (index >= 0) state.worlds[index] = safeJsonClone(world);
+        if (state.editingWorld?.id === world.id) state.editingWorld = safeJsonClone(world);
+        await saveState();
+        close();
+        renderWorlds();
+        if (state.editingWorld?.id === world.id) { renderWorldSidecarConfigEditor(state.editingWorld); }
+        showToast(`Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`, 'success');
+    };
 }
 
 async function saveWorld() {

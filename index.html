@@ -3491,6 +3491,19 @@
     </div>
 </div>
 
+<!-- Sidecar migration wizard -->
+<div id="sidecar-migration-wizard-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg">
+        <div class="modal-hd"><h2>⇄ Migrate timelines to Sidecar</h2><button id="close-sidecar-migration-wizard-btn" class="modal-close" type="button" aria-label="Close migration wizard">✕</button></div>
+        <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
+            <p class="form-hint">Choose which Inline Legacy timelines to migrate. Raw roleplay and canonical receipts are preserved; only derived vector/episodic caches are rebuilt. Each selected timeline receives a rollback backup.</p>
+            <div id="sidecar-migration-wizard-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+            <div id="sidecar-migration-wizard-status" class="form-hint" style="margin-top:12px;" aria-live="polite"></div>
+        </div>
+        <div class="modal-ft" style="display:flex; justify-content:space-between; gap:8px;"><button id="sidecar-migration-select-all-btn" class="btn btn-ghost" type="button">Select all</button><div style="display:flex; gap:8px;"><button id="cancel-sidecar-migration-btn" class="btn btn-ghost" type="button">Cancel</button><button id="run-sidecar-migration-btn" class="btn btn-primary" type="button">Back up &amp; migrate selected</button></div></div>
+    </div>
+</div>
+
 <!-- ═══════════════════════ MODALS ═══════════════════════ -->
 
 <!-- Settings Modal -->
