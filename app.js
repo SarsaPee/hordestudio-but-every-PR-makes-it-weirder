@@ -10662,7 +10662,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const configuredContext = Math.max(1024, Number(world.contextSize) || 8192);
     const contextRatio = Math.min(1, (historyChars + sceneChars) / (configuredContext * 3.5));
     const questions = (protocol?.questions || []).filter(question => question.status === 'open' && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)).slice(-8)
-        .map(question => ({ id: question.id, prompt: question.prompt, target: question.target }));
+        .map(question => ({ id: question.id, prompt: question.prompt, target: question.target, priority: question.priority || question.pressure || 'low', blocking: question.blocking === true, origin: question.origin, evidence: String(question.evidence || '').slice(0, 800) }));
     const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
     const memoryGraph = window.HordeSidecarMemoryGraph?.graph(protocol);
     const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
@@ -11208,12 +11208,8 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     result.resolutions.forEach(resolution => {
         const question = protocol.questions.find(item => item.id === String(resolution.question_id || ''));
         if (!question || !['resolved', 'deferred'].includes(resolution.status)) return;
-        question.status = resolution.status;
-        question.answer = String(resolution.answer || '').slice(0, 3000);
-        question.resolvedAt = new Date().toISOString();
-        question.attempts = (Number(question.attempts) || 0) + 1;
-        question.resolutionType = resolution.status === 'resolved' ? 'direct_user_answer' : 'direct_user_deferral';
-        question.provenance = { ...(isPlainObject(question.provenance) ? question.provenance : {}), resolution: 'direct_user_refinement' };
+        recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'sidecar_conversation', status: resolution.status, answer: resolution.answer || '' });
+        updateSidecarQuestion(world, sess, question.id, { status: resolution.status, answer: resolution.answer || '', resolutionType: resolution.status === 'resolved' ? 'direct_user_answer' : 'direct_user_deferral', provenance: { source: 'direct_user_refinement', conversationId: authorEntry.id } });
     });
     protocol.conversations.push(authorEntry, sidecarEntry);
     protocol.conversations = protocol.conversations.slice(-200);
