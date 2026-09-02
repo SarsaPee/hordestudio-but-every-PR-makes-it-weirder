@@ -10647,7 +10647,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
         coreReview: protocol?.coreAnswers || {},
         pendingQuestions: questions,
-        backgroundProposals: (protocol?.backgroundProposals || []).filter(proposal => proposal.status === 'pending_sidecar_review')
+        backgroundProposals: (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status))
             .slice(-6).map(proposal => ({ id: proposal.id, turn: proposal.turn, summary: proposal.summary, status: proposal.status })),
         recentAuthorialRefinements: (protocol?.refinements || []).slice(-6).map(refinement => ({
             text: String(refinement.userText || '').slice(0, 1200),
@@ -10806,6 +10806,45 @@ function parseSidecarCognitionOutput(content) {
     return { memories };
 }
 
+async function vectorizeSidecarMemoryRecords(records) {
+    const pending = records.filter(record => record && record.text && !Array.isArray(record.embedding));
+    let cursor = 0;
+    async function worker() {
+        while (cursor < pending.length) {
+            const record = pending[cursor++];
+            try {
+                record.embedding = await HordeVectorMemory.getCachedEmbedding(record.text);
+                record.embeddingNamespace = HordeVectorMemory.namespace();
+                record.vectorizedAt = new Date().toISOString();
+            } catch (error) { record.vectorError = String(error?.message || error).slice(0, 300); }
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, pending.length) }, worker));
+    return { attempted: pending.length, completed: pending.filter(record => Array.isArray(record.embedding)).length };
+}
+
+async function retrieveSidecarMemory(world, sess, query, limit = 8) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
+    const text = String(query || '').trim();
+    if (!graph || !text || !HordeVectorMemory) return [];
+    let queryEmbedding;
+    try { queryEmbedding = await HordeVectorMemory.getCachedEmbedding(text); } catch (_) { return []; }
+    if (!Array.isArray(queryEmbedding)) return [];
+    const candidates = [
+        ...(graph.episodes || []).filter(record => record.status === 'active').map(record => ({ kind: 'episode', text: `${record.summary}\n${record.objectiveHistory || ''}`, record })),
+        ...(graph.cognition || []).filter(record => record.status === 'active').map(record => ({ kind: 'cognition', text: record.text, record })),
+        ...(graph.locationReferences || []).filter(record => record.status !== 'resolved').map(record => ({ kind: 'unresolved_place', text: `${record.name || ''} ${record.evidence || ''}`, record }))
+    ].filter(candidate => candidate.text);
+    const missing = candidates.filter(candidate => !Array.isArray(candidate.record.embedding)).slice(0, 48);
+    missing.forEach(candidate => { candidate.record.text = String(candidate.record.text || candidate.text).slice(0, 8000); });
+    if (missing.length) await vectorizeSidecarMemoryRecords(missing.map(candidate => candidate.record));
+    return candidates.map(candidate => ({ ...candidate, score: cosineSimilarity(queryEmbedding, candidate.record.embedding || []) }))
+        .filter(candidate => Number.isFinite(candidate.score) && candidate.score > 0)
+        .sort((a, b) => b.score - a.score).slice(0, limit)
+        .map(candidate => ({ kind: candidate.kind, score: Math.round(candidate.score * 1000) / 1000, text: candidate.text.slice(0, 1600), id: candidate.record.id, characterId: candidate.record.characterId || '' }));
+}
+
 async function runSidecarBackgroundMemoryJobs(world, sess) {
     if (!hasApiCredentials() || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return;
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
@@ -10956,13 +10995,31 @@ function renderSidecarConversation(world, sess) {
     panel.classList.toggle('hidden', !enabled);
     if (!enabled) return;
     const entries = (protocol?.conversations || []).slice(-80);
-    log.innerHTML = entries.map(entry => {
+    const proposalCards = (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status)).slice(-12).map(proposal => `
+        <div style="margin:0 0 9px; padding:9px; border-radius:7px; background:rgba(255,180,70,.08); border:1px solid var(--border);">
+            <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${escapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : 'awaiting review')}</div>
+            <div style="font-size:.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML((proposal.summary || []).join('\n') || 'No readable proposal summary.')}</div>
+            <div style="display:flex; gap:6px; margin-top:7px;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}<button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button></div>
+        </div>`).join('');
+    log.innerHTML = proposalCards + entries.map(entry => {
         const author = entry.role === 'user';
         return `<div style="margin:0 0 9px; padding:8px 9px; border-radius:7px; background:${author ? 'var(--surface)' : 'rgba(108, 92, 231, 0.12)'}; border-left:3px solid ${author ? 'var(--accent)' : '#6c5ce7'};">
             <div style="font-size:0.66rem; color:var(--text-3); font-weight:800; text-transform:uppercase; margin-bottom:3px;">${author ? 'Author → Sidecar' : 'Sidecar'}</div>
             <div style="font-size:0.82rem; color:var(--text-2);">${parseHordeMarkdown(String(entry.text || ''))}</div>
         </div>`;
     }).join('') || '<div style="color:var(--text-3); font-size:0.8rem;">Ask Sidecar about the current world, open continuity questions, or an explicit authorial refinement.</div>';
+    log.querySelectorAll('.sidecar-proposal-approve').forEach(button => button.onclick = async () => {
+        const proposal = protocol.backgroundProposals.find(item => item.id === button.dataset.proposalId);
+        if (!proposal) return;
+        proposal.status = 'author_approved'; proposal.reviewedAt = new Date().toISOString(); proposal.reviewProvenance = 'direct_user_refinement';
+        protocol.packet = buildSidecarScenePacket(world, sess); await saveState(); renderSidecarConversation(world, sess);
+    });
+    log.querySelectorAll('.sidecar-proposal-dismiss').forEach(button => button.onclick = async () => {
+        const proposal = protocol.backgroundProposals.find(item => item.id === button.dataset.proposalId);
+        if (!proposal) return;
+        proposal.status = 'dismissed'; proposal.reviewedAt = new Date().toISOString(); proposal.reviewProvenance = 'direct_user_refinement';
+        protocol.packet = buildSidecarScenePacket(world, sess); await saveState(); renderSidecarConversation(world, sess);
+    });
     log.scrollTop = log.scrollHeight;
 }
 
@@ -13859,6 +13916,8 @@ function setupWorldStudioLogic() {
     document.getElementById('add-entity-btn-bottom').onclick = () => addWorldEntity('npc');
     document.getElementById('add-item-btn').onclick = addWorldItem;
     document.getElementById('add-item-btn-bottom').onclick = addWorldItem;
+    document.getElementById('add-vehicle-btn').onclick = () => addWorldEntity('vehicle');
+    document.getElementById('add-vehicle-btn-bottom').onclick = () => addWorldEntity('vehicle');
     document.getElementById('add-faction-btn').onclick = () => addWorldFaction('top');
     document.getElementById('add-faction-btn-bottom').onclick = () => addWorldFaction('bottom');
     document.getElementById('add-world-origin-btn').onclick = addWorldStartingLife;
@@ -14180,6 +14239,24 @@ function renderWorldSidecarConfigEditor(world) {
     hint.textContent = config.mode === 'sidecar'
         ? 'Active: Narrator writes visible prose and hidden handoff notes; Sidecar performs one native canonical commit. Legacy repair and Chronicle classifier paths are bypassed.'
         : 'Inline Legacy is retained for compatibility. It uses the existing receipt/classifier adapters; migrate a selected world deliberately before switching a live timeline to Sidecar.';
+    const restore = document.getElementById('w-sidecar-restore-backup');
+    const backups = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
+    if (restore) {
+        restore.classList.toggle('hidden', !backups.length);
+        restore.textContent = backups.length ? `Restore latest Inline backup · ${new Date(backups.at(-1).createdAt).toLocaleString()}` : 'Restore latest Inline backup';
+        restore.onclick = async () => {
+            const backup = backups.at(-1);
+            if (!backup?.world || !confirm('Restore this selected world and its saved runtime to the pre-Sidecar Inline backup? Current Sidecar-only derived data will be replaced.')) return;
+            const restored = safeJsonClone(backup.world);
+            const index = state.worlds.findIndex(item => item.id === world.id);
+            if (index >= 0) state.worlds[index] = restored;
+            state.editingWorld = safeJsonClone(restored);
+            if (backup.runtime) state.worldInstances[restored.id] = safeJsonClone(backup.runtime);
+            await saveState();
+            openWorldStudio(restored.id);
+            showToast('Restored the selected pre-Sidecar migration backup.', 'success');
+        };
+    }
     initializeOpenRouterRoutingPanel('sidecar');
 }
 
@@ -16899,9 +16976,9 @@ function renderWorldLocations() {
 }
 
 function addWorldEntity(type = 'npc') {
-    // Only the two canonical authored entity types are valid. This also makes
+    // Only canonical authored entity types are valid. This also makes
     // the function safe if it is ever called by an event listener directly.
-    const entityType = type === 'item' ? 'item' : 'npc';
+    const entityType = ['item', 'vehicle'].includes(type) ? type : 'npc';
     const ent = {
         id: 'ent_' + Date.now(),
         name: '',
@@ -16917,8 +16994,12 @@ function addWorldEntity(type = 'npc') {
         secrets: [],
         schedule: []
     };
+    if (entityType === 'vehicle') {
+        ent.vehicle = { persistent: true, parkedAnchorId: '', owners: [], access: [], runtimeContainer: false };
+        window.HordeSidecarTraversal?.normalizeVehicle(ent);
+    }
     state.editingWorld.entities.push(ent);
-    const directory = entityType === 'item' ? 'items' : 'people';
+    const directory = entityType === 'npc' ? 'people' : 'items';
     worldStudioListState[directory].query = '';
     worldStudioListState[directory].page = 0;
     openWorldRecordInspector('entity', ent.id, 'overview', directory);
@@ -18033,7 +18114,7 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
     const query = view.query.trim().toLowerCase();
     const filter = view.filter || 'all';
     const groupBy = view.groupBy || (isItems ? 'location' : 'household');
-    const source = world.entities.filter(entity => isItems ? entity.type === 'item' : entity.type === 'npc');
+    const source = world.entities.filter(entity => isItems ? ['item', 'vehicle'].includes(entity.type) : entity.type === 'npc');
     const matches = source.filter(entity => {
         const linkedGroups = (entity.groupIds || []).map(id => world.groups.find(group => group.id === id)?.name || '').join(' ');
         const search = [entity.name, entity.id, entity.type, entity.description, entity.persona, entity.goal, linkedGroups, ...(entity.tags || [])].join(' ').toLowerCase();
@@ -18121,8 +18202,8 @@ function renderWorldEntities(mode = 'people') {
 
         div.innerHTML = `
             <div class="world-inspector-section" data-inspector-section="overview" style="display:flex; gap:12px; margin-bottom:12px; align-items:center;">
-                <input type="text" class="form-input ent-name" style="flex:1" value="${escapeHTML(ent.name)}" placeholder="${ent.type === 'item' ? 'Item name' : 'Person name'}">
-                <span class="mini-tag" style="padding:8px 12px;">${ent.type === 'item' ? 'Object' : 'Person'}</span>
+                <input type="text" class="form-input ent-name" style="flex:1" value="${escapeHTML(ent.name)}" placeholder="${ent.type === 'vehicle' ? 'Vehicle name' : ent.type === 'item' ? 'Item name' : 'Person name'}">
+                <span class="mini-tag" style="padding:8px 12px;">${ent.type === 'vehicle' ? 'Vehicle' : ent.type === 'item' ? 'Object' : 'Person'}</span>
                 ${ent.type === 'npc' ? `
                     <select class="form-select ent-simulation-depth" style="width:170px;" title="Controls simulation and context priority; every person keeps a persona.">
                         <option value="background" ${ent.simulationDepth === 'background' ? 'selected' : ''}>Background</option>
@@ -18252,6 +18333,12 @@ function renderWorldEntities(mode = 'people') {
                 <select class="form-select ent-loc"><option value="">Unplaced item</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
                 <p class="form-hint">This is where the object exists at the start of a new session. It is not a person, household member or autonomous actor.</p>
             </div>`}
+            ${ent.type === 'vehicle' ? `<div class="world-inspector-section" data-inspector-section="placement" style="margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;">
+                <div><label class="form-label">Parked anchor · Canon Link</label><select class="form-select ent-vehicle-anchor"><option value="">No parked anchor</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${ent.vehicle?.parkedAnchorId === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select></div>
+                <div><label class="form-label">Owners & access</label><input class="form-input ent-vehicle-access" value="${escapeHTML((ent.vehicle?.access || []).map(entry => entry.entityId || entry).join(', '))}" placeholder="entity IDs with access"></div>
+                <label class="vh-test-check"><input class="ent-vehicle-persistent" type="checkbox" ${ent.vehicle?.persistent !== false ? 'checked' : ''}> Persistent personal vehicle</label>
+                <p class="form-hint" style="margin:0;">Moving vehicles become runtime journey containers. They are not authored map locations.</p>
+            </div>` : ''}
             ${ent.type === 'npc' ? `<div class="world-inspector-section" data-inspector-section="relationships" style="margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:12px;">
                 <label class="form-label">Households, families &amp; organizations</label>
                 <div class="canon-link-row ent-group-links">${world.groups.length ? world.groups.map(group => `<label class="canon-link"><input type="checkbox" class="ent-group" value="${escapeHTML(group.id)}" ${(ent.groupIds || []).includes(group.id) ? 'checked' : ''}> ${escapeHTML(group.name)} · ${escapeHTML(group.type)}</label>`).join('') : '<span class="form-hint">No groups yet. Create one below, then reuse it across the cast.</span>'}</div>
@@ -18464,6 +18551,15 @@ function renderWorldEntities(mode = 'people') {
         div.querySelector('.ent-loc').onchange = (e) => { ent.startLocation = e.target.value; updateWorldTokenCount(); };
         const homeControl = div.querySelector('.ent-home');
         if (homeControl) homeControl.onchange = (e) => { ent.homeLocation = e.target.value; updateWorldTokenCount(); };
+        if (ent.type === 'vehicle') {
+            const normalizeVehicle = () => window.HordeSidecarTraversal?.normalizeVehicle(ent);
+            div.querySelector('.ent-vehicle-anchor').onchange = event => { ent.vehicle.parkedAnchorId = event.target.value; ent.startLocation = event.target.value; normalizeVehicle(); };
+            div.querySelector('.ent-vehicle-access').onchange = event => {
+                ent.vehicle.access = [...new Set(event.target.value.split(',').map(value => value.trim()).filter(Boolean))].slice(0, 30).map(entityId => ({ entityId, role: 'owner_or_granted' }));
+                normalizeVehicle();
+            };
+            div.querySelector('.ent-vehicle-persistent').onchange = event => { ent.vehicle.persistent = event.target.checked; normalizeVehicle(); };
+        }
         div.querySelector('.del-ent').onclick = () => {
             const usedBy = worldDirectoryUsedBy('entity', ent.id);
             if (usedBy.length && !confirm(`“${ent.name || ent.id}” has ${usedBy.length} authored connection${usedBy.length === 1 ? '' : 's'}:\n\n${usedBy.slice(0, 8).join('\n')}\n\nDelete this record and clear those connections?`)) return;
@@ -20446,6 +20542,7 @@ function setupWorldPlayLogic() {
 
     // Parity Features
     document.getElementById('world-new-session-btn').onclick = createNewWorldSession;
+    document.getElementById('world-fork-session-btn').onclick = forkCurrentWorldTimeline;
 
     document.getElementById('world-rename-session-btn').onclick = async () => {
         const sess = getCurrentWorldSession();
@@ -22215,6 +22312,30 @@ async function createNewWorldSession() {
     renderWorldPlayState();
     openSessionZero(() => executeWorldTurn("init"));
     showToast('New Timeline Created');
+}
+
+async function forkCurrentWorldTimeline() {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const inst = state.worldInstances?.[state.activeWorldId];
+    const source = getCurrentWorldSession();
+    if (!world || !inst || !source) return;
+    const name = prompt('Name this timeline fork:', `Fork of ${source.name || 'current timeline'}`);
+    if (name === null) return;
+    const fork = safeJsonClone(source);
+    fork.id = `wsess_${Date.now()}`;
+    fork.name = String(name || '').trim() || `Fork of ${source.name || 'timeline'}`;
+    fork.createdAt = new Date().toISOString();
+    fork.forkedFrom = { sessionId: source.id, turnCount: source.turnCount || 0, createdAt: fork.createdAt };
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, fork);
+    if (protocol) {
+        protocol.migration = { ...(protocol.migration || {}), forkedFrom: safeJsonClone(fork.forkedFrom) };
+        protocol.packet = buildSidecarScenePacket(world, fork);
+    }
+    inst.sessions.push(fork);
+    inst.activeSessionId = fork.id;
+    await saveState();
+    renderWorldPlayState();
+    showToast('Timeline forked from committed continuity.', 'success');
 }
 
 /**
@@ -24985,7 +25106,8 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
 
     if (sidecarMode) {
         const priorPacket = sess.sidecar?.packet || buildSidecarScenePacket(world, sess);
-        systemPrompt += `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.\n\n[CURRENT SIDECAR SCENE PACKET]\n${JSON.stringify(priorPacket)}`;
+        const sidecarRecall = await retrieveSidecarMemory(world, sess, submittedInput || userInput, 8).catch(() => []);
+        systemPrompt += `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.\n\n[CURRENT SIDECAR SCENE PACKET]\n${JSON.stringify(priorPacket)}\n\n[SIDECAR SEMANTIC RECALL — derived memory, never objective canon]\n${JSON.stringify(sidecarRecall)}`;
     }
 
     // Show persistent typing indicator
@@ -34599,6 +34721,7 @@ function setupVectorMemoryViewerEvents() {
     const tabUnresolved = document.getElementById('vector-tab-unresolved');
     const characterFilter = document.getElementById('vector-character-filter');
     const deleteAllBtn = document.getElementById('vector-delete-all-btn');
+    const vectorizeListedBtn = document.getElementById('vectorize-listed-btn');
     
     const searchBtn = document.getElementById('vector-test-search-btn');
     const queryInput = document.getElementById('vector-test-query');
@@ -34688,6 +34811,31 @@ function setupVectorMemoryViewerEvents() {
             await saveState();
             renderVectorMemoryList(queryInput?.value.trim() || '');
             showToast('Only records in this inspector view were deleted.', 'success');
+        };
+    }
+
+    if (vectorizeListedBtn) {
+        vectorizeListedBtn.onclick = async () => {
+            const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+            const sess = getCurrentWorldSession();
+            const graph = isWorld && window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+            if (!graph || !['cognition', 'unresolved'].includes(currentVectorTab)) {
+                return showToast('Choose NPC Cognition or Unresolved Places in a Sidecar world.', 'info');
+            }
+            const characterId = characterFilter?.value || '';
+            const records = currentVectorTab === 'cognition'
+                ? graph.cognition.filter(record => !characterId || record.characterId === characterId)
+                : graph.locationReferences.filter(record => !record.locationId && record.status !== 'resolved');
+            records.forEach(record => { if (!record.text) record.text = `${record.name || ''} ${record.evidence || ''}`.trim(); });
+            vectorizeListedBtn.disabled = true;
+            vectorizeListedBtn.textContent = 'Vectorizing…';
+            try {
+                const result = await vectorizeSidecarMemoryRecords(records);
+                await saveState();
+                renderVectorMemoryList(queryInput?.value.trim() || '');
+                showToast(`Vectorized ${result.completed}/${result.attempted} derived records.`, 'success');
+            } catch (error) { showToast(`Vectorization failed: ${error.message}`, 'error'); }
+            finally { vectorizeListedBtn.disabled = false; vectorizeListedBtn.textContent = 'Vectorize listed'; }
         };
     }
     

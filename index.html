@@ -383,6 +383,7 @@
                                 <div class="session-selector-wrap">
                                     <select id="world-session-select" class="tool-select"></select>
                                     <button class="tool-btn" id="world-new-session-btn" title="New World Session">➕ New</button>
+                                    <button class="tool-btn" id="world-fork-session-btn" title="Fork the selected committed timeline">⑂ Fork</button>
                                     <button class="tool-btn" id="world-rename-session-btn" title="Rename Current Session">✏️ Rename</button>
                                     <button class="tool-btn tool-btn-danger" id="world-del-session-btn" type="button" title="Delete Current Session" aria-label="Delete current session">🗑️</button>
                                 </div>
@@ -834,13 +835,13 @@
                         <div class="panel-header">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <h2>Items &amp; Objects</h2>
-                                <button id="add-item-btn" class="btn btn-primary">+ New Item</button>
+                                <div style="display:flex; gap:8px;"><button id="add-vehicle-btn" class="btn btn-ghost">+ Vehicle</button><button id="add-item-btn" class="btn btn-primary">+ New Item</button></div>
                             </div>
                             <p>Keep possessions, evidence, equipment and notable objects separate from the cast. Items still use stable canon links.</p>
                         </div>
                         <div class="form-body" id="w-items-list" style="display:flex; flex-direction:column; gap:16px;"></div>
                         <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
-                            <button id="add-item-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Item</button>
+                            <div style="display:flex; width:100%; gap:8px;"><button id="add-vehicle-btn-bottom" class="btn btn-ghost" style="flex:1; border:1px dashed var(--border);">+ Vehicle</button><button id="add-item-btn-bottom" class="btn btn-ghost" style="flex:1; border: 1px dashed var(--border);">+ New Item</button></div>
                         </div>
                     </div>
 
@@ -1024,6 +1025,7 @@
                                 </div>
                                 <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden"></div>
                                 <p id="w-sidecar-mode-hint" class="form-hint" style="margin:12px 0 0;"></p>
+                                <div id="w-sidecar-migration-controls" style="display:flex; gap:8px; margin-top:10px;"><button id="w-sidecar-restore-backup" type="button" class="btn btn-ghost hidden">Restore latest Inline backup</button></div>
                             </div>
 
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
@@ -4510,6 +4512,7 @@
         <div class="modal-ft" style="display:flex; justify-content:space-between; align-items:center;">
             <div style="display:flex; gap:8px;">
                 <button id="force-archive-now-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">⚡ Force Archive Now</button>
+                <button id="vectorize-listed-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">Vectorize listed</button>
                 <button id="vector-delete-all-btn" class="btn btn-ghost" style="color:var(--red); border-color:var(--red);">Delete listed</button>
             </div>
             <button id="close-vector-memory-ft-btn" class="btn btn-ghost">Close</button>
