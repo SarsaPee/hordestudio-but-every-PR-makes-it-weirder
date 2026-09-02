@@ -10823,7 +10823,10 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         protocol.turns.push(turnRecord);
         protocol.turns = protocol.turns.slice(-500);
         window.HordeSidecarMemoryGraph?.recordTurn(protocol, turnRecord);
-        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: 5 });
+        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, {
+            batchSize: Number(state.globalSettings?.episodeChunkTurns) || 5,
+            cadenceTurns: Number(state.globalSettings?.episodeCadenceTurns) || 5
+        });
         return { committed, receipt, packet: protocol.packet || null, turnId };
     }
     return { committed, receipt, packet: protocol?.packet || null, turnId: null };
@@ -26579,7 +26582,16 @@ ${modularMandate}
                 console.warn('Horde Sidecar: reconciliation failed; no disputed state was committed.', sidecarError);
             }
         }
-        for (const call of toolCalls) {
+        // Sidecar narrator turns are deliberately tool-free. If a provider
+        // ignores that instruction and emits a canonical commit anyway, do not
+        // let it create a hidden third foreground commit; Sidecar's single
+        // reconciliation receipt is the only state-authority call. Secret
+        // investigation remains a read/authorise action and may still be
+        // handled after the visible turn.
+        const foregroundToolCalls = sidecarMode
+            ? toolCalls.filter(call => call.function?.name === 'investigate_secret')
+            : toolCalls;
+        for (const call of foregroundToolCalls) {
             let responsePayload = { success: true, status: 'Action processed.' };
             try {
                 const args = parseWorldToolArguments(call.function.arguments || '{}');
