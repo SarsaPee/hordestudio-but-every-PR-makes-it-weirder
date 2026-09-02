@@ -13,8 +13,15 @@
         return !!api?.isSidecarTimeline(world, timeline);
     }
 
+    function ensureNarrativeHierarchy(world, timeline) {
+        const protocol = normalizeWorldTimeline(world, timeline);
+        if (!protocol || !isSidecarWorld(world, timeline)) return null;
+        return global.HordeSidecarTimeline?.ensureHierarchy(protocol, timeline) || null;
+    }
+
     global.HordeSidecarHooks = Object.freeze({
         normalizeWorldTimeline,
-        isSidecarWorld
+        isSidecarWorld,
+        ensureNarrativeHierarchy
     });
 })(window);

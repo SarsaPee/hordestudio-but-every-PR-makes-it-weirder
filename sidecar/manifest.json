@@ -15,9 +15,10 @@
   },
   "loadOrder": [
     "runtime/mode-config.js",
+    "runtime/timeline-model.js",
     "integrations/horde-16.7-hooks.js"
   ],
-  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage"],
+  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn"],
   "hooks": [
     "world configuration normalization",
     "timeline protocol normalization",
@@ -29,7 +30,8 @@
     "direct Sidecar conversation",
     "Backstage and debug UI",
     "World Studio tracker/provider/routing configuration",
-    "semantic temporal evidence"
+    "semantic temporal evidence",
+    "sequence/scene/turn hierarchy and author-approved transition planning"
   ],
   "integrationManifest": "patches/16.7-integration-manifest.md"
 }

@@ -10587,6 +10587,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const hour12 = clock.hours24 % 12 || 12;
     const location = getLocationRef(world, frame.player_location_id);
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
     const questions = (protocol?.questions || []).filter(question => question.status === 'open' && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)).slice(-8)
         .map(question => ({ id: question.id, prompt: question.prompt, target: question.target }));
     return {
@@ -10595,6 +10596,17 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         worldTime: `${hour12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`,
         activeLocation: { id: frame.player_location_id, name: location?.name || frame.player_location_id },
         activeCast: frame.present_character_ids,
+        activeSequence: hierarchy?.sequence ? {
+            id: hierarchy.sequence.id,
+            title: hierarchy.sequence.title,
+            controlledEntityId: hierarchy.sequence.controlledEntityId,
+            transitionMode: hierarchy.sequence.transitionMode
+        } : null,
+        activeScene: hierarchy?.scene ? {
+            id: hierarchy.scene.id,
+            title: hierarchy.scene.title,
+            mode: hierarchy.scene.mode
+        } : null,
         activities: frame.activities,
         temporalContinuity: handoff ? sidecarTemporalStatement(handoff).slice(0, 600) : String(protocol?.temporalState?.authoredMeaning || '').slice(0, 600),
         temporalEvidence: protocol?.temporalState || null,
@@ -10605,7 +10617,11 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             text: String(refinement.userText || '').slice(0, 1200),
             committed: refinement.committed === true,
             createdAt: refinement.createdAt || ''
-        }))
+        })),
+        contextPressure: window.HordeSidecarTimeline?.contextPressure(protocol, sess, {
+            historyCount: sess.history?.length || 0,
+            contextRatio: 0
+        }) || null
     };
 }
 
@@ -10695,9 +10711,11 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const packet = buildSidecarScenePacket(world, sess, handoff);
         protocol.packet = packet;
         const turnId = receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`;
-        protocol.turns.push({ id: turnId, status: 'active',
+        const turnRecord = { id: turnId, status: 'active',
             createdAt: new Date().toISOString(), narration: narration.slice(0, 24000), handoff,
-            preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit) });
+            preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit) };
+        window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
+        protocol.turns.push(turnRecord);
         protocol.turns = protocol.turns.slice(-500);
         return { committed, receipt, packet: protocol.packet || null, turnId };
     }
@@ -18788,6 +18806,91 @@ function parseWorldItemModifiers(value) {
     return result;
 }
 
+function parseSequencePlanningPacket(content, fallback = {}) {
+    const raw = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const parsed = safeParseJSONRepair(raw);
+    const packet = isPlainObject(parsed) ? parsed : {};
+    return {
+        title: String(packet.title || fallback.title || 'New sequence').trim().slice(0, 180),
+        sceneTitle: String(packet.sceneTitle || packet.scene_title || fallback.sceneTitle || 'New scene').trim().slice(0, 180),
+        transitionMode: packet.transitionMode === 'discontinuous' || packet.transition_mode === 'discontinuous' ? 'discontinuous' : 'continuous',
+        continuity: String(packet.continuity || '').trim().slice(0, 2400),
+        constraints: Array.isArray(packet.constraints) ? packet.constraints.map(item => String(item || '').trim().slice(0, 360)).filter(Boolean).slice(0, 16) : [],
+        openQuestions: Array.isArray(packet.openQuestions || packet.open_questions) ? (packet.openQuestions || packet.open_questions)
+            .map(item => String(item || '').trim().slice(0, 360)).filter(Boolean).slice(0, 16) : []
+    };
+}
+
+async function requestSequencePlanningPacket(world, sess, authorIntent, options = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) throw new Error('Sidecar protocol is unavailable for this timeline.');
+    const planning = window.HordeSidecarTimeline?.beginPlanning(protocol, sess, authorIntent);
+    if (!planning) throw new Error('Sequence planning is unavailable.');
+    const currentPacket = buildSidecarScenePacket(world, sess);
+    const model = world.model || state.globalSettings.defaultModel;
+    const prompt = `[SEQUENCE PLANNING — OUT OF WORLD]\nYou are helping the author plan the next sequence in an ongoing roleplay world. This is not narration and must not advance time, move actors, create state, or resolve open questions. Reconstruct only the constraints that matter for the requested cut. A continuous transition keeps the current dramatic beat; a discontinuous transition requires an establishing beat. Return one JSON object only:\n{\n  "title":"short sequence title",\n  "sceneTitle":"short immediate scene title",\n  "transitionMode":"continuous|discontinuous",\n  "continuity":"compact narrator-facing continuity direction",\n  "constraints":["established facts to preserve"],\n  "openQuestions":["relevant unresolved questions"]\n}\n\nCURRENT CANONICAL SCENE PACKET:\n${JSON.stringify(currentPacket)}\n\nOPEN QUESTIONS:\n${JSON.stringify((protocol.questions || []).filter(question => question.status === 'open').slice(-20))}\n\nAUTHOR'S DESIRED CUT:\n${JSON.stringify(String(authorIntent || '').slice(0, 4000))}`;
+    const body = {
+        model, stream: false, max_tokens: Math.max(500, Number(world.maxTokens) || 1200), temperature: 0.2,
+        messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Prepare the sequence planning packet.' }]
+    };
+    const response = await fetch(apiBase() + '/chat/completions', {
+        method: 'POST', signal: options.signal,
+        headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+        body: JSON.stringify(applyOpenRouterRouting(body, world, { scope: 'world' }))
+    });
+    if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sequence planning failed (${response.status})`);
+    const reply = (await response.json())?.choices?.[0]?.message?.content || '';
+    const packet = parseSequencePlanningPacket(reply, { title: 'New sequence', sceneTitle: 'New scene' });
+    planning.proposedStartPacket = packet;
+    planning.constraints = packet.constraints;
+    planning.status = 'ready_for_author';
+    planning.narratorModel = model;
+    planning.generatedAt = new Date().toISOString();
+    recordSidecarTrace(world, sess, { kind: 'sequence_planning', prompt, reply, model });
+    return { planning, packet };
+}
+
+async function planAndApproveWorldSequence() {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        showToast('Sequence planning is available in Sidecar worlds.', 'info');
+        return;
+    }
+    const authorIntent = prompt('What cut or continuation do you want for the next sequence?\n\nThis is an authorial planning request, not in-character dialogue.', '');
+    if (!authorIntent?.trim()) return;
+    const typing = document.getElementById('world-dm-typing');
+    const label = document.getElementById('world-dm-typing-label');
+    if (typing) typing.style.display = 'flex';
+    if (label) label.textContent = 'The Narrator is preparing the next scene…';
+    try {
+        const { packet } = await requestSequencePlanningPacket(world, sess, authorIntent.trim());
+        const detail = [
+            `Transition: ${packet.transitionMode === 'continuous' ? 'continuous — preserve the current beat' : 'discontinuous — allow an establishing beat'}`,
+            packet.continuity || 'No additional continuity direction was required.',
+            packet.constraints.length ? `\nPreserve:\n• ${packet.constraints.join('\n• ')}` : '',
+            packet.openQuestions.length ? `\nStill open:\n• ${packet.openQuestions.join('\n• ')}` : ''
+        ].filter(Boolean).join('\n');
+        showConfirmModal('Approve new sequence', detail, async () => {
+            const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+            const result = window.HordeSidecarTimeline?.approvePlanning(protocol, sess, packet, {
+                transitionMode: packet.transitionMode,
+                title: packet.title,
+                closePriorScene: packet.transitionMode === 'discontinuous'
+            });
+            if (!result) throw new Error('Sequence plan could not be approved.');
+            protocol.packet = buildSidecarScenePacket(world, sess);
+            await saveState();
+            renderWorldPlayState();
+            showToast('New sequence approved. The next narrator turn receives its planned starting packet.', 'success');
+        });
+    } catch (error) {
+        showToast(`Sequence planning failed: ${humanizeApiError(error) || error.message || error}`, 'error');
+    } finally {
+        if (typing) typing.style.display = 'none';
+    }
+}
+
 function renderWorldItemCatalogControls(world = state.editingWorld) {
     const container = document.getElementById('w-rules-item-catalog');
     if (!container || !world || !globalThis.HordeRpgMechanics) return;
@@ -20130,6 +20233,25 @@ function setupWorldPlayLogic() {
     };
 
     document.getElementById('world-session-zero-btn').onclick = () => openSessionZero(null);
+
+    document.getElementById('world-plan-sequence-btn').onclick = () => {
+        void planAndApproveWorldSequence();
+    };
+    document.getElementById('world-close-sequence-btn').onclick = async () => {
+        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        const sess = getCurrentWorldSession();
+        if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+            showToast('Sequence controls are available in Sidecar worlds.', 'info');
+            return;
+        }
+        const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+        const closed = window.HordeSidecarTimeline?.closeActiveSequence(protocol, sess, 'author_closed');
+        if (!closed) return showToast('There is no active sequence to close.', 'info');
+        protocol.packet = buildSidecarScenePacket(world, sess);
+        await saveState();
+        renderWorldPlayState();
+        showToast('Sequence closed. Plan and approve the next sequence before resuming narration.', 'success');
+    };
 
     document.getElementById('world-continue-btn').onclick = () => {
         if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
@@ -22977,6 +23099,20 @@ function renderWorldPlayState() {
         if (worldInput) worldInput.placeholder = conversationMode.value === 'sidecar'
             ? 'Ask Sidecar about continuity, questions, or a refinement…'
             : 'What do you do?...';
+        ['world-plan-sequence-btn', 'world-close-sequence-btn'].forEach(id => {
+            const button = document.getElementById(id);
+            if (!button) return;
+            button.disabled = !sidecarAvailable;
+            button.style.display = sidecarAvailable ? '' : 'none';
+        });
+        const hierarchy = sidecarAvailable
+            ? window.HordeSidecarTimeline?.ensureHierarchy(sidecarProtocol, sess)
+            : null;
+        const closeButton = document.getElementById('world-close-sequence-btn');
+        if (closeButton && sidecarAvailable) {
+            closeButton.disabled = !hierarchy;
+            closeButton.title = hierarchy ? `Close ${hierarchy.sequence.title}` : 'No active sequence — plan the next sequence';
+        }
     }
     renderSidecarConversation(world, sess);
 
@@ -24020,6 +24156,14 @@ async function executeWorldTurn(commandOrReroll = null) {
         }
         normalizeLivingWorldState(world, sess);
         sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        if (sidecarMode && command !== 'init') {
+            const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess);
+            const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+            if (!hierarchy) {
+                showToast('This sequence is closed. Plan and approve the next sequence before continuing narration.', 'info');
+                return;
+            }
+        }
         if (sess.pendingChecks?.length && !isReroll && command !== 'init') {
             showToast('Resolve the pending check before taking another action.', 'info');
             return;

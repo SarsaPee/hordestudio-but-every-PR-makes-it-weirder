@@ -24,8 +24,13 @@ it never contains copied Horde Studio application files.
   no phrase-to-duration lookup is part of this bundle.
 - Timeline protocol state coordinates provenance, questions, takes and packets;
   canonical game state remains owned by Horde's validator/reducer pipeline.
+- `runtime/timeline-model.js` provides the portable `Timeline → Sequence →
+  Scene → Turn` lifecycle. Each committed Sidecar turn is attached to the
+  active sequence and scene. Closing a sequence is explicit; the next one is
+  created only after the author asks for and approves an out-of-world planning
+  packet generated with the Narrator configuration.
 
-Not yet bundled as reusable modules: Sequence/Scene planning, full migration
-wizard rollback UI, progressive entity promotion, traversal/vehicle adapters,
-hierarchical memory workers, and proposal-only World Agent revisions. Those
-remain deliberately separate increments rather than undocumented app edits.
+Not yet bundled as reusable modules: full migration wizard rollback UI,
+progressive entity promotion, traversal/vehicle adapters, hierarchical memory
+workers, and proposal-only World Agent revisions. Those remain deliberately
+separate increments rather than undocumented app edits.
