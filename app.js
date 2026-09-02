@@ -10431,7 +10431,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     const preparedDossierClaims = window.HordeDossierClaims?.prepareCommit?.(world, sess, validation, {
         origin: source === 'sidecar' ? 'sidecar' : 'narrator'
     }) || { enabled: false, claims: [], rejected: [] };
-    const actionResult = processStructuredActions(validation.legacyArgs);
+    const actionResult = processStructuredActions(validation.legacyArgs, world, sess, { sidecar: source === 'sidecar' });
     applyWorldEntityPatches(world, sess, validation.entityPatches);
     // Recover an omitted NPC movement only when two independent channels
     // agree: the structured ending checksum names the NPC and the visible
@@ -10443,7 +10443,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         ? detectNarratedPresence(world, sess, context.narrativeText)
         : [];
     const recoveredPresence = [];
-    recoverablePresence.forEach(hit => {
+    if (source !== 'sidecar') recoverablePresence.forEach(hit => {
         if (!assertedCast.has(hit.id)) return;
         const entState = sess.entityStates?.[hit.id];
         if (!entState || isNpcPinned(sess, entState)) return;
@@ -10456,7 +10456,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         recoveredPresence.push(hit.id);
     });
     validation.recoveredPresence = recoveredPresence;
-    if (sess.playerLocation !== previousLocation) rollForScenePopulation(sess.playerLocation, false);
+    if (source !== 'sidecar' && sess.playerLocation !== previousLocation) rollForScenePopulation(sess.playerLocation, false);
     if (hasConditionalCheck && actionResult.checkResults.some(result => !result.pending && !result.reason)) {
         const resolvedFrame = buildWorldSceneFrame(world, sess);
         validation.sceneAssertion = {
@@ -10495,6 +10495,109 @@ function commitEngineWorldNoOp(world, sess, source = 'engine', summary = 'Engine
         })),
         state_updates: {}
     }, { playerStartLocationId: sess.playerLocation }, source);
+}
+
+function extractSidecarNarratorHandoff(value) {
+    const raw = String(value || '');
+    const match = raw.match(/<scene_handoff>\s*([\s\S]*?)\s*<\/scene_handoff>/i);
+    if (!match) return { narration: raw.trim(), handoff: '', complete: false };
+    return {
+        narration: `${raw.slice(0, match.index)}${raw.slice((match.index || 0) + match[0].length)}`.trim(),
+        handoff: String(match[1] || '').trim(),
+        complete: true
+    };
+}
+
+function buildSidecarScenePacket(world, sess, handoff = '') {
+    const frame = buildWorldSceneFrame(world, sess);
+    const clock = getWorldTimeData(world, sess);
+    const hour12 = clock.hours24 % 12 || 12;
+    const location = getLocationRef(world, frame.player_location_id);
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const questions = (protocol?.questions || []).filter(question => question.status === 'open').slice(-8)
+        .map(question => ({ id: question.id, prompt: question.prompt, target: question.target }));
+    return {
+        version: 1,
+        generatedAt: new Date().toISOString(),
+        worldTime: `${hour12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`,
+        activeLocation: { id: frame.player_location_id, name: location?.name || frame.player_location_id },
+        activeCast: frame.present_character_ids,
+        activities: frame.activities,
+        temporalContinuity: handoff ? String(handoff.match(/ANSWER\s+core\.time\s*(?::|\n)\s*-?\s*([^\n]+)/i)?.[1] || '').slice(0, 600) : '',
+        sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
+        pendingQuestions: questions
+    };
+}
+
+function recordSidecarTrace(world, sess, trace) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol?.debug?.enabled) return;
+    protocol.debug.traces.push({ id: `trace_${Date.now().toString(36)}`, at: new Date().toISOString(), ...trace });
+    protocol.debug.traces = protocol.debug.traces.slice(-Math.max(1, protocol.debug.retainTraceCount || 20));
+}
+
+function queueSidecarQuestion(world, sess, prompt, evidence = '') {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) return null;
+    const prior = protocol.questions.find(question => question.status === 'open' && question.prompt === prompt);
+    if (prior) return prior;
+    const question = {
+        id: `q_sidecar_${Date.now().toString(36)}_${protocol.questions.length + 1}`,
+        origin: 'sidecar_reconciliation', target: 'user', status: 'open', prompt: String(prompt).slice(0, 1200),
+        evidence: String(evidence).slice(0, 4000), createdTurn: Math.max(1, Number(sess.turnCount) || 1),
+        attempts: 0, provenance: { source: 'sidecar' }, createdAt: new Date().toISOString()
+    };
+    protocol.questions.push(question);
+    return question;
+}
+
+async function runSidecarReconciliation(world, sess, options = {}) {
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const tracker = config.tracker || {};
+    const narratorModel = world.model || state.globalSettings.defaultModel;
+    const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
+    const sidecarWorld = {
+        ...world,
+        model,
+        openRouterRouting: tracker.openRouterRouting || world.openRouterRouting
+    };
+    const preFrame = buildWorldSceneFrame(world, sess);
+    const handoff = String(options.handoff || '').trim();
+    const narration = String(options.narration || '').trim();
+    const commitTool = safeJsonClone(options.commitTool);
+    if (!commitTool?.function?.parameters) throw new Error('The native world commit tool is unavailable.');
+    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against the canonical frame and mechanics. Mechanics constrain outcomes; they never author them. If something is uncertain, leave it unchanged.\n\nReturn exactly one native commit_world_turn tool call. Preserve actor IDs. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, or time changes. Translate explicit temporal meaning only when the handoff establishes it; use the existing state_updates fields where an exact mechanical value is justified.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 3000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 18000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
+    const body = {
+        model, stream: false,
+        max_tokens: Math.max(600, Number(tracker.maxTokens) || 1400),
+        temperature: 0,
+        messages: [{ role: 'system', content: sidecarPrompt }, { role: 'user', content: 'Reconcile this authored turn now.' }],
+        tools: [commitTool], tool_choice: { type: 'function', function: { name: 'commit_world_turn' } }
+    };
+    if (tracker.reasoning === true) body.reasoning_effort = 'low';
+    const response = await fetch(apiBase() + '/chat/completions', {
+        method: 'POST', signal: options.signal,
+        headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld))
+    });
+    if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar request failed (${response.status})`);
+    const payload = await response.json();
+    const message = payload?.choices?.[0]?.message || {};
+    const toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn');
+    recordSidecarTrace(world, sess, { kind: 'reconciliation', prompt: sidecarPrompt, reply: message, model });
+    if (!toolCall) throw new Error('Sidecar returned no commit_world_turn tool call.');
+    const receipt = parseWorldToolArguments(toolCall.function?.arguments || '{}');
+    const committed = commitWorldTurnReceipt(world, sess, receipt, options.receiptContext || {}, 'sidecar');
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (protocol) {
+        const packet = buildSidecarScenePacket(world, sess, handoff);
+        protocol.packet = packet;
+        protocol.turns.push({ id: receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`,
+            createdAt: new Date().toISOString(), narration: narration.slice(0, 24000), handoff,
+            preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit) });
+        protocol.turns = protocol.turns.slice(-500);
+    }
+    return { committed, receipt, packet: protocol?.packet || null };
 }
 
 function extractInlineWorldTurnReceipt(text) {
@@ -21886,7 +21989,10 @@ function enterWorld(worldId) {
     
     const sess = getCurrentWorldSession();
     normalizeLivingWorldState(world, sess);
-    const entryScheduleSync = syncNPCSchedules(world, sess);
+    // Schedules remain useful constraints for Sidecar, but they must not
+    // silently author arrivals merely because a world was opened.
+    const sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const entryScheduleSync = sidecarMode ? { moves: 0 } : syncNPCSchedules(world, sess);
     if (entryScheduleSync.moves > 0) saveState().catch(() => {});
     
     document.getElementById('world-active-name').textContent = 'Living world';
@@ -21905,7 +22011,10 @@ function renderWorldPlayState() {
     const sess = getCurrentWorldSession(); // Triggers Healing Pass
     if (!world || !inst || !sess) return;
     const ruleModules = normalizeWorldGameRules(world).modules;
-    const questEvaluation = evaluateQuestProgress(world, sess);
+    const sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    // Legacy quest evaluation can mutate progress based on ambient state. In
+    // Sidecar worlds it remains a reconciliation input, not a passive author.
+    const questEvaluation = sidecarMode ? { changed: false } : evaluateQuestProgress(world, sess);
     if (questEvaluation.changed) saveState().catch(() => {});
 
     // Auto-sync start location if history is empty (fixes workshop start location updates not applying)
@@ -22048,6 +22157,20 @@ function renderWorldPlayState() {
                 const targetLoc = resolveWorldExitTarget(world, exit);
                 if (!targetLoc) {
                     showToast(`Broken exit: "${exitText}" does not resolve to one unique location.`, 'error');
+                    return;
+                }
+                if (sidecarMode) {
+                    if (worldTurnInProgress) {
+                        showToast('The narrator is still responding — please wait.', 'info');
+                        return;
+                    }
+                    // An exit is player intent in Sidecar mode. The Narrator
+                    // establishes whether movement actually completes; the
+                    // second call validates and commits that result.
+                    const intent = `I head toward ${targetLoc.name}.`;
+                    const input = document.getElementById('world-user-input');
+                    if (input) input.value = intent;
+                    executeWorldTurn();
                     return;
                 }
                 const movement = movePlayerAlongWorldPath(world, sess, targetLoc);
@@ -22473,8 +22596,9 @@ function renderWorldPlayState() {
     const ledgerStatus = document.getElementById('world-ledger-status');
     if (ledgerStatus) {
         const diagnostic = sess.ledgerDiagnostics || {};
-        const sourceLabels = {
-            structured: 'structured state',
+            const sourceLabels = {
+                structured: 'structured state',
+                sidecar: 'Sidecar reconciliation',
             tagged: 'DM memory',
             classifier: 'chronicle classifier',
             local: 'local recovery',
@@ -22751,6 +22875,8 @@ function appendWorldMessageUI(msg, index = null) {
     // model that narrates changes but never records them fails invisibly.
     if (msg.role === 'dm' && msg.stateSource) {
         metaParts.push(msg.stateSource === 'tool_call' ? '⚙️ canonical turn committed'
+            : msg.stateSource === 'sidecar' ? '🎭 Sidecar canonical turn committed'
+            : msg.stateSource === 'sidecar_unresolved' ? '🎭 narration preserved — Sidecar state unresolved'
             : msg.stateSource === 'inline_rescue' ? '⚙️ tagged turn receipt recovered'
             : msg.stateSource === 'receipt_repair' ? '🩹 missing receipt repaired'
             : msg.stateSource === 'frozen_no_receipt' ? '🧊 unverified state frozen — receipt missing'
@@ -22772,6 +22898,7 @@ function appendWorldMessageUI(msg, index = null) {
             if (msg.callAudit.receiptRepair) extras.push('receipt repair');
             if (msg.callAudit.narrativeFollowUp) extras.push('dice/tool narration');
             if (msg.callAudit.chronicleClassifier) extras.push('chronicle classifier');
+            if (msg.callAudit.sidecar) extras.push('Sidecar reconciliation');
             metaParts.push(`🧮 ${escapeHTML(msg.callAudit.foregroundTotal)} foreground model call${msg.callAudit.foregroundTotal === 1 ? '' : 's'}${extras.length ? ` · ${escapeHTML(extras.join(', '))}` : ' · scene kernel'}`);
         }
         if (msg.narratedMove) {
@@ -22795,6 +22922,15 @@ function appendWorldMessageUI(msg, index = null) {
     const metaHtml = metaParts.length
         ? `<div class="world-msg-meta">${metaParts.join(' &nbsp;·&nbsp; ')}</div>`
         : '';
+    const backstage = msg.sidecarBackstage;
+    const backstageHtml = backstage ? `
+        <details class="world-sidecar-backstage" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); padding:7px 9px; font-size:0.76rem;">
+            <summary style="cursor:pointer; color:var(--text-2); font-weight:700;">🎭 Backstage handoff${backstage.unresolved ? ' · needs reconciliation' : ''}</summary>
+            ${backstage.handoff ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Narrator → Sidecar · scene handoff</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(backstage.handoff)}</pre></details>` : ''}
+            ${backstage.receipt ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Sidecar → Canon · reconciliation receipt</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(JSON.stringify(backstage.receipt, null, 2))}</pre></details>` : ''}
+            ${backstage.packet ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Sidecar → Narrator · next-beat packet</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(JSON.stringify(backstage.packet, null, 2))}</pre></details>` : ''}
+            ${backstage.questionCount ? `<div style="margin-top:8px; color:var(--warning, #ffb347);">${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'}</div>` : ''}
+        </details>` : '';
 
     // Version nav restores that take's world-state snapshot — only safe on the
     // LAST entry. Allowing it mid-history rewound stats/NPCs/ledger underneath
@@ -22807,6 +22943,7 @@ function appendWorldMessageUI(msg, index = null) {
         <div class="msg-bubble">
             <div class="msg-text">${messageHtml}</div>
             ${metaHtml}
+            ${backstageHtml}
             <textarea class="msg-edit-area hidden" style="width:100%; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:8px; margin-top:8px; font-family:inherit; font-size:inherit;"></textarea>
             ${msg.role === 'dm' && versions.length > 1 && !isLastEntry ? `
                 <div style="font-size:0.65rem; color:var(--text-3); margin-top:6px;" title="Takes can only be switched on the latest response — switching older ones would rewind the world state underneath everything that happened since.">🔒 take ${currentVersionIdx + 1}/${versions.length} (locked — older turn)</div>
@@ -23464,6 +23601,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     let committedOutfit = null;
     let turnCallAudit = null;
     let labsWorldFrame = null;
+    let sidecarMode = false;
 
     try {
         world = state.worlds.find(w => w.id === state.activeWorldId);
@@ -23473,6 +23611,7 @@ async function executeWorldTurn(commandOrReroll = null) {
             throw new Error("World state not initialized. Please ensure a world is selected.");
         }
         normalizeLivingWorldState(world, sess);
+        sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
         if (sess.pendingChecks?.length && !isReroll && command !== 'init') {
             showToast('Resolve the pending check before taking another action.', 'info');
             return;
@@ -23483,7 +23622,8 @@ async function executeWorldTurn(commandOrReroll = null) {
             providerFallback: 0,
             receiptRepair: 0,
             narrativeFollowUp: 0,
-            chronicleClassifier: 0
+            chronicleClassifier: 0,
+            sidecar: 0
         };
         // A failed reroll must restore the currently selected take's live
         // state, not the old turn's pre-action snapshot.
@@ -23499,7 +23639,7 @@ async function executeWorldTurn(commandOrReroll = null) {
         const authoredOpening = String(sess.pendingOriginIntro || world.intro || '').trim();
         if (command === "init" && authoredOpening && sess.history.length === 0) {
             normalizeLivingWorldState(world, sess);
-            syncNPCSchedules(world, sess);
+            if (!sidecarMode) syncNPCSchedules(world, sess);
             // An authored opening is trusted world data, not uncertain model
             // prose. Make explicitly present named NPCs canonical before the
             // no-op receipt snapshots the first scene.
@@ -23563,23 +23703,25 @@ async function executeWorldTurn(commandOrReroll = null) {
         }
 
         if (command !== "init" && command !== "look" && command !== "continue") {
-            labsWorldFrame = await requestWorldMicroFrame(world, sess, userInput);
+            // Sidecar owns semantic interpretation after the narrator's turn;
+            // do not preflight a third model call before that two-call loop.
+            if (!sidecarMode) labsWorldFrame = await requestWorldMicroFrame(world, sess, userInput);
             const movementOrigin = sess.playerLocation;
             const originWitnesses = sessionNpcs(world, sess)
                 .filter(npc => sess.entityStates?.[npc.id]?.location === movementOrigin && isNpcActive(sess.entityStates[npc.id]))
                 .map(npc => npc.id);
-            arrivalContext = applyUserDirectedMovement(world, sess, userInput, labsWorldFrame?.candidate);
+            arrivalContext = sidecarMode ? '' : applyUserDirectedMovement(world, sess, userInput, labsWorldFrame?.candidate);
             if (sess.playerLocation !== movementOrigin) {
                 committedMovement = {
                     originId: movementOrigin,
                     destinationId: sess.playerLocation
                 };
             }
-            const outfitResult = applyPlayerOutfitIntent(sess, userInput)
+            const outfitResult = !sidecarMode && (applyPlayerOutfitIntent(sess, userInput)
                 || (labsWorldFrame?.candidate?.intent === 'outfit'
                     && labsWorldFrame.candidate.phase === 'completed'
                     && Number(labsWorldFrame.candidate.confidence) >= 0.72
-                    ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null);
+                    ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null));
             if (outfitResult) committedOutfit = outfitResult;
             addWorldMessage('user', userInput, {
                 location: movementOrigin,
@@ -23592,26 +23734,28 @@ async function executeWorldTurn(commandOrReroll = null) {
     }
 
     if (isReroll && command !== "init" && command !== "look" && command !== "continue") {
-        labsWorldFrame = await requestWorldMicroFrame(world, sess, userInput);
-        arrivalContext = applyUserDirectedMovement(world, sess, userInput, labsWorldFrame?.candidate);
-        applyPlayerOutfitIntent(sess, userInput)
+        if (!sidecarMode) labsWorldFrame = await requestWorldMicroFrame(world, sess, userInput);
+        arrivalContext = sidecarMode ? '' : applyUserDirectedMovement(world, sess, userInput, labsWorldFrame?.candidate);
+        !sidecarMode && (applyPlayerOutfitIntent(sess, userInput)
             || (labsWorldFrame?.candidate?.intent === 'outfit'
                 && labsWorldFrame.candidate.phase === 'completed'
                 && Number(labsWorldFrame.candidate.confidence) >= 0.72
-                ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null);
+                ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null));
     }
 
     // A turn-based living world advances exactly once per genuine player turn.
     // turnSnapshot was captured before this point, so rerolls restore and replay
     // the same deterministic tick instead of double-advancing the simulation.
-    if (command !== "init" && command !== "look" && command !== "continue") {
+    if (!sidecarMode && command !== "init" && command !== "look" && command !== "continue") {
         if (turnRuleModules.livingWorld) updatePlaystyleProfile(sess, userInput);
         runLivingWorldTick(world, sess);
     }
 
     const currentLocId = sess.playerLocation;
-    syncNPCSchedules(world, sess);
-    evaluateQuestProgress(world, sess);
+    if (!sidecarMode) {
+        syncNPCSchedules(world, sess);
+        evaluateQuestProgress(world, sess);
+    }
 
     // --- The Engine Logic ---
     // Robust Lookup: Support both ID and Name for legacy compatibility
@@ -24029,6 +24173,11 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
         if (previousDirectorNotes) {
             systemPrompt += `\n\n[PREVIOUS DIRECTOR PLAN — execute this continuity before drafting the next beat]\n${previousDirectorNotes}`;
         }
+    }
+
+    if (sidecarMode) {
+        const priorPacket = sess.sidecar?.packet || buildSidecarScenePacket(world, sess);
+        systemPrompt += `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.\n\n[CURRENT SIDECAR SCENE PACKET]\n${JSON.stringify(priorPacket)}`;
     }
 
     // Show persistent typing indicator
@@ -24775,6 +24924,11 @@ ${modularMandate}
             if (!ruleModules.relationships && !ruleModules.livingWorld) delete questRewardProperties.faction_reputation;
         }
 
+        // Preserve the native schema for Sidecar's second foreground call, but
+        // make the narrator completely tool-free in Sidecar mode.
+        const sidecarCommitTool = sidecarMode ? safeJsonClone(worldStateTool) : null;
+        if (sidecarMode) toolsConfig.splice(0, toolsConfig.length);
+
         const modelId = world.model || state.globalSettings.defaultModel;
 
         // Tool calling across OpenAI-compatible providers is not uniform. Give
@@ -24783,7 +24937,7 @@ ${modularMandate}
         // no longer gets two free turns in which state silently disappears.
         const knownToolShy = Array.isArray(state.globalSettings.toolShyModels)
             && state.globalSettings.toolShyModels.includes(modelId);
-        if (command !== 'look' && command !== 'init') {
+        if (!sidecarMode && command !== 'look' && command !== 'init') {
             const escapeHatch = `\n\n[TURN RECEIPT DELIVERY FAILSAFE]\nUse commit_world_turn as a real tool call. If and only if this provider cannot emit that tool call, append exactly one block at the end instead:\n<world_turn_receipt>{"scene":{"player_location_id":"${sess.playerLocation}","player_location_changed":false,"present_character_ids":[]},"events":[],"entity_updates":[],"state_updates":{}}</world_turn_receipt>\nThe receipt is mandatory even when nothing changes. Fill it with the same actor-scoped events, full ending cast and updates you would have sent to the tool. Never send both a successful tool call and the tagged block.${knownToolShy ? '\nThis model has previously failed to deliver tool calls, so use the tagged receipt rather than dropping state.' : ''}`;
             const lastSystem = [...messages].reverse().find(entry => entry.role === 'system');
             if (lastSystem) lastSystem.content += escapeHatch;
@@ -24793,11 +24947,13 @@ ${modularMandate}
         const requestBody = {
             model: modelId,
             messages: sanitizeMessagesForProvider(messages),
-            stream: true,
-            tool_choice: "auto",
-            tools: toolsConfig
+            stream: true
         };
-        if (normalizeWorldKernelConfig(world).enabled && normalizeWorldKernelConfig(world).compactTools) {
+        if (!sidecarMode) {
+            requestBody.tool_choice = 'auto';
+            requestBody.tools = toolsConfig;
+        }
+        if (!sidecarMode && normalizeWorldKernelConfig(world).enabled && normalizeWorldKernelConfig(world).compactTools) {
             compactWorldToolContract(requestBody.tools);
             requestBody.parallel_tool_calls = false;
         }
@@ -24920,7 +25076,12 @@ ${modularMandate}
                     : delta.content;
                 if (content) {
                     fullText += content;
-                    textTarget.innerHTML = parseHordeMarkdown(fullText);
+                    const handoffStart = sidecarMode ? fullText.search(/<scene_handoff\b/i) : -1;
+                    if (sidecarMode && handoffStart >= 0 && dmTypingLabel) {
+                        dmTypingLabel.textContent = 'GM is writing handoff notes…';
+                    }
+                    const visibleStreamingText = handoffStart >= 0 ? fullText.slice(0, handoffStart) : fullText;
+                    textTarget.innerHTML = parseHordeMarkdown(visibleStreamingText);
                     const container = document.getElementById('world-messages-container');
                     container.scrollTop = container.scrollHeight;
                 }
@@ -24987,6 +25148,41 @@ ${modularMandate}
             authorizedPlayerDestinationId: receiptAuthorizedTarget?.id || '',
             narrativeText: fullText
         };
+        let sidecarReconciliationFailed = false;
+        let sidecarHandoff = '';
+        let sidecarReceipt = null;
+        let sidecarPacket = null;
+        if (sidecarMode) {
+            const narratorOutput = extractSidecarNarratorHandoff(fullText);
+            fullText = narratorOutput.narration;
+            sidecarHandoff = narratorOutput.handoff;
+            receiptContext.narrativeText = fullText;
+            if (dmTypingLabel) dmTypingLabel.textContent = 'GM is writing handoff notes…';
+            try {
+                if (!narratorOutput.complete) throw new Error('Narrator omitted its required scene handoff.');
+                if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is reconciling world state…';
+                turnCallAudit.sidecar = (turnCallAudit.sidecar || 0) + 1;
+                const reconciled = await runSidecarReconciliation(world, sess, {
+                    handoff: narratorOutput.handoff, narration: fullText,
+                    playerInput: submittedInput || userInput, receiptContext,
+                    commitTool: sidecarCommitTool, signal: controller.signal
+                });
+                sidecarReceipt = reconciled.receipt;
+                sidecarPacket = reconciled.packet;
+                if (reconciled.committed.actionResult?.ledgerEntry) structuredChronicle = reconciled.committed.actionResult.ledgerEntry;
+                successfulStateCall = true;
+                sess.lastTurnStateSource = 'sidecar';
+                if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is preparing next-beat pacing…';
+            } catch (sidecarError) {
+                if (sidecarError?.name === 'AbortError') throw sidecarError;
+                sidecarReconciliationFailed = true;
+                queueSidecarQuestion(world, sess,
+                    'The latest narration was preserved, but Sidecar could not reconcile its state update. Review or clarify the beat before relying on a state change.',
+                    `${sidecarError.message || sidecarError}\n\n${narratorOutput.handoff || fullText}`);
+                recordSidecarTrace(world, sess, { kind: 'reconciliation_failure', error: sidecarError.message || String(sidecarError) });
+                console.warn('Horde Sidecar: reconciliation failed; no disputed state was committed.', sidecarError);
+            }
+        }
         for (const call of toolCalls) {
             let responsePayload = { success: true, status: 'Action processed.' };
             try {
@@ -25064,7 +25260,7 @@ ${modularMandate}
         // Providers that print the mandatory receipt instead of calling the
         // tool still pass through the same validator and reducer.
         let inlineStateApplied = false;
-        if (!successfulStateCall) {
+        if (!sidecarMode && !successfulStateCall) {
             const inlineReceipt = extractInlineWorldTurnReceipt(fullText);
             if (inlineReceipt) {
                 try {
@@ -25084,7 +25280,7 @@ ${modularMandate}
         // provider failed the primary contract.
         let repairedReceiptApplied = false;
         const receiptRepairNeeded = shouldRepairMissingWorldReceipt(world, command, submittedInput || userInput, fullText);
-        if (!successfulStateCall && !inlineStateApplied && fullText.trim() && receiptRepairNeeded) {
+        if (!sidecarMode && !successfulStateCall && !inlineStateApplied && fullText.trim() && receiptRepairNeeded) {
             try {
                 if (dmTypingLabel) dmTypingLabel.textContent = 'DM is reconciling the world state...';
                 const repairFrame = buildWorldSceneFrame(world, sess);
@@ -25132,7 +25328,7 @@ ${modularMandate}
         // unverified mutation is inferred from it. Record a canonical no-op
         // receipt and an audit failure so every turn still has a transaction.
         let frozenReceiptApplied = false;
-        if (!successfulStateCall && !inlineStateApplied && !repairedReceiptApplied && fullText.trim()) {
+        if (!sidecarMode && !successfulStateCall && !inlineStateApplied && !repairedReceiptApplied && fullText.trim()) {
             const frame = buildWorldSceneFrame(world, sess);
             const noOpReceipt = {
                 summary: 'No model-authored state receipt was available; unverified state was frozen.',
@@ -25157,7 +25353,9 @@ ${modularMandate}
             });
             frozenReceiptApplied = true;
         }
-        sess.lastTurnStateSource = successfulStateCall ? 'tool_call'
+        sess.lastTurnStateSource = sidecarMode
+            ? (sidecarReconciliationFailed ? 'sidecar_unresolved' : 'sidecar')
+            : successfulStateCall ? 'tool_call'
             : inlineStateApplied ? 'inline_rescue'
                 : repairedReceiptApplied ? 'receipt_repair'
                     : frozenReceiptApplied ? 'frozen_no_receipt' : 'none';
@@ -25166,7 +25364,7 @@ ${modularMandate}
         // in a row is a strong signal this model will not use tools, and opens
         // the plain-text channel on the next turn. A tool call clears it, so a
         // model that recovers stops being nagged.
-        if (command !== 'init' && command !== 'look' && command !== 'continue') {
+        if (!sidecarMode && command !== 'init' && command !== 'look' && command !== 'continue') {
             const shyList = Array.isArray(state.globalSettings.toolShyModels)
                 ? state.globalSettings.toolShyModels : [];
             if (successfulStateCall || inlineStateApplied || repairedReceiptApplied) {
@@ -25242,7 +25440,7 @@ ${modularMandate}
         // (e.g. DeepSeek Pro) spent its entire token budget thinking, or the
         // provider filtered the reply. One plain, tool-free retry with a bigger
         // budget rescues most of these before we give up.
-        if (!fullText.trim() && command !== 'init') {
+        if (!sidecarMode && !fullText.trim() && command !== 'init') {
             console.warn(`Horde Engine: empty narrative (finish_reason=${lastFinishReason}, reasoning=${reasoningSeen}) — attempting rescue call.`);
             if (dmTyping) { dmTyping.style.display = 'flex'; if (dmTypingLabel) dmTypingLabel.textContent = 'DM lost their train of thought — retrying...'; }
             try {
@@ -25278,7 +25476,7 @@ ${modularMandate}
         // deliberately deferred until after narrative rescue. Reconcile the
         // final prose now so an emergency narrative cannot bypass the canonical
         // transaction layer.
-        if (fullText.trim() && !successfulStateCall && !inlineStateApplied
+        if (!sidecarMode && fullText.trim() && !successfulStateCall && !inlineStateApplied
             && !repairedReceiptApplied && !frozenReceiptApplied) {
             try {
                 const finalFrame = buildWorldSceneFrame(world, sess);
@@ -25341,7 +25539,7 @@ ${modularMandate}
             sess.turnCount++;
             // The prompt used the start-of-turn cast. Re-sync after advancing
             // the clock so the persisted HUD/cast matches the displayed time.
-            syncNPCSchedules(world, sess);
+            if (!sidecarMode) syncNPCSchedules(world, sess);
         }
 
         // Save the DM's narrative response
@@ -25351,7 +25549,7 @@ ${modularMandate}
             let cleanText = fullText;
             const taggedChronicle = extractWorldLedgerEntry(fullText);
             let extractedChronicle = structuredChronicle || null;
-            let chronicleSource = structuredChronicle ? 'structured' : '';
+            let chronicleSource = structuredChronicle ? (sidecarMode ? 'sidecar' : 'structured') : '';
             
             // Rerolls already restored turnSnapshot before any tools ran. Leave
             // the old message metadata intact until addWorldMessage archives it
@@ -25365,7 +25563,7 @@ ${modularMandate}
             cleanText = stripWorldLedgerDirective(fullText);
 
             const kernelConfig = normalizeWorldKernelConfig(world);
-            if (!extractedChronicle && (!kernelConfig.enabled || kernelConfig.memoryMode === 'semantic')
+            if (!sidecarMode && !extractedChronicle && (!kernelConfig.enabled || kernelConfig.memoryMode === 'semantic')
                 && command !== 'init' && command !== 'look') {
                 turnCallAudit.chronicleClassifier++;
                 const recovered = await recoverWorldLedgerEntry(world, structuredModelFor(world), submittedInput || userInput, cleanText, controller.signal);
@@ -25375,7 +25573,7 @@ ${modularMandate}
                     console.log(`Horde Engine: Chronicle recovered — ${extractedChronicle}`);
                 }
             }
-            if (!extractedChronicle && !kernelConfig.enabled && command !== 'init' && command !== 'look') {
+            if (!sidecarMode && !extractedChronicle && !kernelConfig.enabled && command !== 'init' && command !== 'look') {
                 const localFallback = buildLocalNarrativeLedgerFallback(submittedInput || userInput, cleanText);
                 extractedChronicle = appendWorldLedgerEntry(sess, localFallback);
                 if (extractedChronicle) {
@@ -25389,7 +25587,7 @@ ${modularMandate}
             sess.ledgerDiagnostics = {
                 turn: Math.max(1, parseInt(sess.turnCount) || 1),
                 status: extractedChronicle ? 'updated' : 'no_change',
-                source: chronicleSource || 'none'
+                source: chronicleSource || (sidecarMode ? 'sidecar' : 'none')
             };
 
             // Scrubber: Remove any hallucinated location/system headers the AI might have copied from context
@@ -25467,6 +25665,13 @@ ${modularMandate}
                     foregroundTotal: Object.values(turnCallAudit).reduce((sum, value) => sum + value, 0),
                     kernelMode: normalizeWorldKernelConfig(world).enabled ? 'scene_kernel' : 'legacy'
                 } : undefined,
+                sidecarBackstage: sidecarMode ? {
+                    handoff: sidecarHandoff,
+                    receipt: sidecarReceipt,
+                    packet: sidecarPacket || sess.sidecar?.packet || null,
+                    questionCount: (sess.sidecar?.questions || []).filter(question => question.status === 'open').length,
+                    unresolved: sidecarReconciliationFailed
+                } : undefined,
                 turnSnapshot,
                 witnesses: endingWitnesses,
                 deferPersist: true
@@ -25542,7 +25747,7 @@ ${modularMandate}
         // the blocking chat transaction. Deterministic schedules, events and
         // goals have already advanced locally; this call only seeds future
         // surprises when the configured interval says the queue needs it.
-        if (command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
+        if (!sidecarMode && command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
             runWorldAgent(world, sess).then(async () => {
                 await saveState();
                 if (state.activeWorldId === world.id) renderWorldPlayState();
@@ -26276,18 +26481,18 @@ function sanitizeCheckOutcomeActions(raw) {
     return Object.keys(clean).length ? clean : null;
 }
 
-function processStructuredActions(args) {
+function processStructuredActions(args, explicitWorld = null, explicitSession = null, options = {}) {
     // Optional explicit targets let the background World Agent finish safely
     // even if the player switches sessions while its request is in flight.
-    // Keep the public one-argument signature stable for extensions/audits.
-    const explicitWorld = arguments[1] || null;
-    const explicitSession = arguments[2] || null;
+    // Optional trailing context is internal; ordinary callers may still use
+    // the original one-argument form.
     const world = explicitWorld || state.worlds.find(w => w.id === state.activeWorldId);
     const sess = explicitSession || getCurrentWorldSession();
     if (!world || !sess) return null;
     normalizeLivingWorldState(world, sess);
     normalizePlayerRulesState(world, sess);
     const modules = normalizeWorldGameRules(world).modules;
+    const sidecarCommit = options?.sidecar === true;
     let ledgerEntry = null;
     let movementResult = null;
     let statResult = null;
@@ -26315,7 +26520,7 @@ function processStructuredActions(args) {
             if (result.pending || result.reason) return;
             const requested = requestedChecks[index] || {};
             const branch = sanitizeCheckOutcomeActions(result.success ? requested.on_success : requested.on_failure);
-            if (branch) checkOutcomeResults.push(processStructuredActions(branch, world, sess));
+            if (branch) checkOutcomeResults.push(processStructuredActions(branch, world, sess, options));
         });
         const guarded = { ...args };
         delete guarded.checks;
@@ -26399,8 +26604,10 @@ function processStructuredActions(args) {
             // The clock just jumped past events scheduled inside the skipped
             // window (a dawn raid during an eight-hour sleep). Fire them now,
             // in the turn that skipped, rather than one action later.
-            runLivingWorldTick(world, sess);
-            syncNPCSchedules(world, sess);
+            if (!sidecarCommit) {
+                runLivingWorldTick(world, sess);
+                syncNPCSchedules(world, sess);
+            }
         }
     }
 
@@ -27088,7 +27295,12 @@ function getWorldTimeData(world, sess) {
     const timeStep = world.hudConfig?.timeStep !== undefined ? world.hudConfig.timeStep : 5;
     const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60
         + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
-    const totalElapsedMinutes = (sess.turnCount - 1) * timeStep + (sess.bonusTimeMinutes || 0);
+    // Sidecar worlds resolve time from authored evidence via the reconciled
+    // receipt. A model call is not a unit of fictional time, so legacy turn
+    // ticks remain available only to Inline Legacy timelines.
+    const sidecarTimeline = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const totalElapsedMinutes = (sidecarTimeline ? 0 : (sess.turnCount - 1) * timeStep)
+        + (Number(sess.bonusTimeMinutes) || 0) + (Number(sess.bonusTimeSeconds) || 0) / 60;
     const currentTotalMinutes = Math.max(0, startMinutes + totalElapsedMinutes);
     
     const days = Math.floor(currentTotalMinutes / (24 * 60)) + 1;
