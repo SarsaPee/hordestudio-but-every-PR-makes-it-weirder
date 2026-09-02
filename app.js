@@ -24059,6 +24059,37 @@ function selectSidecarTake(sess, message, takeIndex) {
     });
 }
 
+function invalidateSidecarDerivedAfterRestore(sess, activeTurnIds) {
+    const protocol = sess?.sidecar;
+    if (!protocol) return;
+    const active = new Set(activeTurnIds || []);
+    const isActiveSource = value => !value || active.has(value);
+    (protocol.turns || []).forEach(turn => {
+        if (!active.has(turn.id)) { turn.status = 'superseded'; turn.supersededAt = turn.supersededAt || new Date().toISOString(); }
+    });
+    const graph = window.HordeSidecarMemoryGraph?.graph?.(protocol);
+    if (graph) {
+        graph.worldHistory = (graph.worldHistory || []).filter(record => isActiveSource(record.turnId));
+        const removedEpisodes = new Set((graph.episodes || []).filter(episode =>
+            (episode.sourceTurnIds || []).some(turnId => !isActiveSource(turnId))).map(episode => episode.id));
+        graph.episodes = (graph.episodes || []).filter(episode => !removedEpisodes.has(episode.id));
+        graph.cognition = (graph.cognition || []).filter(memory => !removedEpisodes.has(memory.episodeId)
+            && !(memory.sourceTurnIds || []).some(turnId => !isActiveSource(turnId)));
+        graph.locationReferences = (graph.locationReferences || []).filter(reference => !removedEpisodes.has(reference.episodeId)
+            && !(reference.sourceTurnIds || []).some(turnId => !isActiveSource(turnId)));
+        ['scenes', 'sequences'].forEach(key => {
+            graph[key] = (graph[key] || []).map(record => ({ ...record,
+                episodeIds: (record.episodeIds || []).filter(id => !removedEpisodes.has(id)),
+                sourceTurnIds: (record.sourceTurnIds || []).filter(isActiveSource)
+            })).filter(record => (record.episodeIds || []).length || (record.sourceTurnIds || []).length);
+        });
+        graph.lastEpisodeTurnCount = (graph.episodes || []).flatMap(episode => episode.sourceTurnIds || []).length;
+    }
+    protocol.jobs = (protocol.jobs || []).filter(job => !(job.sourceTurnIds || []).some(turnId => !isActiveSource(turnId))
+        && !((job.episodeId || '') && graph && !(graph.episodes || []).some(episode => episode.id === job.episodeId)));
+    protocol.packet = null;
+}
+
 function restoreWorldTurnState(world, sess, snapshot) {
     if (!snapshot || !isPlainObject(snapshot) || !isPlainObject(snapshot.session) || !isPlainObject(snapshot.world)) return false;
     const liveManualRevision = Number(sess.ledgerManualRevision) || 0;
@@ -24067,6 +24098,8 @@ function restoreWorldTurnState(world, sess, snapshot) {
     const liveManualLedger = String(sess.ledgerManualOverrideText ?? sess.ledger ?? '');
     const liveLedgerDiagnostics = safeJsonClone(sess.ledgerDiagnostics || {});
     const liveSidecarAudit = safeJsonClone(sess.sidecar || null);
+    const snapshotActiveSidecarTurnIds = new Set((snapshot.session?.sidecar?.turns || [])
+        .filter(turn => turn.status !== 'superseded').map(turn => turn.id));
     const preserved = {
         id: sess.id,
         name: sess.name,
@@ -24095,6 +24128,7 @@ function restoreWorldTurnState(world, sess, snapshot) {
                 .filter((trace, index, all) => all.findIndex(other => other.id === trace.id) === index)
                 .slice(-Math.max(1, sess.sidecar.debug.retainTraceCount || 20));
         }
+        invalidateSidecarDerivedAfterRestore(sess, snapshotActiveSidecarTurnIds);
     }
     // A manual ledger save is an explicit source-of-truth correction. Rerolls
     // restore automated state, but must not silently erase a newer correction.
