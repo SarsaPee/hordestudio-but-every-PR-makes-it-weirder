@@ -10810,6 +10810,22 @@ function updateSidecarQuestion(world, sess, questionId, patch = {}) {
     return question;
 }
 
+async function runSidecarQuestionRepair(world, sess, questionId) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const question = protocol?.questions?.find(item => item.id === questionId && item.status === 'open');
+    if (!question) throw new Error('Question is no longer open.');
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {}; const tracker = config.tracker || {};
+    const model = tracker.model || world.model || state.globalSettings.defaultModel;
+    const prompt = `[SIDECAR QUESTION REPAIR]\nAnswer only this one unresolved authorial question from the supplied evidence. Do not mutate canon and do not infer adjacent facts. Return JSON only: {"answer":"YES|NO|UNKNOWN|CLARIFICATION","explanation":"brief"}.\nQUESTION: ${JSON.stringify({ id: question.id, prompt: question.prompt, evidence: question.evidence, dependencies: question.dependencies })}\nPACKET: ${JSON.stringify(buildSidecarScenePacket(world, sess))}`;
+    const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() }, body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 400, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] }, { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' })) });
+    if (!response.ok) throw new Error((await response.text()).slice(0, 500) || `Question repair failed (${response.status})`);
+    const reply = (await response.json())?.choices?.[0]?.message?.content || '{}'; const parsed = safeParseJSONRepair(reply) || {};
+    recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'explicit_repair', answer: parsed.answer || 'UNKNOWN', explanation: parsed.explanation || '' });
+    question.repairCallHistory = [...(question.repairCallHistory || []), { at: new Date().toISOString(), model, answer: parsed.answer || 'UNKNOWN', explanation: String(parsed.explanation || '').slice(0, 800) }].slice(-12);
+    question.answer = String(parsed.explanation || parsed.answer || 'UNKNOWN').slice(0, 3000); question.resolutionType = 'canonical_evidence_resolution'; question.provenance = { ...(question.provenance || {}), lastRepair: 'explicit_sidecar_repair' };
+    await saveState(); renderSidecarConversation(world, sess); return parsed;
+}
+
 function queueSidecarReconciliationQuestions(world, sess, audit) {
     const rejected = Array.isArray(audit?.rejected) ? audit.rejected.slice(-6) : [];
     rejected.forEach(item => {
@@ -11237,6 +11253,7 @@ function renderSidecarConversation(world, sess) {
             <div style="font-size:.78rem; color:var(--text-2); margin-top:6px; white-space:pre-wrap;">${escapeHTML(question.prompt || '')}</div>
             <div style="font-size:.68rem; color:var(--text-3); margin-top:5px;">Origin: ${escapeHTML(question.origin || '')} · Target: ${escapeHTML(question.target || '')} · Attempts: ${Number(question.attempts) || 0} · Relevance: ${escapeHTML(question.relevance || 'active_scene')}</div>
             ${question.evidence ? `<div style="font-size:.68rem; color:var(--text-3); margin-top:4px;">Evidence: ${escapeHTML(question.evidence.slice(0, 600))}</div>` : ''}
+            ${question.priority === 'high' ? `<button class="tool-btn sidecar-question-repair" data-question-id="${escapeHTML(question.id)}" style="margin-top:6px;">Run narrow repair</button>` : ''}
         </details>`).join('');
     const proposalCards = (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved', 'sidecar_reviewed'].includes(proposal.status)).slice(-12).map(proposal => `
         <div style="margin:0 0 9px; padding:9px; border-radius:7px; background:rgba(255,180,70,.08); border:1px solid var(--border);">
@@ -11277,6 +11294,12 @@ function renderSidecarConversation(world, sess) {
         } finally {
             renderSidecarConversation(world, sess);
         }
+    });
+    log.querySelectorAll('.sidecar-question-repair').forEach(button => button.onclick = async () => {
+        button.disabled = true;
+        try { await runSidecarQuestionRepair(world, sess, button.dataset.questionId); showToast('Question repair recorded.', 'success'); }
+        catch (error) { showToast(`Question repair failed: ${error.message || error}`, 'error'); }
+        finally { renderSidecarConversation(world, sess); }
     });
     log.scrollTop = log.scrollHeight;
 }
