@@ -10780,13 +10780,28 @@ function parseSidecarEpisodeOutput(content) {
     };
 }
 
+function parseSidecarCognitionOutput(content) {
+    const parsed = safeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!isPlainObject(parsed)) return null;
+    const memories = (Array.isArray(parsed.memories) ? parsed.memories : []).filter(isPlainObject).slice(0, 16)
+        .map(memory => ({
+            text: String(memory.text || '').trim().slice(0, 3000),
+            epistemicStatus: ['self_action', 'direct_observation', 'disclosure', 'interpretation', 'belief', 'influence']
+                .includes(memory.epistemicStatus || memory.epistemic_status) ? (memory.epistemicStatus || memory.epistemic_status) : 'direct_observation',
+            importance: Math.max(0, Math.min(1, Number(memory.importance) || 0.45)),
+            confidence: Math.max(0, Math.min(1, Number(memory.confidence) || 0.6)),
+            sourceTurnIds: Array.isArray(memory.sourceTurnIds || memory.source_turn_ids) ? (memory.sourceTurnIds || memory.source_turn_ids).slice(0, 12) : []
+        })).filter(memory => memory.text);
+    return { memories };
+}
+
 async function runSidecarBackgroundMemoryJobs(world, sess) {
     if (!hasApiCredentials() || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return;
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
     const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
     if (!graph) return;
     window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: 5 });
-    const runnable = (protocol.jobs || []).filter(job => job.type === 'episode_consolidation' && job.status === 'queued'
+    const runnable = (protocol.jobs || []).filter(job => ['episode_consolidation', 'cognition_consolidation'].includes(job.type) && job.status === 'queued'
         && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now())).slice(0, 6);
     if (!runnable.length) return;
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
@@ -10796,6 +10811,43 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
         : tracker.model;
     await Promise.all(runnable.map(async job => {
         job.status = 'running'; job.startedAt = new Date().toISOString();
+        if (job.type === 'cognition_consolidation') {
+            const episode = (graph.episodes || []).find(record => record.id === job.episodeId && record.status === 'active');
+            const character = job.characterId === 'player'
+                ? { id: 'player', name: sess.playerIdentity?.name || 'the player', persona: sess.playerIdentity?.persona || '' }
+                : (world.entities || []).find(entity => entity.id === job.characterId && entity.type === 'npc');
+            if (!episode || !character) {
+                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, !episode ? 'Episode no longer exists.' : 'Character is not a tracked participant.');
+                return;
+            }
+            const prior = (graph.cognition || []).filter(record => record.characterId === character.id && record.status === 'active').slice(-12)
+                .map(record => ({ text: record.text, epistemicStatus: record.epistemicStatus }));
+            const prompt = `[SIDECAR CHARACTER COGNITION]\nWrite only experiential memories for ${character.name} [${character.id}]. This is private character cognition, never objective canon. Return JSON only: {"memories":[{"text":"first-person memory","epistemicStatus":"self_action|direct_observation|disclosure|interpretation|belief|influence","importance":0.0,"confidence":0.0,"sourceTurnIds":["turn id"]}]}.\nKeep witnessed actions distinct from self-actions; disclosures must identify who told them; interpretations and suspicions must remain uncertain. Do not create a memory merely because the character was present, and do not infer interiority beyond the available character grounding.\n\nCHARACTER GROUNDING:\n${JSON.stringify({ id: character.id, name: character.name, persona: character.persona || '', description: character.description || '', access: job.access })}\n\nEPISODE:\n${JSON.stringify({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, perceptionCoverage: episode.perceptionCoverage })}\n\nRELEVANT PRIOR COGNITION:\n${JSON.stringify(prior)}`;
+            try {
+                const response = await fetch(apiBase() + '/chat/completions', {
+                    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                    body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 1200, temperature: 0.2,
+                        messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this character cognition.' }] },
+                        { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
+                });
+                if (!response.ok) throw new Error(`Cognition consolidation failed (${response.status})`);
+                const output = parseSidecarCognitionOutput((await response.json())?.choices?.[0]?.message?.content || '');
+                if (!output) throw new Error('Cognition consolidation returned no usable JSON.');
+                output.memories.forEach(memory => graph.cognition.push({
+                    id: `cognition_${Date.now().toString(36)}_${graph.cognition.length + 1}`, status: 'active', createdAt: new Date().toISOString(),
+                    characterId: character.id, characterName: character.name, episodeId: episode.id, text: memory.text,
+                    epistemicStatus: memory.epistemicStatus, importance: memory.importance, confidence: memory.confidence,
+                    sourceTurnIds: memory.sourceTurnIds.length ? memory.sourceTurnIds : episode.sourceTurnIds,
+                    provenance: { source: 'character_cognition_consolidation', access: job.access }
+                }));
+                graph.cognition = graph.cognition.slice(-4000);
+                job.status = 'completed'; job.completedAt = new Date().toISOString();
+                protocol.packet = buildSidecarScenePacket(world, sess);
+            } catch (error) {
+                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
+            }
+            return;
+        }
         const source = graph.worldHistory.filter(record => job.sourceTurnIds.includes(record.turnId) && record.status === 'active');
         if (!source.length) {
             window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'All source turns were superseded before consolidation.');

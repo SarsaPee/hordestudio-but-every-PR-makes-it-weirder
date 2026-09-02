@@ -90,6 +90,19 @@
         memory.locationReferences = memory.locationReferences.slice(-1000);
         memory.lastEpisodeTurnCount += job.sourceTurnIds.length;
         job.status = 'completed'; job.completedAt = now(); job.outputId = episode.id;
+        episode.perceptionCoverage.forEach(coverage => {
+            const characterId = clean(coverage?.characterId, 160);
+            const access = clean(coverage?.access, 80).toLowerCase();
+            if (!characterId || access === 'absent') return;
+            const duplicate = jobs.find(entry => entry.type === 'cognition_consolidation'
+                && entry.episodeId === episode.id && entry.characterId === characterId);
+            if (duplicate) return;
+            jobs.push({
+                id: id('memory_job'), type: 'cognition_consolidation', status: 'queued', createdAt: now(), attempts: 0,
+                episodeId: episode.id, characterId, access, dependencies: [job.id], priority: 'background', retryAt: '', diagnostics: [],
+                provenance: { source: 'episode_perception_coverage' }
+            });
+        });
         return episode;
     }
 
