@@ -24762,7 +24762,11 @@ ${modularMandate}
         }
 
         addParam('temperature', temp);
-        addParam('max_tokens', parseInt(world.maxTokens) || 2048);
+        // max_tokens is a core request budget rather than a provider-specific
+        // tuning parameter. Provider catalogues sometimes omit it, so sending
+        // it through the supported-parameter gate makes the Worlds response
+        // length control silently ineffective for those models.
+        requestBody.max_tokens = parseInt(world.maxTokens) || 2048;
         addParam('top_p', world.topP || 1);
         if (world.freqPenalty) addParam('frequency_penalty', world.freqPenalty);
         if (world.presPenalty) addParam('presence_penalty', world.presPenalty);
