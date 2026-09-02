@@ -10694,12 +10694,14 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         queueSidecarReconciliationQuestions(world, sess, committed.audit);
         const packet = buildSidecarScenePacket(world, sess, handoff);
         protocol.packet = packet;
-        protocol.turns.push({ id: receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`,
+        const turnId = receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`;
+        protocol.turns.push({ id: turnId, status: 'active',
             createdAt: new Date().toISOString(), narration: narration.slice(0, 24000), handoff,
             preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit) });
         protocol.turns = protocol.turns.slice(-500);
+        return { committed, receipt, packet: protocol.packet || null, turnId };
     }
-    return { committed, receipt, packet: protocol?.packet || null };
+    return { committed, receipt, packet: protocol?.packet || null, turnId: null };
 }
 
 function parseSidecarConversationResponse(content) {
@@ -23336,10 +23338,12 @@ function appendWorldMessageUI(msg, index = null) {
                 const ledgerEntry = msg.versionLedgerEntries?.[msg.currentVersion] || null;
                 if (ledgerEntry) msg.ledgerEntry = ledgerEntry;
                 else delete msg.ledgerEntry;
+                if (msg.sidecarBackstages?.[msg.currentVersion]) msg.sidecarBackstage = msg.sidecarBackstages[msg.currentVersion];
                 const sess = getCurrentWorldSession();
                 const world = state.worlds.find(w => w.id === state.activeWorldId);
                 const snapshot = msg.versionSnapshots?.[msg.currentVersion];
                 if (world && snapshot) restoreWorldTurnState(world, sess, snapshot);
+                selectSidecarTake(sess, msg, msg.currentVersion);
                 if (sess) invalidateEpisodicFrom(sess, sess.history.indexOf(msg));
                 await saveState();
                 renderWorldPlayState();
@@ -23350,10 +23354,12 @@ function appendWorldMessageUI(msg, index = null) {
                 const ledgerEntry = msg.versionLedgerEntries?.[msg.currentVersion] || null;
                 if (ledgerEntry) msg.ledgerEntry = ledgerEntry;
                 else delete msg.ledgerEntry;
+                if (msg.sidecarBackstages?.[msg.currentVersion]) msg.sidecarBackstage = msg.sidecarBackstages[msg.currentVersion];
                 const sess = getCurrentWorldSession();
                 const world = state.worlds.find(w => w.id === state.activeWorldId);
                 const snapshot = msg.versionSnapshots?.[msg.currentVersion];
                 if (world && snapshot) restoreWorldTurnState(world, sess, snapshot);
+                selectSidecarTake(sess, msg, msg.currentVersion);
                 if (sess) invalidateEpisodicFrom(sess, sess.history.indexOf(msg));
                 await saveState();
                 renderWorldPlayState();
@@ -23427,6 +23433,21 @@ function captureWorldTurnState(world, sess) {
     });
 }
 
+function selectSidecarTake(sess, message, takeIndex) {
+    const ids = Array.isArray(message?.sidecarTurnIds) ? message.sidecarTurnIds : [];
+    const selectedId = ids[takeIndex];
+    if (!selectedId || !sess) return;
+    const protocol = sess.sidecar;
+    if (!Array.isArray(protocol?.turns)) return;
+    ids.forEach((id, index) => {
+        const turn = protocol.turns.find(entry => entry.id === id);
+        if (!turn) return;
+        turn.status = index === takeIndex ? 'active' : 'superseded';
+        if (index !== takeIndex) turn.supersededAt = new Date().toISOString();
+        else delete turn.supersededAt;
+    });
+}
+
 function restoreWorldTurnState(world, sess, snapshot) {
     if (!snapshot || !isPlainObject(snapshot) || !isPlainObject(snapshot.session) || !isPlainObject(snapshot.world)) return false;
     const liveManualRevision = Number(sess.ledgerManualRevision) || 0;
@@ -23434,6 +23455,7 @@ function restoreWorldTurnState(world, sess, snapshot) {
     const snapshotManualRevision = Number(snapshot.session.ledgerManualRevision) || 0;
     const liveManualLedger = String(sess.ledgerManualOverrideText ?? sess.ledger ?? '');
     const liveLedgerDiagnostics = safeJsonClone(sess.ledgerDiagnostics || {});
+    const liveSidecarAudit = safeJsonClone(sess.sidecar || null);
     const preserved = {
         id: sess.id,
         name: sess.name,
@@ -23445,6 +23467,24 @@ function restoreWorldTurnState(world, sess, snapshot) {
         if (!['id', 'name', 'history', '_memEpoch', '_worldEpoch'].includes(key)) delete sess[key];
     });
     Object.assign(sess, safeJsonClone(snapshot.session), preserved);
+    // Canonical state follows the selected snapshot, but Sidecar turn/take
+    // audit records must survive a reroll so superseded generations remain
+    // inspectable instead of being erased with the selected world state.
+    if (liveSidecarAudit && isPlainObject(sess.sidecar)) {
+        const restoredTurns = Array.isArray(sess.sidecar.turns) ? sess.sidecar.turns : [];
+        const combinedTurns = [...restoredTurns];
+        (Array.isArray(liveSidecarAudit.turns) ? liveSidecarAudit.turns : []).forEach(turn => {
+            if (!combinedTurns.some(existing => existing.id === turn.id)) combinedTurns.push(turn);
+        });
+        sess.sidecar.turns = combinedTurns.slice(-500);
+        const restoredTraces = Array.isArray(sess.sidecar.debug?.traces) ? sess.sidecar.debug.traces : [];
+        const liveTraces = Array.isArray(liveSidecarAudit.debug?.traces) ? liveSidecarAudit.debug.traces : [];
+        if (sess.sidecar.debug) {
+            sess.sidecar.debug.traces = [...restoredTraces, ...liveTraces]
+                .filter((trace, index, all) => all.findIndex(other => other.id === trace.id) === index)
+                .slice(-Math.max(1, sess.sidecar.debug.retainTraceCount || 20));
+        }
+    }
     // A manual ledger save is an explicit source-of-truth correction. Rerolls
     // restore automated state, but must not silently erase a newer correction.
     if (liveManualRevision > snapshotManualRevision) {
@@ -23527,6 +23567,17 @@ function addWorldMessage(role, text, metadata = {}) {
                     : [lastMsg.postSnapshot || null];
                 lastMsg.versionSnapshots.push(metadata.postSnapshot);
                 lastMsg.postSnapshot = metadata.postSnapshot;
+            }
+            if (metadata.sidecarTurnId) {
+                lastMsg.sidecarTurnIds = Array.isArray(lastMsg.sidecarTurnIds)
+                    ? lastMsg.sidecarTurnIds : [lastMsg.sidecarTurnId || null];
+                lastMsg.sidecarTurnIds.push(metadata.sidecarTurnId);
+                lastMsg.sidecarTurnId = metadata.sidecarTurnId;
+                lastMsg.sidecarBackstages = Array.isArray(lastMsg.sidecarBackstages)
+                    ? lastMsg.sidecarBackstages : [lastMsg.sidecarBackstage || null];
+                lastMsg.sidecarBackstages.push(metadata.sidecarBackstage || null);
+                lastMsg.sidecarBackstage = metadata.sidecarBackstage || lastMsg.sidecarBackstage;
+                selectSidecarTake(sess, lastMsg, lastMsg.currentVersion);
             }
             targetMsgRef = lastMsg;
 
@@ -25509,6 +25560,7 @@ ${modularMandate}
         let sidecarHandoff = '';
         let sidecarReceipt = null;
         let sidecarPacket = null;
+        let sidecarTurnId = null;
         if (sidecarMode) {
             const narratorOutput = extractSidecarNarratorHandoff(fullText);
             fullText = narratorOutput.narration;
@@ -25526,6 +25578,7 @@ ${modularMandate}
                 });
                 sidecarReceipt = reconciled.receipt;
                 sidecarPacket = reconciled.packet;
+                sidecarTurnId = reconciled.turnId;
                 if (reconciled.committed.actionResult?.ledgerEntry) structuredChronicle = reconciled.committed.actionResult.ledgerEntry;
                 successfulStateCall = true;
                 sess.lastTurnStateSource = 'sidecar';
@@ -26029,10 +26082,18 @@ ${modularMandate}
                     questionCount: (sess.sidecar?.questions || []).filter(question => question.status === 'open').length,
                     unresolved: sidecarReconciliationFailed
                 } : undefined,
+                sidecarTurnId: sidecarTurnId || undefined,
                 turnSnapshot,
                 witnesses: endingWitnesses,
                 deferPersist: true
             });
+            if (sidecarTurnId) {
+                const sidecarTurn = sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId);
+                if (sidecarTurn) {
+                    sidecarTurn.timelineMessageId = dmMsg?.id || '';
+                    sidecarTurn.takeIndex = dmMsg?.currentVersion ?? 0;
+                }
+            }
             const postSnapshot = captureWorldTurnState(world, sess);
             if (isReroll) {
                 dmMsg.versionSnapshots = Array.isArray(dmMsg.versionSnapshots)
