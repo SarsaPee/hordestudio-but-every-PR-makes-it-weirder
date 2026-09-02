@@ -2180,6 +2180,12 @@ function validateWorldData(value, label = 'World') {
         }
         if (value.sidecarConfig.debug !== undefined) requirePlainObject(value.sidecarConfig.debug, `${label} Sidecar debug`);
     }
+    if (value.dossierClaims !== undefined) {
+        requirePlainObject(value.dossierClaims, `${label} dossier claims configuration`);
+        if (value.dossierClaims.enabled !== undefined && typeof value.dossierClaims.enabled !== 'boolean') {
+            throw new Error(`${label} dossier claims enabled must be a boolean`);
+        }
+    }
     if (value.worldAgent !== undefined) {
         requirePlainObject(value.worldAgent, `${label} World Agent`);
         validateOpenRouterRoutingData(value.worldAgent.openRouterRouting, `${label} World Agent OpenRouter routing`);
@@ -10412,6 +10418,11 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         }
     }
     const previousLocation = sess.playerLocation;
+    // Claims are checked against accepted, actor-scoped receipt evidence, but
+    // stay staged until the native reducer has handled the same receipt.
+    const preparedDossierClaims = window.HordeDossierClaims?.prepareCommit?.(world, sess, validation, {
+        origin: source === 'sidecar' ? 'sidecar' : 'narrator'
+    }) || { enabled: false, claims: [], rejected: [] };
     const actionResult = processStructuredActions(validation.legacyArgs);
     applyWorldEntityPatches(world, sess, validation.entityPatches);
     // Recover an omitted NPC movement only when two independent channels
@@ -10447,6 +10458,14 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         };
     }
     const audit = recordWorldTurnCommit(world, sess, validation, actionResult, source);
+    const dossierClaimResult = window.HordeDossierClaims?.applyPreparedCommit?.(world, sess, preparedDossierClaims)
+        || { applied: [], rejected: [] };
+    if (preparedDossierClaims.enabled) {
+        audit.dossier_claims = {
+            applied: dossierClaimResult.applied.map(claim => claim?.id || '').filter(Boolean),
+            rejected: [...preparedDossierClaims.rejected, ...dossierClaimResult.rejected]
+        };
+    }
     return { validation, actionResult, audit };
 }
 
@@ -13201,6 +13220,7 @@ function createNewWorld() {
             tracker: { inheritNarrator: true, model: '', openRouterRouting: null, reasoning: false, maxTokens: 0 },
             debug: { enabled: false, retainTraceCount: 20 }
         },
+        dossierClaims: { version: 1, enabled: true },
         hudConfig: {
             showClock: true,
             showQuests: true,
@@ -19840,6 +19860,8 @@ function resetWorldTimeline(world, sess) {
     normalizePlayerRulesState(world, sess);
     normalizeWorldSocietyState(world, sess);
     window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
+    window.HordeDossierClaims?.normalizeWorldConfig(world, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
+    window.HordeDossierClaims?.ensureSession(world, sess);
     return sess;
 }
 
@@ -19953,6 +19975,8 @@ function getCurrentWorldSession() {
         normalizePlayerRulesState(world, session);
         normalizeQuestState(world, session);
         window.HordeSidecarHooks?.normalizeWorldTimeline(world, session);
+        window.HordeDossierClaims?.normalizeWorldConfig(world);
+        window.HordeDossierClaims?.ensureSession(world, session);
     }
 
     return session;
@@ -21690,6 +21714,7 @@ function openNpcDossier(npcId) {
     const goalProgress = livingClamp(entState.goalProgress || 0, 0, 100);
     const goalAutonomy = ['paused', 'low', 'medium', 'high'].includes(entState.goalAutonomy) ? entState.goalAutonomy : 'medium';
     const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(npc.id));
+    const dossierClaims = window.HordeDossierClaims?.history?.(world, sess, npc.id)?.active || [];
 
     document.getElementById('npc-dossier-title').textContent = `📇 ${npc.name}`;
     const content = document.getElementById('npc-dossier-content');
@@ -21705,6 +21730,17 @@ function openNpcDossier(npcId) {
         </div>
         ${npc.description ? `<p style="font-size:0.85rem; color:var(--text-2); margin-bottom:12px;">${escapeHTML(npc.description)}</p>` : ''}
         ${npc.persona ? `<div class="form-section"><label class="form-label">Personality</label><p style="font-size:0.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML(npc.persona)}</p></div>` : ''}
+        ${dossierClaims.length ? `<div class="form-section">
+            <label class="form-label">Evidence-backed dossier claims (${dossierClaims.length})</label>
+            <p class="form-hint">Claims are reviewable interpretations or facts with provenance. They do not replace current location, inventory, conditions, or other reducer-owned state.</p>
+            <div style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;">
+                ${dossierClaims.slice().reverse().map(claim => `<div style="background:var(--surface2); padding:8px 10px; border:1px solid var(--border); border-radius:8px;">
+                    <div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:0.75rem;">${escapeHTML(claim.fieldPath)}</strong><button class="tool-btn tool-btn-danger" style="font-size:10px; padding:2px 6px;" data-dossier-claim-dismiss="${escapeHTML(claim.id)}" title="Dismiss this claim">✕</button></div>
+                    <div style="font-size:0.76rem; color:var(--text-2); margin-top:3px; white-space:pre-wrap;">${escapeHTML(typeof claim.value === 'string' ? claim.value : JSON.stringify(claim.value))}</div>
+                    <div style="font-size:0.66rem; color:var(--text-3); margin-top:4px;">${escapeHTML(claim.maturity)} · ${Math.round((Number(claim.confidence) || 0) * 100)}% confidence · ${escapeHTML(claim.origin)}${claim.evidenceIds?.length ? ` · evidence: ${escapeHTML(claim.evidenceIds.join(', '))}` : ''}</div>
+                </div>`).join('')}
+            </div>
+        </div>` : ''}
         <div class="form-section">
             <label class="form-label">Disposition Toward You (drag to adjust)</label>
             <div style="display:flex; align-items:center; gap:10px;">
@@ -21762,6 +21798,14 @@ function openNpcDossier(npcId) {
             await saveState();
         }, 400);
     };
+
+    content.querySelectorAll('[data-dossier-claim-dismiss]').forEach(button => {
+        button.onclick = async () => {
+            if (!window.HordeDossierClaims?.suppressClaim(world, sess, button.dataset.dossierClaimDismiss, 'Dismissed from NPC dossier')) return;
+            await saveState();
+            openNpcDossier(npcId);
+        };
+    });
 
     // Goal editing
     const goalProgressInput = content.querySelector('#dossier-goal-progress');
@@ -23856,6 +23900,7 @@ Characters in this world are NOT omniscient. They only know what they have perso
     const labsWorldHint = labsWorldLens?.candidate && Number(labsWorldLens.candidate.confidence) >= 0.55
         ? `\n\n[PRIVATE MICRO WORLD SENSOR — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor, intent, destination, outfit, explicit time and completion scope only. The graph still owns routes and travel time. It cannot create facts, replace commit_world_turn, or override canonical state. If it conflicts with the player's words or canonical frame, ignore it.`
         : '';
+    const dossierClaimsContext = window.HordeDossierClaims?.promptContext?.(world, sess, presentNPCs) || '';
 
     let systemPrompt = `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
 
@@ -23911,7 +23956,7 @@ Rules Profile: ${gameRules.profileId}. Enabled modules: ${WORLD_RULE_MODULE_KEYS
 Special rules: vital stat "${ruleModules.health ? (gameRules.vitalStatId || 'none') : 'disabled'}"; zero-health mode "${ruleModules.health ? gameRules.zeroHpMode : 'disabled'}"; currency stat "${ruleModules.commerce ? (gameRules.currencyStatId || 'none') : 'disabled'}" (${gameRules.currencyName}).
 Check Engine: ${ruleModules.checks ? `d${diceConfig.sides}, ${diceConfig.resolution} resolution, ${diceConfig.visibility} visibility, default difficulty ${diceConfig.defaultDifficulty}, stat modifier ${diceConfig.modifierMode}. Submit at most ONE check and put every result-dependent persistent mutation inside its on_success/on_failure object; completed top-level consequences beside a check are rejected. ${diceConfig.resolution === 'player' ? 'End at the moment of uncertainty. The player must resolve the queued check before any other action; the next response receives the canonical result.' : 'The engine resolves it immediately; never invent a roll.'}${diceConfig.visibility === 'hidden' ? ' Keep the die, target and modifier out of narration; reveal only fictional consequences.' : ''}` : 'Disabled — resolve through fiction without dice.'}
 Player Outfit: ${sess.outfit || 'Standard attire'}
-${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPrompt}${societyPrompt}`;
+${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPrompt}${societyPrompt}${dossierClaimsContext}`;
     
     if (command === "look") {
         systemPrompt += "\n\n[IMMEDIATE TASK]\nThe player has just arrived at the location listed in 'CURRENT WORLD STATE'. \n1. DESCRIBE the transition and the new surroundings in detail.\n2. The player is already there: assert the current ID in commit_world_turn but emit no new player movement event.\n3. Focus entirely on narrative and atmosphere.";
@@ -24697,6 +24742,9 @@ ${modularMandate}
             removeToolFields(['npc_goal_updates', 'world_events', 'location_state_updates', 'faction_updates', 'player_preference_updates']);
         }
         if (!ruleModules.commerce && !ruleModules.livingWorld) removeToolFields(['economy_updates']);
+        if (window.HordeDossierClaims?.isEnabled?.(world)) {
+            window.HordeDossierClaims.extendReceiptSchema(worldStateTool.function.parameters);
+        }
 
         const failureCostProperties = worldStateProperties.checks?.items?.properties?.failure_cost?.properties;
         const checkSchema = worldStateProperties.checks;
