@@ -13540,6 +13540,7 @@ function setupPersonasLogic() {
         const session = world ? getCurrentWorldSession() : null;
         const model = document.getElementById('persona-generation-model').value.trim() || state.globalSettings.defaultModel;
         const maxTokens = Math.max(500, Math.min(5000, parseInt(document.getElementById('persona-generation-max-tokens').value, 10) || 5000));
+        const reasoningEnabled = document.getElementById('persona-generation-reasoning')?.checked === true;
         const status = document.getElementById('persona-generation-status');
         const desc = document.getElementById('persona-desc');
         generatePersonaBtn.disabled = true;
@@ -13556,6 +13557,7 @@ function setupPersonasLogic() {
             const response = await fetch(apiBase() + '/chat/completions', {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
                 body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: maxTokens, temperature: 0.35, stream: true,
+                    ...(reasoningEnabled ? { reasoning_effort: 'low' } : {}),
                     messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Produce the complete persona draft now.' }] }, { ...(world || {}), model }, { scope: 'persona' }))
             });
             if (!response.ok) throw new Error((await response.text()).slice(0, 600) || `Persona generation failed (${response.status})`);
@@ -13580,7 +13582,7 @@ function setupPersonasLogic() {
             while (true) { const { done, value } = await reader.read(); if (done) break; consume(decoder.decode(value, { stream: true })); }
             if (!output.trim()) throw new Error('Persona generation returned no usable draft.');
             persona.text = output.trim().slice(0, 12000);
-            persona.personaGeneration = { provider: cloudProviderName(), model, maxTokens, generatedAt: new Date().toISOString(), source: 'world_and_recent_history', draftRequired: true };
+            persona.personaGeneration = { provider: cloudProviderName(), model, maxTokens, reasoning: reasoningEnabled, routing: 'global', generatedAt: new Date().toISOString(), source: 'world_and_recent_history', draftRequired: true };
             await saveState();
             if (status) status.textContent = `Draft complete · ${output.trim().split(/\s+/).length.toLocaleString()} words · saved with generation provenance.`;
             showToast('Persona draft generated and saved.', 'success');
@@ -13695,8 +13697,10 @@ function selectPersona(id) {
     if (document.activeElement !== descInput) descInput.value = p.text;
     const generationModel = document.getElementById('persona-generation-model');
     const generationMaxTokens = document.getElementById('persona-generation-max-tokens');
+    const generationReasoning = document.getElementById('persona-generation-reasoning');
     if (generationModel && document.activeElement !== generationModel) generationModel.value = p.personaGeneration?.model || '';
     if (generationMaxTokens && document.activeElement !== generationMaxTokens) generationMaxTokens.value = Math.max(500, Math.min(5000, Number(p.personaGeneration?.maxTokens) || 5000));
+    if (generationReasoning && document.activeElement !== generationReasoning) generationReasoning.checked = p.personaGeneration?.reasoning === true;
     if (colorInput) colorInput.value = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '#4A90E2';
     const structuredInputs = {
         age: document.getElementById('persona-age'),
