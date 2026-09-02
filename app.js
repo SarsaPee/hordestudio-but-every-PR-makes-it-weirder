@@ -10597,6 +10597,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const questions = (protocol?.questions || []).filter(question => question.status === 'open' && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)).slice(-8)
         .map(question => ({ id: question.id, prompt: question.prompt, target: question.target }));
     const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
+    const memoryGraph = window.HordeSidecarMemoryGraph?.graph(protocol);
     const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
     const accessibleVehicles = window.HordeSidecarTraversal?.accessibleVehicles(world, hierarchy?.sequence?.controlledEntityId || 'player') || [];
     return {
@@ -10623,6 +10624,12 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
                 access: vehicle.vehicle?.access || []
             }))
         },
+        memory: memoryGraph ? {
+            worldHistoryCount: (memoryGraph.worldHistory || []).filter(record => record.status === 'active').length,
+            episodeCount: (memoryGraph.episodes || []).filter(record => record.status === 'active').length,
+            cognitionCount: (memoryGraph.cognition || []).filter(record => record.status !== 'superseded').length,
+            queuedJobs: (protocol?.jobs || []).filter(job => ['queued', 'running'].includes(job.status)).map(job => ({ id: job.id, type: job.type, status: job.status }))
+        } : null,
         activities: frame.activities,
         temporalContinuity: handoff ? sidecarTemporalStatement(handoff).slice(0, 600) : String(protocol?.temporalState?.authoredMeaning || '').slice(0, 600),
         temporalEvidence: protocol?.temporalState || null,
@@ -10742,6 +10749,8 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
         protocol.turns.push(turnRecord);
         protocol.turns = protocol.turns.slice(-500);
+        window.HordeSidecarMemoryGraph?.recordTurn(protocol, turnRecord);
+        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: 5 });
         return { committed, receipt, packet: protocol.packet || null, turnId };
     }
     return { committed, receipt, packet: protocol?.packet || null, turnId: null };
@@ -10756,6 +10765,60 @@ function parseSidecarConversationResponse(content) {
         resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions.slice(0, 12) : [],
         proposedReceipt: isPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null
     };
+}
+
+function parseSidecarEpisodeOutput(content) {
+    const parsed = safeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!isPlainObject(parsed) || !String(parsed.summary || '').trim()) return null;
+    return {
+        summary: String(parsed.summary || '').trim().slice(0, 8000),
+        objectiveHistory: String(parsed.objectiveHistory || parsed.objective_history || '').trim().slice(0, 8000),
+        perceptionCoverage: Array.isArray(parsed.perceptionCoverage || parsed.perception_coverage)
+            ? (parsed.perceptionCoverage || parsed.perception_coverage).slice(0, 80) : [],
+        locationReferences: Array.isArray(parsed.locationReferences || parsed.location_references)
+            ? (parsed.locationReferences || parsed.location_references).slice(0, 80) : []
+    };
+}
+
+async function runSidecarBackgroundMemoryJobs(world, sess) {
+    if (!hasApiCredentials() || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return;
+    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+    const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
+    if (!graph) return;
+    window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: 5 });
+    const runnable = (protocol.jobs || []).filter(job => job.type === 'episode_consolidation' && job.status === 'queued'
+        && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now())).slice(0, 6);
+    if (!runnable.length) return;
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const tracker = config.tracker || {};
+    const model = tracker.inheritNarrator !== false || !tracker.model
+        ? (state.globalSettings?.consolidationModel || world.model || state.globalSettings.defaultModel)
+        : tracker.model;
+    await Promise.all(runnable.map(async job => {
+        job.status = 'running'; job.startedAt = new Date().toISOString();
+        const source = graph.worldHistory.filter(record => job.sourceTurnIds.includes(record.turnId) && record.status === 'active');
+        if (!source.length) {
+            window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'All source turns were superseded before consolidation.');
+            return;
+        }
+        const prompt = `[SIDECAR EPISODE CONSOLIDATION]\nYou consolidate a committed group of roleplay turns. Do not invent facts, promote implied places, or grant character knowledge from authorial context. Return JSON only:\n{\n  "summary":"objective episode summary",\n  "objectiveHistory":"durable factual history only",\n  "perceptionCoverage":[{"characterId":"canonical ID when known","access":"visual|auditory|informational|absent","detail":"what this participant had access to"}],\n  "locationReferences":[{"name":"particular referenced place","locationId":"canonical ID or empty","status":"assigned|unresolved","evidence":"short contextual clue"}]\n}\nAn ordinary generic desire such as “somewhere quiet” is not a location reference. Only record a particular place if the full episode context identifies one or establishes that it is unresolved.\n\nCOMMITTED SOURCE TURNS:\n${JSON.stringify(source.map(record => ({ turnId: record.turnId, sequenceId: record.sequenceId, sceneId: record.sceneId, narration: record.narration, handoff: record.sceneReading })))} `;
+        try {
+            const response = await fetch(apiBase() + '/chat/completions', {
+                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 1400, temperature: 0,
+                    messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this episode.' }] },
+                    { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' }))
+            });
+            if (!response.ok) throw new Error(`Episode consolidation failed (${response.status})`);
+            const output = parseSidecarEpisodeOutput((await response.json())?.choices?.[0]?.message?.content || '');
+            if (!output) throw new Error('Episode consolidation returned no usable JSON.');
+            window.HordeSidecarMemoryGraph.completeEpisode(protocol, job.id, output);
+            protocol.packet = buildSidecarScenePacket(world, sess);
+        } catch (error) {
+            window.HordeSidecarMemoryGraph.failJob(protocol, job.id, error.message || String(error));
+        }
+    }));
+    await saveState();
 }
 
 async function runSidecarConversation(world, sess, userText, options = {}) {
@@ -26428,8 +26491,13 @@ ${modularMandate}
             }).catch(agentError => console.warn('Horde Engine: background world agent skipped —', agentError.message));
         }
 
-        // Trigger non-blocking rolling episodic memory consolidation for World Mode
-        if (!normalizeWorldKernelConfig(world).enabled
+        // Sidecar keeps a separate, source-pinned Turn → Episode graph. Legacy
+        // worlds retain the established episodic archive path unchanged.
+        if (sidecarMode) {
+            runSidecarBackgroundMemoryJobs(world, sess).catch(err => {
+                console.warn('Sidecar memory dispatcher skipped —', err.message);
+            });
+        } else if (!normalizeWorldKernelConfig(world).enabled
             || normalizeWorldKernelConfig(world).memoryMode === 'semantic') {
             consolidateSessionEpisodicMemory(sess, world).catch(err => {
                 console.warn("World consolidation error in background:", err);

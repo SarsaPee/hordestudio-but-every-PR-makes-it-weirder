@@ -18,9 +18,10 @@
     "runtime/timeline-model.js",
     "runtime/promotion-model.js",
     "runtime/traversal-vehicle-model.js",
+    "runtime/memory-graph.js",
     "integrations/horde-16.7-hooks.js"
   ],
-  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn", "progressive_promotion", "semantic_traversal"],
+  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn", "progressive_promotion", "semantic_traversal", "hierarchical_memory"],
   "hooks": [
     "world configuration normalization",
     "timeline protocol normalization",
