@@ -43,8 +43,10 @@ it never contains copied Horde Studio application files.
 - `runtime/memory-graph.js` keeps a Sidecar-only source-pinned
   `World History → Episode → Scene/Sequence` graph. Episode work is queued in
   five-turn batches and, after a valid objective summary, fans out only to
-  characters whose perception coverage changed. Cognition is first-person,
-  epistemically typed, provenance-linked, and never feeds objective canon.
+  characters whose perception coverage changed. Scene and Sequence compression
+  jobs use the same global consolidation model and retain their episode/source
+  links. Cognition is first-person, epistemically typed, provenance-linked,
+  and never feeds objective canon.
 - The Story Memory Inspector exposes those derived cognition records by
   canonical character ID and separately exposes unresolved place references.
   They can be removed contextually without touching raw roleplay history.
