@@ -14358,6 +14358,25 @@ async function saveWorld() {
         }
     };
     w.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.(sidecarDraftWorld) || priorSidecarConfig;
+    const switchingToSidecar = !!storedBeforeSave && w.sidecarConfig?.mode === 'sidecar' && !wasSidecar;
+    if (switchingToSidecar && !confirm(
+        'Migrate this world to Sidecar? Horde Studio will preserve its raw roleplay and canonical receipts, clear only derived vector/episodic caches, and create a local migration backup. This is a selected-world migration; other worlds are unchanged.'
+    )) return;
+    if (switchingToSidecar) {
+        // A Sidecar migration must be both deliberate and recoverable. Keep a
+        // compact, per-world backup rather than using the orphan-world rescue
+        // store (which is reserved for worlds that disappear from the library).
+        const backups = Array.isArray(w.sidecarMigrationBackups) ? w.sidecarMigrationBackups : [];
+        backups.push({
+            id: `sidecar_migration_${Date.now().toString(36)}`,
+            createdAt: new Date().toISOString(),
+            from: 'inline_legacy', to: 'sidecar',
+            world: safeJsonClone(storedBeforeSave),
+            runtime: safeJsonClone(state.worldInstances?.[w.id] || null),
+            note: 'Raw history and canonical receipts are preserved in the migrated runtime; this backup exists for explicit rollback/re-import.'
+        });
+        w.sidecarMigrationBackups = backups.slice(-3);
+    }
     w.temp = parseFloat(document.getElementById('w-studio-temp').value) || 0.9;
     w.minP = parseFloat(document.getElementById('w-studio-min-p').value) || 0.0;
     w.topP = parseFloat(document.getElementById('w-studio-top-p').value) || 1.0;
