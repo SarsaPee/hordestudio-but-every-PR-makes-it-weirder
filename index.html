@@ -736,7 +736,7 @@
                         <button class="world-studio-tab" data-tab="w-locations">Locations</button>
                         <button class="world-studio-tab" data-tab="w-entities">People</button>
                                 <button class="world-studio-tab" data-tab="w-items">Items</button>
-                                <button class="world-studio-tab" data-tab="w-travel">Travel & Vehicles</button>
+                        <button class="world-studio-tab" data-tab="w-travel" data-sidecar-feature="travel">Travel & Vehicles</button>
                                 <button class="world-studio-tab" data-tab="w-factions">Factions</button>
                         <button class="world-studio-tab" data-tab="w-sandbox">Sandbox</button>
                         <button class="world-studio-tab" data-tab="w-lore">Global Lore</button>
@@ -772,6 +772,7 @@
                                 <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
                             </details>
                         </div>
+                        <section id="w-overview-sidecar-migration" class="world-overview-sidecar-migration hidden" aria-live="polite"></section>
                     </div>
                     <!-- World Basics -->
                     <div id="tab-w-basics" class="studio-panel hidden">
@@ -962,18 +963,18 @@
                         <div class="panel-header">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <h2>Items &amp; Objects</h2>
-                                <div style="display:flex; gap:8px;"><button id="add-vehicle-btn" class="btn btn-ghost">+ Vehicle</button><button id="add-item-btn" class="btn btn-primary">+ New Item</button></div>
+                                <div style="display:flex; gap:8px;"><button id="add-vehicle-btn" class="btn btn-ghost" data-sidecar-feature="vehicle-authoring">+ Vehicle</button><button id="add-item-btn" class="btn btn-primary">+ New Item</button></div>
                             </div>
                             <p>Keep possessions, evidence, equipment and notable objects separate from the cast. Items still use stable canon links.</p>
                         </div>
                         <div class="form-body" id="w-items-list" style="display:flex; flex-direction:column; gap:16px;"></div>
                         <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
-                            <div style="display:flex; width:100%; gap:8px;"><button id="add-vehicle-btn-bottom" class="btn btn-ghost" style="flex:1; border:1px dashed var(--border);">+ Vehicle</button><button id="add-item-btn-bottom" class="btn btn-ghost" style="flex:1; border: 1px dashed var(--border);">+ New Item</button></div>
+                            <div style="display:flex; width:100%; gap:8px;"><button id="add-vehicle-btn-bottom" class="btn btn-ghost" data-sidecar-feature="vehicle-authoring" style="flex:1; border:1px dashed var(--border);">+ Vehicle</button><button id="add-item-btn-bottom" class="btn btn-ghost" style="flex:1; border: 1px dashed var(--border);">+ New Item</button></div>
                         </div>
                     </div>
 
                     <!-- Traversal and vehicle authoring -->
-                    <div id="tab-w-travel" class="studio-panel hidden">
+                    <div id="tab-w-travel" class="studio-panel hidden" data-sidecar-feature="travel">
                         <div class="panel-header">
                             <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
                                 <div>
@@ -1160,7 +1161,7 @@
                                     </select>
                                 </div>
                                 <p class="form-hint">Sidecar uses a tool-free narrator call followed by one canonical reconciliation call. Inline Legacy retains the existing classifier and receipt-repair adapters for older worlds.</p>
-                                <div id="w-sidecar-config-grid" class="world-kernel-config-grid" style="margin-top:12px;">
+                                <div id="w-sidecar-config-grid" class="world-kernel-config-grid" data-sidecar-feature="sidecar-configuration" style="margin-top:12px;">
                                     <label class="vh-test-check"><input type="checkbox" id="w-sidecar-inherit-narrator" checked> Use narrator model and routing</label>
                                     <div>
                                         <label class="form-label">Sidecar model <span class="form-hint">(blank when inheriting)</span></label>
@@ -1177,7 +1178,7 @@
                                         <input id="w-sidecar-trace-count" type="number" class="form-input" min="1" max="200" step="1" value="20">
                                     </div>
                                 </div>
-                                <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden"></div>
+                                <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden" data-sidecar-feature="sidecar-configuration"></div>
                                 <p id="w-sidecar-mode-hint" class="form-hint" style="margin:12px 0 0;"></p>
                                 <div id="w-sidecar-migration-report" class="form-hint" style="margin-top:8px;"></div>
                                 <div id="w-sidecar-migration-controls" style="display:flex; gap:8px; margin-top:10px;"><button id="w-sidecar-migrate-btn" type="button" class="btn btn-primary">Review &amp; migrate this world</button><button id="w-sidecar-restore-backup" type="button" class="btn btn-ghost hidden">Restore latest Inline backup</button></div>
@@ -5212,13 +5213,13 @@
 <script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
 <script src="dossier-claims.js?v=20260902-generic-claims-v1"></script>
-<script src="sidecar/runtime/mode-config.js?v=20260902-sidecar-foundation-v1"></script>
-<script src="sidecar/runtime/timeline-model.js?v=20260902-sidecar-timeline-v1"></script>
-<script src="sidecar/runtime/promotion-model.js?v=20260902-sidecar-promotion-v1"></script>
-<script src="sidecar/runtime/traversal-vehicle-model.js?v=20260902-sidecar-traversal-v1"></script>
-<script src="sidecar/runtime/memory-graph.js?v=20260902-sidecar-memory-v1"></script>
+<script src="world-runtime-mode.js?v=20260902-v1700"></script>
+<script src="world-runtime-timeline.js?v=20260902-v1700"></script>
+<script src="world-runtime-promotion.js?v=20260902-v1700"></script>
+<script src="world-runtime-traversal.js?v=20260902-v1700"></script>
+<script src="world-runtime-memory.js?v=20260902-v1700"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="sidecar/integrations/horde-16.7-hooks.js?v=20260902-sidecar-foundation-v1"></script>
-<script src="app.js?v=20260902-v1700-sidecar-video-v1"></script>
+<script src="world-runtime-hooks.js?v=20260902-v1700"></script>
+<script src="app.js?v=20260903-v1700-workspace-restore-v3"></script>
 </body>
 </html>

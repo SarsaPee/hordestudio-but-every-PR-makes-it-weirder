@@ -116,12 +116,12 @@ STATIC_FILES = {
     # The Sidecar bundle is deliberately modular in the clean fork.  These
     # explicit public assets keep the bridge's allowlist strict while letting
     # World Studio load the runtime rather than silently receiving a 404.
-    "/sidecar/runtime/mode-config.js": ("sidecar/runtime/mode-config.js", "text/javascript"),
-    "/sidecar/runtime/timeline-model.js": ("sidecar/runtime/timeline-model.js", "text/javascript"),
-    "/sidecar/runtime/promotion-model.js": ("sidecar/runtime/promotion-model.js", "text/javascript"),
-    "/sidecar/runtime/traversal-vehicle-model.js": ("sidecar/runtime/traversal-vehicle-model.js", "text/javascript"),
-    "/sidecar/runtime/memory-graph.js": ("sidecar/runtime/memory-graph.js", "text/javascript"),
-    "/sidecar/integrations/horde-16.7-hooks.js": ("sidecar/integrations/horde-16.7-hooks.js", "text/javascript"),
+    "/world-runtime-mode.js": ("sidecar/runtime/mode-config.js", "text/javascript"),
+    "/world-runtime-timeline.js": ("sidecar/runtime/timeline-model.js", "text/javascript"),
+    "/world-runtime-promotion.js": ("sidecar/runtime/promotion-model.js", "text/javascript"),
+    "/world-runtime-traversal.js": ("sidecar/runtime/traversal-vehicle-model.js", "text/javascript"),
+    "/world-runtime-memory.js": ("sidecar/runtime/memory-graph.js", "text/javascript"),
+    "/world-runtime-hooks.js": ("sidecar/integrations/horde-16.7-hooks.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
     "/boot-diagnostics.js": ("boot-diagnostics.js", "text/javascript"),
     "/policy-panic-world.js": ("policy-panic-world.js", "text/javascript"),
@@ -166,6 +166,16 @@ else:
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
 ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
+SHARED_LIBRARY_FILE = CONFIG_DIR / "shared-library.json"
+MAX_SHARED_LIBRARY_SNAPSHOT_BYTES = 28 * 1024 * 1024
+SHARED_LIBRARY_HISTORY_LIMIT = 12
+SHARED_LIBRARY_DEVICE_TTL_SECONDS = 15 * 60
+SHARED_LIBRARY_MAX_ACTIVE_DEVICES = 24
+SHARED_LIBRARY_LOCAL_SETTING_KEYS = frozenset({
+    "mcpBridgeUrl", "localBaseUrl", "localApiKey", "localGenerationTimeoutSeconds",
+    "embeddingBaseUrl", "embeddingApiKey", "localTtsBaseUrl", "localTtsApiKey",
+    "localImageBaseUrl", "localImageApiKey", "comfyUiBaseUrl", "comfyWorkflowProfiles",
+})
 
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
@@ -1048,6 +1058,176 @@ class MultiplayerRuntime:
 
 
 multiplayer_runtime = MultiplayerRuntime()
+
+
+class SharedLibraryStore:
+    """Crash-safe, versioned recovery snapshots shared by Horde browsers."""
+
+    def __init__(self, path: Path = SHARED_LIBRARY_FILE) -> None:
+        self.path = path
+        self.lock = threading.RLock()
+
+    @staticmethod
+    def _default() -> dict[str, Any]:
+        return {"version": 1, "revision": 0, "snapshot": None, "fingerprint": "",
+                "updatedAt": 0, "updatedBy": "", "history": [], "activeDevices": []}
+
+    @staticmethod
+    def _clean_device(value: Any, field: str, maximum: int) -> str:
+        cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(value or "")).strip()[:maximum]
+        if not cleaned:
+            raise ValueError(f"{field} is required.")
+        return cleaned
+
+    @staticmethod
+    def _clean_snapshot(snapshot: Any) -> tuple[dict[str, Any], str, int]:
+        if not isinstance(snapshot, dict):
+            raise ValueError("Shared library snapshot must be a JSON object.")
+        try:
+            clean = json.loads(json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Shared library snapshot is not valid JSON.") from error
+        settings = clean.get("globalSettings")
+        if isinstance(settings, dict):
+            for key in SHARED_LIBRARY_LOCAL_SETTING_KEYS:
+                settings.pop(key, None)
+        encoded = json.dumps(clean, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        if len(encoded) > MAX_SHARED_LIBRARY_SNAPSHOT_BYTES:
+            raise ValueError("Shared library snapshot exceeds the 28 MB safety limit.")
+        return clean, hashlib.sha256(encoded).hexdigest(), len(encoded)
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.path.read_text("utf-8"))
+        except (OSError, ValueError):
+            value = {}
+        if not isinstance(value, dict):
+            value = {}
+        state = self._default()
+        state.update(value)
+        state["revision"] = max(0, int(state.get("revision") or 0))
+        state["snapshot"] = state["snapshot"] if isinstance(state.get("snapshot"), dict) else None
+        state["history"] = state["history"] if isinstance(state.get("history"), list) else []
+        state["activeDevices"] = state["activeDevices"] if isinstance(state.get("activeDevices"), list) else []
+        return state
+
+    def _save(self, state: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, ensure_ascii=False, separators=(",", ":")), "utf-8")
+        try:
+            os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+        temporary.replace(self.path)
+
+    @staticmethod
+    def _summary(state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "available": isinstance(state.get("snapshot"), dict),
+            "revision": max(0, int(state.get("revision") or 0)),
+            "updatedAt": max(0, int(state.get("updatedAt") or 0)),
+            "updatedBy": str(state.get("updatedBy") or ""),
+            "activeDevices": list(state.get("activeDevices") or []),
+        }
+
+    @staticmethod
+    def _archive(state: dict[str, Any], trigger: str) -> None:
+        snapshot = state.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return
+        try:
+            encoded = json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        except (TypeError, ValueError):
+            return
+        point = {
+            "id": secrets.token_hex(16), "revision": int(state.get("revision") or 0),
+            "snapshot": snapshot, "updatedAt": int(state.get("updatedAt") or 0),
+            "updatedBy": str(state.get("updatedBy") or ""), "archivedAt": int(time.time() * 1000),
+            "bytes": len(encoded), "trigger": trigger,
+        }
+        state["history"] = [point, *state.get("history", [])][:SHARED_LIBRARY_HISTORY_LIMIT]
+
+    def _record_device(self, state: dict[str, Any], device_id: Any, label: Any) -> None:
+        identifier = self._clean_device(device_id, "deviceId", 128)
+        device_label = self._clean_device(label, "label", 80)
+        now = int(time.time() * 1000)
+        cutoff = now - SHARED_LIBRARY_DEVICE_TTL_SECONDS * 1000
+        active = [
+            item for item in state.get("activeDevices", [])
+            if isinstance(item, dict) and int(item.get("seenAt") or 0) >= cutoff and item.get("id") != identifier
+        ]
+        active.append({"id": identifier, "label": device_label, "seenAt": now})
+        state["activeDevices"] = active[-SHARED_LIBRARY_MAX_ACTIVE_DEVICES:]
+
+    def status(self, device_id: Any, label: Any, include_snapshot: bool = False,
+               include_history: bool = False) -> dict[str, Any]:
+        with self.lock:
+            state = self._load()
+            self._record_device(state, device_id, label)
+            self._save(state)
+            payload = self._summary(state)
+            if include_snapshot and payload["available"]:
+                payload["snapshot"] = state["snapshot"]
+            if include_history:
+                payload["history"] = [
+                    {key: value for key, value in point.items() if key != "snapshot"}
+                    for point in state["history"] if isinstance(point, dict)
+                ]
+            return payload
+
+    def push(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        with self.lock:
+            state = self._load()
+            self._record_device(state, body.get("deviceId"), body.get("label"))
+            base_revision = int(body.get("baseRevision") or 0)
+            if base_revision != int(state["revision"]):
+                self._save(state)
+                return 409, self._summary(state)
+            snapshot, fingerprint, _ = self._clean_snapshot(body.get("snapshot"))
+            if state.get("fingerprint") == fingerprint:
+                self._save(state)
+                return 200, {**self._summary(state), "unchanged": True}
+            self._archive(state, str(body.get("trigger") or "publish")[:80])
+            state["snapshot"] = snapshot
+            state["fingerprint"] = fingerprint
+            state["revision"] += 1
+            state["updatedAt"] = int(time.time() * 1000)
+            state["updatedBy"] = self._clean_device(body.get("label"), "label", 80)
+            self._save(state)
+            return 200, self._summary(state)
+
+    def restore(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        with self.lock:
+            state = self._load()
+            self._record_device(state, body.get("deviceId"), body.get("label"))
+            base_revision = int(body.get("baseRevision") or 0)
+            if base_revision != int(state["revision"]):
+                self._save(state)
+                return 409, self._summary(state)
+            history_id = self._clean_device(body.get("historyId"), "historyId", 64)
+            point = next((
+                item for item in state["history"]
+                if isinstance(item, dict) and item.get("id") == history_id and isinstance(item.get("snapshot"), dict)
+            ), None)
+            if point is None:
+                raise ValueError("Shared library recovery point was not found.")
+            snapshot, fingerprint, _ = self._clean_snapshot(point["snapshot"])
+            restored_from_revision = int(point.get("revision") or 0)
+            self._archive(state, "restore")
+            state["snapshot"] = snapshot
+            state["fingerprint"] = fingerprint
+            state["revision"] += 1
+            state["updatedAt"] = int(time.time() * 1000)
+            state["updatedBy"] = self._clean_device(body.get("label"), "label", 80)
+            self._save(state)
+            return 200, {
+                **self._summary(state), "snapshot": snapshot,
+                "restoredFromRevision": restored_from_revision,
+            }
+
+
+shared_library_store = SharedLibraryStore()
 
 
 def load_store() -> dict[str, Any]:
@@ -2427,6 +2607,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 query = urllib.parse.parse_qs(parsed.query)
                 body = {key: values[0] for key, values in query.items() if values}
                 return self.respond(200, multiplayer_runtime.state(body))
+            if parsed.path in {"/sync/status", "/sync/snapshot", "/sync/history"}:
+                query = urllib.parse.parse_qs(parsed.query)
+                device_id = query.get("deviceId", [""])[0]
+                label = query.get("label", [""])[0]
+                return self.respond(200, shared_library_store.status(
+                    device_id, label,
+                    include_snapshot=parsed.path == "/sync/snapshot",
+                    include_history=parsed.path == "/sync/history",
+                ))
             if parsed.path == "/always-on/status":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Always-on control is loopback-only."})
@@ -2526,6 +2715,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return self.respond(200, always_on_runtime.pause(str(body.get("reason") or "paused by user")))
             if parsed_path == "/always-on/stop":
                 return self.respond(200, always_on_runtime.stop())
+            if parsed_path == "/sync/push":
+                status, payload = shared_library_store.push(self.read_json())
+                return self.respond(status, payload)
+            if parsed_path == "/sync/restore":
+                status, payload = shared_library_store.restore(self.read_json())
+                return self.respond(status, payload)
             if parsed_path == "/local-image/comfy/generate":
                 body = self.read_json()
                 return self.respond(200, {"image": comfy_generate(body)})

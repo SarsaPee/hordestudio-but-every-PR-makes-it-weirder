@@ -15,6 +15,55 @@ import horde_mcp_bridge as bridge
 
 
 class McpBridgeAudit(unittest.TestCase):
+    def test_shared_library_store_publishes_pulls_conflicts_and_restores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = bridge.SharedLibraryStore(Path(directory) / "shared-library.json")
+            self.assertFalse(store.status("device-a", "Mac browser")["available"])
+
+            first = {
+                "version": 1,
+                "globalSettings": {"theme": "dark", "localApiKey": "must-not-sync"},
+                "characters": [{"id": "character-a"}],
+            }
+            status, published = store.push({
+                "deviceId": "device-a", "label": "Mac browser", "baseRevision": 0,
+                "snapshot": first, "trigger": "manual",
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(published["revision"], 1)
+            pulled = store.status("device-b", "iPad browser", include_snapshot=True)
+            self.assertEqual(pulled["snapshot"]["characters"], [{"id": "character-a"}])
+            self.assertNotIn("localApiKey", pulled["snapshot"]["globalSettings"])
+            self.assertEqual({device["id"] for device in pulled["activeDevices"]}, {"device-a", "device-b"})
+
+            status, conflict = store.push({
+                "deviceId": "device-b", "label": "iPad browser", "baseRevision": 0,
+                "snapshot": {"characters": []}, "trigger": "manual",
+            })
+            self.assertEqual(status, 409)
+            self.assertEqual(conflict["revision"], 1)
+
+            second = {"version": 1, "globalSettings": {}, "characters": [{"id": "character-b"}]}
+            status, published = store.push({
+                "deviceId": "device-b", "label": "iPad browser", "baseRevision": 1,
+                "snapshot": second, "trigger": "manual",
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(published["revision"], 2)
+            history = store.status("device-b", "iPad browser", include_history=True)["history"]
+            self.assertEqual(len(history), 1)
+            self.assertNotIn("snapshot", history[0])
+
+            status, restored = store.restore({
+                "deviceId": "device-b", "label": "iPad browser", "baseRevision": 2,
+                "historyId": history[0]["id"],
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(restored["revision"], 3)
+            self.assertEqual(restored["restoredFromRevision"], 1)
+            self.assertEqual(restored["snapshot"]["characters"], [{"id": "character-a"}])
+            self.assertEqual(len(store.status("device-b", "iPad browser", include_history=True)["history"]), 2)
+
     @mock.patch.object(bridge, "safe_fal_url")
     @mock.patch.object(bridge, "json_request")
     def test_fal_content_policy_errors_are_typed_and_do_not_echo_inputs(self, request, _safe):

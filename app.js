@@ -1902,6 +1902,14 @@ let state = {
     activeWorldId: null,
     worldInstances: {}, // worldId -> current state
     editingWorld: null,
+    view: null,
+    editingCharId: null,
+    lastWorldStudioId: null,
+    lastWorldStudioTab: null,
+    lastStudioTab: null,
+    lastCompanionStudioTab: null,
+    settingsOpen: false,
+    settingsSection: 'models',
     // Video Adventures are a separate product surface and persistence graph. They
     // intentionally share no definitions, sessions or canonical state with Worlds.
     videoWorlds: [],
@@ -2725,9 +2733,223 @@ function repairLoadedState() {
     });
 }
 
+const WORKSPACE_STATE_MIRROR_KEY = 'horde_workspace_state_v2';
+const WORKSPACE_STATE_VERSION = 2;
+let workspaceRestoring = false;
+let workspacePersistTimer = null;
+let pendingWorkspaceState = null;
+
+function validWorkspaceView(value) {
+    return ['library', 'chat', 'studio', 'worlds', 'worldStudio', 'worldPlay',
+        'videoWorlds', 'videoWorldStudio', 'videoWorldPlay', 'companions',
+        'companionStudio', 'companionChat', 'multiplayer', 'pip'].includes(value);
+}
+
+function workspaceString(value) {
+    return typeof value === 'string' && value.length <= 200 ? value : null;
+}
+
+function captureWorkspaceState() {
+    return {
+        version: WORKSPACE_STATE_VERSION,
+        savedAt: Date.now(),
+        view: validWorkspaceView(state.view) ? state.view : 'library',
+        activeCharId: workspaceString(state.activeCharId),
+        activeRoomId: workspaceString(state.activeRoomId),
+        editingCharId: workspaceString(state.editingChar?.id || state.editingCharId),
+        activeWorldId: workspaceString(state.activeWorldId),
+        lastWorldStudioId: workspaceString(state.lastWorldStudioId),
+        lastWorldStudioTab: workspaceString(state.lastWorldStudioTab),
+        activeVideoWorldId: workspaceString(state.activeVideoWorldId),
+        editingVideoWorldId: workspaceString(state.editingVideoWorldId),
+        activeCompanionId: workspaceString(state.activeCompanionId),
+        editingCompanionId: workspaceString(state.editingCompanionId),
+        lastStudioTab: workspaceString(state.lastStudioTab),
+        lastCompanionStudioTab: workspaceString(state.lastCompanionStudioTab),
+        settingsOpen: state.settingsOpen === true,
+        settingsSection: SETTINGS_SECTION_LABELS?.[state.settingsSection]
+            ? state.settingsSection : activeSettingsSection
+    };
+}
+
+function applyWorkspaceState(raw) {
+    if (!isPlainObject(raw)) return;
+    state.view = validWorkspaceView(raw.view) ? raw.view : state.view;
+    ['activeCharId', 'activeRoomId', 'editingCharId', 'activeWorldId',
+        'lastWorldStudioId', 'lastWorldStudioTab', 'activeVideoWorldId',
+        'editingVideoWorldId', 'activeCompanionId', 'editingCompanionId',
+        'lastStudioTab', 'lastCompanionStudioTab'].forEach(key => {
+        if (raw[key] !== undefined) state[key] = workspaceString(raw[key]);
+    });
+    if (raw.settingsOpen !== undefined) state.settingsOpen = raw.settingsOpen === true;
+    if (SETTINGS_SECTION_LABELS?.[raw.settingsSection]) {
+        state.settingsSection = raw.settingsSection;
+        activeSettingsSection = raw.settingsSection;
+    }
+}
+
+function readWorkspaceStateMirror() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(WORKSPACE_STATE_MIRROR_KEY) || 'null');
+        return isPlainObject(raw) && Number(raw.version) === WORKSPACE_STATE_VERSION ? raw : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function writeWorkspaceStateMirror(snapshot = captureWorkspaceState()) {
+    try {
+        localStorage.setItem(WORKSPACE_STATE_MIRROR_KEY, JSON.stringify(snapshot));
+    } catch (_) { /* IndexedDB remains the durable fallback. */ }
+    return snapshot;
+}
+
+async function persistWorkspaceState(snapshot = captureWorkspaceState()) {
+    writeWorkspaceStateMirror(snapshot);
+    if (HordeDB.db) await HordeDB.set('workspaceStateV2', snapshot);
+}
+
+function persistWorkspaceSoon() {
+    if (workspaceRestoring) return;
+    const snapshot = writeWorkspaceStateMirror();
+    clearTimeout(workspacePersistTimer);
+    workspacePersistTimer = setTimeout(() => {
+        persistWorkspaceState(snapshot).catch(() => {});
+    }, 80);
+}
+
+window.addEventListener('pagehide', () => {
+    if (!workspaceRestoring) writeWorkspaceStateMirror();
+});
+
+async function loadWorkspaceState() {
+    const mirror = readWorkspaceStateMirror();
+    let stored = null;
+    let legacy = null;
+    try {
+        stored = await HordeDB.get('workspaceStateV2');
+        if (!stored) {
+            legacy = {
+                view: await HordeDB.get('view'),
+                activeCharId: await HordeDB.get('activeCharId'),
+                activeRoomId: await HordeDB.get('activeRoomId'),
+                lastWorldStudioId: await HordeDB.get('lastWorldStudioId'),
+                lastWorldStudioTab: await HordeDB.get('lastWorldStudioTab'),
+                lastStudioTab: await HordeDB.get('lastStudioTab'),
+                lastCompanionStudioTab: await HordeDB.get('lastCompanionStudioTab'),
+                editingCompanionId: await HordeDB.get('editingCompanionId')
+            };
+        }
+    } catch (_) { /* The local mirror still permits a fast refresh restore. */ }
+    const candidates = [mirror, stored, legacy].filter(isPlainObject);
+    return candidates.sort((a, b) => (Number(b.savedAt) || 0) - (Number(a.savedAt) || 0))[0] || null;
+}
+
+function workspaceEntityExists(list, id) {
+    return !!id && Array.isArray(list) && list.some(item => item && item.id === id);
+}
+
+function restoreLastWorkspace() {
+    const lastView = state.view;
+    const lastWorldTab = state.lastWorldStudioTab;
+    const lastStudioTab = state.lastStudioTab;
+    const lastCompanionTab = state.lastCompanionStudioTab;
+    const lastWorldStudioId = state.lastWorldStudioId;
+    workspaceRestoring = true;
+    try {
+        if (lastView === 'worldPlay' && workspaceEntityExists(state.worlds, state.activeWorldId)) {
+            enterWorld(state.activeWorldId);
+            return;
+        }
+        if (lastView === 'worldStudio') {
+            const worldId = workspaceEntityExists(state.worlds, lastWorldStudioId)
+                ? lastWorldStudioId
+                : (workspaceEntityExists(state.worlds, state.activeWorldId) ? state.activeWorldId : null);
+            if (worldId) openWorldStudio(worldId, { tab: lastWorldTab || 'w-overview' });
+            else switchView('worlds');
+            return;
+        }
+        if (lastView === 'studio') {
+            const characterId = workspaceEntityExists(state.characters, state.editingCharId)
+                ? state.editingCharId : state.activeCharId;
+            if (workspaceEntityExists(state.characters, characterId)) {
+                state.activeCharId = characterId;
+                switchView('studio');
+                if (lastStudioTab) {
+                    document.querySelector(`#studio-view .studio-tab[data-tab="${lastStudioTab}"]`)?.click();
+                }
+            } else if (workspaceEntityExists(state.rooms, state.activeRoomId)) {
+                switchView('chat');
+            } else {
+                switchView('library');
+            }
+            return;
+        }
+        if (lastView === 'companionStudio') {
+            const companionId = workspaceEntityExists(state.companions, state.editingCompanionId)
+                ? state.editingCompanionId
+                : (workspaceEntityExists(state.companions, state.activeCompanionId) ? state.activeCompanionId : null);
+            if (companionId) state.editingCompanionId = companionId;
+            if (companionId) {
+                switchView('companionStudio');
+                if (lastCompanionTab) activateCompanionStudioTab(lastCompanionTab);
+            } else {
+                switchView('companions');
+            }
+            return;
+        }
+        if (lastView === 'chat') {
+            if (!workspaceEntityExists(state.characters, state.activeCharId)) state.activeCharId = null;
+            if (!workspaceEntityExists(state.rooms, state.activeRoomId)) state.activeRoomId = null;
+            if (state.activeCharId || state.activeRoomId) switchView('chat');
+            else switchView('library');
+            return;
+        }
+        if (lastView === 'companionChat') {
+            if (workspaceEntityExists(state.companions, state.activeCompanionId)) switchView('companionChat');
+            else switchView('companions');
+            return;
+        }
+        if (lastView === 'videoWorldStudio') {
+            const worldId = workspaceEntityExists(state.videoWorlds, state.editingVideoWorldId)
+                ? state.editingVideoWorldId : state.activeVideoWorldId;
+            if (workspaceEntityExists(state.videoWorlds, worldId)) {
+                state.editingVideoWorldId = worldId;
+                state.activeVideoWorldId = worldId;
+                switchView('videoWorldStudio');
+            } else {
+                switchView('videoWorlds');
+            }
+            return;
+        }
+        if (lastView === 'videoWorldPlay') {
+            if (workspaceEntityExists(state.videoWorlds, state.activeVideoWorldId)) switchView('videoWorldPlay');
+            else switchView('videoWorlds');
+            return;
+        }
+        if (lastView === 'multiplayerSession') {
+            switchView('multiplayer');
+            return;
+        }
+        if (lastView && views[lastView]) {
+            switchView(lastView);
+            return;
+        }
+        switchView('library');
+    } finally {
+        workspaceRestoring = false;
+        if (lastView === 'worldStudio') state.lastWorldStudioTab = lastWorldTab || state.lastWorldStudioTab;
+        if (lastView === 'studio') state.lastStudioTab = lastStudioTab || state.lastStudioTab;
+        if (lastView === 'companionStudio') state.lastCompanionStudioTab = lastCompanionTab || state.lastCompanionStudioTab;
+        persistWorkspaceSoon();
+    }
+}
+
 async function loadState() {
     await HordeDB.init();
     await HordeVectorMemory.init();
+    pendingWorkspaceState = await loadWorkspaceState();
+    applyWorkspaceState(pendingWorkspaceState);
     // Shipped worlds are authored against the same schema users migrate to.
     // Do this at startup (after the whole script has initialized) rather than
     // baking a second, divergent compatibility format into starter content.
@@ -3343,6 +3565,12 @@ async function loadState() {
         });
         if (changed) await saveState();
     }
+
+    // Library records load after the initial workspace snapshot. Reapply the
+    // small local snapshot only after validation and migrations have finished,
+    // so active IDs point at this freshly loaded library rather than getting
+    // overwritten by the regular persistence reads above.
+    applyWorkspaceState(pendingWorkspaceState);
 }
 
 let saveStateInFlight = null;
@@ -3403,6 +3631,7 @@ async function persistStateSnapshot() {
             worldRecoverySnapshots: state.worldRecoverySnapshots,
             worldInstances: state.worldInstances,
             activeWorldId: state.activeWorldId,
+            ...captureWorkspaceState(),
             videoWorlds: state.videoWorlds,
             videoWorldSessions: state.videoWorldSessions,
             activeVideoWorldId: state.activeVideoWorldId,
@@ -6171,9 +6400,15 @@ async function init() {
     });
     
     renderLibrary();
-    
-    switchView('library');
-    if (!hasApiCredentials() && !state.falApiKey) showGlobalSettings();
+
+    // Resume wherever the user last actually was, rather than always
+    // dropping back to the library on every refresh. worldPlay is a special
+    // case: its real setup (session, history, DM intro) lives in enterWorld,
+    // not in switchView itself, so it needs the dedicated entry point.
+    restoreLastWorkspace();
+    // Settings is a workspace pane. Do not cover the restored screen merely
+    // because a provider key is absent, users can open it when they are ready.
+    if (state.settingsOpen) showGlobalSettings();
     applyGlobalStyles();
     applyTheme();
     setupCustomizeModal();
@@ -6417,6 +6652,7 @@ function setupNavigation() {
 
 function switchView(viewName) {
     state.view = viewName;
+    persistWorkspaceSoon();
     
     // Update Nav Buttons
     const navParent = {
@@ -6809,6 +7045,8 @@ function setupStudioTabs() {
             tab.classList.add('active');
             const target = document.getElementById(`tab-${tab.dataset.tab}`);
             if (target) target.classList.remove('hidden');
+            state.lastStudioTab = tab.dataset.tab || null;
+            persistWorkspaceSoon();
         };
     });
     document.querySelectorAll('[data-chat-studio-target]').forEach(button => {
@@ -7248,14 +7486,21 @@ function createNewCharacter() {
         chatHud: normalizeChatHudConfig({})
     };
     loadStudioData();
-    document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    if (!workspaceRestoring) {
+        document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    }
 }
 
 function editCharacter(id) {
     const char = state.characters.find(c => c.id === id);
+    if (!char) return;
     state.editingChar = JSON.parse(JSON.stringify(char)); // Deep clone
+    state.editingCharId = char.id;
+    persistWorkspaceSoon();
     loadStudioData();
-    document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    if (!workspaceRestoring) {
+        document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    }
 }
 
 async function autoSaveStudioChanges() {
@@ -12346,6 +12591,8 @@ function activateSettingsSection(sectionId, options = {}) {
     const search = document.getElementById('settings-search-input');
     const validId = SETTINGS_SECTION_LABELS[sectionId] ? sectionId : 'models';
     activeSettingsSection = validId;
+    state.settingsSection = validId;
+    persistWorkspaceSoon();
     if (options.clearSearch !== false && search) search.value = '';
     if (content) content.classList.remove('is-searching');
     document.querySelectorAll('[data-settings-section]').forEach(section => {
@@ -13293,6 +13540,10 @@ function purgeAllData() {
 function showGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) {
+        state.settingsOpen = true;
+        state.settingsSection = SETTINGS_SECTION_LABELS[state.settingsSection]
+            ? state.settingsSection : activeSettingsSection;
+        persistWorkspaceSoon();
         modal.classList.remove('hidden');
         const settingsSearch = document.getElementById('settings-search-input');
         if (settingsSearch) settingsSearch.value = '';
@@ -13408,6 +13659,8 @@ function showGlobalSettings() {
 function hideGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) modal.classList.add('hidden');
+    state.settingsOpen = false;
+    persistWorkspaceSoon();
 }
 
 // --- Feedback ---
@@ -14337,12 +14590,65 @@ function createNewWorld() {
     document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
 }
 
+const SIDECAR_PIPELINE_DISABLED_MESSAGE = "disabled because the current state pipeline doesn't utilise this feature";
+
+function worldUsesSidecarPipeline(world = state.editingWorld) {
+    return window.HordeSidecarMode?.normalizeWorldConfig?.(world)?.mode === 'sidecar';
+}
+
+// Sidecar is deliberately visible in Studio before migration: authors should
+// be able to discover what the new pipeline unlocks.  It must not, however,
+// look editable while Inline Legacy still owns state, otherwise a world can be
+// configured with mechanics that its active turn pipeline will never consume.
+function setSidecarStudioFeatureAvailability(world = state.editingWorld) {
+    const sidecarActive = worldUsesSidecarPipeline(world);
+    document.querySelectorAll('[data-sidecar-feature]').forEach(feature => {
+        const unavailable = !sidecarActive;
+        feature.classList.toggle('sidecar-feature-disabled', unavailable);
+        feature.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
+        if (unavailable) {
+            feature.setAttribute('title', SIDECAR_PIPELINE_DISABLED_MESSAGE);
+        } else if (feature.getAttribute('title') === SIDECAR_PIPELINE_DISABLED_MESSAGE) {
+            feature.removeAttribute('title');
+        }
+    });
+}
+
+function renderWorldOverviewSidecarMigration(world = state.editingWorld) {
+    const host = document.getElementById('w-overview-sidecar-migration');
+    if (!host) return;
+    const inlineLegacy = !!world && !worldUsesSidecarPipeline(world);
+    host.classList.toggle('hidden', !inlineLegacy);
+    if (!inlineLegacy) {
+        host.innerHTML = '';
+        return;
+    }
+    const sessions = state.worldInstances?.[world.id]?.sessions || [];
+    const timelineLabel = sessions.length
+        ? `${sessions.length} existing timeline${sessions.length === 1 ? '' : 's'} will be reviewed before migration.`
+        : 'This world has no timeline yet, so the wizard will simply enable Sidecar for its first session.';
+    host.innerHTML = `
+        <div class="world-overview-sidecar-migration-head">
+            <div>
+                <span class="vh-eyebrow">STATE PIPELINE</span>
+                <h3>This world is using Inline Legacy</h3>
+                <p>Move this world to Sidecar before authoring Sidecar-only travel, vehicle, and reconciliation features. The migration wizard creates a recoverable backup and retains raw roleplay and canonical records. ${escapeHTML(timelineLabel)}</p>
+            </div>
+            <button id="w-overview-sidecar-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button>
+        </div>`;
+    document.getElementById('w-overview-sidecar-migrate-btn')?.addEventListener('click', () => openSidecarMigrationWizard(world.id));
+}
+
 function setupWorldStudioTabs() {
     const tabs = document.querySelectorAll('.world-studio-tab');
     const panels = document.querySelectorAll('#world-studio-view .studio-panel');
 
     tabs.forEach(tab => {
         tab.onclick = () => {
+            if (tab.classList.contains('sidecar-feature-disabled')) {
+                showToast('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
+                return;
+            }
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             const target = tab.dataset.tab;
@@ -14358,6 +14664,8 @@ function setupWorldStudioTabs() {
             // makes a perfectly editable starter look read-only. Build only the
             // panel the author actually opens.
             renderWorldStudioPanel(target);
+            state.lastWorldStudioTab = target;
+            persistWorkspaceSoon();
         };
     });
     document.querySelectorAll('[data-world-studio-target]').forEach(button => {
@@ -14368,6 +14676,7 @@ function setupWorldStudioTabs() {
 function renderWorldStudioPanel(target) {
     if (!state.editingWorld) return;
     const renderers = {
+        'w-overview': () => renderWorldOverviewSidecarMigration(state.editingWorld),
         'w-visuals': renderWorldVisuals,
         'w-locations': renderWorldLocations,
         'w-entities': renderWorldEntities,
@@ -14376,12 +14685,34 @@ function renderWorldStudioPanel(target) {
         'w-factions': renderWorldFactions,
         'w-sandbox': renderWorldSandboxStudio,
         'w-lore': renderWorldLore,
-        'w-visual-map': renderWorldArchitectMap
+        'w-visual-map': renderWorldArchitectMap,
+        'w-ai': () => renderWorldSidecarConfigEditor(state.editingWorld)
     };
     if (renderers[target]) renderers[target]();
+    setSidecarStudioFeatureAvailability(state.editingWorld);
 }
 
 function setupWorldStudioLogic() {
+
+    // Do not merely make Sidecar controls look inactive: prevent pointer and
+    // keyboard changes while Inline Legacy is the selected pipeline.  The
+    // migration card and pipeline selector are intentionally outside these
+    // marked surfaces so an author always has a clear route forward.
+    if (!document.body.dataset.sidecarFeatureGuard) {
+        const blockUnavailableSidecarFeature = event => {
+            const feature = event.target instanceof Element
+                ? event.target.closest('[data-sidecar-feature].sidecar-feature-disabled')
+                : null;
+            if (!feature) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (event.type === 'click') showToast('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
+        };
+        document.addEventListener('click', blockUnavailableSidecarFeature, true);
+        document.addEventListener('pointerdown', blockUnavailableSidecarFeature, true);
+        document.addEventListener('keydown', blockUnavailableSidecarFeature, true);
+        document.body.dataset.sidecarFeatureGuard = 'true';
+    }
 
     const recordOverlay = document.getElementById('world-record-overlay');
     document.getElementById('world-record-close').onclick = closeWorldRecordInspector;
@@ -14487,6 +14818,8 @@ function setupWorldStudioLogic() {
         if (!config) return;
         config.mode = event.target.value === 'sidecar' ? 'sidecar' : 'inline_legacy';
         renderWorldSidecarConfigEditor(state.editingWorld);
+        renderWorldOverviewSidecarMigration(state.editingWorld);
+        setSidecarStudioFeatureAvailability(state.editingWorld);
     };
     document.getElementById('w-sidecar-inherit-narrator').onchange = event => {
         if (!state.editingWorld) return;
@@ -14818,31 +15151,45 @@ function renderWorldSidecarConfigEditor(world) {
     if (migrate) {
         const sessions = state.worldInstances?.[world.id]?.sessions || [];
         const inlineSessions = sessions.filter(session => window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
-        migrate.classList.toggle('hidden', !inlineSessions.length);
-        migrate.textContent = config.mode === 'sidecar' ? 'Review & migrate Inline timelines' : 'Review & migrate this world';
-        migrate.onclick = async () => {
-            openSidecarMigrationWizard(world.id);
-        };
+        migrate.classList.remove('hidden');
+        migrate.disabled = false;
+        if (!sessions.length && config.mode !== 'sidecar') migrate.textContent = 'Enable Sidecar for this world';
+        else if (inlineSessions.length) migrate.textContent = config.mode === 'sidecar' ? 'Review & migrate Inline timelines' : 'Review & migrate this world';
+        else migrate.textContent = 'Review Sidecar migration';
+        migrate.onclick = () => openSidecarMigrationWizard(world.id);
     }
     const report = document.getElementById('w-sidecar-migration-report');
     if (report) {
         const sessions = state.worldInstances?.[world.id]?.sessions || [];
+        const inlineSessions = sessions.filter(session => window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
         const migrations = sessions.map(session => session.sidecar?.migration).filter(Boolean);
         const warnings = migrations.flatMap(migration => migration.warnings || []);
-        report.innerHTML = migrations.length
-            ? `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${escapeHTML(warnings.join(' · '))}</span>` : ''}`
-            : (sessions.length ? `<strong>Migration readiness:</strong> ${sessions.length} timeline${sessions.length === 1 ? '' : 's'} will be analysed and backed up on save.` : 'Migration applies only when this world has existing timelines.');
+        if (migrations.length) {
+            report.innerHTML = `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${escapeHTML(warnings.join(' · '))}</span>` : ''}`;
+        } else if (inlineSessions.length) {
+            report.innerHTML = `<strong>Migration readiness:</strong> ${inlineSessions.length} Inline timeline${inlineSessions.length === 1 ? '' : 's'} can be backed up and switched to Sidecar without rewriting raw history.`;
+        } else if (sessions.length) {
+            report.innerHTML = '<strong>Migration readiness:</strong> every existing timeline is already on Sidecar.';
+        } else if (config.mode === 'sidecar') {
+            report.innerHTML = 'This world is already set to Sidecar. New play sessions will use the Sidecar pipeline.';
+        } else {
+            report.innerHTML = 'This world is still on Inline Legacy. Enable Sidecar here to switch the world; existing play sessions, if any, stay Inline until you migrate them.';
+        }
     }
     initializeOpenRouterRoutingPanel('sidecar');
+    renderWorldOverviewSidecarMigration(world);
+    setSidecarStudioFeatureAvailability(world);
 }
 
-function openWorldStudio(worldId = null) {
+function openWorldStudio(worldId = null, options = {}) {
     if (worldId) {
         const world = state.worlds.find(w => w.id === worldId);
         if (!world) return;
         // Proposals belong to the world they were generated for.
         if (calibrationPassState && calibrationPassState.worldId !== worldId) calibrationPassState = null;
         state.editingWorld = JSON.parse(JSON.stringify(world));
+        state.lastWorldStudioId = worldId;
+        persistWorkspaceSoon();
     }
 
     const w = state.editingWorld;
@@ -14924,7 +15271,10 @@ function openWorldStudio(worldId = null) {
     updateWorldTokenCount();
     switchView('worldStudio');
 
-    if (worldId) document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
+    const preferredTab = options.tab
+        || (workspaceRestoring ? state.lastWorldStudioTab : null)
+        || (worldId ? 'w-overview' : null);
+    if (preferredTab) document.querySelector(`.world-studio-tab[data-tab="${preferredTab}"]`)?.click();
 
     // Preserve the selected authoring tab, but hydrate only that tab. Basics,
     // AI Config, HUD and notes are plain controls already populated above.
@@ -14984,6 +15334,7 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
         const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         return protocol?.mode !== 'sidecar';
     });
+    const alreadySidecar = world.sidecarConfig?.mode === 'sidecar';
     list.innerHTML = inline.length ? inline.map(sess => {
         const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         const warnings = [
@@ -14992,8 +15343,17 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
             (sess.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length) ? 'rejected legacy proposals' : ''
         ].filter(Boolean);
         return `<label class="world-migration-card" style="display:flex; align-items:flex-start; gap:10px; padding:10px; cursor:pointer;"><input type="checkbox" class="sidecar-migration-session" data-session-id="${escapeHTML(sess.id)}" checked><span style="flex:1;"><strong>${escapeHTML(sess.name || sess.id)}</strong><small style="display:block; color:var(--text-3);">${sess.history?.length || 0} messages · ${sess.worldTurnReceipts?.length || 0} receipts · ${protocol?.mode === 'sidecar' ? 'already Sidecar' : 'Inline Legacy'}${warnings.length ? ` · <span style="color:var(--warning)">${escapeHTML(warnings.join(', '))}</span>` : ''}</small></span></label>`;
-    }).join('') : '<div class="form-hint">No Inline Legacy timelines are waiting for migration.</div>';
-    status.textContent = inline.length ? `${inline.length} timeline${inline.length === 1 ? '' : 's'} available. Select the timelines to migrate.` : 'The world is already fully migrated.';
+    }).join('') : (sessions.length
+        ? '<div class="form-hint">No Inline Legacy timelines are waiting for migration.</div>'
+        : `<div class="form-hint">${alreadySidecar ? 'This world is already set to Sidecar. New play sessions will use the Sidecar pipeline.' : 'This world has no play sessions yet. Enabling Sidecar switches the world so the next session uses the new pipeline.'}</div>`);
+    status.textContent = inline.length
+        ? `${inline.length} timeline${inline.length === 1 ? '' : 's'} available. Select the timelines to migrate.`
+        : (sessions.length ? 'Every existing timeline is already on Sidecar.' : (alreadySidecar ? 'The world is already on Sidecar.' : 'No timelines to migrate. You can still enable Sidecar for this world.'));
+    const runBtn = document.getElementById('run-sidecar-migration-btn');
+    if (runBtn) {
+        runBtn.disabled = alreadySidecar && !inline.length;
+        runBtn.textContent = inline.length ? 'Back up & migrate selected' : 'Back up & enable Sidecar';
+    }
     overlay.classList.remove('hidden');
     const close = () => overlay.classList.add('hidden');
     document.getElementById('close-sidecar-migration-wizard-btn').onclick = close;
@@ -15005,21 +15365,27 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
     };
     document.getElementById('run-sidecar-migration-btn').onclick = async () => {
         const selectedIds = [...list.querySelectorAll('.sidecar-migration-session:checked')].map(box => box.dataset.sessionId);
-        if (!selectedIds.length) return showToast('Select at least one Inline timeline to migrate.', 'info');
-        const selectedSessions = sessions.filter(sess => selectedIds.includes(String(sess.id)));
+        if (inline.length && !selectedIds.length) return showToast('Select at least one Inline timeline to migrate.', 'info');
+        if (!inline.length && world.sidecarConfig?.mode === 'sidecar') return showToast('This world is already on Sidecar.', 'info');
         const backupList = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
-        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: safeJsonClone(world), runtime: safeJsonClone(state.worldInstances?.[world.id] || null), note: 'Selected-timeline migration backup.' });
+        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: safeJsonClone(world), runtime: safeJsonClone(state.worldInstances?.[world.id] || null), note: inline.length ? 'Selected-timeline migration backup.' : 'World-level Sidecar enablement backup.' });
         world.sidecarMigrationBackups = backupList.slice(-5);
-        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } });
-        const reports = migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds });
+        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } }) || { ...(world.sidecarConfig || {}), mode: 'sidecar' };
+        const reports = inline.length ? migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds }) : [];
         const index = state.worlds.findIndex(item => item.id === world.id);
         if (index >= 0) state.worlds[index] = safeJsonClone(world);
-        if (state.editingWorld?.id === world.id) state.editingWorld = safeJsonClone(world);
+        if (state.editingWorld?.id === world.id) {
+            state.editingWorld = safeJsonClone(world);
+            const modeSelect = document.getElementById('w-sidecar-mode');
+            if (modeSelect) modeSelect.value = 'sidecar';
+        }
         await saveState();
         close();
         renderWorlds();
         if (state.editingWorld?.id === world.id) { renderWorldSidecarConfigEditor(state.editingWorld); }
-        showToast(`Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`, 'success');
+        showToast(reports.length
+            ? `Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`
+            : 'Sidecar enabled for this world.', 'success');
     };
 }
 
@@ -18798,10 +19164,20 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
     container.appendChild(directory);
 }
 
+function ensureWorldTraversalConfig(world) {
+    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world);
+    if (config) return config;
+    if (!world.traversalConfig || typeof world.traversalConfig !== 'object') {
+        world.traversalConfig = { schemaVersion: 1, methods: [] };
+    }
+    if (!Array.isArray(world.traversalConfig.methods)) world.traversalConfig.methods = [];
+    return world.traversalConfig;
+}
+
 function addWorldTraversalMethod() {
     const world = state.editingWorld;
     if (!world) return;
-    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world) || (world.traversalConfig = { schemaVersion: 1, methods: [] });
+    const config = ensureWorldTraversalConfig(world);
     config.methods.push({
         id: `traversal_${Date.now().toString(36)}`,
         name: 'New traversal method', enabled: true, coverageType: 'point_to_point',
@@ -18816,7 +19192,7 @@ function renderWorldTravel() {
     const methodsHost = document.getElementById('w-traversal-methods-list');
     const vehiclesHost = document.getElementById('w-vehicles-list');
     const journeysHost = document.getElementById('w-journeys-list');
-    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world) || { methods: [] };
+    const config = ensureWorldTraversalConfig(world);
     const locations = Array.isArray(world.locations) ? world.locations : [];
     const locationName = id => locations.find(location => location.id === id)?.name || id || '—';
     const lines = value => String(value || '').split('\n').map(item => item.trim()).filter(Boolean);
@@ -45421,8 +45797,9 @@ function renderIncludedHumansCatalog() {
 
 function openCompanionStudio(id) {
     state.editingCompanionId = id;
+    persistWorkspaceSoon();
     renderCompanionStudioForm();
-    activateCompanionStudioTab('cs-overview');
+    activateCompanionStudioTab((workspaceRestoring && state.lastCompanionStudioTab) || 'cs-overview');
 }
 
 function resetNewCompanionStudioState() {
@@ -45508,6 +45885,8 @@ function setupCompanionStudioTabs() {
 }
 
 function activateCompanionStudioTab(tabName) {
+    state.lastCompanionStudioTab = tabName || null;
+    persistWorkspaceSoon();
     document.querySelectorAll('.companion-studio-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
     });

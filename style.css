@@ -8905,6 +8905,30 @@ label[data-help] > span:first-child::after,
 .creator-overview-card > strong { font: 700 1.08rem/1.2 'Outfit', sans-serif; }
 .creator-overview-card > small { color: var(--text-2); font-size: .84rem; line-height: 1.55; }
 .creator-overview-card.primary { border-color: color-mix(in srgb, var(--accent) 46%, var(--border)); box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 8%, transparent); }
+.world-overview-sidecar-migration {
+    max-width: 1120px;
+    margin-top: 18px;
+    padding: 22px;
+    border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+    border-radius: 18px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 11%, var(--surface)), var(--surface2));
+    box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.world-overview-sidecar-migration-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
+.world-overview-sidecar-migration h3 { margin:4px 0 7px; font-size:1.12rem; }
+.world-overview-sidecar-migration p { max-width:780px; margin:0; color:var(--text-2); line-height:1.55; }
+.world-overview-sidecar-migration .btn { flex:0 0 auto; white-space:nowrap; }
+.sidecar-feature-disabled {
+    opacity: .42;
+    filter: grayscale(.72);
+    cursor: not-allowed !important;
+}
+.sidecar-feature-disabled :is(button, input, select, textarea, a) { cursor: not-allowed !important; }
+.world-studio-tab.sidecar-feature-disabled { color:var(--text-3); }
+@media (max-width: 760px) {
+    .world-overview-sidecar-migration-head { flex-direction:column; }
+    .world-overview-sidecar-migration .btn { width:100%; }
+}
 .creator-advanced-card {
     grid-column: 1 / -1;
     border: 1px solid var(--border);
