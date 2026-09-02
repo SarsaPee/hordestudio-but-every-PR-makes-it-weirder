@@ -3915,7 +3915,12 @@
                         </div>
                         <div class="form-row" style="margin-top:10px;">
                             <div class="form-col"><label class="form-label">Background jobs</label><input id="global-consolidation-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="6"></div>
+                            <div class="form-col"><label class="form-label">Per-provider jobs</label><input id="global-background-provider-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="2"></div>
                             <div class="form-col"><label class="form-label">Embedding cache entries</label><input id="global-embedding-cache-limit" type="number" class="form-input" min="100" max="100000" step="100" value="10000"></div>
+                        </div>
+                        <div class="form-row" style="margin-top:10px;">
+                            <div class="form-col"><label class="form-label">Pressure watch threshold</label><input id="global-context-pressure-watch" type="number" class="form-input" min="1" max="98" value="45"></div>
+                            <div class="form-col"><label class="form-label">Pressure refresh threshold</label><input id="global-context-pressure-refresh" type="number" class="form-input" min="2" max="100" value="70"></div>
                         </div>
                         <p class="form-hint">These are global defaults inherited by Sidecar Episode, cognition, and location jobs. Raw turns stay available; the verbatim window is only the recent window injected alongside summaries.</p>
                         <label class="form-label" style="margin-top:12px;">Separate Embedding Server URL (optional)</label>
@@ -4054,11 +4059,14 @@
                         <summary>Additional roleplay notes</summary>
                         <div style="display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap;">
                             <button id="persona-generate-btn" class="btn btn-ghost" type="button">✨ Generate from current world</button>
+                            <select id="persona-generation-provider" class="form-select" style="width:150px;">
+                                <option value="inherit">Global provider</option><option value="openrouter">OpenRouter</option><option value="gptproto">GPTProto</option><option value="nanogpt">NanoGPT</option><option value="nvidia">NVIDIA</option><option value="bedrock">AWS Mantle</option><option value="custom">Custom</option><option value="local">Local</option>
+                            </select>
                             <input id="persona-generation-model" class="form-input" style="flex:1; min-width:180px;" placeholder="Use global narrator model">
                             <input id="persona-generation-max-tokens" class="form-input" style="width:120px;" type="number" min="500" max="5000" step="100" value="5000" title="Maximum persona draft tokens">
                             <label class="vh-test-check" style="white-space:nowrap;"><input id="persona-generation-reasoning" type="checkbox"> Low reasoning</label>
                         </div>
-                        <div id="persona-generation-status" class="form-hint" style="margin-top:6px;" aria-live="polite">Provider and routing inherit from global Settings; model and budget may be overridden here.</div>
+                        <div id="persona-generation-status" class="form-hint" style="margin-top:6px;" aria-live="polite">Provider may inherit global Settings or use a dedicated provider; model and budget may be overridden here.</div>
                         <textarea id="persona-desc" class="form-textarea" style="min-height:140px; resize:vertical; margin-top:12px;" placeholder="Voice, history, preferences or other details that should inform play..."></textarea>
                     </details>
 

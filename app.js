@@ -1800,6 +1800,9 @@ let state = {
         episodeCadenceTurns: 5,
         verbatimTurnWindow: 5,
         consolidationConcurrency: 6,
+        backgroundProviderConcurrency: 2,
+        contextPressureWatchThreshold: 45,
+        contextPressureRefreshThreshold: 70,
         embeddingCacheLimit: 10000,
         localGenerationTimeoutSeconds: 300,
         cloudGenerationTimeoutSeconds: 45,
@@ -2527,6 +2530,9 @@ function repairLoadedState() {
     state.globalSettings.episodeCadenceTurns = Math.max(1, Math.min(50, Math.round(Number(state.globalSettings.episodeCadenceTurns) || 5)));
     state.globalSettings.verbatimTurnWindow = Math.max(0, Math.min(30, Math.round(Number(state.globalSettings.verbatimTurnWindow) || 5)));
     state.globalSettings.consolidationConcurrency = Math.max(1, Math.min(12, Math.round(Number(state.globalSettings.consolidationConcurrency) || 6)));
+    state.globalSettings.backgroundProviderConcurrency = Math.max(1, Math.min(12, Math.round(Number(state.globalSettings.backgroundProviderConcurrency) || 2)));
+    state.globalSettings.contextPressureWatchThreshold = Math.max(1, Math.min(98, Math.round(Number(state.globalSettings.contextPressureWatchThreshold) || 45)));
+    state.globalSettings.contextPressureRefreshThreshold = Math.max(state.globalSettings.contextPressureWatchThreshold + 1, Math.min(100, Math.round(Number(state.globalSettings.contextPressureRefreshThreshold) || 70)));
     state.globalSettings.embeddingCacheLimit = Math.max(100, Math.min(100000, Math.round(Number(state.globalSettings.embeddingCacheLimit) || 10000)));
     const timeoutSeconds = Number(state.globalSettings.localGenerationTimeoutSeconds);
     state.globalSettings.localGenerationTimeoutSeconds = Number.isFinite(timeoutSeconds)
@@ -2763,6 +2769,9 @@ async function loadState() {
         if (state.globalSettings.episodeCadenceTurns === undefined) state.globalSettings.episodeCadenceTurns = 5;
         if (state.globalSettings.verbatimTurnWindow === undefined) state.globalSettings.verbatimTurnWindow = 5;
         if (state.globalSettings.consolidationConcurrency === undefined) state.globalSettings.consolidationConcurrency = 6;
+        if (state.globalSettings.backgroundProviderConcurrency === undefined) state.globalSettings.backgroundProviderConcurrency = 2;
+        if (state.globalSettings.contextPressureWatchThreshold === undefined) state.globalSettings.contextPressureWatchThreshold = 45;
+        if (state.globalSettings.contextPressureRefreshThreshold === undefined) state.globalSettings.contextPressureRefreshThreshold = 70;
         if (state.globalSettings.embeddingCacheLimit === undefined) state.globalSettings.embeddingCacheLimit = 10000;
         // Remember-key opt-in: default ON for users who already had a stored key
         // (preserves their existing behavior), OFF for everyone else.
@@ -10658,6 +10667,21 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const memoryGraph = window.HordeSidecarMemoryGraph?.graph(protocol);
     const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
     const accessibleVehicles = window.HordeSidecarTraversal?.accessibleVehicles(world, hierarchy?.sequence?.controlledEntityId || 'player') || [];
+    const activeSceneTurns = protocol?.turns?.filter(turn => turn.sceneId === hierarchy?.scene?.id).length || 0;
+    const activeSequenceTurns = protocol?.turns?.filter(turn => turn.sequenceId === hierarchy?.sequence?.id).length || 0;
+    const openQuestionRecords = (protocol?.questions || []).filter(question => question.status === 'open');
+    const canonicalChars = JSON.stringify({ frame, clock, traversal: traversalState?.journeys || [], entityStates: sess.entityStates || {} }).length;
+    const retrievedMemoryCount = Number(protocol?.lastRetrievalCount) || 0;
+    const pressureFactors = {
+        activeCast: frame.present_character_ids?.length || 0,
+        blockingQuestions: openQuestionRecords.filter(question => question.blocking === true || question.pressure === 'high').length,
+        retrievedMemoryCount,
+        canonicalChars,
+        sceneChars,
+        sequenceTurns: activeSequenceTurns,
+        reconciliationFriction: (protocol?.audits || []).filter(audit => Array.isArray(audit.rejected) && audit.rejected.length).length,
+        sourceRetirement: (protocol?.turns || []).filter(turn => turn.status === 'superseded').length
+    };
     return {
         version: 1,
         generatedAt: new Date().toISOString(),
@@ -10712,7 +10736,12 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         })),
         contextPressure: window.HordeSidecarTimeline?.contextPressure(protocol, sess, {
             historyCount: sess.history?.length || 0,
-            contextRatio
+            contextRatio,
+            factors: pressureFactors,
+            thresholds: {
+                watch: state.globalSettings?.contextPressureWatchThreshold,
+                refresh: state.globalSettings?.contextPressureRefreshThreshold
+            }
         }) || null
     };
 }
@@ -10737,9 +10766,47 @@ function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) 
         evidence: String(evidence).slice(0, 4000), createdTurn: Math.max(1, Number(sess.turnCount) || 1),
         attempts: 0, dependencies: Array.isArray(options.dependencies) ? options.dependencies.slice(0, 12) : [],
         pressure: ['low', 'medium', 'high'].includes(options.pressure) ? options.pressure : 'low',
-        resolutionType: '', provenance: { source: options.source || 'sidecar' }, createdAt: new Date().toISOString()
+        priority: ['low', 'medium', 'high'].includes(options.priority) ? options.priority : (['low', 'medium', 'high'].includes(options.pressure) ? options.pressure : 'low'),
+        blocking: options.blocking === true,
+        scope: options.scope || 'world', relevance: options.relevance || 'active_scene',
+        sceneId: options.sceneId || protocol.activeSceneId || '', sequenceId: options.sequenceId || protocol.activeSequenceId || '',
+        revisionId: options.revisionId || '', resolutionType: '',
+        attemptHistory: [], priorityHistory: [], answerProvenance: [], evidenceInspected: [], repairCallHistory: [], targetTransferHistory: [], finalResolution: null,
+        provenance: { source: options.source || 'sidecar', ...(isPlainObject(options.provenance) ? options.provenance : {}) }, createdAt: new Date().toISOString()
     };
     protocol.questions.push(question);
+    return question;
+}
+
+function recordSidecarQuestionAttempt(world, sess, questionId, attempt = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const question = protocol?.questions?.find(item => item.id === questionId);
+    if (!question) return null;
+    question.attempts = (Number(question.attempts) || 0) + 1;
+    if (!Array.isArray(question.attemptHistory)) question.attemptHistory = [];
+    question.attemptHistory.push({ at: new Date().toISOString(), ...safeJsonClone(attempt) });
+    question.attemptHistory = question.attemptHistory.slice(-20);
+    return question;
+}
+
+function updateSidecarQuestion(world, sess, questionId, patch = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const question = protocol?.questions?.find(item => item.id === questionId);
+    if (!question) return null;
+    if (patch.priority && ['low', 'medium', 'high'].includes(patch.priority) && patch.priority !== question.priority) {
+        if (!Array.isArray(question.priorityHistory)) question.priorityHistory = [];
+        question.priorityHistory.push({ from: question.priority, to: patch.priority, at: new Date().toISOString(), reason: String(patch.priorityReason || '').slice(0, 500), provenance: patch.priorityProvenance || 'sidecar' });
+        question.priority = patch.priority;
+        question.pressure = patch.priority;
+    }
+    if (typeof patch.blocking === 'boolean') question.blocking = patch.blocking;
+    if (patch.relevance) question.relevance = String(patch.relevance).slice(0, 120);
+    if (Array.isArray(patch.evidenceInspected)) question.evidenceInspected = patch.evidenceInspected.slice(-20);
+    if (patch.status && ['open', 'resolved', 'deferred', 'expired', 'superseded'].includes(patch.status)) question.status = patch.status;
+    if (patch.resolutionType) question.resolutionType = String(patch.resolutionType).slice(0, 120);
+    if (patch.answer != null) question.answer = String(patch.answer).slice(0, 3000);
+    if (patch.provenance) question.answerProvenance = [...(question.answerProvenance || []), safeJsonClone(patch.provenance)].slice(-20);
+    if (question.status !== 'open') { question.resolvedAt = question.resolvedAt || new Date().toISOString(); question.finalResolution = { status: question.status, resolutionType: question.resolutionType, answer: question.answer || '', at: question.resolvedAt }; }
     return question;
 }
 
@@ -10960,16 +11027,37 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
     if (!graph) return;
     const startMemoryEpoch = Number(sess._memEpoch) || 0;
     const memoryDefaults = state.globalSettings || {};
-    window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: Number(memoryDefaults.episodeChunkTurns) || 5, cadenceTurns: Number(memoryDefaults.episodeCadenceTurns) || 5 });
-    const runnable = (protocol.jobs || []).filter(job => ['episode_consolidation', 'scene_consolidation', 'sequence_consolidation', 'cognition_consolidation'].includes(job.type) && job.status === 'queued'
-        && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now())).slice(0, Math.max(1, Math.min(12, Number(memoryDefaults.consolidationConcurrency) || 6)));
-    if (!runnable.length) return;
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
     const model = tracker.inheritNarrator !== false || !tracker.model
         ? (state.globalSettings?.consolidationModel || world.model || state.globalSettings.defaultModel)
         : tracker.model;
-    await Promise.all(runnable.map(async job => {
+    window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: Number(memoryDefaults.episodeChunkTurns) || 5, cadenceTurns: Number(memoryDefaults.episodeCadenceTurns) || 5 });
+    const providerLimit = Math.max(1, Math.min(12, Number(memoryDefaults.backgroundProviderConcurrency) || 2));
+    const overallLimit = Math.max(1, Math.min(12, Number(memoryDefaults.consolidationConcurrency) || 6));
+    const queuedJobs = (protocol.jobs || []).filter(job => ['episode_consolidation', 'scene_consolidation', 'sequence_consolidation', 'cognition_consolidation'].includes(job.type) && ['queued', 'dependency_waiting'].includes(job.status)
+        && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now()));
+    const completedIds = new Set((protocol.jobs || []).filter(job => job.status === 'completed').map(job => job.id));
+    queuedJobs.forEach(job => {
+        const deps = Array.isArray(job.dependencies) ? job.dependencies : [];
+        if (deps.some(dep => !completedIds.has(dep) && !(protocol.jobs || []).some(candidate => candidate.id === dep && candidate.status === 'completed'))) {
+            job.status = 'dependency_waiting'; job.waitingSince = job.waitingSince || new Date().toISOString();
+        } else if (job.status === 'dependency_waiting') job.status = 'queued';
+        job.provider = job.provider || state.globalSettings?.apiProvider || 'openrouter';
+        job.model = job.model || state.globalSettings?.consolidationModel || model;
+    });
+    const runnable = queuedJobs.filter(job => job.status === 'queued').slice(0, overallLimit);
+    if (!runnable.length) return;
+    const providerCounts = {};
+    const scheduled = runnable.filter(job => {
+        const key = `${job.provider || 'default'}::${job.model || model}`;
+        providerCounts[key] = providerCounts[key] || 0;
+        if (providerCounts[key] >= providerLimit) return false;
+        providerCounts[key]++;
+        job.dispatch = { provider: job.provider || 'default', model: job.model || model, scheduledAt: new Date().toISOString(), foreground: false };
+        return true;
+    });
+    await Promise.all(scheduled.map(async job => {
         job.status = 'running'; job.startedAt = new Date().toISOString();
         if (job.type === 'cognition_consolidation') {
             const episode = (graph.episodes || []).find(record => record.id === job.episodeId && record.status === 'active');
@@ -11147,13 +11235,20 @@ function renderSidecarConversation(world, sess) {
     panel.classList.toggle('hidden', !enabled);
     if (!enabled) return;
     const entries = (protocol?.conversations || []).slice(-80);
+    const questionCards = (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-20).map(question => `
+        <details style="margin:0 0 8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.03);">
+            <summary style="cursor:pointer; font-size:.72rem; color:var(--warning);">Open question · ${escapeHTML(question.id)} · ${escapeHTML(question.priority || question.pressure || 'low')}${question.blocking ? ' · blocking' : ''}</summary>
+            <div style="font-size:.78rem; color:var(--text-2); margin-top:6px; white-space:pre-wrap;">${escapeHTML(question.prompt || '')}</div>
+            <div style="font-size:.68rem; color:var(--text-3); margin-top:5px;">Origin: ${escapeHTML(question.origin || '')} · Target: ${escapeHTML(question.target || '')} · Attempts: ${Number(question.attempts) || 0} · Relevance: ${escapeHTML(question.relevance || 'active_scene')}</div>
+            ${question.evidence ? `<div style="font-size:.68rem; color:var(--text-3); margin-top:4px;">Evidence: ${escapeHTML(question.evidence.slice(0, 600))}</div>` : ''}
+        </details>`).join('');
     const proposalCards = (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved', 'sidecar_reviewed'].includes(proposal.status)).slice(-12).map(proposal => `
         <div style="margin:0 0 9px; padding:9px; border-radius:7px; background:rgba(255,180,70,.08); border:1px solid var(--border);">
             <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${escapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : proposal.status === 'sidecar_reviewed' ? `Sidecar reviewed · ${proposal.reviewOutcome || 'no automatic commit'}` : 'awaiting review')}</div>
             <div style="font-size:.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML((proposal.summary || []).join('\n') || 'No readable proposal summary.')}</div>
             <div style="display:flex; gap:6px; margin-top:7px; flex-wrap:wrap;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}${proposal.status !== 'sidecar_reviewed' ? `<button class="tool-btn sidecar-proposal-revise" data-proposal-id="${escapeHTML(proposal.id)}">Refine proposal</button><button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button>` : ''}</div>
         </div>`).join('');
-    log.innerHTML = proposalCards + entries.map(entry => {
+    log.innerHTML = questionCards + proposalCards + entries.map(entry => {
         const author = entry.role === 'user';
         return `<div style="margin:0 0 9px; padding:8px 9px; border-radius:7px; background:${author ? 'var(--surface)' : 'rgba(108, 92, 231, 0.12)'}; border-left:3px solid ${author ? 'var(--accent)' : '#6c5ce7'};">
             <div style="font-size:0.66rem; color:var(--text-3); font-weight:800; text-transform:uppercase; margin-bottom:3px;">${author ? 'Author → Sidecar' : 'Sidecar'}</div>
@@ -12395,6 +12490,9 @@ function setupGlobalSettings() {
         state.globalSettings.episodeCadenceTurns = Math.max(1, Math.min(50, parseInt(document.getElementById('global-episode-cadence-turns').value, 10) || 5));
         state.globalSettings.verbatimTurnWindow = Math.max(0, Math.min(30, parseInt(document.getElementById('global-verbatim-turn-window').value, 10) || 0));
         state.globalSettings.consolidationConcurrency = Math.max(1, Math.min(12, parseInt(document.getElementById('global-consolidation-concurrency').value, 10) || 6));
+        state.globalSettings.backgroundProviderConcurrency = Math.max(1, Math.min(12, parseInt(document.getElementById('global-background-provider-concurrency')?.value, 10) || 2));
+        state.globalSettings.contextPressureWatchThreshold = Math.max(1, Math.min(98, parseInt(document.getElementById('global-context-pressure-watch')?.value, 10) || 45));
+        state.globalSettings.contextPressureRefreshThreshold = Math.max(state.globalSettings.contextPressureWatchThreshold + 1, Math.min(100, parseInt(document.getElementById('global-context-pressure-refresh')?.value, 10) || 70));
         state.globalSettings.embeddingCacheLimit = Math.max(100, Math.min(100000, parseInt(document.getElementById('global-embedding-cache-limit').value, 10) || 10000));
         state.globalSettings.rememberApiKey = document.getElementById('remember-api-key').checked;
         state.globalSettings.slopStripper = document.getElementById('global-slop-stripper').checked;
@@ -13136,6 +13234,9 @@ function showGlobalSettings() {
         document.getElementById('global-episode-cadence-turns').value = state.globalSettings.episodeCadenceTurns || 5;
         document.getElementById('global-verbatim-turn-window').value = state.globalSettings.verbatimTurnWindow ?? 5;
         document.getElementById('global-consolidation-concurrency').value = state.globalSettings.consolidationConcurrency || 6;
+        if (document.getElementById('global-background-provider-concurrency')) document.getElementById('global-background-provider-concurrency').value = state.globalSettings.backgroundProviderConcurrency || 2;
+        if (document.getElementById('global-context-pressure-watch')) document.getElementById('global-context-pressure-watch').value = state.globalSettings.contextPressureWatchThreshold || 45;
+        if (document.getElementById('global-context-pressure-refresh')) document.getElementById('global-context-pressure-refresh').value = state.globalSettings.contextPressureRefreshThreshold || 70;
         document.getElementById('global-embedding-cache-limit').value = state.globalSettings.embeddingCacheLimit || 10000;
         refreshMcpSettingsStatus();
     }
@@ -13538,6 +13639,8 @@ function setupPersonasLogic() {
         if (!hasApiCredentials()) return showToast(`API Key is missing. Add your ${cloudProviderName()} key in Settings.`, 'error');
         const world = state.worlds.find(item => item.id === state.activeWorldId) || state.editingWorld;
         const session = world ? getCurrentWorldSession() : null;
+        const selectedPersonaProvider = document.getElementById('persona-generation-provider')?.value || 'inherit';
+        const personaProvider = selectedPersonaProvider === 'inherit' ? normalizedProviderId(state.globalSettings.apiProvider) : normalizedProviderId(selectedPersonaProvider);
         const model = document.getElementById('persona-generation-model').value.trim() || state.globalSettings.defaultModel;
         const maxTokens = Math.max(500, Math.min(5000, parseInt(document.getElementById('persona-generation-max-tokens').value, 10) || 5000));
         const reasoningEnabled = document.getElementById('persona-generation-reasoning')?.checked === true;
@@ -13545,7 +13648,7 @@ function setupPersonasLogic() {
         const desc = document.getElementById('persona-desc');
         generatePersonaBtn.disabled = true;
         generatePersonaBtn.textContent = '⏳ Drafting persona…';
-        if (status) status.textContent = `Narrator model: ${model} · streaming one complete draft (up to ${maxTokens} tokens)…`;
+        if (status) status.textContent = `${personaProvider} · ${model} · streaming one complete draft (up to ${maxTokens} tokens)…`;
         const context = {
             persona: normalizePersona(persona),
             world: world ? { name: world.name, description: world.description, authorNote: world.authorNote } : null,
@@ -13554,11 +13657,12 @@ function setupPersonasLogic() {
         };
         const prompt = `[PERSONA DRAFTING]\nWrite a single rich, usable player persona description from the supplied world and conversation evidence. This is a portrayal brief for the narrator, not a JSON object and not a transcript. Use concrete voice, values, habits, boundaries, appearance, history, motivations, relationships, and speech patterns where supported. Clearly mark uncertainty instead of inventing biography. Keep the persona internally coherent and written as direct authorial notes. Return only the final persona text; do not include headings such as "draft", analysis, or a closing note. One complete draft is required.\n\nSOURCE CONTEXT:\n${JSON.stringify(context)}`;
         try {
-            const response = await fetch(apiBase() + '/chat/completions', {
-                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+            const personaWorld = { ...(world || {}), model, provider: personaProvider, openRouterRouting: personaProvider === normalizedProviderId(state.globalSettings.apiProvider) ? (world?.openRouterRouting || state.globalSettings.openRouterRouting) : null };
+            const response = await fetch(providerApiBase(personaProvider) + '/chat/completions', {
+                method: 'POST', headers: { ...providerAuthHeaders(personaProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(personaProvider) },
                 body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: maxTokens, temperature: 0.35, stream: true,
                     ...(reasoningEnabled ? { reasoning_effort: 'low' } : {}),
-                    messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Produce the complete persona draft now.' }] }, { ...(world || {}), model }, { scope: 'persona' }))
+                    messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Produce the complete persona draft now.' }] }, personaWorld, { scope: 'persona' }))
             });
             if (!response.ok) throw new Error((await response.text()).slice(0, 600) || `Persona generation failed (${response.status})`);
             const reader = response.body?.getReader();
@@ -13582,7 +13686,7 @@ function setupPersonasLogic() {
             while (true) { const { done, value } = await reader.read(); if (done) break; consume(decoder.decode(value, { stream: true })); }
             if (!output.trim()) throw new Error('Persona generation returned no usable draft.');
             persona.text = output.trim().slice(0, 12000);
-            persona.personaGeneration = { provider: cloudProviderName(), model, maxTokens, reasoning: reasoningEnabled, routing: 'global', generatedAt: new Date().toISOString(), source: 'world_and_recent_history', draftRequired: true };
+            persona.personaGeneration = { provider: personaProvider, model, maxTokens, reasoning: reasoningEnabled, routing: personaWorld.openRouterRouting || null, generatedAt: new Date().toISOString(), source: 'world_and_recent_history', draftRequired: true };
             await saveState();
             if (status) status.textContent = `Draft complete · ${output.trim().split(/\s+/).length.toLocaleString()} words · saved with generation provenance.`;
             showToast('Persona draft generated and saved.', 'success');
@@ -13696,9 +13800,11 @@ function selectPersona(id) {
     if (document.activeElement !== nameInput) nameInput.value = p.name;
     if (document.activeElement !== descInput) descInput.value = p.text;
     const generationModel = document.getElementById('persona-generation-model');
+    const generationProvider = document.getElementById('persona-generation-provider');
     const generationMaxTokens = document.getElementById('persona-generation-max-tokens');
     const generationReasoning = document.getElementById('persona-generation-reasoning');
     if (generationModel && document.activeElement !== generationModel) generationModel.value = p.personaGeneration?.model || '';
+    if (generationProvider && document.activeElement !== generationProvider) generationProvider.value = p.personaGeneration?.provider || 'inherit';
     if (generationMaxTokens && document.activeElement !== generationMaxTokens) generationMaxTokens.value = Math.max(500, Math.min(5000, Number(p.personaGeneration?.maxTokens) || 5000));
     if (generationReasoning && document.activeElement !== generationReasoning) generationReasoning.checked = p.personaGeneration?.reasoning === true;
     if (colorInput) colorInput.value = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '#4A90E2';
@@ -19614,6 +19720,45 @@ async function requestSequencePlanningPacket(world, sess, authorIntent, options 
     return { planning, packet };
 }
 
+async function requestSequenceClosureReconciliation(world, sess, options = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const hierarchy = protocol && window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
+    if (!protocol || !hierarchy?.sequence) throw new Error('No active Sidecar sequence.');
+    const sequence = hierarchy.sequence;
+    const packet = buildSidecarScenePacket(world, sess);
+    const questions = (protocol.questions || []).filter(question => ['open', 'deferred'].includes(question.status));
+    const prompt = `[SEQUENCE CLOSURE RECONCILIATION]\nReview whether the active sequence can close without inventing facts. Return JSON only: {"status":"ready|blocked|needs_author","summary":"short reconciliation result","blockingQuestionIds":["stable IDs"],"questions":[{"id":"stable ID","prompt":"authorial question","blocking":true}],"provisionalReview":"what remains implicit"}. A closure must preserve canonical state, unresolved questions, provisional entities/locations, and pending jobs. Do not mutate state.\n\nSEQUENCE: ${JSON.stringify(sequence)}\nSCENE PACKET: ${JSON.stringify(packet)}\nOPEN QUESTIONS: ${JSON.stringify(questions.slice(-30))}`;
+    const model = world.model || state.globalSettings.defaultModel;
+    const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() }, body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 1000, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Reconcile sequence closure.' }] }, world, { scope: 'sidecar' })) });
+    if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sequence closure failed (${response.status})`);
+    const parsed = safeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
+    const reconciliation = { status: ['ready', 'blocked', 'needs_author'].includes(parsed.status) ? parsed.status : 'needs_author', summary: String(parsed.summary || '').slice(0, 2000), blockingQuestionIds: Array.isArray(parsed.blockingQuestionIds) ? parsed.blockingQuestionIds.slice(0, 30) : [], provisionalReview: String(parsed.provisionalReview || '').slice(0, 1200), generatedAt: new Date().toISOString(), provenance: { source: 'sequence_closure_reconciliation', model } };
+    sequence.closure = { ...(sequence.closure || {}), reconciliation };
+    (Array.isArray(parsed.questions) ? parsed.questions : []).slice(0, 8).forEach(question => queueSidecarQuestion(world, sess, question.prompt || 'Closure clarification required.', reconciliation.summary, { id: question.id || '', origin: 'sequence_closure', target: 'user', priority: question.blocking ? 'high' : 'medium', blocking: question.blocking === true, scope: 'sequence', sequenceId: sequence.id }));
+    recordSidecarTrace(world, sess, { kind: 'sequence_closure_reconciliation', prompt, reply: parsed, model });
+    await saveState();
+    return reconciliation;
+}
+
+async function requestSceneBoundaryReview(world, sess, options = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const hierarchy = protocol && window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
+    if (!protocol || !hierarchy?.scene) throw new Error('No active Sidecar scene.');
+    const packet = buildSidecarScenePacket(world, sess);
+    const model = world.model || state.globalSettings.defaultModel;
+    const prompt = `[SCENE BOUNDARY REVIEW]\nDetermine whether a material circumstance change warrants proposing a new scene. Do not mutate canon. Return JSON only: {"shouldClose":true|false,"title":"short title","mode":"continuous|discontinuous","evidence":"why","questionIds":["existing IDs"]}. A scene boundary is a proposal for author review, never an automatic close.\nREASON: ${String(options.reason || 'author requested review').slice(0, 500)}\nPACKET: ${JSON.stringify(packet)}\nRECENT TURNS: ${JSON.stringify((protocol.turns || []).slice(-8).map(turn => ({ id: turn.id, narration: String(turn.narration || '').slice(0, 1000), sceneId: turn.sceneId })))} `;
+    const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() }, body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 700, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Review the current scene boundary.' }] }, world, { scope: 'sidecar' })) });
+    if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Scene review failed (${response.status})`);
+    const parsed = safeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
+    const review = { id: `scene_review_${Date.now().toString(36)}`, sceneId: hierarchy.scene.id, shouldClose: parsed.shouldClose === true, title: String(parsed.title || 'New scene').slice(0, 180), mode: parsed.mode === 'discontinuous' ? 'discontinuous' : 'continuous', evidence: String(parsed.evidence || '').slice(0, 1600), questionIds: Array.isArray(parsed.questionIds) ? parsed.questionIds.slice(0, 12) : [], status: 'proposed', createdAt: new Date().toISOString(), provenance: { source: 'scene_boundary_review', model, reason: options.reason || 'author_requested' } };
+    protocol.sceneBoundaryReviews = Array.isArray(protocol.sceneBoundaryReviews) ? protocol.sceneBoundaryReviews : [];
+    protocol.sceneBoundaryReviews.push(review); protocol.sceneBoundaryReviews = protocol.sceneBoundaryReviews.slice(-40);
+    hierarchy.scene.provisionalReview = { ...(hierarchy.scene.provisionalReview || {}), ...review };
+    recordSidecarTrace(world, sess, { kind: 'scene_boundary_review', prompt, reply: parsed, model });
+    await saveState();
+    return review;
+}
+
 async function planAndApproveWorldSequence() {
     const world = state.worlds.find(item => item.id === state.activeWorldId);
     const sess = getCurrentWorldSession();
@@ -21094,6 +21239,14 @@ function setupWorldPlayLogic() {
             return;
         }
         const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+        let reconciliation;
+        try { reconciliation = await requestSequenceClosureReconciliation(world, sess); }
+        catch (error) { showToast(`Sequence closure review failed: ${error.message || error}`, 'error'); return; }
+        if (reconciliation.status !== 'ready') {
+            showToast(reconciliation.summary || 'Sequence remains open until its closure questions are resolved.', 'info');
+            renderWorldPlayState();
+            return;
+        }
         const closed = window.HordeSidecarTimeline?.closeActiveSequence(protocol, sess, 'author_closed');
         if (!closed) return showToast('There is no active sequence to close.', 'info');
         protocol.packet = buildSidecarScenePacket(world, sess);
@@ -21101,6 +21254,18 @@ function setupWorldPlayLogic() {
         renderWorldPlayState();
         showToast('Sequence closed. Plan and approve the next sequence before resuming narration.', 'success');
     };
+    document.getElementById('world-v3-end-scene-btn')?.addEventListener('click', async () => {
+        const world = state.worlds.find(item => item.id === state.activeWorldId); const sess = getCurrentWorldSession();
+        if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return showToast('Scene review is available in Sidecar worlds.', 'info');
+        try {
+            const review = await requestSceneBoundaryReview(world, sess, { reason: 'author_requested' });
+            if (!review.shouldClose) return showToast('Sidecar found no material scene boundary yet.', 'info');
+            showConfirmModal('Approve scene boundary', `${review.title}\n\n${review.evidence || 'A material circumstance change was detected.'}`, async () => {
+                const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess); const hierarchy = window.HordeSidecarTimeline.ensureHierarchy(protocol, sess);
+                const scene = hierarchy?.scene; if (scene) { scene.status = 'closed'; scene.closedAt = new Date().toISOString(); scene.provisionalReview = { ...review, status: 'approved', reviewedAt: new Date().toISOString() }; window.HordeSidecarTimeline.ensureHierarchy(protocol, sess, { createWhenMissing: true }); protocol.packet = buildSidecarScenePacket(world, sess); await saveState(); renderWorldPlayState(); showToast('Scene boundary approved.', 'success'); }
+            });
+        } catch (error) { showToast(`Scene review failed: ${error.message || error}`, 'error'); }
+    });
     document.getElementById('world-promote-implied-btn').onclick = () => {
         void promoteImpliedWorldRecord();
     };
@@ -27317,7 +27482,9 @@ ${modularMandate}
         // goals have already advanced locally; this call only seeds future
         // surprises when the configured interval says the queue needs it.
         if (command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
-            runWorldAgent(world, sess).then(async () => {
+            const sidecarProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+            const agentReason = sidecarProtocol?.activeSceneId && sess.lastWorldAgentSceneId !== sidecarProtocol.activeSceneId ? 'scene_change' : 'turn_cadence';
+            runWorldAgent(world, sess, { triggerReason: agentReason }).then(async () => {
                 await saveState();
                 if (state.activeWorldId === world.id) renderWorldPlayState();
             }).catch(agentError => console.warn('Horde Engine: background world agent skipped —', agentError.message));
@@ -31492,6 +31659,11 @@ function shouldRunWorldAgent(world, sess, options = {}) {
     if (!normalizeWorldGameRules(world).modules.livingWorld) return false;
     const config = normalizeWorldAgentConfig(world);
     if (!config.enabled) return false;
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const activeSceneId = protocol?.activeSceneId || '';
+    if (activeSceneId && sess.lastWorldAgentSceneId && sess.lastWorldAgentSceneId !== activeSceneId) {
+        return true;
+    }
     const turn = Math.max(1, parseInt(sess.turnCount) || 1);
     const last = Math.max(0, parseInt(sess.lastWorldAgentTurn) || 0);
     const elapsed = last === 0 ? turn : turn - last;
@@ -31571,11 +31743,14 @@ function sanitizeWorldAgentActions(raw) {
     return { actions, dropped, applied: Object.keys(actions).length > 0 };
 }
 
-async function runWorldAgent(world, sess) {
+async function runWorldAgent(world, sess, options = {}) {
     const config = normalizeWorldAgentConfig(world);
     const turn = Math.max(1, parseInt(sess.turnCount) || 1);
     const startEpoch = Number(sess._worldEpoch) || 0;
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const triggerReason = options.triggerReason || (protocol?.activeSceneId && sess.lastWorldAgentSceneId !== protocol.activeSceneId ? 'scene_change' : 'turn_cadence');
     sess.lastWorldAgentTurn = turn;   // set first: a failure must not retry every turn
+    if (protocol?.activeSceneId) sess.lastWorldAgentSceneId = protocol.activeSceneId;
 
     const system = `You are the WORLD AGENT for a persistent roleplay world. Between the player's scenes you decide what the rest of the world does.
 
@@ -31639,13 +31814,12 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
         .map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
     const sidecarTimeline = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     if (sidecarTimeline || config.proposalOnly) {
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-        if (protocol) {
+            if (protocol) {
             protocol.backgroundProposals.push({
                 id: `world_agent_${turn}_${Date.now().toString(36)}`,
                 status: 'pending_sidecar_review', createdAt: new Date().toISOString(), turn,
                 summary: developments, actions: safeJsonClone(actions), dropped,
-                provenance: { source: 'world_agent', model: config.model || structuredModelFor(world) }
+                provenance: { source: 'world_agent', model: config.model || structuredModelFor(world), triggerReason, sceneId: protocol.activeSceneId || '' }
             });
             protocol.backgroundProposals = protocol.backgroundProposals.slice(-80);
             protocol.packet = buildSidecarScenePacket(world, sess);

@@ -193,11 +193,45 @@
         const activeScene = current(protocol, 'scenes', protocol.activeSceneId);
         const sceneTurns = (protocol.turns || []).filter(turn => turn.sceneId === activeScene?.id).length;
         const openQuestions = (protocol.questions || []).filter(question => question.status === 'open').length;
-        const score = Math.min(100, Math.round(contextRatio * 45 + Math.min(25, sceneTurns * 2) + Math.min(16, openQuestions * 2) + Math.min(14, historyCount / 12)));
+        const f = options.factors && isObject(options.factors) ? options.factors : {};
+        const values = {
+            contextRatio,
+            historyCount,
+            sceneTurns,
+            openQuestions,
+            blockingQuestions: Math.max(0, Number(f.blockingQuestions) || 0),
+            activeCast: Math.max(0, Number(f.activeCast) || 0),
+            retrievedMemoryCount: Math.max(0, Number(f.retrievedMemoryCount) || 0),
+            canonicalChars: Math.max(0, Number(f.canonicalChars) || 0),
+            sceneChars: Math.max(0, Number(f.sceneChars) || 0),
+            sequenceTurns: Math.max(0, Number(f.sequenceTurns) || 0),
+            reconciliationFriction: Math.max(0, Number(f.reconciliationFriction) || 0),
+            sourceRetirement: Math.max(0, Number(f.sourceRetirement) || 0)
+        };
+        const weights = { contextRatio: 45, historyCount: 0.08, sceneTurns: 2, openQuestions: 2, blockingQuestions: 5, activeCast: 1.5, retrievedMemoryCount: 0.5, canonicalChars: 0.002, sceneChars: 0.002, sequenceTurns: 0.5, reconciliationFriction: 3, sourceRetirement: 2, ...(isObject(options.weights) ? options.weights : {}) };
+        const score = Math.min(100, Math.round(
+            values.contextRatio * Number(weights.contextRatio) +
+            values.historyCount * Number(weights.historyCount) +
+            values.sceneTurns * Number(weights.sceneTurns) +
+            values.openQuestions * Number(weights.openQuestions) +
+            values.blockingQuestions * Number(weights.blockingQuestions) +
+            values.activeCast * Number(weights.activeCast) +
+            values.retrievedMemoryCount * Number(weights.retrievedMemoryCount) +
+            values.canonicalChars * Number(weights.canonicalChars) +
+            values.sceneChars * Number(weights.sceneChars) +
+            values.sequenceTurns * Number(weights.sequenceTurns) +
+            values.reconciliationFriction * Number(weights.reconciliationFriction) +
+            values.sourceRetirement * Number(weights.sourceRetirement)
+        ));
+        const thresholds = isObject(options.thresholds) ? options.thresholds : {};
+        const watch = Math.max(1, Math.min(99, Number(thresholds.watch) || 45));
+        const refresh = Math.max(watch + 1, Math.min(100, Number(thresholds.refresh) || 70));
         return {
             score,
-            recommendation: score >= 70 ? 'recommend_refresh' : score >= 45 ? 'watch' : 'clear',
-            factors: { contextRatio, sceneTurns, openQuestions, historyCount },
+            recommendation: score >= refresh ? 'recommend_refresh' : score >= watch ? 'watch' : 'clear',
+            factors: values,
+            weights: { ...weights },
+            thresholds: { watch, refresh },
             generatedAt: now()
         };
     }
