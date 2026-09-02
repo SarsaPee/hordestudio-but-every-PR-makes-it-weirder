@@ -13871,6 +13871,7 @@ function renderWorldStudioPanel(target) {
         'w-locations': renderWorldLocations,
         'w-entities': renderWorldEntities,
         'w-items': renderWorldItems,
+        'w-travel': renderWorldTravel,
         'w-factions': renderWorldFactions,
         'w-sandbox': renderWorldSandboxStudio,
         'w-lore': renderWorldLore,
@@ -13972,6 +13973,7 @@ function setupWorldStudioLogic() {
     document.getElementById('add-item-btn-bottom').onclick = addWorldItem;
     document.getElementById('add-vehicle-btn').onclick = () => addWorldEntity('vehicle');
     document.getElementById('add-vehicle-btn-bottom').onclick = () => addWorldEntity('vehicle');
+    document.getElementById('add-traversal-method-btn')?.addEventListener('click', () => addWorldTraversalMethod());
     document.getElementById('add-faction-btn').onclick = () => addWorldFaction('top');
     document.getElementById('add-faction-btn-bottom').onclick = () => addWorldFaction('bottom');
     document.getElementById('add-world-origin-btn').onclick = addWorldStartingLife;
@@ -18250,6 +18252,108 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
     container.appendChild(directory);
 }
 
+function addWorldTraversalMethod() {
+    const world = state.editingWorld;
+    if (!world) return;
+    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world) || (world.traversalConfig = { schemaVersion: 1, methods: [] });
+    config.methods.push({
+        id: `traversal_${Date.now().toString(36)}`,
+        name: 'New traversal method', enabled: true, coverageType: 'point_to_point',
+        exclusions: [], routeStops: [], tags: [], provider: '', notes: ''
+    });
+    renderWorldTravel();
+}
+
+function renderWorldTravel() {
+    const world = state.editingWorld;
+    if (!world) return;
+    const methodsHost = document.getElementById('w-traversal-methods-list');
+    const vehiclesHost = document.getElementById('w-vehicles-list');
+    const journeysHost = document.getElementById('w-journeys-list');
+    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world) || { methods: [] };
+    const locations = Array.isArray(world.locations) ? world.locations : [];
+    const locationName = id => locations.find(location => location.id === id)?.name || id || '—';
+    const lines = value => String(value || '').split('\n').map(item => item.trim()).filter(Boolean);
+
+    if (methodsHost) {
+        methodsHost.innerHTML = config.methods.length ? config.methods.map((method, index) => `
+            <div class="world-inspector-section" data-traversal-index="${index}" style="padding:14px; border:1px solid var(--border); border-radius:10px;">
+                <div style="display:grid; grid-template-columns:minmax(0,1fr) 180px auto auto; gap:8px; align-items:center;">
+                    <input class="form-input traversal-name" value="${escapeHTML(method.name)}" placeholder="Train, walking, Uber…">
+                    <select class="form-select traversal-type"><option value="point_to_point" ${method.coverageType === 'point_to_point' ? 'selected' : ''}>Point-to-point</option><option value="route_based" ${method.coverageType === 'route_based' ? 'selected' : ''}>Route-based</option></select>
+                    <label class="vh-test-check"><input type="checkbox" class="traversal-enabled" ${method.enabled ? 'checked' : ''}> Enabled</label>
+                    <button class="tool-btn tool-btn-danger traversal-delete" type="button">Delete</button>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:10px;">
+                    <label><span class="form-label">Provider / mode tag</span><input class="form-input traversal-provider" value="${escapeHTML(method.provider || '')}" placeholder="Metro, rideshare, bicycle…"></label>
+                    <label><span class="form-label">Tags</span><input class="form-input traversal-tags" value="${escapeHTML((method.tags || []).join(', '))}" placeholder="public, accessible, fast"></label>
+                    <label><span class="form-label">Exclusions</span><textarea class="form-textarea traversal-exclusions" rows="2" placeholder="One location ID or name per line">${escapeHTML((method.exclusions || []).join('\n'))}</textarea></label>
+                    <label class="traversal-route-wrap ${method.coverageType === 'route_based' ? '' : 'hidden'}"><span class="form-label">Ordered route stops</span><textarea class="form-textarea traversal-stops" rows="2" placeholder="One stop ID or name per line">${escapeHTML((method.routeStops || []).join('\n'))}</textarea></label>
+                </div>
+                <label style="display:block; margin-top:10px;"><span class="form-label">Author notes</span><textarea class="form-textarea traversal-notes" rows="2" placeholder="Legality, accessibility, or operating notes">${escapeHTML(method.notes || '')}</textarea></label>
+                <p class="form-hint" style="margin:8px 0 0;">${method.coverageType === 'route_based' ? 'Default-deny: only the ordered stops above are traversable.' : 'Default-allow across eligible external spatial scopes, subject to exclusions.'}</p>
+            </div>`).join('') : '<div class="form-hint">No traversal methods yet. Add one to author trains, buses, walking, bicycles, elevators, or rideshare coverage.</div>';
+        methodsHost.querySelectorAll('[data-traversal-index]').forEach(card => {
+            const index = Number(card.dataset.traversalIndex);
+            const method = config.methods[index];
+            const update = () => {
+                method.name = card.querySelector('.traversal-name').value.trim().slice(0, 140) || `Traversal ${index + 1}`;
+                method.coverageType = card.querySelector('.traversal-type').value === 'route_based' ? 'route_based' : 'point_to_point';
+                method.enabled = card.querySelector('.traversal-enabled').checked;
+                method.provider = card.querySelector('.traversal-provider').value.trim().slice(0, 140);
+                method.tags = [...new Set(card.querySelector('.traversal-tags').value.split(',').map(value => value.trim()).filter(Boolean))].slice(0, 32);
+                method.exclusions = lines(card.querySelector('.traversal-exclusions').value).slice(0, 100);
+                const stopsInput = card.querySelector('.traversal-stops');
+                method.routeStops = method.coverageType === 'route_based' && stopsInput ? lines(stopsInput.value).slice(0, 500) : [];
+                method.notes = card.querySelector('.traversal-notes').value.trim().slice(0, 1200);
+                card.querySelector('.traversal-route-wrap').classList.toggle('hidden', method.coverageType !== 'route_based');
+                updateWorldTokenCount();
+            };
+            card.querySelectorAll('input, textarea, select').forEach(input => input.addEventListener(input.type === 'checkbox' || input.tagName === 'SELECT' ? 'change' : 'input', update));
+            card.querySelector('.traversal-delete').onclick = () => { config.methods.splice(index, 1); renderWorldTravel(); };
+        });
+    }
+    const vehicles = (world.entities || []).filter(entity => entity.type === 'vehicle');
+    if (vehiclesHost) {
+        vehiclesHost.innerHTML = vehicles.length ? vehicles.map((vehicle, index) => {
+            const data = window.HordeSidecarTraversal?.normalizeVehicle?.(vehicle) || vehicle.vehicle || {};
+            const owner = (world.entities || []).find(entity => entity.id === data.ownerEntityId);
+            return `<div class="world-inspector-section" data-vehicle-index="${index}" style="padding:14px; border:1px solid var(--border); border-radius:10px;">
+                <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 180px; gap:8px; align-items:center;"><strong>${escapeHTML(vehicle.name || 'Unnamed vehicle')}</strong><span class="form-hint">${data.persistent === false ? 'Runtime/staged' : 'Persistent entity'}</span><span class="form-hint">Owner: ${escapeHTML(owner?.name || data.ownerEntityId || 'none')}</span></div>
+                <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:10px;">
+                    <label><span class="form-label">Parked anchor</span><select class="form-select vehicle-anchor"><option value="">No parked anchor</option>${locations.map(location => `<option value="${escapeHTML(location.id)}" ${data.parkedAnchorId === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
+                    <label><span class="form-label">Owner entity ID</span><input class="form-input vehicle-owner" value="${escapeHTML(data.ownerEntityId || '')}" placeholder="ent_…"></label>
+                    <label><span class="form-label">Access entity IDs</span><input class="form-input vehicle-access" value="${escapeHTML((data.access || []).map(entry => entry.entityId || entry).join(', '))}" placeholder="comma separated"></label>
+                </div>
+                <div style="display:grid; grid-template-columns:minmax(0,1fr) 180px; gap:10px; margin-top:10px;">
+                    <label><span class="form-label">Interior / runtime hint</span><textarea class="form-textarea vehicle-interior" rows="2">${escapeHTML(data.interiorHint || '')}</textarea></label>
+                    <label><span class="form-label">Vehicle tags</span><input class="form-input vehicle-tags" value="${escapeHTML((data.tags || []).join(', '))}" placeholder="car, taxi, bicycle"></label>
+                </div>
+                <label class="vh-test-check" style="margin-top:8px;"><input type="checkbox" class="vehicle-persistent" ${data.persistent !== false ? 'checked' : ''}> Persistent vehicle (uncheck only for authored staged/runtime fixtures)</label>
+            </div>`;
+        }).join('') : '<div class="form-hint">No vehicle entities yet. Use Items &amp; Objects → + Vehicle to create one, then configure ownership and its parked anchor here.</div>';
+        vehiclesHost.querySelectorAll('[data-vehicle-index]').forEach(card => {
+            const vehicle = vehicles[Number(card.dataset.vehicleIndex)];
+            const update = () => {
+                const data = window.HordeSidecarTraversal?.normalizeVehicle?.(vehicle) || (vehicle.vehicle = {});
+                data.parkedAnchorId = card.querySelector('.vehicle-anchor').value;
+                data.ownerEntityId = card.querySelector('.vehicle-owner').value.trim().slice(0, 160);
+                data.access = card.querySelector('.vehicle-access').value.split(',').map(value => value.trim()).filter(Boolean).slice(0, 80).map(entityId => ({ entityId, role: entityId === data.ownerEntityId ? 'owner' : 'guest' }));
+                if (data.ownerEntityId && !data.access.some(entry => entry.entityId === data.ownerEntityId)) data.access.unshift({ entityId: data.ownerEntityId, role: 'owner' });
+                data.interiorHint = card.querySelector('.vehicle-interior').value.trim().slice(0, 1800);
+                data.tags = [...new Set(card.querySelector('.vehicle-tags').value.split(',').map(value => value.trim()).filter(Boolean))].slice(0, 32);
+                data.persistent = card.querySelector('.vehicle-persistent').checked;
+                vehicle.startLocation = data.parkedAnchorId;
+                updateWorldTokenCount();
+            };
+            card.querySelectorAll('input, textarea, select').forEach(input => input.addEventListener(input.type === 'checkbox' || input.tagName === 'SELECT' ? 'change' : 'input', update));
+        });
+    }
+    const sessions = state.worldInstances?.[world.id]?.sessions || [];
+    const journeys = sessions.flatMap(session => ((window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.traversalState?.journeys) || []).map(journey => ({ ...journey, sessionName: session.name || session.id }))).slice(-40).reverse();
+    if (journeysHost) journeysHost.innerHTML = journeys.length ? journeys.map(journey => `<div style="padding:10px 12px; border:1px solid var(--border); border-radius:8px;"><strong>${escapeHTML(journey.status || 'prepared')}</strong> · ${escapeHTML(journey.sessionName)} · ${escapeHTML(journey.methodId || 'untyped journey')}<br><span class="form-hint">${escapeHTML(locationName(journey.originAnchorId))} → ${escapeHTML(locationName(journey.destinationAnchorId))} · occupants: ${escapeHTML((journey.occupants || []).join(', ') || 'none')} ${journey.runtimeContainer ? `· runtime ${escapeHTML(journey.runtimeContainer.kind || 'vehicle')}` : ''}</span></div>`).join('') : '<div class="form-hint">No journeys have been staged or completed in this world yet.</div>';
+}
+
 function renderWorldItems() {
     renderWorldEntities('items');
 }
@@ -20656,6 +20760,12 @@ function setupWorldPlayLogic() {
     // Parity Features
     document.getElementById('world-new-session-btn').onclick = createNewWorldSession;
     document.getElementById('world-fork-session-btn').onclick = forkCurrentWorldTimeline;
+    document.getElementById('world-timeline-browser-btn')?.addEventListener('click', openWorldTimelineBrowser);
+    document.getElementById('close-world-timeline-browser-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
+    document.getElementById('close-world-timeline-browser-ft-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
+    document.getElementById('world-timeline-browser-overlay')?.addEventListener('click', event => {
+        if (event.target.id === 'world-timeline-browser-overlay') event.currentTarget.classList.add('hidden');
+    });
 
     document.getElementById('world-rename-session-btn').onclick = async () => {
         const sess = getCurrentWorldSession();
@@ -22452,6 +22562,48 @@ async function forkCurrentWorldTimeline() {
     await saveState();
     renderWorldPlayState();
     showToast('Timeline forked from committed continuity.', 'success');
+}
+
+function renderWorldTimelineBrowser() {
+    const host = document.getElementById('world-timeline-browser-list');
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sessions = state.worldInstances?.[state.activeWorldId]?.sessions || [];
+    if (!host || !world) return;
+    const activeId = state.worldInstances?.[state.activeWorldId]?.activeSessionId;
+    host.innerHTML = sessions.length ? sessions.map(session => {
+        const fork = session.forkedFrom || session.sidecar?.migration?.forkedFrom;
+        const selected = session.id === activeId;
+        const source = fork ? sessions.find(candidate => candidate.id === fork.sessionId) : null;
+        return `<div class="world-inspector-section" style="padding:14px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border)'}; border-radius:10px;">
+            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;"><div><strong>${escapeHTML(session.name || session.id)}</strong>${selected ? ' <span class="model-badge">ACTIVE</span>' : ''}<div class="form-hint">${escapeHTML(session.id)} · ${Number(session.turnCount || 0)} committed turn${Number(session.turnCount || 0) === 1 ? '' : 's'}</div></div><button class="tool-btn timeline-select-btn" data-session-id="${escapeHTML(session.id)}">${selected ? 'Selected' : 'Select'}</button></div>
+            <div class="form-hint" style="margin-top:8px;">${fork ? `Fork of <strong>${escapeHTML(source?.name || fork.sessionId)}</strong> at committed turn ${Number(fork.turnCount || 0)} · ${escapeHTML(fork.createdAt || '')}` : 'Root timeline · no fork parent'}</div>
+            <div style="display:flex; gap:8px; margin-top:10px;"><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button>${fork ? `<span class="form-hint">Source history retained; later derived memory is branch-local.</span>` : ''}</div>
+        </div>`;
+    }).join('') : '<div class="form-hint">No timelines exist yet. Create a new timeline from Session Setup.</div>';
+    host.querySelectorAll('.timeline-select-btn').forEach(button => button.onclick = async () => {
+        const inst = state.worldInstances?.[state.activeWorldId];
+        if (!inst || !inst.sessions.some(session => session.id === button.dataset.sessionId)) return;
+        inst.activeSessionId = button.dataset.sessionId;
+        await saveState();
+        renderWorldPlayState();
+        renderWorldTimelineBrowser();
+    });
+    host.querySelectorAll('.timeline-fork-btn').forEach(button => button.onclick = async () => {
+        const inst = state.worldInstances?.[state.activeWorldId];
+        if (!inst) return;
+        const previous = inst.activeSessionId;
+        inst.activeSessionId = button.dataset.sessionId;
+        await forkCurrentWorldTimeline();
+        inst.activeSessionId = previous === button.dataset.sessionId ? inst.activeSessionId : previous;
+        renderWorldTimelineBrowser();
+    });
+}
+
+function openWorldTimelineBrowser() {
+    const overlay = document.getElementById('world-timeline-browser-overlay');
+    if (!overlay) return;
+    renderWorldTimelineBrowser();
+    overlay.classList.remove('hidden');
 }
 
 /**

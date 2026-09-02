@@ -384,6 +384,7 @@
                                     <select id="world-session-select" class="tool-select"></select>
                                     <button class="tool-btn" id="world-new-session-btn" title="New World Session">➕ New</button>
                                     <button class="tool-btn" id="world-fork-session-btn" title="Fork the selected committed timeline">⑂ Fork</button>
+                                    <button class="tool-btn" id="world-timeline-browser-btn" title="Inspect timelines and fork provenance">▤ Timelines</button>
                                     <button class="tool-btn" id="world-rename-session-btn" title="Rename Current Session">✏️ Rename</button>
                                     <button class="tool-btn tool-btn-danger" id="world-del-session-btn" type="button" title="Delete Current Session" aria-label="Delete current session">🗑️</button>
                                 </div>
@@ -611,8 +612,9 @@
                         <button class="world-studio-tab" data-tab="w-visuals">Visuals</button>
                         <button class="world-studio-tab" data-tab="w-locations">Locations</button>
                         <button class="world-studio-tab" data-tab="w-entities">People</button>
-                        <button class="world-studio-tab" data-tab="w-items">Items</button>
-                        <button class="world-studio-tab" data-tab="w-factions">Factions</button>
+                                <button class="world-studio-tab" data-tab="w-items">Items</button>
+                                <button class="world-studio-tab" data-tab="w-travel">Travel & Vehicles</button>
+                                <button class="world-studio-tab" data-tab="w-factions">Factions</button>
                         <button class="world-studio-tab" data-tab="w-sandbox">Sandbox</button>
                         <button class="world-studio-tab" data-tab="w-lore">Global Lore</button>
                         <button class="world-studio-tab" data-tab="w-note">Author's Note</button>
@@ -843,6 +845,33 @@
                         <div class="form-body" id="w-items-list" style="display:flex; flex-direction:column; gap:16px;"></div>
                         <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
                             <div style="display:flex; width:100%; gap:8px;"><button id="add-vehicle-btn-bottom" class="btn btn-ghost" style="flex:1; border:1px dashed var(--border);">+ Vehicle</button><button id="add-item-btn-bottom" class="btn btn-ghost" style="flex:1; border: 1px dashed var(--border);">+ New Item</button></div>
+                        </div>
+                    </div>
+
+                    <!-- Traversal and vehicle authoring -->
+                    <div id="tab-w-travel" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                                <div>
+                                    <h2>Travel &amp; Vehicles</h2>
+                                    <p>Author the traversal methods that are legal in this world and inspect the vehicle entities and runtime journeys that use them. Point-to-point is permissive across eligible spatial anchors; Route-based requires the ordered stops authored below.</p>
+                                </div>
+                                <button id="add-traversal-method-btn" class="btn btn-primary">+ Traversal method</button>
+                            </div>
+                        </div>
+                        <div class="form-body" style="display:flex; flex-direction:column; gap:18px;">
+                            <section>
+                                <div class="world-inspector-section-head"><h3 style="margin:0;">Traversal methods</h3><span class="form-hint">Vehicles never become map rooms. Pickup and drop-off resolve upward to an eligible building, street/path, area, region, or transit space.</span></div>
+                                <div id="w-traversal-methods-list" style="display:flex; flex-direction:column; gap:12px;"></div>
+                            </section>
+                            <section>
+                                <div class="world-inspector-section-head"><h3 style="margin:0;">Vehicle registry</h3><span class="form-hint">Persistent vehicles retain their entity identity and parked anchor. Rideshares/taxis are created as temporary runtime containers for a journey.</span></div>
+                                <div id="w-vehicles-list" style="display:flex; flex-direction:column; gap:12px;"></div>
+                            </section>
+                            <section>
+                                <div class="world-inspector-section-head"><h3 style="margin:0;">Active and recent journeys</h3><span class="form-hint">This is runtime state for the selected world’s timelines, not authored locations.</span></div>
+                                <div id="w-journeys-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+                            </section>
                         </div>
                     </div>
 
@@ -3448,6 +3477,18 @@
         </div>
 
     </main>
+</div>
+
+<!-- Timeline browser / fork provenance -->
+<div id="world-timeline-browser-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg" style="height:78vh; max-height:760px; display:flex; flex-direction:column;">
+        <div class="modal-hd"><h2>Timeline branches</h2><button id="close-world-timeline-browser-btn" class="modal-close" type="button" aria-label="Close timeline browser">✕</button></div>
+        <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px;">
+            <p class="form-hint">Every timeline is a canonical branch. Forks copy the selected committed state and retain immutable source provenance; they do not merge or rewrite the source timeline.</p>
+            <div id="world-timeline-browser-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+        </div>
+        <div class="modal-ft"><button id="close-world-timeline-browser-ft-btn" class="btn btn-ghost">Close</button></div>
+    </div>
 </div>
 
 <!-- ═══════════════════════ MODALS ═══════════════════════ -->
