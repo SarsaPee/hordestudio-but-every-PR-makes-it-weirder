@@ -81,7 +81,14 @@
         const current = isObject(timeline.sidecar) ? timeline.sidecar : {};
         const protocol = { ...emptyProtocol(normalizeMode(config.mode)), ...current };
         protocol.schemaVersion = SCHEMA_VERSION;
-        protocol.mode = normalizeMode(current.mode, normalizeMode(config.mode));
+        // A world-level switch must not silently convert an existing legacy
+        // timeline before the migration wizard has selected it. New timelines
+        // are explicitly initialised with their own `sidecar.mode`; an absent
+        // protocol on an established timeline therefore remains Inline Legacy.
+        const fallbackMode = isObject(timeline.sidecar)
+            ? normalizeMode(config.mode)
+            : (options.newWorld === true ? MODES.SIDECAR : MODES.INLINE_LEGACY);
+        protocol.mode = normalizeMode(current.mode, fallbackMode);
         ['sequences', 'scenes', 'turns', 'takes', 'questions', 'requests', 'proposals', 'backgroundProposals',
             'refinements', 'conversations', 'provisionalLocations', 'provisionalEntities', 'jobs']
             .forEach(key => { if (!Array.isArray(protocol[key])) protocol[key] = []; });

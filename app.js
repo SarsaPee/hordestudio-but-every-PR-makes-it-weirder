@@ -14544,7 +14544,9 @@ function renderWorldSidecarConfigEditor(world) {
     }
     if (migrate) {
         const sessions = state.worldInstances?.[world.id]?.sessions || [];
-        migrate.classList.toggle('hidden', config.mode === 'sidecar');
+        const inlineSessions = sessions.filter(session => window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
+        migrate.classList.toggle('hidden', !inlineSessions.length);
+        migrate.textContent = config.mode === 'sidecar' ? 'Review & migrate Inline timelines' : 'Review & migrate this world';
         migrate.onclick = async () => {
             openSidecarMigrationWizard(world.id);
         };
@@ -14801,7 +14803,7 @@ async function saveWorld() {
     w.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.(sidecarDraftWorld) || priorSidecarConfig;
     const switchingToSidecar = !!storedBeforeSave && w.sidecarConfig?.mode === 'sidecar' && !wasSidecar;
     if (switchingToSidecar && !confirm(
-        'Migrate this world to Sidecar? Horde Studio will preserve its raw roleplay and canonical receipts, clear only derived vector/episodic caches, and create a local migration backup. This is a selected-world migration; other worlds are unchanged.'
+        'Enable Sidecar for this world? Existing timelines remain Inline Legacy until you choose them in the migration wizard. Horde Studio will preserve raw roleplay and canonical receipts and create a local backup.'
     )) return;
     if (switchingToSidecar) {
         // A Sidecar migration must be both deliberate and recoverable. Keep a
@@ -14861,9 +14863,10 @@ async function saveWorld() {
     }
 
     const savedWorld = state.worlds[idx !== -1 ? idx : state.worlds.length - 1];
-    const migrationReports = savedWorld.sidecarConfig?.mode === 'sidecar' && !wasSidecar
-        ? migrateWorldTimelinesToSidecar(savedWorld, storedBeforeSave?.sidecarConfig)
-        : [];
+    // Changing the world-level mode never silently migrates established
+    // timelines. The migration wizard performs the explicit per-timeline
+    // selection, backup, and import step instead.
+    const migrationReports = [];
 
     worldMediaDirty = true;
     await saveState();
@@ -21280,7 +21283,9 @@ function resetWorldTimeline(world, sess) {
     (world.hudConfig?.stats || []).forEach(stat => { sess.playerStats[stat.id] = stat.value; });
     normalizePlayerRulesState(world, sess);
     normalizeWorldSocietyState(world, sess);
-    window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
+    window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess, {
+        newWorld: world?.sidecarConfig?.mode === 'sidecar' && !sess.history?.length && sess.setupComplete !== true
+    });
     window.HordeDossierClaims?.normalizeWorldConfig(world, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
     window.HordeDossierClaims?.ensureSession(world, sess);
     return sess;
