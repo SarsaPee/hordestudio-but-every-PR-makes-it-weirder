@@ -10528,6 +10528,29 @@ function extractSidecarNarratorHandoff(value) {
     };
 }
 
+function sidecarTemporalStatement(handoff) {
+    const match = String(handoff || '').match(/ANSWER\s+core\.time\s*(?::|\n)\s*-?\s*([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i);
+    return String(match?.[1] || '').replace(/\s+/g, ' ').trim().slice(0, 1200);
+}
+
+function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) return null;
+    const afterClock = getWorldTimeData(world, sess);
+    const authoredMeaning = sidecarTemporalStatement(handoff);
+    // The exact clock delta is an existing reducer result. Preserve it beside,
+    // never instead of, the Narrator's potentially approximate language.
+    protocol.temporalState = {
+        authoredMeaning,
+        beforeCanonicalMinutes: beforeClock?.currentTotalMinutes ?? null,
+        afterCanonicalMinutes: afterClock.currentTotalMinutes,
+        mechanicalDeltaMinutes: beforeClock
+            ? afterClock.currentTotalMinutes - beforeClock.currentTotalMinutes : null,
+        recordedAt: new Date().toISOString()
+    };
+    return protocol.temporalState;
+}
+
 function buildSidecarScenePacket(world, sess, handoff = '') {
     const frame = buildWorldSceneFrame(world, sess);
     const clock = getWorldTimeData(world, sess);
@@ -10543,7 +10566,8 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         activeLocation: { id: frame.player_location_id, name: location?.name || frame.player_location_id },
         activeCast: frame.present_character_ids,
         activities: frame.activities,
-        temporalContinuity: handoff ? String(handoff.match(/ANSWER\s+core\.time\s*(?::|\n)\s*-?\s*([^\n]+)/i)?.[1] || '').slice(0, 600) : '',
+        temporalContinuity: handoff ? sidecarTemporalStatement(handoff).slice(0, 600) : String(protocol?.temporalState?.authoredMeaning || '').slice(0, 600),
+        temporalEvidence: protocol?.temporalState || null,
         sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
         pendingQuestions: questions,
         recentAuthorialRefinements: (protocol?.refinements || []).slice(-6).map(refinement => ({
@@ -10587,11 +10611,12 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         openRouterRouting: tracker.openRouterRouting || world.openRouterRouting
     };
     const preFrame = buildWorldSceneFrame(world, sess);
+    const preClock = getWorldTimeData(world, sess);
     const handoff = String(options.handoff || '').trim();
     const narration = String(options.narration || '').trim();
     const commitTool = safeJsonClone(options.commitTool);
     if (!commitTool?.function?.parameters) throw new Error('The native world commit tool is unavailable.');
-    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against the canonical frame and mechanics. Mechanics constrain outcomes; they never author them. If something is uncertain, leave it unchanged.\n\nReturn exactly one native commit_world_turn tool call. Preserve actor IDs. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, or time changes. Translate explicit temporal meaning only when the handoff establishes it; use the existing state_updates fields where an exact mechanical value is justified.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 3000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 18000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
+    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against the canonical frame and mechanics. Mechanics constrain outcomes; they never author them. If something is uncertain, leave it unchanged.\n\nReturn exactly one native commit_world_turn tool call. Preserve actor IDs. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range in the handoff context. Only set existing mechanical time fields when the authored beat establishes a defensible canonical delta. Never choose a duration merely because it says "immediate", "brief", or "a few seconds".\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK:\n${JSON.stringify(preClock)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 3000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 18000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const body = {
         model, stream: false,
         max_tokens: Math.max(600, Number(tracker.maxTokens) || 1400),
@@ -10615,6 +10640,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const committed = commitWorldTurnReceipt(world, sess, receipt, options.receiptContext || {}, 'sidecar');
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (protocol) {
+        recordSidecarTemporalEvidence(world, sess, handoff, preClock);
         const packet = buildSidecarScenePacket(world, sess, handoff);
         protocol.packet = packet;
         protocol.turns.push({ id: receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`,
@@ -19758,11 +19784,13 @@ function setupWorldPlayLogic() {
         if (targetAmPm === 'AM' && h24 === 12) h24 = 0;
         
         const targetTotalMinutes = (targetDay - 1) * 24 * 60 + h24 * 60 + targetMins;
-        const timeStep = world.hudConfig?.timeStep !== undefined ? world.hudConfig.timeStep : 5;
         const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60
             + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
-        
-        const newBonusTimeMinutes = targetTotalMinutes - startMinutes - (sess.turnCount - 1) * timeStep;
+        const sidecarTimeline = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        const legacyTickMinutes = sidecarTimeline
+            ? 0
+            : (sess.turnCount - 1) * (world.hudConfig?.timeStep !== undefined ? world.hudConfig.timeStep : 5);
+        const newBonusTimeMinutes = targetTotalMinutes - startMinutes - legacyTickMinutes;
         sess.bonusTimeMinutes = newBonusTimeMinutes;
         
         saveState().catch(() => {});
