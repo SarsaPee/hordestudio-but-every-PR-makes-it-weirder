@@ -9767,6 +9767,17 @@ function parseWorldToolArguments(raw) {
     return parsed;
 }
 
+// A few compatible providers wrap tool arguments in a { receipt: {...} }
+// envelope even though the native tool schema does not require it. The
+// validator can tolerate that envelope, but Sidecar's promotion, traversal,
+// audit and temporal-evidence adapters must all inspect the *same* receipt the
+// reducer receives. Normalize it here, once, before Sidecar begins its work.
+function unwrapSidecarCommitReceipt(raw) {
+    const parsed = parseWorldToolArguments(raw);
+    if (isPlainObject(parsed?.receipt)) return parsed.receipt;
+    return parsed;
+}
+
 const WORLD_TURN_EVENT_TYPES = Object.freeze([
     'movement', 'activity', 'interaction', 'outfit', 'inventory', 'condition',
     'time', 'observation', 'status', 'relationship', 'quest', 'discovery',
@@ -10726,7 +10737,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn');
     recordSidecarTrace(world, sess, { kind: 'reconciliation', prompt: sidecarPrompt, reply: message, model });
     if (!toolCall) throw new Error('Sidecar returned no commit_world_turn tool call.');
-    const receipt = parseWorldToolArguments(toolCall.function?.arguments || '{}');
+    const receipt = unwrapSidecarCommitReceipt(toolCall.function?.arguments || '{}');
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(protocol, receipt, {
         source: 'narrator_handoff', narration, handoff, turnId: receipt.turn_id || ''
