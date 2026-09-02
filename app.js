@@ -20675,6 +20675,9 @@ function setupWorldPlayLogic() {
     document.getElementById('world-plan-sequence-btn').onclick = () => {
         void planAndApproveWorldSequence();
     };
+    document.getElementById('world-context-refresh-btn').onclick = () => {
+        void planAndApproveWorldSequence();
+    };
     document.getElementById('world-close-sequence-btn').onclick = async () => {
         const world = state.worlds.find(item => item.id === state.activeWorldId);
         const sess = getCurrentWorldSession();
@@ -23568,7 +23571,7 @@ function renderWorldPlayState() {
         if (worldInput) worldInput.placeholder = conversationMode.value === 'sidecar'
             ? 'Ask Sidecar about continuity, questions, or a refinement…'
             : 'What do you do?...';
-        ['world-plan-sequence-btn', 'world-close-sequence-btn', 'world-promote-implied-btn'].forEach(id => {
+        ['world-plan-sequence-btn', 'world-context-refresh-btn', 'world-close-sequence-btn', 'world-promote-implied-btn'].forEach(id => {
             const button = document.getElementById(id);
             if (!button) return;
             button.disabled = !sidecarAvailable;
