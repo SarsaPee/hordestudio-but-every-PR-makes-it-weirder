@@ -34,6 +34,12 @@ it never contains copied Horde Studio application files.
   They cannot silently become canonical. The author may explicitly promote a
   record through the native reducer; likely canonical duplicates instead become
   stable reconciliation questions.
+- `runtime/traversal-vehicle-model.js` keeps point-to-point and route-based
+  coverage separate over Horde's existing exit topology. It resolves an
+  interior request to a trustworthy external pickup/drop-off anchor, makes
+  route travel use authored stops only, and represents rideshares as temporary
+  journey containers rather than locations. Persistent vehicles retain an
+  entity identity, parked anchor, and explicit access roles.
 
 Not yet bundled as reusable modules: full migration wizard rollback UI,
 progressive entity promotion, traversal/vehicle adapters, hierarchical memory

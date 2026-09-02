@@ -10011,6 +10011,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                 to_location_id: toLoc?.id || '',
                 movement_mode: ['voluntary', 'forced', 'carried', 'vehicle', 'fall', 'teleport']
                     .includes(event.movement_mode) ? event.movement_mode : 'voluntary',
+                vehicle_id: String(event.vehicle_id || '').slice(0, 160),
                 caused_by_actor_id: resolveWorldActorId(world, sess, event.caused_by_actor_id)
             };
             if (!toLoc) {
@@ -10590,6 +10591,9 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
     const questions = (protocol?.questions || []).filter(question => question.status === 'open' && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)).slice(-8)
         .map(question => ({ id: question.id, prompt: question.prompt, target: question.target }));
+    const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
+    const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
+    const accessibleVehicles = window.HordeSidecarTraversal?.accessibleVehicles(world, hierarchy?.sequence?.controlledEntityId || 'player') || [];
     return {
         version: 1,
         generatedAt: new Date().toISOString(),
@@ -10607,6 +10611,13 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             title: hierarchy.scene.title,
             mode: hierarchy.scene.mode
         } : null,
+        traversal: {
+            activeJourneys,
+            accessibleVehicles: accessibleVehicles.map(vehicle => ({
+                id: vehicle.id, name: vehicle.name, parkedAnchorId: vehicle.vehicle?.parkedAnchorId || vehicle.startLocation || '',
+                access: vehicle.vehicle?.access || []
+            }))
+        },
         activities: frame.activities,
         temporalContinuity: handoff ? sidecarTemporalStatement(handoff).slice(0, 600) : String(protocol?.temporalState?.authoredMeaning || '').slice(0, 600),
         temporalEvidence: protocol?.temporalState || null,
@@ -10710,6 +10721,9 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     if (protocol) {
         recordSidecarCoreAnswers(world, sess, handoff);
         recordSidecarTemporalEvidence(world, sess, handoff, preClock);
+        const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(protocol, world, receipt, {
+            playerLocationId: preFrame.player_location_id
+        }) || [];
         queueSidecarReconciliationQuestions(world, sess, committed.audit);
         const packet = buildSidecarScenePacket(world, sess, handoff);
         protocol.packet = packet;
@@ -10717,7 +10731,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const turnRecord = { id: turnId, status: 'active',
             createdAt: new Date().toISOString(), narration: narration.slice(0, 24000), handoff,
             preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit),
-            provisionalIntroductions: stagedIntroductions.map(entry => entry.id) };
+            provisionalIntroductions: stagedIntroductions.map(entry => entry.id), traversalChanges };
         window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
         protocol.turns.push(turnRecord);
         protocol.turns = protocol.turns.slice(-500);
@@ -15373,7 +15387,8 @@ function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
 
     let canonicalEntityRefs = 0;
     world.entities.forEach(entity => {
-        entity.type = entity.type === 'item' ? 'item' : 'npc';
+        entity.type = entity.type === 'item' ? 'item' : entity.type === 'vehicle' ? 'vehicle' : 'npc';
+        if (entity.type === 'vehicle') window.HordeSidecarTraversal?.normalizeVehicle(entity);
         ['startLocation', 'homeLocation', 'vendorFor'].forEach(field => {
             const target = resolveLocation(entity[field]);
             if (target && entity[field] !== target.id) {
@@ -15493,7 +15508,8 @@ function normalizeWorldDirectoryData(world) {
         // Repair malformed legacy records, including the v16 New Person click
         // regression where a PointerEvent was serialized into `type`.
         const authoredType = typeof entity.type === 'string' ? entity.type.trim().toLowerCase() : '';
-        entity.type = ['item', 'object', 'prop'].includes(authoredType) ? 'item' : 'npc';
+        entity.type = ['item', 'object', 'prop'].includes(authoredType) ? 'item' : authoredType === 'vehicle' ? 'vehicle' : 'npc';
+        if (entity.type === 'vehicle') window.HordeSidecarTraversal?.normalizeVehicle(entity);
         entity.persona = String(entity.persona || '').slice(0, 6000);
         const inferredDepth = entity.isMajor ? 'core'
             : (entity.persona || entity.goal || (entity.schedule || []).length ? 'recurring' : 'background');
@@ -20576,11 +20592,15 @@ function getCurrentWorldSession() {
         // NORMALIZE ENTITY TYPES: every `e.type === 'npc'` check in the engine
         // (presence, schedules, population, context) silently drops entities
         // whose type is missing or spelled differently ("NPC", "character").
-        // Anything not explicitly an item is a person.
+        // Anything not explicitly an item or vehicle is a person. Vehicles are
+        // canonical entities in Sidecar worlds but never NPCs or scene cast.
         world.entities.forEach(ent => {
             const t = (ent.type || '').trim().toLowerCase();
             if (t === 'item' || t === 'object' || t === 'prop') {
                 ent.type = 'item';
+            } else if (t === 'vehicle') {
+                ent.type = 'vehicle';
+                window.HordeSidecarTraversal?.normalizeVehicle(ent);
             } else if (ent.type !== 'npc') {
                 console.log(`Horde Engine: normalized entity "${ent.name}" type "${ent.type}" → npc`);
                 ent.type = 'npc';
@@ -25021,6 +25041,7 @@ ${modularMandate}
                                     from_location_id: { type: "string" },
                                     to_location_id: { type: "string" },
                                     movement_mode: { type: "string", enum: ["voluntary", "forced", "carried", "vehicle", "fall", "teleport"] },
+                                    vehicle_id: { type: "string", description: "Persistent vehicle entity ID when an established vehicle is involved. Omit for a temporary rideshare runtime container." },
                                     caused_by_actor_id: { type: "string", description: "Required with a non-voluntary player movement." },
                                     activity: { type: "string" },
                                     action: { type: "string" },

@@ -5,6 +5,8 @@
         const api = global.HordeSidecarMode;
         if (!api) return null;
         api.normalizeWorldConfig(world, options);
+        global.HordeSidecarTraversal?.normalizeWorldTraversal(world);
+        (world?.entities || []).forEach(entity => global.HordeSidecarTraversal?.normalizeVehicle(entity));
         return api.normalizeTimelineProtocol(world, timeline, options);
     }
 
