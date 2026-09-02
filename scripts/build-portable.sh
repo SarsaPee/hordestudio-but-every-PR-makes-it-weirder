@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${1:-16.7.0}"
+VERSION="${1:-17.0.0}"
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 APP_DIR="$BUILD_DIR/Horde Studio"
@@ -18,6 +18,7 @@ mkdir -p "$APP_DIR" "$OUTPUT_DIR"
 for file in \
   index.html \
   app.js \
+  video-worlds.js \
   style.css \
   presets.js \
   boot-diagnostics.js \

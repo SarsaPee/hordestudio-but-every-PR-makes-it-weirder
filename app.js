@@ -7,8 +7,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '16.7.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-09-01T13:22:39+05:00';
+const HORDE_STUDIO_VERSION = '17.0.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-09-02T01:38:52+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -540,6 +540,10 @@ function mcpBridgeBase() {
 async function mcpBridgeRequest(path, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+    const externalSignal = options.signal;
+    const abortFromCaller = () => controller.abort();
+    if (externalSignal?.aborted) controller.abort();
+    else externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
         const response = await fetch(mcpBridgeBase() + path, {
             method: options.method || 'GET',
@@ -557,13 +561,14 @@ async function mcpBridgeRequest(path, options = {}) {
         }
         return data;
     } catch (error) {
-        if (controller.signal.aborted) throw new Error('The local MCP bridge timed out.');
+        if (controller.signal.aborted) throw new Error(externalSignal?.aborted ? 'Request cancelled.' : 'The local MCP bridge timed out.');
         if (/Failed to fetch|NetworkError|Load failed/i.test(String(error.message || error))) {
             throw new Error('Horde Studio cannot reach its local bridge. Run the launcher for your OS from Settings → Launch Horde Studio.');
         }
         throw error;
     } finally {
         clearTimeout(timeout);
+        externalSignal?.removeEventListener('abort', abortFromCaller);
     }
 }
 function apiBase() {
@@ -684,6 +689,7 @@ function providerAttributionHeaders(providerId) {
 }
 
 function providerHasCredentials(providerId) {
+    if (String(providerId || '').toLowerCase() === 'fal') return !!String(state.falApiKey || '').trim();
     const provider = normalizedProviderId(providerId);
     if (provider === 'local') return true;
     if (provider === 'custom') return !!normalizeRemoteApiBase(state.globalSettings?.customBaseUrl);
@@ -694,6 +700,7 @@ function providerHasCredentials(providerId) {
 }
 
 function providerDisplayName(providerId) {
+    if (String(providerId || '').toLowerCase() === 'fal') return 'Fal';
     return ({ openrouter: 'OpenRouter', gptproto: 'GPTProto', nanogpt: 'NanoGPT', nvidia: 'NVIDIA NIM', bedrock: 'AWS Bedrock', custom: customProviderName(), local: 'Local provider' })[
         normalizedProviderId(providerId)
     ];
@@ -704,7 +711,7 @@ function providerDisplayName(providerId) {
 // Virtual Human can talk through OpenRouter, make photos through GPTProto and
 // render clips through WaveSpeed without any provider silently replacing the
 // others.
-const VIDEO_PROVIDER_IDS = Object.freeze(['openrouter', 'evolink', 'wavespeed']);
+const VIDEO_PROVIDER_IDS = Object.freeze(['openrouter', 'evolink', 'wavespeed', 'fal']);
 const VIDEO_MODEL_FALLBACKS = Object.freeze({
     openrouter: [
         { id: 'bytedance/seedance-2.0-fast', name: 'Seedance 2.0 Fast', reference: true },
@@ -721,6 +728,12 @@ const VIDEO_MODEL_FALLBACKS = Object.freeze({
         { id: 'bytedance/seedance-v2.0-fast/image-to-video', name: 'Seedance 2.0 Fast · image to video', reference: true },
         { id: 'bytedance/seedance-v2.0/image-to-video', name: 'Seedance 2.0 · image to video', reference: true },
         { id: 'minimax/hailuo-2.3/image-to-video', name: 'MiniMax Hailuo 2.3 · image to video', reference: true }
+    ],
+    fal: [
+        { id: 'minimax/h3-max', name: 'MiniMax H3 Max · native dialogue', reference: true, audio: true },
+        { id: 'alibaba/wan-3.0', name: 'Wan 3.0 · audio', reference: true, audio: true },
+        { id: 'fal-ai/ltx-2.3/fast', name: 'LTX-2.3 Fast · audio', reference: true, audio: true },
+        { id: 'alibaba/wan-3.0-prime', name: 'Wan 3.0 Prime · audio', reference: true, audio: true }
     ]
 });
 const videoModelCatalogCache = new Map();
@@ -731,7 +744,7 @@ function normalizedVideoProviderId(value) {
 }
 
 function videoProviderDisplayName(value) {
-    return ({ openrouter: 'OpenRouter', evolink: 'EvoLink', wavespeed: 'WaveSpeed' })[normalizedVideoProviderId(value)];
+    return ({ openrouter: 'OpenRouter', evolink: 'EvoLink', wavespeed: 'WaveSpeed', fal: 'Fal' })[normalizedVideoProviderId(value)];
 }
 
 function videoProviderApiBase(value) {
@@ -744,7 +757,8 @@ function videoProviderApiBase(value) {
 function videoProviderApiKey(value) {
     const provider = normalizedVideoProviderId(value);
     return provider === 'evolink' ? state.evolinkApiKey
-        : provider === 'wavespeed' ? state.wavespeedApiKey : state.apiKey;
+        : provider === 'wavespeed' ? state.wavespeedApiKey
+            : provider === 'fal' ? state.falApiKey : state.apiKey;
 }
 
 function videoProviderHasCredentials(value) {
@@ -783,6 +797,11 @@ async function fetchVideoModels(providerValue, force = false) {
     const cached = videoModelCatalogCache.get(provider);
     if (!force && cached?.at > Date.now() - 10 * 60 * 1000) return cached.models;
     let models = [];
+    if (provider === 'fal') {
+        models = VIDEO_MODEL_FALLBACKS.fal.map(item => normalizeVideoModel(item, provider));
+        videoModelCatalogCache.set(provider, { at: Date.now(), models });
+        return models;
+    }
     if (provider === 'openrouter' && videoProviderHasCredentials(provider)) {
         try {
             const response = await fetch(`${videoProviderApiBase(provider)}/videos/models`, { headers: videoProviderHeaders(provider) });
@@ -898,6 +917,7 @@ function companionTextProviderId(companion) {
 }
 
 function companionImageProviderId(companion) {
+    if (companion?.imageSource === 'fal') return 'fal';
     const requested = ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(companion?.imageSource)
         ? companion.imageSource : normalizedProviderId();
     return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(requested) ? requested : 'openrouter';
@@ -1044,6 +1064,7 @@ let state = {
     gptprotoApiKey: '',
     evolinkApiKey: '',
     wavespeedApiKey: '',
+    falApiKey: '',
     nanogptApiKey: '',
     nvidiaApiKey: '',
     bedrockApiKey: '',
@@ -1057,6 +1078,10 @@ let state = {
         customBaseUrl: '',
         evolinkBaseUrl: 'https://api.evolink.ai/v1',
         wavespeedBaseUrl: 'https://api.wavespeed.ai/api/v3',
+        falRate480: 0.05,
+        falRate768: 0.08,
+        falPricingVersion: 2,
+        falSafetyChecker: true,
         editFontSize: 15,
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
@@ -1134,6 +1159,12 @@ let state = {
     activeWorldId: null,
     worldInstances: {}, // worldId -> current state
     editingWorld: null,
+    // Video Adventures are a separate product surface and persistence graph. They
+    // intentionally share no definitions, sessions or canonical state with Worlds.
+    videoWorlds: [],
+    videoWorldSessions: {}, // videoWorldId -> { activeSessionId, sessions[] }
+    activeVideoWorldId: null,
+    editingVideoWorldId: null,
     companions: [],
     companionThreads: {}, // legacy companionId -> message array; migrated on load
     companionTimelines: {}, // companionId -> { activeSessionId, sessions[] }
@@ -1545,6 +1576,7 @@ function validateBackupData(value) {
     requireArray(value.rooms, 'Backup rooms', { optional: true, max: 1000 });
     requireArray(value.systemPresets, 'Backup presets', { optional: true, max: 1000 });
     requireArray(value.worlds, 'Backup worlds', { optional: true, max: 1000 });
+    requireArray(value.videoWorlds, 'Backup Video Adventures', { optional: true, max: 1000 });
     requireArray(value.companions, 'Backup Virtual Humans', { optional: true, max: 1000 });
     (value.characters || []).forEach((item, index) => validateCharacterData(item, `Backup character ${index + 1}`));
     (value.rooms || []).forEach((item, index) => validateRoomData(item, `Backup room ${index + 1}`));
@@ -1556,6 +1588,13 @@ function validateBackupData(value) {
         requireSafeId(item.id, `Backup persona ${index + 1} id`, { optional: true });
     });
     (value.worlds || []).forEach((item, index) => validateWorldData(item, `Backup world ${index + 1}`));
+    (value.videoWorlds || []).forEach((item, index) => {
+        requirePlainObject(item, `Backup Video Adventure ${index + 1}`);
+        requireSafeId(item.id, `Backup Video Adventure ${index + 1} id`);
+        requireString(item.name, `Backup Video Adventure ${index + 1} name`, { max: 120 });
+        ['tagline', 'premise', 'visualStyle', 'openingShot', 'resolution', 'aspectRatio'].forEach(key =>
+            requireString(item[key], `Backup Video Adventure ${index + 1} ${key}`, { optional: true, max: key === 'openingShot' ? 6000 : 4000 }));
+    });
     (value.companions || []).forEach((item, index) =>
         validateCompanionData(item, `Backup Virtual Human ${index + 1}`));
     if (value.companionTimelines !== undefined) {
@@ -1585,7 +1624,7 @@ function validateBackupData(value) {
         requireSafeId(item.id, `Backup preset ${index + 1} id`, { optional: true });
         validatePresetData(item.data, `Backup preset ${index + 1}`);
     });
-    ['chats', 'chatContinuities', 'activeSessionId', 'globalSettings', 'theme', 'worldInstances'].forEach(key => {
+    ['chats', 'chatContinuities', 'activeSessionId', 'globalSettings', 'theme', 'worldInstances', 'videoWorldSessions'].forEach(key => {
         if (value[key] !== undefined) requirePlainObject(value[key], `Backup ${key}`);
     });
     Object.entries(value.chatContinuities || {}).forEach(([continuityId, continuity]) => {
@@ -1675,6 +1714,10 @@ function validateBackupData(value) {
 }
 
 function repairLoadedState() {
+    const loadedGlobalSettings = isPlainObject(state.globalSettings) ? state.globalSettings : {};
+    const migrateExpiredFalLaunchRates = Number(loadedGlobalSettings.falPricingVersion || 0) < 2
+        && Number(loadedGlobalSettings.falRate480) === 0.025
+        && Number(loadedGlobalSettings.falRate768) === 0.04;
     state.globalSettings = {
         defaultModel: 'deepseek/deepseek-v4-flash',
         editFontSize: 15,
@@ -1687,6 +1730,10 @@ function repairLoadedState() {
         embeddingApiKey: '',
         localTtsBaseUrl: 'http://127.0.0.1:8000/v1',
         localTtsApiKey: '',
+        falRate480: 0.05,
+        falRate768: 0.08,
+        falPricingVersion: 2,
+        falSafetyChecker: true,
         mcpBridgeUrl: HORDE_MCP_BRIDGE_DEFAULT,
         localImageBaseUrl: 'http://127.0.0.1:7860/v1',
         localImagePath: '/images/generations',
@@ -1706,8 +1753,13 @@ function repairLoadedState() {
         companionAlwaysOnClientId: '',
         companionAgencyPaused: false,
         labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } },
-        ...(isPlainObject(state.globalSettings) ? state.globalSettings : {})
+        ...loadedGlobalSettings
     };
+    if (migrateExpiredFalLaunchRates) {
+        state.globalSettings.falRate480 = 0.05;
+        state.globalSettings.falRate768 = 0.08;
+    }
+    state.globalSettings.falPricingVersion = 2;
     state.globalSettings.defaultModel = typeof state.globalSettings.defaultModel === 'string' ? state.globalSettings.defaultModel.slice(0, 500) : 'deepseek/deepseek-v4-flash';
     // Blank is meaningful here: it means "fall back to the world's own model".
     state.globalSettings.structuredModel = typeof state.globalSettings.structuredModel === 'string'
@@ -1726,6 +1778,9 @@ function repairLoadedState() {
     state.globalSettings.localTtsBaseUrl = normalizeOpenAICompatibleBase(
         state.globalSettings.localTtsBaseUrl, 'http://127.0.0.1:8000/v1');
     state.globalSettings.localTtsApiKey = String(state.globalSettings.localTtsApiKey || '').slice(0, 500);
+    state.globalSettings.falRate480 = Math.max(0, Math.min(100, Number(state.globalSettings.falRate480) || 0.05));
+    state.globalSettings.falRate768 = Math.max(0, Math.min(100, Number(state.globalSettings.falRate768) || 0.08));
+    state.globalSettings.falSafetyChecker = state.globalSettings.falSafetyChecker !== false;
     state.globalSettings.companionAlwaysOnEnabled = state.globalSettings.companionAlwaysOnEnabled === true;
     state.globalSettings.companionAlwaysOnMessages = state.globalSettings.companionAlwaysOnMessages !== false;
     state.globalSettings.companionAlwaysOnSocial = state.globalSettings.companionAlwaysOnSocial !== false;
@@ -1758,6 +1813,8 @@ function repairLoadedState() {
     state.chatContinuities = isPlainObject(state.chatContinuities) ? state.chatContinuities : {};
     state.activeSessionId = isPlainObject(state.activeSessionId) ? state.activeSessionId : {};
     state.worldInstances = isPlainObject(state.worldInstances) ? state.worldInstances : {};
+    state.videoWorlds = Array.isArray(state.videoWorlds) ? state.videoWorlds.filter(isPlainObject) : [];
+    state.videoWorldSessions = isPlainObject(state.videoWorldSessions) ? state.videoWorldSessions : {};
     state.characters = Array.isArray(state.characters) ? state.characters.filter(c => {
         try { validateCharacterData(c); return true; } catch (err) { console.warn('Dropped invalid stored character:', err.message); return false; }
     }) : [];
@@ -1867,6 +1924,7 @@ async function loadState() {
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || '';
         state.evolinkApiKey = sessionStorage.getItem('horde_evolink_api_key') || '';
         state.wavespeedApiKey = sessionStorage.getItem('horde_wavespeed_api_key') || '';
+        state.falApiKey = sessionStorage.getItem('horde_fal_api_key') || '';
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || '';
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || '';
         state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || '';
@@ -1899,6 +1957,7 @@ async function loadState() {
         const storedGPTProtoApiKey = await HordeDB.get('gptprotoApiKey') || '';
         const storedEvolinkApiKey = await HordeDB.get('evolinkApiKey') || '';
         const storedWaveSpeedApiKey = await HordeDB.get('wavespeedApiKey') || '';
+        const storedFalApiKey = await HordeDB.get('falApiKey') || '';
         const storedNanoGPTApiKey = await HordeDB.get('nanogptApiKey') || '';
         const storedNvidiaApiKey = await HordeDB.get('nvidiaApiKey') || '';
         const storedBedrockApiKey = await HordeDB.get('bedrockApiKey') || '';
@@ -1912,6 +1971,8 @@ async function loadState() {
         if (state.evolinkApiKey) sessionStorage.setItem('horde_evolink_api_key', state.evolinkApiKey);
         state.wavespeedApiKey = sessionStorage.getItem('horde_wavespeed_api_key') || storedWaveSpeedApiKey;
         if (state.wavespeedApiKey) sessionStorage.setItem('horde_wavespeed_api_key', state.wavespeedApiKey);
+        state.falApiKey = sessionStorage.getItem('horde_fal_api_key') || storedFalApiKey;
+        if (state.falApiKey) sessionStorage.setItem('horde_fal_api_key', state.falApiKey);
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || storedNanoGPTApiKey;
         if (state.nanogptApiKey) sessionStorage.setItem('horde_nanogpt_api_key', state.nanogptApiKey);
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || storedNvidiaApiKey;
@@ -1950,6 +2011,8 @@ async function loadState() {
         if (state.globalSettings.customBaseUrl === undefined) state.globalSettings.customBaseUrl = '';
         if (state.globalSettings.evolinkBaseUrl === undefined) state.globalSettings.evolinkBaseUrl = 'https://api.evolink.ai/v1';
         if (state.globalSettings.wavespeedBaseUrl === undefined) state.globalSettings.wavespeedBaseUrl = 'https://api.wavespeed.ai/api/v3';
+        if (state.globalSettings.falRate480 === undefined) state.globalSettings.falRate480 = 0.05;
+        if (state.globalSettings.falRate768 === undefined) state.globalSettings.falRate768 = 0.08;
         if (state.globalSettings.localBaseUrl === undefined) state.globalSettings.localBaseUrl = '';
         if (state.globalSettings.localApiKey === undefined) state.globalSettings.localApiKey = '';
         if (state.globalSettings.localGenerationTimeoutSeconds === undefined) state.globalSettings.localGenerationTimeoutSeconds = 300;
@@ -1983,6 +2046,9 @@ async function loadState() {
         });
         state.worldInstances = await HordeDB.get('worldInstances') || {};
         state.activeWorldId = await HordeDB.get('activeWorldId') || null;
+        state.videoWorlds = await HordeDB.get('videoWorlds') || [];
+        state.videoWorldSessions = await HordeDB.get('videoWorldSessions') || {};
+        state.activeVideoWorldId = await HordeDB.get('activeVideoWorldId') || null;
         repairedCompanionIds = await loadCompanionsState();
         
         // --- MIGRATION: Convert chats to sessions if needed ---
@@ -2479,6 +2545,7 @@ async function persistStateSnapshot() {
             gptprotoApiKey: state.globalSettings.rememberApiKey ? (state.gptprotoApiKey || '') : '',
             evolinkApiKey: state.globalSettings.rememberApiKey ? (state.evolinkApiKey || '') : '',
             wavespeedApiKey: state.globalSettings.rememberApiKey ? (state.wavespeedApiKey || '') : '',
+            falApiKey: state.globalSettings.rememberApiKey ? (state.falApiKey || '') : '',
             nanogptApiKey: state.globalSettings.rememberApiKey ? (state.nanogptApiKey || '') : '',
             nvidiaApiKey: state.globalSettings.rememberApiKey ? (state.nvidiaApiKey || '') : '',
             bedrockApiKey: state.globalSettings.rememberApiKey ? (state.bedrockApiKey || '') : '',
@@ -2499,6 +2566,9 @@ async function persistStateSnapshot() {
             worldRecoverySnapshots: state.worldRecoverySnapshots,
             worldInstances: state.worldInstances,
             activeWorldId: state.activeWorldId,
+            videoWorlds: state.videoWorlds,
+            videoWorldSessions: state.videoWorldSessions,
+            activeVideoWorldId: state.activeVideoWorldId,
             companions: state.companions,
             companionThreads: state.companionThreads,
             companionTimelines: state.companionTimelines,
@@ -2604,6 +2674,7 @@ async function persistGlobalSettingsOnly() {
         gptprotoApiKey: remember ? (state.gptprotoApiKey || '') : '',
         evolinkApiKey: remember ? (state.evolinkApiKey || '') : '',
         wavespeedApiKey: remember ? (state.wavespeedApiKey || '') : '',
+        falApiKey: remember ? (state.falApiKey || '') : '',
         nanogptApiKey: remember ? (state.nanogptApiKey || '') : '',
         nvidiaApiKey: remember ? (state.nvidiaApiKey || '') : '',
         bedrockApiKey: remember ? (state.bedrockApiKey || '') : '',
@@ -3341,7 +3412,7 @@ function normalizeWorldPresentation(world) {
         panelOpacity: livingClamp(raw.panelOpacity == null ? 88 : raw.panelOpacity, 35, 100),
         backgroundDim: livingClamp(raw.backgroundDim == null ? 68 : raw.backgroundDim, 0, 95),
         mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),
-        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
+        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
         imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500)
     });
     world.presentation = raw;
@@ -3450,6 +3521,9 @@ const views = {
     worlds: document.getElementById('worlds-view'),
     worldStudio: document.getElementById('world-studio-view'),
     worldPlay: document.getElementById('world-play-view'),
+    videoWorlds: document.getElementById('video-worlds-view'),
+    videoWorldStudio: document.getElementById('video-world-studio-view'),
+    videoWorldPlay: document.getElementById('video-world-play-view'),
     companions: document.getElementById('companions-view'),
     companionStudio: document.getElementById('companion-studio-view'),
     companionChat: document.getElementById('companion-chat-view')
@@ -4647,6 +4721,7 @@ async function init() {
     setupWorldStudioLogic();
     setupAIBuilderLogic(); // ✨ AI Builder & Verification Layer setup
     setupWorldPlayLogic();
+    window.HordeVideoWorlds?.setup?.();
     setupMultiplayerHub();
     window.HordeMultiplayer?.setup?.({
         bridgeRequest: mcpBridgeRequest,
@@ -4682,7 +4757,7 @@ async function init() {
     renderLibrary();
     
     switchView('library');
-    if (!hasApiCredentials()) showGlobalSettings();
+    if (!hasApiCredentials() && !state.falApiKey) showGlobalSettings();
     applyGlobalStyles();
     applyTheme();
     setupCustomizeModal();
@@ -4935,6 +5010,8 @@ function switchView(viewName) {
         companionChat: 'companions',
         worldStudio: 'worlds',
         worldPlay: 'worlds',
+        videoWorldStudio: 'videoWorlds',
+        videoWorldPlay: 'videoWorlds',
         multiplayerSession: 'multiplayer'
     }[viewName] || viewName;
     navBtns.forEach(btn => {
@@ -4977,6 +5054,7 @@ function switchView(viewName) {
     if (viewName === 'worlds') {
         renderWorlds();
     }
+    window.HordeVideoWorlds?.onView?.(viewName);
 
     if (viewName === 'worldStudio') {
         if (!state.editingWorld) {
@@ -10270,6 +10348,9 @@ function setupGlobalSettings() {
         state.wavespeedApiKey = document.getElementById('global-wavespeed-key')?.value.trim() || '';
         if (state.wavespeedApiKey) sessionStorage.setItem('horde_wavespeed_api_key', state.wavespeedApiKey);
         else sessionStorage.removeItem('horde_wavespeed_api_key');
+        state.falApiKey = document.getElementById('global-fal-key')?.value.trim() || '';
+        if (state.falApiKey) sessionStorage.setItem('horde_fal_api_key', state.falApiKey);
+        else sessionStorage.removeItem('horde_fal_api_key');
         applyNanoGPTApiKeyForSession(document.getElementById('global-nanogpt-key').value);
         state.nvidiaApiKey = document.getElementById('global-nvidia-key').value.trim();
         if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
@@ -10312,6 +10393,12 @@ function setupGlobalSettings() {
             || 'https://api.evolink.ai/v1';
         state.globalSettings.wavespeedBaseUrl = normalizeRemoteApiBase(document.getElementById('global-wavespeed-url')?.value)
             || 'https://api.wavespeed.ai/api/v3';
+        state.globalSettings.falRate480 = Math.max(0, Math.min(100,
+            Number(document.getElementById('global-fal-rate-480')?.value) || 0.05));
+        state.globalSettings.falRate768 = Math.max(0, Math.min(100,
+            Number(document.getElementById('global-fal-rate-768')?.value) || 0.08));
+        state.globalSettings.falPricingVersion = 2;
+        state.globalSettings.falSafetyChecker = document.getElementById('global-fal-safety-checker')?.checked !== false;
         const rawCustomHeaders = document.getElementById('global-custom-headers').value.trim();
         if (rawCustomHeaders) {
             try {
@@ -10377,7 +10464,7 @@ function setupGlobalSettings() {
         syncCompanionAlwaysOnRuntime({ announce: true }).catch(() => {});
         const enteredCloudKey = !!(state.apiKey || state.gptprotoApiKey || state.nanogptApiKey
             || state.nvidiaApiKey || state.bedrockApiKey || state.customApiKey
-            || state.evolinkApiKey || state.wavespeedApiKey);
+            || state.evolinkApiKey || state.wavespeedApiKey || state.falApiKey);
         showToast(enteredCloudKey && !state.globalSettings.rememberApiKey
             ? 'Settings saved. API keys remain in this tab only; enable “Remember API keys” to keep them after closing the browser.'
             : 'Settings saved for future sessions.', 'success');
@@ -10448,7 +10535,7 @@ function setupGlobalSettings() {
             if (fpWarn) fpWarn.style.display = (local && location.protocol === 'file:') ? 'block' : 'none';
         };
     }
-    ['global-api-key', 'global-gptproto-key', 'global-nanogpt-key', 'global-nvidia-key',
+    ['global-api-key', 'global-gptproto-key', 'global-fal-key', 'global-nanogpt-key', 'global-nvidia-key',
         'global-bedrock-key', 'global-custom-api-key'].forEach(inputId => {
         document.getElementById(inputId)?.addEventListener('input', () => refreshSettingsProviderCards(providerSel?.value));
     });
@@ -10550,6 +10637,33 @@ function setupGlobalSettings() {
             if (result) result.textContent = `NanoGPT generation test failed: ${humanizeApiError(error, 'nanogpt')}`;
         } finally {
             testNanoGPTBtn.disabled = false;
+        }
+    };
+    const testFalBtn = document.getElementById('test-fal-conn-btn');
+    if (testFalBtn) testFalBtn.onclick = async () => {
+        const result = document.getElementById('fal-conn-result');
+        const key = document.getElementById('global-fal-key')?.value.trim() || '';
+        if (!key) {
+            if (result) result.textContent = 'Enter a Fal API key first.';
+            return;
+        }
+        testFalBtn.disabled = true;
+        if (result) result.textContent = 'Checking Fal authentication without generating or charging…';
+        try {
+            const response = await mcpBridgeRequest('/fal/video/test', {
+                method: 'POST', body: { apiKey: key }, timeoutMs: 30000
+            });
+            state.falApiKey = key;
+            sessionStorage.setItem('horde_fal_api_key', key);
+            refreshSettingsProviderCards(document.getElementById('global-api-provider')?.value);
+            if (result) result.textContent = `Connected to Fal${response.modelsVisible ? ` · ${response.modelsVisible} models returned by the catalog probe` : ''}. The key is active for this browser session; Save changes to keep your settings.`;
+        } catch (error) {
+            const oldBridge = /Unknown MCP provider|Unknown bridge endpoint|request failed \(404\)/i.test(error.message || '');
+            if (result) result.textContent = oldBridge
+                ? 'Fal test unavailable because an older local bridge is still running. Restart Horde Studio once, reopen Settings, and test again.'
+                : `Fal connection failed: ${humanizeApiError(error)}`;
+        } finally {
+            testFalBtn.disabled = false;
         }
     };
     const setupOpenAICompatibleCloudTest = ({ buttonId, resultId, keyId, label, baseUrl }) => {
@@ -10846,6 +10960,9 @@ async function exportFullBackup() {
         worlds: state.worlds,
         worldInstances: state.worldInstances,
         activeWorldId: state.activeWorldId,
+        videoWorlds: state.videoWorlds,
+        videoWorldSessions: state.videoWorldSessions,
+        activeVideoWorldId: state.activeVideoWorldId,
         companions: state.companions,
         companionThreads: state.companionThreads,
         companionTimelines: state.companionTimelines,
@@ -10880,12 +10997,16 @@ function importFullBackup(file) {
                     if (data.companionThreads === undefined) data.companionThreads = {};
                     if (data.companionTimelines === undefined) data.companionTimelines = {};
                     if (data.activeCompanionId === undefined) data.activeCompanionId = null;
+                    if (data.videoWorlds === undefined) data.videoWorlds = [];
+                    if (data.videoWorldSessions === undefined) data.videoWorldSessions = {};
+                    if (data.activeVideoWorldId === undefined) data.activeVideoWorldId = null;
                     if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
                     if (data.chatContinuities === undefined) data.chatContinuities = {};
                     const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
                         'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
                         'worlds', 'worldInstances', 'activeWorldId', 'companions',
-                        'companionThreads', 'companionTimelines', 'activeCompanionId'];
+                        'companionThreads', 'companionTimelines', 'activeCompanionId',
+                        'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
                     keys.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
                     for (const [assetId, source] of Object.entries(data.companionVideoAssets || {})) {
                         if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
@@ -10936,6 +11057,10 @@ function showGlobalSettings() {
         document.getElementById('global-gptproto-key').value = state.gptprotoApiKey;
         document.getElementById('global-evolink-key').value = state.evolinkApiKey;
         document.getElementById('global-wavespeed-key').value = state.wavespeedApiKey;
+        document.getElementById('global-fal-key').value = state.falApiKey;
+        document.getElementById('global-fal-rate-480').value = String(state.globalSettings.falRate480 ?? 0.05);
+        document.getElementById('global-fal-rate-768').value = String(state.globalSettings.falRate768 ?? 0.08);
+        document.getElementById('global-fal-safety-checker').checked = state.globalSettings.falSafetyChecker !== false;
         document.getElementById('global-evolink-url').value = state.globalSettings.evolinkBaseUrl || 'https://api.evolink.ai/v1';
         document.getElementById('global-wavespeed-url').value = state.globalSettings.wavespeedBaseUrl || 'https://api.wavespeed.ai/api/v3';
         document.getElementById('global-nanogpt-key').value = state.nanogptApiKey;
@@ -13172,8 +13297,8 @@ async function renderWorldVisualModelSearch(world, force = false) {
     if (!world || !input || !results || !status) return;
     const renderId = ++worldVisualModelSearchRenderId;
     const provider = worldVisualProvider(world);
-    if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
-        status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter, GPTProto or NanoGPT, or enter the exact model ID used by your provider.';
+    if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
+        status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter, GPTProto, NanoGPT or Fal, or enter the exact model ID used by your provider.';
         results.innerHTML = '<div class="smart-input-empty">Choose a catalog-backed image provider to browse compatible models.</div>';
         setCompanionSearchOpen(input, results, true);
         return;
@@ -13317,8 +13442,8 @@ function renderWorldVisuals() {
     byId('w-visual-refresh-models').onclick = async event => {
         const button = event.currentTarget;
         const provider = worldVisualProvider(world);
-        if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
-            return showToast('Choose OpenRouter, GPTProto or NanoGPT to browse cloud image models.', 'info');
+        if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
+            return showToast('Choose OpenRouter, GPTProto, NanoGPT or Fal to browse cloud image models.', 'info');
         }
         button.disabled = true;
         button.textContent = '↻ Loading…';
@@ -33702,7 +33827,7 @@ function normalizeCompanion(raw) {
         intimacyBoundaries: String(c.intimacyBoundaries || '').trim().slice(0, 2400),
         textProvider: ['provider', ...TEXT_PROVIDER_IDS].includes(c.textProvider)
             ? c.textProvider : 'provider',
-        imageSource: ['provider', 'openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(c.imageSource)
+        imageSource: ['provider', 'openrouter', 'gptproto', 'nanogpt', 'fal', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(c.imageSource)
             ? c.imageSource : 'provider',
         imageModel: typeof c.imageModel === 'string' ? c.imageModel : '',
         mcpImageTool: typeof c.mcpImageTool === 'string' ? c.mcpImageTool.trim().slice(0, 300) : '',
@@ -33718,6 +33843,8 @@ function normalizeCompanion(raw) {
         allowVideoClips: c.allowVideoClips === true,
         videoProvider: normalizedVideoProviderId(c.videoProvider),
         videoModel: String(c.videoModel || '').trim().slice(0, 300),
+        videoFallbackModel: String(c.videoFallbackModel || '').trim().slice(0, 300),
+        videoFallbackModel2: String(c.videoFallbackModel2 || '').trim().slice(0, 300),
         videoResolution: ['480p', '720p', '1080p'].includes(c.videoResolution) ? c.videoResolution : '480p',
         videoDuration: livingClamp(Number(c.videoDuration) || 5, 2, 30),
         videoAudio: c.videoAudio !== false,
@@ -37747,6 +37874,25 @@ async function submitCompanionVideoJob(companion, job) {
     job.prompt = companionVideoPrompt(companion, job);
     job.status = 'queued'; job.progress = 3; job.updatedAt = Date.now(); job.error = '';
     renderCompanionSocialPanel(companion); await saveState();
+    if (provider === 'fal') {
+        const fallback = String(companion.videoFallbackModel || '').trim();
+        const fallback2 = String(companion.videoFallbackModel2 || '').trim();
+        const models = [job.model, fallback, fallback2].filter((item, index, list) => item && list.indexOf(item) === index);
+        const submitted = await mcpBridgeRequest('/fal/video/jobs', {
+            method: 'POST', timeoutMs: 15000,
+            body: {
+                apiKey: state.falApiKey, models, prompt: job.prompt,
+                duration: job.duration,
+                resolution: job.resolution === '720p' ? '768P' : job.resolution.toUpperCase(),
+                aspectRatio: '9:16', imageDataUrl: reference,
+                enableSafetyChecker: state.globalSettings.falSafetyChecker !== false
+            }
+        });
+        job.providerJobId = submitted.jobId;
+        job.status = 'generating'; job.progress = 5; job.updatedAt = Date.now();
+        await saveState(); renderCompanionSocialPanel(companion);
+        return pollCompanionFalVideoJob(companion, job);
+    }
     let endpoint = '';
     let body = {};
     if (provider === 'openrouter') {
@@ -37781,6 +37927,27 @@ async function submitCompanionVideoJob(companion, job) {
     job.status = 'generating'; job.progress = Math.max(5, Number(data?.progress) || 5); job.updatedAt = Date.now();
     await saveState(); renderCompanionSocialPanel(companion);
     return pollCompanionVideoJob(companion, job);
+}
+
+async function pollCompanionFalVideoJob(companion, job) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20 * 60 * 1000 && ['queued', 'generating'].includes(job.status)) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const result = await mcpBridgeRequest(`/fal/video/jobs/${encodeURIComponent(job.providerJobId)}`, { timeoutMs: 15000 });
+        job.model = result.currentModel || job.model;
+        job.progress = Math.min(94, job.progress + (result.status === 'running' ? 3 : 1));
+        job.updatedAt = Date.now();
+        if (result.status === 'completed') {
+            job.model = result.result?.model || job.model;
+            job.duration = Number(result.result?.duration) || job.duration;
+            return completeCompanionVideoJob(companion, job, `${mcpBridgeBase()}${result.result?.mediaUrl || ''}`);
+        }
+        if (['failed', 'cancelled'].includes(result.status)) {
+            throw new Error(result.error || `Fal video generation ${result.status}.`);
+        }
+        renderCompanionSocialPanel(companion);
+    }
+    throw new Error('Fal video generation timed out. The bridge retained the job for recovery.');
 }
 
 async function completeCompanionVideoJob(companion, job, outputUrl) {
@@ -38255,6 +38422,11 @@ const COMPANION_IMAGE_MODEL_FALLBACKS = [
     { id: 'black-forest-labs/flux-1-schnell', name: 'FLUX.1 Schnell' },
     { id: 'stabilityai/stable-diffusion-3.5-large', name: 'Stable Diffusion 3.5 Large' }
 ];
+const FAL_IMAGE_MODELS = Object.freeze([
+    { id: 'fal-ai/flux/schnell', name: 'FLUX.1 Schnell · fastest · $0.003/MP', architecture: { input_modalities: ['text'], output_modalities: ['image'] }, pricing: [{ billable: 'output_image', unit: 'image', cost_usd: 0.003 }] },
+    { id: 'fal-ai/flux/dev/image-to-image', name: 'FLUX.1 Dev · identity/reference', architecture: { input_modalities: ['text', 'image'], output_modalities: ['image'] }, supported_parameters: { input_references: { type: 'range', min: 1, max: 1 }, aspect_ratio: { type: 'enum', values: ['1:1', '16:9', '9:16', '4:3', '3:4'] } } },
+    { id: 'fal-ai/wan-25-preview/image-to-image', name: 'Wan 2.5 · reference · $0.05/image', architecture: { input_modalities: ['text', 'image'], output_modalities: ['image'] }, supported_parameters: { input_references: { type: 'range', min: 1, max: 1 }, aspect_ratio: { type: 'enum', values: ['auto', '1:1', '16:9', '9:16'] } }, pricing: [{ billable: 'output_image', unit: 'image', cost_usd: 0.05 }] }
+]);
 const GPTPROTO_IMAGE_MODELS = Object.freeze([
     {
         id: 'gpt-image-2', name: 'GPT Image 2',
@@ -38375,6 +38547,7 @@ function gptProtoImageEndpoint(modelId, usedReference = false) {
 }
 
 function companionImageModelFallback(providerId = state.globalSettings.apiProvider) {
+    if (String(providerId || '').toLowerCase() === 'fal') return 'fal-ai/flux/schnell';
     const provider = normalizedProviderId(providerId);
     if (provider === 'gptproto') return GPTPROTO_IMAGE_MODELS[0].id;
     if (provider === 'nanogpt') return 'hidream';
@@ -38529,12 +38702,17 @@ function imageParameterValueForDescriptor(key, value, descriptor) {
 }
 
 async function getCompanionOutputModels(modality, force = false, providerId = state.globalSettings.apiProvider) {
-    const provider = normalizedProviderId(providerId);
-    const base = providerApiBase(provider);
+    const provider = String(providerId || '').toLowerCase() === 'fal' ? 'fal' : normalizedProviderId(providerId);
+    const base = provider === 'fal' ? 'fal://local-bridge' : providerApiBase(provider);
     const key = `${base}|${modality}`;
     if (force) companionOutputModelCache.delete(key);
     if (companionOutputModelCache.has(key)) return companionOutputModelCache.get(key);
     let models = [];
+    if (provider === 'fal') {
+        models = modality === 'image' ? FAL_IMAGE_MODELS.map(model => safeJsonClone(model)) : [];
+        companionOutputModelCache.set(key, models);
+        return models;
+    }
     try {
         const queryModality = modality === 'audio' ? 'speech' : modality;
         const catalogPath = provider === 'nanogpt'
@@ -38632,7 +38810,7 @@ function isImageCapableModel(model) {
 }
 
 function rankCompanionImageModels(models, providerId = state.globalSettings.apiProvider) {
-    const provider = normalizedProviderId(providerId);
+    const provider = String(providerId || '').toLowerCase() === 'fal' ? 'fal' : normalizedProviderId(providerId);
     const source = provider === 'gptproto'
         ? (Array.isArray(models) ? models : []).map(enrichGptProtoImageModel)
         : provider === 'nanogpt'
@@ -38681,6 +38859,7 @@ function companionImageModelInfo(modelId) {
 }
 
 async function getCompanionImageEndpoints(modelId, force = false, providerId = state.globalSettings.apiProvider) {
+    if (String(providerId || '').toLowerCase() === 'fal') return [];
     const provider = normalizedProviderId(providerId);
     const id = String(modelId || '').trim();
     if (!id || provider !== 'openrouter') return [];
@@ -38913,7 +39092,9 @@ function buildCompanionImageRequest(companion, sceneDescription, options = {}) {
         prompt: buildCompanionPhotoPrompt(companion, sceneDescription, { ...options, hasReference: includeReference })
     };
     if (includeReference) {
-        if (provider === 'nanogpt') {
+        if (provider === 'fal') {
+            body.imageDataUrl = companion.basePhoto;
+        } else if (provider === 'nanogpt') {
             // NanoGPT accepts browser-local identity references directly as a
             // data URL. This avoids a public image host and keeps the photo on
             // the user's device until the generation request is submitted.
@@ -39142,12 +39323,26 @@ async function pollGptProtoImagePrediction(data, headers, signal, requestedMedia
 }
 
 async function requestCompanionPhoto(body, providerId = state.globalSettings.apiProvider) {
-    const provider = normalizedProviderId(providerId);
+    const provider = String(providerId || '').toLowerCase() === 'fal' ? 'fal' : normalizedProviderId(providerId);
     const catalogModel = companionImageModelCatalog.find(item => item.id === body.model);
     const usedReference = !!body.input_references?.length || !!body.image
         || !!body.imageDataUrl || !!body.imageDataUrls?.length;
     if (usedReference && catalogModel?.supportsReference === false) {
-        throw new Error(`${catalogModel.name} does not advertise reference-image input. Choose a model marked “reference ready” in Virtual Human Studio.`);
+        if (provider !== 'fal') throw new Error(`${catalogModel.name} does not advertise reference-image input. Choose a model marked “reference ready” in Virtual Human Studio.`);
+    }
+    if (provider === 'fal') {
+        if (!state.falApiKey) throw new Error('Add a Fal API key in Settings before generating images.');
+        const result = await mcpBridgeRequest('/fal/image/generate', {
+            method: 'POST', timeoutMs: 210000,
+            body: {
+                apiKey: state.falApiKey, model: body.model, prompt: body.prompt,
+                imageDataUrl: body.imageDataUrl || '',
+                aspectRatio: body.aspect_ratio || (String(body.size || '').includes('16_9') ? '16:9' : '1:1'),
+                enableSafetyChecker: state.globalSettings.falSafetyChecker !== false
+            }
+        });
+        if (!result.image) throw new Error('Fal completed without returning an image.');
+        return normalizeGeneratedImageSource(result.image);
     }
     const gptprotoProfile = provider === 'gptproto'
         ? gptProtoImageReferenceProfile({ id: body.model, ...(catalogModel || {}) }) : null;
@@ -39490,6 +39685,7 @@ function worldVisualProvider(world) {
     const presentation = normalizeWorldPresentation(world);
     const requested = presentation.imageProvider === 'inherit'
         ? normalizedProviderId(state.globalSettings.apiProvider) : presentation.imageProvider;
+    if (requested === 'fal') return 'fal';
     const provider = normalizedProviderId(requested);
     return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(provider) ? provider : 'openrouter';
 }
@@ -39537,8 +39733,8 @@ async function makeWorldVisualPortable(source, maxDimension, quality) {
 async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label } = {}) {
     const presentation = normalizeWorldPresentation(world);
     const provider = worldVisualProvider(world);
-    if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
-        throw new Error('Choose OpenRouter, GPTProto or NanoGPT under World Studio → Visuals, or upload an image manually.');
+    if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
+        throw new Error('Choose OpenRouter, GPTProto, NanoGPT or Fal under World Studio → Visuals, or upload an image manually.');
     }
     if (!providerHasCredentials(provider)) {
         throw new Error(`Add a ${providerDisplayName(provider)} API key in Settings before generating world visuals.`);
@@ -39560,6 +39756,10 @@ async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDim
     };
     const body = applyCompanionImageParameters({ model, prompt }, requestConfig,
         companionImageCapabilities(modelInfo, endpoint), endpoint);
+    if (provider === 'fal') {
+        body.aspect_ratio = aspectRatio;
+        body.enable_safety_checker = state.globalSettings.falSafetyChecker !== false;
+    }
     const generated = await requestCompanionPhoto(body, provider);
     const portable = await makeWorldVisualPortable(generated, maxDimension, quality);
     return addWorldMediaAsset(world, portable, kind, label, { generated: true, model, prompt });
@@ -41063,6 +41263,7 @@ async function getSettingsEmbeddingCatalog() {
 function setupCatalogModelSearchFields() {
     const definitions = [
         { inputId: 'w-agent-model', resultsId: 'w-agent-model-results', blankLabel: 'Use this world’s DM model', kind: 'text' },
+        { inputId: 'video-world-director-model', resultsId: 'video-world-director-model-results', kind: 'text', providerAware: true },
         { inputId: 'global-default-model', resultsId: 'global-default-model-results', kind: 'text' },
         { inputId: 'global-consolidation-model', resultsId: 'global-consolidation-model-results', kind: 'text' },
         { inputId: 'global-embedding-model', resultsId: 'global-embedding-model-results', kind: 'embedding' },
@@ -41075,7 +41276,7 @@ function setupCatalogModelSearchFields() {
         const render = async () => {
             let rawModels = [];
             try {
-                rawModels = definition.inputId === 'global-default-model'
+                rawModels = definition.inputId === 'global-default-model' || definition.providerAware
                     ? await getSettingsProviderCatalog()
                     : definition.kind === 'embedding'
                         ? await getSettingsEmbeddingCatalog()
@@ -41336,12 +41537,28 @@ function setupCompanionStudioTabs() {
         if (!companion) return;
         companion.videoProvider = normalizedVideoProviderId(videoProvider.value);
         companion.videoModel = '';
+        companion.videoFallbackModel = companion.videoProvider === 'fal' ? 'alibaba/wan-3.0' : '';
+        companion.videoFallbackModel2 = '';
         renderCompanionVideoStudio(companion, true);
     };
     const videoModel = document.getElementById('cs-video-model');
     if (videoModel) videoModel.onchange = () => {
         const companion = getCompanion(state.editingCompanionId);
-        if (companion) companion.videoModel = videoModel.value;
+        if (!companion) return;
+        companion.videoModel = videoModel.value;
+        renderCompanionVideoStudio(companion);
+    };
+    const videoFallbackModel = document.getElementById('cs-video-fallback-model');
+    if (videoFallbackModel) videoFallbackModel.onchange = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.videoFallbackModel = videoFallbackModel.value;
+        renderCompanionVideoStudio(companion);
+    };
+    const videoFallbackModel2 = document.getElementById('cs-video-fallback-model-2');
+    if (videoFallbackModel2) videoFallbackModel2.onchange = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.videoFallbackModel2 = videoFallbackModel2.value;
     };
 }
 
@@ -41365,12 +41582,17 @@ async function renderCompanionVideoStudio(companion, refreshModels = false) {
     const toggle = document.getElementById('cs-video-enabled');
     const provider = document.getElementById('cs-video-provider');
     const model = document.getElementById('cs-video-model');
+    const fallbackModel = document.getElementById('cs-video-fallback-model');
+    const fallbackModel2 = document.getElementById('cs-video-fallback-model-2');
     const status = document.getElementById('cs-video-model-status');
     if (!toggle || !provider || !model) return;
     toggle.setAttribute('aria-pressed', String(companion.allowVideoClips));
     toggle.classList.toggle('active', companion.allowVideoClips);
     document.getElementById('cs-video-enabled-label').textContent = companion.allowVideoClips ? 'Clips on' : 'Clips off';
     provider.value = normalizedVideoProviderId(companion.videoProvider);
+    const falFallbacksEnabled = provider.value === 'fal';
+    if (fallbackModel) fallbackModel.disabled = !falFallbacksEnabled;
+    if (fallbackModel2) fallbackModel2.disabled = !falFallbacksEnabled;
     document.getElementById('cs-video-resolution').value = companion.videoResolution;
     document.getElementById('cs-video-duration').value = String(companion.videoDuration);
     document.getElementById('cs-video-reference').value = companion.videoReferencePolicy;
@@ -41386,6 +41608,22 @@ async function renderCompanionVideoStudio(companion, refreshModels = false) {
     }
     model.value = companion.videoModel || models[0]?.id || '';
     if (!companion.videoModel && model.value) companion.videoModel = model.value;
+    if (fallbackModel) {
+        fallbackModel.innerHTML = '<option value="">No automatic fallback</option>' + models
+            .filter(item => item.id !== model.value)
+            .map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || item.id)}</option>`).join('');
+        fallbackModel.value = models.some(item => item.id === companion.videoFallbackModel)
+            ? companion.videoFallbackModel : '';
+        companion.videoFallbackModel = fallbackModel.value;
+    }
+    if (fallbackModel2) {
+        fallbackModel2.innerHTML = '<option value="">None</option>' + models
+            .filter(item => ![model.value, fallbackModel?.value].includes(item.id))
+            .map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || item.id)}</option>`).join('');
+        fallbackModel2.value = models.some(item => item.id === companion.videoFallbackModel2)
+            ? companion.videoFallbackModel2 : '';
+        companion.videoFallbackModel2 = fallbackModel2.value;
+    }
     status.textContent = `${models.length} reference-capable model${models.length === 1 ? '' : 's'} · ${videoProviderDisplayName(provider.value)}${videoProviderHasCredentials(provider.value) ? ' connected' : ' key required before generation'}.`;
 }
 
@@ -41833,6 +42071,10 @@ function commitCompanionStudioForm() {
     if (videoProvider) companion.videoProvider = normalizedVideoProviderId(videoProvider.value);
     const videoModel = document.getElementById('cs-video-model');
     if (videoModel) companion.videoModel = videoModel.value.trim().slice(0, 300);
+    const videoFallbackModel = document.getElementById('cs-video-fallback-model');
+    if (videoFallbackModel) companion.videoFallbackModel = videoFallbackModel.value.trim().slice(0, 300);
+    const videoFallbackModel2 = document.getElementById('cs-video-fallback-model-2');
+    if (videoFallbackModel2) companion.videoFallbackModel2 = videoFallbackModel2.value.trim().slice(0, 300);
     const videoResolution = document.getElementById('cs-video-resolution');
     if (videoResolution) companion.videoResolution = videoResolution.value;
     const videoDuration = document.getElementById('cs-video-duration');
@@ -42520,7 +42762,7 @@ function companionMcpTool(companion) {
 }
 
 function updateCompanionImageSourceUI(companion) {
-    const source = ['provider', 'openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(companion.imageSource)
+    const source = ['provider', 'openrouter', 'gptproto', 'nanogpt', 'fal', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(companion.imageSource)
         ? companion.imageSource : 'provider';
     const isMcp = ['higgsfield', 'magnific'].includes(source);
     const isComfy = source === 'comfyui';
@@ -42537,6 +42779,7 @@ function updateCompanionImageSourceUI(companion) {
         : source === 'openrouter' ? 'OpenRouter'
         : source === 'gptproto' ? 'GPTProto'
         : source === 'nanogpt' ? 'NanoGPT'
+        : source === 'fal' ? 'Fal'
         : source === 'local' ? providerDisplayName(companionImageProviderId(companion))
         : source === 'local_image' ? 'local image server'
         : source === 'comfyui' ? `ComfyUI · ${activeComfyWorkflowProfile()?.name || 'active workflow'}`
@@ -44001,7 +44244,7 @@ function setupCompanionsLogic() {
     document.getElementById('cs-image-source').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
-        companion.imageSource = ['openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(e.target.value)
+        companion.imageSource = ['openrouter', 'gptproto', 'nanogpt', 'fal', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(e.target.value)
             ? e.target.value : 'provider';
         companion.imageModel = '';
         companion.imageProviderTag = '';
