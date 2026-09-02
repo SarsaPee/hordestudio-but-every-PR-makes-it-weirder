@@ -2186,6 +2186,14 @@ function validateWorldData(value, label = 'World') {
             throw new Error(`${label} dossier claims enabled must be a boolean`);
         }
     }
+    if (value.relationshipClaims !== undefined) {
+        requireArray(value.relationshipClaims, `${label} directional relationship claims`, { max: 10000 });
+        value.relationshipClaims.forEach((claim, index) => {
+            requirePlainObject(claim, `${label} directional relationship claim ${index + 1}`);
+            ['sourceCharacterId', 'targetCharacterId', 'axis', 'reason', 'origin', 'status'].forEach(key =>
+                requireString(claim[key], `${label} directional relationship claim ${index + 1} ${key}`, { optional: true, max: 500 }));
+        });
+    }
     if (value.worldAgent !== undefined) {
         requirePlainObject(value.worldAgent, `${label} World Agent`);
         validateOpenRouterRoutingData(value.worldAgent.openRouterRouting, `${label} World Agent OpenRouter routing`);
@@ -30744,6 +30752,12 @@ function applyCalibrationFinding(world, finding) {
             location.tags = [...new Set((finding.patch.tags || []).map(String).map(tag => tag.trim()).filter(Boolean))].slice(0, 30);
             return location.tags.length > 0;
         }
+        case 'set_location_aliases': {
+            const location = locations.find(l => l.id === finding.patch.locationId);
+            if (!location || (location.aliases || []).length) return false;
+            location.aliases = [...new Set((finding.patch.aliases || []).map(String).map(alias => alias.trim()).filter(Boolean))].slice(0, 12);
+            return location.aliases.length > 0;
+        }
         case 'set_location_description': {
             const location = locations.find(l => l.id === finding.patch.locationId);
             if (!location || String(location.description || '').trim()) return false;
@@ -30809,6 +30823,23 @@ function applyCalibrationFinding(world, finding) {
             // The author's standing for a pair is never overwritten.
             if (world.relationships.some(rel => relationshipKey(rel.a, rel.b) === key)) return false;
             world.relationships.push({ a, b, label, score, reason });
+            return true;
+        }
+        case 'add_directional_relationship_claim': {
+            const { sourceCharacterId, targetCharacterId, axis } = finding.patch;
+            if (!(world.entities || []).some(entity => entity.id === sourceCharacterId)
+                || !(world.entities || []).some(entity => entity.id === targetCharacterId)
+                || sourceCharacterId === targetCharacterId) return false;
+            if (!Array.isArray(world.relationshipClaims)) world.relationshipClaims = [];
+            if (world.relationshipClaims.some(claim => claim.sourceCharacterId === sourceCharacterId
+                && claim.targetCharacterId === targetCharacterId && claim.axis === axis)) return false;
+            world.relationshipClaims.push({
+                id: `relclaim_${Date.now().toString(36)}_${world.relationshipClaims.length + 1}`,
+                sourceCharacterId, targetCharacterId, axis,
+                value: safeJsonClone(finding.patch.value), confidence: finding.patch.confidence,
+                reason: finding.patch.reason, origin: 'world_health_check',
+                provenance: { pass: 'relationships', appliedAt: new Date().toISOString() }, status: 'active'
+            });
             return true;
         }
         case 'set_location_state': {
@@ -31048,6 +31079,14 @@ const CALIBRATION_PASSES = Object.freeze({
         label: 'Structure',
         blurb: 'Which places sit inside which, how they are laid out, and how long it takes to walk between them.'
     },
+    locations: {
+        label: 'Locations',
+        blurb: 'Stable aliases and semantic identity for existing places. It never creates, merges, or moves locations.'
+    },
+    relationships: {
+        label: 'Relationships',
+        blurb: 'Evidence-backed, directional relationship proposals. Reciprocal feelings are never assumed.'
+    },
     people: {
         label: 'People',
         blurb: 'Where each character lives and starts, how they speak, who they belong with, their daily routine, and the agenda they pursue when you are not watching.'
@@ -31181,6 +31220,8 @@ function calibrationPairCandidates(world) {
 // routine and agenda is a long one.
 const CALIBRATION_BATCH_SIZES = Object.freeze({
     structure: 40,   // a line or two of JSON each
+    locations: 30,   // aliases and stable tags only
+    relationships: 18, // directional assessment for one candidate pair
     people: 10,      // persona + schedule + beats + pool: the longest answers
     items: 24,       // description + placement + tags are compact
     society: 15      // a judged pair plus a place, each a short object
@@ -31192,6 +31233,8 @@ const CALIBRATION_BATCH_SIZES = Object.freeze({
  */
 function calibrationWorkUnits(world, pass) {
     if (pass === 'structure') return (world?.locations || []).slice();
+    if (pass === 'locations') return (world?.locations || []).slice();
+    if (pass === 'relationships') return calibrationPairCandidates(world);
     if (pass === 'people') return (world?.entities || []).filter(entity => entity?.type === 'npc');
     if (pass === 'items') return (world?.entities || []).filter(entity => entity?.type === 'item');
     if (pass === 'society') {
@@ -31300,7 +31343,47 @@ function calibrationItemDigest(world, batch) {
     }).join('\n');
 }
 
+function calibrationRelationshipDigest(world, batch) {
+    return (batch || calibrationWorkUnits(world, 'relationships')).map(pair => {
+        const describe = entity => String(entity.description || entity.persona || entity.goal || '')
+            .replace(/\s+/g, ' ').slice(0, 360) || 'No authored description.';
+        return `- [${pair.a.id}] "${pair.a.name}" ↔ [${pair.b.id}] "${pair.b.name}"\n`
+            + `  possible basis: ${pair.reasons.join(', ')}\n  ${pair.a.name}: ${describe(pair.a)}\n  ${pair.b.name}: ${describe(pair.b)}`;
+    }).join('\n');
+}
+
 function buildCalibrationPrompt(world, pass, batch) {
+    if (pass === 'relationships') {
+        const pairs = calibrationRelationshipDigest(world, batch);
+        if (!pairs) return '';
+        return `You audit directional relationships in a roleplay world. You do not write fiction and you do not invent a bond merely because two people exist.
+
+For each listed pair, propose a claim only when the written evidence supports it. A relationship is directional: A can distrust B while B likes A. Assess each direction independently and omit the reverse direction unless it has its own evidence. Use neutral reusable axes such as affinity, trust, respect, dependence, rivalry, obligation, or familiarity. Do not use a city/profile-specific axis. A reciprocal claim is never implied.
+
+Each proposal needs an exact source id, target id, axis, a compact value (a signed number or short bounded phrase), confidence 0..1, and a reason that points to the written evidence. A missing answer is better than a guess.
+
+OUTPUT FORMAT — JSON only, first character {:
+{"relationship_claims":[{"source":"<id>","target":"<id>","axis":"<neutral axis>","value":<number or text>,"confidence":0.0,"reason":"<evidence-based explanation>"}]}
+
+WORLD: ${world.name}
+${world.description ? `PREMISE: ${String(world.description).slice(0, 500)}\n` : ''}
+PAIRS:
+${pairs}`;
+    }
+    if (pass === 'locations') {
+        const locations = calibrationLocationDigest(world, batch);
+        if (!locations) return '';
+        return `You audit the stable semantic identity of locations in a roleplay world. Do not create locations, infer containment, merge similar places, alter paths, or describe transient weather, occupants, or scene events.
+
+For each listed existing location, supply only missing stable aliases (names a player might reasonably use for that same place) and stable semantic tags. Do not guess aliases. Omit a location entirely when the world does not support a useful addition.
+
+OUTPUT FORMAT — JSON only, first character {:
+{"locations":[{"id":"<existing id>","aliases":["<alias>"],"tags":["<stable tag>"],"why":"<brief evidence>"}]}
+
+WORLD: ${world.name}
+LOCATIONS:
+${locations}`;
+    }
     if (pass === 'society') {
         const { pairs, places, factions, unaffiliated } = calibrationSocietyDigest(world, batch);
         if (!pairs && !places && !unaffiliated) return '';
@@ -31710,6 +31793,64 @@ function calibrationFindingsFromItems(world, payload) {
     return findings;
 }
 
+function calibrationFindingsFromLocations(world, payload) {
+    const findings = [];
+    const locations = new Map((world.locations || []).map(location => [String(location.id), location]));
+    (Array.isArray(payload?.locations) ? payload.locations : []).forEach(entry => {
+        const location = locations.get(String(entry?.id || ''));
+        if (!location) return;
+        const aliases = [...new Set((Array.isArray(entry?.aliases) ? entry.aliases : [])
+            .map(alias => String(alias || '').trim()).filter(Boolean))].slice(0, 12);
+        const tags = [...new Set((Array.isArray(entry?.tags) ? entry.tags : [])
+            .map(tag => String(tag || '').trim()).filter(Boolean))].slice(0, 30);
+        const why = String(entry?.why || '').trim().slice(0, 240);
+        if (aliases.length && !(location.aliases || []).length) {
+            findings.push({
+                tier: 'locations', id: `location_aliases_${location.id}`, type: 'set_location_aliases', severity: 'suggestion',
+                title: `Add aliases for ${location.name}`, detail: `${aliases.join(' · ')}${why ? ` — ${why}` : ''}`,
+                patch: { locationId: location.id, aliases }
+            });
+        }
+        if (tags.length && !(location.tags || []).length) {
+            findings.push({
+                tier: 'locations', id: `location_tags_${location.id}`, type: 'set_location_tags', severity: 'suggestion',
+                title: `Add semantic tags for ${location.name}`, detail: `${tags.join(' · ')}${why ? ` — ${why}` : ''}`,
+                patch: { locationId: location.id, tags }
+            });
+        }
+    });
+    return findings;
+}
+
+function calibrationFindingsFromRelationships(world, payload) {
+    const findings = [];
+    const entities = new Set((world.entities || []).filter(entity => entity?.type === 'npc').map(entity => entity.id));
+    const existing = new Set((Array.isArray(world.relationshipClaims) ? world.relationshipClaims : [])
+        .map(claim => `${claim.sourceCharacterId}|${claim.targetCharacterId}|${claim.axis}`));
+    const proposed = new Set();
+    (Array.isArray(payload?.relationship_claims) ? payload.relationship_claims : []).forEach(entry => {
+        const sourceCharacterId = String(entry?.source || '').trim();
+        const targetCharacterId = String(entry?.target || '').trim();
+        const axis = String(entry?.axis || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+        const reason = String(entry?.reason || '').trim().slice(0, 500);
+        const confidence = Math.max(0, Math.min(1, Number(entry?.confidence) || 0));
+        const key = `${sourceCharacterId}|${targetCharacterId}|${axis}`;
+        if (!entities.has(sourceCharacterId) || !entities.has(targetCharacterId) || sourceCharacterId === targetCharacterId
+            || !axis || !reason || confidence < 0.45 || existing.has(key) || proposed.has(key)) return;
+        proposed.add(key);
+        const source = (world.entities || []).find(entity => entity.id === sourceCharacterId);
+        const target = (world.entities || []).find(entity => entity.id === targetCharacterId);
+        findings.push({
+            tier: 'relationships', id: `relationship_claim_${sourceCharacterId}_${targetCharacterId}_${axis}`,
+            type: 'add_directional_relationship_claim', severity: confidence < 0.7 ? 'suggestion' : 'warning',
+            title: `${source?.name || sourceCharacterId} → ${target?.name || targetCharacterId}: ${axis}`,
+            detail: `${typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value)} · ${Math.round(confidence * 100)}% confidence — ${reason}`,
+            patch: { sourceCharacterId, targetCharacterId, axis, value: safeJsonClone(entry.value), confidence, reason }
+        });
+    });
+    return findings;
+}
+
 function calibrationFindingsFromSociety(world, payload, carriedFactions) {
     const findings = [];
     const npcs = new Map((world.entities || [])
@@ -31957,6 +32098,8 @@ async function runCalibrationBatch(world, pass, batch, carriedFactions) {
     delete payload.__truncated;
     const findings = pass === 'people' ? calibrationFindingsFromPeople(world, payload)
         : pass === 'items' ? calibrationFindingsFromItems(world, payload)
+        : pass === 'locations' ? calibrationFindingsFromLocations(world, payload)
+        : pass === 'relationships' ? calibrationFindingsFromRelationships(world, payload)
         : pass === 'society' ? calibrationFindingsFromSociety(world, payload, carriedFactions)
         : calibrationFindingsFromStructure(world, payload);
     return { findings, truncated: wasCutShort };
@@ -31976,7 +32119,7 @@ function parseCalibrationPayload(raw) {
     // here — so a complete, perfectly valid Society reply was rejected as
     // unusable and reported as a model failure. It could never have worked.
     const PAYLOAD_KEYS = ['locations', 'travel', 'people', 'items',
-        'relationships', 'places', 'factions', 'memberships'];
+        'relationships', 'relationship_claims', 'places', 'factions', 'memberships'];
     const usable = value => value && typeof value === 'object' && !Array.isArray(value)
         && PAYLOAD_KEYS.some(key => Array.isArray(value[key]));
     const tryParse = candidate => {
