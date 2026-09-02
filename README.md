@@ -2,7 +2,7 @@
 
 <div align="center">
 
-# Horde Studio 16.7
+# Horde Studio 17
 
 ### Build characters. Shape worlds. Simulate lives.
 
@@ -14,7 +14,7 @@ Characters & group rooms · Living sandbox worlds · Autonomous virtual humans �
 
 ## What is Horde Studio?
 
-**Horde Studio 16.7** is a creator-focused AI roleplay and simulation platform that brings character chat, collaborative storytelling, persistent worldbuilding, virtual-human simulation, and host-powered multiplayer into one application.
+**Horde Studio 17** is a creator-focused AI roleplay and simulation platform that brings character chat, interactive video storytelling, persistent worldbuilding, virtual-human simulation, and host-powered multiplayer into one application.
 
 It is designed for stories that need to **remember, react, and evolve**. Build a cast, create a world around them, carry consequences across sessions, or simulate an AI person with routines, relationships, moods, memories, and multiple timelines.
 
@@ -70,6 +70,22 @@ Virtual Humans maintain their own clock, routine, mood, relationship state, memo
 ---
 
 ## Core experiences
+
+### Video Adventures — new in 17
+
+Video Adventures are a separate, story-first roleplay mode built around short generated scenes and contextual player choices. A fast World Director preserves canon, writes concise dialogue, prepares meaningful branches, and hands each beat to a configurable Fal renderer chain.
+
+- Multiple-choice play with an optional custom action
+- Persistent characters, reference images, visual styles, player viewpoint, canon and timelines
+- First-person and visible-player presentation modes
+- MiniMax H3 Max, Wan 3.0, Wan 3.0 Prime and LTX-2.3 Fast renderer selection
+- Ordered automatic fallbacks that preserve the Director beat and continuity frame
+- Background jobs, cancellation, recovery, local clip storage and timeline deletion
+- Session spending limits with renderer-aware duration and price estimates
+- Fal image generation for World visuals and Virtual Human photos
+- Fal video generation for Virtual Human story clips
+
+Video Adventures remain separate from simulation Worlds: neither definitions nor timelines are silently shared between the two experiences.
 
 ### Persistent story memory — new in 16.7
 

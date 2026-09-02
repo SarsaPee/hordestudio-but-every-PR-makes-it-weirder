@@ -64,9 +64,12 @@ HOST = os.environ.get("HORDE_SERVER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HORDE_SERVER_PORT", "43127"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
-BRIDGE_BUILD = "20260822-multiplayer-v1"
+BRIDGE_BUILD = "20260901-video-worlds-v1"
 APP_INSTANCE_ID = hashlib.sha256(str(APP_DIR).encode("utf-8")).hexdigest()[:16]
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
+MAX_VIDEO_BYTES = 160 * 1024 * 1024
+FAL_VIDEO_JOBS: dict[str, dict[str, Any]] = {}
+FAL_VIDEO_JOBS_LOCK = threading.Lock()
 
 def allowed_origins(port: int) -> set[str]:
     origins = {
@@ -109,6 +112,7 @@ STATIC_FILES = {
     "/index.html": ("index.html", "text/html"),
     "/style.css": ("style.css", "text/css"),
     "/app.js": ("app.js", "text/javascript"),
+    "/video-worlds.js": ("video-worlds.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
     "/boot-diagnostics.js": ("boot-diagnostics.js", "text/javascript"),
     "/policy-panic-world.js": ("policy-panic-world.js", "text/javascript"),
@@ -152,6 +156,7 @@ else:
     CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "horde-studio"
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
 ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
+VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
 
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
@@ -1481,6 +1486,447 @@ def safe_remote_image_url(value: Any) -> str:
     return url
 
 
+def safe_fal_url(value: Any, *, media: bool = False) -> str:
+    """Allow only credential-free HTTPS URLs owned by fal.
+
+    Queue URLs and generated-media URLs come back in provider responses, so
+    every redirect target is validated before the bridge follows it. This keeps
+    the Video Adventures endpoint from becoming a general-purpose URL fetcher.
+    """
+    url = str(value or "").strip()
+    parsed = urllib.parse.urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    allowed = ("fal.media",) if media else ("fal.run", "fal.ai")
+    if parsed.scheme != "https" or not hostname or parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("Fal URLs must be credential-free HTTPS URLs.")
+    if not any(hostname == suffix or hostname.endswith("." + suffix) for suffix in allowed):
+        raise ValueError("The Fal response referenced an unexpected host.")
+    try:
+        addresses = {entry[4][0] for entry in socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)}
+    except OSError as error:
+        raise ValueError("The Fal host could not be resolved.") from error
+    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+        raise ValueError("Fal URLs may not resolve to a private or reserved address.")
+    return url
+
+
+def fal_key(value: Any) -> str:
+    key = str(value or os.environ.get("FAL_KEY") or "").strip()
+    if not key:
+        raise ValueError("Add a Fal API key in Horde Studio Settings first.")
+    if len(key) > 1000 or any(char in key for char in "\r\n"):
+        raise ValueError("The Fal API key is invalid.")
+    return key
+
+
+class FalRequestError(RuntimeError):
+    def __init__(self, message: str, *, status: int = 0, error_type: str = "", fields: Any = None):
+        super().__init__(message)
+        self.status = status
+        self.error_type = error_type
+        self.fields = fields or []
+
+
+def fal_json_request(url: str, key: str, *, method: str = "GET", payload: Any = None,
+                     timeout: int = 120) -> dict[str, Any]:
+    safe_fal_url(url)
+    status, _, data = json_request(url, method=method, headers={
+        "Authorization": f"Key {key}",
+        "User-Agent": "HordeStudio/17.0 VideoAdventures/1",
+    }, payload=payload, timeout=timeout)
+    if not 200 <= status < 300:
+        if isinstance(data, dict):
+            detail = data.get("detail") or data.get("error") or data.get("message") or data.get("raw")
+        else:
+            detail = data
+        typed = detail if isinstance(detail, list) else []
+        error_types = [str(item.get("type") or "") for item in typed if isinstance(item, dict)]
+        fields = sorted({str(item.get("loc", [])[-1]) for item in typed
+                         if isinstance(item, dict) and isinstance(item.get("loc"), list) and item.get("loc")})
+        if "content_policy_violation" in error_types:
+            labels = ", ".join(fields) if fields else "submitted content"
+            raise FalRequestError(
+                f"Fal's content checker rejected: {labels}. Horde can restage the scene safely, but cannot bypass the provider's filter.",
+                status=status, error_type="content_policy_violation", fields=fields)
+        safe_detail = str(detail or "unknown provider error")
+        if len(safe_detail) > 1200:
+            safe_detail = safe_detail[:1200] + "…"
+        raise FalRequestError(f"Fal request failed ({status}): {safe_detail}", status=status,
+                              error_type=error_types[0] if error_types else "", fields=fields)
+    if not isinstance(data, dict):
+        raise RuntimeError("Fal returned an invalid JSON response.")
+    return data
+
+
+FAL_IMAGE_MODELS = {
+    "fal-ai/flux/schnell",
+    "fal-ai/flux/dev",
+    "fal-ai/flux/dev/image-to-image",
+    "fal-ai/wan-25-preview/image-to-image",
+}
+
+
+def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
+    """Generate a portable image through a small curated Fal model surface."""
+    key = fal_key(body.get("apiKey"))
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("An image prompt is required.")
+    if len(prompt) > 12000:
+        raise ValueError("The image prompt exceeds the 12,000 character limit.")
+    requested_model = str(body.get("model") or "fal-ai/flux/schnell").strip()
+    if requested_model not in FAL_IMAGE_MODELS:
+        raise ValueError("That Fal image model is not supported by this Horde Studio build.")
+    image_url = str(body.get("imageDataUrl") or "").strip()
+    if image_url:
+        if not re.match(r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", image_url, re.I):
+            raise ValueError("The image reference must be a JPEG, PNG or WebP data URL.")
+        if len(image_url) > 12 * 1024 * 1024:
+            raise ValueError("The image reference exceeds the 12 MB safety limit.")
+    model = requested_model
+    if image_url and model in {"fal-ai/flux/schnell", "fal-ai/flux/dev"}:
+        model = "fal-ai/flux/dev/image-to-image"
+    if not image_url and model.endswith("/image-to-image"):
+        model = "fal-ai/flux/schnell"
+    aspect = str(body.get("aspectRatio") or "1:1")
+    image_size = {
+        "16:9": "landscape_16_9", "4:3": "landscape_4_3", "9:16": "portrait_16_9",
+        "3:4": "portrait_4_3", "1:1": "square_hd",
+    }.get(aspect, "square_hd")
+    payload: dict[str, Any] = {
+        "prompt": prompt, "num_images": 1, "output_format": "jpeg",
+        "enable_safety_checker": body.get("enableSafetyChecker") is not False,
+    }
+    if model == "fal-ai/wan-25-preview/image-to-image":
+        payload["image_urls"] = [image_url]
+        payload["aspect_ratio"] = aspect if aspect in {"16:9", "9:16", "1:1"} else "auto"
+    else:
+        payload["image_size"] = image_size
+        if image_url:
+            payload["image_url"] = image_url
+            payload["strength"] = float(body.get("strength") or 0.35)
+    result = fal_json_request(f"https://fal.run/{model}", key, method="POST", payload=payload, timeout=180)
+    images = result.get("images") if isinstance(result.get("images"), list) else []
+    first = images[0] if images and isinstance(images[0], dict) else {}
+    single_image = result.get("image") if isinstance(result.get("image"), dict) else {}
+    output_url = str(first.get("url") or single_image.get("url") or "")
+    if not output_url:
+        raise RuntimeError("Fal completed the request without an image URL.")
+    safe_fal_url(output_url, media=True)
+    return {"ok": True, "provider": "fal", "model": model, "image": download_image(output_url)}
+
+
+def download_fal_video(url: str, media_id: str) -> tuple[Path, int]:
+    safe_fal_url(url, media=True)
+    VIDEO_WORLD_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    target = VIDEO_WORLD_MEDIA_DIR / f"{media_id}.mp4"
+    temporary = VIDEO_WORLD_MEDIA_DIR / f"{media_id}.partial"
+    request = urllib.request.Request(url, headers={
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.1",
+        "User-Agent": "Mozilla/5.0 HordeStudio/17.0",
+    })
+    total = 0
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response, temporary.open("wb") as output:
+            safe_fal_url(response.geturl(), media=True)
+            content_type = str(response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if content_type and not content_type.startswith("video/") and content_type != "application/octet-stream":
+                raise RuntimeError(f"Fal returned a non-video asset ({content_type}).")
+            declared = int(response.headers.get("Content-Length") or 0)
+            if declared > MAX_VIDEO_BYTES:
+                raise RuntimeError("Generated video exceeds Horde Studio's 160 MB safety limit.")
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_VIDEO_BYTES:
+                    raise RuntimeError("Generated video exceeds Horde Studio's 160 MB safety limit.")
+                output.write(chunk)
+        if total < 1024:
+            raise RuntimeError("Fal returned an empty or incomplete video.")
+        temporary.replace(target)
+        return target, total
+    finally:
+        if temporary.exists():
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
+
+FAL_VIDEO_RENDERERS = {
+    "minimax/h3-max",
+    "alibaba/wan-3.0",
+    "alibaba/wan-3.0-prime",
+    "fal-ai/ltx-2.3/fast",
+}
+
+
+def _fal_video_request(model: str, body: dict[str, Any], prompt: str, image_url: str,
+                       duration: int, resolution: str, aspect_ratio: str,
+                       seed: int) -> tuple[str, dict[str, Any], int, str]:
+    """Translate Horde's stable video contract to one documented Fal model schema."""
+    if model == "minimax/h3-max":
+        endpoint = f"{model}/{'image-to-video' if image_url else 'text-to-video'}"
+        h3_resolution = "768P" if resolution in {"768P", "1080P"} else "480P"
+        payload: dict[str, Any] = {
+            "prompt": prompt, "duration": duration, "resolution": h3_resolution, "seed": seed,
+            "enable_safety_checker": body.get("enableSafetyChecker") is not False,
+            "prompt_expansion_mode": "disabled" if image_url else "balanced",
+        }
+        if image_url:
+            payload["image_url"] = image_url
+        else:
+            payload["aspect_ratio"] = aspect_ratio
+        return endpoint, payload, duration, h3_resolution
+
+    if model.startswith("alibaba/wan-3.0"):
+        endpoint = f"{model}/{'image-to-video' if image_url else 'text-to-video'}"
+        wan_resolution = "1080p" if resolution == "1080P" else "720p" if resolution == "768P" else "480p"
+        wan_aspect = aspect_ratio if aspect_ratio in {"16:9", "9:16"} else "adaptive"
+        payload = {
+            "prompt": prompt, "duration": duration, "resolution": wan_resolution,
+            "aspect_ratio": "adaptive" if image_url else wan_aspect,
+            "audio": True, "enable_thinking": False, "enable_prompt_expansion": False,
+            "enable_safety_checker": body.get("enableSafetyChecker") is not False,
+            "seed": seed,
+        }
+        if image_url:
+            payload["start_image_url"] = image_url
+        return endpoint, payload, duration, wan_resolution
+
+    if model == "fal-ai/ltx-2.3/fast":
+        endpoint = f"fal-ai/ltx-2.3/{'image-to-video' if image_url else 'text-to-video'}/fast"
+        supported_durations = (6, 8, 10, 12, 14, 16, 18, 20)
+        ltx_duration = min(supported_durations, key=lambda value: abs(value - duration))
+        payload = {
+            "prompt": prompt, "duration": str(ltx_duration), "resolution": "1080p",
+            "aspect_ratio": "auto" if image_url else (aspect_ratio if aspect_ratio in {"16:9", "9:16"} else "16:9"),
+            "fps": "25", "generate_audio": True,
+        }
+        if image_url:
+            payload["image_url"] = image_url
+        return endpoint, payload, ltx_duration, "1080p"
+    raise ValueError("That Fal video renderer is not supported by this Horde Studio build.")
+
+
+def generate_fal_video(body: dict[str, Any], on_model: Any = None) -> dict[str, Any]:
+    """Generate one shot with an ordered, model-aware Fal fallback chain."""
+    key = fal_key(body.get("apiKey"))
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("A shot prompt is required.")
+    if len(prompt) > 12000:
+        raise ValueError("The shot prompt exceeds the 12,000 character limit.")
+    duration = int(body.get("duration") or 5)
+    if duration < 5 or duration > 15:
+        raise ValueError("Video duration must be between 5 and 15 seconds.")
+    resolution = str(body.get("resolution") or "480P").upper()
+    if resolution not in {"480P", "768P", "1080P"}:
+        raise ValueError("Video resolution must be 480P, 768P or 1080P.")
+    aspect_ratio = str(body.get("aspectRatio") or "16:9")
+    if aspect_ratio not in {"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}:
+        raise ValueError("Unsupported Video Adventure aspect ratio.")
+    seed = int(body.get("seed") or secrets.randbelow(2_000_000_000))
+    image_url = str(body.get("imageDataUrl") or "").strip()
+    if image_url:
+        if not re.match(r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", image_url, re.I):
+            raise ValueError("The continuity frame must be a JPEG, PNG or WebP data URL.")
+        if len(image_url) > 12 * 1024 * 1024:
+            raise ValueError("The continuity frame exceeds the 12 MB safety limit.")
+
+    requested_models = body.get("models") if isinstance(body.get("models"), list) else []
+    models = []
+    for raw in requested_models[:4] or [body.get("model") or "minimax/h3-max"]:
+        model = str(raw or "").strip()
+        if model in FAL_VIDEO_RENDERERS and model not in models:
+            models.append(model)
+    if not models:
+        raise ValueError("Choose at least one supported Fal video renderer.")
+    latency_mode = str(body.get("latencyMode") or "queue").lower()
+    attempts: list[dict[str, str]] = []
+    last_error: Any = None
+    result: dict[str, Any] = {}
+    request_id = ""
+    endpoint = ""
+    actual_duration = duration
+    actual_resolution = resolution
+    for model in models:
+        if callable(on_model):
+            on_model(model)
+        try:
+            endpoint, payload, actual_duration, actual_resolution = _fal_video_request(
+                model, body, prompt, image_url, duration, resolution, aspect_ratio, seed)
+            if latency_mode != "queue":
+                result = fal_json_request(f"https://fal.run/{endpoint}", key,
+                                          method="POST", payload=payload, timeout=240)
+                request_id = str(result.get("request_id") or result.get("requestId") or "")
+            else:
+                submitted = fal_json_request(f"https://queue.fal.run/{endpoint}", key,
+                                             method="POST", payload=payload, timeout=60)
+                request_id = str(submitted.get("request_id") or submitted.get("requestId") or "")
+                status_url = submitted.get("status_url") or submitted.get("statusUrl")
+                response_url = submitted.get("response_url") or submitted.get("responseUrl")
+                if not request_id or not status_url:
+                    raise RuntimeError("Fal did not return a queue request ID and status URL.")
+                deadline = time.monotonic() + 360
+                while time.monotonic() < deadline:
+                    status_data = fal_json_request(str(status_url), key, timeout=45)
+                    status_name = str(status_data.get("status") or "").upper()
+                    if status_name == "COMPLETED":
+                        response_url = status_data.get("response_url") or status_data.get("responseUrl") or response_url
+                        break
+                    if status_name in {"FAILED", "CANCELLED", "CANCELED"}:
+                        detail = status_data.get("error") or status_data.get("detail") or status_name.lower()
+                        raise RuntimeError(f"Fal video generation {status_name.lower()}: {detail}")
+                    time.sleep(0.5)
+                else:
+                    raise RuntimeError("Fal video generation timed out after six minutes.")
+                if not response_url:
+                    raise RuntimeError("Fal completed the shot without a result URL.")
+                result = fal_json_request(str(response_url), key, timeout=60)
+            video = result.get("video") if isinstance(result.get("video"), dict) else {}
+            if not str(video.get("url") or ""):
+                raise RuntimeError("Fal completed the request without a video URL.")
+            attempts.append({"model": model, "status": "completed"})
+            break
+        except Exception as error:
+            last_error = error
+            attempts.append({"model": model, "status": "failed", "error": str(error)[:300]})
+            continue
+    else:
+        if isinstance(last_error, FalRequestError):
+            raise FalRequestError(
+                "All configured Fal renderers failed. " + " | ".join(
+                    f"{attempt['model']}: {attempt.get('error', 'failed')}" for attempt in attempts),
+                status=last_error.status, error_type=last_error.error_type, fields=last_error.fields)
+        raise RuntimeError("All configured Fal renderers failed. " + " | ".join(
+            f"{attempt['model']}: {attempt.get('error', 'failed')}" for attempt in attempts)) from last_error
+    video = result.get("video") if isinstance(result.get("video"), dict) else {}
+    video_url = str(video.get("url") or "")
+    if not video_url:
+        raise RuntimeError("Fal completed the request without a video URL.")
+    media_id = secrets.token_hex(16)
+    _, size = download_fal_video(video_url, media_id)
+    timings = result.get("timings") if isinstance(result.get("timings"), dict) else {}
+    return {
+        "ok": True,
+        "provider": "fal",
+        "model": endpoint,
+        "requestId": request_id,
+        "mediaId": media_id,
+        "mediaUrl": f"/video-world-media/{media_id}.mp4",
+        "bytes": size,
+        "duration": actual_duration,
+        "resolution": actual_resolution,
+        "seed": seed,
+        "attempts": attempts,
+        "expandedPrompt": str(result.get("expanded_prompt") or "")[:30000],
+        "inferenceSeconds": float(timings.get("inference") or 0),
+    }
+
+
+def _fal_video_job_public(job: dict[str, Any]) -> dict[str, Any]:
+    return {key: job.get(key) for key in ("jobId", "status", "createdAt", "updatedAt", "result", "error",
+                                           "errorCode", "errorFields", "currentModel")}
+
+
+def submit_fal_video_job(body: dict[str, Any]) -> dict[str, Any]:
+    """Run Fal independently of the browser request so refreshes cannot orphan UI state."""
+    fal_key(body.get("apiKey"))
+    job_id = secrets.token_hex(16)
+    now = int(time.time() * 1000)
+    job = {"jobId": job_id, "status": "queued", "createdAt": now, "updatedAt": now,
+           "result": None, "error": "", "errorCode": "", "errorFields": [], "currentModel": ""}
+    with FAL_VIDEO_JOBS_LOCK:
+        cutoff = now - (24 * 60 * 60 * 1000)
+        for stale_id in [key for key, value in FAL_VIDEO_JOBS.items() if int(value.get("updatedAt") or 0) < cutoff]:
+            FAL_VIDEO_JOBS.pop(stale_id, None)
+        FAL_VIDEO_JOBS[job_id] = job
+
+    def run() -> None:
+        with FAL_VIDEO_JOBS_LOCK:
+            if job["status"] == "cancelled":
+                return
+            job.update(status="running", updatedAt=int(time.time() * 1000))
+        try:
+            durable_body = dict(body)
+            durable_body["latencyMode"] = "queue"
+            def update_model(model: str) -> None:
+                with FAL_VIDEO_JOBS_LOCK:
+                    job.update(currentModel=model, updatedAt=int(time.time() * 1000))
+
+            result = generate_fal_video(durable_body, on_model=update_model)
+            with FAL_VIDEO_JOBS_LOCK:
+                if job["status"] == "cancelled":
+                    media_id = str(result.get("mediaId") or "")
+                    if re.fullmatch(r"[a-f0-9]{32}", media_id):
+                        try:
+                            (VIDEO_WORLD_MEDIA_DIR / f"{media_id}.mp4").unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    return
+                job.update(status="completed", result=result, updatedAt=int(time.time() * 1000))
+        except Exception as error:
+            with FAL_VIDEO_JOBS_LOCK:
+                if job["status"] != "cancelled":
+                    job.update(status="failed", error=str(error),
+                               errorCode=str(getattr(error, "error_type", "") or ""),
+                               errorFields=list(getattr(error, "fields", []) or []),
+                               updatedAt=int(time.time() * 1000))
+
+    threading.Thread(target=run, name=f"fal-video-{job_id[:8]}", daemon=True).start()
+    return _fal_video_job_public(job)
+
+
+def get_fal_video_job(job_id: str) -> dict[str, Any]:
+    with FAL_VIDEO_JOBS_LOCK:
+        job = FAL_VIDEO_JOBS.get(job_id)
+        if not job:
+            raise KeyError("Video generation job was not found. The local bridge may have restarted.")
+        return _fal_video_job_public(job)
+
+
+def cancel_fal_video_job(job_id: str) -> dict[str, Any]:
+    with FAL_VIDEO_JOBS_LOCK:
+        job = FAL_VIDEO_JOBS.get(job_id)
+        if not job:
+            raise KeyError("Video generation job was not found.")
+        if job["status"] in {"queued", "running"}:
+            job.update(status="cancelled", updatedAt=int(time.time() * 1000),
+                       error="Cancelled locally; upstream work already accepted by Fal may still finish and bill.")
+        return _fal_video_job_public(job)
+
+
+def test_fal_connection(body: dict[str, Any]) -> dict[str, Any]:
+    """Verify a Fal API-scope key without starting a billable generation."""
+    key = fal_key(body.get("apiKey"))
+    data = fal_json_request("https://api.fal.ai/v1/models?limit=1", key, timeout=25)
+    models = data.get("models") if isinstance(data.get("models"), list) else data.get("data")
+    return {
+        "ok": True,
+        "provider": "fal",
+        "modelsVisible": len(models) if isinstance(models, list) else 0,
+    }
+
+
+def delete_fal_videos(body: dict[str, Any]) -> dict[str, Any]:
+    values = body.get("mediaIds") if isinstance(body.get("mediaIds"), list) else []
+    removed = 0
+    for raw in values[:5000]:
+        media_id = str(raw or "")
+        if not re.fullmatch(r"[a-f0-9]{32}", media_id):
+            continue
+        target = VIDEO_WORLD_MEDIA_DIR / f"{media_id}.mp4"
+        try:
+            target.unlink()
+            removed += 1
+        except FileNotFoundError:
+            pass
+    return {"ok": True, "removed": removed}
+
+
 def loopback_base_url(value: Any, default_port: int) -> str:
     """Validate a user-configured image server on this device or its private LAN.
 
@@ -1841,6 +2287,53 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def serve_video_file(self, target: Path) -> None:
+        try:
+            size = target.stat().st_size
+        except OSError:
+            self.respond(404, {"error": "Video Adventure clip not found."})
+            return
+        start, end, status = 0, max(0, size - 1), 200
+        requested = str(self.headers.get("Range") or "")
+        match = re.fullmatch(r"bytes=(\d*)-(\d*)", requested.strip()) if requested else None
+        if match:
+            if match.group(1):
+                start = int(match.group(1))
+                end = min(end, int(match.group(2))) if match.group(2) else end
+            elif match.group(2):
+                suffix = min(size, int(match.group(2)))
+                start = size - suffix
+            if start >= size or end < start:
+                self.send_response(416)
+                self.cors()
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+            status = 206
+        length = max(0, end - start + 1)
+        self.send_response(status)
+        self.cors()
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        try:
+            with target.open("rb") as source:
+                source.seek(start)
+                remaining = length
+                while remaining:
+                    chunk = source.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def serve_app_file(self, path: str) -> bool:
         entry = STATIC_FILES.get(path) or STATIC_FILES.get(urllib.parse.quote(urllib.parse.unquote(path), safe="/"))
         if entry:
@@ -1850,7 +2343,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
             decoded = urllib.parse.unquote(path)
             target = None
             content_type = "application/octet-stream"
+            if decoded.startswith("/video-world-media/"):
+                filename = decoded[len("/video-world-media/"):]
+                if not re.fullmatch(r"[a-f0-9]{32}\.mp4", filename):
+                    self.respond(403, {"error": "Invalid Video Adventure media path."})
+                    return True
+                target = VIDEO_WORLD_MEDIA_DIR / filename
+                content_type = "video/mp4"
             for url_prefix, root in STATIC_MEDIA_ROOTS:
+                if target is not None:
+                    break
                 if not decoded.startswith(url_prefix):
                     continue
                 relative = decoded[len(url_prefix):].lstrip("/")
@@ -1866,6 +2368,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if target is None:
                 return False
         try:
+            if content_type == "video/mp4" and target.parent == VIDEO_WORLD_MEDIA_DIR:
+                self.serve_video_file(target)
+                return True
             raw = target.read_bytes()
         except OSError:
             self.respond(404, {"error": "Application asset not found."})
@@ -1917,6 +2422,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Always-on control is loopback-only."})
                 return self.respond(200, always_on_runtime.status())
+            job_match = re.fullmatch(r"/fal/video/jobs/([a-f0-9]{32})", parsed.path)
+            if job_match:
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Video Adventure generation is loopback-only."})
+                return self.respond(200, get_fal_video_job(job_match.group(1)))
             if parsed.path == "/providers":
                 return self.respond(200, {"providers": [provider_status(key) for key in PROVIDERS]})
             if parsed.path == "/oauth/callback":
@@ -2013,6 +2523,31 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed_path == "/local-image/openai/generate":
                 body = self.read_json()
                 return self.respond(200, {"image": openai_local_generate(body)})
+            if parsed_path == "/fal/video/generate":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Video Adventure generation is loopback-only."})
+                return self.respond(200, generate_fal_video(self.read_json()))
+            if parsed_path == "/fal/image/generate":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Fal image generation is loopback-only."})
+                return self.respond(200, generate_fal_image(self.read_json()))
+            if parsed_path == "/fal/video/jobs":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Video Adventure generation is loopback-only."})
+                return self.respond(202, submit_fal_video_job(self.read_json()))
+            cancel_match = re.fullmatch(r"/fal/video/jobs/([a-f0-9]{32})/cancel", parsed_path)
+            if cancel_match:
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Video Adventure generation is loopback-only."})
+                return self.respond(200, cancel_fal_video_job(cancel_match.group(1)))
+            if parsed_path == "/fal/video/test":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Fal connection testing is loopback-only."})
+                return self.respond(200, test_fal_connection(self.read_json()))
+            if parsed_path == "/fal/video/delete":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Video Adventure media deletion is loopback-only."})
+                return self.respond(200, delete_fal_videos(self.read_json()))
             if parsed_path == "/media/fetch":
                 body = self.read_json()
                 return self.respond(200, {"image": download_image(safe_remote_image_url(body.get("url")))})

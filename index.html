@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260901-v167-openrouter-routing-v1">
+    <link rel="stylesheet" href="style.css?v=20260902-v1700-sidecar-ui-v1">
 </head>
 <body>
 <div id="app">
@@ -32,6 +32,10 @@
             <button class="nav-item" data-view="worlds" id="nav-worlds-btn">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                 Worlds
+            </button>
+            <button class="nav-item video-world-nav-item" data-view="videoWorlds" id="nav-video-worlds-btn" type="button" title="Create and play persistent generated films">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9z"/></svg>
+                <span>Video Adventures</span><span class="multiplayer-nav-badge">ALPHA</span>
             </button>
             <button class="nav-item multiplayer-nav-item" data-view="multiplayer" id="nav-multiplayer-btn" type="button" title="Host or join a shared Chat or World session">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M2.5 20v-1.5A5.5 5.5 0 018 13h0a5.5 5.5 0 015.5 5.5V20M13 14.2A5.5 5.5 0 0121.5 19v1"/></svg>
@@ -190,6 +194,116 @@
             <div id="world-grid" class="char-grid">
                 <!-- Worlds rendered here -->
             </div>
+            </div>
+        </section>
+
+        <!-- ────────── VIDEO ADVENTURES (separate from simulation Worlds) ────────── -->
+        <section id="video-worlds-view" class="view hidden landing-view">
+            <div class="landing-shell video-world-library-shell">
+                <header class="page-header landing-hero video-world-hero">
+                    <div class="landing-hero-copy">
+                        <span class="vh-eyebrow">Playable generated film</span>
+                        <h1 class="page-title">Video Adventures</h1>
+                        <p class="page-subtitle">Create a cinematic setting, take an action, and let each generated shot become the starting frame for the next.</p>
+                    </div>
+                    <div class="header-actions landing-actions">
+                        <button id="create-video-world-btn" class="btn btn-primary">+ Create Video Adventure</button>
+                    </div>
+                </header>
+                <div class="video-world-alpha-note"><strong>First draft</strong><span>Video Adventures have their own library and timelines. They do not read or modify regular World saves.</span></div>
+                <div id="video-world-grid" class="char-grid"></div>
+            </div>
+        </section>
+
+        <section id="video-world-studio-view" class="view hidden">
+            <div class="video-world-studio-shell">
+                <header class="video-world-studio-header">
+                    <div><button id="video-world-studio-back" class="btn btn-ghost btn-small" type="button">← Video Adventures</button><span class="vh-eyebrow">VIDEO ADVENTURE STUDIO</span><h1 id="video-world-studio-title">Create Video Adventure</h1></div>
+                    <div><button id="delete-video-world-btn" class="btn btn-ghost hidden" type="button">Delete</button><button id="save-video-world-btn" class="btn btn-primary" type="button">Save Video Adventure</button></div>
+                </header>
+                <div class="video-world-studio-grid">
+                    <section class="video-world-form-card">
+                        <span class="vh-eyebrow">1 · STORY</span>
+                        <label class="form-field"><span>Name</span><input id="video-world-name" class="form-input" maxlength="120" placeholder="The Last Train to Meridian"></label>
+                        <label class="form-field"><span>Tagline</span><input id="video-world-tagline" class="form-input" maxlength="240" placeholder="A playable film about one impossible journey."></label>
+                        <label class="form-field"><span>Story premise</span><textarea id="video-world-premise" class="form-textarea" rows="5" maxlength="4000" placeholder="Where are we, who is the player, what do they want, and what is at stake?"></textarea></label>
+                        <label class="form-field"><span>Story rules and tone <small>optional</small></span><textarea id="video-world-story-rules" class="form-textarea" rows="3" maxlength="4000" placeholder="Slow-burn mystery; choices have lasting consequences; humor never erases danger..."></textarea></label>
+
+                        <span class="vh-eyebrow video-world-section-label">2 · LOOK</span>
+                        <div id="video-world-style-presets" class="video-world-preset-grid" role="radiogroup" aria-label="Visual style"></div>
+                        <label class="form-field"><span>Visual details <small>optional</small></span><textarea id="video-world-style" class="form-textarea" rows="3" maxlength="4000" placeholder="Warm sunset palette, expressive faces, weathered locations..."></textarea></label>
+
+                        <span class="vh-eyebrow video-world-section-label">3 · PLAYER</span>
+                        <div class="video-world-segmented" id="video-world-viewpoint" role="radiogroup" aria-label="Player viewpoint">
+                            <button type="button" data-value="third_person">See my character</button><button type="button" data-value="first_person">First person · through my eyes</button>
+                        </div>
+                        <label class="form-field"><span>Who is the player?</span><textarea id="video-world-player-description" class="form-textarea" rows="3" maxlength="3000" placeholder="A newly hired ranch hand with a hidden past..."></textarea></label>
+                        <details class="video-world-advanced"><summary>Advanced · put me in the story</summary><p>Upload a clear reference photo. It stays inside this Video Adventure and is used only when your player character should be visible.</p><input id="video-world-player-reference" type="file" accept="image/png,image/jpeg,image/webp"><div id="video-world-player-reference-preview" class="video-world-reference-preview"></div></details>
+
+                        <span class="vh-eyebrow video-world-section-label">4 · CAST</span>
+                        <p class="video-world-helper">Create the recurring characters the Director must remember. A reference image helps preserve their face, wardrobe, and silhouette.</p>
+                        <div id="video-world-characters" class="video-world-character-list"></div>
+                        <button id="video-world-add-character" class="btn btn-ghost" type="button">+ Add character</button>
+
+                        <span class="vh-eyebrow video-world-section-label">5 · OPENING</span>
+                        <label class="form-field"><span>Opening situation</span><textarea id="video-world-opening" class="form-textarea" rows="5" maxlength="6000" placeholder="What is happening when play begins? Describe the dramatic situation; the Director will stage the shot."></textarea></label>
+                    </section>
+                    <aside class="video-world-form-card video-world-production-card">
+                        <span class="vh-eyebrow">WORLD DIRECTOR</span>
+                        <label class="form-field"><span>Fast text model</span>
+                            <div class="searchable-dropdown-container">
+                                <input id="video-world-director-model" class="form-input search-dropdown-input" type="search" maxlength="500" autocomplete="off" role="combobox" aria-controls="video-world-director-model-results" aria-expanded="false" placeholder="Search provider models or type an exact ID">
+                                <div id="video-world-director-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
+                            </div>
+                        </label>
+                        <p class="video-world-helper">Searches the live catalog from your current text provider. Choose a low-latency model with JSON output, or type an exact unlisted ID. This model writes story beats and choices, not video.</p>
+                        <button id="video-world-test-director" class="btn btn-ghost" type="button">Test Director</button>
+                        <div id="video-world-director-status" class="video-world-director-status" aria-live="polite">Not tested.</div>
+                        <button id="video-world-open-ai-settings" class="btn btn-ghost btn-small" type="button">Configure text provider</button>
+                        <span class="vh-eyebrow video-world-section-label">PRODUCTION</span>
+                        <label class="form-field"><span>Primary video renderer</span><select id="video-world-renderer-primary" class="form-select"><option value="minimax/h3-max">MiniMax H3 Max · dialogue · fast</option><option value="alibaba/wan-3.0">Wan 3.0 · audio · resilient</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast · native audio</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime · higher fidelity</option></select></label>
+                        <label class="form-field"><span>Fallback renderer</span><select id="video-world-renderer-fallback" class="form-select"><option value="alibaba/wan-3.0">Wan 3.0 · recommended after H3</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option><option value="">No automatic fallback</option></select></label>
+                        <label class="form-field"><span>Second fallback <small>optional</small></span><select id="video-world-renderer-fallback-2" class="form-select"><option value="">None</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0">Wan 3.0</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option></select></label>
+                        <p class="video-world-helper">The fallback retries the same Director beat and continuity frame when the primary renderer rejects or fails. Fal may bill upstream work accepted before a fallback begins.</p>
+                        <label class="form-field"><span>Resolution</span><select id="video-world-resolution" class="form-select"><option value="480P">480p · economical</option><option value="768P">768p / 720p · higher fidelity</option></select></label>
+                        <label class="form-field"><span>Shot duration</span><select id="video-world-duration" class="form-select"><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option></select></label>
+                        <label class="form-field"><span>Aspect ratio</span><select id="video-world-aspect" class="form-select"><option value="16:9">16:9 · cinematic</option><option value="21:9">21:9 · ultrawide</option><option value="4:3">4:3 · classic</option><option value="1:1">1:1 · square</option><option value="9:16">9:16 · vertical</option></select></label>
+                        <label class="vh-test-check video-world-safety-toggle"><input id="video-world-safety-checker" type="checkbox" checked><span>Fal safety checker</span></label>
+                        <p class="video-world-helper">On by default. Both this adventure switch and the global Fal switch must be on to request optional checking. When either is off, Horde sends <code>enable_safety_checker: false</code> to supported endpoints. LTX Fast does not expose this option, and mandatory provider or model-level filters can still reject a request.</p>
+                        <label class="form-field"><span>Session spending limit</span><div class="video-world-money-input"><span>$</span><input id="video-world-budget" class="form-input" type="number" min="0.10" max="10000" step="0.25" value="5.00"></div></label>
+                        <div id="video-world-cost-preview" class="video-world-cost-preview"></div>
+                        <div class="video-world-provider-note"><strong id="video-world-renderer-note">Renderers: Fal · H3 Max → Wan 3.0</strong><span>The Fal key stays in this browser session and is sent only to Horde's loopback bridge, which downloads completed clips locally.</span></div>
+                    </aside>
+                </div>
+            </div>
+        </section>
+
+        <section id="video-world-play-view" class="view hidden">
+            <div class="video-world-play-shell">
+                <header class="video-world-play-header">
+                    <div><button id="video-world-play-back" class="btn btn-ghost btn-small" type="button">← Library</button><span class="vh-eyebrow">VIDEO ADVENTURE</span><h1 id="video-world-play-title">Untitled Video Adventure</h1><p id="video-world-play-tagline"></p></div>
+                    <div class="video-world-play-actions"><button id="video-world-new-run" class="btn btn-ghost" type="button">New timeline</button><button id="video-world-edit" class="btn btn-ghost" type="button">Edit</button></div>
+                </header>
+                <div class="video-world-play-grid">
+                    <main class="video-world-stage-panel">
+                        <div id="video-world-stage" class="video-world-stage">
+                            <div id="video-world-stage-empty" class="video-world-stage-empty"><button id="video-world-stage-generate" type="button" aria-label="Film opening shot">▶</button><strong>Your opening shot is ready to film</strong><small>Select Film opening to generate picture and ambient sound.</small></div>
+                            <video id="video-world-player" class="hidden" controls playsinline preload="metadata"></video>
+                            <video id="video-world-preloader" class="hidden" muted playsinline preload="auto" aria-hidden="true"></video>
+                            <div id="video-world-generating" class="video-world-generating hidden"><span class="video-world-spinner"></span><strong id="video-world-generating-title">Filming shot…</strong><small id="video-world-generating-detail">Submitting to Fal</small><button id="video-world-cancel-generation" type="button">Cancel</button></div>
+                        </div>
+                        <div class="video-world-composer">
+                            <label for="video-world-action" id="video-world-action-label">Opening shot</label>
+                            <div id="video-world-choices" class="video-world-choices hidden" role="group" aria-label="Choose the next action"></div>
+                            <textarea id="video-world-action" class="form-textarea" rows="3" maxlength="3000" placeholder="Describe what you attempt or what should happen next..."></textarea>
+                            <div><span id="video-world-next-cost">Estimated shot: $0.00</span><button id="video-world-generate" class="btn btn-primary" type="button">Film opening</button></div>
+                        </div>
+                    </main>
+                    <aside class="video-world-timeline-panel">
+                        <div class="video-world-run-summary"><div><span>Timeline</span><select id="video-world-run-name" class="video-world-run-select" aria-label="Video Adventure timeline"></select></div><div><span>Spend</span><strong id="video-world-run-spend">$0.00 / $5.00</strong></div><div class="video-world-run-actions"><button id="video-world-rename-run" type="button">Rename</button><button id="video-world-delete-run" type="button">Delete</button></div></div>
+                        <div id="video-world-timeline" class="video-world-timeline"></div>
+                    </aside>
+                </div>
             </div>
         </section>
 
@@ -783,6 +897,7 @@
                                         <option value="openrouter">OpenRouter</option>
                                         <option value="gptproto">GPTProto</option>
                                         <option value="nanogpt">NanoGPT</option>
+                                        <option value="fal">Fal</option>
                                     </select>
                                 </div>
                                 <div class="form-col form-col-grow">
@@ -2823,8 +2938,10 @@
                                 <button id="cs-video-enabled" class="vh-social-feed-toggle" type="button" aria-pressed="false"><span class="vh-social-feed-toggle-dot"></span><span id="cs-video-enabled-label">Clips off</span></button>
                             </section>
                             <div class="vh-social-behavior-grid">
-                                <label class="form-field"><span>Video provider</span><select id="cs-video-provider" class="form-select"><option value="openrouter">OpenRouter</option><option value="evolink">EvoLink</option><option value="wavespeed">WaveSpeed</option></select></label>
+                                <label class="form-field"><span>Video provider</span><select id="cs-video-provider" class="form-select"><option value="openrouter">OpenRouter</option><option value="evolink">EvoLink</option><option value="wavespeed">WaveSpeed</option><option value="fal">Fal</option></select></label>
                                 <label class="form-field"><span>Reference-capable model</span><select id="cs-video-model" class="form-select"></select><small id="cs-video-model-status" class="form-hint">Choose a provider to load its video catalog.</small></label>
+                                <label class="form-field"><span>Fallback model</span><select id="cs-video-fallback-model" class="form-select"><option value="">No automatic fallback</option></select><small class="form-hint">Fal only. Retries the same scene and identity reference.</small></label>
+                                <label class="form-field"><span>Second fallback</span><select id="cs-video-fallback-model-2" class="form-select"><option value="">None</option></select></label>
                                 <label class="form-field"><span>Default quality</span><select id="cs-video-resolution" class="form-select"><option value="480p">480p · fast / recommended</option><option value="720p">720p</option><option value="1080p">1080p</option></select></label>
                                 <label class="form-field"><span>Default duration</span><select id="cs-video-duration" class="form-select"><option value="5">5 seconds</option><option value="8">8 seconds</option><option value="10">10 seconds</option></select></label>
                                 <label class="form-field"><span>Identity reference</span><select id="cs-video-reference" class="form-select"><option value="auto">Smart · generation image, profile, then gallery</option><option value="generation">Generation reference only</option><option value="profile">Profile image only</option><option value="gallery">Most recent gallery photo</option></select></label>
@@ -3119,6 +3236,7 @@
                                             <option value="openrouter">OpenRouter</option>
                                             <option value="gptproto">GPTProto</option>
                                             <option value="nanogpt">NanoGPT</option>
+                                            <option value="fal">Fal</option>
                                             <option value="local">Local / self-hosted</option>
                                             <option value="local_image">Local image server (OpenAI-compatible)</option>
                                             <option value="comfyui">ComfyUI workflow</option>
@@ -3621,6 +3739,20 @@
                 <label class="form-label" for="global-wavespeed-url" style="margin-top:10px;">Base URL</label>
                 <input type="url" id="global-wavespeed-url" class="form-input" value="https://api.wavespeed.ai/api/v3" spellcheck="false">
                 <p class="form-hint">Used only for Virtual Human Clips. Output is downloaded into browser storage before temporary provider links expire.</p>
+            </details>
+            <details class="settings-provider-card settings-provider-card-wide" data-provider="fal">
+                <summary><span class="settings-provider-mark">FA</span><span><strong>Fal</strong><small>Images · Virtual Humans · Video Adventures</small></span><span class="settings-provider-state">Media</span></summary>
+                <label class="form-label" for="global-fal-key">API key</label>
+                <input type="password" id="global-fal-key" class="form-input" placeholder="Fal API key" autocomplete="off">
+                <button id="test-fal-conn-btn" class="btn btn-ghost" type="button">Test Fal connection</button>
+                <div id="fal-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite">Not tested yet.</div>
+                <div class="form-row" style="margin-top:10px;">
+                    <div class="form-col"><label class="form-label" for="global-fal-rate-480">480p estimate · USD/second</label><input id="global-fal-rate-480" class="form-input" type="number" min="0" max="100" step="0.001" value="0.05"></div>
+                    <div class="form-col"><label class="form-label" for="global-fal-rate-768">768p estimate · USD/second</label><input id="global-fal-rate-768" class="form-input" type="number" min="0" max="100" step="0.001" value="0.08"></div>
+                </div>
+                <label class="vh-test-check" style="margin-top:10px;"><input id="global-fal-safety-checker" type="checkbox" checked><span>Request Fal safety checking by default</span></label>
+                <p class="form-hint">Turning this off sends a model’s documented safety flag only where that endpoint supports one. Fal account authorization and mandatory provider/model checks still apply.</p>
+                <p class="form-hint">The rate fields estimate spending and enforce each Video Adventure's session limit; Fal remains the billing authority. Your key is sent only to Horde Studio's local bridge, never embedded in a Video Adventure or backup.</p>
             </details>
             <details id="nanogpt-key-block" class="settings-provider-card" data-provider="nanogpt">
                 <summary><span class="settings-provider-mark">NG</span><span><strong>NanoGPT</strong><small>Text · images · speech</small></span><span class="settings-provider-state">Configure</span></summary>
@@ -5074,7 +5206,7 @@
 <script src="labs-core.js?v=20260822-v161"></script>
 <script src="labs-tasks.js?v=20260822-v161"></script>
 <script src="labs-guide.js?v=20260822-v161"></script>
-<script src="help-system.js?v=20260901-v167-memory-release"></script>
+<script src="help-system.js?v=20260902-fal-media-alpha8"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
@@ -5085,7 +5217,8 @@
 <script src="sidecar/runtime/promotion-model.js?v=20260902-sidecar-promotion-v1"></script>
 <script src="sidecar/runtime/traversal-vehicle-model.js?v=20260902-sidecar-traversal-v1"></script>
 <script src="sidecar/runtime/memory-graph.js?v=20260902-sidecar-memory-v1"></script>
-    <script src="sidecar/integrations/horde-16.7-hooks.js?v=20260902-sidecar-foundation-v1"></script>
-    <script src="app.js?v=20260901-v167-shared-library-sync-v1"></script>
+<script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
+<script src="sidecar/integrations/horde-16.7-hooks.js?v=20260902-sidecar-foundation-v1"></script>
+<script src="app.js?v=20260902-v1700-sidecar-video-v1"></script>
 </body>
 </html>
