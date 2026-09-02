@@ -11657,6 +11657,12 @@ function renderSidecarConversation(world, sess) {
     const enabled = mode.value === 'sidecar' && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     panel.classList.toggle('hidden', !enabled);
     if (!enabled) return;
+    document.getElementById('world-close-sidecar-conversation')?.addEventListener('click', () => {
+        mode.value = 'narrator';
+        mode.dispatchEvent(new Event('change'));
+        renderSidecarConversation(world, sess);
+        document.getElementById('world-user-input')?.focus();
+    }, { once: true });
     const entries = (protocol?.conversations || []).slice(-80);
     const questionCards = (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-20).map(question => `
         <details style="margin:0 0 8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.03);">
