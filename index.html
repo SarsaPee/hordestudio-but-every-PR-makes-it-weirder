@@ -1191,10 +1191,10 @@
                                     🌍 Background World Agent
                                 </label>
                                 <div class="form-hint" style="margin-top: 8px;">
-                                    The local kernel advances schedules and known consequences without an API call. This optional agent
-                                    runs after a response only when future momentum is running low, inventing grounded off-screen developments.
-                                    It shapes the world only — it can never move, harm, or reward your character. In Sidecar worlds it writes
-                                    proposal packets for Sidecar to review; it never commits them directly.
+                                    Disabled by default. This is a background proposal writer, not an autonomous world mutator: it may suggest
+                                    off-screen developments from established world state on its configured cadence or a scene change. In Sidecar
+                                    worlds every result is a visible proposal packet. Sidecar may refine or reject it, and the author reviews any
+                                    consequential change in the World GM conversation before it can become canonical.
                                 </div>
                                 <label class="vh-test-check" style="margin-top:10px;"><input type="checkbox" id="w-agent-proposal-only"> Store proposals for review (also enforced in Sidecar mode)</label>
                                 <div style="display:flex; gap:12px; margin-top:12px;">

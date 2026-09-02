@@ -11735,6 +11735,32 @@ function sidecarInspectorJson(value, fallback = 'Nothing has been recorded yet.'
     return `<pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:48vh; overflow:auto; margin:0; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text-2); font-size:.74rem;">${escapeHTML(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+function openWorldSidecarLine(workspace = {}) {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return;
+    if (window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) !== true) return openWorldSidecarInspector('migration');
+    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+    protocol.workspace = {
+        kind: ['sequence_planning', 'context_refresh', 'sequence_closure'].includes(workspace.kind) ? workspace.kind : 'world_gm',
+        title: String(workspace.title || 'World GM').slice(0, 160),
+        guidance: String(workspace.guidance || '').slice(0, 3000),
+        openedAt: new Date().toISOString(),
+        provenance: { source: 'direct_user_refinement' }
+    };
+    const mode = document.getElementById('world-conversation-mode');
+    const input = document.getElementById('world-user-input');
+    if (mode) { mode.value = 'sidecar'; mode.dispatchEvent(new Event('change')); }
+    if (input) {
+        input.placeholder = workspace.placeholder || 'Ask Sidecar about continuity, questions, or a refinement…';
+        input.value = workspace.draft || '';
+        input.focus();
+    }
+    protocol.packet = buildSidecarScenePacket(world, sess);
+    saveState().catch(() => {});
+    renderSidecarConversation(world, sess);
+}
+
 function openWorldSidecarInspector(view = 'scene') {
     closeWorldSidecarInspector();
     const world = state.worlds.find(item => item.id === state.activeWorldId);
@@ -11780,7 +11806,7 @@ function openWorldSidecarInspector(view = 'scene') {
             <button class="tool-btn sidecar-inspector-tab" data-view="line">Private Sidecar line</button>
             <button class="tool-btn sidecar-inspector-tab" data-view="timelines">Timelines</button>
         </div>`;
-        if (view === 'line') body = `${tabs}<p class="form-hint">This is an out-of-world conversation with the tracker. It does not create a roleplay turn or advance time, movement, traversal, or scenes.</p><button class="btn btn-primary" id="world-sidecar-inspector-open-line">Open private Sidecar line</button>`;
+        if (view === 'line') { openWorldSidecarLine(); return; }
         else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
         else if (view === 'timelines') body = `${tabs}<p class="form-hint">Forks are immutable copies of a selected committed revision. Superseded takes stay auditable but do not leak into the active timeline.</p><button class="btn btn-primary" id="world-sidecar-inspector-timelines">Open timeline and fork browser</button>`;
@@ -11792,13 +11818,6 @@ function openWorldSidecarInspector(view = 'scene') {
     document.getElementById('close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
     document.getElementById('world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });
     document.querySelectorAll('.sidecar-inspector-tab').forEach(button => button.addEventListener('click', () => openWorldSidecarInspector(button.dataset.view)));
-    document.getElementById('world-sidecar-inspector-open-line')?.addEventListener('click', () => {
-        closeWorldSidecarInspector();
-        const mode = document.getElementById('world-conversation-mode');
-        if (mode) { mode.value = 'sidecar'; mode.dispatchEvent(new Event('change')); }
-        renderSidecarConversation(world, sess);
-        document.getElementById('world-user-input')?.focus();
-    });
     document.getElementById('world-sidecar-inspector-timelines')?.addEventListener('click', () => { closeWorldSidecarInspector(); openWorldTimelineBrowser(); });
 }
 
@@ -22094,12 +22113,16 @@ function setupWorldPlayLogic() {
 
     document.getElementById('world-session-zero-btn').onclick = () => openSessionZero(null);
 
-    document.getElementById('world-plan-sequence-btn').onclick = () => {
-        void planAndApproveWorldSequence();
-    };
-    document.getElementById('world-context-refresh-btn').onclick = () => {
-        void planAndApproveWorldSequence();
-    };
+    document.getElementById('world-plan-sequence-btn').onclick = () => openWorldSidecarLine({
+        kind: 'sequence_planning', title: 'New Sequence planning',
+        guidance: 'Discuss the intended cut, constraints, continuity and unresolved questions. When the plan is ready, explicitly tell Sidecar that it may prepare the approval packet.',
+        placeholder: 'Describe the next sequence you want to author…'
+    });
+    document.getElementById('world-context-refresh-btn').onclick = () => openWorldSidecarLine({
+        kind: 'context_refresh', title: 'Context Refresh planning',
+        guidance: 'Review what should carry forward, what can be compressed, and any continuity constraints. This is authorial planning; no scene changes until explicitly approved.',
+        placeholder: 'What should the next context packet preserve or refresh?'
+    });
     document.getElementById('world-close-sequence-btn').onclick = async () => {
         const world = state.worlds.find(item => item.id === state.activeWorldId);
         const sess = getCurrentWorldSession();
@@ -22112,7 +22135,11 @@ function setupWorldPlayLogic() {
         try { reconciliation = await requestSequenceClosureReconciliation(world, sess); }
         catch (error) { showToast(`Sequence closure review failed: ${error.message || error}`, 'error'); return; }
         if (reconciliation.status !== 'ready') {
-            showToast(reconciliation.summary || 'Sequence remains open until its closure questions are resolved.', 'info');
+            openWorldSidecarLine({
+                kind: 'sequence_closure', title: 'Sequence closure questions',
+                guidance: reconciliation.summary || 'Resolve the outstanding closure questions. The sequence remains open until they are resolved or deliberately deferred.',
+                placeholder: 'Answer or defer the sequence closure questions…'
+            });
             renderWorldPlayState();
             return;
         }
@@ -22127,6 +22154,12 @@ function setupWorldPlayLogic() {
         const world = state.worlds.find(item => item.id === state.activeWorldId); const sess = getCurrentWorldSession();
         if (!world || !sess) return;
         if (!window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return openWorldSidecarInspector('migration');
+        openWorldSidecarLine({
+            kind: 'scene_boundary', title: 'Scene boundary review',
+            guidance: 'Discuss whether a material scene boundary has actually occurred, what the next scene should inherit, and any unresolved continuity. Do not close the scene until the author explicitly approves it.',
+            placeholder: 'Describe the scene boundary you want to review…'
+        });
+        return;
         try {
             const review = await requestSceneBoundaryReview(world, sess, { reason: 'author_requested' });
             if (!review.shouldClose) return showToast('Sidecar found no material scene boundary yet.', 'info');
@@ -22136,12 +22169,14 @@ function setupWorldPlayLogic() {
             });
         } catch (error) { showToast(`Scene review failed: ${error.message || error}`, 'error'); }
     });
-    document.getElementById('world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarInspector('line'));
+    document.getElementById('world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarLine());
     document.getElementById('world-v3-panel-btn')?.addEventListener('click', () => openWorldSidecarInspector('scene'));
     document.getElementById('world-backstage-btn')?.addEventListener('click', () => openWorldSidecarInspector('backstage'));
-    document.getElementById('world-promote-implied-btn').onclick = () => {
-        void promoteImpliedWorldRecord();
-    };
+    document.getElementById('world-promote-implied-btn').onclick = () => openWorldSidecarLine({
+        kind: 'implied_promotion', title: 'Implied records review',
+        guidance: 'Review implied people, places and props. Decide whether each should stay implicit, link to existing canon, or be explicitly promoted. Never create a duplicate merely because a noun was mentioned.',
+        placeholder: 'Ask which implied records need review, or describe one to promote…'
+    });
 
     document.getElementById('world-continue-btn').onclick = () => {
         if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
