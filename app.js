@@ -10533,6 +10533,32 @@ function sidecarTemporalStatement(handoff) {
     return String(match?.[1] || '').replace(/\s+/g, ' ').trim().slice(0, 1200);
 }
 
+const SIDECAR_CORE_QUESTION_IDS = Object.freeze(['core.time', 'core.location', 'core.cast', 'core.world_changes']);
+
+function sidecarHandoffAnswer(handoff, questionId) {
+    const escaped = String(questionId || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = String(handoff || '').match(new RegExp(
+        `ANSWER\\s+${escaped}\\s*(?::|\\n)\\s*-?\\s*([\\s\\S]*?)(?=\\n\\s*(?:ANSWER|REQUEST|ACCEPTED\\s+PLAYER\\s+DETAILS)\\b|$)`, 'i'));
+    return String(match?.[1] || '').replace(/\s+/g, ' ').trim().slice(0, 1600);
+}
+
+function recordSidecarCoreAnswers(world, sess, handoff) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) return {};
+    const answers = protocol.coreAnswers || (protocol.coreAnswers = {});
+    SIDECAR_CORE_QUESTION_IDS.forEach(id => {
+        const answer = sidecarHandoffAnswer(handoff, id);
+        if (!answer) return;
+        answers[id] = {
+            answer,
+            source: 'narrator_handoff',
+            answeredTurn: Math.max(1, Number(sess.turnCount) || 1),
+            recordedAt: new Date().toISOString()
+        };
+    });
+    return answers;
+}
+
 function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
@@ -10561,7 +10587,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const hour12 = clock.hours24 % 12 || 12;
     const location = getLocationRef(world, frame.player_location_id);
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const questions = (protocol?.questions || []).filter(question => question.status === 'open').slice(-8)
+    const questions = (protocol?.questions || []).filter(question => question.status === 'open' && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)).slice(-8)
         .map(question => ({ id: question.id, prompt: question.prompt, target: question.target }));
     return {
         version: 1,
@@ -10573,6 +10599,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         temporalContinuity: handoff ? sidecarTemporalStatement(handoff).slice(0, 600) : String(protocol?.temporalState?.authoredMeaning || '').slice(0, 600),
         temporalEvidence: protocol?.temporalState || null,
         sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
+        coreReview: protocol?.coreAnswers || {},
         pendingQuestions: questions,
         recentAuthorialRefinements: (protocol?.refinements || []).slice(-6).map(refinement => ({
             text: String(refinement.userText || '').slice(0, 1200),
@@ -10589,19 +10616,37 @@ function recordSidecarTrace(world, sess, trace) {
     protocol.debug.traces = protocol.debug.traces.slice(-Math.max(1, protocol.debug.retainTraceCount || 20));
 }
 
-function queueSidecarQuestion(world, sess, prompt, evidence = '') {
+function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
-    const prior = protocol.questions.find(question => question.status === 'open' && question.prompt === prompt);
+    const stableId = String(options.id || '').trim();
+    const prior = protocol.questions.find(question => question.status === 'open'
+        && (stableId ? question.id === stableId : question.prompt === prompt));
     if (prior) return prior;
     const question = {
-        id: `q_sidecar_${Date.now().toString(36)}_${protocol.questions.length + 1}`,
-        origin: 'sidecar_reconciliation', target: 'user', status: 'open', prompt: String(prompt).slice(0, 1200),
+        id: stableId || `q_sidecar_${Date.now().toString(36)}_${protocol.questions.length + 1}`,
+        origin: options.origin || 'sidecar_reconciliation', target: options.target || 'user', status: 'open', prompt: String(prompt).slice(0, 1200),
         evidence: String(evidence).slice(0, 4000), createdTurn: Math.max(1, Number(sess.turnCount) || 1),
-        attempts: 0, provenance: { source: 'sidecar' }, createdAt: new Date().toISOString()
+        attempts: 0, dependencies: Array.isArray(options.dependencies) ? options.dependencies.slice(0, 12) : [],
+        pressure: ['low', 'medium', 'high'].includes(options.pressure) ? options.pressure : 'low',
+        resolutionType: '', provenance: { source: options.source || 'sidecar' }, createdAt: new Date().toISOString()
     };
     protocol.questions.push(question);
     return question;
+}
+
+function queueSidecarReconciliationQuestions(world, sess, audit) {
+    const rejected = Array.isArray(audit?.rejected) ? audit.rejected.slice(-6) : [];
+    rejected.forEach(item => {
+        const reason = String(item.reason || 'unreconciled_state').slice(0, 120);
+        const actor = String(item.actor_id || '').slice(0, 120);
+        queueSidecarQuestion(world, sess,
+            `A narrated change could not be reconciled (${reason}${actor ? ` for ${actor}` : ''}). Should this remain unresolved, or can a later beat establish the missing fact?`,
+            String(item.detail || reason), {
+                id: `reconcile.${reason}.${actor || 'world'}`.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 180),
+                origin: 'reconciliation', target: 'narrator', pressure: 'low'
+            });
+    });
 }
 
 async function runSidecarReconciliation(world, sess, options = {}) {
@@ -10644,7 +10689,9 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const committed = commitWorldTurnReceipt(world, sess, receipt, options.receiptContext || {}, 'sidecar');
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (protocol) {
+        recordSidecarCoreAnswers(world, sess, handoff);
         recordSidecarTemporalEvidence(world, sess, handoff, preClock);
+        queueSidecarReconciliationQuestions(world, sess, committed.audit);
         const packet = buildSidecarScenePacket(world, sess, handoff);
         protocol.packet = packet;
         protocol.turns.push({ id: receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`,
@@ -10714,6 +10761,8 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         question.status = resolution.status;
         question.answer = String(resolution.answer || '').slice(0, 3000);
         question.resolvedAt = new Date().toISOString();
+        question.attempts = (Number(question.attempts) || 0) + 1;
+        question.resolutionType = resolution.status === 'resolved' ? 'direct_user_answer' : 'direct_user_deferral';
         question.provenance = { ...(isPlainObject(question.provenance) ? question.provenance : {}), resolution: 'direct_user_refinement' };
     });
     protocol.conversations.push(authorEntry, sidecarEntry);

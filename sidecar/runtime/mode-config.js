@@ -60,6 +60,8 @@
             backgroundProposals: [],
             refinements: [],
             conversations: [],
+            inputMode: 'narrator',
+            coreAnswers: {},
             temporalState: {},
             provisionalLocations: [],
             provisionalEntities: [],
@@ -83,8 +85,9 @@
         ['sequences', 'scenes', 'turns', 'takes', 'questions', 'requests', 'proposals', 'backgroundProposals',
             'refinements', 'conversations', 'provisionalLocations', 'provisionalEntities', 'jobs']
             .forEach(key => { if (!Array.isArray(protocol[key])) protocol[key] = []; });
-        ['takeIndex', 'temporalState', 'traversalState', 'memoryGraph', 'diagnostics', 'migration']
+        ['takeIndex', 'temporalState', 'traversalState', 'memoryGraph', 'diagnostics', 'migration', 'coreAnswers']
             .forEach(key => { if (!isObject(protocol[key])) protocol[key] = {}; });
+        protocol.inputMode = protocol.inputMode === 'sidecar' ? 'sidecar' : 'narrator';
         protocol.activeSequenceId = text(protocol.activeSequenceId, 120);
         protocol.activeSceneId = text(protocol.activeSceneId, 120);
         protocol.packet = isObject(protocol.packet) ? protocol.packet : null;

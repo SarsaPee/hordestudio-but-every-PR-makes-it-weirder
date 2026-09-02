@@ -9,7 +9,7 @@
     "origin": { "type": "string" },
     "target": { "type": "string" },
     "prompt": { "type": "string" },
-    "pressure": { "type": "number" },
+    "pressure": { "oneOf": [{ "type": "number" }, { "enum": ["low", "medium", "high"] }] },
     "attempts": { "type": "integer", "minimum": 0 },
     "resolutionType": {
       "enum": [
@@ -20,7 +20,9 @@
         "delegated_target_answer",
         "explicit_unknown",
         "explicit_defer",
-        "user_authorial_answer"
+        "user_authorial_answer",
+        "direct_user_answer",
+        "direct_user_deferral"
       ]
     }
   },
