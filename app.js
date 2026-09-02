@@ -10571,6 +10571,25 @@ function recordSidecarCoreAnswers(world, sess, handoff) {
     return answers;
 }
 
+function recordSidecarRequests(world, sess, handoff) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) return [];
+    const match = String(handoff || '').match(/(?:REQUESTS?|NARRATIVE\s+REQUESTS?)\s*[:\n]\s*([\s\S]*?)(?=\n\s*(?:ACCEPTED\s+PLAYER\s+DETAILS|ANSWER)\b|$)/i);
+    const body = String(match?.[1] || '').trim();
+    if (!body || /^(?:none|no change|n\/a)\.?$/i.test(body)) return [];
+    const lines = body.split('\n').map(line => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean).slice(0, 12);
+    const created = [];
+    lines.forEach(text => {
+        const prior = protocol.requests.find(request => request.status === 'open' && request.text === text);
+        if (prior) return;
+        const request = { id: `request_${Date.now().toString(36)}_${protocol.requests.length + 1}`, status: 'open', text: text.slice(0, 1600),
+            origin: 'narrator_handoff', createdTurn: Math.max(1, Number(sess.turnCount) || 1), createdAt: new Date().toISOString(), provenance: { source: 'narrator_handoff' } };
+        protocol.requests.push(request); created.push(request);
+    });
+    protocol.requests = protocol.requests.slice(-200);
+    return created;
+}
+
 function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
@@ -10647,6 +10666,8 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
         coreReview: protocol?.coreAnswers || {},
         pendingQuestions: questions,
+        pendingRequests: (protocol?.requests || []).filter(request => request.status === 'open').slice(-8)
+            .map(request => ({ id: request.id, text: request.text, origin: request.origin })),
         backgroundProposals: (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status))
             .slice(-6).map(proposal => ({ id: proposal.id, turn: proposal.turn, summary: proposal.summary, status: proposal.status })),
         recentAuthorialRefinements: (protocol?.refinements || []).slice(-6).map(refinement => ({
@@ -10745,6 +10766,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const committed = commitWorldTurnReceipt(world, sess, receipt, options.receiptContext || {}, 'sidecar');
     if (protocol) {
         recordSidecarCoreAnswers(world, sess, handoff);
+        recordSidecarRequests(world, sess, handoff);
         recordSidecarTemporalEvidence(world, sess, handoff, preClock);
         const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(protocol, world, receipt, {
             playerLocationId: preFrame.player_location_id
@@ -14256,6 +14278,15 @@ function renderWorldSidecarConfigEditor(world) {
             openWorldStudio(restored.id);
             showToast('Restored the selected pre-Sidecar migration backup.', 'success');
         };
+    }
+    const report = document.getElementById('w-sidecar-migration-report');
+    if (report) {
+        const sessions = state.worldInstances?.[world.id]?.sessions || [];
+        const migrations = sessions.map(session => session.sidecar?.migration).filter(Boolean);
+        const warnings = migrations.flatMap(migration => migration.warnings || []);
+        report.innerHTML = migrations.length
+            ? `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${escapeHTML(warnings.join(' · '))}</span>` : ''}`
+            : (sessions.length ? `<strong>Migration readiness:</strong> ${sessions.length} timeline${sessions.length === 1 ? '' : 's'} will be analysed and backed up on save.` : 'Migration applies only when this world has existing timelines.');
     }
     initializeOpenRouterRoutingPanel('sidecar');
 }
