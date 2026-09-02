@@ -10624,6 +10624,8 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
         coreReview: protocol?.coreAnswers || {},
         pendingQuestions: questions,
+        backgroundProposals: (protocol?.backgroundProposals || []).filter(proposal => proposal.status === 'pending_sidecar_review')
+            .slice(-6).map(proposal => ({ id: proposal.id, turn: proposal.turn, summary: proposal.summary, status: proposal.status })),
         recentAuthorialRefinements: (protocol?.refinements || []).slice(-6).map(refinement => ({
             text: String(refinement.userText || '').slice(0, 1200),
             committed: refinement.committed === true,
@@ -10697,7 +10699,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         model, stream: false,
         max_tokens: Math.max(600, Number(tracker.maxTokens) || 1400),
         temperature: 0,
-        messages: [{ role: 'system', content: sidecarPrompt }, { role: 'user', content: 'Reconcile this authored turn now.' }],
+        messages: [{ role: 'system', content: `${sidecarPrompt}\n\n[CURRENT SIDECAR PACKET — Background World Agent entries are proposals only, never canon]\n${JSON.stringify(buildSidecarScenePacket(world, sess))}` }, { role: 'user', content: 'Reconcile this authored turn now.' }],
         tools: [commitTool], tool_choice: { type: 'function', function: { name: 'commit_world_turn' } }
     };
     if (tracker.reasoning === true) body.reasoning_effort = 'low';
@@ -14088,6 +14090,7 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-agent-enabled').checked = agentConfig.enabled;
     document.getElementById('w-agent-interval').value = agentConfig.intervalTurns;
     document.getElementById('w-agent-model').value = agentConfig.model;
+    document.getElementById('w-agent-proposal-only').checked = agentConfig.proposalOnly === true;
     initializeOpenRouterRoutingPanel('world');
     initializeOpenRouterRoutingPanel('worldAgent');
     const kernelConfig = normalizeWorldKernelConfig(w);
@@ -14202,6 +14205,7 @@ async function saveWorld() {
             enabled: document.getElementById('w-agent-enabled').checked,
             intervalTurns: document.getElementById('w-agent-interval').value,
             model: document.getElementById('w-agent-model').value,
+            proposalOnly: document.getElementById('w-agent-proposal-only').checked,
             openRouterRouting: readOpenRouterRoutingPanel('worldAgent')
         }
     });
@@ -26412,7 +26416,7 @@ ${modularMandate}
         // the blocking chat transaction. Deterministic schedules, events and
         // goals have already advanced locally; this call only seeds future
         // surprises when the configured interval says the queue needs it.
-        if (!sidecarMode && command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
+        if (command !== 'init' && !isReroll && shouldRunWorldAgent(world, sess) && hasApiCredentials()) {
             runWorldAgent(world, sess).then(async () => {
                 await saveState();
                 if (state.activeWorldId === world.id) renderWorldPlayState();
@@ -30572,7 +30576,8 @@ function normalizeWorldAgentConfig(world) {
         enabled: raw.enabled === true,
         intervalTurns: Math.max(8, Math.min(200, parseInt(raw.intervalTurns) || 24)),
         model: String(raw.model || '').trim().slice(0, 160),
-        openRouterRouting: normalizeOpenRouterRouting(raw.openRouterRouting, { allowNull: true })
+        openRouterRouting: normalizeOpenRouterRouting(raw.openRouterRouting, { allowNull: true }),
+        proposalOnly: raw.proposalOnly === true
     };
 }
 
@@ -30725,10 +30730,27 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
     if (dropped) console.warn(`Horde Engine: world agent proposed ${dropped} out-of-scope field(s); ignored.`);
     if (!Object.keys(actions).length) return { applied: false, turn, developments: [] };
 
-    processStructuredActions(actions, world, sess);
-
     const developments = (Array.isArray(parsed.developments) ? parsed.developments : [])
         .map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
+    const sidecarTimeline = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    if (sidecarTimeline || config.proposalOnly) {
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        if (protocol) {
+            protocol.backgroundProposals.push({
+                id: `world_agent_${turn}_${Date.now().toString(36)}`,
+                status: 'pending_sidecar_review', createdAt: new Date().toISOString(), turn,
+                summary: developments, actions: safeJsonClone(actions), dropped,
+                provenance: { source: 'world_agent', model: config.model || structuredModelFor(world) }
+            });
+            protocol.backgroundProposals = protocol.backgroundProposals.slice(-80);
+            protocol.packet = buildSidecarScenePacket(world, sess);
+        }
+        console.log(`Horde Engine: World Agent stored a proposal packet on turn ${turn}.`);
+        return { applied: false, proposed: true, turn, developments, fields: Object.keys(actions) };
+    }
+
+    processStructuredActions(actions, world, sess);
+
     developments.forEach((summary, index) => {
         addWorldNews(sess, summary, {
             id: `news_agent_${turn}_${index}`, type: 'world', playerVisible: false,
