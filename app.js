@@ -14294,6 +14294,7 @@ function renderWorldSidecarConfigEditor(world) {
         ? 'Active: Narrator writes visible prose and hidden handoff notes; Sidecar performs one native canonical commit. Legacy repair and Chronicle classifier paths are bypassed.'
         : 'Inline Legacy is retained for compatibility. It uses the existing receipt/classifier adapters; migrate a selected world deliberately before switching a live timeline to Sidecar.';
     const restore = document.getElementById('w-sidecar-restore-backup');
+    const migrate = document.getElementById('w-sidecar-migrate-btn');
     const backups = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
     if (restore) {
         restore.classList.toggle('hidden', !backups.length);
@@ -14309,6 +14310,23 @@ function renderWorldSidecarConfigEditor(world) {
             await saveState();
             openWorldStudio(restored.id);
             showToast('Restored the selected pre-Sidecar migration backup.', 'success');
+        };
+    }
+    if (migrate) {
+        const sessions = state.worldInstances?.[world.id]?.sessions || [];
+        migrate.classList.toggle('hidden', config.mode === 'sidecar');
+        migrate.onclick = async () => {
+            const details = sessions.map(session => {
+                const warnings = [
+                    (session.pendingChecks || []).length ? 'pending checks' : '', session.unresolvedDestination ? 'unresolved destination' : '',
+                    (session.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length) ? 'rejected legacy proposals' : ''
+                ].filter(Boolean);
+                return `• ${session.name || session.id}: ${session.history?.length || 0} messages, ${session.worldTurnReceipts?.length || 0} receipts${warnings.length ? ` — ${warnings.join(', ')}` : ''}`;
+            }).join('\n') || '• No existing timelines: this world will start directly in Sidecar mode.';
+            if (!confirm(`SIDECAR MIGRATION REVIEW\n\n${details}\n\nThe selected world receives a backup. Raw history and canonical records remain. Only derived embeddings and episodic caches are rebuilt. Continue?`)) return;
+            document.getElementById('w-sidecar-mode').value = 'sidecar';
+            await saveWorld();
+            renderWorldSidecarConfigEditor(state.editingWorld);
         };
     }
     const report = document.getElementById('w-sidecar-migration-report');
