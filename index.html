@@ -15,6 +15,8 @@
 <body>
 <div id="app">
 
+    <button id="global-sidebar-toggle" class="global-sidebar-toggle-btn" type="button" title="Show or hide sidebar" aria-label="Show or hide sidebar">‹</button>
+
     <!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
     <aside class="sidebar">
         <button class="sidebar-logo sidebar-logo-button" id="sidebar-home-btn" type="button" title="Go to Chat Library">Horde<span>Studio</span></button>
@@ -456,6 +458,7 @@
                         </div>
                         <span style="font-size:0.8rem; color:var(--text-3); font-style:italic;" id="world-dm-typing-label">DM is writing...</span>
                     </div>
+                    <button id="world-scroll-bottom-btn" class="world-scroll-bottom-btn hidden" type="button" title="Scroll to latest" aria-label="Scroll to latest message">↓</button>
                     <div class="input-wrap">
                         <div class="input-row">
                             <textarea id="world-user-input" class="msg-input" placeholder="What do you do?..." rows="1"></textarea>
@@ -467,7 +470,12 @@
                 </div>
 
                 <!-- Status & Info Column -->
+                <div class="world-status-resize-handle" id="world-status-resize-handle" title="Drag to resize the state window"></div>
                 <aside class="world-status-col">
+                    <div class="world-status-toolbar">
+                        <button id="world-status-columns-toggle" class="tool-btn" type="button" title="Toggle one or two state columns" aria-pressed="false">▦ 1 column</button>
+                    </div>
+                    <div class="hud-columns" id="world-status-columns">
                     <!-- Player HUD (Phase 2 RPG Mechanics) -->
                     <!-- World Time & Atmosphere -->
                     <section class="world-status-section" id="hud-section-clock" style="margin-top:0;">
@@ -562,6 +570,7 @@
                             <!-- Simulation state appears here -->
                         </div>
                     </section>
+                    </div>
                 </aside>
             </div>
         </section>
@@ -5076,7 +5085,7 @@
 <script src="sidecar/runtime/promotion-model.js?v=20260902-sidecar-promotion-v1"></script>
 <script src="sidecar/runtime/traversal-vehicle-model.js?v=20260902-sidecar-traversal-v1"></script>
 <script src="sidecar/runtime/memory-graph.js?v=20260902-sidecar-memory-v1"></script>
-<script src="sidecar/integrations/horde-16.7-hooks.js?v=20260902-sidecar-foundation-v1"></script>
+    <script src="sidecar/integrations/horde-16.7-hooks.js?v=20260902-sidecar-foundation-v1"></script>
     <script src="app.js?v=20260901-v167-shared-library-sync-v1"></script>
 </body>
 </html>

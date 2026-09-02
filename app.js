@@ -6021,7 +6021,24 @@ function labsSocialContext(result) {
 }
 
 // --- Initialization ---
+function applyPersistedSidebarState() {
+    try {
+        document.getElementById('app')?.classList.toggle('sidebar-collapsed', localStorage.getItem('hordeSidebarCollapsed') === 'true');
+    } catch (_) { /* localStorage may be unavailable */ }
+}
+
+function initGlobalSidebarToggle() {
+    const button = document.getElementById('global-sidebar-toggle');
+    if (!button) return;
+    button.onclick = () => {
+        const collapsed = document.getElementById('app')?.classList.toggle('sidebar-collapsed');
+        try { localStorage.setItem('hordeSidebarCollapsed', String(Boolean(collapsed))); } catch (_) { /* localStorage may be unavailable */ }
+    };
+}
+
 async function init() {
+    applyPersistedSidebarState();
+    initGlobalSidebarToggle();
     // Ask the browser to protect our IndexedDB from storage-pressure eviction
     if (navigator.storage && navigator.storage.persist) {
         navigator.storage.persist().catch(() => {});
@@ -20838,7 +20855,181 @@ async function hardResetActiveWorldTimeline() {
     return true;
 }
 
+function initWorldStatusResizeHandle() {
+    const handle = document.getElementById('world-status-resize-handle');
+    const column = document.querySelector('#world-play-view .world-status-col');
+    if (!handle || !column || handle.dataset.initialized) return;
+    handle.dataset.initialized = 'true';
+    const applyWidth = value => {
+        const width = Math.max(240, Math.min(720, Number(value) || 320));
+        document.documentElement.style.setProperty('--world-status-w', `${width}px`);
+        return width;
+    };
+    try {
+        const saved = Number(localStorage.getItem('hordeWorldStatusWidth'));
+        if (Number.isFinite(saved)) applyWidth(saved);
+    } catch (_) { /* localStorage may be unavailable */ }
+    let dragging = false;
+    handle.addEventListener('pointerdown', event => {
+        dragging = true;
+        handle.classList.add('is-dragging');
+        handle.setPointerCapture?.(event.pointerId);
+    });
+    handle.addEventListener('pointermove', event => {
+        if (dragging) applyWidth(column.getBoundingClientRect().right - event.clientX);
+    });
+    const stop = event => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('is-dragging');
+        try { handle.releasePointerCapture?.(event.pointerId); } catch (_) { /* already released */ }
+        try { localStorage.setItem('hordeWorldStatusWidth', String(parseInt(getComputedStyle(document.documentElement).getPropertyValue('--world-status-w'), 10))); } catch (_) { /* localStorage may be unavailable */ }
+    };
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+}
+
+function prepareWorldStatusSections(container) {
+    const titles = {
+        'hud-section-clock': 'Time & Weather',
+        'hud-section-ledger': 'World Ledger',
+        'hud-section-quests': 'Active Quests',
+        'hud-section-secrets': 'Secrets Uncovered',
+        'hud-section-threads': 'Story Threads',
+        'hud-section-living-world': 'Living World'
+    };
+    const sections = [...container.children].filter(node => node.classList?.contains('world-status-section'));
+    sections.forEach((section, index) => {
+        if (!section.dataset.hudId) section.dataset.hudId = section.id?.replace(/^hud-section-/, '') || `panel-${index + 1}`;
+        if (section.querySelector(':scope > .hud-head')) return;
+        const children = [...section.children];
+        const existingHeading = children.find(child => child.matches('h3'));
+        const existingHeader = children.find(child => child !== existingHeading && child.querySelector?.('h3'));
+        const head = existingHeader || document.createElement('div');
+        head.classList.add('hud-head');
+        if (!existingHeader) {
+            const heading = existingHeading || document.createElement('h3');
+            if (!existingHeading) heading.textContent = titles[section.id] || section.dataset.hudId.replace(/[-_]/g, ' ');
+            head.appendChild(heading);
+            section.insertBefore(head, section.firstChild);
+        }
+        let actions = head.querySelector(':scope > .hud-head-actions');
+        if (!actions) {
+            actions = document.createElement('div');
+            actions.className = 'hud-head-actions';
+            head.appendChild(actions);
+        }
+        actions.insertAdjacentHTML('beforeend', `
+            <button class="hud-compact-btn" type="button" title="Compact this section" aria-pressed="false">↕</button>
+            <button class="hud-collapse-btn" type="button" title="Collapse this section" aria-expanded="true">︿</button>
+            <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>`);
+        const body = document.createElement('div');
+        body.className = 'hud-body';
+        [...section.children].filter(child => child !== head).forEach(child => body.appendChild(child));
+        section.appendChild(body);
+    });
+}
+
+function initWorldStatusPanel() {
+    const container = document.getElementById('world-status-columns');
+    const columnsButton = document.getElementById('world-status-columns-toggle');
+    if (!container || container.dataset.initialized) return;
+    container.dataset.initialized = 'true';
+    prepareWorldStatusSections(container);
+    const allSections = () => [...container.querySelectorAll('.world-status-section[data-hud-id]')];
+    const ids = allSections().map(section => section.dataset.hudId);
+    const read = key => { try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; } catch (_) { return []; } };
+    const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* localStorage may be unavailable */ } };
+    const storedOrder = read('hordeWorldStatusOrder').filter(id => ids.includes(id));
+    const panelState = {
+        order: storedOrder.length ? [...storedOrder, ...ids.filter(id => !storedOrder.includes(id))] : ids,
+        collapsed: new Set(read('hordeWorldStatusCollapsed')),
+        compact: new Set(read('hordeWorldStatusCompact')),
+        twoColumns: (() => { try { return localStorage.getItem('hordeWorldStatusTwoCol') === 'true'; } catch (_) { return false; } })()
+    };
+    const layout = () => {
+        const byId = new Map(allSections().map(section => [section.dataset.hudId, section]));
+        const ordered = panelState.order.map(id => byId.get(id)).filter(Boolean);
+        container.replaceChildren();
+        container.classList.toggle('is-two-col', panelState.twoColumns);
+        const groups = panelState.twoColumns ? [ordered.slice(0, Math.ceil(ordered.length / 2)), ordered.slice(Math.ceil(ordered.length / 2))] : [ordered];
+        groups.forEach(group => {
+            const column = document.createElement('div');
+            column.className = 'hud-col';
+            group.forEach(section => column.appendChild(section));
+            container.appendChild(column);
+        });
+    };
+    const updateColumnsButton = () => {
+        if (!columnsButton) return;
+        columnsButton.setAttribute('aria-pressed', String(panelState.twoColumns));
+        columnsButton.textContent = panelState.twoColumns ? '▦ 2 columns' : '▦ 1 column';
+    };
+    if (columnsButton) columnsButton.onclick = () => {
+        panelState.twoColumns = !panelState.twoColumns;
+        try { localStorage.setItem('hordeWorldStatusTwoCol', String(panelState.twoColumns)); } catch (_) { /* localStorage may be unavailable */ }
+        updateColumnsButton(); layout();
+    };
+    const indicator = document.createElement('div');
+    indicator.className = 'hud-drop-indicator';
+    let draggingId = '';
+    const clearDrag = () => { draggingId = ''; indicator.remove(); allSections().forEach(section => section.classList.remove('is-dragging')); };
+    container.addEventListener('dragover', event => {
+        if (!draggingId) return;
+        event.preventDefault();
+        const columns = [...container.querySelectorAll('.hud-col')];
+        const column = columns.reduce((best, candidate) => {
+            const rect = candidate.getBoundingClientRect();
+            const distance = event.clientX < rect.left ? rect.left - event.clientX : event.clientX > rect.right ? event.clientX - rect.right : 0;
+            return !best || distance < best.distance ? { candidate, distance } : best;
+        }, null)?.candidate;
+        if (!column) return;
+        const target = [...column.children].find(node => node !== indicator && node.classList.contains('world-status-section') && event.clientY < node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2);
+        column.insertBefore(indicator, target || null);
+    });
+    container.addEventListener('drop', event => {
+        event.preventDefault();
+        if (!draggingId || !indicator.isConnected) return clearDrag();
+        const next = indicator.nextElementSibling?.dataset?.hudId || '';
+        panelState.order = panelState.order.filter(id => id !== draggingId);
+        const at = next ? panelState.order.indexOf(next) : -1;
+        panelState.order.splice(at < 0 ? panelState.order.length : at, 0, draggingId);
+        write('hordeWorldStatusOrder', panelState.order);
+        clearDrag(); layout();
+    });
+    allSections().forEach(section => {
+        const id = section.dataset.hudId;
+        const collapse = section.querySelector('.hud-collapse-btn');
+        const compact = section.querySelector('.hud-compact-btn');
+        const handle = section.querySelector('.hud-drag-handle');
+        section.classList.toggle('is-collapsed', panelState.collapsed.has(id));
+        section.classList.toggle('is-compact', panelState.compact.has(id));
+        collapse?.setAttribute('aria-expanded', String(!panelState.collapsed.has(id)));
+        compact?.setAttribute('aria-pressed', String(panelState.compact.has(id)));
+        collapse?.addEventListener('click', () => { const next = section.classList.toggle('is-collapsed'); collapse.setAttribute('aria-expanded', String(!next)); next ? panelState.collapsed.add(id) : panelState.collapsed.delete(id); write('hordeWorldStatusCollapsed', [...panelState.collapsed]); });
+        compact?.addEventListener('click', () => { const next = section.classList.toggle('is-compact'); compact.setAttribute('aria-pressed', String(next)); next ? panelState.compact.add(id) : panelState.compact.delete(id); write('hordeWorldStatusCompact', [...panelState.compact]); });
+        handle?.addEventListener('dragstart', event => { draggingId = id; section.classList.add('is-dragging'); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', id); });
+        handle?.addEventListener('dragend', clearDrag);
+    });
+    updateColumnsButton();
+    layout();
+}
+
+function initWorldScrollToBottom() {
+    const button = document.getElementById('world-scroll-bottom-btn');
+    const container = document.getElementById('world-messages-container');
+    if (!button || !container || button.dataset.initialized) return;
+    button.dataset.initialized = 'true';
+    const update = () => button.classList.toggle('hidden', container.scrollHeight - container.scrollTop - container.clientHeight < 120);
+    container.addEventListener('scroll', update, { passive: true });
+    button.onclick = () => container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    update();
+}
+
 function setupWorldPlayLogic() {
+    initWorldStatusResizeHandle();
+    initWorldStatusPanel();
+    initWorldScrollToBottom();
     document.getElementById('world-exit-btn').onclick = () => switchView('worlds');
     document.getElementById('world-map-btn').onclick = renderWorldMap;
     document.getElementById('world-more-btn').onclick = () => {
