@@ -4024,6 +4024,12 @@
                     </details>
                     <details class="persona-editor-section">
                         <summary>Additional roleplay notes</summary>
+                        <div style="display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap;">
+                            <button id="persona-generate-btn" class="btn btn-ghost" type="button">✨ Generate from current world</button>
+                            <input id="persona-generation-model" class="form-input" style="flex:1; min-width:180px;" placeholder="Use global narrator model">
+                            <input id="persona-generation-max-tokens" class="form-input" style="width:120px;" type="number" min="500" max="5000" step="100" value="5000" title="Maximum persona draft tokens">
+                        </div>
+                        <div id="persona-generation-status" class="form-hint" style="margin-top:6px;" aria-live="polite"></div>
                         <textarea id="persona-desc" class="form-textarea" style="min-height:140px; resize:vertical; margin-top:12px;" placeholder="Voice, history, preferences or other details that should inform play..."></textarea>
                     </details>
 

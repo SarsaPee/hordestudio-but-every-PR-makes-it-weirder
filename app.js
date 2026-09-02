@@ -13366,6 +13366,66 @@ function setupPersonasLogic() {
         };
     });
 
+    const generatePersonaBtn = document.getElementById('persona-generate-btn');
+    if (generatePersonaBtn) generatePersonaBtn.onclick = async () => {
+        const personaId = document.getElementById('persona-edit-pane').dataset.id;
+        const persona = state.personas.find(item => item.id === personaId);
+        if (!persona) return;
+        if (!hasApiCredentials()) return showToast(`API Key is missing. Add your ${cloudProviderName()} key in Settings.`, 'error');
+        const world = state.worlds.find(item => item.id === state.activeWorldId) || state.editingWorld;
+        const session = world ? getCurrentWorldSession() : null;
+        const model = document.getElementById('persona-generation-model').value.trim() || state.globalSettings.defaultModel;
+        const maxTokens = Math.max(500, Math.min(5000, parseInt(document.getElementById('persona-generation-max-tokens').value, 10) || 5000));
+        const status = document.getElementById('persona-generation-status');
+        const desc = document.getElementById('persona-desc');
+        generatePersonaBtn.disabled = true;
+        generatePersonaBtn.textContent = '⏳ Drafting persona…';
+        if (status) status.textContent = `Narrator model: ${model} · streaming one complete draft (up to ${maxTokens} tokens)…`;
+        const context = {
+            persona: normalizePersona(persona),
+            world: world ? { name: world.name, description: world.description, authorNote: world.authorNote } : null,
+            controlledCharacter: session?.controlledEntityId ? (world?.entities || []).find(entity => entity.id === session.controlledEntityId) : null,
+            recentTurns: (session?.history || []).slice(-24).map(message => ({ role: message.role, content: String(message.content || message.text || '').slice(0, 1200) }))
+        };
+        const prompt = `[PERSONA DRAFTING]\nWrite a single rich, usable player persona description from the supplied world and conversation evidence. This is a portrayal brief for the narrator, not a JSON object and not a transcript. Use concrete voice, values, habits, boundaries, appearance, history, motivations, relationships, and speech patterns where supported. Clearly mark uncertainty instead of inventing biography. Keep the persona internally coherent and written as direct authorial notes. Return only the final persona text; do not include headings such as "draft", analysis, or a closing note. One complete draft is required.\n\nSOURCE CONTEXT:\n${JSON.stringify(context)}`;
+        try {
+            const response = await fetch(apiBase() + '/chat/completions', {
+                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
+                body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: maxTokens, temperature: 0.35, stream: true,
+                    messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Produce the complete persona draft now.' }] }, { ...(world || {}), model }, { scope: 'persona' }))
+            });
+            if (!response.ok) throw new Error((await response.text()).slice(0, 600) || `Persona generation failed (${response.status})`);
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error('Persona provider did not return a stream.');
+            const decoder = new TextDecoder(); let buffer = ''; let output = ''; let reasoning = '';
+            const consume = raw => {
+                buffer += raw;
+                const rows = buffer.split('\n'); buffer = rows.pop() || '';
+                rows.forEach(row => {
+                    if (!row.startsWith('data:')) return;
+                    const payload = row.slice(5).trim(); if (!payload || payload === '[DONE]') return;
+                    try {
+                        const delta = JSON.parse(payload).choices?.[0]?.delta || {};
+                        const thought = delta.reasoning || delta.thought || '';
+                        if (thought) { reasoning += thought; if (status) status.innerHTML = `<em>Thinking:</em> ${escapeHTML(reasoning.slice(-600))}`; }
+                        const token = delta.content || '';
+                        if (token) { output += token; desc.value = output; if (status) status.textContent = `Streaming persona draft… ${output.length.toLocaleString()} characters`; }
+                    } catch (_) { /* provider may split JSON across chunks */ }
+                });
+            };
+            while (true) { const { done, value } = await reader.read(); if (done) break; consume(decoder.decode(value, { stream: true })); }
+            if (!output.trim()) throw new Error('Persona generation returned no usable draft.');
+            persona.text = output.trim().slice(0, 12000);
+            persona.personaGeneration = { provider: cloudProviderName(), model, maxTokens, generatedAt: new Date().toISOString(), source: 'world_and_recent_history', draftRequired: true };
+            await saveState();
+            if (status) status.textContent = `Draft complete · ${output.trim().split(/\s+/).length.toLocaleString()} words · saved with generation provenance.`;
+            showToast('Persona draft generated and saved.', 'success');
+        } catch (error) {
+            if (status) status.textContent = `Generation failed: ${error.message}`;
+            showToast(`Persona generation failed: ${error.message}`, 'error');
+        } finally { generatePersonaBtn.disabled = false; generatePersonaBtn.textContent = '✨ Generate from current world'; }
+    };
+
     document.getElementById('save-persona-btn').onclick = async () => {
         await saveState();
         renderPersonasList();
@@ -13469,6 +13529,10 @@ function selectPersona(id) {
     const colorInput = document.getElementById('persona-color');
     if (document.activeElement !== nameInput) nameInput.value = p.name;
     if (document.activeElement !== descInput) descInput.value = p.text;
+    const generationModel = document.getElementById('persona-generation-model');
+    const generationMaxTokens = document.getElementById('persona-generation-max-tokens');
+    if (generationModel && document.activeElement !== generationModel) generationModel.value = p.personaGeneration?.model || '';
+    if (generationMaxTokens && document.activeElement !== generationMaxTokens) generationMaxTokens.value = Math.max(500, Math.min(5000, Number(p.personaGeneration?.maxTokens) || 5000));
     if (colorInput) colorInput.value = /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color : '#4A90E2';
     const structuredInputs = {
         age: document.getElementById('persona-age'),
