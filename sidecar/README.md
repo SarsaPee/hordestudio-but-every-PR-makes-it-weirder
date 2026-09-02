@@ -50,14 +50,20 @@ it never contains copied Horde Studio application files.
   They can be removed contextually without touching raw roleplay history.
 - In Sidecar worlds the World Agent is disabled by default and proposal-only
   when enabled. Its packet is visible to Sidecar but cannot commit world state.
+- World Studio now exposes the selected-world migration review/backup/restore
+  path, dedicated traversal-method and vehicle authoring/inspection screens,
+  and runtime journey diagnostics.
+- The Story Memory Inspector supports canonical-character scoping, prerequisite
+  checks, stale/missing counts, progress callbacks, contextual deletion, and
+  semantic retrieval over committed World History, Episodes, cognition,
+  locations, and unresolved references. Global settings control consolidation
+  budgets, cadence, concurrency, and embedding-cache retention.
+- World Agent proposal packets have a visible Sidecar review path, and the
+  timeline browser exposes active branches, fork parents, committed turn
+  counts, and branch-local provenance.
+- Persona setup supports a streamed, one-draft generation path from current
+  world/history evidence with model, budget, and provenance controls.
 
-## Deliberately deferred integration work
-
-The bundle still does not replace Horde Studio's persistence or UI layers.
-The following are explicit follow-on work, not silent assumptions in the
-runtime modules: a full selected-world migration/rollback wizard, dedicated
-authoring screens for vehicle ownership and traversal methods, vector
-embeddings/retrieval over the new cognition and unresolved-place graph, a
-proposal-review panel for the World Agent, and fully user-facing timeline fork
-management. The integration manifest identifies the host seams for those
-features.
+The bundle remains host-oriented: Horde Studio persistence and presentation
+layers stay in the application, while this directory provides the reusable
+contracts, runtime modules, and integration manifest for an upstream PR.

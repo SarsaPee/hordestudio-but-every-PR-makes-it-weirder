@@ -21,7 +21,7 @@
     "runtime/memory-graph.js",
     "integrations/horde-16.7-hooks.js"
   ],
-  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn", "progressive_promotion", "semantic_traversal", "hierarchical_memory"],
+  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage", "sequence_scene_turn", "progressive_promotion", "semantic_traversal", "vehicle_authoring", "timeline_fork_browser", "hierarchical_memory", "vector_retrieval", "persona_drafting", "world_agent_review"],
   "hooks": [
     "world configuration normalization",
     "timeline protocol normalization",
@@ -33,6 +33,11 @@
     "direct Sidecar conversation",
     "Backstage and debug UI",
     "World Studio tracker/provider/routing configuration",
+    "World Studio migration review and rollback backup",
+    "World Studio traversal/vehicle authoring and journey inspection",
+    "timeline branch browser and fork provenance",
+    "global consolidation and embedding-cache controls",
+    "persona generation stream and provenance",
     "semantic temporal evidence",
     "sequence/scene/turn hierarchy and author-approved transition planning"
   ],
