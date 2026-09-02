@@ -72,11 +72,14 @@
         const jobs = ensureJobs(protocol);
         const job = jobs.find(entry => entry.id === jobId);
         if (!memory || !job) return null;
+        const sourceRecords = memory.worldHistory.filter(record => (job.sourceTurnIds || []).includes(record.turnId));
+        const sceneIds = [...new Set(sourceRecords.map(record => record.sceneId).filter(Boolean))];
+        const sequenceIds = [...new Set(sourceRecords.map(record => record.sequenceId).filter(Boolean))];
         const episode = {
             id: id('episode'), kind: 'episode', status: 'active', createdAt: now(), jobId,
             sourceTurnIds: Array.isArray(job.sourceTurnIds) ? job.sourceTurnIds : [],
-            sequenceIds: Array.isArray(output.sequenceIds) ? output.sequenceIds : [],
-            sceneIds: Array.isArray(output.sceneIds) ? output.sceneIds : [],
+            sequenceIds: sequenceIds.length ? sequenceIds : (Array.isArray(output.sequenceIds) ? output.sequenceIds : []),
+            sceneIds: sceneIds.length ? sceneIds : (Array.isArray(output.sceneIds) ? output.sceneIds : []),
             summary: clean(output.summary, 8000), objectiveHistory: clean(output.objectiveHistory, 8000),
             perceptionCoverage: Array.isArray(output.perceptionCoverage) ? output.perceptionCoverage : [],
             locationReferences: Array.isArray(output.locationReferences) ? output.locationReferences : [],
@@ -90,6 +93,20 @@
         memory.locationReferences = memory.locationReferences.slice(-1000);
         memory.lastEpisodeTurnCount += job.sourceTurnIds.length;
         job.status = 'completed'; job.completedAt = now(); job.outputId = episode.id;
+        // Keep the next two hierarchy levels as source-pinned containers. They
+        // deliberately retain child episode IDs and source evidence; later
+        // compaction may replace their summary, never erase its retrieval path.
+        const upsertContainer = (kind, key, collection) => {
+            const existing = collection.find(record => record[`${kind}Id`] === key && record.status === 'active');
+            const target = existing || { id: id(kind), [`${kind}Id`]: key, kind, status: 'active', createdAt: now(), episodeIds: [], sourceTurnIds: [], summary: '', provenance: { source: 'episode_hierarchy' } };
+            if (!existing) collection.push(target);
+            target.episodeIds = [...new Set([...(target.episodeIds || []), episode.id])];
+            target.sourceTurnIds = [...new Set([...(target.sourceTurnIds || []), ...episode.sourceTurnIds])];
+            target.summary = clean([target.summary, episode.summary].filter(Boolean).join('\n\n'), 12000);
+            target.updatedAt = now();
+        };
+        episode.sceneIds.forEach(sceneId => upsertContainer('scene', sceneId, memory.scenes));
+        episode.sequenceIds.forEach(sequenceId => upsertContainer('sequence', sequenceId, memory.sequences));
         episode.perceptionCoverage.forEach(coverage => {
             const characterId = clean(coverage?.characterId, 160);
             const access = clean(coverage?.access, 80).toLowerCase();

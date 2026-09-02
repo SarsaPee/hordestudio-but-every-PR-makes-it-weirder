@@ -10657,6 +10657,8 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         memory: memoryGraph ? {
             worldHistoryCount: (memoryGraph.worldHistory || []).filter(record => record.status === 'active').length,
             episodeCount: (memoryGraph.episodes || []).filter(record => record.status === 'active').length,
+            sceneMemoryCount: (memoryGraph.scenes || []).filter(record => record.status === 'active').length,
+            sequenceMemoryCount: (memoryGraph.sequences || []).filter(record => record.status === 'active').length,
             cognitionCount: (memoryGraph.cognition || []).filter(record => record.status !== 'superseded').length,
             queuedJobs: (protocol?.jobs || []).filter(job => ['queued', 'running'].includes(job.status)).map(job => ({ id: job.id, type: job.type, status: job.status }))
         } : null,
