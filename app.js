@@ -35284,7 +35284,10 @@ function setupVectorMemoryViewerEvents() {
             const sess = getCurrentWorldSession();
             if (!sess) return showToast('No active world session.', 'error');
             if (currentVectorTab === 'episodic') {
-                sess.episodicMemories = [];
+                if (window.HordeSidecarHooks?.isSidecarWorld?.(state.worlds.find(world => world.id === state.activeWorldId), sess)) {
+                    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol);
+                    if (graph) { graph.worldHistory = []; graph.episodes = []; graph.scenes = []; graph.sequences = []; graph.lastEpisodeTurnCount = 0; graph.locationReferences = []; graph.cognition = []; sess.sidecarProtocol.jobs = []; }
+                } else sess.episodicMemories = [];
             } else {
                 const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol);
                 if (!graph) return showToast('Sidecar memory is unavailable for this timeline.', 'error');
@@ -35306,14 +35309,16 @@ function setupVectorMemoryViewerEvents() {
             const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
             const sess = getCurrentWorldSession();
             const graph = isWorld && window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
-            if (!graph || !['cognition', 'locations', 'unresolved'].includes(currentVectorTab)) {
-                return showToast('Choose NPC Cognition, Locations, or Unresolved Places in a Sidecar world.', 'info');
+            if (!graph || !['episodic', 'cognition', 'locations', 'unresolved'].includes(currentVectorTab)) {
+                return showToast('Choose a Sidecar memory tab first.', 'info');
             }
-            if (!graph.worldHistory.some(record => Array.isArray(record.embedding)) || !graph.episodes.some(record => Array.isArray(record.embedding))) {
+            if (currentVectorTab !== 'episodic' && (!graph.worldHistory.some(record => Array.isArray(record.embedding)) || !graph.episodes.some(record => Array.isArray(record.embedding)))) {
                 return showToast('Vectorization cannot continue yet. Vectorize committed World History and at least one Episode first.', 'error');
             }
             const characterId = characterFilter?.value || '';
-            const records = currentVectorTab === 'cognition'
+            const records = currentVectorTab === 'episodic'
+                ? [...graph.worldHistory, ...graph.episodes]
+                : currentVectorTab === 'cognition'
                 ? graph.cognition.filter(record => !characterId || record.characterId === characterId)
                 : currentVectorTab === 'locations'
                     ? (state.worlds.find(world => world.id === state.activeWorldId)?.locations || [])
@@ -35451,7 +35456,16 @@ async function renderVectorMemoryList(filterQuery = "") {
         // Retrieve rolling episodic summaries
         if (isWorld) {
             const sess = getCurrentWorldSession();
-            if (sess && sess.episodicMemories) {
+            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            const graph = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)
+                ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol) : null;
+            if (graph) {
+                currentEpisodicStore = [...graph.worldHistory, ...graph.episodes];
+                candidates = currentEpisodicStore.filter(record => record.status === 'active').map(record => ({
+                    text: record.kind === 'episode' ? `[EPISODE] ${record.text || record.summary || ''}` : `[WORLD HISTORY] ${record.text || record.narration || ''}`,
+                    embedding: record.embedding, embeddingNamespace: record.embeddingNamespace, source: record.kind || 'world_history', ref: record
+                }));
+            } else if (sess && sess.episodicMemories) {
                 currentEpisodicStore = sess.episodicMemories;
                 candidates = sess.episodicMemories.map(m => ({ text: m.text, embedding: m.embedding, source: 'episodic', ref: m }));
             }
@@ -35691,8 +35705,10 @@ async function renderVectorMemoryList(filterQuery = "") {
         // Legacy episodic records retain full edit controls. Sidecar cognition and
         // unresolved-place records are independently removable, but not silently
         // rewritten: regeneration preserves their source provenance.
-        const editable = currentVectorTab === 'episodic' && item.ref && currentEpisodicStore;
-        const removableSidecarRecord = isWorld && ['cognition', 'unresolved'].includes(currentVectorTab) && item.ref;
+        const editable = currentVectorTab === 'episodic' && item.ref && currentEpisodicStore
+            && !(isWorld && window.HordeSidecarHooks?.isSidecarWorld?.(state.worlds.find(world => world.id === state.activeWorldId), getCurrentWorldSession()));
+        const removableSidecarRecord = isWorld && ['episodic', 'cognition', 'unresolved'].includes(currentVectorTab)
+            && item.ref && window.HordeSidecarHooks?.isSidecarWorld?.(state.worlds.find(world => world.id === state.activeWorldId), getCurrentWorldSession());
         const escaped = (item.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
         const actionBtns = editable ? `
@@ -35781,8 +35797,12 @@ async function renderVectorMemoryList(filterQuery = "") {
                 if (!graph) return;
                 if (currentVectorTab === 'cognition') {
                     graph.cognition = graph.cognition.filter(record => record !== item.ref);
-                } else {
+                } else if (currentVectorTab === 'unresolved') {
                     graph.locationReferences = graph.locationReferences.filter(record => record !== item.ref);
+                } else if (item.ref.kind === 'episode') {
+                    graph.episodes = graph.episodes.filter(record => record !== item.ref);
+                } else {
+                    graph.worldHistory = graph.worldHistory.filter(record => record !== item.ref);
                 }
                 await saveState();
                 renderVectorMemoryList(filterQuery);
