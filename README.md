@@ -1,4 +1,4 @@
-![Horde Studio 16.6 — Any World. Any Party. Your Rules.](assets/marketing/v16.6.0/horde-studio-v16.6.0-launch-poster.png)
+![Horde Studio 17 — Your Story. Your Choices. Now in Motion.](assets/marketing/v17.0.0/horde-studio-v17.0.0-launch-poster.png)
 
 <div align="center">
 
