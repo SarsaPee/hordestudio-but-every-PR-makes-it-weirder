@@ -18374,6 +18374,17 @@ function renderWorldEntities(mode = 'people') {
                 <select class="form-select ent-loc"><option value="">Unplaced item</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
                 <p class="form-hint">This is where the object exists at the start of a new session. It is not a person, household member or autonomous actor.</p>
             </div>`}
+            ${ent.type === 'npc' ? `<div class="world-inspector-section" data-inspector-section="overview" style="margin-top:12px;">
+                <label class="form-label">Vehicles this character can use</label>
+                <div class="canon-link-row">${world.entities.filter(vehicle => vehicle.type === 'vehicle').length ? world.entities.filter(vehicle => vehicle.type === 'vehicle').map(vehicle => {
+                    const access = Array.isArray(vehicle.vehicle?.access) ? vehicle.vehicle.access : [];
+                    const owners = Array.isArray(vehicle.vehicle?.owners) ? vehicle.vehicle.owners : [];
+                    const hasAccess = access.some(entry => (entry.entityId || entry) === ent.id);
+                    const owns = owners.some(entry => (entry.entityId || entry) === ent.id);
+                    return `<label class="canon-link"><input type="checkbox" class="ent-vehicle-owned" data-vehicle-id="${escapeHTML(vehicle.id)}" ${owns ? 'checked' : ''}> Owns ${escapeHTML(vehicle.name || vehicle.id)}</label><label class="canon-link"><input type="checkbox" class="ent-vehicle-access-grant" data-vehicle-id="${escapeHTML(vehicle.id)}" ${hasAccess ? 'checked' : ''}> Access</label>`;
+                }).join('') : '<span class="form-hint">Create a Vehicle in Items & Objects first.</span>'}</div>
+                <p class="form-hint">Ownership persists across parked and moving states. Access grants use the same vehicle entity; rideshares remain temporary runtime containers.</p>
+            </div>` : ''}
             ${ent.type === 'vehicle' ? `<div class="world-inspector-section" data-inspector-section="placement" style="margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;">
                 <div><label class="form-label">Parked anchor · Canon Link</label><select class="form-select ent-vehicle-anchor"><option value="">No parked anchor</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${ent.vehicle?.parkedAnchorId === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select></div>
                 <div><label class="form-label">Owners & access</label><input class="form-input ent-vehicle-access" value="${escapeHTML((ent.vehicle?.access || []).map(entry => entry.entityId || entry).join(', '))}" placeholder="entity IDs with access"></div>
@@ -18519,6 +18530,27 @@ function renderWorldEntities(mode = 'people') {
             };
             div.querySelector('.ent-generate-beats').onclick = (event) =>
                 generateAgendaBeats(ent, event.currentTarget);
+            div.querySelectorAll('.ent-vehicle-owned').forEach(input => input.onchange = event => {
+                const vehicle = world.entities.find(candidate => candidate.id === event.target.dataset.vehicleId && candidate.type === 'vehicle');
+                if (!vehicle) return;
+                window.HordeSidecarTraversal?.normalizeVehicle(vehicle);
+                const owners = Array.isArray(vehicle.vehicle.owners) ? vehicle.vehicle.owners : [];
+                vehicle.vehicle.owners = event.target.checked
+                    ? [...owners.filter(entry => (entry.entityId || entry) !== ent.id), { entityId: ent.id, role: 'owner' }]
+                    : owners.filter(entry => (entry.entityId || entry) !== ent.id);
+                if (event.target.checked && !vehicle.vehicle.access.some(entry => (entry.entityId || entry) === ent.id)) vehicle.vehicle.access.push({ entityId: ent.id, role: 'owner' });
+                updateWorldTokenCount();
+            });
+            div.querySelectorAll('.ent-vehicle-access-grant').forEach(input => input.onchange = event => {
+                const vehicle = world.entities.find(candidate => candidate.id === event.target.dataset.vehicleId && candidate.type === 'vehicle');
+                if (!vehicle) return;
+                window.HordeSidecarTraversal?.normalizeVehicle(vehicle);
+                const access = Array.isArray(vehicle.vehicle.access) ? vehicle.vehicle.access : [];
+                vehicle.vehicle.access = event.target.checked
+                    ? [...access.filter(entry => (entry.entityId || entry) !== ent.id), { entityId: ent.id, role: 'granted' }]
+                    : access.filter(entry => (entry.entityId || entry) !== ent.id);
+                updateWorldTokenCount();
+            });
         }
         
         const vendorControl = div.querySelector('.ent-vendor');
