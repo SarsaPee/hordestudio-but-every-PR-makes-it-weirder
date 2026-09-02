@@ -186,6 +186,622 @@ body {
 .vh-health-finding.warning { color: #ffc46b; border-left: 3px solid #ffc46b; }
 .vh-health-finding.good { color: #5cddb4; border-left: 3px solid #5cddb4; }
 .vh-health-finding.info { color: #92bfff; border-left: 3px solid #6aa8ff; }
++/* Restored legacy World Architect controls. The 16.7 semantic map retains its
+   current data model; these selectors restore the authoring canvas, inspector,
+   storage tray and edit affordances that existing markup already understands. */
++.world-map-modal {
+  width: min(1440px, calc(100vw - 32px));
+  height: min(90vh, 940px);
+  max-width: none;
+}
+
+.world-map-container,
+.world-visual-canvas {
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.world-map-container {
+  flex: 1;
+  border-width: 0;
+}
+
+.world-visual-canvas {
+  height: clamp(520px, 68vh, 760px);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.world-visual-canvas.is-map-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  height: 100vh;
+  width: 100vw;
+  border-radius: 0;
+  border: none;
+}
+
+.semantic-map-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.semantic-map-view-controls .tool-btn {
+  min-height: 28px;
+  min-width: 28px;
+  padding: 4px 10px;
+  border-color: transparent;
+  font-size: 0.72rem;
+}
+
+.semantic-map-fullscreen-btn {
+  white-space: nowrap;
+}
+
+.semantic-map-settings-wrap {
+  position: relative;
+}
+
+.semantic-map-settings-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 220px;
+  padding: 12px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.semantic-map-settings-popover.hidden {
+  display: none;
+}
+
+.semantic-map-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.semantic-map-settings-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--text-2);
+}
+
+.semantic-map-settings-row-top span:last-child {
+  color: var(--text);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.semantic-map-settings-row input[type="range"] {
+  width: 100%;
+}
+
+.semantic-world-svg {
+  cursor: grab;
+}
+
+.semantic-world-svg.is-panning {
+  cursor: grabbing;
+}
+
+.semantic-map-host {
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+}
+
+.semantic-world-svg,
+.semantic-world-svg * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.semantic-map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+
+.semantic-map-summary {
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.semantic-map-toolbar-controls,
+.semantic-map-modes {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.semantic-map-toolbar-controls {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.semantic-map-modes {
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.semantic-map-mode-btn {
+  min-height: 28px;
+  padding: 4px 10px;
+  border-color: transparent;
+  font-size: 0.68rem;
+}
+
+.semantic-map-mode-btn[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border2);
+}
+
+.semantic-map-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+}
+
+.semantic-map-legend-item {
+  --map-color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.semantic-map-legend-item::before {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--map-color);
+  border-radius: 3px;
+  content: '';
+}
+
+.semantic-map-detail {
+  min-height: 38px;
+  padding: 9px 16px;
+  color: var(--text-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+
+.semantic-map-detail.has-warning {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.semantic-map-edit-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.semantic-map-edit-toggle[aria-pressed="true"] {
+  color: var(--bg);
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.semantic-map-store-btn {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.semantic-map-storage-tray {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(251, 191, 36, 0.06);
+  border-bottom: 1px dashed rgba(251, 191, 36, 0.35);
+}
+
+.semantic-map-storage-tray-label {
+  color: #fbbf24;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.semantic-map-storage-tray-empty {
+  color: var(--text-2);
+  font-size: 0.72rem;
+}
+
+.semantic-map-storage-tray-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px 6px 12px;
+  color: var(--text);
+  background: var(--surface3);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-left: 3px solid var(--map-color);
+  border-radius: 7px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.semantic-map-storage-tray-item-name {
+  font-weight: 700;
+}
+
+.semantic-map-storage-tray-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.semantic-map-storage-tray-item-meta::before {
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--map-color);
+  border-radius: 2px;
+  content: '';
+  flex: none;
+}
+
+.semantic-map-storage-tray-item:hover {
+  background: var(--surface2);
+}
+
+.semantic-map-storage-tray-item.is-edit-selected {
+  color: var(--bg);
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.semantic-map-inspector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.semantic-map-inspector-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--text-2);
+}
+
+.semantic-map-inspector-row select,
+.semantic-map-inspector-row input[type="text"] {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+}
+
+.semantic-map-inspector-id {
+  padding: 2px 6px;
+  color: var(--text-2);
+  background: var(--surface3);
+  border-radius: 4px;
+  font-size: 0.68rem;
+}
+
+.semantic-map-inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.semantic-region-box.is-drop-target,
+.semantic-cluster-box.is-drop-target {
+  cursor: pointer;
+}
+
+.semantic-region-box.is-drop-target:hover,
+.semantic-cluster-box.is-drop-target:hover {
+  fill: color-mix(in srgb, var(--red) 12%, transparent);
+  stroke: var(--red);
+}
+
+.semantic-map-node.is-edit-selected .semantic-node-shape {
+  stroke: var(--red);
+  stroke-width: 2.5px;
+}
+
+.semantic-map-node.is-link-hover .semantic-node-shape {
+  stroke: #38bdf8;
+  stroke-width: 2.5px;
+}
+
+.semantic-map-handle {
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+/* A selected node is the one you're about to move or link — its handles
+   should be the most visible thing on the canvas, not a subtle afterthought. */
+.semantic-map-node.is-edit-selected .semantic-map-handle {
+  opacity: 1;
+}
+
+.semantic-map-node.is-edit-selected .semantic-map-handle circle {
+  stroke-width: 2px;
+}
+
+.semantic-map-node.is-edit-selected .semantic-map-handle-move circle {
+  stroke: var(--red);
+}
+
+.semantic-map-node.is-edit-selected .semantic-map-handle-link circle {
+  stroke: #38bdf8;
+}
+
+/* Edges touching the selected node — so "what does this connect to" reads
+   at a glance instead of requiring a hover on the exact line. */
+.semantic-map-edge.is-touching-selection {
+  stroke: var(--red) !important;
+  stroke-width: 2.5px !important;
+  opacity: 1 !important;
+}
+
+.semantic-map-inline-rename {
+  position: fixed;
+  z-index: 5000;
+  padding: 0 6px;
+  color: var(--text);
+  background: var(--surface2);
+  border: 2px solid var(--red);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.semantic-map-handle circle {
+  fill: var(--surface3);
+  stroke: var(--border2);
+  stroke-width: 1px;
+}
+
+.semantic-map-handle text {
+  fill: var(--text);
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.semantic-map-handle:hover {
+  opacity: 1;
+}
+
+.semantic-map-handle-move:hover circle {
+  stroke: var(--red);
+}
+
+.semantic-map-handle-link:hover circle {
+  stroke: #38bdf8;
+}
+
+.semantic-map-handle-store,
+.semantic-map-handle-add-child {
+  opacity: 1;
+}
+
+.semantic-map-handle-store circle {
+  stroke: #fbbf24;
+}
+
+.semantic-map-handle-add-child circle {
+  stroke: var(--success);
+}
+
+.semantic-map-handle-add-child text {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.semantic-map-drag-ghost rect {
+  fill: color-mix(in srgb, var(--red) 14%, transparent);
+  stroke: var(--red);
+  stroke-width: 1.5px;
+  stroke-dasharray: 6 4;
+}
+
+.semantic-map-drag-ghost text {
+  fill: var(--red);
+  font-size: 22px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.semantic-map-link-preview {
+  stroke: #38bdf8;
+  stroke-width: 2px;
+  stroke-dasharray: 5 4;
+  fill: none;
+  pointer-events: none;
+}
+
+.semantic-region-box.is-drag-hover,
+.semantic-cluster-box.is-drag-hover {
+  fill: color-mix(in srgb, var(--red) 18%, transparent);
+  stroke: var(--red);
+  stroke-width: 2px;
+}
+
+/* A plain leaf node used as a drop target has no cluster box of its own yet
+   to highlight, so the node shape itself gets the same treatment. */
+.semantic-map-node.is-drag-hover .semantic-node-shape {
+  fill: color-mix(in srgb, var(--red) 18%, transparent);
+  stroke: var(--red);
+  stroke-width: 3px;
+}
+
+.semantic-map-edge.is-deletable {
+  cursor: pointer;
+}
+
+.semantic-map-edge.is-deletable:hover {
+  stroke: var(--red);
+  stroke-width: 2.5px;
+}
+
+.semantic-map-storage-tray.is-drag-hover {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  border-color: var(--red);
+}
+
+.semantic-map-box-add {
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.semantic-map-box-add circle {
+  fill: var(--surface3);
+  stroke: var(--red);
+  stroke-width: 1px;
+}
+
+.semantic-map-box-add text {
+  fill: var(--red);
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.semantic-map-box-add:hover {
+  opacity: 1;
+}
+
+.semantic-map-box-add:hover circle {
+  fill: var(--red);
+}
+
+.semantic-map-box-add:hover text {
+  fill: var(--bg);
+}
+
+.semantic-map-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  background:
+    radial-gradient(circle at 1px 1px, var(--border2) 1px, transparent 1.2px) 0 0 / 22px 22px,
+    var(--bg);
+  overscroll-behavior: contain;
+}
+
+.semantic-map-zoom-slider {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--surface2) 92%, transparent);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  font-size: 0.8rem;
+  font-weight: 700;
+  pointer-events: auto;
+}
+
+.semantic-map-zoom-slider input[type="range"] {
+  width: 130px;
+}
+
+.semantic-map-host.is-cartographic .semantic-map-scroll {
+  background:
+    linear-gradient(35deg, transparent 48%, color-mix(in srgb, var(--border2) 24%, transparent) 49%, transparent 50%) 0 0 / 96px 96px,
+    linear-gradient(145deg, transparent 48%, color-mix(in srgb, var(--border2) 18%, transparent) 49%, transparent 50%) 0 0 / 96px 96px,
+    color-mix(in srgb, var(--bg) 94%, var(--surface2));
+}
+
+.semantic-world-svg {
+  display: block;
+  min-width: 100%;
+  min-height: 100%;
+  margin: auto;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.semantic-region-box {
+  fill: color-mix(in srgb, var(--surface2) 78%, transparent);
+  stroke: var(--border2);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+  opacity: var(--map-ui-opacity, 1);
+}
+
+.semantic-region-label {
+  fill: var(--text-2);
+  font-family: 'Outfit', 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.semantic-map-promote-region {
+  fill: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  opacity: 0.65;
+}
+
+.semantic-map-promote-region:hover {
+  fill: var(--red);
+  opacity: 1;
+}
+
 @media (max-width: 700px) {
     .vh-autonomy-health-report { grid-template-columns: 1fr; }
     .vh-autonomy-health-actions { align-items: stretch; flex-direction: column; }
