@@ -40,8 +40,24 @@ it never contains copied Horde Studio application files.
   route travel use authored stops only, and represents rideshares as temporary
   journey containers rather than locations. Persistent vehicles retain an
   entity identity, parked anchor, and explicit access roles.
+- `runtime/memory-graph.js` keeps a Sidecar-only source-pinned
+  `World History → Episode → Scene/Sequence` graph. Episode work is queued in
+  five-turn batches and, after a valid objective summary, fans out only to
+  characters whose perception coverage changed. Cognition is first-person,
+  epistemically typed, provenance-linked, and never feeds objective canon.
+- The Story Memory Inspector exposes those derived cognition records by
+  canonical character ID and separately exposes unresolved place references.
+  They can be removed contextually without touching raw roleplay history.
+- In Sidecar worlds the World Agent is disabled by default and proposal-only
+  when enabled. Its packet is visible to Sidecar but cannot commit world state.
 
-Not yet bundled as reusable modules: full migration wizard rollback UI,
-progressive entity promotion, traversal/vehicle adapters, hierarchical memory
-workers, and proposal-only World Agent revisions. Those remain deliberately
-separate increments rather than undocumented app edits.
+## Deliberately deferred integration work
+
+The bundle still does not replace Horde Studio's persistence or UI layers.
+The following are explicit follow-on work, not silent assumptions in the
+runtime modules: a full selected-world migration/rollback wizard, dedicated
+authoring screens for vehicle ownership and traversal methods, vector
+embeddings/retrieval over the new cognition and unresolved-place graph, a
+proposal-review panel for the World Agent, and fully user-facing timeline fork
+management. The integration manifest identifies the host seams for those
+features.

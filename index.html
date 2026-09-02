@@ -4488,7 +4488,10 @@
             <div style="display:flex; border-bottom:1px solid var(--border2); padding-bottom:8px; gap:16px;">
                 <button id="vector-tab-episodic" class="tab-btn active-tab" style="background:none; border:none; color:var(--accent); font-weight:bold; cursor:pointer; padding:4px 8px; font-size:0.9rem;">📚 Story Continuity</button>
                 <button id="vector-tab-biography" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">📖 Character Bio & Lore</button>
+                <button id="vector-tab-cognition" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">🗣 NPC Cognition</button>
+                <button id="vector-tab-unresolved" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">⌁ Unresolved Places</button>
             </div>
+            <select id="vector-character-filter" class="form-select hidden" aria-label="Character cognition filter"><option value="">All characters</option></select>
             
             <!-- Cosine Similarity Test Playground -->
             <div style="background:var(--surface2); border:1px solid var(--border); padding:12px; border-radius:8px; display:flex; flex-direction:column; gap:10px;">
@@ -4505,7 +4508,10 @@
             </div>
         </div>
         <div class="modal-ft" style="display:flex; justify-content:space-between; align-items:center;">
-            <button id="force-archive-now-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">⚡ Force Archive Now</button>
+            <div style="display:flex; gap:8px;">
+                <button id="force-archive-now-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">⚡ Force Archive Now</button>
+                <button id="vector-delete-all-btn" class="btn btn-ghost" style="color:var(--red); border-color:var(--red);">Delete listed</button>
+            </div>
             <button id="close-vector-memory-ft-btn" class="btn btn-ghost">Close</button>
         </div>
     </div>

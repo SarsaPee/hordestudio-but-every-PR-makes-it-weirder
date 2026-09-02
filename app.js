@@ -34565,6 +34565,10 @@ function setupVectorMemoryViewerEvents() {
     
     const tabEpisodic = document.getElementById('vector-tab-episodic');
     const tabBiography = document.getElementById('vector-tab-biography');
+    const tabCognition = document.getElementById('vector-tab-cognition');
+    const tabUnresolved = document.getElementById('vector-tab-unresolved');
+    const characterFilter = document.getElementById('vector-character-filter');
+    const deleteAllBtn = document.getElementById('vector-delete-all-btn');
     
     const searchBtn = document.getElementById('vector-test-search-btn');
     const queryInput = document.getElementById('vector-test-query');
@@ -34610,6 +34614,52 @@ function setupVectorMemoryViewerEvents() {
             renderVectorMemoryList();
         };
     }
+
+    if (tabCognition) {
+        tabCognition.onclick = () => {
+            currentVectorTab = 'cognition';
+            updateVectorTabUI();
+            renderVectorMemoryList();
+        };
+    }
+
+    if (tabUnresolved) {
+        tabUnresolved.onclick = () => {
+            currentVectorTab = 'unresolved';
+            updateVectorTabUI();
+            renderVectorMemoryList();
+        };
+    }
+
+    if (characterFilter) {
+        characterFilter.onchange = () => renderVectorMemoryList(queryInput?.value.trim() || '');
+    }
+
+    if (deleteAllBtn) {
+        deleteAllBtn.onclick = async () => {
+            const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+            if (!isWorld || !['episodic', 'cognition', 'unresolved'].includes(currentVectorTab)) {
+                return showToast('This view has no independently stored records to delete.', 'error');
+            }
+            const sess = getCurrentWorldSession();
+            if (!sess) return showToast('No active world session.', 'error');
+            if (currentVectorTab === 'episodic') {
+                sess.episodicMemories = [];
+            } else {
+                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol);
+                if (!graph) return showToast('Sidecar memory is unavailable for this timeline.', 'error');
+                if (currentVectorTab === 'cognition') {
+                    const characterId = characterFilter?.value || '';
+                    graph.cognition = graph.cognition.filter(memory => characterId && memory.characterId !== characterId);
+                } else {
+                    graph.locationReferences = graph.locationReferences.filter(reference => reference.locationId || reference.status === 'resolved');
+                }
+            }
+            await saveState();
+            renderVectorMemoryList(queryInput?.value.trim() || '');
+            showToast('Only records in this inspector view were deleted.', 'success');
+        };
+    }
     
     if (searchBtn && queryInput) {
         searchBtn.onclick = () => {
@@ -34638,6 +34688,11 @@ function setupVectorMemoryViewerEvents() {
                     const world = state.worlds.find(w => w.id === state.activeWorldId);
                     const sess = getCurrentWorldSession();
                     if (!sess || !world) throw new Error('No active world session');
+                    if (window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+                        await runSidecarBackgroundMemoryJobs(world, sess);
+                        renderVectorMemoryList();
+                        return;
+                    }
                     // Full rebuild: clear stale memories and re-consolidate from scratch
                     // (otherwise we'd duplicate the entire archive on top of old entries).
                     sess.episodicMemories = [];
@@ -34673,32 +34728,36 @@ function setupVectorMemoryViewerEvents() {
 }
 
 function updateVectorTabUI() {
-    const tabEpisodic = document.getElementById('vector-tab-episodic');
-    const tabBiography = document.getElementById('vector-tab-biography');
-    
-    if (currentVectorTab === 'episodic') {
-        if (tabEpisodic) {
-            tabEpisodic.style.color = 'var(--accent)';
-            tabEpisodic.style.fontWeight = 'bold';
-            tabEpisodic.style.borderBottom = '2px solid var(--accent)';
-        }
-        if (tabBiography) {
-            tabBiography.style.color = 'var(--text-3)';
-            tabBiography.style.fontWeight = 'normal';
-            tabBiography.style.borderBottom = 'none';
-        }
-    } else {
-        if (tabEpisodic) {
-            tabEpisodic.style.color = 'var(--text-3)';
-            tabEpisodic.style.fontWeight = 'normal';
-            tabEpisodic.style.borderBottom = 'none';
-        }
-        if (tabBiography) {
-            tabBiography.style.color = 'var(--accent)';
-            tabBiography.style.fontWeight = 'bold';
-            tabBiography.style.borderBottom = '2px solid var(--accent)';
-        }
-    }
+    const tabs = {
+        episodic: document.getElementById('vector-tab-episodic'),
+        biography: document.getElementById('vector-tab-biography'),
+        cognition: document.getElementById('vector-tab-cognition'),
+        unresolved: document.getElementById('vector-tab-unresolved')
+    };
+    Object.entries(tabs).forEach(([key, tab]) => {
+        if (!tab) return;
+        const active = key === currentVectorTab;
+        tab.style.color = active ? 'var(--accent)' : 'var(--text-3)';
+        tab.style.fontWeight = active ? 'bold' : 'normal';
+        tab.style.borderBottom = active ? '2px solid var(--accent)' : 'none';
+    });
+
+    const characterFilter = document.getElementById('vector-character-filter');
+    if (!characterFilter) return;
+    const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
+    characterFilter.classList.toggle('hidden', currentVectorTab !== 'cognition' || !isWorld);
+    if (currentVectorTab !== 'cognition' || !isWorld) return;
+
+    const selected = characterFilter.value;
+    const sess = getCurrentWorldSession();
+    const world = state.worlds.find(w => w.id === state.activeWorldId);
+    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+    const ids = [...new Set((graph?.cognition || []).map(record => record.characterId).filter(Boolean))];
+    const names = new Map((world?.entities || []).map(entity => [entity.id, entity.name || entity.id]));
+    characterFilter.innerHTML = '<option value="">All characters</option>' + ids.map(id =>
+        `<option value="${escapeHTML(id)}">${escapeHTML(names.get(id) || id)}</option>`
+    ).join('');
+    if (ids.includes(selected)) characterFilter.value = selected;
 }
 
 async function renderVectorMemoryList(filterQuery = "") {
@@ -34728,6 +34787,29 @@ async function renderVectorMemoryList(filterQuery = "") {
                 candidates = continuity.records.map(m => ({ ...m, source: 'continuity', ref: m }));
             }
         }
+    } else if (currentVectorTab === 'cognition' && isWorld) {
+        const sess = getCurrentWorldSession();
+        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+        const characterId = document.getElementById('vector-character-filter')?.value || '';
+        candidates = (graph?.cognition || [])
+            .filter(memory => memory.status !== 'superseded' && (!characterId || memory.characterId === characterId))
+            .map(memory => ({
+                text: `[${memory.characterName || memory.characterId || 'Character'} · ${String(memory.epistemicStatus || 'memory').replace(/_/g, ' ')}] ${memory.text || ''}`,
+                source: 'cognition', ref: memory, type: memory.epistemicStatus || 'cognition',
+                status: memory.status || 'active', importance: memory.importance,
+                sourceSessionId: memory.sourceEpisodeId || memory.sourceTurnIds?.join(', ')
+            }));
+    } else if (currentVectorTab === 'unresolved' && isWorld) {
+        const sess = getCurrentWorldSession();
+        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+        candidates = (graph?.locationReferences || [])
+            .filter(reference => !reference.locationId && reference.status !== 'resolved')
+            .map(reference => ({
+                text: `[UNRESOLVED PLACE: ${reference.name || 'Unnamed place'}] ${reference.evidence || reference.summary || 'Mentioned in established scene history.'}`,
+                source: 'unresolved_place', ref: reference, type: 'unresolved place',
+                status: reference.status || 'open', importance: reference.importance,
+                sourceSessionId: reference.sourceEpisodeId || reference.sourceTurnIds?.join(', ')
+            }));
     } else {
         // Retrieve Biography & Lore memories
         if (isWorld) {
@@ -34915,8 +34997,11 @@ async function renderVectorMemoryList(filterQuery = "") {
             ? `<span style="font-size:0.6rem; font-weight:800; text-transform:uppercase; color:var(--success); opacity:0.85;">⚡ EMBEDDED</span>`
             : `<span style="font-size:0.6rem; font-weight:800; text-transform:uppercase; color:var(--text-3); opacity:0.6;">⏳ RAW TEXT</span>`;
 
-        // Editable only for episodic memories (which we have a live ref to)
+        // Legacy episodic records retain full edit controls. Sidecar cognition and
+        // unresolved-place records are independently removable, but not silently
+        // rewritten: regeneration preserves their source provenance.
         const editable = currentVectorTab === 'episodic' && item.ref && currentEpisodicStore;
+        const removableSidecarRecord = isWorld && ['cognition', 'unresolved'].includes(currentVectorTab) && item.ref;
         const escaped = (item.text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
         const actionBtns = editable ? `
@@ -34924,7 +35009,10 @@ async function renderVectorMemoryList(filterQuery = "") {
                 <button class="tool-btn epi-pin-btn" title="Keep this memory in recall" style="font-size:11px; padding:2px 8px;">${item.ref?.pinned ? '★ Pinned' : '☆ Pin'}</button>
                 <button class="tool-btn epi-edit-btn" title="Edit memory" style="font-size:11px; padding:2px 8px;">✎ Edit</button>
                 <button class="tool-btn tool-btn-danger epi-del-btn" title="Delete memory" style="font-size:11px; padding:2px 8px;">✕</button>
-            </div>` : '';
+            </div>` : (removableSidecarRecord ? `
+            <div style="display:flex; gap:6px;">
+                <button class="tool-btn tool-btn-danger sidecar-memory-del-btn" title="Delete this derived record" style="font-size:11px; padding:2px 8px;">✕ Delete</button>
+            </div>` : '');
 
         const metadata = item.ref ? [
             String(item.ref.type || 'episode').replace('_', ' '),
@@ -34991,6 +35079,23 @@ async function renderVectorMemoryList(filterQuery = "") {
                     renderVectorMemoryList(filterQuery);
                     showToast('Memory updated', 'success');
                 }
+            };
+        }
+
+        if (removableSidecarRecord) {
+            const delBtn = card.querySelector('.sidecar-memory-del-btn');
+            delBtn.onclick = async () => {
+                const sess = getCurrentWorldSession();
+                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+                if (!graph) return;
+                if (currentVectorTab === 'cognition') {
+                    graph.cognition = graph.cognition.filter(record => record !== item.ref);
+                } else {
+                    graph.locationReferences = graph.locationReferences.filter(record => record !== item.ref);
+                }
+                await saveState();
+                renderVectorMemoryList(filterQuery);
+                showToast('Derived memory removed.', 'success');
             };
         }
 
