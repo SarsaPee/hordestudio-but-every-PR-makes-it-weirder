@@ -10669,7 +10669,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         pendingRequests: (protocol?.requests || []).filter(request => request.status === 'open').slice(-8)
             .map(request => ({ id: request.id, text: request.text, origin: request.origin })),
         backgroundProposals: (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status))
-            .slice(-6).map(proposal => ({ id: proposal.id, turn: proposal.turn, summary: proposal.summary, status: proposal.status })),
+            .slice(-6).map(proposal => ({ id: proposal.id, turn: proposal.turn, summary: proposal.summary, actions: proposal.actions || {}, status: proposal.status })),
         recentAuthorialRefinements: (protocol?.refinements || []).slice(-6).map(refinement => ({
             text: String(refinement.userText || '').slice(0, 1200),
             committed: refinement.committed === true,
@@ -10771,6 +10771,16 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(protocol, world, receipt, {
             playerLocationId: preFrame.player_location_id
         }) || [];
+        // World Agent output is never independently applied. A normal Sidecar
+        // reconciliation is its review pass: the resulting native receipt is
+        // the only evidence that any proposed fact was accepted into canon.
+        (protocol.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status))
+            .forEach(proposal => {
+                proposal.status = 'sidecar_reviewed';
+                proposal.reviewedAt = new Date().toISOString();
+                proposal.reviewReceiptId = receipt.turn_id || '';
+                proposal.reviewOutcome = committed.audit?.rejected?.length ? 'reviewed_with_rejections' : 'reviewed_no_automatic_commit';
+            });
         queueSidecarReconciliationQuestions(world, sess, committed.audit);
         const packet = buildSidecarScenePacket(world, sess, handoff);
         protocol.packet = packet;
@@ -11017,11 +11027,11 @@ function renderSidecarConversation(world, sess) {
     panel.classList.toggle('hidden', !enabled);
     if (!enabled) return;
     const entries = (protocol?.conversations || []).slice(-80);
-    const proposalCards = (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status)).slice(-12).map(proposal => `
+    const proposalCards = (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved', 'sidecar_reviewed'].includes(proposal.status)).slice(-12).map(proposal => `
         <div style="margin:0 0 9px; padding:9px; border-radius:7px; background:rgba(255,180,70,.08); border:1px solid var(--border);">
-            <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${escapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : 'awaiting review')}</div>
+            <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${escapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : proposal.status === 'sidecar_reviewed' ? `Sidecar reviewed · ${proposal.reviewOutcome || 'no automatic commit'}` : 'awaiting review')}</div>
             <div style="font-size:.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML((proposal.summary || []).join('\n') || 'No readable proposal summary.')}</div>
-            <div style="display:flex; gap:6px; margin-top:7px;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}<button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button></div>
+            <div style="display:flex; gap:6px; margin-top:7px;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}${proposal.status !== 'sidecar_reviewed' ? `<button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button>` : ''}</div>
         </div>`).join('');
     log.innerHTML = proposalCards + entries.map(entry => {
         const author = entry.role === 'user';
