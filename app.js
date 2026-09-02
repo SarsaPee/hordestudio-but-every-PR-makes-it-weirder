@@ -3623,7 +3623,7 @@ AGENCY
             vitalStatId: 'hp', currencyStatId: 'gold', currencyName: 'wealth', zeroHpMode: 'fail_forward'
         },
         openRouterRouting: null,
-        worldAgent: { enabled: true, intervalTurns: 6, model: '', openRouterRouting: null }
+        worldAgent: { enabled: false, intervalTurns: 6, model: '', openRouterRouting: null, proposalOnly: true }
     };
 }
 
@@ -3909,7 +3909,7 @@ IMMERSION
             {id:'hp',name:'Health',value:100,min:0,max:100,color:'#e05a5a'},{id:'cash',name:'Cash',value:80,min:0,max:0,color:'#d7aa42'},{id:'energy',name:'Energy',value:75,min:0,max:100,color:'#4da56d'},{id:'stress',name:'Stress',value:30,min:0,max:100,color:'#d47c45'},{id:'reputation',name:'Local Reputation',value:0,min:-100,max:100,color:'#8774cf'},{id:'social',name:'Social',value:1,min:-5,max:10,color:'#c76c9b'},{id:'focus',name:'Focus',value:1,min:-5,max:10,color:'#4f8fc9'},{id:'practical',name:'Practical',value:1,min:-5,max:10,color:'#6f9d58'}]},
         gameRules:{profileId:'full_rpg',modules:{stats:true,health:true,conditions:true,checks:true,inventory:true,commerce:true,quests:true,relationships:true,schedules:true,livingWorld:true},vitalStatId:'hp',currencyStatId:'cash',currencyName:'dollars',zeroHpMode:'fail_forward'},
         openRouterRouting:null,
-        worldAgent:{enabled:true,intervalTurns:8,model:'',openRouterRouting:null}
+        worldAgent:{enabled:false,intervalTurns:8,model:'',openRouterRouting:null,proposalOnly:true}
     };
 }
 
@@ -10589,6 +10589,11 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const location = getLocationRef(world, frame.player_location_id);
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+    const historyChars = (sess.history || []).reduce((total, message) => total + String(message?.text || '').length, 0);
+    const sceneChars = String(world.dmPrompt || '').length + String(world.authorNote || '').length
+        + String(location?.description || '').length + String(sess.ledger || '').length;
+    const configuredContext = Math.max(1024, Number(world.contextSize) || 8192);
+    const contextRatio = Math.min(1, (historyChars + sceneChars) / (configuredContext * 3.5));
     const questions = (protocol?.questions || []).filter(question => question.status === 'open' && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)).slice(-8)
         .map(question => ({ id: question.id, prompt: question.prompt, target: question.target }));
     const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
@@ -10633,7 +10638,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         })),
         contextPressure: window.HordeSidecarTimeline?.contextPressure(protocol, sess, {
             historyCount: sess.history?.length || 0,
-            contextRatio: 0
+            contextRatio
         }) || null
     };
 }
