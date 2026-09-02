@@ -2161,6 +2161,18 @@ function validateWorldData(value, label = 'World') {
     ['description', 'dmPrompt', 'intro', 'model', 'authorNote'].forEach(key =>
         requireString(value[key], `${label} ${key}`, { optional: true }));
     validateOpenRouterRoutingData(value.openRouterRouting, `${label} OpenRouter routing`);
+    if (value.sidecarConfig !== undefined) {
+        requirePlainObject(value.sidecarConfig, `${label} Sidecar configuration`);
+        if (value.sidecarConfig.mode !== undefined && !['inline_legacy', 'sidecar'].includes(value.sidecarConfig.mode)) {
+            throw new Error(`${label} Sidecar mode is invalid`);
+        }
+        if (value.sidecarConfig.tracker !== undefined) {
+            requirePlainObject(value.sidecarConfig.tracker, `${label} Sidecar tracker`);
+            requireString(value.sidecarConfig.tracker.model, `${label} Sidecar tracker model`, { optional: true, max: 160 });
+            validateOpenRouterRoutingData(value.sidecarConfig.tracker.openRouterRouting, `${label} Sidecar tracker OpenRouter routing`);
+        }
+        if (value.sidecarConfig.debug !== undefined) requirePlainObject(value.sidecarConfig.debug, `${label} Sidecar debug`);
+    }
     if (value.worldAgent !== undefined) {
         requirePlainObject(value.worldAgent, `${label} World Agent`);
         validateOpenRouterRoutingData(value.worldAgent.openRouterRouting, `${label} World Agent OpenRouter routing`);
@@ -13167,6 +13179,12 @@ function createNewWorld() {
         maxTokens: 2048,
         reasoning: false,
         reasoningEffort: 'auto',
+        sidecarConfig: {
+            schemaVersion: 1,
+            mode: 'sidecar',
+            tracker: { inheritNarrator: true, model: '', openRouterRouting: null, reasoning: false, maxTokens: 0 },
+            debug: { enabled: false, retainTraceCount: 20 }
+        },
         hudConfig: {
             showClock: true,
             showQuests: true,
@@ -19805,6 +19823,7 @@ function resetWorldTimeline(world, sess) {
     (world.hudConfig?.stats || []).forEach(stat => { sess.playerStats[stat.id] = stat.value; });
     normalizePlayerRulesState(world, sess);
     normalizeWorldSocietyState(world, sess);
+    window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
     return sess;
 }
 
@@ -19917,6 +19936,7 @@ function getCurrentWorldSession() {
         normalizeLivingWorldState(world, session);
         normalizePlayerRulesState(world, session);
         normalizeQuestState(world, session);
+        window.HordeSidecarHooks?.normalizeWorldTimeline(world, session);
     }
 
     return session;
@@ -32038,6 +32058,7 @@ function normalizeMigratedWorldInstance(world, instance) {
             });
             session.locationStates = canonicalStates;
         }
+        window.HordeSidecarHooks?.normalizeWorldTimeline(world, session);
     });
     return instance;
 }

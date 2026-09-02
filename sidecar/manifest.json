@@ -1,0 +1,32 @@
+{
+  "name": "horde-sidecar",
+  "schemaVersion": 1,
+  "upstream": {
+    "minimumVersion": "16.7.0",
+    "requiredSymbols": [
+      "validateWorldTurnReceipt",
+      "commitWorldTurnReceipt",
+      "processStructuredActions",
+      "recordWorldTurnCommit",
+      "executeWorldTurn",
+      "captureWorldTurnState",
+      "restoreWorldTurnState"
+    ]
+  },
+  "loadOrder": [
+    "runtime/mode-config.js",
+    "integrations/horde-16.7-hooks.js"
+  ],
+  "featureFlags": ["inline_legacy", "sidecar"],
+  "hooks": [
+    "world configuration normalization",
+    "timeline protocol normalization",
+    "narrator prompt assembly",
+    "streaming handoff stripping",
+    "Sidecar native receipt adapter",
+    "post-commit scene packet",
+    "reroll/take restoration",
+    "direct Sidecar conversation",
+    "Backstage and debug UI"
+  ]
+}

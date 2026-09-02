@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Horde Sidecar Temporal Evidence",
+  "type": "object",
+  "required": ["id", "source", "authoredText", "kind"],
+  "properties": {
+    "id": { "type": "string" },
+    "source": { "enum": ["narrator_handoff", "direct_user", "mechanical_constraint"] },
+    "authoredText": { "type": "string" },
+    "kind": { "enum": ["immediate", "duration", "range", "anchor", "skip", "unknown"] },
+    "authoredRangeSeconds": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 }
+      ]
+    },
+    "reconciliationStatus": { "enum": ["accepted", "ambiguous", "contradicted"] }
+  },
+  "additionalProperties": true
+}

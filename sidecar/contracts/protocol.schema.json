@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Horde Sidecar Timeline Protocol",
+  "type": "object",
+  "required": ["schemaVersion", "mode"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "mode": { "enum": ["inline_legacy", "sidecar"] },
+    "activeSequenceId": { "type": "string" },
+    "activeSceneId": { "type": "string" },
+    "questions": { "type": "array" },
+    "requests": { "type": "array" },
+    "takes": { "type": "array" },
+    "temporalState": { "type": "object" },
+    "debug": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "principle": "Every Sidecar proposal must resolve to a native reducer, a declared extension, a question, an audit record, or rejection.",
+  "destinations": {
+    "time": "state_updates.semantic_time",
+    "movement": "events[type=movement]",
+    "scene": "scene",
+    "entity_state": "entity_updates",
+    "inventory": "state_updates.inventory_add|inventory_remove|transactions",
+    "conditions": "events[type=condition]|state_updates.player_condition_updates",
+    "ledger": "state_updates.ledger_update",
+    "threads": "state_updates.threads_update",
+    "quests": "state_updates.quests_update",
+    "relationships": "extension:directional_relationship_claims",
+    "cognition": "derived:character_cognition_job",
+    "location_identity": "question:reconcile.location"
+  }
+}

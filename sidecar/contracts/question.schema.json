@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Horde Sidecar Directed Question",
+  "type": "object",
+  "required": ["id", "status", "origin", "target", "prompt"],
+  "properties": {
+    "id": { "type": "string" },
+    "status": { "enum": ["open", "resolved", "deferred", "expired", "superseded"] },
+    "origin": { "type": "string" },
+    "target": { "type": "string" },
+    "prompt": { "type": "string" },
+    "pressure": { "type": "number" },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "resolutionType": {
+      "enum": [
+        "explicit_target_answer",
+        "authorised_narrative_derivation",
+        "pressure_based_target_derivation",
+        "canonical_evidence_resolution",
+        "delegated_target_answer",
+        "explicit_unknown",
+        "explicit_defer",
+        "user_authorial_answer"
+      ]
+    }
+  },
+  "additionalProperties": true
+}
