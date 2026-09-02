@@ -10838,6 +10838,22 @@ function parseSidecarCognitionOutput(content) {
     return { memories };
 }
 
+function sidecarLocationEmbeddingText(world, location) {
+    const ancestry = [];
+    let parentId = location?.parentLocationId;
+    const seen = new Set();
+    while (parentId && !seen.has(parentId) && ancestry.length < 6) {
+        seen.add(parentId);
+        const parent = (world?.locations || []).find(item => item.id === parentId);
+        if (!parent) break;
+        ancestry.unshift(parent.name || parent.id); parentId = parent.parentLocationId;
+    }
+    return [`Location: ${location?.name || location?.id || 'Unnamed'}`, location?.aliases?.length ? `Aliases: ${location.aliases.join(', ')}` : '',
+        `Type: ${location?.mapType || location?.type || 'location'}`, ancestry.length ? `Within: ${ancestry.join(' › ')}` : '',
+        `Stable description: ${location?.description || ''}`, location?.purpose ? `Purpose: ${location.purpose}` : '',
+        Array.isArray(location?.tags) && location.tags.length ? `Tags: ${location.tags.join(', ')}` : ''].filter(Boolean).join('\n').slice(0, 6000);
+}
+
 async function vectorizeSidecarMemoryRecords(records) {
     const pending = records.filter(record => record && record.text && !Array.isArray(record.embedding));
     let cursor = 0;
@@ -10845,7 +10861,7 @@ async function vectorizeSidecarMemoryRecords(records) {
         while (cursor < pending.length) {
             const record = pending[cursor++];
             try {
-                record.embedding = await HordeVectorMemory.getCachedEmbedding(record.text);
+                record.embedding = await HordeVectorMemory.getCachedEmbedding(record.vectorText || record.text);
                 record.embeddingNamespace = HordeVectorMemory.namespace();
                 record.vectorizedAt = new Date().toISOString();
             } catch (error) { record.vectorError = String(error?.message || error).slice(0, 300); }
@@ -10867,9 +10883,10 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8) {
         ...(graph.episodes || []).filter(record => record.status === 'active').map(record => ({ kind: 'episode', text: `${record.summary}\n${record.objectiveHistory || ''}`, record })),
         ...(graph.cognition || []).filter(record => record.status === 'active').map(record => ({ kind: 'cognition', text: record.text, record })),
         ...(graph.locationReferences || []).filter(record => record.status !== 'resolved').map(record => ({ kind: 'unresolved_place', text: `${record.name || ''} ${record.evidence || ''}`, record }))
+        ,...(world.locations || []).map(record => ({ kind: 'location', text: sidecarLocationEmbeddingText(world, record), record }))
     ].filter(candidate => candidate.text);
     const missing = candidates.filter(candidate => !Array.isArray(candidate.record.embedding)).slice(0, 48);
-    missing.forEach(candidate => { candidate.record.text = String(candidate.record.text || candidate.text).slice(0, 8000); });
+    missing.forEach(candidate => { candidate.record.vectorText = String(candidate.record.vectorText || candidate.text).slice(0, 8000); });
     if (missing.length) await vectorizeSidecarMemoryRecords(missing.map(candidate => candidate.record));
     return candidates.map(candidate => ({ ...candidate, score: cosineSimilarity(queryEmbedding, candidate.record.embedding || []) }))
         .filter(candidate => Number.isFinite(candidate.score) && candidate.score > 0)
@@ -34791,6 +34808,7 @@ function setupVectorMemoryViewerEvents() {
     const tabEpisodic = document.getElementById('vector-tab-episodic');
     const tabBiography = document.getElementById('vector-tab-biography');
     const tabCognition = document.getElementById('vector-tab-cognition');
+    const tabLocations = document.getElementById('vector-tab-locations');
     const tabUnresolved = document.getElementById('vector-tab-unresolved');
     const characterFilter = document.getElementById('vector-character-filter');
     const deleteAllBtn = document.getElementById('vector-delete-all-btn');
@@ -34848,6 +34866,9 @@ function setupVectorMemoryViewerEvents() {
             renderVectorMemoryList();
         };
     }
+    if (tabLocations) {
+        tabLocations.onclick = () => { currentVectorTab = 'locations'; updateVectorTabUI(); renderVectorMemoryList(); };
+    }
 
     if (tabUnresolved) {
         tabUnresolved.onclick = () => {
@@ -34892,14 +34913,17 @@ function setupVectorMemoryViewerEvents() {
             const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
             const sess = getCurrentWorldSession();
             const graph = isWorld && window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
-            if (!graph || !['cognition', 'unresolved'].includes(currentVectorTab)) {
-                return showToast('Choose NPC Cognition or Unresolved Places in a Sidecar world.', 'info');
+            if (!graph || !['cognition', 'locations', 'unresolved'].includes(currentVectorTab)) {
+                return showToast('Choose NPC Cognition, Locations, or Unresolved Places in a Sidecar world.', 'info');
             }
             const characterId = characterFilter?.value || '';
             const records = currentVectorTab === 'cognition'
                 ? graph.cognition.filter(record => !characterId || record.characterId === characterId)
-                : graph.locationReferences.filter(record => !record.locationId && record.status !== 'resolved');
-            records.forEach(record => { if (!record.text) record.text = `${record.name || ''} ${record.evidence || ''}`.trim(); });
+                : currentVectorTab === 'locations'
+                    ? (state.worlds.find(world => world.id === state.activeWorldId)?.locations || [])
+                    : graph.locationReferences.filter(record => !record.locationId && record.status !== 'resolved');
+            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            records.forEach(record => { if (!record.text && !record.vectorText) record.vectorText = currentVectorTab === 'locations' ? sidecarLocationEmbeddingText(world, record) : `${record.name || ''} ${record.evidence || ''}`.trim(); });
             vectorizeListedBtn.disabled = true;
             vectorizeListedBtn.textContent = 'Vectorizing…';
             try {
@@ -34983,6 +35007,7 @@ function updateVectorTabUI() {
         episodic: document.getElementById('vector-tab-episodic'),
         biography: document.getElementById('vector-tab-biography'),
         cognition: document.getElementById('vector-tab-cognition'),
+        locations: document.getElementById('vector-tab-locations'),
         unresolved: document.getElementById('vector-tab-unresolved')
     };
     Object.entries(tabs).forEach(([key, tab]) => {
@@ -35050,6 +35075,10 @@ async function renderVectorMemoryList(filterQuery = "") {
                 status: memory.status || 'active', importance: memory.importance,
                 sourceSessionId: memory.sourceEpisodeId || memory.sourceTurnIds?.join(', ')
             }));
+    } else if (currentVectorTab === 'locations' && isWorld) {
+        const world = state.worlds.find(item => item.id === state.activeWorldId);
+        candidates = (world?.locations || []).map(location => ({ text: sidecarLocationEmbeddingText(world, location), embedding: location.embedding,
+            source: 'location', ref: location, type: location.mapType || 'location', status: 'canonical', importance: 0.8, sourceSessionId: location.id }));
     } else if (currentVectorTab === 'unresolved' && isWorld) {
         const sess = getCurrentWorldSession();
         const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
