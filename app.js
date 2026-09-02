@@ -10757,7 +10757,7 @@ function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) 
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
     const stableId = String(options.id || '').trim();
-    const prior = protocol.questions.find(question => question.status === 'open'
+    const prior = protocol.questions.find(question => ['open', 'deferred'].includes(question.status)
         && (stableId ? question.id === stableId : question.prompt === prompt));
     if (prior) return prior;
     const question = {

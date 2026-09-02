@@ -65,6 +65,14 @@ it never contains copied Horde Studio application files.
   counts, and branch-local provenance.
 - Persona setup supports a streamed, one-draft generation path from current
   world/history evidence with model, budget, and provenance controls.
+- Persistent Sidecar questions retain priority, blocking state, evidence,
+  attempts, answer provenance, and explicit repair history. Sequence closure
+  and scene-boundary controls create review proposals rather than silently
+  mutating the hierarchy.
+- Context pressure is a weighted, configurable diagnostic (including cast,
+  canonical context, unresolved work, retrieval and reconciliation friction),
+  while background memory dispatch records provider/model workload and waits
+  for dependencies before scheduling.
 
 The bundle remains host-oriented: Horde Studio persistence and presentation
 layers stay in the application, while this directory provides the reusable
