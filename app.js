@@ -10917,13 +10917,21 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8) {
     let queryEmbedding;
     try { queryEmbedding = await HordeVectorMemory.getCachedEmbedding(text); } catch (_) { return []; }
     if (!Array.isArray(queryEmbedding)) return [];
-    const candidates = [
-        ...(graph.episodes || []).filter(record => record.status === 'active').map(record => ({ kind: 'episode', text: `${record.summary}\n${record.objectiveHistory || ''}`, record })),
+    const historyCandidates = (graph.worldHistory || []).filter(record => record.status === 'active').map(record => ({ kind: 'world_history', text: record.text || record.narration, record }));
+    const episodeCandidates = (graph.episodes || []).filter(record => record.status === 'active').map(record => ({ kind: 'episode', text: record.text || `${record.summary}\n${record.objectiveHistory || ''}`, record }));
+    const baseCandidates = [...historyCandidates, ...episodeCandidates].filter(candidate => candidate.text);
+    const missingBase = baseCandidates.filter(candidate => !Array.isArray(candidate.record.embedding)).slice(0, 48);
+    missingBase.forEach(candidate => { candidate.record.vectorText = String(candidate.record.vectorText || candidate.text).slice(0, 8000); });
+    if (missingBase.length) await vectorizeSidecarMemoryRecords(missingBase.map(candidate => candidate.record));
+    const prerequisitesMet = historyCandidates.some(candidate => Array.isArray(candidate.record.embedding))
+        && episodeCandidates.some(candidate => Array.isArray(candidate.record.embedding));
+    const derivedCandidates = prerequisitesMet ? [
         ...(graph.cognition || []).filter(record => record.status === 'active').map(record => ({ kind: 'cognition', text: record.text, record })),
-        ...(graph.locationReferences || []).filter(record => record.status !== 'resolved').map(record => ({ kind: 'unresolved_place', text: `${record.name || ''} ${record.evidence || ''}`, record }))
-        ,...(world.locations || []).map(record => ({ kind: 'location', text: sidecarLocationEmbeddingText(world, record), record }))
-    ].filter(candidate => candidate.text);
-    const missing = candidates.filter(candidate => !Array.isArray(candidate.record.embedding)).slice(0, 48);
+        ...(graph.locationReferences || []).filter(record => record.status !== 'resolved').map(record => ({ kind: 'unresolved_place', text: `${record.name || ''} ${record.evidence || ''}`, record })),
+        ...(world.locations || []).map(record => ({ kind: 'location', text: sidecarLocationEmbeddingText(world, record), record }))
+    ] : [];
+    const candidates = [...baseCandidates, ...derivedCandidates].filter(candidate => candidate.text);
+    const missing = derivedCandidates.filter(candidate => !Array.isArray(candidate.record.embedding)).slice(0, 48);
     missing.forEach(candidate => { candidate.record.vectorText = String(candidate.record.vectorText || candidate.text).slice(0, 8000); });
     if (missing.length) await vectorizeSidecarMemoryRecords(missing.map(candidate => candidate.record));
     return candidates.map(candidate => ({ ...candidate, score: cosineSimilarity(queryEmbedding, candidate.record.embedding || []) }))
