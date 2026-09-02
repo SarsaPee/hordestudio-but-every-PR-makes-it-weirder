@@ -22663,18 +22663,38 @@ async function createNewWorldSession() {
     showToast('New Timeline Created');
 }
 
-async function forkCurrentWorldTimeline() {
+async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount = null) {
     const world = state.worlds.find(item => item.id === state.activeWorldId);
     const inst = state.worldInstances?.[state.activeWorldId];
-    const source = getCurrentWorldSession();
+    const source = sourceSessionId ? (inst?.sessions || []).find(session => session.id === sourceSessionId) : getCurrentWorldSession();
     if (!world || !inst || !source) return;
-    const name = prompt('Name this timeline fork:', `Fork of ${source.name || 'current timeline'}`);
+    const maxTurn = Number(source.turnCount || 0);
+    const requestedTurn = targetTurnCount == null ? maxTurn : Math.max(0, Math.min(maxTurn, Number(targetTurnCount) || maxTurn));
+    const name = prompt('Name this timeline fork:', `Fork of ${source.name || 'current timeline'}${requestedTurn < maxTurn ? ` · turn ${requestedTurn}` : ''}`);
     if (name === null) return;
     const fork = safeJsonClone(source);
     fork.id = `wsess_${Date.now()}`;
     fork.name = String(name || '').trim() || `Fork of ${source.name || 'timeline'}`;
     fork.createdAt = new Date().toISOString();
-    fork.forkedFrom = { sessionId: source.id, turnCount: source.turnCount || 0, createdAt: fork.createdAt };
+    fork.forkedFrom = { sessionId: source.id, turnCount: requestedTurn, createdAt: fork.createdAt };
+    if (requestedTurn < maxTurn) {
+        const dmTurns = fork.history.map((message, index) => ({ message, index })).filter(item => item.message.role === 'dm' && Array.isArray(item.message.versionSnapshots));
+        const selected = requestedTurn === 0 ? (dmTurns[0] || null) : (dmTurns[requestedTurn - 1] || null);
+        if (selected) {
+            const snapshot = safeJsonClone(requestedTurn === 0
+                ? selected.message.turnSnapshot
+                : (selected.message.versionSnapshots[selected.message.currentVersion ?? selected.message.versionSnapshots.length - 1] || selected.message.versionSnapshots.at(-1)));
+            if (snapshot) {
+                snapshot.session = snapshot.session || {};
+                snapshot.session.sidecar = snapshot.session.sidecar || fork.sidecar;
+                snapshot.world = snapshot.world || {};
+                snapshot.world.dynamicEntities = (snapshot.world.dynamicEntities || []).map(entity => ({ ...entity, sessionOrigin: fork.id }));
+                restoreWorldTurnState(world, fork, snapshot);
+                fork.history = fork.history.slice(0, requestedTurn === 0 ? selected.index : selected.index + 1);
+                fork.turnCount = requestedTurn;
+            }
+        }
+    }
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, fork);
     if (protocol) {
         protocol.migration = { ...(protocol.migration || {}), forkedFrom: safeJsonClone(fork.forkedFrom) };
@@ -22700,7 +22720,7 @@ function renderWorldTimelineBrowser() {
         return `<div class="world-inspector-section" style="padding:14px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border)'}; border-radius:10px;">
             <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;"><div><strong>${escapeHTML(session.name || session.id)}</strong>${selected ? ' <span class="model-badge">ACTIVE</span>' : ''}<div class="form-hint">${escapeHTML(session.id)} · ${Number(session.turnCount || 0)} committed turn${Number(session.turnCount || 0) === 1 ? '' : 's'}</div></div><button class="tool-btn timeline-select-btn" data-session-id="${escapeHTML(session.id)}">${selected ? 'Selected' : 'Select'}</button></div>
             <div class="form-hint" style="margin-top:8px;">${fork ? `Fork of <strong>${escapeHTML(source?.name || fork.sessionId)}</strong> at committed turn ${Number(fork.turnCount || 0)} · ${escapeHTML(fork.createdAt || '')}` : 'Root timeline · no fork parent'}</div>
-            <div style="display:flex; gap:8px; margin-top:10px;"><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button>${fork ? `<span class="form-hint">Source history retained; later derived memory is branch-local.</span>` : ''}</div>
+            <div style="display:flex; gap:8px; margin-top:10px; align-items:center;"><label class="form-hint">Fork after turn <input class="form-input timeline-fork-turn" data-session-id="${escapeHTML(session.id)}" type="number" min="0" max="${Number(session.turnCount || 0)}" value="${Number(session.turnCount || 0)}" style="width:80px; display:inline-block; padding:4px 6px;"></label><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button>${fork ? `<span class="form-hint">Source history retained; later derived memory is branch-local.</span>` : ''}</div>
         </div>`;
     }).join('') : '<div class="form-hint">No timelines exist yet. Create a new timeline from Session Setup.</div>';
     host.querySelectorAll('.timeline-select-btn').forEach(button => button.onclick = async () => {
@@ -22712,12 +22732,8 @@ function renderWorldTimelineBrowser() {
         renderWorldTimelineBrowser();
     });
     host.querySelectorAll('.timeline-fork-btn').forEach(button => button.onclick = async () => {
-        const inst = state.worldInstances?.[state.activeWorldId];
-        if (!inst) return;
-        const previous = inst.activeSessionId;
-        inst.activeSessionId = button.dataset.sessionId;
-        await forkCurrentWorldTimeline();
-        inst.activeSessionId = previous === button.dataset.sessionId ? inst.activeSessionId : previous;
+        const turnInput = [...host.querySelectorAll('.timeline-fork-turn')].find(input => input.dataset.sessionId === button.dataset.sessionId);
+        await forkCurrentWorldTimeline(button.dataset.sessionId, Number(turnInput?.value));
         renderWorldTimelineBrowser();
     });
 }
