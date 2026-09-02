@@ -1,6 +1,6 @@
 {
   "name": "horde-sidecar",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "upstream": {
     "minimumVersion": "16.7.0",
     "requiredSymbols": [
@@ -17,7 +17,7 @@
     "runtime/mode-config.js",
     "integrations/horde-16.7-hooks.js"
   ],
-  "featureFlags": ["inline_legacy", "sidecar"],
+  "featureFlags": ["inline_legacy", "sidecar", "sidecar_conversation", "sidecar_backstage"],
   "hooks": [
     "world configuration normalization",
     "timeline protocol normalization",
@@ -27,6 +27,9 @@
     "post-commit scene packet",
     "reroll/take restoration",
     "direct Sidecar conversation",
-    "Backstage and debug UI"
-  ]
+    "Backstage and debug UI",
+    "World Studio tracker/provider/routing configuration",
+    "semantic temporal evidence"
+  ],
+  "integrationManifest": "patches/16.7-integration-manifest.md"
 }

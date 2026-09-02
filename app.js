@@ -10541,6 +10541,10 @@ function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock) {
     // The exact clock delta is an existing reducer result. Preserve it beside,
     // never instead of, the Narrator's potentially approximate language.
     protocol.temporalState = {
+        id: `temporal_${Date.now().toString(36)}`,
+        source: 'narrator_handoff',
+        authoredText: authoredMeaning,
+        kind: 'semantic',
         authoredMeaning,
         beforeCanonicalMinutes: beforeClock?.currentTotalMinutes ?? null,
         afterCanonicalMinutes: afterClock.currentTotalMinutes,

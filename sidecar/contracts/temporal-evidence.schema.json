@@ -7,7 +7,10 @@
     "id": { "type": "string" },
     "source": { "enum": ["narrator_handoff", "direct_user", "mechanical_constraint"] },
     "authoredText": { "type": "string" },
-    "kind": { "enum": ["immediate", "duration", "range", "anchor", "skip", "unknown"] },
+    "kind": { "enum": ["semantic", "immediate", "duration", "range", "anchor", "skip", "unknown"] },
+    "beforeCanonicalMinutes": { "type": ["number", "null"] },
+    "afterCanonicalMinutes": { "type": ["number", "null"] },
+    "mechanicalDeltaMinutes": { "type": ["number", "null"] },
     "authoredRangeSeconds": {
       "oneOf": [
         { "type": "null" },

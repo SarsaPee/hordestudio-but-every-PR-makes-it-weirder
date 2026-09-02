@@ -2,7 +2,7 @@
   "version": 1,
   "principle": "Every Sidecar proposal must resolve to a native reducer, a declared extension, a question, an audit record, or rejection.",
   "destinations": {
-    "time": "state_updates.semantic_time",
+    "time": "state_updates.time_skip_minutes and protocol.temporalState (raw authored evidence retained separately)",
     "movement": "events[type=movement]",
     "scene": "scene",
     "entity_state": "entity_updates",
