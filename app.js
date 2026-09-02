@@ -1521,6 +1521,9 @@ const OPENROUTER_ROUTE_CHAINS = Object.freeze({
     default: ['world', 'global'],
     // Background world agent: its own pin, else world, else global (unchanged).
     worldAgent: ['worldAgent', 'world', 'global'],
+    // The foreground Sidecar reconciliation may use a different model, but
+    // otherwise follows the world's routing preference.
+    sidecar: ['sidecar', 'world', 'global'],
     // Utility routes run their own models. They resolve their own stored
     // routing and otherwise route on availability — never the world's pin.
     consolidation: ['consolidation', 'availability'],
@@ -1549,6 +1552,9 @@ function storedOpenRouterRoutingForLink(link, owner) {
     if (link === 'worldAgent') {
         return normalizeOpenRouterRouting(owner?.worldAgent?.openRouterRouting, { allowNull: true });
     }
+    if (link === 'sidecar') {
+        return normalizeOpenRouterRouting(owner?.sidecarConfig?.tracker?.openRouterRouting, { allowNull: true });
+    }
     if (link === 'world') {
         return normalizeOpenRouterRouting(owner?.openRouterRouting, { allowNull: true });
     }
@@ -1561,7 +1567,7 @@ function effectiveOpenRouterRouting(owner = null, scope = 'default') {
     for (const link of chain) {
         // Owner-scoped links are unavailable on ownerless calls; skip to the
         // next link rather than collapsing straight to global.
-        if (!owner && ['world', 'worldAgent', 'receiptRepair'].includes(link)) continue;
+        if (!owner && ['world', 'worldAgent', 'sidecar', 'receiptRepair'].includes(link)) continue;
         const resolved = storedOpenRouterRoutingForLink(link, owner);
         if (resolved) return resolved;
     }
@@ -4340,6 +4346,13 @@ function openRouterRoutingPanelDefinition(scope) {
             inheritLabel: 'Inherit World routing',
             owner: () => state.editingWorld,
             stored: () => state.editingWorld?.worldAgent?.openRouterRouting
+        },
+        sidecar: {
+            hostId: 'world-sidecar-openrouter-routing',
+            modelId: 'w-sidecar-model',
+            inheritLabel: 'Inherit World routing',
+            owner: () => state.editingWorld,
+            stored: () => state.editingWorld?.sidecarConfig?.tracker?.openRouterRouting
         }
     };
     return definitions[scope] || null;
@@ -4347,7 +4360,7 @@ function openRouterRoutingPanelDefinition(scope) {
 
 function openRouterRoutingParent(scope) {
     const globalRouting = normalizeOpenRouterRouting(state.globalSettings.openRouterRouting);
-    if (scope !== 'worldAgent') return globalRouting;
+    if (!['worldAgent', 'sidecar'].includes(scope)) return globalRouting;
     const worldDraft = openRouterRoutingDrafts.get('world');
     if (worldDraft) {
         return worldDraft.inherit
@@ -4364,6 +4377,12 @@ function openRouterRoutingModel(scope) {
     if (scope === 'worldAgent') {
         return String(document.getElementById('w-studio-model')?.value
             || state.editingWorld?.model || state.globalSettings.defaultModel || '').trim();
+    }
+    if (scope === 'sidecar') {
+        const inherit = document.getElementById('w-sidecar-inherit-narrator')?.checked !== false;
+        return String(inherit ? (document.getElementById('w-studio-model')?.value || state.editingWorld?.model)
+            : (document.getElementById('w-sidecar-model')?.value || state.editingWorld?.model)
+            || state.globalSettings.defaultModel || '').trim();
     }
     return String(state.globalSettings.defaultModel || '').trim();
 }
@@ -10584,7 +10603,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST', signal: options.signal,
         headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld))
+        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld, { scope: 'sidecar' }))
     });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar request failed (${response.status})`);
     const payload = await response.json();
@@ -10638,7 +10657,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST', signal: options.signal,
         headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld))
+        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld, { scope: 'sidecar' }))
     });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar conversation failed (${response.status})`);
     const data = await response.json();
@@ -13596,6 +13615,20 @@ function setupWorldStudioLogic() {
     document.getElementById('add-w-lore-btn').onclick = () => { addWorldLore(); updateWorldTokenCount(); };
     document.getElementById('add-world-stat-btn').onclick = addWorldStat;
     document.getElementById('w-fetch-model-btn').onclick = fetchWorldModelSettings;
+    document.getElementById('w-sidecar-mode').onchange = event => {
+        if (!state.editingWorld) return;
+        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!config) return;
+        config.mode = event.target.value === 'sidecar' ? 'sidecar' : 'inline_legacy';
+        renderWorldSidecarConfigEditor(state.editingWorld);
+    };
+    document.getElementById('w-sidecar-inherit-narrator').onchange = event => {
+        if (!state.editingWorld) return;
+        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!config) return;
+        config.tracker.inheritNarrator = event.target.checked;
+        renderWorldSidecarConfigEditor(state.editingWorld);
+    };
 
     const sandboxBindings = {
         'w-sandbox-enabled': ['enabled', 'checked'],
@@ -13878,6 +13911,28 @@ async function fetchWorldModelSettings() {
     await fetchModelData(modelInput, 'w-', state.editingWorld);
 }
 
+function renderWorldSidecarConfigEditor(world) {
+    if (!world) return;
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world);
+    if (!config) return;
+    const tracker = config.tracker || {};
+    const debug = config.debug || {};
+    document.getElementById('w-sidecar-mode').value = config.mode;
+    document.getElementById('w-sidecar-inherit-narrator').checked = tracker.inheritNarrator !== false;
+    document.getElementById('w-sidecar-model').value = tracker.model || '';
+    document.getElementById('w-sidecar-reasoning').checked = tracker.reasoning === true;
+    document.getElementById('w-sidecar-max-tokens').value = Number(tracker.maxTokens) || 0;
+    document.getElementById('w-sidecar-debug').checked = debug.enabled === true;
+    document.getElementById('w-sidecar-trace-count').value = Number(debug.retainTraceCount) || 20;
+    const inheriting = tracker.inheritNarrator !== false;
+    document.getElementById('w-sidecar-model').disabled = inheriting;
+    const hint = document.getElementById('w-sidecar-mode-hint');
+    hint.textContent = config.mode === 'sidecar'
+        ? 'Active: Narrator writes visible prose and hidden handoff notes; Sidecar performs one native canonical commit. Legacy repair and Chronicle classifier paths are bypassed.'
+        : 'Inline Legacy is retained for compatibility. It uses the existing receipt/classifier adapters; migrate a selected world deliberately before switching a live timeline to Sidecar.';
+    initializeOpenRouterRoutingPanel('sidecar');
+}
+
 function openWorldStudio(worldId = null) {
     if (worldId) {
         const world = state.worlds.find(w => w.id === worldId);
@@ -13924,6 +13979,7 @@ function openWorldStudio(worldId = null) {
     document.getElementById('w-kernel-memory-mode').value = kernelConfig.memoryMode;
     document.getElementById('w-kernel-repair-mode').value = kernelConfig.repairMode;
     document.getElementById('w-kernel-compact-tools').checked = kernelConfig.compactTools;
+    renderWorldSidecarConfigEditor(w);
 
     document.getElementById('w-studio-temp').value = w.temp ?? 0.9;
     document.getElementById('w-studio-min-p').value = w.minP ?? 0.0;
@@ -13978,10 +14034,44 @@ function openWorldStudio(worldId = null) {
     }
 }
 
+function migrateWorldTimelinesToSidecar(world, legacyConfig = null) {
+    const instance = state.worldInstances?.[world?.id];
+    const sessions = Array.isArray(instance?.sessions) ? instance.sessions : [];
+    const reports = [];
+    sessions.forEach(sess => {
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        if (!protocol || protocol.mode === 'sidecar') return;
+        const warnings = [];
+        if ((sess.pendingChecks || []).length) warnings.push('pending checks require narration before their outcome can commit');
+        if (sess.unresolvedDestination) warnings.push('an unresolved destination is already queued');
+        if ((sess.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length)) warnings.push('prior legacy receipts contain rejected proposals');
+        protocol.migration = {
+            from: 'inline_legacy', to: 'sidecar', migratedAt: new Date().toISOString(),
+            sourceHistoryCount: (sess.history || []).length,
+            sourceReceiptCount: (sess.worldTurnReceipts || []).length,
+            warnings,
+            // Canonical source history and receipts remain in their existing
+            // stores. This compact audit supports a future rollback/import UI.
+            legacyConfig: safeJsonClone(legacyConfig || world.sidecarConfig || {})
+        };
+        protocol.mode = 'sidecar';
+        protocol.packet = null;
+        (sess.history || []).forEach(message => { delete message.embedding; });
+        delete sess.vectorMemory;
+        delete sess.embeddingCache;
+        // These are derived retrieval material; raw turns and canonical
+        // receipts remain, then rebuild under Sidecar when requested.
+        sess.episodicMemories = [];
+        reports.push({ id: sess.id, warnings });
+    });
+    return reports;
+}
 
 async function saveWorld() {
     const w = state.editingWorld;
     if (!w) return;
+    const storedBeforeSave = state.worlds.find(world => world.id === w.id);
+    const wasSidecar = storedBeforeSave?.sidecarConfig?.mode === 'sidecar';
 
     w.name = document.getElementById('w-studio-name').value.trim();
     w.description = document.getElementById('w-studio-desc').value.trim();
@@ -14005,6 +14095,28 @@ async function saveWorld() {
         repairMode: document.getElementById('w-kernel-repair-mode').value,
         compactTools: document.getElementById('w-kernel-compact-tools').checked
     } });
+    const priorSidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.(w) || {};
+    const sidecarDraftWorld = {
+        ...w,
+        sidecarConfig: {
+            ...priorSidecarConfig,
+            mode: document.getElementById('w-sidecar-mode').value,
+            tracker: {
+                ...(priorSidecarConfig.tracker || {}),
+                inheritNarrator: document.getElementById('w-sidecar-inherit-narrator').checked,
+                model: document.getElementById('w-sidecar-model').value.trim(),
+                openRouterRouting: readOpenRouterRoutingPanel('sidecar'),
+                reasoning: document.getElementById('w-sidecar-reasoning').checked,
+                maxTokens: document.getElementById('w-sidecar-max-tokens').value
+            },
+            debug: {
+                ...(priorSidecarConfig.debug || {}),
+                enabled: document.getElementById('w-sidecar-debug').checked,
+                retainTraceCount: document.getElementById('w-sidecar-trace-count').value
+            }
+        }
+    };
+    w.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.(sidecarDraftWorld) || priorSidecarConfig;
     w.temp = parseFloat(document.getElementById('w-studio-temp').value) || 0.9;
     w.minP = parseFloat(document.getElementById('w-studio-min-p').value) || 0.0;
     w.topP = parseFloat(document.getElementById('w-studio-top-p').value) || 1.0;
@@ -14047,9 +14159,16 @@ async function saveWorld() {
         state.worlds.push(JSON.parse(JSON.stringify(w)));
     }
 
+    const savedWorld = state.worlds[idx !== -1 ? idx : state.worlds.length - 1];
+    const migrationReports = savedWorld.sidecarConfig?.mode === 'sidecar' && !wasSidecar
+        ? migrateWorldTimelinesToSidecar(savedWorld, storedBeforeSave?.sidecarConfig)
+        : [];
+
     worldMediaDirty = true;
     await saveState();
-    showToast('World Saved!', 'success');
+    showToast(migrationReports.length
+        ? `World saved; ${migrationReports.length} timeline${migrationReports.length === 1 ? '' : 's'} prepared for Sidecar.`
+        : 'World Saved!', 'success');
     renderWorlds();
 }
 

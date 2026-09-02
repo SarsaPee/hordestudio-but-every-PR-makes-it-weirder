@@ -990,6 +990,39 @@
                                 </div>
                             </div>
 
+                            <div class="form-section" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
+                                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+                                    <div>
+                                        <span class="vh-eyebrow">STATE PIPELINE</span>
+                                        <h3 style="margin:4px 0 6px; font-size:1rem;">Narrator + Sidecar</h3>
+                                    </div>
+                                    <select id="w-sidecar-mode" class="form-select" style="max-width:190px;">
+                                        <option value="inline_legacy">Inline Legacy</option>
+                                        <option value="sidecar">Sidecar</option>
+                                    </select>
+                                </div>
+                                <p class="form-hint">Sidecar uses a tool-free narrator call followed by one canonical reconciliation call. Inline Legacy retains the existing classifier and receipt-repair adapters for older worlds.</p>
+                                <div id="w-sidecar-config-grid" class="world-kernel-config-grid" style="margin-top:12px;">
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-inherit-narrator" checked> Use narrator model and routing</label>
+                                    <div>
+                                        <label class="form-label">Sidecar model <span class="form-hint">(blank when inheriting)</span></label>
+                                        <input id="w-sidecar-model" class="form-input" placeholder="Use narrator model">
+                                    </div>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-reasoning"> Low reasoning for reconciliation</label>
+                                    <div>
+                                        <label class="form-label">Sidecar max tokens <span class="form-hint">(0 = default)</span></label>
+                                        <input id="w-sidecar-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" value="0">
+                                    </div>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-debug"> Retain unabridged prompt/reply traces</label>
+                                    <div>
+                                        <label class="form-label">Trace history</label>
+                                        <input id="w-sidecar-trace-count" type="number" class="form-input" min="1" max="200" step="1" value="20">
+                                    </div>
+                                </div>
+                                <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden"></div>
+                                <p id="w-sidecar-mode-hint" class="form-hint" style="margin:12px 0 0;"></p>
+                            </div>
+
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
                                 <label class="form-label" style="display:flex; align-items:center; gap:8px; margin:0;">
                                     <input type="checkbox" id="w-agent-enabled">
