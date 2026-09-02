@@ -10901,6 +10901,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
     const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
     if (!graph) return;
+    const startMemoryEpoch = Number(sess._memEpoch) || 0;
     window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: 5 });
     const runnable = (protocol.jobs || []).filter(job => ['episode_consolidation', 'cognition_consolidation'].includes(job.type) && job.status === 'queued'
         && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now())).slice(0, 6);
@@ -10934,6 +10935,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
                 if (!response.ok) throw new Error(`Cognition consolidation failed (${response.status})`);
                 const output = parseSidecarCognitionOutput((await response.json())?.choices?.[0]?.message?.content || '');
                 if (!output) throw new Error('Cognition consolidation returned no usable JSON.');
+                if ((Number(sess._memEpoch) || 0) !== startMemoryEpoch) return;
                 output.memories.forEach(memory => graph.cognition.push({
                     id: `cognition_${Date.now().toString(36)}_${graph.cognition.length + 1}`, status: 'active', createdAt: new Date().toISOString(),
                     characterId: character.id, characterName: character.name, episodeId: episode.id, text: memory.text,
@@ -10965,6 +10967,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
             if (!response.ok) throw new Error(`Episode consolidation failed (${response.status})`);
             const output = parseSidecarEpisodeOutput((await response.json())?.choices?.[0]?.message?.content || '');
             if (!output) throw new Error('Episode consolidation returned no usable JSON.');
+            if ((Number(sess._memEpoch) || 0) !== startMemoryEpoch) return;
             window.HordeSidecarMemoryGraph.completeEpisode(protocol, job.id, output);
             protocol.packet = buildSidecarScenePacket(world, sess);
         } catch (error) {
