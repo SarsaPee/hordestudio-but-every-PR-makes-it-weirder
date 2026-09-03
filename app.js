@@ -11384,11 +11384,12 @@ async function runSidecarReconciliation(world, sess, options = {}) {
 function parseSidecarConversationResponse(content) {
     const raw = String(content || '').trim();
     const parsed = safeParseJSONRepair(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-    if (!isPlainObject(parsed)) return { reply: raw || 'Sidecar did not return a usable reply.', resolutions: [], proposedReceipt: null };
+    if (!isPlainObject(parsed)) return { reply: raw || 'Sidecar did not return a usable reply.', resolutions: [], proposedReceipt: null, workspaceAction: 'none' };
     return {
         reply: String(parsed.reply || '').trim() || 'I have recorded the discussion.',
         resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions.slice(0, 12) : [],
-        proposedReceipt: isPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null
+        proposedReceipt: isPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null,
+        workspaceAction: ['none', 'close_scene', 'begin_sequence_plan', 'approve_sequence_plan', 'context_refresh'].includes(parsed.workspace_action) ? parsed.workspace_action : 'none'
     };
 }
 
@@ -11690,12 +11691,13 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
     const packet = protocol.packet || buildSidecarScenePacket(world, sess);
     const openQuestions = (protocol.questions || []).filter(question => question.status === 'open').slice(-20);
+    const workspaceContract = `\n\nWORKSPACE:\n${JSON.stringify(protocol.workspace || { kind: 'world_gm' })}\nIf and only if the author explicitly approves an available workspace action, include an additional JSON field "workspace_action" with one of: "close_scene", "begin_sequence_plan", "approve_sequence_plan", "context_refresh". Otherwise set it to "none". Never infer approval from merely opening a workspace.`;
     const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay, and a conversation must not itself advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts. Implied people and places are evidence-backed provisional records, not canonical entities: explain their status, but only propose promotion when the author explicitly asks.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers, including a clearly requested clock correction. It must be a complete native commit_world_turn receipt, and must never turn a conversation into an automatic tick, arrival, traversal progression, presence change, or speculative fact. If no state change is requested, use null.\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nIMPLIED RECORDS AWAITING REVIEW:\n${JSON.stringify([...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])].filter(record => record.status !== 'promoted').slice(-20))}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
     const body = {
         model, stream: false,
         max_tokens: Math.max(400, Number(tracker.maxTokens) || 1200),
         temperature: 0.2,
-        messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Respond as Sidecar.' }]
+        messages: [{ role: 'system', content: prompt + workspaceContract }, { role: 'user', content: 'Respond as Sidecar.' }]
     };
     if (tracker.reasoning === true) body.reasoning_effort = 'low';
     const sidecarWorld = { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
@@ -11729,6 +11731,26 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'sidecar_conversation', status: resolution.status, answer: resolution.answer || '' });
         updateSidecarQuestion(world, sess, question.id, { status: resolution.status, answer: resolution.answer || '', resolutionType: resolution.status === 'resolved' ? 'direct_user_answer' : 'direct_user_deferral', provenance: { source: 'direct_user_refinement', conversationId: authorEntry.id } });
     });
+    if (result.workspaceAction === 'close_scene') {
+        const active = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+        if (active?.scene?.status === 'active') {
+            const closedSceneId = active.scene.id;
+            active.scene.status = 'closed'; active.scene.closedAt = new Date().toISOString();
+            active.scene.endTurnId = (protocol.turns || []).filter(turn => turn.sceneId === closedSceneId).at(-1)?.id || '';
+            active.scene.provisionalReview = { status: 'author_approved', reviewedAt: new Date().toISOString(), provenance: { source: 'sidecar_conversation', conversationId: authorEntry.id } };
+            const memory = effectiveSidecarMemoryConfig(world);
+            window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'scene_transition', priority: 'scene_transition' });
+            protocol.activeSceneId = '';
+            sidecarEntry.workspaceAction = { type: 'close_scene', sceneId: closedSceneId, source: 'explicit_author_approval' };
+        }
+    } else if (result.workspaceAction === 'begin_sequence_plan') {
+        const plan = window.HordeSidecarTimeline?.beginPlanning(protocol, sess, authorEntry.text);
+        if (plan) sidecarEntry.workspaceAction = { type: 'begin_sequence_plan', planId: plan.id, source: 'explicit_author_approval' };
+    } else if (result.workspaceAction === 'context_refresh') {
+        const memory = effectiveSidecarMemoryConfig(world);
+        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'context_refresh', priority: 'context_refresh' });
+        sidecarEntry.workspaceAction = { type: 'context_refresh', source: 'explicit_author_approval' };
+    }
     protocol.conversations.push(authorEntry, sidecarEntry);
     protocol.conversations = protocol.conversations.slice(-200);
     protocol.refinements.push({ id: `refinement_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), userText: authorEntry.text,
@@ -11736,6 +11758,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     protocol.refinements = protocol.refinements.slice(-200);
     protocol.packet = buildSidecarScenePacket(world, sess);
     recordSidecarTrace(world, sess, { kind: 'conversation', prompt, reply: data?.choices?.[0]?.message || {}, model });
+    if (sidecarEntry.workspaceAction) runSidecarBackgroundMemoryJobs(world, sess).catch(error => console.warn('Sidecar workspace memory dispatch skipped —', error.message));
     return { ...result, commit, packet: protocol.packet };
 }
 
@@ -25911,7 +25934,7 @@ function addWorldMessage(role, text, metadata = {}) {
             // Scrub NPC observations for the previous version
             if (lastMsg.id) {
                 const world = state.worlds.find(w => w.id === state.activeWorldId);
-                if (world) {
+                if (world && !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
                     world.entities.forEach(ent => {
                         if (ent.type === 'npc' && sess.entityStates[ent.id]) {
                             const entState = sess.entityStates[ent.id];
