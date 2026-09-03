@@ -57,7 +57,31 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     function reconcileVehicleEvents(protocol,world,receipt,options={}){const state=traversalState(protocol);if(!state)return[];const changes=[];(receipt?.events||[]).forEach(event=>{if(event?.type!=='movement'||event?.movement_mode!=='vehicle')return;const actorId=clean(event.actor_id,160),vehicleId=clean(event.vehicle_id||event.vehicleId,160),status=clean(event.status,40)||'completed';if(['intended','attempted','in_progress'].includes(status)){let journey=state.journeys.find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey){journey=createJourney(protocol,world,{vehicleId,originId:event.from_location_id||options.playerLocationId,destinationId:event.to_location_id||'',occupants:[actorId],source:'narrator_handoff',evidence:event.evidence||event.cause||'',runtimeKind:vehicleId?'':'rideshare'});if(journey?.id)changes.push({type:'journey_prepared',journeyId:journey.id});}return;}if(status!=='completed')return;const journey=[...state.journeys].reverse().find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey)return;journey.status='completed';journey.completedAt=stamp();journey.destinationAnchorId=clean(event.to_location_id||journey.destinationAnchorId,160);if(journey.vehicleEntityId){const vehicle=(world.entities||[]).find(entity=>entity.id===journey.vehicleEntityId),data=normalizeVehicle(vehicle);if(data)data.parkedAnchorId=journey.destinationAnchorId||data.parkedAnchorId;}else if(journey.runtimeContainer){state.recentRuntimeContainers.push({...journey.runtimeContainer,departedAt:stamp(),journeyId:journey.id});state.recentRuntimeContainers=state.recentRuntimeContainers.slice(-20);}changes.push({type:'journey_completed',journeyId:journey.id});});return changes;}
     function graph(protocol){if(!protocol)return null;const prior=object(protocol.memoryGraph)?protocol.memoryGraph:{};protocol.memoryGraph={schemaVersion:1,worldHistory:Array.isArray(prior.worldHistory)?prior.worldHistory:[],episodes:Array.isArray(prior.episodes)?prior.episodes:[],scenes:Array.isArray(prior.scenes)?prior.scenes:[],sequences:Array.isArray(prior.sequences)?prior.sequences:[],cognition:Array.isArray(prior.cognition)?prior.cognition:[],locationReferences:Array.isArray(prior.locationReferences)?prior.locationReferences:[],lastEpisodeTurnCount:Math.max(0,Number(prior.lastEpisodeTurnCount)||0),...prior};return protocol.memoryGraph;}
     function jobs(protocol){if(!protocol)return[];if(!Array.isArray(protocol.jobs))protocol.jobs=[];return protocol.jobs;}
-    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record)return record;record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
+    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record)return record;record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
+    /* Bring pre-Sidecar visible narration into the same source-pinned graph.
+       This is deliberately an evidence import, not a retroactive receipt: it
+       never invents a handoff, state update, cognition, or scene boundary.
+       The imported raw turn stays active until an Episode has succeeded. */
+    function backfillWorldHistory(protocol,timeline,options={}){
+        const memory=graph(protocol); if(!memory||!timeline)return {added:0,skipped:0};
+        const active=hierarchy(protocol,timeline); const messages=Array.isArray(timeline.history)?timeline.history:[];
+        let added=0, skipped=0;
+        messages.forEach((message,index)=>{
+            const role=String(message?.role||'').toLowerCase();
+            if(role!=='dm'&&role!=='assistant'){return;}
+            const narration=clean(message?.text||message?.content||'',24000); if(!narration){skipped++;return;}
+            const messageId=clean(message?.id||`history_${index}`,160);
+            const turnId=clean(message?.sidecarTurnId||`historical_turn_${messageId}`,180);
+            if(memory.worldHistory.some(record=>record.turnId===turnId||record.timelineMessageId===messageId)){skipped++;return;}
+            const user=messages.slice(0,index).reverse().find(candidate=>String(candidate?.role||'').toLowerCase()==='user');
+            const sourceMessageIds=[user?.id,messageId].map(value=>clean(value,160)).filter(Boolean);
+            const handoff=clean(message?.sidecarBackstage?.handoff||message?.handoff||'',6000);
+            memory.worldHistory.push({id:identifier('world_history'),kind:'world_history',turnId,sequenceId:clean(active?.sequence?.id,160),sceneId:clean(active?.scene?.id,160),status:'active',createdAt:clean(message?.createdAt||message?.timestamp||stamp(),80)||stamp(),narration,sceneReading:handoff,text:narration,timelineMessageId:messageId,sourceMessageIds,provenance:{source:'sidecar_migration_history_backfill',rawSourcePinned:true,legacyMessageId:messageId,semanticHandoffAvailable:!!handoff}}); added++;
+        });
+        memory.worldHistory=memory.worldHistory.slice(-2000);
+        memory.backfill={version:1,completedAt:stamp(),added:(Number(memory.backfill?.added)||0)+added,lastRunAdded:added,skipped:(Number(memory.backfill?.skipped)||0)+skipped};
+        return {added,skipped};
+    }
     function queueEpisode(protocol,options={}){const memory=graph(protocol), pending=jobs(protocol);if(!memory)return null;const active=memory.worldHistory.filter(record=>record.status==='active'),size=Math.max(1,Math.min(20,Number(options.batchSize)||5)),cadence=Math.max(1,Math.min(50,Number(options.cadenceTurns)||size)),available=active.length-memory.lastEpisodeTurnCount;if(available<(options.force?1:cadence))return null;const source=active.slice(memory.lastEpisodeTurnCount,memory.lastEpisodeTurnCount+size);if(!source.length||(!options.force&&source.length<size))return null;const ids=source.map(record=>record.turnId),previous=pending.find(job=>job.type==='episode_consolidation'&&job.status!=='completed'&&Array.isArray(job.sourceTurnIds)&&job.sourceTurnIds.join('|')===ids.join('|'));if(previous)return previous;const job={id:identifier('memory_job'),type:'episode_consolidation',status:'queued',createdAt:stamp(),attempts:0,sourceTurnIds:ids,dependencies:[],priority:options.priority||'background',sourceRange:{start:source[0].id,end:source.at(-1).id},retryAt:'',diagnostics:[],provenance:{source:options.source||'sidecar_memory_dispatcher',forced:options.force===true}};pending.push(job);return job;}
     function queueScope(protocol,scope,id,options={}){const memory=graph(protocol),pending=jobs(protocol),type=scope==='sequence'?'sequence_consolidation':'scene_consolidation',key=scope==='sequence'?'sequenceId':'sceneId';if(!memory||!id)return null;const recordField=scope==='sequence'?'sequenceIds':'sceneIds';const episodes=(memory.episodes||[]).filter(episode=>episode.status==='active'&&(episode[recordField]||[]).includes(id));const sourceTurns=[...new Set(episodes.flatMap(episode=>episode.sourceTurnIds||[]))];let job=pending.find(candidate=>candidate.type===type&&candidate[key]===id&&candidate.status!=='completed');if(job){job.episodeIds=[...new Set([...(job.episodeIds||[]),...episodes.map(episode=>episode.id)])];job.sourceTurnIds=[...new Set([...(job.sourceTurnIds||[]),...sourceTurns])];return job;}if(!episodes.length&&!options.allowEmpty)return null;job={id:identifier('memory_job'),type,status:'queued',createdAt:stamp(),attempts:0,[key]:id,episodeIds:episodes.map(episode=>episode.id),sourceTurnIds,dependencies:episodes.map(episode=>episode.jobId).filter(Boolean),priority:options.priority||'background',retryAt:'',diagnostics:[],provenance:{source:options.source||'scope_transition',sourcePinned:true}};pending.push(job);return job;}
     /* An Episode is a successful, source-pinned replacement layer.  Completing
@@ -123,7 +147,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     global.HordeSidecarTimeline=Object.freeze({ensureHierarchy:hierarchy,beginPlanning,approvePlanning,closeActiveSequence:closeSequence,recordTurn:recordTimelineTurn,contextPressure:pressure});
     global.HordeSidecarPromotion=Object.freeze({ensure:protocol=>protocol,stage,stageReceiptIntroductions:stageIntroductions,markPromotionRequested:promotionFlag,markPromoted:promoted});
     global.HordeSidecarTraversal=Object.freeze({normalizeWorldTraversal:normalizeTraversal,normalizeVehicle,accessibleVehicles:(world,id)=>(world?.entities||[]).filter(entity=>String(entity?.type||'').toLowerCase()==='vehicle'&&(normalizeVehicle(entity)?.ownerEntityId===clean(id,160)||normalizeVehicle(entity)?.access.some(entry=>entry.entityId===clean(id,160)))),resolveEligibleAnchor:anchor,evaluateCoverage:coverage,ensureState:traversalState,createJourney,reconcileVehicleEvents});
-    global.HordeSidecarMemoryGraph=Object.freeze({graph,ensureJobs:jobs,recordTurn:recordMemoryTurn,queueEpisode,queueScope,completeEpisode,failJob});
+    global.HordeSidecarMemoryGraph=Object.freeze({graph,ensureJobs:jobs,recordTurn:recordMemoryTurn,backfillWorldHistory,queueEpisode,queueScope,completeEpisode,failJob});
     global.HordeSidecarHooks=Object.freeze({normalizeWorldTimeline:(world,timeline,options={})=>{const protocol=timelineProtocol(world,timeline,options);normalizeTraversal(world);(world?.entities||[]).forEach(normalizeVehicle);return protocol;},isSidecarWorld:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar',ensureNarrativeHierarchy:(world,timeline)=>{const protocol=timelineProtocol(world,timeline);return protocol?.mode==='sidecar'?hierarchy(protocol,timeline):null;}});
 })(window);
 
@@ -11538,6 +11562,10 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
     const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
     if (!graph) return;
+    // Sidecar migration retains visible history as evidence.  Materialise that
+    // evidence before looking for an Episode so manual archive and ordinary
+    // cadence have the same truthful source set.
+    window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
     const startMemoryEpoch = Number(sess._memEpoch) || 0;
     const memoryDefaults = effectiveSidecarMemoryConfig(world);
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
@@ -36729,6 +36757,12 @@ function setupVectorMemoryViewerEvents() {
     
     if (worldOpenBtn) {
         worldOpenBtn.onclick = () => {
+            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            const sess = getCurrentWorldSession();
+            if (world && sess && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+                const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+                window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
+            }
             currentVectorTab = 'episodic';
             overlay.classList.remove('hidden');
             updateVectorTabUI();
