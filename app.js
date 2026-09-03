@@ -15694,13 +15694,17 @@ function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}
             legacyConfig: safeJsonClone(legacyConfig || world.sidecarConfig || {})
         };
         protocol.mode = 'sidecar';
-        protocol.packet = null;
         (sess.history || []).forEach(message => { delete message.embedding; });
         delete sess.vectorMemory;
         delete sess.embeddingCache;
         // These are derived retrieval material; raw turns and canonical
         // receipts remain, then rebuild under Sidecar when requested.
         sess.episodicMemories = [];
+        // Migration does not retroactively fabricate Sidecar handoffs for
+        // Legacy turns. It does make existing raw history available as pinned
+        // evidence and prepares a real Sidecar packet for the next turn.
+        window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
+        protocol.packet = buildSidecarScenePacket(world, sess);
         reports.push({ id: sess.id, warnings });
     });
     return reports;
@@ -15902,10 +15906,21 @@ async function saveWorld() {
 
     worldMediaDirty = true;
     await saveState();
-    showToast(migrationReports.length
-        ? `World saved; ${migrationReports.length} timeline${migrationReports.length === 1 ? '' : 's'} prepared for Sidecar.`
-        : 'World Saved!', 'success');
     renderWorlds();
+    // Never leave a world-looking Sidecar-enabled while its existing play
+    // timelines silently remain on the Legacy path. The wizard still owns
+    // selection, backup and the actual migration; opening it makes that
+    // required next action visible at the moment the setting changes.
+    const inlineTimelines = (state.worldInstances?.[savedWorld.id]?.sessions || []).filter(session =>
+        window.HordeSidecarHooks?.normalizeWorldTimeline?.(savedWorld, session)?.mode !== 'sidecar');
+    if (switchingToSidecar && inlineTimelines.length) {
+        showToast('Sidecar is configured. Select the existing timeline(s) to migrate before generating another turn.', 'info');
+        openSidecarMigrationWizard(savedWorld.id);
+    } else {
+        showToast(migrationReports.length
+            ? `World saved; ${migrationReports.length} timeline${migrationReports.length === 1 ? '' : 's'} prepared for Sidecar.`
+            : 'World Saved!', 'success');
+    }
 }
 
 async function deleteWorld() {
@@ -22308,19 +22323,7 @@ function setupWorldPlayLogic() {
     };
     
     document.getElementById('world-del-session-btn').onclick = () => {
-        const inst = state.worldInstances[state.activeWorldId];
-        if (!inst || inst.sessions.length <= 1) return showToast('Cannot delete the last session', 'info');
-        
-        showConfirmModal('Delete Session', 'Permanently delete this timeline? This cannot be undone.', async () => {
-            const currentIdx = inst.sessions.findIndex(s => s.id === inst.activeSessionId);
-            if (currentIdx !== -1) {
-                inst.sessions.splice(currentIdx, 1);
-                inst.activeSessionId = inst.sessions[0].id;
-                await saveState();
-                renderWorldPlayState();
-                showToast('Session Deleted');
-            }
-        });
+        showToast('The active timeline is protected. Open Timelines and delete an unselected fork from there.', 'info');
     };
 
     document.getElementById('world-session-select').onchange = (e) => {
@@ -24182,10 +24185,12 @@ function renderWorldTimelineBrowser() {
         const fork = session.forkedFrom || session.sidecar?.migration?.forkedFrom;
         const selected = session.id === activeId;
         const source = fork ? sessions.find(candidate => candidate.id === fork.sessionId) : null;
+        const canDeleteFork = !!fork && !selected;
         return `<div class="world-inspector-section" style="padding:14px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border)'}; border-radius:10px;">
             <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;"><div><strong>${escapeHTML(session.name || session.id)}</strong>${selected ? ' <span class="model-badge">ACTIVE</span>' : ''}<div class="form-hint">${escapeHTML(session.id)} · ${Number(session.turnCount || 0)} committed turn${Number(session.turnCount || 0) === 1 ? '' : 's'}</div></div><button class="tool-btn timeline-select-btn" data-session-id="${escapeHTML(session.id)}">${selected ? 'Selected' : 'Select'}</button></div>
             <div class="form-hint" style="margin-top:8px;">${fork ? `Fork of <strong>${escapeHTML(source?.name || fork.sessionId)}</strong> at committed turn ${Number(fork.turnCount || 0)} · ${escapeHTML(fork.createdAt || '')}` : 'Root timeline · no fork parent'}</div>
-            <div style="display:flex; gap:8px; margin-top:10px; align-items:center;"><label class="form-hint">Fork after turn <input class="form-input timeline-fork-turn" data-session-id="${escapeHTML(session.id)}" type="number" min="0" max="${Number(session.turnCount || 0)}" value="${Number(session.turnCount || 0)}" style="width:80px; display:inline-block; padding:4px 6px;"></label><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button>${fork ? `<span class="form-hint">Source history retained; later derived memory is branch-local.</span>` : ''}</div>
+            <div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap;"><label class="form-hint">Fork after turn <input class="form-input timeline-fork-turn" data-session-id="${escapeHTML(session.id)}" type="number" min="0" max="${Number(session.turnCount || 0)}" value="${Number(session.turnCount || 0)}" style="width:80px; display:inline-block; padding:4px 6px;"></label><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button>${canDeleteFork ? `<button class="tool-btn tool-btn-danger timeline-delete-fork-btn" data-session-id="${escapeHTML(session.id)}">🗑 Delete fork</button>` : ''}${fork ? `<span class="form-hint">${selected ? 'Active timelines are protected from deletion. Select its parent or another timeline to delete this fork.' : 'Source history retained; later derived memory is branch-local.'}</span>` : ''}</div>
+            ${canDeleteFork ? `<div class="timeline-delete-confirm hidden" data-session-id="${escapeHTML(session.id)}" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:9px; padding:8px 10px; border:1px solid var(--warning); border-radius:7px; background:rgba(245,158,11,.08); font-size:.76rem; color:var(--text-2);"><span>Delete this fork and its branch-local derived state?</span><button type="button" class="timeline-delete-fork-yes btn btn-primary" data-session-id="${escapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">Yes</button><button type="button" class="timeline-delete-fork-no btn btn-ghost" data-session-id="${escapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">No</button></div>` : ''}
         </div>`;
     }).join('') : '<div class="form-hint">No timelines exist yet. Create a new timeline from Session Setup.</div>';
     host.querySelectorAll('.timeline-select-btn').forEach(button => button.onclick = async () => {
@@ -24200,6 +24205,25 @@ function renderWorldTimelineBrowser() {
         const turnInput = [...host.querySelectorAll('.timeline-fork-turn')].find(input => input.dataset.sessionId === button.dataset.sessionId);
         await forkCurrentWorldTimeline(button.dataset.sessionId, Number(turnInput?.value), { useDefaultName: true });
         renderWorldTimelineBrowser();
+    });
+    host.querySelectorAll('.timeline-delete-fork-btn').forEach(button => button.onclick = () => {
+        const confirm = host.querySelector(`.timeline-delete-confirm[data-session-id="${CSS.escape(button.dataset.sessionId)}"]`);
+        if (confirm) { confirm.classList.remove('hidden'); confirm.style.display = 'flex'; }
+    });
+    host.querySelectorAll('.timeline-delete-fork-no').forEach(button => button.onclick = () => {
+        const confirm = host.querySelector(`.timeline-delete-confirm[data-session-id="${CSS.escape(button.dataset.sessionId)}"]`);
+        if (confirm) { confirm.classList.add('hidden'); confirm.style.display = 'none'; }
+    });
+    host.querySelectorAll('.timeline-delete-fork-yes').forEach(button => button.onclick = async () => {
+        const inst = state.worldInstances?.[state.activeWorldId];
+        const target = inst?.sessions?.find(session => session.id === button.dataset.sessionId);
+        if (!inst || !target?.forkedFrom) return showToast('Only an unselected fork can be deleted here.', 'info');
+        if (target.id === inst.activeSessionId) return showToast('The active timeline is protected from deletion.', 'info');
+        inst.sessions = inst.sessions.filter(session => session.id !== target.id);
+        await saveState();
+        renderWorldTimelineBrowser();
+        renderWorldPlayState();
+        showToast('Fork deleted. Its branch-local derived state was removed with it.', 'success');
     });
 }
 
@@ -25328,6 +25352,16 @@ function renderWorldPlayState() {
             sessSelect.appendChild(opt);
         });
     }
+    const deleteActiveTimelineButton = document.getElementById('world-del-session-btn');
+    if (deleteActiveTimelineButton) {
+        // A live/selected timeline is the user's continuity anchor. Forks are
+        // deleted from the timeline browser only while another timeline is
+        // active, with an inline confirmation beside that fork.
+        deleteActiveTimelineButton.disabled = true;
+        deleteActiveTimelineButton.title = 'The active timeline is protected. Select another timeline, then delete an unselected fork in Timelines.';
+        deleteActiveTimelineButton.style.opacity = '.45';
+        deleteActiveTimelineButton.style.cursor = 'not-allowed';
+    }
 
     // Render World Ledger
     const ledgerContent = document.getElementById('world-ledger-content');
@@ -25388,6 +25422,19 @@ function renderWorldPlayState() {
         if (closeButton && sidecarAvailable) {
             closeButton.disabled = !hierarchy;
             closeButton.title = hierarchy ? `Close ${hierarchy.sequence.title}` : 'No active sequence — plan the next sequence';
+        }
+        const pipelineButton = document.getElementById('world-pipeline-status-btn');
+        if (pipelineButton) {
+            pipelineButton.textContent = sidecarAvailable ? '◉ Sidecar' : '⚠ Legacy · migrate';
+            pipelineButton.title = sidecarAvailable
+                ? 'This timeline is using the two-call Sidecar reconciliation pipeline. Open Backstage to inspect its handoffs and receipts.'
+                : 'This world may be configured for Sidecar, but this existing timeline is still Inline Legacy. Migrate it before generating a Sidecar turn.';
+            pipelineButton.style.color = sidecarAvailable ? 'var(--success)' : 'var(--warning)';
+            pipelineButton.style.borderColor = sidecarAvailable ? 'var(--success)' : 'var(--warning)';
+            pipelineButton.onclick = () => {
+                if (sidecarAvailable) openWorldSidecarInspector('backstage');
+                else openSidecarMigrationWizard(world.id);
+            };
         }
     }
     renderSidecarConversation(world, sess);
@@ -25737,6 +25784,11 @@ function appendWorldMessageUI(msg, index = null) {
             ${metaHtml}
             ${backstageHtml}
             <textarea class="msg-edit-area hidden" style="width:100%; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:8px; margin-top:8px; font-family:inherit; font-size:inherit;"></textarea>
+            <div class="msg-rewind-confirm hidden" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; padding:8px 10px; border:1px solid var(--warning); border-radius:7px; background:rgba(245,158,11,.08); font-size:.76rem; color:var(--text-2);">
+                <span>Rewind this turn to the edited draft?</span>
+                <button type="button" class="msg-rewind-yes btn btn-primary" style="padding:4px 9px; font-size:.72rem;">Yes</button>
+                <button type="button" class="msg-rewind-no btn btn-ghost" style="padding:4px 9px; font-size:.72rem;">No</button>
+            </div>
             ${msg.role === 'dm' && versions.length > 1 && !isLastEntry ? `
                 <div style="font-size:0.65rem; color:var(--text-3); margin-top:6px;" title="Takes can only be switched on the latest response — switching older ones would rewind the world state underneath everything that happened since.">🔒 take ${currentVersionIdx + 1}/${versions.length} (locked — older turn)</div>
             ` : ''}
@@ -25751,6 +25803,7 @@ function appendWorldMessageUI(msg, index = null) {
             <div class="msg-actions" style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
                 ${index !== null ? `
                 <button class="msg-edit-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">✎ Edit</button>
+                ${msg.role === 'user' ? `<button class="msg-rewind-draft-btn hidden" style="background:none; border:none; color:var(--warning); font-size:0.7rem; cursor:pointer;">↶ Rewind to draft</button>` : ''}
                 ${msg.role === 'dm' ? `<button class="msg-fork-btn" data-fork-turn="${turnNumber}" title="Create a new timeline from this committed turn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">⑂ Fork</button>` : ''}
                 <button class="msg-del-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">🗑️ Delete</button>
                 ` : ''}
@@ -25764,7 +25817,22 @@ function appendWorldMessageUI(msg, index = null) {
         const delBtn = div.querySelector('.msg-del-btn');
         const editArea = div.querySelector('.msg-edit-area');
         const textDiv = div.querySelector('.msg-text');
+        const rewindDraftBtn = div.querySelector('.msg-rewind-draft-btn');
+        const rewindConfirm = div.querySelector('.msg-rewind-confirm');
+        const rewindYes = div.querySelector('.msg-rewind-yes');
+        const rewindNo = div.querySelector('.msg-rewind-no');
         const sess = getCurrentWorldSession();
+        let pendingRewind = null;
+        const hideRewindConfirm = () => {
+            pendingRewind = null;
+            if (rewindConfirm) { rewindConfirm.classList.add('hidden'); rewindConfirm.style.display = 'none'; }
+        };
+        rewindNo?.addEventListener('click', hideRewindConfirm);
+        rewindYes?.addEventListener('click', async () => {
+            const action = pendingRewind;
+            hideRewindConfirm();
+            if (action) await action();
+        });
 
         forkBtn?.addEventListener('click', () => forkCurrentWorldTimeline(sess.id, Number(forkBtn.dataset.forkTurn), { useDefaultName: true }));
 
@@ -25818,6 +25886,46 @@ function appendWorldMessageUI(msg, index = null) {
             });
         };
 
+        const prepareRewind = () => {
+            const editedText = editArea.value.trim();
+            if (!editedText) return showToast('The replay draft cannot be empty.', 'info');
+            const currentSession = getCurrentWorldSession();
+            const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
+            const affectedDm = messageIndex >= 0
+                ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
+                : null;
+            if (!affectedDm) return showToast('There is no committed response after this message to rewind.', 'info');
+            pendingRewind = async () => {
+                const world = state.worlds.find(item => item.id === state.activeWorldId);
+                if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
+                // The snapshot restores Sidecar's selected pre-turn revision
+                // and invalidates all derived Episode, cognition, scene and
+                // sequence output sourced by the discarded tail. The ordinary
+                // legacy archive receives the same rewind for Inline timelines.
+                invalidateEpisodicFrom(currentSession, messageIndex);
+                currentSession.history.splice(messageIndex);
+                const mode = document.getElementById('world-conversation-mode');
+                if (mode?.value !== 'narrator') {
+                    mode.value = 'narrator';
+                    mode.dispatchEvent(new Event('change'));
+                }
+                const input = document.getElementById('world-user-input');
+                if (input) {
+                    input.value = editedText;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                await saveState();
+                renderWorldPlayState();
+                document.getElementById('world-user-input')?.focus();
+                showToast('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
+            };
+            if (rewindConfirm) {
+                rewindConfirm.classList.remove('hidden');
+                rewindConfirm.style.display = 'flex';
+            } else pendingRewind();
+        };
+        rewindDraftBtn?.addEventListener('click', prepareRewind);
+
         let isEditing = false;
         editBtn.onclick = async () => {
             if (!isEditing) {
@@ -25830,54 +25938,27 @@ function appendWorldMessageUI(msg, index = null) {
                 // world state and return the author to an unsent draft.
                 const draftable = msg.role === 'user' && sess?.history.slice(index + 1)
                     .some(entry => entry.role === 'dm' && entry.turnSnapshot);
-                editBtn.textContent = draftable ? '↶ Rewind to draft' : '💾 Save';
+                editBtn.textContent = '💾 Save';
+                rewindDraftBtn?.classList.toggle('hidden', !draftable);
                 editArea.focus();
             } else {
                 const editedText = editArea.value.trim();
-                if (!editedText) return showToast('The replay draft cannot be empty.', 'info');
+                if (!editedText) return showToast('The edited message cannot be empty.', 'info');
                 const currentSession = getCurrentWorldSession();
                 const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
-                const affectedDm = messageIndex >= 0
-                    ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
-                    : null;
-                if (msg.role === 'user' && affectedDm) {
-                    showConfirmModal(
-                        'Rewind to draft?',
-                        'This removes this player line and everything after it from the current timeline, restores the state immediately before it, and returns your edited text as an unsent narrator draft. Continue?',
-                        async () => {
-                            const world = state.worlds.find(item => item.id === state.activeWorldId);
-                            if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
-                            // The snapshot restores Sidecar's selected pre-turn
-                            // revision and invalidates all derived Episode,
-                            // cognition, scene and sequence output sourced by
-                            // the discarded tail.  The ordinary legacy archive
-                            // receives the same rewind for Inline timelines.
-                            invalidateEpisodicFrom(currentSession, messageIndex);
-                            currentSession.history.splice(messageIndex);
-                            const mode = document.getElementById('world-conversation-mode');
-                            if (mode?.value !== 'narrator') {
-                                mode.value = 'narrator';
-                                mode.dispatchEvent(new Event('change'));
-                            }
-                            const input = document.getElementById('world-user-input');
-                            if (input) {
-                                input.value = editedText;
-                                input.dispatchEvent(new Event('input', { bubbles: true }));
-                            }
-                            await saveState();
-                            renderWorldPlayState();
-                            document.getElementById('world-user-input')?.focus();
-                            showToast('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
-                        }
-                    );
-                    return;
-                }
                 if (msg.versions) {
                     msg.versions[currentVersionIdx] = editedText;
                     // Displayed version IS the active version — keep .text canonical
                     if (currentVersionIdx === (msg.currentVersion ?? msg.versions.length - 1)) msg.text = editedText;
                 } else msg.text = editedText;
                 if (currentSession) invalidateEpisodicFrom(currentSession, messageIndex);
+                if (msg.role === 'user' && currentSession?.history.slice(messageIndex + 1).some(entry => entry.role === 'dm')) {
+                    msg.authorialEdit = {
+                        editedAt: new Date().toISOString(),
+                        mode: 'text_only',
+                        note: 'Visible player wording was edited without replaying the already committed response.'
+                    };
+                }
                 await saveState();
                 renderWorldPlayState();
                 isEditing = false;
