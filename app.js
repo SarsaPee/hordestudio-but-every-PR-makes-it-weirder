@@ -2154,6 +2154,7 @@ function isPlainObject(value) {
 }
 
 function safeJsonClone(value) {
+    if (value === undefined) return undefined;
     return JSON.parse(JSON.stringify(value, (key, item) => {
         if (key === '__proto__' || key === 'prototype' || key === 'constructor') return undefined;
         return item;
@@ -24132,7 +24133,8 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     fork.id = `wsess_${Date.now()}`;
     fork.name = String(name || '').trim() || defaultName;
     fork.createdAt = new Date().toISOString();
-    fork.forkedFrom = { sessionId: source.id, turnCount: requestedTurn, createdAt: fork.createdAt };
+    const forkLineage = { sessionId: source.id, turnCount: requestedTurn, createdAt: fork.createdAt };
+    fork.forkedFrom = safeJsonClone(forkLineage);
     if (requestedTurn < maxTurn) {
         const dmTurns = fork.history.map((message, index) => ({ message, index })).filter(item => item.message.role === 'dm' && Array.isArray(item.message.versionSnapshots));
         const selected = requestedTurn === 0 ? (dmTurns[0] || null) : (dmTurns[requestedTurn - 1] || null);
@@ -24146,6 +24148,12 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
                 snapshot.world = snapshot.world || {};
                 snapshot.world.dynamicEntities = (snapshot.world.dynamicEntities || []).map(entity => ({ ...entity, sessionOrigin: fork.id }));
                 restoreWorldTurnState(world, fork, snapshot);
+                // Snapshot restoration deliberately replaces session state.
+                // Fork lineage belongs to the wrapper, not historical state,
+                // so put it back after the restore rather than letting a
+                // pre-fork snapshot erase the branch's identity.
+                fork.forkedFrom = safeJsonClone(forkLineage);
+                fork.createdAt = forkLineage.createdAt;
                 fork.history = fork.history.slice(0, requestedTurn === 0 ? selected.index : selected.index + 1);
                 fork.turnCount = requestedTurn;
             }
@@ -24153,7 +24161,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     }
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, fork);
     if (protocol) {
-        protocol.migration = { ...(protocol.migration || {}), forkedFrom: safeJsonClone(fork.forkedFrom) };
+        protocol.migration = { ...(protocol.migration || {}), forkedFrom: safeJsonClone(forkLineage) };
         protocol.packet = buildSidecarScenePacket(world, fork);
     }
     inst.sessions.push(fork);
@@ -25819,8 +25827,7 @@ function appendWorldMessageUI(msg, index = null) {
                 editArea.value = displayText;
                 // A player line with a later committed DM response is not a
                 // simple text field: changing it must restore the pre-turn
-                // world state and preserve the existing continuity as a fork.
-                // The author returns to an unsent draft on the new branch.
+                // world state and return the author to an unsent draft.
                 const draftable = msg.role === 'user' && sess?.history.slice(index + 1)
                     .some(entry => entry.role === 'dm' && entry.turnSnapshot);
                 editBtn.textContent = draftable ? '↶ Rewind to draft' : '💾 Save';
@@ -25834,26 +25841,19 @@ function appendWorldMessageUI(msg, index = null) {
                     ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
                     : null;
                 if (msg.role === 'user' && affectedDm) {
-                    const priorCommittedTurns = currentSession.history.slice(0, messageIndex)
-                        .filter(entry => entry.role === 'dm').length;
                     showConfirmModal(
-                        'Rewind to draft on a new fork',
-                        'This keeps the current timeline intact. Horde will create a branch at the state immediately before this player line, remove this line and everything after it from the branch, and return your edited text as an unsent narrator draft. Continue?',
+                        'Rewind to draft?',
+                        'This removes this player line and everything after it from the current timeline, restores the state immediately before it, and returns your edited text as an unsent narrator draft. Continue?',
                         async () => {
-                            const fork = await forkCurrentWorldTimeline(currentSession.id, priorCommittedTurns, { useDefaultName: true });
-                            if (!fork) return;
-                            fork.rewindDraft = {
-                                sourceSessionId: currentSession.id,
-                                sourceMessageId: msg.id || '',
-                                sourceHistoryIndex: messageIndex,
-                                createdAt: new Date().toISOString(),
-                                provenance: 'author_rewind_to_draft'
-                            };
-                            // Fork restoration invalidates every derived record
-                            // sourced after the branch point.  Raw turns remain
-                            // source-pinned in the parent; no child memory is
-                            // allowed to leak across this divergent draft.
-                            invalidateEpisodicFrom(fork, fork.history.length);
+                            const world = state.worlds.find(item => item.id === state.activeWorldId);
+                            if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
+                            // The snapshot restores Sidecar's selected pre-turn
+                            // revision and invalidates all derived Episode,
+                            // cognition, scene and sequence output sourced by
+                            // the discarded tail.  The ordinary legacy archive
+                            // receives the same rewind for Inline timelines.
+                            invalidateEpisodicFrom(currentSession, messageIndex);
+                            currentSession.history.splice(messageIndex);
                             const mode = document.getElementById('world-conversation-mode');
                             if (mode?.value !== 'narrator') {
                                 mode.value = 'narrator';
@@ -25867,7 +25867,7 @@ function appendWorldMessageUI(msg, index = null) {
                             await saveState();
                             renderWorldPlayState();
                             document.getElementById('world-user-input')?.focus();
-                            showToast('Fork rewound. Review the draft, then send it to create divergent continuity.', 'success');
+                            showToast('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
                         }
                     );
                     return;
