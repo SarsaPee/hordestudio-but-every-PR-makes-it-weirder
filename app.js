@@ -101,8 +101,15 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             if(child){child.episodeIds=[...new Set([...(child.episodeIds||[]),episode.id])];child.sourceTurnIds=[...new Set([...(child.sourceTurnIds||[]),...episode.sourceTurnIds])];return child;}
             child={id:identifier('memory_job'),type,status:'queued',createdAt:stamp(),attempts:0,[key]:identity,episodeIds:[episode.id],sourceTurnIds:episode.sourceTurnIds.slice(),dependencies:[job.id],priority:'background',retryAt:'',diagnostics:[],provenance:{source:'episode_hierarchy',sourceEpisodeId:episode.id}};pending.push(child);return child;
         };
-        episode.sceneIds.forEach(id=>queue('scene_consolidation',id));
-        episode.sequenceIds.forEach(id=>queue('sequence_consolidation',id));
+        // A scene/sequence record may collect several Episodes while it is
+        // live, but it is only a replacement layer once that dramatic scope
+        // has actually closed.  Summarising an open scope and then removing
+        // its raw context is how information gets silently lost mid-scene.
+        // The closure transition is therefore the dispatcher boundary for
+        // Scene and Sequence consolidation; the source Episodes remain
+        // pinned either way.
+        episode.sceneIds.forEach(id=>{ if((protocol.scenes||[]).some(scene=>scene.id===id&&scene.status==='closed')) queue('scene_consolidation',id); });
+        episode.sequenceIds.forEach(id=>{ if((protocol.sequences||[]).some(sequence=>sequence.id===id&&sequence.status==='closed')) queue('sequence_consolidation',id); });
         episode.perceptionCoverage.forEach(coverage=>{
             const characterId=clean(coverage?.characterId,160),access=clean(coverage?.access,80).toLowerCase();
             if(!characterId||access==='absent')return;
@@ -11503,8 +11510,9 @@ function effectiveSidecarMemoryConfig(world) {
     const global = state.globalSettings || {};
     const local = world?.sidecarConfig?.memory && typeof world.sidecarConfig.memory === 'object'
         ? world.sidecarConfig.memory : {};
+    const inherited = name => local.inheritGlobal === false ? local[name] : (global[name] ?? local[name]);
     const pick = (name, fallback, min, max) => {
-        const candidate = local.inheritGlobal === false ? local[name] : (global[name] ?? local[name]);
+        const candidate = inherited(name);
         const numeric = Math.round(Number(candidate));
         return Number.isFinite(numeric) ? Math.max(min, Math.min(max, numeric)) : fallback;
     };
@@ -11518,13 +11526,14 @@ function effectiveSidecarMemoryConfig(world) {
         retrievalLimit: pick('retrievalLimit', 8, 1, 24),
         cognitionRecentLimit: pick('cognitionRecentLimit', 8, 1, 30),
         cognitionSemanticTopK: pick('cognitionSemanticTopK', 6, 1, 20),
-        consolidationMaxTokens: Number(local.inheritGlobal === false ? local.consolidationMaxTokens : (local.consolidationMaxTokens ?? global.consolidationMaxTokens)) || 1400,
-        consolidationTemperature: Number(local.inheritGlobal === false ? local.consolidationTemperature : (local.consolidationTemperature ?? global.consolidationTemperature)) || 0,
-        consolidationReasoning: (local.inheritGlobal === false ? local.consolidationReasoning : (local.consolidationReasoning ?? global.consolidationReasoning)) === true
+        consolidationModel: String(inherited('consolidationModel') || global.consolidationModel || world?.model || state.globalSettings?.defaultModel || '').trim(),
+        consolidationMaxTokens: Number(inherited('consolidationMaxTokens')) || 1400,
+        consolidationTemperature: Number(inherited('consolidationTemperature')) || 0,
+        consolidationReasoning: inherited('consolidationReasoning') === true
     };
 }
 
-async function runSidecarBackgroundMemoryJobs(world, sess) {
+async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
     if (!hasApiCredentials() || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return;
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
     const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
@@ -11534,9 +11543,15 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
     const model = tracker.inheritNarrator !== false || !tracker.model
-        ? (state.globalSettings?.consolidationModel || world.model || state.globalSettings.defaultModel)
+        ? (memoryDefaults.consolidationModel || world.model || state.globalSettings.defaultModel)
         : tracker.model;
-    window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: memoryDefaults.episodeChunkTurns, cadenceTurns: memoryDefaults.episodeCadenceTurns });
+    window.HordeSidecarMemoryGraph.queueEpisode(protocol, {
+        batchSize: memoryDefaults.episodeChunkTurns,
+        cadenceTurns: memoryDefaults.episodeCadenceTurns,
+        force: options.force === true,
+        source: options.source || 'sidecar_memory_dispatcher',
+        priority: options.priority || (options.force === true ? 'manual' : 'background')
+    });
     const providerLimit = Math.max(1, Math.min(12, Number(memoryDefaults.backgroundProviderConcurrency) || 2));
     const overallLimit = Math.max(1, Math.min(12, Number(memoryDefaults.consolidationConcurrency) || 6));
     const queuedJobs = (protocol.jobs || []).filter(job => ['episode_consolidation', 'scene_consolidation', 'sequence_consolidation', 'cognition_consolidation'].includes(job.type) && ['queued', 'dependency_waiting'].includes(job.status)
@@ -11548,7 +11563,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
             job.status = 'dependency_waiting'; job.waitingSince = job.waitingSince || new Date().toISOString();
         } else if (job.status === 'dependency_waiting') job.status = 'queued';
         job.provider = job.provider || state.globalSettings?.apiProvider || 'openrouter';
-        job.model = job.model || state.globalSettings?.consolidationModel || model;
+        job.model = job.model || memoryDefaults.consolidationModel || model;
     });
     const runnable = queuedJobs.filter(job => job.status === 'queued').slice(0, overallLimit);
     if (!runnable.length) return;
@@ -11676,9 +11691,12 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
     // Episode completion creates dependent cognition and hierarchy jobs after
     // this wave was selected.  Yield once, then dispatch a fresh bounded wave;
     // this is deliberately background-only and never becomes a third turn call.
-    if (scheduled.some(job => job.type === 'episode_consolidation')
-        && (protocol.jobs || []).some(job => job.status === 'queued' && job.provenance?.source !== 'sidecar_memory_dispatcher')) {
-        setTimeout(() => runSidecarBackgroundMemoryJobs(world, sess).catch(error => console.warn('Sidecar memory follow-up wave skipped —', error.message)), 0);
+    const hasDependentWave = (protocol.jobs || []).some(job => job.status === 'queued' && job.provenance?.source !== 'sidecar_memory_dispatcher');
+    const activeCount = (graph.worldHistory || []).filter(record => record.status === 'active').length;
+    const hasForcedRemainder = options.force === true && activeCount > Number(graph.lastEpisodeTurnCount || 0)
+        && scheduled.some(job => job.type === 'episode_consolidation' && job.status === 'completed');
+    if (hasDependentWave || hasForcedRemainder) {
+        setTimeout(() => runSidecarBackgroundMemoryJobs(world, sess, options).catch(error => console.warn('Sidecar memory follow-up wave skipped —', error.message)), 0);
     }
 }
 
@@ -11746,6 +11764,20 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     } else if (result.workspaceAction === 'begin_sequence_plan') {
         const plan = window.HordeSidecarTimeline?.beginPlanning(protocol, sess, authorEntry.text);
         if (plan) sidecarEntry.workspaceAction = { type: 'begin_sequence_plan', planId: plan.id, source: 'explicit_author_approval' };
+    } else if (result.workspaceAction === 'approve_sequence_plan') {
+        const previous = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
+        const memory = effectiveSidecarMemoryConfig(world);
+        // Queue the final evidence before close.  The closure itself is then
+        // observed by Episode completion and fans out the Scene/Sequence jobs.
+        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'sequence_transition', priority: 'closure' });
+        const transitionMode = /(?:cut|skip|later|tomorrow|following|new scene)/i.test(authorEntry.text) ? 'discontinuous' : 'continuous';
+        const approved = window.HordeSidecarTimeline?.approvePlanning(protocol, sess, {
+            title: protocol.sequencePlanning?.title || 'New sequence',
+            sceneTitle: protocol.sequencePlanning?.sceneTitle || '',
+            transitionMode,
+            authorIntent: authorEntry.text
+        }, { closePriorScene: true, transitionMode });
+        if (approved) sidecarEntry.workspaceAction = { type: 'approve_sequence_plan', sequenceId: approved.sequence.id, sceneId: approved.scene.id, source: 'explicit_author_approval', priorSceneId: previous?.scene?.id || '' };
     } else if (result.workspaceAction === 'context_refresh') {
         const memory = effectiveSidecarMemoryConfig(world);
         window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'context_refresh', priority: 'context_refresh' });
@@ -15443,8 +15475,8 @@ function renderWorldSidecarConfigEditor(world) {
     document.querySelectorAll('#w-sidecar-memory-grid input').forEach(input => input.disabled = memory.inheritGlobal !== false);
     const memoryStatus = document.getElementById('w-sidecar-memory-status');
     if (memoryStatus) memoryStatus.textContent = memory.inheritGlobal !== false
-        ? `Using global controls · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns · ${effectiveMemory.consolidationConcurrency}/${effectiveMemory.backgroundProviderConcurrency} jobs.`
-        : `World override active · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns.`;
+        ? `Using global controls · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns · ${effectiveMemory.consolidationConcurrency}/${effectiveMemory.backgroundProviderConcurrency} jobs · ${effectiveMemory.consolidationModel || 'default consolidation model'} / ${effectiveMemory.consolidationMaxTokens} tokens.`
+        : `World override active · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns · ${effectiveMemory.consolidationConcurrency}/${effectiveMemory.backgroundProviderConcurrency} jobs · ${effectiveMemory.consolidationModel || 'global model'} / ${effectiveMemory.consolidationMaxTokens} tokens.`;
     const inheriting = tracker.inheritNarrator !== false;
     document.getElementById('w-sidecar-model').disabled = inheriting;
     const hint = document.getElementById('w-sidecar-mode-hint');
@@ -27009,6 +27041,7 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
         const sidecarRecall = await retrieveSidecarMemory(world, sess, submittedInput || userInput,
             effectiveSidecarMemoryConfig(world).retrievalLimit,
             { characterIds: priorPacket.activeCast || [] }).catch(() => []);
+        if (sess.sidecar) sess.sidecar.lastRetrievalCount = sidecarRecall.length;
         const memoryGraph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
         const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy?.(sess.sidecar, sess);
         const replacementMemory = [
@@ -36844,7 +36877,8 @@ function setupVectorMemoryViewerEvents() {
                     const sess = getCurrentWorldSession();
                     if (!sess || !world) throw new Error('No active world session');
                     if (window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-                        await runSidecarBackgroundMemoryJobs(world, sess);
+                        const memory = effectiveSidecarMemoryConfig(world);
+                        await runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'manual_force_archive', priority: 'manual' });
                         renderVectorMemoryList();
                         return;
                     }
