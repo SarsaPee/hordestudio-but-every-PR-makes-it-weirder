@@ -1180,6 +1180,20 @@
                                     </div>
                                 </div>
                                 <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden" data-sidecar-feature="sidecar-configuration"></div>
+                                <details class="form-section" data-sidecar-feature="memory-consolidation" style="margin:14px 0 0; padding:12px; border:1px solid var(--border); border-radius:8px;">
+                                    <summary style="cursor:pointer;"><strong>Memory &amp; consolidation</strong> <span class="help-glyph" title="Controls Sidecar’s source-pinned Turn → Episode → Scene → Sequence work. Raw turns remain available until a valid replacement exists; cognition is generated only from character-specific perception coverage.">?</span></summary>
+                                    <p class="form-hint">Global controls are the default. Turn off inheritance only when this world needs a different cadence, active verbatim window, retrieval depth, or provider throttle.</p>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-memory-inherit" checked> Use global memory and consolidation controls</label>
+                                    <div id="w-sidecar-memory-grid" class="world-kernel-config-grid" style="margin-top:10px;">
+                                        <div><label class="form-label">Episode size <span class="help-glyph" title="How many committed Sidecar turns become one objective, source-pinned Episode.">?</span></label><input id="w-sidecar-episode-size" type="number" class="form-input" min="1" max="20" step="1" value="5"></div>
+                                        <div><label class="form-label">Episode cadence <span class="help-glyph" title="How many new turns must accumulate before Episode work begins.">?</span></label><input id="w-sidecar-episode-cadence" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
+                                        <div><label class="form-label">Active verbatim turns <span class="help-glyph" title="Newest raw turn pairs kept in the narrator context even after a successful Episode replacement exists.">?</span></label><input id="w-sidecar-verbatim-window" type="number" class="form-input" min="0" max="30" step="1" value="5"></div>
+                                        <div><label class="form-label">Recall entries <span class="help-glyph" title="Maximum semantic memories selected for a narrator turn before normal context budgeting applies.">?</span></label><input id="w-sidecar-retrieval-limit" type="number" class="form-input" min="1" max="24" step="1" value="8"></div>
+                                        <div><label class="form-label">Parallel jobs <span class="help-glyph" title="Maximum total asynchronous consolidation jobs for this world.">?</span></label><input id="w-sidecar-job-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="6"></div>
+                                        <div><label class="form-label">Per-provider jobs <span class="help-glyph" title="Maximum simultaneous jobs sent to the same provider/model pair.">?</span></label><input id="w-sidecar-provider-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="2"></div>
+                                    </div>
+                                    <div id="w-sidecar-memory-status" class="form-hint" style="margin-top:10px;"></div>
+                                </details>
                                 <p id="w-sidecar-mode-hint" class="form-hint" style="margin:12px 0 0;"></p>
                                 <div id="w-sidecar-migration-report" class="form-hint" style="margin-top:8px;"></div>
                                 <div id="w-sidecar-migration-controls" style="display:flex; gap:8px; margin-top:10px;"><button id="w-sidecar-migrate-btn" type="button" class="btn btn-primary">Review &amp; migrate this world</button><button id="w-sidecar-restore-backup" type="button" class="btn btn-ghost hidden">Restore latest Inline backup</button></div>
