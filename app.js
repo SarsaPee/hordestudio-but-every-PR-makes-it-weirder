@@ -24161,6 +24161,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     await saveState();
     renderWorldPlayState();
     showToast('Timeline forked from committed continuity.', 'success');
+    return fork;
 }
 
 function renderWorldTimelineBrowser() {
@@ -25816,20 +25817,67 @@ function appendWorldMessageUI(msg, index = null) {
                 textDiv.classList.add('hidden');
                 editArea.classList.remove('hidden');
                 editArea.value = displayText;
-                editBtn.textContent = '💾 Save';
+                // A player line with a later committed DM response is not a
+                // simple text field: changing it must restore the pre-turn
+                // world state and preserve the existing continuity as a fork.
+                // The author returns to an unsent draft on the new branch.
+                const draftable = msg.role === 'user' && sess?.history.slice(index + 1)
+                    .some(entry => entry.role === 'dm' && entry.turnSnapshot);
+                editBtn.textContent = draftable ? '↶ Rewind to draft' : '💾 Save';
                 editArea.focus();
             } else {
-                if (msg.versions) {
-                    msg.versions[currentVersionIdx] = editArea.value;
-                    // Displayed version IS the active version — keep .text canonical
-                    if (currentVersionIdx === (msg.currentVersion ?? msg.versions.length - 1)) {
-                        msg.text = editArea.value;
-                    }
-                } else {
-                    msg.text = editArea.value;
+                const editedText = editArea.value.trim();
+                if (!editedText) return showToast('The replay draft cannot be empty.', 'info');
+                const currentSession = getCurrentWorldSession();
+                const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
+                const affectedDm = messageIndex >= 0
+                    ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
+                    : null;
+                if (msg.role === 'user' && affectedDm) {
+                    const priorCommittedTurns = currentSession.history.slice(0, messageIndex)
+                        .filter(entry => entry.role === 'dm').length;
+                    showConfirmModal(
+                        'Rewind to draft on a new fork',
+                        'This keeps the current timeline intact. Horde will create a branch at the state immediately before this player line, remove this line and everything after it from the branch, and return your edited text as an unsent narrator draft. Continue?',
+                        async () => {
+                            const fork = await forkCurrentWorldTimeline(currentSession.id, priorCommittedTurns, { useDefaultName: true });
+                            if (!fork) return;
+                            fork.rewindDraft = {
+                                sourceSessionId: currentSession.id,
+                                sourceMessageId: msg.id || '',
+                                sourceHistoryIndex: messageIndex,
+                                createdAt: new Date().toISOString(),
+                                provenance: 'author_rewind_to_draft'
+                            };
+                            // Fork restoration invalidates every derived record
+                            // sourced after the branch point.  Raw turns remain
+                            // source-pinned in the parent; no child memory is
+                            // allowed to leak across this divergent draft.
+                            invalidateEpisodicFrom(fork, fork.history.length);
+                            const mode = document.getElementById('world-conversation-mode');
+                            if (mode?.value !== 'narrator') {
+                                mode.value = 'narrator';
+                                mode.dispatchEvent(new Event('change'));
+                            }
+                            const input = document.getElementById('world-user-input');
+                            if (input) {
+                                input.value = editedText;
+                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                            }
+                            await saveState();
+                            renderWorldPlayState();
+                            document.getElementById('world-user-input')?.focus();
+                            showToast('Fork rewound. Review the draft, then send it to create divergent continuity.', 'success');
+                        }
+                    );
+                    return;
                 }
-                const sess = getCurrentWorldSession();
-                if (sess) invalidateEpisodicFrom(sess, sess.history.indexOf(msg));
+                if (msg.versions) {
+                    msg.versions[currentVersionIdx] = editedText;
+                    // Displayed version IS the active version — keep .text canonical
+                    if (currentVersionIdx === (msg.currentVersion ?? msg.versions.length - 1)) msg.text = editedText;
+                } else msg.text = editedText;
+                if (currentSession) invalidateEpisodicFrom(currentSession, messageIndex);
                 await saveState();
                 renderWorldPlayState();
                 isEditing = false;
