@@ -60,7 +60,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         };
         remember(trace);
         console.groupCollapsed(`[Horde API] Request · ${trace.request.method} ${trace.request.url}`);
-        console.log('request', trace.request);
+        console.log(JSON.stringify({ request: trace.request }, null, 2));
         console.groupEnd();
         try {
             const response = await nativeFetch(input, init);
@@ -71,7 +71,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
                 trace.response.body = body;
                 global.__hordePersistApiTrace?.(trace);
                 console.groupCollapsed(`[Horde API] Response · ${response.status} ${trace.request.url}`);
-                console.log('response', trace.response);
+                console.log(JSON.stringify({ response: trace.response }, null, 2));
                 console.groupEnd();
             }).catch(error => {
                 trace.response.body = `[response body unavailable: ${error?.message || error}]`;
@@ -11415,7 +11415,10 @@ function recordSidecarTrace(world, sess, trace) {
 function logSidecarConsoleTrace(stage, payload) {
     const label = `[Horde Sidecar] ${stage}`;
     console.groupCollapsed(label);
-    Object.entries(payload || {}).forEach(([name, value]) => console.log(name, value));
+    // Stringify rather than logging expandable objects: Chrome's console
+    // export/remote inspector otherwise collapses exact prompt/reply evidence
+    // to the useless label "Object".
+    console.log(JSON.stringify(payload || {}, null, 2));
     console.groupEnd();
 }
 
