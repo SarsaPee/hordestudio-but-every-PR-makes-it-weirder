@@ -1,6 +1,79 @@
 window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 
 /*
+ * Permanent API flight recorder. Every app-originated fetch is captured as a
+ * locally persisted request/response pair and echoed to the browser console.
+ * Headers are deliberately redacted: the point is to inspect exact prompts,
+ * payloads and provider replies without ever writing a credential into a log.
+ */
+(function installHordeApiFlightRecorder(global) {
+    if (global.__hordeApiFlightRecorderInstalled || typeof global.fetch !== 'function') return;
+    const nativeFetch = global.fetch.bind(global);
+    const redactUrl = value => String(value || '').replace(/([?&](?:api[_-]?key|token|authorization)=)[^&]*/gi, '$1[REDACTED]');
+    const redactHeaders = headers => {
+        const result = {};
+        try {
+            new Headers(headers || {}).forEach((value, name) => {
+                result[name] = /authorization|api[_-]?key|token|cookie/i.test(name) ? '[REDACTED]' : value;
+            });
+        } catch (_) {}
+        return result;
+    };
+    const remember = trace => {
+        global.__hordeApiCallTraces = Array.isArray(global.__hordeApiCallTraces) ? global.__hordeApiCallTraces : [];
+        global.__hordeApiCallTraces.push(trace);
+        global.__hordeApiCallTraces = global.__hordeApiCallTraces.slice(-500);
+        global.__hordePersistApiTrace?.(trace);
+    };
+    global.fetch = async function hordeFlightRecordedFetch(input, init = {}) {
+        const request = input instanceof Request ? input : null;
+        const trace = {
+            id: `api_trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+            startedAt: new Date().toISOString(), status: 'pending',
+            request: {
+                url: redactUrl(request?.url || input),
+                method: String(init.method || request?.method || 'GET').toUpperCase(),
+                headers: redactHeaders(init.headers || request?.headers),
+                body: typeof init.body === 'string' ? init.body : (init.body == null ? '' : '[non-text request body]')
+            },
+            response: null,
+            error: ''
+        };
+        remember(trace);
+        console.groupCollapsed(`[Horde API] Request · ${trace.request.method} ${trace.request.url}`);
+        console.log('request', trace.request);
+        console.groupEnd();
+        try {
+            const response = await nativeFetch(input, init);
+            trace.status = response.ok ? 'ok' : 'http_error';
+            trace.completedAt = new Date().toISOString();
+            trace.response = { status: response.status, statusText: response.statusText, headers: redactHeaders(response.headers), body: '' };
+            response.clone().text().then(body => {
+                trace.response.body = body;
+                global.__hordePersistApiTrace?.(trace);
+                console.groupCollapsed(`[Horde API] Response · ${response.status} ${trace.request.url}`);
+                console.log('response', trace.response);
+                console.groupEnd();
+            }).catch(error => {
+                trace.response.body = `[response body unavailable: ${error?.message || error}]`;
+                global.__hordePersistApiTrace?.(trace);
+            });
+            return response;
+        } catch (error) {
+            trace.status = 'network_error';
+            trace.completedAt = new Date().toISOString();
+            trace.error = String(error?.stack || error);
+            global.__hordePersistApiTrace?.(trace);
+            console.groupCollapsed(`[Horde API] Network error · ${trace.request.url}`);
+            console.error(error);
+            console.groupEnd();
+            throw error;
+        }
+    };
+    global.__hordeApiFlightRecorderInstalled = true;
+})(window);
+
+/*
  * Sidecar runtime.  This deliberately lives in app.js: Sidecar and the world
  * engine share one browser runtime and communicate through direct state, not
  * separately loaded globals.  sidecar/ remains an archival/upstream source
@@ -1951,6 +2024,10 @@ let state = {
     bedrockApiKey: '',
     customApiKey: '',
     customHeaders: '',
+    // Full raw request/reply flight recorder. Retained locally so a failed
+    // provider or Sidecar turn remains inspectable after refresh; credentials
+    // are redacted before an entry ever reaches this collection.
+    apiCallTraces: [],
     globalSettings: {
         defaultModel: 'deepseek/deepseek-v4-flash',
         openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
@@ -2081,6 +2158,25 @@ const worldLoadWarnings = new Map();
 function getAllPresets() {
     return [...DEFAULT_SYSTEM_PRESETS, ...(state.systemPresets || [])];
 }
+
+let apiTracePersistTimer = null;
+window.__hordePersistApiTrace = trace => {
+    if (!trace || !state) return;
+    const traces = Array.isArray(state.apiCallTraces) ? state.apiCallTraces : [];
+    const index = traces.findIndex(entry => entry?.id === trace.id);
+    const safeTrace = safeJsonClone(trace);
+    if (index >= 0) traces[index] = safeTrace;
+    else traces.push(safeTrace);
+    state.apiCallTraces = traces.slice(-500);
+    // A streaming reply may update several times in quick succession. Coalesce
+    // persistence without making the trace itself temporary or best-effort.
+    clearTimeout(apiTracePersistTimer);
+    apiTracePersistTimer = setTimeout(() => saveState().catch(error =>
+        console.warn('Horde API trace persistence failed.', error)), 250);
+};
+// Fetches made before state finished initialising remain in the in-page buffer;
+// adopt them once persistence is available.
+(window.__hordeApiCallTraces || []).forEach(trace => window.__hordePersistApiTrace(trace));
 
 /**
  * Resolve a SillyTavern-style preset's prompts into the exact SEQUENCE and
@@ -11245,6 +11341,18 @@ function recordSidecarTrace(world, sess, trace) {
     protocol.debug.traces = protocol.debug.traces.slice(-Math.max(1, protocol.debug.retainTraceCount || 20));
 }
 
+// Sidecar is an authored two-call loop. Keep its live console trail visible
+// even when durable trace retention is off: debugging an unexpected state
+// result must not depend on a Studio checkbox or an opaque network inspector.
+// Request payloads deliberately contain no headers, so API credentials never
+// enter the console.
+function logSidecarConsoleTrace(stage, payload) {
+    const label = `[Horde Sidecar] ${stage}`;
+    console.groupCollapsed(label);
+    Object.entries(payload || {}).forEach(([name, value]) => console.log(name, value));
+    console.groupEnd();
+}
+
 function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
@@ -11357,6 +11465,11 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         tools: [commitTool], tool_choice: { type: 'function', function: { name: 'commit_world_turn' } }
     };
     if (tracker.reasoning === true) body.reasoning_effort = 'low';
+    logSidecarConsoleTrace('Reconciliation request', {
+        model,
+        prompt: sidecarPrompt,
+        request: safeJsonClone(body)
+    });
     const response = await fetch(apiBase() + '/chat/completions', {
         method: 'POST', signal: options.signal,
         headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
@@ -11365,6 +11478,10 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar request failed (${response.status})`);
     const payload = await response.json();
     const message = payload?.choices?.[0]?.message || {};
+    logSidecarConsoleTrace('Reconciliation response', {
+        model,
+        assistant: safeJsonClone(message)
+    });
     const toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn');
     recordSidecarTrace(world, sess, { kind: 'reconciliation', prompt: sidecarPrompt, reply: message, model });
     if (!toolCall) throw new Error('Sidecar returned no commit_world_turn tool call.');
@@ -28044,6 +28161,13 @@ ${modularMandate}
             if (world.includeReasoning) requestBody.include_reasoning = true;
         }
 
+        if (sidecarMode) {
+            logSidecarConsoleTrace('Narrator request', {
+                model: modelId,
+                request: safeJsonClone(requestBody)
+            });
+        }
+
         let questFallbackMode = false;
         turnCallAudit.main++;
         let response = await fetch(apiBase() + '/chat/completions', {
@@ -28203,6 +28327,11 @@ ${modularMandate}
         let sidecarPacket = null;
         let sidecarTurnId = null;
         if (sidecarMode) {
+            logSidecarConsoleTrace('Narrator response', {
+                model: modelId,
+                assistant: fullText,
+                toolCalls: toolCalls.map(call => safeJsonClone(call))
+            });
             // The Sidecar debug setting promises the complete two-call trail,
             // not merely the second reconciliation request. Keep the exact
             // narrator request assembled for this accepted take and the raw
