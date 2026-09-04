@@ -28203,6 +28203,22 @@ ${modularMandate}
         let sidecarPacket = null;
         let sidecarTurnId = null;
         if (sidecarMode) {
+            // The Sidecar debug setting promises the complete two-call trail,
+            // not merely the second reconciliation request. Keep the exact
+            // narrator request assembled for this accepted take and the raw
+            // streamed reply (including its hidden handoff) together before
+            // presentation strips the handoff from visible prose.
+            recordSidecarTrace(world, sess, {
+                kind: 'narrator', model: modelId,
+                request: safeJsonClone({
+                    model: requestBody.model,
+                    messages: requestBody.messages,
+                    stream: requestBody.stream,
+                    max_tokens: requestBody.max_tokens,
+                    temperature: requestBody.temperature
+                }),
+                reply: { content: fullText, toolCalls: toolCalls.map(call => safeJsonClone(call)) }
+            });
             const narratorOutput = extractSidecarNarratorHandoff(fullText);
             fullText = narratorOutput.narration;
             sidecarHandoff = narratorOutput.handoff;
