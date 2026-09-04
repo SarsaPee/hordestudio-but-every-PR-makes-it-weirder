@@ -1,10 +1,12 @@
 window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 
 /*
- * Permanent API flight recorder. Every app-originated fetch is captured as a
- * locally persisted request/response pair and echoed to the browser console.
- * Headers are deliberately redacted: the point is to inspect exact prompts,
- * payloads and provider replies without ever writing a credential into a log.
+ * Permanent provider-call flight recorder. Every request which leaves Horde's
+ * local runtime is captured as a locally persisted request/response pair and
+ * echoed to the browser console. Local UI/bridge, IndexedDB, and shared-library
+ * synchronisation are deliberately not recorded: they are not model/API calls
+ * and dumping their enormous app snapshots obscures the prompt diagnostics.
+ * Headers are redacted so a useful trace never records a credential.
  */
 (function installHordeApiFlightRecorder(global) {
     if (global.__hordeApiFlightRecorderInstalled || typeof global.fetch !== 'function') return;
@@ -19,6 +21,18 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         } catch (_) {}
         return result;
     };
+    const isRemoteEndpoint = value => {
+        try {
+            const url = new URL(String(value || ''), global.location?.href || undefined);
+            if (!/^https?:$/.test(url.protocol)) return false;
+            const host = String(url.hostname || '').toLowerCase();
+            // The browser runtime and its local Horde/MCP bridges are internal.
+            return url.origin !== global.location?.origin
+                && host !== 'localhost' && host !== '::1'
+                && !/^127(?:\.\d{1,3}){3}$/.test(host)
+                && !/^0\.0\.0\.0$/.test(host);
+        } catch (_) { return false; }
+    };
     const remember = trace => {
         global.__hordeApiCallTraces = Array.isArray(global.__hordeApiCallTraces) ? global.__hordeApiCallTraces : [];
         global.__hordeApiCallTraces.push(trace);
@@ -28,11 +42,10 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     global.fetch = async function hordeFlightRecordedFetch(input, init = {}) {
         const request = input instanceof Request ? input : null;
         const requestUrl = redactUrl(request?.url || input);
-        // Shared-library mirrors serialise the whole application. Capturing
-        // that body inside the application produces a recursive snapshot of
-        // the trace ledger itself and can never be a useful prompt diagnostic.
-        // Keep the request/response metadata, but omit mirror payload bodies.
-        const sharedMirror = /\/sync\/(?:push|snapshot|history|restore|status)(?:[?#]|$)/.test(requestUrl);
+        // Do not turn ordinary local browser/bridge work into fake "API" logs.
+        // Provider calls (narrator, Sidecar, consolidation and embeddings) use
+        // remote HTTP endpoints and are recorded in full below.
+        if (!isRemoteEndpoint(requestUrl)) return nativeFetch(input, init);
         const trace = {
             id: `api_trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
             startedAt: new Date().toISOString(), status: 'pending',
@@ -40,8 +53,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
                 url: requestUrl,
                 method: String(init.method || request?.method || 'GET').toUpperCase(),
                 headers: redactHeaders(init.headers || request?.headers),
-                body: sharedMirror ? '[omitted: shared-library mirror payload]'
-                    : (typeof init.body === 'string' ? init.body : (init.body == null ? '' : '[non-text request body]'))
+                body: typeof init.body === 'string' ? init.body : (init.body == null ? '' : '[non-text request body]')
             },
             response: null,
             error: ''
@@ -54,14 +66,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             const response = await nativeFetch(input, init);
             trace.status = response.ok ? 'ok' : 'http_error';
             trace.completedAt = new Date().toISOString();
-            trace.response = { status: response.status, statusText: response.statusText, headers: redactHeaders(response.headers), body: sharedMirror ? '[omitted: shared-library mirror payload]' : '' };
-            if (sharedMirror) {
-                global.__hordePersistApiTrace?.(trace);
-                console.groupCollapsed(`[Horde API] Response · ${response.status} ${trace.request.url}`);
-                console.log('response', trace.response);
-                console.groupEnd();
-                return response;
-            }
+            trace.response = { status: response.status, statusText: response.statusText, headers: redactHeaders(response.headers), body: '' };
             response.clone().text().then(body => {
                 trace.response.body = body;
                 global.__hordePersistApiTrace?.(trace);
@@ -349,6 +354,8 @@ const sharedLibrarySync = {
     lastPublishedFingerprint: '',
     history: [],
     dirty: false,
+    blockedFingerprint: '',
+    blockedBytes: 0,
     assistantTurnsSincePublish: 0,
     autoBackupTimer: null,
 };
@@ -617,19 +624,39 @@ async function pushSharedLibrarySnapshot({ manual = false, trigger = 'manual' } 
         const snapshot = buildSharedLibrarySnapshot();
         const fingerprint = sharedLibrarySnapshotFingerprint(snapshot);
         if (!manual && fingerprint === sharedLibrarySync.lastPublishedFingerprint) return;
+        const payload = {
+            deviceId: sharedLibraryDeviceId(),
+            label: sharedLibraryDeviceLabel(),
+            baseRevision: Number(sharedLibrarySync.revision) || 0,
+            snapshot,
+            trigger,
+        };
+        // The bridge rejects payloads at 30 MiB.  Do the check before sending
+        // anything so an oversized local library does not create an endless
+        // 400/retry loop or interfere with the running world.  The local
+        // IndexedDB library remains fully saved; only its bridge mirror waits
+        // for the user to trim/export/archive material.
+        const payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+        const bridgeSafetyLimit = 29 * 1024 * 1024;
+        if (payloadBytes >= bridgeSafetyLimit) {
+            sharedLibrarySync.blockedFingerprint = fingerprint;
+            sharedLibrarySync.blockedBytes = payloadBytes;
+            sharedLibrarySync.dirty = false;
+            const sizeMb = (payloadBytes / (1024 * 1024)).toFixed(1);
+            const message = `Shared-library mirror paused: local snapshot is ${sizeMb} MB (bridge limit is 30 MB). Local Horde data is still saved.`;
+            if (manual) showToast(message, 'warning');
+            else console.warn(message);
+            return;
+        }
         const data = await sharedLibraryRequest('/sync/push', {
             method: 'POST',
-            body: {
-                deviceId: sharedLibraryDeviceId(),
-                label: sharedLibraryDeviceLabel(),
-                baseRevision: Number(sharedLibrarySync.revision) || 0,
-                snapshot,
-                trigger,
-            },
+            body: payload,
         });
         applySharedLibraryStatus(data);
         persistSharedLibraryMeta({ revision: Number(data.revision) || 0, pushedAt: Date.now() });
         sharedLibrarySync.lastPublishedFingerprint = fingerprint;
+        sharedLibrarySync.blockedFingerprint = '';
+        sharedLibrarySync.blockedBytes = 0;
         sharedLibrarySync.conflict = false;
         sharedLibrarySync.dirty = false;
         sharedLibrarySync.assistantTurnsSincePublish = 0;
@@ -782,6 +809,10 @@ function renderSharedLibrarySyncStatus(errorMessage = '') {
     if (!status) return;
     if (errorMessage) {
         status.textContent = errorMessage;
+        return;
+    }
+    if (sharedLibrarySync.blockedFingerprint) {
+        status.textContent = `Shared-library mirror paused at ${(sharedLibrarySync.blockedBytes / (1024 * 1024)).toFixed(1)} MB (30 MB bridge limit). Local Horde data remains saved.`;
         return;
     }
     if (!sharedLibrarySync.remoteRevision) {
@@ -26189,6 +26220,10 @@ function restoreWorldTurnState(world, sess, snapshot) {
     const liveManualLedger = String(sess.ledgerManualOverrideText ?? sess.ledger ?? '');
     const liveLedgerDiagnostics = safeJsonClone(sess.ledgerDiagnostics || {});
     const liveSidecarAudit = safeJsonClone(sess.sidecar || null);
+    // Pipeline migration is timeline infrastructure, not authored turn state.
+    // An Inline snapshot taken before migration must never demote a migrated
+    // timeline simply because a reroll/rewind restores that old turn snapshot.
+    const retainSidecarPipeline = liveSidecarAudit?.mode === 'sidecar';
     const snapshotActiveSidecarTurnIds = new Set((snapshot.session?.sidecar?.turns || [])
         .filter(turn => turn.status !== 'superseded').map(turn => turn.id));
     const preserved = {
@@ -26240,6 +26275,22 @@ function restoreWorldTurnState(world, sess, snapshot) {
     if (modernSnapshot) {
         world.entities = (world.entities || []).filter(entity => entity?.sessionOrigin !== sess.id);
         world.entities.push(...safeJsonClone(snapshotDynamic));
+    }
+    if (retainSidecarPipeline) {
+        // Do this after canonical snapshot restoration so the snapshot remains
+        // authoritative for story state, while the selected Sidecar pipeline
+        // and its migration provenance remain authoritative for execution.
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess) || sess.sidecar;
+        if (protocol) {
+            protocol.mode = 'sidecar';
+            protocol.migration = {
+                ...(isPlainObject(protocol.migration) ? protocol.migration : {}),
+                ...(isPlainObject(liveSidecarAudit.migration) ? liveSidecarAudit.migration : {}),
+                pipelinePreservedAcrossRestoreAt: new Date().toISOString(),
+                restoreSnapshotMode: String(snapshot.session?.sidecar?.mode || 'none')
+            };
+            protocol.packet = buildSidecarScenePacket(world, sess);
+        }
     }
     bumpMemoryEpoch(sess); // any in-flight consolidation must now abort its commit
     if (typeof bumpWorldEpoch === 'function') bumpWorldEpoch(sess);  // and so must the asynchronous World Agent
