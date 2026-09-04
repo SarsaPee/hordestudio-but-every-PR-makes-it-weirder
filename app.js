@@ -618,7 +618,8 @@ async function pullSharedLibrarySnapshot({ reload = false } = {}) {
 }
 
 async function pushSharedLibrarySnapshot({ manual = false, trigger = 'manual' } = {}) {
-    if (sharedLibrarySync.applying || sharedLibrarySync.pushing) return;
+    if (sharedLibrarySync.applying || sharedLibrarySync.pushing
+        || (!manual && sharedLibrarySync.blockedFingerprint)) return;
     sharedLibrarySync.pushing = true;
     try {
         const snapshot = buildSharedLibrarySnapshot();
@@ -682,6 +683,10 @@ async function pushSharedLibrarySnapshot({ manual = false, trigger = 'manual' } 
 function scheduleSharedLibraryPush() {
     if (!sharedLibrarySync.ready || sharedLibrarySync.applying) return;
     sharedLibrarySync.dirty = true;
+    // An oversized snapshot is a transport limitation, not a transient world
+    // error. Keep local persistence running, but do not rebuild and warn about
+    // the same 100+ MB payload on every ordinary state save.
+    if (sharedLibrarySync.blockedFingerprint) return;
     if (sharedLibraryBackupPolicy().afterEveryChangeEnabled) {
         // Coalesce the small cluster of saves a single edit normally creates.
         clearTimeout(sharedLibrarySync.pushTimer);
@@ -695,7 +700,9 @@ function configureSharedLibraryAutoBackup() {
     const policy = sharedLibraryBackupPolicy();
     if (!policy.periodicEnabled || !sharedLibrarySync.ready) return;
     sharedLibrarySync.autoBackupTimer = setInterval(() => {
-        if (sharedLibrarySync.dirty) void pushSharedLibrarySnapshot({ trigger: 'periodic' });
+        if (sharedLibrarySync.dirty && !sharedLibrarySync.blockedFingerprint) {
+            void pushSharedLibrarySnapshot({ trigger: 'periodic' });
+        }
     }, policy.intervalMinutes * 60 * 1000);
 }
 
@@ -15945,6 +15952,7 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
         await saveState();
         close();
         renderWorlds();
+        if (state.activeWorldId === world.id) renderWorldPlayState();
         if (state.editingWorld?.id === world.id) { renderWorldSidecarConfigEditor(state.editingWorld); }
         showToast(reports.length
             ? `Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`
