@@ -9911,6 +9911,13 @@ label[data-help] > span:first-child::after,
 .world-sidecar-backstage summary b { font-size:.74rem; letter-spacing:.02em; }
 .world-sidecar-backstage summary small { color:var(--text-3); font-size:.62rem; }
 .world-sidecar-backstage summary i { margin-left:auto; padding:4px 7px; border:1px solid rgba(85,230,189,.24); border-radius:999px; color:#72ead4; font-size:.56rem; font-style:normal; font-weight:800; white-space:nowrap; }
+.world-sidecar-backstage.sidecar-backstage-failed { border-color:rgba(243,189,89,.42); background:linear-gradient(135deg,rgba(243,189,89,.075),rgba(126,124,255,.025)); }
+.world-sidecar-backstage.sidecar-backstage-failed>summary { color:#ffe1a6; }
+.world-sidecar-backstage.sidecar-backstage-failed>summary i { border-color:rgba(243,189,89,.4); color:#ffd388; }
+.world-sidecar-backstage.sidecar-backstage-failed .sidecar-backstage-mark,
+.sidecar-reconciliation-failure>header>span { color:#ffd388; background:rgba(243,189,89,.14); }
+.sidecar-reconciliation-failure { border-color:rgba(243,189,89,.24); background:rgba(243,189,89,.045); }
+.sidecar-reconciliation-failure .sidecar-backstage-list div { border-left-color:rgba(243,189,89,.55); }
 .sidecar-backstage-body { display:grid; gap:9px; padding:0 10px 11px; border-top:1px solid rgba(255,255,255,.06); }
 .sidecar-backstage-section { padding:10px; border:1px solid rgba(255,255,255,.07); border-radius:10px; background:rgba(6,13,15,.42); }
 .sidecar-backstage-section>header { display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; }

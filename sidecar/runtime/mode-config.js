@@ -30,6 +30,7 @@
             mode,
             tracker: {
                 inheritNarrator: tracker.inheritNarrator !== false,
+                provider: text(tracker.provider, 40),
                 model: text(tracker.model),
                 openRouterRouting: isObject(tracker.openRouterRouting) ? tracker.openRouterRouting : null,
                 reasoning: tracker.reasoning === true,

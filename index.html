@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260903-v1700-sidecar-pipeline-ui-v2">
+    <link rel="stylesheet" href="style.css?v=20260905-v1700-sidecar-reconciliation-v1">
 </head>
 <body>
 <div id="app">
@@ -1166,12 +1166,25 @@
                                 <div id="w-sidecar-config-grid" class="world-kernel-config-grid" data-sidecar-feature="sidecar-configuration" style="margin-top:12px;">
                                     <label class="vh-test-check"><input type="checkbox" id="w-sidecar-inherit-narrator" checked> Use narrator model and routing</label>
                                     <div>
-                                        <label class="form-label">Sidecar model <span class="form-hint">(blank when inheriting)</span></label>
+                                        <label class="form-label">Sidecar provider <span class="help-glyph" title="The provider used only for the reconciliation call. Leave inheritance on to use the same provider as the Narrator.">?</span></label>
+                                        <select id="w-sidecar-provider" class="form-select">
+                                            <option value="">Use narrator provider</option>
+                                            <option value="openrouter">OpenRouter</option>
+                                            <option value="gptproto">GPTProto</option>
+                                            <option value="nanogpt">NanoGPT</option>
+                                            <option value="nvidia">NVIDIA NIM</option>
+                                            <option value="bedrock">AWS Bedrock</option>
+                                            <option value="custom">Custom OpenAI-compatible API</option>
+                                            <option value="local">Local / self-hosted</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Sidecar model <span class="help-glyph" title="The structured-output model that translates the authored beat into one validated world-state receipt.">?</span></label>
                                         <input id="w-sidecar-model" class="form-input" placeholder="Use narrator model">
                                     </div>
-                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-reasoning"> Low reasoning for reconciliation</label>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-reasoning"> Low reasoning for reconciliation <span class="help-glyph" title="Allows a small private reasoning budget. Off explicitly asks supported providers not to spend the receipt budget on hidden reasoning.">?</span></label>
                                     <div>
-                                        <label class="form-label">Sidecar max tokens <span class="form-hint">(0 = default)</span></label>
+                                        <label class="form-label">Sidecar max tokens <span class="help-glyph" title="Output room for the complete native state receipt. Zero uses the adaptive 6,000-token default; this is separate from Narrator response length.">?</span></label>
                                         <input id="w-sidecar-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" value="0">
                                     </div>
                                     <label class="vh-test-check"><input type="checkbox" id="w-sidecar-debug"> Retain unabridged prompt/reply traces</label>
@@ -5230,6 +5243,6 @@
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
 <script src="dossier-claims.js?v=20260902-generic-claims-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260903-v1700-sidecar-pipeline-ui-v4"></script>
+<script src="app.js?v=20260905-v1700-sidecar-reconciliation-v1"></script>
 </body>
 </html>
