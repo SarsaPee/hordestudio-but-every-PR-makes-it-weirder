@@ -27,14 +27,21 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     };
     global.fetch = async function hordeFlightRecordedFetch(input, init = {}) {
         const request = input instanceof Request ? input : null;
+        const requestUrl = redactUrl(request?.url || input);
+        // Shared-library mirrors serialise the whole application. Capturing
+        // that body inside the application produces a recursive snapshot of
+        // the trace ledger itself and can never be a useful prompt diagnostic.
+        // Keep the request/response metadata, but omit mirror payload bodies.
+        const sharedMirror = /\/sync\/(?:push|snapshot|history|restore|status)(?:[?#]|$)/.test(requestUrl);
         const trace = {
             id: `api_trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
             startedAt: new Date().toISOString(), status: 'pending',
             request: {
-                url: redactUrl(request?.url || input),
+                url: requestUrl,
                 method: String(init.method || request?.method || 'GET').toUpperCase(),
                 headers: redactHeaders(init.headers || request?.headers),
-                body: typeof init.body === 'string' ? init.body : (init.body == null ? '' : '[non-text request body]')
+                body: sharedMirror ? '[omitted: shared-library mirror payload]'
+                    : (typeof init.body === 'string' ? init.body : (init.body == null ? '' : '[non-text request body]'))
             },
             response: null,
             error: ''
@@ -47,7 +54,14 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             const response = await nativeFetch(input, init);
             trace.status = response.ok ? 'ok' : 'http_error';
             trace.completedAt = new Date().toISOString();
-            trace.response = { status: response.status, statusText: response.statusText, headers: redactHeaders(response.headers), body: '' };
+            trace.response = { status: response.status, statusText: response.statusText, headers: redactHeaders(response.headers), body: sharedMirror ? '[omitted: shared-library mirror payload]' : '' };
+            if (sharedMirror) {
+                global.__hordePersistApiTrace?.(trace);
+                console.groupCollapsed(`[Horde API] Response · ${response.status} ${trace.request.url}`);
+                console.log('response', trace.response);
+                console.groupEnd();
+                return response;
+            }
             response.clone().text().then(body => {
                 trace.response.body = body;
                 global.__hordePersistApiTrace?.(trace);
@@ -2165,14 +2179,24 @@ window.__hordePersistApiTrace = trace => {
     const traces = Array.isArray(state.apiCallTraces) ? state.apiCallTraces : [];
     const index = traces.findIndex(entry => entry?.id === trace.id);
     const safeTrace = safeJsonClone(trace);
+    if (/\/sync\/(?:push|snapshot|history|restore|status)(?:[?#]|$)/.test(String(safeTrace?.request?.url || ''))) {
+        if (safeTrace.request) safeTrace.request.body = '[omitted: shared-library mirror payload]';
+        if (safeTrace.response) safeTrace.response.body = '[omitted: shared-library mirror payload]';
+    }
     if (index >= 0) traces[index] = safeTrace;
     else traces.push(safeTrace);
     state.apiCallTraces = traces.slice(-500);
     // A streaming reply may update several times in quick succession. Coalesce
     // persistence without making the trace itself temporary or best-effort.
     clearTimeout(apiTracePersistTimer);
-    apiTracePersistTimer = setTimeout(() => saveState().catch(error =>
-        console.warn('Horde API trace persistence failed.', error)), 250);
+    apiTracePersistTimer = setTimeout(() => {
+        // Trace history is deliberately device-local diagnostic material. Save
+        // it directly instead of routing every provider reply through the
+        // shared-library publisher (which mirrors worlds, not diagnostics).
+        if (!HordeDB?.db) return;
+        HordeDB.set('apiCallTraces', safeJsonClone(state.apiCallTraces)).catch(error =>
+            console.warn('Horde API trace persistence failed.', error));
+    }, 250);
 };
 // Fetches made before state finished initialising remain in the in-page buffer;
 // adopt them once persistence is available.
@@ -3291,6 +3315,10 @@ async function loadState() {
             console.warn('Recovered Settings from the local fallback snapshot.');
         }
         state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
+        state.apiCallTraces = await HordeDB.get('apiCallTraces') || [];
+        // The fetch recorder starts before IndexedDB finishes opening. Merge
+        // those startup calls now that its local-only store is available.
+        (window.__hordeApiCallTraces || []).forEach(trace => window.__hordePersistApiTrace(trace));
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
         if (state.globalSettings.memoryTopK === undefined) state.globalSettings.memoryTopK = 8;
         if (state.globalSettings.consolidationMaxTokens === undefined) state.globalSettings.consolidationMaxTokens = 1400;
