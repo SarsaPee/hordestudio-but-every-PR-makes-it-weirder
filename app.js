@@ -9221,9 +9221,15 @@ function enhanceAccessibility(root = document) {
 }
 
 function getVisibleDialog() {
-    return [...document.querySelectorAll('.modal-bg, .modal-overlay')]
-        .reverse()
-        .find(dialog => !dialog.classList.contains('hidden') && getComputedStyle(dialog).display !== 'none');
+    const visible = [...document.querySelectorAll('.modal-bg, .modal-overlay')]
+        .filter(dialog => !dialog.classList.contains('hidden') && getComputedStyle(dialog).display !== 'none');
+    // Stacked dialogs: the visual editor opens above the record inspector
+    // even though the inspector sits later in the DOM. The layer that owns
+    // focus wins before the last-in-DOM fallback, so a click inside the top
+    // layer is not treated as "focus escaped the dialog" and yanked back
+    // into the layer underneath.
+    const active = document.activeElement;
+    return visible.find(dialog => dialog.contains(active)) || visible[visible.length - 1];
 }
 
 function setupAccessibility() {
