@@ -11619,7 +11619,10 @@ function extractFF54SceneHeader(narration) {
     if (!match) return null;
     const header = {
         raw: match[0],
-        timeText: String(match[1] || '').trim(),
+        // The upstream Time-and-Place header labels its field ("🕰️ Time 8:58 AM"),
+        // so strip a leading label before handing the text to the strict clock
+        // endpoint parser; otherwise real FF headers never move the clock.
+        timeText: String(match[1] || '').trim().replace(/^\s*(?:Time|Clock|Time of Day)\s*[:\-]?\s*/i, '').trim(),
         dayText: String(match[2] || '').trim(),
         locationText: String(match[3] || '').trim(),
         weatherText: String(match[4] || '').trim()
