@@ -10867,7 +10867,13 @@ function normalizeWorldTurnReceipt(world, sess, rawReceipt) {
             player_location_id: String(sceneSource.player_location_id || sceneSource.location_id || '').slice(0, 120),
             player_location_changed: sceneSource.player_location_changed === true,
             present_character_ids: (Array.isArray(sceneSource.present_character_ids)
-                ? sceneSource.present_character_ids : []).map(id => String(id || '').slice(0, 120)).filter(Boolean).slice(0, 80)
+                ? sceneSource.present_character_ids : []).map(id => String(id || '').slice(0, 120)).filter(Boolean).slice(0, 80),
+            // World mechanics owns scene telemetry and boundary evidence;
+            // normalization must not strip them before the engine reads them.
+            ...((window.HordeWorldMechanics?.isEnabled?.(world) && isPlainObject(sceneSource.telemetry))
+                ? { telemetry: sceneSource.telemetry } : {}),
+            ...((window.HordeWorldMechanics?.isEnabled?.(world) && isPlainObject(sceneSource.transition))
+                ? { transition: sceneSource.transition } : {})
         },
         events: (Array.isArray(source.events) ? source.events : []).slice(0, 100),
         entity_updates: (Array.isArray(source.entity_updates) ? source.entity_updates : []).slice(0, 100),
@@ -10957,7 +10963,28 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
             witnessed_by: (Array.isArray(event.witnessed_by) ? event.witnessed_by : [])
                 .map(ref => resolveWorldActorId(world, sess, ref)).filter(Boolean).slice(0, 40),
             evidence: String(event.evidence || '').slice(0, 400),
-            cause: String(event.cause || event.reason || '').slice(0, 300)
+            cause: String(event.cause || event.reason || '').slice(0, 300),
+            // Annex A execution evidence: intent, explicit compensation and
+            // the declared mechanic-conditioned execution survive into the
+            // committed event so the engine can validate them at commit.
+            ...(window.HordeWorldMechanics?.isEnabled?.(world)
+                && isPlainObject(event.mechanic_conditioned_execution) ? {
+                actor_intention: String(event.actor_intention || '').slice(0, 300),
+                compensatory_strategy: (Array.isArray(event.compensatory_strategy) ? event.compensatory_strategy : [])
+                    .map(value => String(value || '').slice(0, 60)).filter(Boolean).slice(0, 10),
+                mechanic_conditioned_execution: {
+                    task: String(event.mechanic_conditioned_execution.task || '').slice(0, 40),
+                    proposed_legality: String(event.mechanic_conditioned_execution.proposed_legality
+                        || event.mechanic_conditioned_execution.legality || '').slice(0, 40),
+                    compensations: (Array.isArray(event.mechanic_conditioned_execution.compensations)
+                        ? event.mechanic_conditioned_execution.compensations : [])
+                        .map(value => String(value || '').slice(0, 60)).filter(Boolean).slice(0, 10),
+                    environmental_support: (Array.isArray(event.mechanic_conditioned_execution.environmental_support)
+                        ? event.mechanic_conditioned_execution.environmental_support : [])
+                        .map(value => String(value || '').slice(0, 60)).filter(Boolean).slice(0, 10)
+                },
+                objective_result: String(event.objective_result || '').slice(0, 300)
+            } : {})
         };
         if (!actorId && !['time', 'environment', 'other'].includes(type)) {
             reject(index, event, 'unknown_actor', event.actor_id);
@@ -11417,9 +11444,27 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     const previousLocation = sess.playerLocation;
     // Claims are checked against accepted, actor-scoped receipt evidence, but
     // stay staged until the native reducer has handled the same receipt.
-    const preparedDossierClaims = window.HordeDossierClaims?.prepareCommit?.(world, sess, validation, {
-        origin: sidecarSource ? 'sidecar' : 'narrator'
-    }) || { enabled: false, claims: [], rejected: [] };
+    // World mechanics: guard -> prepare. When the engine owns this world it
+    // also orchestrates the dossier claims handoff (mechanics-derived
+    // records project into the claims ledger inside its own pipeline), so
+    // the app-level staging below is bypassed to avoid double-applying
+    // claims.
+    const mechanicsEngine = window.HordeWorldMechanics?.isEnabled?.(world) ? window.HordeWorldMechanics : null;
+    let mechanicsGuard = null;
+    let preparedMechanics = { enabled: false, accepted: true, errors: [], dropped: [] };
+    if (mechanicsEngine) {
+        mechanicsGuard = mechanicsEngine.receiptIdentityGuard(world, sess, validation.receipt);
+        if (mechanicsGuard.allowed) {
+            preparedMechanics = mechanicsEngine.prepareCommit(world, sess, validation,
+                world.mechanicsRegistry || window.HordeWorldMechanicsRegistry || null,
+                { origin: sidecarSource ? 'sidecar' : 'narrator' }) || preparedMechanics;
+        }
+    }
+    const preparedDossierClaims = mechanicsEngine
+        ? { enabled: false, claims: [], rejected: [] }
+        : (window.HordeDossierClaims?.prepareCommit?.(world, sess, validation, {
+            origin: sidecarSource ? 'sidecar' : 'narrator'
+        }) || { enabled: false, claims: [], rejected: [] });
     const actionResult = processStructuredActions(validation.legacyArgs, world, sess, { sidecar: sidecarSource });
     applyWorldEntityPatches(world, sess, validation.entityPatches);
     // Recover an omitted NPC movement only when two independent channels
@@ -11462,6 +11507,32 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
             applied: dossierClaimResult.applied.map(claim => claim?.id || '').filter(Boolean),
             rejected: [...preparedDossierClaims.rejected, ...dossierClaimResult.rejected]
         };
+    }
+    // World mechanics: apply -> finalize. The engine lands its own records
+    // (altered states with canonical phases, dose-event history, cognition,
+    // relationships, inventory, scene telemetry and the boundary card) and,
+    // when it owns the world, applies and finalizes the staged dossier
+    // claims inside its own pipeline.
+    if (mechanicsEngine) {
+        if (!mechanicsGuard?.allowed) {
+            audit.mechanics = { applied: false, skipped: 'duplicate_turn_receipt',
+                detail: String(mechanicsGuard?.reason || '').slice(0, 240) };
+        } else if (preparedMechanics.enabled) {
+            const mechanicsResult = mechanicsEngine.applyPreparedCommit(world, sess, preparedMechanics);
+            const mechanicsSceneCard = mechanicsEngine.finalizeCommit(world, sess, validation, audit, preparedMechanics);
+            audit.mechanics = {
+                applied: !!mechanicsResult.applied,
+                errors: mechanicsResult.errors || preparedMechanics.errors || [],
+                dropped: preparedMechanics.dropped || [],
+                continuations: (preparedMechanics.continuations || [])
+                    .map(update => update?.id || '').filter(Boolean),
+                execution_verdicts: preparedMechanics.executionVerdicts || [],
+                scene_card: mechanicsSceneCard?.id || '',
+                revision: preparedMechanics.revision
+            };
+        } else {
+            audit.mechanics = { applied: false, errors: preparedMechanics.errors || [] };
+        }
     }
     return { validation, actionResult, audit };
 }
@@ -31451,6 +31522,9 @@ ${modularMandate}
         if (!ruleModules.commerce && !ruleModules.livingWorld) removeToolFields(['economy_updates']);
         if (window.HordeDossierClaims?.isEnabled?.(world)) {
             window.HordeDossierClaims.extendReceiptSchema(worldStateTool.function.parameters);
+        }
+        if (window.HordeWorldMechanics?.isEnabled?.(world)) {
+            window.HordeWorldMechanics.extendReceiptSchema(world, worldStateTool.function.parameters);
         }
 
         const failureCostProperties = worldStateProperties.checks?.items?.properties?.failure_cost?.properties;

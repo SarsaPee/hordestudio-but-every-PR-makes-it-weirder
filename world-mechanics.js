@@ -367,7 +367,7 @@
         };
     }
 
-    function prepareCommit(world, session, validation, registry) {
+    function prepareCommit(world, session, validation, registry, options = {}) {
         if (!isEnabled(world)) return { enabled: false, accepted: true, errors: [] };
         const state = ensureSession(world, session);
         const updates = object(validation.receipt?.state_updates) ? validation.receipt.state_updates : {};
@@ -466,7 +466,37 @@
                 return { ...update, resolved: resolveContinuation(world, session, record, update) };
             });
 
-        const dossier = globalThis.HordeDossierClaims?.prepareCommit?.(world, session, validation)
+        // Commit-time feasibility validation (Annex A hybrid envelope). The
+        // narration already rendered this beat; the engine checks the
+        // declared mechanic-conditioned execution evidence against the
+        // tracked envelope and records a verdict. A verdict never drops the
+        // event — an overdrawn execution is surfaced for correction, not
+        // erased from the record.
+        const executionVerdicts = list(validation.acceptedEvents).map(event => {
+            const evidence = object(event?.mechanic_conditioned_execution)
+                ? event.mechanic_conditioned_execution : null;
+            if (!evidence) return null;
+            const request = {
+                actorId: event.actor_id,
+                task: evidence.task,
+                proposedLegality: evidence.proposed_legality || evidence.legality,
+                compensations: list(evidence.compensations),
+                environmentalSupport: list(evidence.environmental_support)
+            };
+            const verdict = validateExecution(world, session, request, registry);
+            return {
+                eventId: String(event?.id || '').slice(0, 120),
+                actorId: String(event?.actor_id || '').slice(0, 120),
+                task: verdict.task,
+                legal: verdict.legal === true,
+                affordedLegality: verdict.affordedLegality,
+                envelopeLegality: verdict.envelopeLegality,
+                compensations: clone(request.compensations),
+                environmentalSupport: clone(request.environmentalSupport),
+                reason: verdict.reason || ''
+            };
+        }).filter(Boolean);
+        const dossier = globalThis.HordeDossierClaims?.prepareCommit?.(world, session, validation, { origin: options?.origin || 'narrator' })
             || { enabled: false, accepted: true, claims: [], patches: [], errors: [] };
         if (dossier.enabled && !dossier.accepted) {
             // Same drop-don't-void rule as the records above. A dossier claim
@@ -541,6 +571,7 @@
             inventory,
             altered,
             continuations,
+            executionVerdicts,
             dossier,
             registry,
             state
