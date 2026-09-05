@@ -35160,7 +35160,14 @@ function normalizeWorldSandboxConfig(world) {
                 holdings: (Array.isArray(life.holdings) ? life.holdings : String(life.holdings || '').split(','))
                     .map(item => String(item || '').trim()).filter(Boolean).slice(0, 30),
                 statOverrides,
-                intro: String(life.intro || '').slice(0, 6000)
+                intro: String(life.intro || '').slice(0, 6000),
+                // Mechanics checkpoint overlays ride along untouched: the
+                // world mechanics engine normalizes them at life start
+                // (applyCheckpoint). Rebuilding lives without this field
+                // silently disabled checkpoint initialization for imported
+                // mechanics worlds.
+                ...(isPlainObject(life.checkpointOverlay)
+                    ? { checkpointOverlay: life.checkpointOverlay } : {})
             };
         });
     return world.sandboxConfig;
