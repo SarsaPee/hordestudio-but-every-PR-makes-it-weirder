@@ -2137,6 +2137,12 @@ body {
     background: var(--red-dim);
     color: var(--red);
 }
+
+/* One-scroll record inspector: the tab strip anchors into a continuous view. */
+#world-record-body [data-inspector-section] { scroll-margin-top: 12px; }
+.world-inspector-section-heading { margin: 16px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.world-inspector-section-heading h3 { margin: 0; font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+
 .world-record-body {
     min-height: 0;
     overflow: auto;

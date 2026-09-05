@@ -20601,23 +20601,52 @@ function setWorldInspectorTab(tab) {
         button.setAttribute('aria-selected', String(active));
         button.tabIndex = active ? 0 : -1;
     });
+    // One continuous scroll: every authored section stays visible, the first
+    // section of each kind carries a heading, and visuals sit at the top.
+    // The tab strip is anchor navigation, not a segmentation control.
+    const labels = worldRecordInspector.sections || {};
+    const headed = new Set();
     document.querySelectorAll('#world-record-body [data-inspector-section]').forEach(section => {
-        const visible = section.dataset.inspectorSection === tab;
-        section.classList.toggle('hidden-by-inspector', !visible);
-        section.hidden = !visible;
+        section.classList.remove('hidden-by-inspector');
+        section.hidden = false;
+        const id = section.dataset.inspectorSection;
+        if (labels[id] && !headed.has(id)
+            && !(section.previousElementSibling
+                && section.previousElementSibling.classList.contains('world-inspector-section-heading'))) {
+            // The heading is a previous sibling, never a child: sections like
+            // the media editor are exact two-cell grids whose layout would
+            // shift if an extra child landed inside them.
+            const heading = document.createElement('div');
+            heading.className = 'world-inspector-section-heading';
+            heading.innerHTML = `<h3>${escapeHTML(labels[id])}</h3>`;
+            section.parentElement.insertBefore(heading, section);
+        }
+        headed.add(id);
     });
     const body = document.getElementById('world-record-body');
-    if (body) body.scrollTop = 0;
+    if (!body) return;
+    const visuals = body.querySelector('[data-inspector-section="visuals"]');
+    if (visuals) {
+        // Sections can nest inside inner wrappers; move visuals to the top of
+        // its record card so it leads the scroll.
+        const card = visuals.closest('.studio-card') || visuals.parentElement;
+        if (card && card.firstElementChild !== visuals) card.insertBefore(visuals, card.firstElementChild);
+    }
+    const target = tab ? body.querySelector(`[data-inspector-section="${tab}"]`) : null;
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else body.scrollTop = 0;
 }
 
 function renderWorldInspectorTabs(kind, record) {
+    // Visuals first, then overview, then the remaining sections in place.
     const tabs = kind === 'region'
         ? [['overview', 'Overview'], ['locations', 'Locations'], ['travel', 'Travel links']]
         : kind === 'location'
-        ? [['overview', 'Overview'], ['map', 'Rooms & map'], ['connections', 'Connections'], ['simulation', 'Opening state'], ['commerce', 'Commerce'], ['secrets', 'Secrets'], ['visuals', 'Visuals']]
+        ? [['visuals', 'Visuals'], ['overview', 'Overview'], ['map', 'Rooms & map'], ['connections', 'Connections'], ['simulation', 'Opening state'], ['commerce', 'Commerce'], ['secrets', 'Secrets']]
         : record?.type === 'item'
             ? [['overview', 'Overview'], ['placement', 'Placement'], ['secrets', 'Knowledge & secrets']]
-        : [['overview', 'Overview'], ['persona', 'Persona & voice'], ['relationships', 'Relationships'], ['simulation', 'Life & autonomy'], ['secrets', 'Knowledge & secrets'], ['visuals', 'Visuals']];
+            : [['visuals', 'Visuals'], ['overview', 'Overview'], ['persona', 'Persona & voice'], ['relationships', 'Relationships'], ['simulation', 'Life & autonomy'], ['secrets', 'Knowledge & secrets']];
+    worldRecordInspector.sections = Object.fromEntries(tabs);
     const host = document.getElementById('world-record-tabs');
     if (!tabs.some(([id]) => id === worldRecordInspector.tab)) worldRecordInspector.tab = tabs[0][0];
     host.setAttribute('role', 'tablist');
@@ -20625,7 +20654,7 @@ function renderWorldInspectorTabs(kind, record) {
     host.querySelectorAll('.world-record-tab').forEach(button => button.onclick = () => setWorldInspectorTab(button.dataset.tab));
 }
 
-function openWorldRecordInspector(kind, id, tab = 'overview', directory = '') {
+function openWorldRecordInspector(kind, id, tab = '', directory = '') {
     const record = worldDirectoryRecord(kind, id);
     if (!record) return;
     worldRecordInspector.kind = kind;
@@ -20884,7 +20913,7 @@ function renderWorldRegionInspector() {
     container.querySelector('.region-tags').onchange = event => { region.tags = event.target.value.split(',').map(value => value.trim()).filter(Boolean).slice(0, 30); };
     container.querySelector('.region-description').onchange = event => { region.description = event.target.value.slice(0, 1200); };
     container.querySelector('.region-add-location').onclick = () => addWorldLocation('bottom', region.id);
-    container.querySelectorAll('[data-region-location]').forEach(button => button.onclick = () => openWorldRecordInspector('location', button.dataset.regionLocation, 'overview', 'locations'));
+    container.querySelectorAll('[data-region-location]').forEach(button => button.onclick = () => openWorldRecordInspector('location', button.dataset.regionLocation, '', 'locations'));
     container.querySelector('.travel-connect').onclick = () => {
         const origin = getLocationRef(world, container.querySelector('.travel-origin').value);
         const target = getLocationRef(world, container.querySelector('.travel-target').value);
@@ -21527,7 +21556,7 @@ function renderWorldLocations() {
                 openWorldRecordInspector('location', event.currentTarget.dataset.openParent, 'map', 'locations');
             });
             div.querySelectorAll('[data-open-child]').forEach(button => button.onclick = () => {
-                openWorldRecordInspector('location', button.dataset.openChild, 'overview', 'locations');
+                openWorldRecordInspector('location', button.dataset.openChild, '', 'locations');
             });
             div.querySelector('.loc-map-floor').onchange = (e) => {
                 loc.mapFloor = e.target.value.trim();
@@ -21765,7 +21794,7 @@ function addWorldEntity(type = 'npc') {
     const directory = entityType === 'npc' ? 'people' : 'items';
     worldStudioListState[directory].query = '';
     worldStudioListState[directory].page = 0;
-    openWorldRecordInspector('entity', ent.id, 'overview', directory);
+    openWorldRecordInspector('entity', ent.id, '', directory);
     updateWorldTokenCount();
 }
 
@@ -22911,7 +22940,7 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
                 <div class="world-directory-card-copy"><h3>${escapeHTML(entity.name || 'Unnamed record')}</h3>
                 <p>${escapeHTML(isItems ? (entity.description || 'No item description yet.') : (entity.persona || entity.description || 'No personality or description yet.'))}</p>
                 <div class="world-directory-badges"><span class="world-directory-badge ${depth === 'core' ? 'is-core' : ''}">${escapeHTML(isItems ? 'item' : depth)}</span>${home ? `<span class="world-directory-badge">⌂ ${escapeHTML(home.name)}</span>` : ''}${!isItems && !entity.persona ? '<span class="world-directory-badge is-warning">persona missing</span>' : ''}</div></div>`;
-            card.onclick = () => openWorldRecordInspector('entity', entity.id, 'overview', mode);
+            card.onclick = () => openWorldRecordInspector('entity', entity.id, '', mode);
             grid.appendChild(card);
         });
         directory.appendChild(section);
