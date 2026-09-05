@@ -10083,3 +10083,9 @@ label[data-help] > span:first-child::after,
 .os-builtin-value { display: inline-block; background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 0.72rem; color: var(--text-2); }
 .os-migration-report { border: 1px solid var(--danger); border-radius: 8px; padding: 8px 12px; }
 .os-migration-report ul { margin: 6px 0 8px; padding-left: 18px; }
+
+/* FF Roleplay OS causal chain inside the per-turn Backstage card. */
+.sidecar-os-chain ul.sidecar-os-list { margin: 6px 0 0; padding-left: 16px; }
+.sidecar-os-chain ul.sidecar-os-list li { color: #a6c9c2; font-size: 0.66rem; line-height: 1.5; }
+.sidecar-os-chain ul.sidecar-os-list li b { color: var(--text); }
+.sidecar-os-provenance { color: var(--text-3); font-style: normal; font-size: 0.6rem; }
