@@ -770,6 +770,20 @@
                                     <option value="full-body">Full-body</option>
                                 </select>
                             </div>
+                            <div id="world-visual-subject-field">
+                                <label class="form-label">Structured subject <span class="help-glyph" title="Optional per-character fields for structured image consumers. Blank fields are omitted and never travel to a generator.">?</span></label>
+                                <div class="form-row">
+                                    <div class="form-col"><label class="form-field"><span>Pose</span><input id="world-visual-subject-pose" class="form-input" type="text" placeholder="leaning on the reception desk…" autocomplete="off"></label></div>
+                                    <div class="form-col"><label class="form-field"><span>Expression</span><input id="world-visual-subject-expression" class="form-input" type="text" placeholder="dazzling welcome…" autocomplete="off"></label></div>
+                                    <div class="form-col"><label class="form-field"><span>Action</span><input id="world-visual-subject-action" class="form-input" type="text" placeholder="sliding a folder across…" autocomplete="off"></label></div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-col"><label class="form-field"><span>Clothing</span><input id="world-visual-subject-clothing" class="form-input" type="text" placeholder="teal satin blouse…" autocomplete="off"></label></div>
+                                    <div class="form-col"><label class="form-field"><span>Orientation</span><input id="world-visual-subject-orientation" class="form-input" type="text" placeholder="facing the camera…" autocomplete="off"></label></div>
+                                    <div class="form-col"><label class="form-field"><span>Placement in frame</span><input id="world-visual-subject-location" class="form-input" type="text" placeholder="centered, desk in front…" autocomplete="off"></label></div>
+                                </div>
+                                <p class="form-hint">Optional structured subject fields for this character only — they are never part of presets. Fibo models receive them natively; other models receive them compiled into the prompt.</p>
+                            </div>
                             <div>
                                 <label class="form-label">Aspect ratio</label>
                                 <select id="world-visual-aspect" class="form-select">
@@ -1028,6 +1042,48 @@
                                     <label class="form-field"><span>safety_tolerance</span><input id="w-visual-fal-safety-tolerance" class="form-input" type="number" min="0" max="100" step="any" placeholder="5" autocomplete="off"></label>
                                     <label class="form-field"><span>enable_safety_checker</span><select id="w-visual-fal-enable-safety-checker" class="form-select"><option value="">Blank — omit this field</option><option value="true">true — request safety checking</option><option value="false">false — request no safety checking</option></select></label>
                                     <p class="form-hint">Optional Fal request parameters. Leave either blank when that model does not use it; blank fields are omitted, so the endpoint default applies. Some models use <code>safety_tolerance</code>; Seedream uses <code>enable_safety_checker</code>. Fal may still enforce safety checking when an account is not authorised to disable it.</p>
+                                </div>
+                            </div>
+                            <div id="w-visual-image-guide" class="form-row">
+                                <div class="form-col">
+                                    <label class="form-label">Structured Image Guide <span class="help-glyph" title="Optional authored image direction shared by every world visual. Blank fields are always omitted. Fibo models receive this as their native structured prompt; every other model receives the same fields compiled into prompt text.">?</span></label>
+                                    <div class="form-row" style="gap:8px; align-items:end;">
+                                        <div class="form-col">
+                                            <label class="form-label">Presets</label>
+                                            <select id="w-visual-guide-preset" class="form-select"><option value="">No saved presets yet</option></select>
+                                        </div>
+                                        <div class="form-col form-col-grow">
+                                            <label class="form-label">Preset name</label>
+                                            <input id="w-visual-guide-preset-name" class="form-input" type="text" maxlength="80" placeholder="85mm low-key portrait…" autocomplete="off">
+                                        </div>
+                                        <button class="btn btn-ghost" id="w-visual-guide-preset-save" type="button">Save preset</button>
+                                        <button class="btn btn-ghost" id="w-visual-guide-preset-delete" type="button">Delete</button>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col"><label class="form-field"><span>Style medium</span><input data-image-guide-field="styleMedium" class="form-input" type="text" placeholder="cinematic photograph, oil sketch…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Artistic style</span><input data-image-guide-field="artisticStyle" class="form-input" type="text" placeholder="grounded photorealism…" autocomplete="off"></label></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col"><label class="form-field"><span>Lighting conditions</span><input data-image-guide-field="lightingConditions" class="form-input" type="text" placeholder="low-key, overcast window light…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Lighting direction</span><input data-image-guide-field="lightingDirection" class="form-input" type="text" placeholder="side-lit from camera left…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Shadows</span><input data-image-guide-field="lightingShadows" class="form-input" type="text" placeholder="soft, filled…" autocomplete="off"></label></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col"><label class="form-field"><span>Composition</span><input data-image-guide-field="composition" class="form-input" type="text" placeholder="full-frame head-and-shoulders…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Color scheme</span><input data-image-guide-field="colorScheme" class="form-input" type="text" placeholder="desaturated teal and amber…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Mood and atmosphere</span><input data-image-guide-field="moodAtmosphere" class="form-input" type="text" placeholder="quiet, clinical…" autocomplete="off"></label></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col"><label class="form-field"><span>Depth of field</span><input data-image-guide-field="depthOfField" class="form-input" type="text" placeholder="shallow…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Focus</span><input data-image-guide-field="focus" class="form-input" type="text" placeholder="tack-sharp on the eyes…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Camera angle</span><input data-image-guide-field="cameraAngle" class="form-input" type="text" placeholder="straight-on, slightly low…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-field"><span>Lens focal length</span><input data-image-guide-field="lensFocalLength" class="form-input" type="text" placeholder="85mm…" autocomplete="off"></label></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col form-col-grow"><label class="form-field"><span>Background setting</span><input data-image-guide-field="backgroundSetting" class="form-input" type="text" placeholder="blurred office interior, wet street at night…" autocomplete="off"></label></div>
+                                        <div class="form-col form-col-grow"><label class="form-field"><span>Context</span><input data-image-guide-field="context" class="form-input" type="text" placeholder="reusable identity portrait, not a scene still…" autocomplete="off"></label></div>
+                                    </div>
+                                    <p class="form-hint">Optional image direction for every portrait, background, revision and map skin in this world. Blank fields are omitted. Save the guide as a preset to reuse a look across worlds; presets never store character-specific fields. Fibo models receive this natively as a structured prompt; other models receive it as prompt text.</p>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -5374,6 +5430,6 @@
      HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->
 <script src="melbourne-bunnyrx-registry.js?v=20260905-wm-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260905-v1700-visual-source-v1"></script>
+<script src="app.js?v=20260905-v1700-visual-source-v2"></script>
 </body>
 </html>

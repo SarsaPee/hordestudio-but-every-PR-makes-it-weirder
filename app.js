@@ -2800,6 +2800,13 @@ function validateWorldData(value, label = 'World') {
             requirePlainObject(entity.visuals, `${label} entity ${index + 1} visuals`);
             ['portraitAssetId', 'portraitPosition', 'portraitDisplayAssetId', 'dialogueColor'].forEach(key =>
                 requireString(entity.visuals[key], `${label} entity ${index + 1} visuals ${key}`, { optional: true, max: 200 }));
+            if (entity.visuals.portraitSubjectGuide !== undefined) {
+                requirePlainObject(entity.visuals.portraitSubjectGuide, `${label} entity ${index + 1} visuals portraitSubjectGuide`);
+                WORLD_VISUAL_SUBJECT_FIELDS.forEach(field =>
+                    requireString(entity.visuals.portraitSubjectGuide[field.key],
+                        `${label} entity ${index + 1} visuals portraitSubjectGuide ${field.key}`,
+                        { optional: true, max: field.max }));
+            }
         }
         requireArray(entity.goalSteps, `${label} entity ${index + 1} goal steps`, { optional: true, max: 20 });
         (entity.goalSteps || []).forEach((step, stepIndex) =>
@@ -2820,6 +2827,12 @@ function validateWorldData(value, label = 'World') {
         ['mode', 'artStyle', 'artDirection', 'accent', 'mapSkinAssetId', 'imageProvider', 'imageModel',
             'newImageProvider', 'newImageModel', 'revisionImageProvider', 'revisionImageModel'].forEach(key =>
             requireString(value.presentation[key], `${label} presentation ${key}`, { optional: true, max: key === 'artDirection' ? 4000 : 500 }));
+        if (value.presentation.imageGuide !== undefined) {
+            requirePlainObject(value.presentation.imageGuide, `${label} presentation imageGuide`);
+            WORLD_IMAGE_GUIDE_FIELDS.forEach(field =>
+                requireString(value.presentation.imageGuide[field.key],
+                    `${label} presentation imageGuide ${field.key}`, { optional: true, max: field.max }));
+        }
         if (value.presentation.enabled !== undefined && typeof value.presentation.enabled !== 'boolean') {
             throw new Error(`${label} presentation enabled setting is invalid`);
         }
@@ -3117,6 +3130,7 @@ function repairLoadedState() {
     state.globalSettings.falRate480 = Math.max(0, Math.min(100, Number(state.globalSettings.falRate480) || 0.05));
     state.globalSettings.falRate768 = Math.max(0, Math.min(100, Number(state.globalSettings.falRate768) || 0.08));
     state.globalSettings.falSafetyChecker = state.globalSettings.falSafetyChecker !== false;
+    state.globalSettings.imageGuidePresets = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
     state.globalSettings.companionAlwaysOnEnabled = state.globalSettings.companionAlwaysOnEnabled === true;
     state.globalSettings.companionAlwaysOnMessages = state.globalSettings.companionAlwaysOnMessages !== false;
     state.globalSettings.companionAlwaysOnSocial = state.globalSettings.companionAlwaysOnSocial !== false;
@@ -5040,6 +5054,147 @@ function falAdvancedRequestFieldsFromBody(body) {
     return forwarded;
 }
 
+// --- Optional structured image guide (Fibo-compatible input medium) ---
+// Authored image direction shared by every world visual generator. Blank
+// fields are omitted everywhere: this is an optional guidebook, never an
+// auto-filled template. Fibo endpoints receive it as their native
+// structured prompt; every other model receives the same fields compiled
+// into prompt prose. Per-character subject information never travels here.
+const WORLD_IMAGE_GUIDE_FIELDS = Object.freeze([
+    { key: 'styleMedium', max: 400, label: 'Style medium' },
+    { key: 'artisticStyle', max: 400, label: 'Artistic style' },
+    { key: 'lightingConditions', max: 400, label: 'Lighting conditions' },
+    { key: 'lightingDirection', max: 300, label: 'Lighting direction' },
+    { key: 'lightingShadows', max: 300, label: 'Shadows' },
+    { key: 'composition', max: 400, label: 'Composition' },
+    { key: 'colorScheme', max: 400, label: 'Color scheme' },
+    { key: 'moodAtmosphere', max: 400, label: 'Mood and atmosphere' },
+    { key: 'depthOfField', max: 300, label: 'Depth of field' },
+    { key: 'focus', max: 300, label: 'Focus' },
+    { key: 'cameraAngle', max: 300, label: 'Camera angle' },
+    { key: 'lensFocalLength', max: 200, label: 'Lens focal length' },
+    { key: 'backgroundSetting', max: 800, label: 'Background setting' },
+    { key: 'context', max: 1200, label: 'Context' }
+]);
+
+function normalizeWorldImageGuide(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const guide = {};
+    WORLD_IMAGE_GUIDE_FIELDS.forEach(field => {
+        guide[field.key] = String(source[field.key] || '').trim().slice(0, field.max);
+    });
+    return guide;
+}
+
+function worldImageGuide(world) {
+    const presentation = normalizeWorldPresentation(world);
+    const guide = normalizeWorldImageGuide(presentation.imageGuide);
+    return WORLD_IMAGE_GUIDE_FIELDS.some(field => guide[field.key]) ? guide : null;
+}
+
+function flattenWorldImageGuide(guide) {
+    if (!guide) return '';
+    const lines = WORLD_IMAGE_GUIDE_FIELDS
+        .map(field => guide[field.key] ? `${field.label}: ${guide[field.key]}` : '')
+        .filter(Boolean);
+    return lines.join('. ');
+}
+
+function imageGuideProseBlock(guide) {
+    const prose = flattenWorldImageGuide(guide);
+    return prose ? `[WORLD IMAGE GUIDE - authored image direction for this world's visuals]\n${prose}` : '';
+}
+
+function isFiboImageEndpoint(model) {
+    return /^bria\/fibo[a-z0-9._-]*\//i.test(String(model || ''));
+}
+
+// Builds the Fibo-native structured prompt (or, with an edit instruction,
+// structured instruction) from the authored guide plus optional subject
+// data. Only populated fields travel; the neutral relationship default
+// exists because Fibo's schema demands the field whenever an object is sent.
+function fiboStructuredImageGuide(world, subject = null, editInstruction = '') {
+    const guide = worldImageGuide(world);
+    const structured = {};
+    if (guide) {
+        if (guide.styleMedium) structured.style_medium = guide.styleMedium;
+        if (guide.artisticStyle) structured.artistic_style = guide.artisticStyle;
+        if (guide.context) structured.context = guide.context;
+        if (guide.backgroundSetting) structured.background_setting = guide.backgroundSetting;
+        if (guide.lightingConditions || guide.lightingDirection || guide.lightingShadows) {
+            structured.lighting = {};
+            if (guide.lightingConditions) structured.lighting.conditions = guide.lightingConditions;
+            if (guide.lightingDirection) structured.lighting.direction = guide.lightingDirection;
+            if (guide.lightingShadows) structured.lighting.shadows = guide.lightingShadows;
+        }
+        if (guide.composition || guide.colorScheme || guide.moodAtmosphere) {
+            structured.aesthetics = {};
+            if (guide.composition) structured.aesthetics.composition = guide.composition;
+            if (guide.colorScheme) structured.aesthetics.color_scheme = guide.colorScheme;
+            if (guide.moodAtmosphere) structured.aesthetics.mood_atmosphere = guide.moodAtmosphere;
+        }
+        if (guide.depthOfField || guide.focus || guide.cameraAngle || guide.lensFocalLength) {
+            structured.photographic_characteristics = {};
+            if (guide.depthOfField) structured.photographic_characteristics.depth_of_field = guide.depthOfField;
+            if (guide.focus) structured.photographic_characteristics.focus = guide.focus;
+            if (guide.cameraAngle) structured.photographic_characteristics.camera_angle = guide.cameraAngle;
+            if (guide.lensFocalLength) structured.photographic_characteristics.lens_focal_length = guide.lensFocalLength;
+        }
+    }
+    if (isPlainObject(subject)) {
+        if (subject.shortDescription) structured.short_description = String(subject.shortDescription).slice(0, 800);
+        if (subject.backgroundSetting) structured.background_setting = String(subject.backgroundSetting).slice(0, 800);
+        const object = {};
+        if (subject.description) object.description = String(subject.description).slice(0, 800);
+        if (subject.location) object.location = String(subject.location).slice(0, 400);
+        if (subject.clothing) object.clothing = String(subject.clothing).slice(0, 600);
+        if (subject.pose) object.pose = String(subject.pose).slice(0, 400);
+        if (subject.expression) object.expression = String(subject.expression).slice(0, 300);
+        if (subject.action) object.action = String(subject.action).slice(0, 400);
+        if (subject.orientation) object.orientation = String(subject.orientation).slice(0, 200);
+        if (Object.keys(object).length) {
+            object.relationship = 'the sole primary subject of this image';
+            structured.objects = [object];
+        }
+    }
+    const instruction = String(editInstruction || '').trim();
+    if (instruction) structured.edit_instruction = instruction.slice(0, 2000);
+    return Object.keys(structured).length ? structured : null;
+}
+
+// Per-visual authored subject fields. Optional like the guide itself: blank
+// means the generator's existing identity sources already carry the subject.
+const WORLD_VISUAL_SUBJECT_FIELDS = Object.freeze([
+    { key: 'pose', max: 400 },
+    { key: 'expression', max: 300 },
+    { key: 'action', max: 400 },
+    { key: 'clothing', max: 600 },
+    { key: 'orientation', max: 200 },
+    { key: 'location', max: 400 }
+]);
+
+function normalizeWorldVisualSubjectGuide(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const subject = {};
+    WORLD_VISUAL_SUBJECT_FIELDS.forEach(field => {
+        subject[field.key] = String(source[field.key] || '').trim().slice(0, field.max);
+    });
+    return subject;
+}
+
+// Saved guidebook presets live with global settings so one authored look
+// ("85mm full-frame, low-key lighting") applies across every world. They
+// never contain subject or character data.
+function normalizeImageGuidePresets(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const presets = {};
+    Object.entries(source).slice(0, 60).forEach(([name, value]) => {
+        const label = String(name || '').trim().slice(0, 80);
+        if (label && isPlainObject(value)) presets[label] = normalizeWorldImageGuide(value);
+    });
+    return presets;
+}
+
 function normalizeWorldPresentation(world) {
     if (!world || typeof world !== 'object') return null;
     const raw = isPlainObject(world.presentation) ? world.presentation : {};
@@ -5080,7 +5235,8 @@ function normalizeWorldPresentation(world) {
             ? raw.newImageProvider
             : (['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit'),
         imageModel: String(raw.newImageModel || raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500),
-        falAdvancedSettings: normalizeFalAdvancedSettings(raw.falAdvancedSettings)
+        falAdvancedSettings: normalizeFalAdvancedSettings(raw.falAdvancedSettings),
+        imageGuide: normalizeWorldImageGuide(raw.imageGuide)
     });
     world.presentation = raw;
     if (!Array.isArray(world.mediaAssets)) world.mediaAssets = [];
@@ -20297,6 +20453,68 @@ function renderWorldVisuals() {
         };
     }
     syncFalAdvancedVisibility();
+    // Optional structured image guide: authored direction shared by every
+    // generator. Blank fields are omitted everywhere; presets fill the guide
+    // fields on demand and never carry subject or character data.
+    const guide = normalizeWorldImageGuide(presentation.imageGuide);
+    document.querySelectorAll('[data-image-guide-field]').forEach(input => {
+        const field = WORLD_IMAGE_GUIDE_FIELDS.find(item => item.key === input.dataset.imageGuideField);
+        if (!field) return;
+        input.value = guide[field.key];
+        input.onchange = () => {
+            presentation.imageGuide = normalizeWorldImageGuide({
+                ...presentation.imageGuide, [field.key]: input.value
+            });
+            input.value = presentation.imageGuide[field.key];
+        };
+    });
+    const presetSelect = byId('w-visual-guide-preset');
+    const presetNameInput = byId('w-visual-guide-preset-name');
+    const refreshGuidePresets = () => {
+        const presets = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
+        const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
+        presetSelect.innerHTML = `<option value="">${names.length ? 'Choose a saved preset…' : 'No saved presets yet'}</option>`
+            + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+        return presets;
+    };
+    if (presetSelect) {
+        let presets = refreshGuidePresets();
+        presetSelect.onchange = () => {
+            const name = presetSelect.value;
+            if (!name || !presets[name]) return;
+            presentation.imageGuide = normalizeWorldImageGuide(presets[name]);
+            document.querySelectorAll('[data-image-guide-field]').forEach(input => {
+                const field = WORLD_IMAGE_GUIDE_FIELDS.find(item => item.key === input.dataset.imageGuideField);
+                if (field) input.value = presentation.imageGuide[field.key];
+            });
+            showToast(`Applied image preset “${name}”. Review the fields, then Save World.`, 'success');
+        };
+        const savePresetButton = byId('w-visual-guide-preset-save');
+        if (savePresetButton) savePresetButton.onclick = () => {
+            const name = String(presetNameInput?.value || '').trim().slice(0, 80);
+            if (!name) return showToast('Name the preset before saving it.', 'error');
+            state.globalSettings.imageGuidePresets = {
+                ...normalizeImageGuidePresets(state.globalSettings.imageGuidePresets),
+                [name]: normalizeWorldImageGuide(presentation.imageGuide)
+            };
+            persistGlobalSettingsOnly().catch(() => {});
+            presets = refreshGuidePresets();
+            presetSelect.value = name;
+            presetNameInput.value = '';
+            showToast(`Saved image preset “${name}” — guide fields only, subject data stays per character.`, 'success');
+        };
+        const deletePresetButton = byId('w-visual-guide-preset-delete');
+        if (deletePresetButton) deletePresetButton.onclick = () => {
+            const name = presetSelect.value;
+            const next = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
+            if (!name || !next[name]) return showToast('Choose a saved preset to delete.', 'error');
+            delete next[name];
+            state.globalSettings.imageGuidePresets = next;
+            persistGlobalSettingsOnly().catch(() => {});
+            presets = refreshGuidePresets();
+            showToast(`Deleted image preset “${name}”.`, 'success');
+        };
+    }
     byId('w-visual-accent').value = presentation.accent;
     byId('w-visual-background-dim').value = presentation.backgroundDim;
     byId('w-visual-panel-opacity').value = presentation.panelOpacity;
@@ -35536,6 +35754,7 @@ function normalizeAuthoredWorld(world) {
         if (!isPlainObject(entity.visuals)) entity.visuals = {};
         entity.visuals.portraitAssetId = String(entity.visuals.portraitAssetId || '').slice(0, 160);
         entity.visuals.portraitDisplayAssetId = String(entity.visuals.portraitDisplayAssetId || '').slice(0, 160);
+        entity.visuals.portraitSubjectGuide = normalizeWorldVisualSubjectGuide(entity.visuals.portraitSubjectGuide);
         entity.visuals.portraitPosition = String(entity.visuals.portraitPosition || 'center').slice(0, 80);
         entity.visuals.dialogueColor = /^#[0-9a-f]{6}$/i.test(String(entity.visuals.dialogueColor || ''))
             ? String(entity.visuals.dialogueColor).toUpperCase() : '';
@@ -48774,6 +48993,8 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
                 apiKey: state.falApiKey, model: body.model, prompt: body.prompt,
                 imageDataUrl: body.imageDataUrl || '',
                 aspectRatio: body.aspect_ratio || (String(body.size || '').includes('16_9') ? '16:9' : '1:1'),
+                fiboStructuredPrompt: isPlainObject(body.fiboStructuredPrompt) ? body.fiboStructuredPrompt : null,
+                fiboResolution: String(body.fiboResolution || ''),
                 ...falAdvancedRequestFieldsFromBody(body)
             }
         });
@@ -49435,6 +49656,13 @@ function saveWorldVisualEditorFields() {
         target.visuals.portraitAspectRatio = aspect;
         target.visuals.portraitResolution = resolution;
         target.visuals.portraitCorrection = correction;
+        // Optional authored subject fields: blank keys stay blank and never
+        // travel to a generator.
+        target.visuals.portraitSubjectGuide = normalizeWorldVisualSubjectGuide(
+            WORLD_VISUAL_SUBJECT_FIELDS.reduce((subject, field) => {
+                subject[field.key] = document.getElementById(`world-visual-subject-${field.key}`)?.value || '';
+                return subject;
+            }, target.visuals.portraitSubjectGuide || {}));
     } else {
         target.visualDescription = document.getElementById('world-visual-primary').value.trim().slice(0, 8000);
         target.imagePrompt = document.getElementById('world-visual-prompt').value.trim().slice(0, 8000);
@@ -49687,6 +49915,20 @@ function openWorldVisualEditor(world, target, kind) {
     document.getElementById('world-visual-framing-field').classList.toggle('hidden', !npc);
     document.getElementById('world-visual-framing').value = npc
         ? target.visuals.portraitFraming || 'auto' : 'auto';
+    // Optional per-character subject fields (NPC portraits only). Hidden for
+    // locations, where the world guide and the location's own description
+    // already carry the subject layer.
+    const subjectField = document.getElementById('world-visual-subject-field');
+    if (subjectField) {
+        subjectField.classList.toggle('hidden', !npc);
+        if (npc) {
+            const subjectGuide = normalizeWorldVisualSubjectGuide(target.visuals.portraitSubjectGuide);
+            WORLD_VISUAL_SUBJECT_FIELDS.forEach(field => {
+                const input = document.getElementById(`world-visual-subject-${field.key}`);
+                if (input) input.value = subjectGuide[field.key];
+            });
+        }
+    }
     document.getElementById('world-visual-aspect').value = npc
         ? normalizedWorldVisualAspect(target.visuals.portraitAspectRatio, '3:4')
         : normalizedWorldVisualAspect(target.visuals.backgroundAspectRatio, '16:9');
@@ -49737,7 +49979,7 @@ function attachWorldVisualReference(body, provider, model, referenceImage) {
 
 async function generateWorldVisual(world, prompt, {
     aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label,
-    referenceImage = '', requireReference = false
+    referenceImage = '', requireReference = false, imageSubject = null
 } = {}) {
     const presentation = normalizeWorldPresentation(world);
     const pipeline = requireReference || referenceImage ? 'revision' : 'new';
@@ -49776,6 +50018,15 @@ async function generateWorldVisual(world, prompt, {
     if (requireReference && !canUseReference) {
         throw new Error(`${model} does not expose reference-image editing through its selected endpoint. Choose a reference-capable image model before revising.`);
     }
+    // The authored image guide is the world's optional direction layer. It
+    // rides every generation AND revision: for Fibo endpoints it travels as
+    // the native structured prompt (or structured instruction with the edit
+    // wording embedded); for every other provider it compiles into prompt
+    // prose, which also anchors revisions to the world's look.
+    const imageGuide = worldImageGuide(world);
+    const fiboModel = provider === 'fal' && isFiboImageEndpoint(model);
+    const finalPrompt = imageGuide && !fiboModel
+        ? `${prompt}\n\n${imageGuideProseBlock(imageGuide)}` : prompt;
     const requestConfig = {
         imageModel: model,
         imageParameters: { aspect_ratio: aspectRatio },
@@ -49784,11 +50035,17 @@ async function generateWorldVisual(world, prompt, {
     };
     const buildBody = includeReference => {
         const body = attachWorldVisualReference(
-            applyCompanionImageParameters({ model, prompt }, requestConfig, capabilities, endpoint),
+            applyCompanionImageParameters({ model, prompt: finalPrompt }, requestConfig, capabilities, endpoint),
             provider, model, includeReference ? referenceImage : '');
         if (provider === 'fal') {
             body.aspect_ratio = aspectRatio;
             Object.assign(body, falAdvancedRequestBody(world));
+            if (fiboModel) {
+                const structured = fiboStructuredImageGuide(world, imageSubject,
+                    requireReference ? prompt : '');
+                if (structured) body.fiboStructuredPrompt = structured;
+                body.fiboResolution = maxDimension >= 1536 ? '4MP' : '1MP';
+            }
         }
         return body;
     };
@@ -49825,6 +50082,13 @@ function worldVisualStylePrompt(world) {
 }
 
 async function generateWorldLocationBackground(world, location, options = {}) {
+    // Locations carry their own subject data for structured consumers: the
+    // authored brief as the short description and the visible space as the
+    // background setting. Character data never enters location visuals.
+    const imageSubject = {
+        shortDescription: String(location.imagePrompt || '').trim(),
+        backgroundSetting: String(location.visualDescription || location.description || '').trim()
+    };
     if (options.revisionOnly) {
         const instruction = String(options.correction || '').trim();
         if (!instruction) throw new Error('Write a revision instruction first.');
@@ -49832,7 +50096,7 @@ async function generateWorldLocationBackground(world, location, options = {}) {
             aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || location.visuals?.backgroundAspectRatio, '16:9'),
             maxDimension: normalizedWorldVisualResolution(options.maxDimension || location.visuals?.backgroundResolution, 1600),
             quality: 0.82, kind: 'location_background', label: location.name,
-            referenceImage: options.referenceImage || '', requireReference: true
+            referenceImage: options.referenceImage || '', requireReference: true, imageSubject
         });
     }
     const visibleDescription = location.visualDescription || location.description || 'Use the location name and world premise.';
@@ -49842,11 +50106,19 @@ async function generateWorldLocationBackground(world, location, options = {}) {
         aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || location.visuals?.backgroundAspectRatio, '16:9'),
         maxDimension: normalizedWorldVisualResolution(options.maxDimension || location.visuals?.backgroundResolution, 1600),
         quality: 0.82, kind: 'location_background', label: location.name,
-        referenceImage: ''
+        referenceImage: '', imageSubject
     });
 }
 
 async function generateWorldNpcPortrait(world, npc, options = {}) {
+    // Subject data for structured consumers: stable identity from the same
+    // source the prose compiler uses, plus the optional authored subject
+    // fields. Blank subject fields simply do not travel.
+    const imageSubject = {
+        shortDescription: String(npc.imagePrompt || '').trim(),
+        description: String(npc.appearance || npc.description || '').trim(),
+        ...normalizeWorldVisualSubjectGuide(npc.visuals?.portraitSubjectGuide)
+    };
     if (options.revisionOnly) {
         const instruction = String(options.correction || '').trim();
         if (!instruction) throw new Error('Write a revision instruction first.');
@@ -49854,7 +50126,7 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
             aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || npc.visuals?.portraitAspectRatio, '3:4'),
             maxDimension: normalizedWorldVisualResolution(options.maxDimension || npc.visuals?.portraitResolution, 1200),
             quality: 0.84, kind: 'npc_portrait', label: npc.name,
-            referenceImage: options.referenceImage || '', requireReference: true
+            referenceImage: options.referenceImage || '', requireReference: true, imageSubject
         });
     }
     const compiler = globalThis.HordePortraitPromptCompiler;
@@ -49868,7 +50140,7 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
         };
     return generateWorldVisual(world, request.prompt, {
         aspectRatio: request.aspectRatio, maxDimension: request.maxDimension, quality: request.quality,
-        kind: 'npc_portrait', label: npc.name, referenceImage: ''
+        kind: 'npc_portrait', label: npc.name, referenceImage: '', imageSubject
     });
 }
 

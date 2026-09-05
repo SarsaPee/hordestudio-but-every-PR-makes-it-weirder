@@ -1841,10 +1841,100 @@ def list_fal_models(body: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "provider": "fal", "models": models}
 
 
+FIBO_STRUCTURED_TOP_STRINGS = {
+    "short_description": 800, "background_setting": 800, "context": 1200,
+    "style_medium": 400, "artistic_style": 400, "edit_instruction": 2000,
+}
+FIBO_STRUCTURED_NESTED = {
+    "lighting": {"conditions": 400, "direction": 300, "shadows": 300},
+    "aesthetics": {"composition": 400, "color_scheme": 400, "mood_atmosphere": 400},
+    "photographic_characteristics": {"depth_of_field": 300, "focus": 300,
+                                     "camera_angle": 300, "lens_focal_length": 200},
+}
+FIBO_OBJECT_FIELDS = {
+    "description": 800, "location": 400, "relationship": 400, "relative_size": 200,
+    "shape_and_color": 300, "texture": 300, "appearance_details": 600,
+    "pose": 400, "expression": 300, "clothing": 600, "action": 400,
+    "gender": 100, "skin_tone_and_texture": 300, "orientation": 200,
+}
+
+
+def _fibo_string(source: dict[str, Any], key: str, limit: int, label: str):
+    value = source.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError(f"{label} must be a string.")
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) > limit:
+        raise ValueError(f"{label} exceeds the {limit} character limit.")
+    return text
+
+
+def fibo_structured_prompt(body: dict[str, Any]) -> dict[str, Any] | None:
+    """Validated Fibo structured prompt / instruction from Horde's app layer.
+
+    Horde builds this from the world's authored image guide; the bridge
+    re-validates every field so only known, well-typed values reach the
+    endpoint. Returns None when nothing was authored.
+    """
+    raw = body.get("fiboStructuredPrompt")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("fiboStructuredPrompt must be an object.")
+    structured: dict[str, Any] = {}
+    for key, limit in FIBO_STRUCTURED_TOP_STRINGS.items():
+        text = _fibo_string(raw, key, limit, f"fibo structured {key}")
+        if text:
+            structured[key] = text
+    for parent, children in FIBO_STRUCTURED_NESTED.items():
+        nested_raw = raw.get(parent)
+        if nested_raw is None:
+            continue
+        if not isinstance(nested_raw, dict):
+            raise ValueError(f"fibo structured {parent} must be an object.")
+        nested = {}
+        for child, limit in children.items():
+            text = _fibo_string(nested_raw, child, limit, f"fibo structured {parent}.{child}")
+            if text:
+                nested[child] = text
+        if nested:
+            structured[parent] = nested
+    objects_raw = raw.get("objects")
+    if objects_raw is not None:
+        if not isinstance(objects_raw, list) or len(objects_raw) > 4:
+            raise ValueError("fibo structured objects must be a list of at most 4 entries.")
+        objects: list[dict[str, Any]] = []
+        for index, entry in enumerate(objects_raw):
+            if not isinstance(entry, dict):
+                raise ValueError(f"fibo structured object {index + 1} must be an object.")
+            obj: dict[str, Any] = {}
+            for field, limit in FIBO_OBJECT_FIELDS.items():
+                text = _fibo_string(entry, field, limit, f"fibo structured object {index + 1} {field}")
+                if text:
+                    obj[field] = text
+            count = entry.get("number_of_objects")
+            if count is not None:
+                if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 20:
+                    raise ValueError(f"fibo structured object {index + 1} number_of_objects is invalid.")
+                obj["number_of_objects"] = count
+            if obj:
+                if "relationship" not in obj:
+                    raise ValueError(f"fibo structured object {index + 1} needs a relationship.")
+                objects.append(obj)
+        if objects:
+            structured["objects"] = objects
+    unknown = set(raw) - set(FIBO_STRUCTURED_TOP_STRINGS) - set(FIBO_STRUCTURED_NESTED) - {"objects"}
+    if unknown:
+        raise ValueError(f"Unknown fibo structured fields: {', '.join(sorted(unknown))}.")
+    return structured or None
+
+
 def fal_advanced_image_fields(body: dict[str, Any]) -> dict[str, Any]:
     """Optional fal request parameters from Horde's Advanced Request Settings.
-
-    Deliberately not a per-model capability registry: some fal endpoints
     accept these fields and some do not, so a populated value passes through
     untouched and the endpoint's own validation is the only authority. Blank
     or missing values are omitted entirely so the endpoint default applies.
@@ -1905,7 +1995,38 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
         "prompt": prompt, "num_images": 1, "output_format": "jpeg",
     }
     payload.update(fal_advanced_image_fields(body))
-    if model == "fal-ai/wan-25-preview/image-to-image":
+    # Bria Fibo endpoints speak their own structured JSON. Horde's authored
+    # image guide arrives as a validated structured prompt (generation) or a
+    # structured instruction carrying the edit wording (editing). Other fal
+    # fields Fibo does not document are omitted rather than guessed.
+    fibo_structured = fibo_structured_prompt(body)
+    is_fibo_edit = model.startswith("bria/fibo-edit")
+    is_fibo_gen = model.startswith("bria/fibo") and not is_fibo_edit
+    if is_fibo_gen or is_fibo_edit:
+        payload.pop("num_images", None)
+        payload.pop("output_format", None)
+        payload.pop("enable_safety_checker", None)
+        payload.pop("safety_tolerance", None)
+        if is_fibo_gen:
+            payload["aspect_ratio"] = aspect
+            resolution = str(body.get("fiboResolution") or "").strip()
+            if resolution in {"1MP", "4MP"}:
+                payload["resolution"] = resolution
+            if fibo_structured:
+                payload["structured_prompt"] = fibo_structured
+        else:
+            # Fibo Edit has no `prompt` field: the wording is `instruction`
+            # prose, or a structured_instruction used verbatim when the app
+            # authored one. A single reference keeps its own ratio, so no
+            # aspect_ratio is forced.
+            payload.pop("prompt", None)
+            if image_url:
+                payload["image_urls"] = [image_url]
+            if fibo_structured:
+                payload["structured_instruction"] = fibo_structured
+            else:
+                payload["instruction"] = prompt
+    elif model == "fal-ai/wan-25-preview/image-to-image":
         payload["image_urls"] = [image_url]
         payload["aspect_ratio"] = aspect if aspect in {"16:9", "9:16", "1:1"} else "auto"
     elif model in FAL_IMAGE_MODELS:
