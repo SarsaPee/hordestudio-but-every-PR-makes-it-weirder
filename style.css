@@ -2446,6 +2446,7 @@ body {
 }
 
 .input-row {
+  position: relative;
   display: flex;
   gap: 12px;
   align-items: flex-end;
@@ -2470,6 +2471,38 @@ body {
   max-height: 160px;
   line-height: 1.5;
 }
+#world-user-input.msg-input {
+  resize: none;
+  max-height: 70vh;
+  overflow-y: hidden;
+}
+.world-message-resize-handle {
+  position: absolute;
+  z-index: 2;
+  top: -8px;
+  left: 14px;
+  right: 62px;
+  height: 16px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.world-message-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 42px;
+  height: 3px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--border);
+  box-shadow: 0 1px 0 rgba(255,255,255,.08);
+}
+.world-message-resize-handle:hover::before,
+.world-message-resize-handle:focus-visible::before {
+  background: var(--accent);
+}
+.world-message-resize-handle:focus-visible { outline: none; }
 .msg-input::placeholder { color: var(--text-3); }
 
 .send-btn {
@@ -7477,6 +7510,9 @@ input[type=number].form-input::-webkit-inner-spin-button {
 .world-kernel-config-grid,
 .world-check-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px; margin-top:14px; }
 .world-kernel-config-grid > *, .world-check-form-grid > * { min-width:0; }
+.sidecar-provider-model-row { display:grid; grid-template-columns:25% minmax(0, 1fr); gap:13px; }
+.sidecar-provider-connection-hint { grid-column:1 / -1; margin-top:-5px; }
+.sidecar-provider-connection-hint.form-warning { color:var(--warning, #c99024); }
 .world-kernel-compact-toggle { align-self:center; }
 .world-check-modal { width:min(680px,calc(100vw - 32px)); }
 .world-check-label-field { grid-column:1 / -1; }
@@ -8190,7 +8226,7 @@ input[type=number].form-input::-webkit-inner-spin-button {
 .companion-call-end-label { color: #777182; font-size: .65rem; }
 
 @media (max-width: 620px) {
-    .world-kernel-config-grid, .world-check-form-grid { grid-template-columns:minmax(0,1fr); }
+    .world-kernel-config-grid, .world-check-form-grid, .sidecar-provider-model-row { grid-template-columns:minmax(0,1fr); }
     .world-check-label-field { grid-column:auto; }
     .companion-call-overlay { justify-content: flex-start; padding-top: 54px; }
     .companion-call-transcript { max-height: 34vh; }
@@ -8840,6 +8876,7 @@ input[type=number].form-input::-webkit-inner-spin-button {
 }
 .horde-context-tooltip.visible { opacity: 1; transform: translateY(0); }
 .form-label[data-help]::after,
+summary[data-help]::after,
 label > span[data-help]::after,
 .labs-model-field[data-help] > span:first-child::after,
 label[data-help] > span:first-child::after,
@@ -8857,6 +8894,28 @@ label[data-help] > span:first-child::after,
     line-height: 1;
     vertical-align: 1px;
     opacity: .72;
+}
+/* Legacy inline help spans feed their text to the containing field header.
+   The header then renders one standard bubble and owns the hover target. */
+.form-label > .help-glyph { display: none; }
+.vh-test-check[data-help]::after {
+    content: '?';
+    display: inline-grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    margin-left: 6px;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    color: var(--text-muted);
+    font-size: 9px;
+    line-height: 1;
+    opacity: .72;
+}
+#w-sidecar-reader-max-tokens:placeholder-shown,
+#w-sidecar-max-tokens:placeholder-shown {
+    color: var(--text-3);
+    font-style: italic;
 }
 [data-help]:focus-visible { scroll-margin: 24px; }
 @media (prefers-reduced-motion: reduce) {

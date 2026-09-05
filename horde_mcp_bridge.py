@@ -64,7 +64,7 @@ HOST = os.environ.get("HORDE_SERVER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HORDE_SERVER_PORT", "43127"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
-BRIDGE_BUILD = "20260901-video-worlds-v1"
+BRIDGE_BUILD = "20260905-shared-library-compaction-v1"
 APP_INSTANCE_ID = hashlib.sha256(str(APP_DIR).encode("utf-8")).hexdigest()[:16]
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
 MAX_VIDEO_BYTES = 160 * 1024 * 1024
@@ -159,15 +159,10 @@ ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
 SHARED_LIBRARY_FILE = CONFIG_DIR / "shared-library.json"
 MAX_SHARED_LIBRARY_SNAPSHOT_BYTES = 28 * 1024 * 1024
-SHARED_LIBRARY_HISTORY_LIMIT = 12
+SHARED_LIBRARY_HISTORY_LIMIT = 3
+MAX_SHARED_LIBRARY_HISTORY_BYTES = 48 * 1024 * 1024
 SHARED_LIBRARY_DEVICE_TTL_SECONDS = 15 * 60
 SHARED_LIBRARY_MAX_ACTIVE_DEVICES = 24
-SHARED_LIBRARY_LOCAL_SETTING_KEYS = frozenset({
-    "mcpBridgeUrl", "localBaseUrl", "localApiKey", "localGenerationTimeoutSeconds",
-    "embeddingBaseUrl", "embeddingApiKey", "localTtsBaseUrl", "localTtsApiKey",
-    "localImageBaseUrl", "localImageApiKey", "comfyUiBaseUrl", "comfyWorkflowProfiles",
-})
-
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
 mcp_sessions: dict[str, dict[str, str]] = {}
@@ -1078,10 +1073,14 @@ class SharedLibraryStore:
             clean = json.loads(json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False))
         except (TypeError, ValueError) as error:
             raise ValueError("Shared library snapshot is not valid JSON.") from error
-        settings = clean.get("globalSettings")
-        if isinstance(settings, dict):
-            for key in SHARED_LIBRARY_LOCAL_SETTING_KEYS:
-                settings.pop(key, None)
+        # Migration rollbacks are local-only recovery state. They can contain
+        # entire worlds and their own earlier rollback lists, which makes a
+        # mirrored snapshot recursively copy itself on every publish.
+        worlds = clean.get("worlds")
+        if isinstance(worlds, list):
+            for world in worlds:
+                if isinstance(world, dict):
+                    world.pop("sidecarMigrationBackups", None)
         encoded = json.dumps(clean, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(encoded) > MAX_SHARED_LIBRARY_SNAPSHOT_BYTES:
             raise ValueError("Shared library snapshot exceeds the 28 MB safety limit.")
@@ -1123,7 +1122,34 @@ class SharedLibraryStore:
         }
 
     @staticmethod
-    def _archive(state: dict[str, Any], trigger: str) -> None:
+    def _point_bytes(point: dict[str, Any]) -> int:
+        snapshot = point.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return 0
+        try:
+            return len(json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _trim_history(cls, state: dict[str, Any]) -> None:
+        retained: list[dict[str, Any]] = []
+        used_bytes = 0
+        for point in state.get("history", []):
+            if not isinstance(point, dict) or not isinstance(point.get("snapshot"), dict):
+                continue
+            point = dict(point)
+            point["bytes"] = cls._point_bytes(point)
+            if len(retained) >= SHARED_LIBRARY_HISTORY_LIMIT:
+                continue
+            if retained and used_bytes + point["bytes"] > MAX_SHARED_LIBRARY_HISTORY_BYTES:
+                continue
+            retained.append(point)
+            used_bytes += point["bytes"]
+        state["history"] = retained
+
+    @classmethod
+    def _archive(cls, state: dict[str, Any], trigger: str) -> None:
         snapshot = state.get("snapshot")
         if not isinstance(snapshot, dict):
             return
@@ -1137,7 +1163,33 @@ class SharedLibraryStore:
             "updatedBy": str(state.get("updatedBy") or ""), "archivedAt": int(time.time() * 1000),
             "bytes": len(encoded), "trigger": trigger,
         }
-        state["history"] = [point, *state.get("history", [])][:SHARED_LIBRARY_HISTORY_LIMIT]
+        state["history"] = [point, *state.get("history", [])]
+        cls._trim_history(state)
+
+    def compact(self) -> dict[str, Any]:
+        """Remove local-only recursive state and prune obsolete recovery points."""
+        with self.lock:
+            state = self._load()
+            before = self.path.stat().st_size if self.path.exists() else 0
+            snapshot = state.get("snapshot")
+            if isinstance(snapshot, dict):
+                clean, fingerprint, _ = self._clean_snapshot(snapshot)
+                state["snapshot"] = clean
+                state["fingerprint"] = fingerprint
+            compacted_history = []
+            for point in state.get("history", []):
+                if not isinstance(point, dict) or not isinstance(point.get("snapshot"), dict):
+                    continue
+                clean, _, size = self._clean_snapshot(point["snapshot"])
+                compacted_history.append({**point, "snapshot": clean, "bytes": size})
+            state["history"] = compacted_history
+            self._trim_history(state)
+            state["revision"] = max(0, int(state.get("revision") or 0)) + 1
+            state["updatedAt"] = int(time.time() * 1000)
+            state["updatedBy"] = "local mirror maintenance"
+            self._save(state)
+            return {**self._summary(state), "compacted": True, "bytesBefore": before,
+                    "bytesAfter": self.path.stat().st_size, "historyRetained": len(state["history"])}
 
     def _record_device(self, state: dict[str, Any], device_id: Any, label: Any) -> None:
         identifier = self._clean_device(device_id, "deviceId", 128)
@@ -2712,6 +2764,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed_path == "/sync/restore":
                 status, payload = shared_library_store.restore(self.read_json())
                 return self.respond(status, payload)
+            if parsed_path == "/sync/compact":
+                return self.respond(200, shared_library_store.compact())
             if parsed_path == "/local-image/comfy/generate":
                 body = self.read_json()
                 return self.respond(200, {"image": comfy_generate(body)})

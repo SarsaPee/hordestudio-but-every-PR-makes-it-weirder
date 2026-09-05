@@ -22,7 +22,8 @@ class McpBridgeAudit(unittest.TestCase):
 
             first = {
                 "version": 1,
-                "globalSettings": {"theme": "dark", "localApiKey": "must-not-sync"},
+                "globalSettings": {"theme": "dark", "localApiKey": "test-local-provider-key"},
+                "credentials": {"apiKey": "test-cloud-provider-key"},
                 "characters": [{"id": "character-a"}],
             }
             status, published = store.push({
@@ -33,7 +34,8 @@ class McpBridgeAudit(unittest.TestCase):
             self.assertEqual(published["revision"], 1)
             pulled = store.status("device-b", "iPad browser", include_snapshot=True)
             self.assertEqual(pulled["snapshot"]["characters"], [{"id": "character-a"}])
-            self.assertNotIn("localApiKey", pulled["snapshot"]["globalSettings"])
+            self.assertEqual(pulled["snapshot"]["globalSettings"]["localApiKey"], "test-local-provider-key")
+            self.assertEqual(pulled["snapshot"]["credentials"]["apiKey"], "test-cloud-provider-key")
             self.assertEqual({device["id"] for device in pulled["activeDevices"]}, {"device-a", "device-b"})
 
             status, conflict = store.push({
@@ -63,6 +65,43 @@ class McpBridgeAudit(unittest.TestCase):
             self.assertEqual(restored["restoredFromRevision"], 1)
             self.assertEqual(restored["snapshot"]["characters"], [{"id": "character-a"}])
             self.assertEqual(len(store.status("device-b", "iPad browser", include_history=True)["history"]), 2)
+
+    def test_shared_library_store_excludes_migration_rollbacks_and_compacts_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "shared-library.json"
+            store = bridge.SharedLibraryStore(path)
+            recursive_world = {
+                "id": "world-a", "name": "Recursive",
+                "sidecarMigrationBackups": [{
+                    "world": {"id": "world-a", "sidecarMigrationBackups": [{"world": {"id": "world-a"}}]}
+                }],
+            }
+            status, _ = store.push({
+                "deviceId": "device-a", "label": "Mac browser", "baseRevision": 0,
+                "snapshot": {"version": 1, "worlds": [recursive_world]}, "trigger": "manual",
+            })
+            self.assertEqual(status, 200)
+            current = store.status("device-a", "Mac browser", include_snapshot=True)["snapshot"]
+            self.assertNotIn("sidecarMigrationBackups", current["worlds"][0])
+            for revision in range(1, 6):
+                status, _ = store.push({
+                    "deviceId": "device-a", "label": "Mac browser", "baseRevision": revision,
+                    "snapshot": {"version": 1, "worlds": [{"id": "world-a", "name": f"v{revision}"}]},
+                    "trigger": "periodic",
+                })
+                self.assertEqual(status, 200)
+
+            self.assertEqual(len(store.status("device-a", "Mac browser", include_history=True)["history"]), 3)
+            legacy = store._load()
+            legacy["snapshot"]["worlds"][0]["sidecarMigrationBackups"] = [{"world": recursive_world}]
+            legacy["history"][0]["snapshot"]["worlds"][0]["sidecarMigrationBackups"] = [{"world": recursive_world}]
+            store._save(legacy)
+            before = path.stat().st_size
+            result = store.compact()
+            self.assertTrue(result["compacted"])
+            self.assertLess(result["bytesAfter"], before)
+            compacted = store.status("device-a", "Mac browser", include_snapshot=True)["snapshot"]
+            self.assertNotIn("sidecarMigrationBackups", compacted["worlds"][0])
 
     @mock.patch.object(bridge, "safe_fal_url")
     @mock.patch.object(bridge, "json_request")

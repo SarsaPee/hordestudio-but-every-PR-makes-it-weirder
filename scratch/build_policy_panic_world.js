@@ -128,7 +128,7 @@ Then a soaked woman from the state insurance commission walks through the door, 
 It is not yet nine o'clock.`,
         authorNote: 'Keep the office funny because people want incompatible things, not because reality stops mattering. Keep every NPC voice distinct. Maintain clock, presence, reporting lines and town memory. Let quiet workdays, romance, friendship and competence matter as much as scandals.',
         startLocationId: 'loc_reception',
-        kernel: { enabled: true, sceneLocationLimit: 28, memoryMode: 'ledger', repairMode: 'adaptive', compactTools: true },
+        kernel: { enabled: true, sceneLocationLimit: 28, memoryMode: 'semantic', repairMode: 'adaptive', compactTools: false },
         worldAgent: { enabled: true, intervalTurns: 18, model: '', lastRunTurn: 0 },
         hudConfig: {
             showClock: true, showQuests: true, showLedger: true, showInventory: true, enableSchedules: true,

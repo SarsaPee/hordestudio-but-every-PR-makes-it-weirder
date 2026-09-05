@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260905-v1700-sidecar-reconciliation-v1">
+    <link rel="stylesheet" href="style.css?v=20260905-v1700-sidecar-reader-v1">
 </head>
 <body>
 <div id="app">
@@ -499,17 +499,11 @@
                                 <div class="session-selector-wrap">
                                     <select id="world-session-select" class="tool-select"></select>
                                     <button class="tool-btn" id="world-new-session-btn" title="New World Session">➕ New</button>
-                                    <button class="tool-btn" id="world-fork-session-btn" title="Fork the selected committed timeline">⑂ Fork</button>
                                     <button class="tool-btn" id="world-timeline-browser-btn" title="Inspect timelines and fork provenance">▤ Timelines</button>
                                     <button class="tool-btn" id="world-rename-session-btn" title="Rename Current Session">✏️ Rename</button>
                                     <button class="tool-btn tool-btn-danger" id="world-del-session-btn" type="button" title="Delete Current Session" aria-label="Delete current session">🗑️</button>
                                 </div>
-                                <div class="toolbar-divider"></div>
-                                <select id="world-conversation-mode" class="tool-select" title="Choose whether the input addresses the narrator or the out-of-world Sidecar tracker" aria-label="World conversation mode">
-                                    <option value="narrator">Narrator</option>
-                                    <option value="sidecar">Sidecar</option>
-                                </select>
-                                <button class="tool-btn" id="world-pipeline-status-btn" type="button" title="Inspect the active timeline's state pipeline" aria-label="Active timeline state pipeline">…</button>
+                                <span class="tool-btn" id="world-pipeline-status-btn" title="Active timeline pipeline">…</span>
                                 
                                 <div id="world-context-meter-wrap" style="display:flex; align-items:center; gap:8px; background:var(--surface2); padding:4px 10px; border-radius:10px; border:1px solid var(--border);">
                                     <span style="font-size:0.6rem; color:var(--text-3); font-weight:800;">CTX</span>
@@ -530,18 +524,14 @@
                                 <button class="tool-btn" id="world-continue-btn" title="DM continues without your input">⏩ Continue</button>
                                 <button class="tool-btn" id="world-session-zero-btn" title="Open session identity and story preferences">🎬 Session Setup</button>
                                 <button class="tool-btn" id="world-plan-sequence-btn" title="Plan and approve the next sequence">✦ New Sequence</button>
-                                <button class="tool-btn" id="world-context-refresh-btn" title="Author-approved context refresh and sequence planning">↻ Context Refresh</button>
                                 <button class="tool-btn" id="world-close-sequence-btn" title="Close the current sequence and prepare its reconciliation">▣ Close Sequence</button>
-                                <button class="tool-btn" id="world-promote-implied-btn" title="Review implied locations and characters for explicit promotion">⌁ Promote implied</button>
                                 <button class="tool-btn world-v3-only" id="world-v3-end-scene-btn" title="End the current scene and create its scene card">🎬 End Scene</button>
                                 <button class="tool-btn world-v3-only" id="world-v3-gm-btn" title="Open a private line to the World GM">🧭 World GM</button>
-                                <button class="tool-btn world-v3-only" id="world-v3-panel-btn" title="Inspect the current scene, relationships and canon workflow">◈ Scene State</button>
                                 <button class="tool-btn" id="world-map-btn" title="Toggle Map View">🗺️ Map</button>
                                 <button class="tool-btn" id="world-reroll-btn" title="Reroll last DM response">🔄 Reroll</button>
                                 <button class="tool-btn world-more-btn" id="world-more-btn" type="button" aria-expanded="false">••• More</button>
                                 <div class="world-more-actions" id="world-more-actions">
                                     <button class="tool-btn" id="world-toggle-headers-btn" title="Toggle Message Metadata">👁️ Metadata</button>
-                                    <button class="tool-btn" id="world-backstage-btn" title="Inspect narrator handoffs, Sidecar receipts, questions and the next scene packet">🎭 Backstage</button>
                                     <button class="tool-btn" id="world-presentation-btn" title="Switch between Classic and Cinematic presentation">🎨 View</button>
                                     <button class="tool-btn" id="world-system-btn" title="Inject System Instruction">🖥️ System</button>
                                     <button class="tool-btn" id="world-mechanics-toggle-btn" title="Pause or restore optional RPG mechanics without deleting character data">⚙ Mechanics</button>
@@ -577,6 +567,7 @@
                     <button id="world-scroll-bottom-btn" class="world-scroll-bottom-btn hidden" type="button" title="Scroll to latest" aria-label="Scroll to latest message">↓</button>
                     <div class="input-wrap">
                         <div class="input-row">
+                            <div id="world-message-resize-handle" class="world-message-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Drag up or down to resize message input" tabindex="0" title="Drag up or down to resize message input"></div>
                             <textarea id="world-user-input" class="msg-input" placeholder="What do you do?..." rows="1"></textarea>
                             <button id="world-send-btn" class="send-btn" type="button" aria-label="Send message">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -1102,6 +1093,15 @@
                             <p>Control model and creative parameters for this world.</p>
                         </div>
                         <div class="form-body">
+                            <div class="form-section world-state-pipeline-card">
+                                <span class="vh-eyebrow">STATE PIPELINE</span>
+                                <label class="form-label">Canonical state authority <span class="help-glyph" title="Sidecar is the authoritative state pipeline for new worlds: it reads the Narrator’s authored turn and commits the only canonical receipt. Inline Legacy exists only for compatible older timelines.">?</span></label>
+                                <select id="w-sidecar-mode" class="form-select">
+                                    <option value="sidecar">Sidecar · canonical authority</option>
+                                    <option value="inline_legacy">Inline Legacy · compatibility only</option>
+                                </select>
+                                <p id="w-state-pipeline-hint" class="form-hint"></p>
+                            </div>
                             <!-- Model Selection -->
                             <div class="form-section">
                                 <label class="form-label">Model ID <span class="form-hint">(selected provider)</span></label>
@@ -1117,7 +1117,7 @@
                             <div id="world-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                             <!-- World Agent: off-screen simulation with genuine invention -->
-                            <div class="form-section world-kernel-card">
+                            <div id="w-inline-legacy-settings" class="form-section world-kernel-card" data-pipeline-settings="inline_legacy">
                                 <div class="world-kernel-card-head">
                                     <div>
                                         <span class="vh-eyebrow">WORLD KERNEL</span>
@@ -1147,68 +1147,36 @@
                                             <option value="never">Never repair · freeze uncertain state</option>
                                         </select>
                                     </div>
-                                    <label class="vh-test-check world-kernel-compact-toggle"><input type="checkbox" id="w-kernel-compact-tools" checked> Compact tool contract</label>
+                                    <label class="vh-test-check world-kernel-compact-toggle"><input type="checkbox" id="w-kernel-compact-tools"> Compact tool contract</label>
                                 </div>
+                                    <div style="margin-top:12px;"><button id="w-inline-legacy-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button></div>
                             </div>
 
-                            <div class="form-section" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
-                                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
-                                    <div>
-                                        <span class="vh-eyebrow">STATE PIPELINE</span>
-                                        <h3 style="margin:4px 0 6px; font-size:1rem;">Narrator + Sidecar</h3>
+                            <div id="w-sidecar-authority-settings" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
+                                <span class="vh-eyebrow">SIDECAR AUTHORITY</span>
+                                <h3 style="margin:4px 0 6px; font-size:1rem;">Narrator + Sidecar</h3>
+                                <p class="form-hint">The Narrator writes visible prose and a handoff. Sidecar is the only canonical state authority: it reads that evidence and commits one validated receipt. Legacy repair and classifier paths do not run.</p>
+                                <details id="w-sidecar-settings" class="form-section" data-sidecar-feature="sidecar-configuration" style="margin:14px 0 0; padding:12px; border:1px solid var(--border); border-radius:8px;">
+                                    <summary style="cursor:pointer;" title="Controls the model that reads and reconciles the Narrator’s authored turn. Match Narrator uses the world model and routing."><strong>Sidecar settings</strong></summary>
+                                    <p class="form-hint">Sidecar reads an authored turn, then submits one canonical receipt. These settings do not change the Narrator’s visible prose.</p>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-inherit-narrator" checked> Use Narrator model and routing</label>
+                                    <div id="w-sidecar-override-config" class="sidecar-provider-model-row" style="margin-top:10px;">
+                                        <div><label class="form-label">Provider <span class="help-glyph" title="The service used for Sidecar’s own requests when it is not sharing the Narrator’s provider.">?</span></label><select id="w-sidecar-provider" class="form-select"><option value="openrouter">OpenRouter</option><option value="gptproto">GPTProto</option><option value="nanogpt">NanoGPT</option><option value="nvidia">NVIDIA NIM</option><option value="bedrock">AWS Bedrock</option><option value="custom">Custom OpenAI-compatible API</option><option value="local">Local / self-hosted</option></select></div>
+                                        <div><label class="form-label">Model <span class="help-glyph" title="Fetch models to load the selected provider’s available model IDs. This model runs Sidecar’s evidence pass, canonical receipt, and question repairs.">?</span></label><div style="display:flex; gap:8px;"><div class="searchable-dropdown-wrap" style="flex:1; min-width:0;"><input id="w-sidecar-model" type="search" class="form-input" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-sidecar-model-results" aria-expanded="false" placeholder="Fetch models or type an exact model ID"><div id="w-sidecar-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Sidecar provider model suggestions"></div></div><button id="w-sidecar-fetch-model-btn" type="button" class="btn btn-ghost">Fetch models</button></div><div id="w-sidecar-model-status" class="form-hint"></div></div>
+                                        <div id="w-sidecar-provider-connection-hint" class="form-hint sidecar-provider-connection-hint"></div>
                                     </div>
-                                    <select id="w-sidecar-mode" class="form-select" style="max-width:190px;">
-                                        <option value="inline_legacy">Inline Legacy</option>
-                                        <option value="sidecar">Sidecar</option>
-                                    </select>
-                                </div>
-                                <p class="form-hint">Sidecar uses a tool-free narrator call followed by one canonical reconciliation call. Inline Legacy retains the existing classifier and receipt-repair adapters for older worlds.</p>
-                                <div id="w-sidecar-config-grid" class="world-kernel-config-grid" data-sidecar-feature="sidecar-configuration" style="margin-top:12px;">
-                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-inherit-narrator" checked> Use narrator model and routing</label>
-                                    <div>
-                                        <label class="form-label">Sidecar provider <span class="help-glyph" title="The provider used only for the reconciliation call. Leave inheritance on to use the same provider as the Narrator.">?</span></label>
-                                        <select id="w-sidecar-provider" class="form-select">
-                                            <option value="">Use narrator provider</option>
-                                            <option value="openrouter">OpenRouter</option>
-                                            <option value="gptproto">GPTProto</option>
-                                            <option value="nanogpt">NanoGPT</option>
-                                            <option value="nvidia">NVIDIA NIM</option>
-                                            <option value="bedrock">AWS Bedrock</option>
-                                            <option value="custom">Custom OpenAI-compatible API</option>
-                                            <option value="local">Local / self-hosted</option>
-                                        </select>
+                                    <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden" data-sidecar-feature="sidecar-configuration"></div>
+                                    <div id="w-sidecar-config-grid" class="world-kernel-config-grid" style="margin-top:10px;">
+                                        <div><label class="form-label">Reasoning <span class="help-glyph" title="Match Narrator uses the world reasoning toggle and effort. If an optional-reasoning request hits its output limit, Sidecar retries once without optional reasoning.">?</span></label><select id="w-sidecar-reasoning-mode" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div>
+                                        <div id="w-sidecar-reasoning-effort-row"><label class="form-label">Reasoning effort <span class="help-glyph" title="Auto uses the Narrator effort. Higher effort improves analysis but consumes more output budget.">?</span></label><select id="w-sidecar-reasoning-effort" class="form-select"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+                                        <div><label class="form-label">Reader tokens <span class="help-glyph" title="Output budget for the read-only evidence pass. Leave blank to use its adaptive 3,000-token default.">?</span></label><input id="w-sidecar-reader-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive default · 3,000"></div>
+                                        <div><label class="form-label">Receipt tokens <span class="help-glyph" title="Output budget for the canonical reconciliation receipt. Leave blank to use its adaptive 6,000-token default.">?</span></label><input id="w-sidecar-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive default · 6,000"></div>
+                                        <div><label class="form-label">Trace history <span class="help-glyph" title="Maximum saved Sidecar request/response traces when trace capture is enabled.">?</span></label><input id="w-sidecar-trace-count" type="number" class="form-input" min="1" max="200" step="1" value="20"></div>
                                     </div>
-                                    <div>
-                                        <label class="form-label">Sidecar model <span class="help-glyph" title="The structured-output model that translates the authored beat into one validated world-state receipt.">?</span></label>
-                                        <input id="w-sidecar-model" class="form-input" placeholder="Use narrator model">
-                                    </div>
-                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-reasoning"> Enable Sidecar reasoning <span class="help-glyph" title="Lets the Sidecar Reader and Reconciler reason before responding. This is separate from Narrator reasoning; use the effort control to trade speed for analysis depth.">?</span></label>
-                                    <div id="w-sidecar-reasoning-effort-row" class="hidden">
-                                        <label class="form-label">Sidecar reasoning effort <span class="help-glyph" title="Controls private reasoning for both Sidecar calls. Auto follows the active Narrator world setting where possible. Higher effort uses more tokens but gives semantic retrieval and reconciliation more room.">?</span></label>
-                                        <select id="w-sidecar-reasoning-effort" class="form-select">
-                                            <option value="auto">Auto</option>
-                                            <option value="low">Low</option>
-                                            <option value="medium">Medium</option>
-                                            <option value="high">High</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="form-label">Sidecar reader tokens <span class="help-glyph" title="Budget for the read-only semantic pass that checks canonical characters, locations and current scene evidence before reconciliation. Zero uses a 3,000-token default.">?</span></label>
-                                        <input id="w-sidecar-reader-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" value="0">
-                                    </div>
-                                    <div>
-                                        <label class="form-label">Sidecar max tokens <span class="help-glyph" title="Output room for the complete native state receipt. Zero uses the adaptive 6,000-token default; this is separate from Narrator response length.">?</span></label>
-                                        <input id="w-sidecar-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" value="0">
-                                    </div>
-                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-debug"> Retain unabridged prompt/reply traces</label>
-                                    <div>
-                                        <label class="form-label">Trace history</label>
-                                        <input id="w-sidecar-trace-count" type="number" class="form-input" min="1" max="200" step="1" value="20">
-                                    </div>
-                                </div>
-                                <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden" data-sidecar-feature="sidecar-configuration"></div>
+                                    <label class="vh-test-check" style="display:flex; margin-top:10px;" title="Stores complete Sidecar prompts and provider replies in this world. Disable this unless you are diagnosing a pipeline issue."><input type="checkbox" id="w-sidecar-debug"> Retain unabridged prompt/reply traces</label>
+                                </details>
                                 <details class="form-section" data-sidecar-feature="memory-consolidation" style="margin:14px 0 0; padding:12px; border:1px solid var(--border); border-radius:8px;">
-                                    <summary style="cursor:pointer;"><strong>Memory &amp; consolidation</strong> <span class="help-glyph" title="Controls Sidecar’s source-pinned Turn → Episode → Scene → Sequence work. Raw turns remain available until a valid replacement exists; cognition is generated only from character-specific perception coverage.">?</span></summary>
+                                    <summary style="cursor:pointer;" title="Controls Sidecar’s source-pinned Turn → Episode → Scene → Sequence work. Raw turns remain available until a valid replacement exists; cognition is generated only from character-specific perception coverage."><strong>Memory &amp; consolidation</strong></summary>
                                     <p class="form-hint">Global controls are the default. The global consolidation provider/model, token budget, temperature and reasoning settings are used here too; turn off inheritance only when this world needs a different cadence, active verbatim window, retrieval depth, or provider throttle.</p>
                                     <label class="vh-test-check"><input type="checkbox" id="w-sidecar-memory-inherit" checked> Use global memory and consolidation controls</label>
                                     <div id="w-sidecar-memory-grid" class="world-kernel-config-grid" style="margin-top:10px;">
@@ -4844,6 +4812,10 @@
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto;">
             <p class="form-hint" style="margin-bottom:12px;">Rules run top-to-bottom on each message. <b>Find</b> is a regex (plain, or <code>/pattern/flags</code>). <b>Replace</b> supports <code>$1</code>…<code>$9</code> capture groups and <code>{{match}}</code>. Target picks what the rule touches.</p>
+            <div style="display:flex; gap:8px; margin-bottom:14px;">
+                <select id="regex-suite-select" class="form-select" style="flex:1;"></select>
+                <button id="install-regex-suite-btn" class="btn btn-ghost" type="button" disabled>Install suite</button>
+            </div>
             <div id="regex-list" style="display:flex; flex-direction:column; gap:10px;"></div>
             <button id="add-regex-btn" class="btn btn-ghost btn-full" style="margin-top:14px;">+ Add Regex Script</button>
         </div>
@@ -5256,6 +5228,6 @@
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
 <script src="dossier-claims.js?v=20260902-generic-claims-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260905-v1700-sidecar-reconciliation-v1"></script>
+<script src="app.js?v=20260905-v1700-sidecar-reader-v1"></script>
 </body>
 </html>

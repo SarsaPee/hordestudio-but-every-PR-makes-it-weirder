@@ -148,10 +148,10 @@
         'global-custom-headers': 'Optional JSON object of additional request headers. Treat these as secrets: they follow Remember Keys and are excluded from exports.',
         'test-custom-conn-btn': 'Calls BASE_URL/models with the current key and headers without saving them first.',
         'test-bedrock-conn-btn': 'Verify the Bedrock API key and region by loading that region’s compatible model catalog.',
-        'remember-api-key': 'Persist API keys in this browser profile. Keys are never included in Horde exports or backups.',
+        'remember-api-key': 'Persist API keys in this browser profile. Portable Horde exports and Full Backup files exclude keys; your personal local Shared Library mirror transfers them between your own instances.',
         'global-local-generation-timeout': 'Maximum idle time for a local World generation. The timer resets whenever data arrives; zero disables automatic cancellation.',
         'global-embedding-url': 'Optional separate OpenAI-compatible server used only for vector embeddings. Leave blank to use the active text provider.',
-        'global-embedding-key': 'Optional bearer token for the separate embedding server. It is excluded from backups and exports.',
+        'global-embedding-key': 'Optional bearer token for the separate embedding server. It is excluded from portable exports and Full Backup files, but included in your personal local Shared Library mirror.',
         'global-embedding-model': 'Embedding model sent to the dedicated embedding server or, when no separate URL is set, the active text provider.',
         'test-embedding-conn-btn': 'Send one real embedding request and verify that the server returns a usable vector.',
         'global-local-tts-url': 'Dedicated OpenAI-compatible local speech base URL, normally ending in /v1. This does not change the text provider.',
@@ -235,6 +235,9 @@
     }
 
     function explanationFor(element) {
+        // Provider routing is an operational editor, not guided form input.
+        // Keep it free of automatic nearby-hint and title tooltips.
+        if (element.closest?.('#world-sidecar-openrouter-routing')) return '';
         return valueHelp(element)
             || HELP_BY_ID[element.id]
             || clean(element.getAttribute('data-help'))
