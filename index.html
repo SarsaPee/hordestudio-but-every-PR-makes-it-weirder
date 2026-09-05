@@ -1182,7 +1182,20 @@
                                         <label class="form-label">Sidecar model <span class="help-glyph" title="The structured-output model that translates the authored beat into one validated world-state receipt.">?</span></label>
                                         <input id="w-sidecar-model" class="form-input" placeholder="Use narrator model">
                                     </div>
-                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-reasoning"> Low reasoning for reconciliation <span class="help-glyph" title="Allows a small private reasoning budget. Off explicitly asks supported providers not to spend the receipt budget on hidden reasoning.">?</span></label>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-reasoning"> Enable Sidecar reasoning <span class="help-glyph" title="Lets the Sidecar Reader and Reconciler reason before responding. This is separate from Narrator reasoning; use the effort control to trade speed for analysis depth.">?</span></label>
+                                    <div id="w-sidecar-reasoning-effort-row" class="hidden">
+                                        <label class="form-label">Sidecar reasoning effort <span class="help-glyph" title="Controls private reasoning for both Sidecar calls. Auto follows the active Narrator world setting where possible. Higher effort uses more tokens but gives semantic retrieval and reconciliation more room.">?</span></label>
+                                        <select id="w-sidecar-reasoning-effort" class="form-select">
+                                            <option value="auto">Auto</option>
+                                            <option value="low">Low</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="high">High</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Sidecar reader tokens <span class="help-glyph" title="Budget for the read-only semantic pass that checks canonical characters, locations and current scene evidence before reconciliation. Zero uses a 3,000-token default.">?</span></label>
+                                        <input id="w-sidecar-reader-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" value="0">
+                                    </div>
                                     <div>
                                         <label class="form-label">Sidecar max tokens <span class="help-glyph" title="Output room for the complete native state receipt. Zero uses the adaptive 6,000-token default; this is separate from Narrator response length.">?</span></label>
                                         <input id="w-sidecar-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" value="0">

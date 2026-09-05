@@ -110,7 +110,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     function worldConfig(world, options = {}) {
         if (!object(world)) return null;
         const current = object(world.sidecarConfig) ? world.sidecarConfig : {}, tracker = object(current.tracker) ? current.tracker : {}, debug = object(current.debug) ? current.debug : {}, memory = object(current.memory) ? current.memory : {};
-        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, reasoning: tracker.reasoning === true, maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
+        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, reasoning: tracker.reasoning === true, reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
         return world.sidecarConfig;
     }
     function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], traversalState: {}, packet: null, memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
@@ -11429,7 +11429,7 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
         backstage: turnRecord ? {
             status: 'reconciliation_failed', handoff: turnRecord.handoff,
             handoffComplete: turnRecord.handoffComplete !== false,
-            receipt: null, packet: protocol?.packet || null, failure,
+            reader: turnRecord.reader || null, receipt: null, packet: protocol?.packet || null, failure,
             preFrame: turnRecord.preFrame, postFrame: turnRecord.postFrame
         } : null
     };
@@ -11637,6 +11637,212 @@ function logSidecarConsoleTrace(stage, payload) {
     console.groupEnd();
 }
 
+// The Reader is intentionally incapable of changing canon. It can ask the
+// application to inspect small, attributable slices of the active world, then
+// gives the Reconciler an evidence packet. This keeps a model from burning its
+// commit budget debating whether an already-authored person such as Denton
+// Pike exists, while preserving the Reconciler as the only mutation authority.
+function sidecarReasoningEffort(tracker = {}, world = {}) {
+    const configured = String(tracker.reasoningEffort || 'auto').toLowerCase();
+    if (['low', 'medium', 'high'].includes(configured)) return configured;
+    const narrator = String(world.reasoningEffort || '').toLowerCase();
+    return ['low', 'medium', 'high'].includes(narrator) ? narrator : 'medium';
+}
+
+function applySidecarReasoning(body, provider, tracker = {}, world = {}) {
+    if (tracker.reasoning !== true) {
+        if (provider === 'openrouter') body.reasoning = { enabled: false };
+        return body;
+    }
+    const effort = sidecarReasoningEffort(tracker, world);
+    if (provider === 'openrouter') body.reasoning = { effort };
+    else body.reasoning_effort = effort;
+    return body;
+}
+
+function sidecarCanonicalEntityRecord(world, sess, entityId) {
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const entity = (view?.entities || []).find(item => String(item?.id) === String(entityId));
+    if (!entity) return null;
+    const runtime = sess.entityStates?.[entity.id] || {};
+    return {
+        id: String(entity.id), name: String(entity.name || ''), type: String(entity.type || 'npc'),
+        aliases: (entity.aliases || []).map(String).slice(0, 12),
+        description: String(entity.description || entity.appearance || '').slice(0, 1800),
+        tags: (entity.tags || []).map(String).slice(0, 20),
+        homeLocationId: String(entity.homeLocation || entity.homeLocationId || ''),
+        initialLocationId: String(entity.initialLocation || entity.startLocation || ''),
+        currentState: {
+            status: String(runtime.status || entity.status || 'active'),
+            locationId: String(runtime.location || entity.startLocation || ''),
+            activity: String(runtime.currentActivity || ''),
+            outfit: String(runtime.outfit || ''),
+            conditions: Array.isArray(runtime.conditions) ? runtime.conditions.slice(0, 12).map(String) : []
+        },
+        provenance: { canonical: true, sessionOwned: entity.sessionOrigin === sess.id }
+    };
+}
+
+function sidecarCanonicalLocationRecord(world, sess, locationId) {
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const location = getLocationRef(view, locationId) || (view?.locations || []).find(item => String(item?.id) === String(locationId));
+    if (!location) return null;
+    return {
+        id: String(location.id), name: String(location.name || ''), type: String(location.mapType || location.type || 'location'),
+        aliases: (location.aliases || []).map(String).slice(0, 12),
+        parentLocationId: String(location.parentLocationId || ''),
+        description: String(location.description || '').slice(0, 1800),
+        tags: (location.tags || []).map(String).slice(0, 20),
+        exits: (location.exits || []).slice(0, 40).map(exit => typeof exit === 'string' ? exit : String(exit?.to || exit?.id || '')),
+        provenance: { canonical: true }
+    };
+}
+
+function sidecarReadOnlyTools() {
+    return [
+        {
+            type: 'function', function: {
+                name: 'search_world_state',
+                description: 'Search canonical entity and location records by a narrated name, alias, ID, or descriptive phrase. Read-only; never creates anything.',
+                parameters: { type: 'object', properties: {
+                    query: { type: 'string' }, kinds: { type: 'array', items: { type: 'string', enum: ['entity', 'location'] } }, limit: { type: 'integer', minimum: 1, maximum: 20 }
+                }, required: ['query'], additionalProperties: false }
+            }
+        },
+        {
+            type: 'function', function: {
+                name: 'get_world_entity', description: 'Read a known canonical entity by its exact ID, including current session state. Read-only.',
+                parameters: { type: 'object', properties: { entity_id: { type: 'string' } }, required: ['entity_id'], additionalProperties: false }
+            }
+        },
+        {
+            type: 'function', function: {
+                name: 'get_world_location', description: 'Read a known canonical location by its exact ID, including hierarchy and exits. Read-only.',
+                parameters: { type: 'object', properties: { location_id: { type: 'string' } }, required: ['location_id'], additionalProperties: false }
+            }
+        },
+        {
+            type: 'function', function: {
+                name: 'get_current_scene_state', description: 'Read the current canonical scene frame, clock evidence and open continuity questions. Read-only.',
+                parameters: { type: 'object', properties: {}, additionalProperties: false }
+            }
+        }
+    ];
+}
+
+function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
+    const args = isPlainObject(rawArgs) ? rawArgs : safeParseJSONRepair(String(rawArgs || '{}')) || {};
+    if (name === 'get_world_entity') {
+        const entity = sidecarCanonicalEntityRecord(world, sess, args.entity_id);
+        return { found: !!entity, entity };
+    }
+    if (name === 'get_world_location') {
+        const location = sidecarCanonicalLocationRecord(world, sess, args.location_id);
+        return { found: !!location, location };
+    }
+    if (name === 'get_current_scene_state') return {
+        found: true, scene: buildWorldSceneFrame(world, sess), clock: buildSidecarClockEvidence(world, sess),
+        questions: (window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-12)
+    };
+    if (name === 'search_world_state') {
+        const needle = String(args.query || '').toLowerCase().trim();
+        const kinds = new Set(Array.isArray(args.kinds) && args.kinds.length ? args.kinds : ['entity', 'location']);
+        const limit = Math.max(1, Math.min(20, Number(args.limit) || 8));
+        const manifest = buildSidecarCanonicalReferenceManifest(world, sess, needle);
+        const score = record => {
+            const corpus = [record.id, record.name, ...(record.aliases || [])].join(' ').toLowerCase();
+            if (!needle) return record.referenced ? 2 : 0;
+            if (corpus === needle) return 12;
+            if (corpus.includes(needle)) return 8;
+            return needle.split(/\s+/).reduce((total, token) => total + (token.length > 2 && corpus.includes(token) ? 1 : 0), 0);
+        };
+        const entities = kinds.has('entity') ? manifest.entities.map(record => ({ ...record, _score: score(record) })).filter(record => record._score > 0).sort((a, b) => b._score - a._score).slice(0, limit).map(({ _score, ...record }) => record) : [];
+        const locations = kinds.has('location') ? manifest.locations.map(record => ({ ...record, _score: score(record) })).filter(record => record._score > 0).sort((a, b) => b._score - a._score).slice(0, limit).map(({ _score, ...record }) => record) : [];
+        return { found: entities.length + locations.length > 0, query: String(args.query || ''), entities, locations };
+    }
+    return { found: false, error: `Unknown read-only Sidecar tool: ${String(name || '')}` };
+}
+
+function parseSidecarReaderOutput(content, fallback = {}) {
+    const raw = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const parsed = safeParseJSONRepair(raw);
+    if (!isPlainObject(parsed)) return {
+        valid: false, summary: 'The Sidecar Reader returned no usable structured reading.',
+        canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000)
+    };
+    return {
+        valid: true,
+        summary: String(parsed.summary || parsed.scene_reading || '').slice(0, 6000),
+        canonicalReferences: isPlainObject(parsed.canonical_references) ? parsed.canonical_references : fallback,
+        semanticInterpretation: isPlainObject(parsed.semantic_interpretation) ? parsed.semantic_interpretation : {},
+        reconciliationFocus: Array.isArray(parsed.reconciliation_focus) ? parsed.reconciliation_focus.slice(0, 30) : [],
+        unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved.slice(0, 20) : [],
+        proposedQuestions: Array.isArray(parsed.proposed_questions) ? parsed.proposed_questions.slice(0, 12) : [],
+        timeEvidence: parsed.time_evidence || null,
+        raw: raw.slice(0, 12000)
+    };
+}
+
+function queueSidecarReaderQuestions(world, sess, readerPacket, turnRecord) {
+    const proposed = Array.isArray(readerPacket?.proposedQuestions) ? readerPacket.proposedQuestions : [];
+    proposed.forEach((proposal, index) => {
+        const prompt = typeof proposal === 'string' ? proposal : String(proposal?.prompt || proposal?.question || '');
+        if (!prompt.trim()) return;
+        const target = typeof proposal === 'object' && ['narrator', 'sidecar', 'user'].includes(proposal.target) ? proposal.target : 'narrator';
+        const priority = typeof proposal === 'object' && ['low', 'medium', 'high'].includes(proposal.priority) ? proposal.priority : 'low';
+        queueSidecarQuestion(world, sess, prompt, typeof proposal === 'object' ? String(proposal.evidence || proposal.reason || '') : '', {
+            id: typeof proposal === 'object' && proposal.id ? String(proposal.id).slice(0, 180) : `reader.${turnRecord?.id || 'turn'}.${index + 1}`,
+            origin: 'semantic_reader', target, priority, pressure: priority,
+            scope: 'turn', sceneId: turnRecord?.sceneId || '', sequenceId: turnRecord?.sequenceId || '',
+            provenance: { sourceTurnId: turnRecord?.id || '', source: 'sidecar_reader' }
+        });
+    });
+}
+
+async function runSidecarSemanticReading(world, sess, options = {}) {
+    const tracker = options.tracker || {};
+    const provider = options.provider;
+    const model = options.model;
+    const sidecarWorld = options.sidecarWorld || world;
+    const references = options.references || buildSidecarCanonicalReferenceManifest(world, sess, `${options.playerInput || ''}\n${options.narration || ''}\n${options.handoff || ''}`);
+    const defaultTokens = tracker.reasoning === true ? 5000 : 3000;
+    const configuredTokens = Number(tracker.readerMaxTokens) || 0;
+    const maxTokens = configuredTokens > 0 ? Math.max(1200, Math.min(100000, Math.trunc(configuredTokens))) : defaultTokens;
+    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, or canonical identity is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, and time_evidence.\n\nCANONICAL REFERENCE MANIFEST:\n${JSON.stringify(references)}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
+    const messages = [{ role: 'system', content: prompt }, { role: 'user', content: 'Read this authored beat and return the semantic evidence packet.' }];
+    const tools = sidecarReadOnlyTools();
+    let finalPayload = null;
+    for (let round = 0; round < 3; round++) {
+        const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: safeJsonClone(messages), tools, tool_choice: 'auto', parallel_tool_calls: false };
+        applySidecarReasoning(body, provider, tracker, world);
+        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt, request: safeJsonClone(body) });
+        const response = await fetch(providerApiBase(provider) + '/chat/completions', {
+            method: 'POST', signal: options.signal,
+            headers: { ...providerAuthHeaders(provider), 'Content-Type': 'application/json', ...providerAttributionHeaders(provider) },
+            body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld, { scope: 'sidecar_reader', providerId: provider }))
+        });
+        if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar Reader failed (${response.status})`);
+        finalPayload = await response.json();
+        const choice = finalPayload?.choices?.[0] || {};
+        const message = choice.message || {};
+        logSidecarConsoleTrace(`Reader response · round ${round + 1}`, { model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message) });
+        recordSidecarTrace(world, sess, { kind: 'semantic_reader', round: round + 1, prompt, reply: message, model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '' });
+        const calls = (message.tool_calls || []).filter(call => sidecarReadOnlyTools().some(tool => tool.function.name === call?.function?.name));
+        if (!calls.length) {
+            const packet = parseSidecarReaderOutput(message.content, references);
+            packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
+            return packet;
+        }
+        messages.push({ role: 'assistant', content: message.content || '', tool_calls: safeJsonClone(message.tool_calls || []) });
+        calls.forEach(call => {
+            const result = runSidecarReadOnlyTool(world, sess, call.function?.name, call.function?.arguments || '{}');
+            messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+        });
+        if (round === 2) messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided.' });
+    }
+    return parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references);
+}
+
 function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
@@ -11706,7 +11912,9 @@ async function runSidecarQuestionRepair(world, sess, questionId) {
         ? narratorProvider : normalizedProviderId(tracker.provider);
     const prompt = `[SIDECAR QUESTION REPAIR]\nAnswer only this one unresolved authorial question from the supplied evidence. Do not mutate canon and do not infer adjacent facts. Return JSON only: {"answer":"YES|NO|UNKNOWN|CLARIFICATION","explanation":"brief"}.\nQUESTION: ${JSON.stringify({ id: question.id, prompt: question.prompt, evidence: question.evidence, dependencies: question.dependencies })}\nPACKET: ${JSON.stringify(buildSidecarScenePacket(world, sess))}`;
     const body = { model, max_tokens: 800, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] };
-    if (provider === 'openrouter') body.reasoning = { enabled: false };
+    // A narrow repair should inherit the world's Sidecar reasoning policy;
+    // it is still capped tightly so it cannot become an unbounded debate.
+    applySidecarReasoning(body, provider, tracker, world);
     const response = await fetch(providerApiBase(provider) + '/chat/completions', { method: 'POST', headers: { ...providerAuthHeaders(provider), 'Content-Type': 'application/json', ...providerAttributionHeaders(provider) }, body: JSON.stringify(applyOpenRouterRouting(body, { ...world, model, provider, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar', providerId: provider })) });
     if (!response.ok) throw new Error((await response.text()).slice(0, 500) || `Question repair failed (${response.status})`);
     const reply = (await response.json())?.choices?.[0]?.message?.content || '{}'; const parsed = safeParseJSONRepair(reply) || {};
@@ -11775,7 +11983,31 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         takeIndex: options.takeIndex, revisionId: options.revisionId,
         handoffComplete: options.handoffComplete !== false
     });
-    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Only set existing mechanical time fields when the authored beat establishes a defensible delta. Never choose a duration merely because it says "immediate", "brief", or "a few seconds". A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
+    let readerPacket;
+    try {
+        options.onStage?.('reading');
+        readerPacket = await runSidecarSemanticReading(world, sess, {
+            tracker, provider, model, sidecarWorld, references, preFrame, clockEvidence,
+            playerInput: options.playerInput, narration, handoff, signal: options.signal
+        });
+    } catch (readerError) {
+        // Reading failure is diagnostic rather than state authority. The
+        // Reconciler can still conservatively commit an authored no-op or a
+        // plainly established change from the source evidence it receives.
+        readerPacket = {
+            valid: false, summary: 'Sidecar Reader failed; Reconciler received raw authored evidence directly.',
+            canonicalReferences: references, unresolved: [], proposedQuestions: [],
+            failure: { message: String(readerError?.message || readerError).slice(0, 1200) }
+        };
+        logSidecarConsoleTrace('Reader failure', { model, provider, error: readerPacket.failure });
+        recordSidecarTrace(world, sess, { kind: 'semantic_reader_failure', model, provider, error: readerPacket.failure.message });
+    }
+    if (attempt.turnRecord) {
+        attempt.turnRecord.reader = safeJsonClone(readerPacket);
+        queueSidecarReaderQuestions(world, sess, readerPacket, attempt.turnRecord);
+    }
+    options.onStage?.('reconciling');
+    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Only set existing mechanical time fields when the authored beat establishes a defensible delta. Never choose a duration merely because it says "immediate", "brief", or "a few seconds". A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const configuredTokens = Number(tracker.maxTokens) || 0;
     const maxTokens = configuredTokens > 0
         ? Math.max(1800, Math.min(100000, Math.trunc(configuredTokens)))
@@ -11789,14 +12021,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         tool_choice: { type: 'function', function: { name: 'commit_world_turn' } },
         parallel_tool_calls: false
     };
-    if (provider === 'openrouter') {
-        // OpenRouter models such as GLM may reason even when no generic
-        // reasoning_effort field was requested. Explicitly disabling it keeps
-        // the receipt budget for the receipt; opt-in remains available.
-        body.reasoning = tracker.reasoning === true ? { effort: 'low' } : { enabled: false };
-    } else if (tracker.reasoning === true) {
-        body.reasoning_effort = 'low';
-    }
+    applySidecarReasoning(body, provider, tracker, world);
     logSidecarConsoleTrace('Reconciliation request', {
         model, provider, maxTokens,
         prompt: sidecarPrompt,
@@ -12270,11 +12495,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         temperature: 0.2,
         messages: [{ role: 'system', content: prompt + workspaceContract }, { role: 'user', content: 'Respond as Sidecar.' }]
     };
-    if (provider === 'openrouter') {
-        body.reasoning = tracker.reasoning === true ? { effort: 'low' } : { enabled: false };
-    } else if (tracker.reasoning === true) {
-        body.reasoning_effort = 'low';
-    }
+    applySidecarReasoning(body, provider, tracker, world);
     const sidecarWorld = { ...world, model, provider, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
     logSidecarConsoleTrace('World GM request', { model, provider, request: safeJsonClone(body) });
     const response = await fetch(providerApiBase(provider) + '/chat/completions', {
@@ -12519,7 +12740,7 @@ function openWorldSidecarInspector(view = 'scene') {
             <button class="tool-btn sidecar-inspector-tab" data-view="timelines">Timelines</button>
         </div>`;
         if (view === 'line') { openWorldSidecarLine(); return; }
-        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
+        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
         else if (view === 'memory') body = `${tabs}${sidecarInspectorJson({
             configuration: effectiveSidecarMemoryConfig(world),
@@ -15724,6 +15945,9 @@ function setupWorldStudioLogic() {
         config.tracker.inheritNarrator = event.target.checked;
         renderWorldSidecarConfigEditor(state.editingWorld);
     };
+    document.getElementById('w-sidecar-reasoning').onchange = event => {
+        document.getElementById('w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', !event.target.checked);
+    };
     document.getElementById('w-sidecar-provider').onchange = () => {
         initializeOpenRouterRoutingPanel('sidecar');
     };
@@ -16027,6 +16251,9 @@ function renderWorldSidecarConfigEditor(world) {
     document.getElementById('w-sidecar-provider').value = tracker.provider || '';
     document.getElementById('w-sidecar-model').value = tracker.model || '';
     document.getElementById('w-sidecar-reasoning').checked = tracker.reasoning === true;
+    document.getElementById('w-sidecar-reasoning-effort').value = tracker.reasoningEffort || 'auto';
+    document.getElementById('w-sidecar-reasoning-effort-row').classList.toggle('hidden', tracker.reasoning !== true);
+    document.getElementById('w-sidecar-reader-max-tokens').value = Number(tracker.readerMaxTokens) || 0;
     document.getElementById('w-sidecar-max-tokens').value = Number(tracker.maxTokens) || 0;
     document.getElementById('w-sidecar-debug').checked = debug.enabled === true;
     document.getElementById('w-sidecar-trace-count').value = Number(debug.retainTraceCount) || 20;
@@ -16359,6 +16586,8 @@ async function saveWorld() {
                 model: document.getElementById('w-sidecar-model').value.trim(),
                 openRouterRouting: readOpenRouterRoutingPanel('sidecar'),
                 reasoning: document.getElementById('w-sidecar-reasoning').checked,
+                reasoningEffort: document.getElementById('w-sidecar-reasoning-effort').value,
+                readerMaxTokens: document.getElementById('w-sidecar-reader-max-tokens').value,
                 maxTokens: document.getElementById('w-sidecar-max-tokens').value
             },
             debug: {
@@ -26219,6 +26448,7 @@ function renderSidecarBackstageCard(backstage, turnNumber) {
             .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`) : [])
     ].filter(Boolean).slice(0, 8);
     const handoff = String(backstage.handoff || '').trim();
+    const reader = backstage.reader || null;
     const jobSummary = backstage.memoryJobs || null;
     const formatHandoff = handoff
         ? escapeHTML(handoff).replace(/^(SCENE READING|ANSWER [^\n:]+|REQUEST|ACCEPTED PLAYER DETAILS)\s*:?[ \t]*(.*)$/gim, '<strong class="sidecar-backstage-label">$1</strong><span>$2</span>')
@@ -26232,13 +26462,14 @@ function renderSidecarBackstageCard(backstage, turnNumber) {
         <summary><span class="sidecar-backstage-mark">${failed ? '⚠' : '🎭'}</span><span><b>Backstage handoff</b><small>Narrator → Sidecar → next beat${turnNumber ? ` · Turn ${turnNumber}` : ''}</small></span><i>${failed ? 'Narration saved · state pending' : 'Committed continuity'}</i></summary>
         <div class="sidecar-backstage-body">
             ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Narrator’s handoff notes</b><small>What the narrated beat means for continuity.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
+            ${reader ? `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Sidecar’s semantic reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'Reader fell back to the canonical manifest.' : 'Read-only canonical evidence before reconciliation.'))}</small></div></header>${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${reader.failure ? `<div class="form-hint">Reader diagnostic: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>` : ''}
             ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Narrator handoff was incomplete</b><small>Sidecar still ran from the visible scene and canonical frame; missing interpretation was not invented.</small></div></header></section>` : ''}
             ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Canonical commit did not land</b><small>${escapeHTML(backstage.failure?.message || 'Sidecar did not produce a valid native state receipt.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Failure</b><span>${escapeHTML(backstage.failure?.code || 'sidecar_reconciliation_failed')}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>Safety result</b><span>Visible narration and handoff evidence were preserved. Disputed world state was not mutated.</span></div><div><b>Recovery</b><span>This beat remains in the next Sidecar packet until a later reconciliation or explicit World GM refinement resolves it.</span></div></div></section>` : ''}
             ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Sidecar’s canonical reading</b><small>${escapeHTML(receipt.summary || 'Reconciled from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
             ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next-beat pacing</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next narrator turn receives this reconciled scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending reconciliation</small>${escapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
             ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(jobSummary.queued || 0))} queued</span><span>${escapeHTML(String(jobSummary.running || 0))} running</span><span>${escapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${escapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
             ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
-            <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${escapeHTML(JSON.stringify({ status: backstage.status || null, handoffComplete: backstage.handoffComplete !== false, handoff: backstage.handoff || null, receipt: backstage.receipt || null, failure: backstage.failure || null, audit: backstage.audit || null, preFrame: backstage.preFrame || null, postFrame: backstage.postFrame || null, packet: backstage.packet || null }, null, 2))}</pre></details>
+            <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${escapeHTML(JSON.stringify({ status: backstage.status || null, handoffComplete: backstage.handoffComplete !== false, handoff: backstage.handoff || null, reader: backstage.reader || null, receipt: backstage.receipt || null, failure: backstage.failure || null, audit: backstage.audit || null, preFrame: backstage.preFrame || null, postFrame: backstage.postFrame || null, packet: backstage.packet || null }, null, 2))}</pre></details>
         </div>
     </details>`;
 }
@@ -28842,13 +29073,19 @@ ${modularMandate}
             receiptContext.narrativeText = fullText;
             if (dmTypingLabel) dmTypingLabel.textContent = 'GM is writing handoff notes…';
             try {
-                if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is reconciling world state…';
+                if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is reading the authored beat…';
                 turnCallAudit.sidecar = (turnCallAudit.sidecar || 0) + 1;
                 const reconciled = await runSidecarReconciliation(world, sess, {
                     handoff: narratorOutput.handoff, narration: fullText,
                     playerInput: submittedInput || userInput, receiptContext,
                     commitTool: sidecarCommitTool, signal: controller.signal,
-                    handoffComplete: narratorOutput.complete
+                    handoffComplete: narratorOutput.complete,
+                    onStage: stage => {
+                        if (!dmTypingLabel) return;
+                        dmTypingLabel.textContent = stage === 'reading'
+                            ? 'Sidecar is reading the authored beat…'
+                            : 'Sidecar is reconciling world state…';
+                    }
                 });
                 sidecarReceipt = reconciled.receipt;
                 sidecarPacket = reconciled.packet;
@@ -29384,6 +29621,7 @@ ${modularMandate}
                         ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.handoffComplete !== false
                         : !!sidecarHandoff,
                     handoff: sidecarHandoff,
+                    reader: sidecarTurnId ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.reader : null,
                     receipt: sidecarReceipt,
                     packet: sidecarPacket || sess.sidecar?.packet || null,
                     failure: sidecarFailure,

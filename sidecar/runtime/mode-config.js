@@ -34,6 +34,8 @@
                 model: text(tracker.model),
                 openRouterRouting: isObject(tracker.openRouterRouting) ? tracker.openRouterRouting : null,
                 reasoning: tracker.reasoning === true,
+                reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(text(tracker.reasoningEffort, 20)) ? text(tracker.reasoningEffort, 20) : 'auto',
+                readerMaxTokens: positiveInt(tracker.readerMaxTokens, 0, 100000),
                 maxTokens: positiveInt(tracker.maxTokens, 0, 100000)
             },
             debug: {
