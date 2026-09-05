@@ -11614,7 +11614,88 @@ function sidecarEndpointMinuteOfDay(endpoint, fallbackMeridiem = '') {
     return (endpoint.hour % 12) * 60 + endpoint.minute + (marker === 'pm' ? 720 : 0);
 }
 
-function deriveSidecarExplicitTimeSkip(handoff, clockEvidence) {
+function extractFF54SceneHeader(narration) {
+    const match = String(narration || '').match(/\[\s*🕰️\s*([^\]|]+)\|\s*🗓️\s*([^\]|]+)\|\s*📍\s*([^\]|]+?)(?:\s*\|\s*([^\]]*?))?\s*\]/);
+    if (!match) return null;
+    const header = {
+        raw: match[0],
+        timeText: String(match[1] || '').trim(),
+        dayText: String(match[2] || '').trim(),
+        locationText: String(match[3] || '').trim(),
+        weatherText: String(match[4] || '').trim()
+    };
+    return header.timeText || header.locationText ? header : null;
+}
+
+// Two-phase temporal model (FF 5.4 scene header as the narrative start-anchor):
+//   previous committed end --(inter-turn jump)--> narrator header start
+//   header start --(in-turn elapsed)--> end of the narrated response
+// A header that advances past the canonical clock is authored temporal
+// progression, not a contradiction; it may also legitimately recover a clock
+// that a previous failed reconciliation left stale. A header that cannot
+// resolve to a plausible forward jump stays uncommitted (question lifecycle).
+function deriveSidecarTwoPhaseTemporal(clockEvidence, header, handoff) {
+    const canonicalMinute = Number(clockEvidence?.canonicalTotalMinutes);
+    const previousMinuteOfDay = Number.isFinite(canonicalMinute) ? ((canonicalMinute % 1440) + 1440) % 1440 : null;
+    const canonicalDisplay = String(clockEvidence?.display || '');
+    const meridiem = previousMinuteOfDay === null ? '' : (previousMinuteOfDay >= 720 ? 'pm' : 'am');
+    const breakdown = {
+        previousTurnEnd: { display: canonicalDisplay, minuteOfDay: previousMinuteOfDay, day: Number(clockEvidence?.day) || 0 },
+        narratorHeader: header ? {
+            raw: header.raw,
+            timeText: header.timeText,
+            dayText: header.dayText,
+            locationText: header.locationText,
+            weatherText: header.weatherText
+        } : null,
+        interTurnJump: { minutes: 0, status: 'none', basis: 'no parseable header time' },
+        currentTurnStart: { display: canonicalDisplay, minuteOfDay: previousMinuteOfDay, basis: 'canonical' },
+        inTurnElapsed: { minutes: 0, status: 'none', basis: '' },
+        currentTurnEnd: { display: canonicalDisplay, minuteOfDay: previousMinuteOfDay, basis: 'canonical' }
+    };
+    const headerEndpoint = header ? parseSidecarClockEndpoint(header.timeText) : null;
+    const headerMinuteOfDay = headerEndpoint ? sidecarEndpointMinuteOfDay(headerEndpoint, meridiem) : null;
+    if (Number.isFinite(previousMinuteOfDay) && headerMinuteOfDay !== null) {
+        const interMinutes = (headerMinuteOfDay - previousMinuteOfDay + 1440) % 1440;
+        if (interMinutes === 0) {
+            breakdown.interTurnJump = { minutes: 0, status: 'none', basis: 'header start matches the committed clock' };
+            breakdown.currentTurnStart = { display: header.timeText, minuteOfDay: headerMinuteOfDay, basis: 'header' };
+        } else if (interMinutes > 0 && interMinutes <= SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES) {
+            const statement = sidecarTemporalStatement(handoff);
+            breakdown.interTurnJump = {
+                minutes: interMinutes,
+                status: statement ? 'supported' : 'uncorroborated',
+                basis: statement
+                    ? 'narrator header start-anchor corroborated by the handoff temporal statement'
+                    : 'narrator header start-anchor without a handoff temporal statement'
+            };
+            breakdown.currentTurnStart = { display: header.timeText, minuteOfDay: headerMinuteOfDay, basis: 'header' };
+        } else {
+            breakdown.interTurnJump = { minutes: 0, status: 'ambiguous', basis: 'header time does not resolve to a plausible forward jump' };
+        }
+    }
+    // In-turn elapsed: exact paired endpoints in the handoff temporal statement.
+    // The pair source may anchor at the committed clock or, when the inter-turn
+    // jump is supported, at the narrator's header start-anchor.
+    const anchorForPair = breakdown.interTurnJump.status === 'supported' ? breakdown.currentTurnStart : null;
+    const pair = deriveSidecarExplicitTimeSkip(handoff, clockEvidence, anchorForPair);
+    if (pair) {
+        if (pair.anchoredToHeader) {
+            breakdown.inTurnElapsed = { minutes: pair.minutes, status: 'supported', basis: 'exact endpoint pair "' + pair.source + '" -> "' + pair.target + '" anchored at the header start' };
+        } else {
+            if (breakdown.interTurnJump.status === 'supported') {
+                breakdown.interTurnJump = { minutes: 0, status: 'overridden', basis: 'exact handoff endpoint pair anchored this beat at the canonical clock; the pair outranks the header-derived jump' };
+            }
+            breakdown.inTurnElapsed = { minutes: pair.minutes, status: 'supported', basis: 'exact endpoint pair "' + pair.source + '" -> "' + pair.target + '" in the handoff' };
+        }
+        breakdown.currentTurnEnd = { display: pair.target, minuteOfDay: pair.targetMinuteOfDay, basis: 'handoff_endpoint_pair' };
+    } else if (breakdown.interTurnJump.status === 'supported') {
+        breakdown.currentTurnEnd = { display: breakdown.currentTurnStart.display, minuteOfDay: breakdown.currentTurnStart.minuteOfDay, basis: 'header_start_anchor' };
+    }
+    return breakdown;
+}
+
+function deriveSidecarExplicitTimeSkip(handoff, clockEvidence, startAnchor) {
     const statement = sidecarTemporalStatement(handoff);
     const pair = statement.match(/\b((?:[01]?\d|2[0-3]):[0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?)\s*(?:→|->|–|—|\b(?:into|to|through)\b)\s*((?:[01]?\d|2[0-3]):[0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?)\b/i);
     if (!pair) return null;
@@ -11626,15 +11707,23 @@ function deriveSidecarExplicitTimeSkip(handoff, clockEvidence) {
     const canonicalMeridiem = preTurnMinuteOfDay >= 720 ? 'pm' : 'am';
     const sourceMinute = sidecarEndpointMinuteOfDay(source, canonicalMeridiem);
     // An unmarked 12-hour source is valid only when it names the actual
-    // canonical clock. It cannot silently select AM or PM.
-    if (sourceMinute !== preTurnMinuteOfDay) return null;
-    const inheritedTargetMeridiem = target.meridiem ? '' : (source.meridiem || canonicalMeridiem);
+    // canonical clock or the narrator's committed header start-anchor. It
+    // cannot silently select AM or PM.
+    const anchorMinuteOfDay = Number((startAnchor || {}).minuteOfDay);
+    const matchesCanonical = sourceMinute === preTurnMinuteOfDay;
+    const matchesAnchor = matchesCanonical === false
+        && Number.isFinite(anchorMinuteOfDay)
+        && sourceMinute === anchorMinuteOfDay
+        && String((startAnchor || {}).basis || '') === 'header';
+    if (!matchesCanonical && !matchesAnchor) return null;
+    const sourceBaseMinuteOfDay = matchesAnchor ? anchorMinuteOfDay : preTurnMinuteOfDay;
+    const inheritedTargetMeridiem = target.meridiem ? '' : (source.meridiem || (sourceBaseMinuteOfDay >= 720 ? 'pm' : 'am'));
     const targetMinute = sidecarEndpointMinuteOfDay(target, inheritedTargetMeridiem);
     if (targetMinute === null) return null;
-    let minutes = targetMinute - sourceMinute;
+    let minutes = targetMinute - sourceBaseMinuteOfDay;
     // Crossing midnight must be explicit (PM source to AM target). A bare
     // decreasing pair is ambiguous and intentionally does not move the clock.
-    if (minutes <= 0 && source.meridiem === 'pm' && target.meridiem === 'am') minutes += 1440;
+    if (minutes <= 0 && (source.meridiem === 'pm' || sourceBaseMinuteOfDay >= 720) && target.meridiem === 'am') minutes += 1440;
     if (minutes <= 0 || minutes > SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES) return null;
     return {
         minutes,
@@ -11642,20 +11731,37 @@ function deriveSidecarExplicitTimeSkip(handoff, clockEvidence) {
         source: pair[1].trim(),
         target: pair[2].trim(),
         beforeCanonicalMinutes: canonicalMinute,
-        sourceMinuteOfDay: sourceMinute,
-        targetMinuteOfDay: targetMinute
+        sourceMinuteOfDay: sourceBaseMinuteOfDay,
+        targetMinuteOfDay: targetMinute,
+        anchoredToHeader: matchesAnchor
     };
 }
 
-function applySidecarTemporalAuthority(receipt, handoff, clockEvidence) {
+function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal) {
     if (!isPlainObject(receipt)) return null;
-    const evidence = deriveSidecarExplicitTimeSkip(handoff, clockEvidence);
+    const breakdown = isPlainObject(temporal)
+        ? temporal
+        : deriveSidecarTwoPhaseTemporal(clockEvidence, null, handoff);
     receipt.events = (Array.isArray(receipt.events) ? receipt.events : [])
         .filter(event => String(event?.type || '').toLowerCase() !== 'time');
     receipt.state_updates = isPlainObject(receipt.state_updates) ? receipt.state_updates : {};
     delete receipt.state_updates.time_skip_minutes;
-    if (evidence) receipt.state_updates.time_skip_minutes = evidence.minutes;
-    return evidence;
+    const phaseSupported = phase => isPlainObject(phase) && phase.status === 'supported';
+    let totalMinutes = 0;
+    if (phaseSupported(breakdown.interTurnJump)) totalMinutes += Number(breakdown.interTurnJump.minutes) || 0;
+    if (phaseSupported(breakdown.inTurnElapsed)) totalMinutes += Number(breakdown.inTurnElapsed.minutes) || 0;
+    if (totalMinutes > 0 && totalMinutes <= SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES) {
+        receipt.state_updates.time_skip_minutes = totalMinutes;
+        return {
+            minutes: totalMinutes,
+            interTurnMinutes: phaseSupported(breakdown.interTurnJump) ? Number(breakdown.interTurnJump.minutes) || 0 : 0,
+            inTurnMinutes: phaseSupported(breakdown.inTurnElapsed) ? Number(breakdown.inTurnElapsed.minutes) || 0 : 0,
+            basis: 'two_phase_header_and_endpoints',
+            header: breakdown.narratorHeader,
+            statement: sidecarTemporalStatement(handoff)
+        };
+    }
+    return null;
 }
 
 const SIDECAR_CORE_QUESTION_IDS = Object.freeze(['core.time', 'core.location', 'core.cast', 'core.world_changes']);
@@ -12939,6 +13045,7 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
         sceneReading: sidecarHandoffSection(options.handoff, 'SCENE READING'),
         acceptedPlayerDetails: sidecarHandoffSection(options.handoff, 'ACCEPTED PLAYER DETAILS'),
         temporalStatement: sidecarTemporalStatement(options.handoff),
+        sceneHeader: safeJsonClone(options.sceneHeader || null),
         playerInput: String(options.playerInput || '').slice(0, 6000),
         preFrame: safeJsonClone(options.preFrame || buildWorldSceneFrame(world, sess)),
         preClock: safeJsonClone(options.preClock || buildSidecarClockEvidence(world, sess)),
@@ -13577,6 +13684,11 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const preFrame = buildWorldSceneFrame(world, sess);
     const preClock = getWorldTimeData(world, sess);
     const clockEvidence = buildSidecarClockEvidence(world, sess);
+    // FF 5.4 scene header: parse the visible start-anchor as structured
+    // temporal evidence and split the beat into inter-turn jump + in-turn
+    // elapsed before the Reader/Reconciler see it.
+    const sceneHeader = extractFF54SceneHeader(String(options.narration || ''));
+    const temporalBreakdown = deriveSidecarTwoPhaseTemporal(clockEvidence, sceneHeader, String(options.handoff || ''));
     const handoff = String(options.handoff || '').trim();
     const narration = String(options.narration || '').trim();
     const commitTool = safeJsonClone(options.commitTool);
@@ -13601,6 +13713,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         `${options.playerInput || ''}\n${narration}\n${handoff}`);
     const attempt = beginSidecarTurnAttempt(world, sess, {
         handoff, narration, playerInput: options.playerInput,
+        sceneHeader: safeJsonClone(temporalBreakdown),
         preFrame, preClock: clockEvidence, model, provider,
         takeIndex: options.takeIndex, revisionId: options.revisionId,
         handoffComplete: options.handoffComplete !== false
@@ -13629,7 +13742,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         queueSidecarReaderQuestions(world, sess, readerPacket, attempt.turnRecord);
     }
     options.onStage?.('reconciling');
-    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from an exact handoff source-to-target endpoint that matches the canonical pre-turn clock; "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
+    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const configuredTokens = Number(tracker.maxTokens) || 0;
     const maxTokens = configuredTokens > 0
         ? Math.max(1800, Math.min(100000, Math.trunc(configuredTokens)))
@@ -13701,11 +13814,13 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             throw missing;
         }
         const receipt = unwrapSidecarCommitReceipt(toolCall.function?.arguments || '{}');
-        const explicitEndpointEvidence = applySidecarTemporalAuthority(receipt, handoff, clockEvidence);
+        const explicitEndpointEvidence = applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporalBreakdown);
         const receiptContext = {
             ...(options.receiptContext || {}),
             sidecarTemporalAuthority: true,
-            authorizedTimeSkipMinutes: explicitEndpointEvidence?.minutes || 0
+            authorizedTimeSkipMinutes: explicitEndpointEvidence?.minutes || 0,
+            authorizedInterTurnMinutes: explicitEndpointEvidence?.interTurnMinutes || 0,
+            authorizedInTurnMinutes: explicitEndpointEvidence?.inTurnMinutes || 0
         };
         const protocol = attempt.protocol || window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(protocol, receipt, {
