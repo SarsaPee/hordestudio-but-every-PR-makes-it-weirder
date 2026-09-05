@@ -12686,6 +12686,243 @@ Epistemic discipline: hidden/off-screen facts in <context> are authorial awarene
     };
 }
 
+// ---------------------------------------------------------------------------
+// FF 5.4 Agentic — Sidecar-native Context Compiler.
+// One compiler feeds both context surfaces (the Horde <context> block and the
+// FF agent-data markers). Every semantic item Sidecar owns is offered as a
+// candidate, assigned to exactly one lane, deduplicated, budgeted, and
+// serialized once. Legacy narrator plumbing (Kernel manifest, memory matrix,
+// lore/ledger prompt blocks) is NOT injected alongside this block; whatever
+// survived it as useful semantic information is routed here instead.
+// ---------------------------------------------------------------------------
+function compileFF54SidecarContext(world, sess, opt = {}) {
+    const packet = isPlainObject(opt.packet) ? opt.packet : {};
+    const rules = normalizeWorldGameRules(world);
+    const ruleModules = (rules && rules.modules) || {};
+    const budgetMax = Math.max(4000, parseInt(opt.budget, 10) || 14000);
+    const candidates = [];
+    let orderCounter = 0;
+    const jsonText = value => { try { return JSON.stringify(value); } catch (_) { return ''; } };
+    const normKey = text => String(text || '').toLowerCase()
+        .replace(/\s+/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 180);
+    const add = (lane, label, text, priority, cap) => {
+        const content = String(text || '').trim();
+        orderCounter += 1;
+        if (!content) {
+            candidates.push({ lane: String(lane), label: String(label || lane), priority: Math.max(1, priority || 3), order: orderCounter, chars: 0, kept: false, reason: 'empty' });
+            return;
+        }
+        const clipped = content.length > cap;
+        const candidate = {
+            lane: String(lane), label: String(label || lane), priority: Math.max(1, priority || 3),
+            order: orderCounter, chars: content.length,
+            content: clipped ? content.slice(0, cap) + '\n[truncated by context budget]' : content,
+            clipped, kept: false, reason: 'pending'
+        };
+        candidate.key = normKey(candidate.content);
+        candidates.push(candidate);
+    };
+
+    const castIds = Array.isArray(packet.activeCast) ? packet.activeCast : [];
+
+    // Authorial configuration (precedence layer 4) — one lane, no duplicates.
+    add('author_config', 'AUTHORIAL WORLD DIRECTION', world && world.dmPrompt, 1, 5000);
+    add('author_config', 'SESSION PREFERENCES', opt.storyPrefsPrompt, 1, 900);
+    if (world && world.authorNote) {
+        add('author_config', 'AUTHOR NOTE', "[AUTHOR'S NOTE: " + world.authorNote + ']', 1, 900);
+    }
+
+    // FF persona stats — controlled character identity + physical state.
+    add('agent_persona_stats', 'CONTROLLED CHARACTER', [
+        String(opt.personaContext || '').trim(),
+        'CURRENT PHYSICAL STATE: ' + jsonText({
+            location: String(opt.locName || ''),
+            outfit: String(sess.outfit || ''),
+            stats: String(opt.statContext || '').trim(),
+            status: String((opt.playerRulesState || {}).status || 'active'),
+            conditions: Array.isArray((opt.playerRulesState || {}).conditions) ? opt.playerRulesState.conditions : []
+        })
+    ].filter(Boolean).join('\n\n'), 1, 3600);
+
+    // FF character tracker — active cast state + relationship posture.
+    const relationships = (Array.isArray(world && world.relationships) ? world.relationships : [])
+        .filter(record => record && (castIds.indexOf(record.a) !== -1 || castIds.indexOf(record.b) !== -1))
+        .slice(-12)
+        .map(record => ({ between: [record.a, record.b], label: record.label, score: record.score, reason: record.reason }));
+    add('agent_character_tracker', 'ACTIVE CAST', jsonText({
+        present_cast: (opt.presentNPCs || []).map(npc => npc && npc.name).filter(Boolean),
+        controlled_entity: (packet.activeSequence || {}).controlledEntityId || 'player',
+        activities: packet.activities || null,
+        relationships: relationships,
+        presence_note: 'Committed presence only. A mentioned destination is not arrival; a nearby voice is not physical presence.'
+    }), 1, 2200);
+
+    // FF quest tracker — canonical quest state, not legacy prompt formatting.
+    add('agent_quest', 'QUEST TRACKER', jsonText(
+        (Array.isArray(sess.quests) ? sess.quests : [])
+            .filter(quest => quest.status === 'active').slice(0, 12)
+            .map(quest => ({
+                title: quest.title,
+                description: quest.description || '',
+                giver: quest.giver || '',
+                objectives: (quest.objectives || []).map(objective =>
+                    (objective.status || 'active') + ': ' + objective.text + (objective.optional ? ' (optional)' : ''))
+            }))
+    ), 2, 2200);
+
+    // FF world state — committed scene/time/place evidence.
+    add('agent_world_state', 'WORLD STATE', jsonText({
+        sequence: packet.activeSequence || null,
+        scene: packet.activeScene || null,
+        time: {
+            clock: String(opt.exactTimeStr || packet.worldTime || ''),
+            period: String(opt.period || ''),
+            weekday: String(opt.weekdayName || ''),
+            day: opt.days,
+            temporal_continuity: packet.temporalContinuity || ''
+        },
+        weather: String(opt.weather || ''),
+        location: {
+            name: String(opt.locName || (packet.activeLocation || {}).name || ''),
+            description: String(opt.locDesc || ''),
+            exits: String(opt.locExits || '')
+        },
+        canonical_frame: opt.canonicalSceneFrame || null,
+        recent_committed_events: Array.isArray(opt.recentCanonicalEvents) ? opt.recentCanonicalEvents : [],
+        temporal_evidence: packet.temporalEvidence || null,
+        canonical_status: packet.canonicalStateStatus || ''
+    }), 1, 3200);
+
+    // FF inventory tracker.
+    if (ruleModules.inventory || ruleModules.equipment) {
+        const itemName = item => (globalThis.HordeRpgMechanics && globalThis.HordeRpgMechanics.itemName) ? globalThis.HordeRpgMechanics.itemName(item) : String(item || '');
+        add('agent_inventory_tracker', 'INVENTORY', jsonText({
+            inventory: (Array.isArray(sess.inventory) ? sess.inventory : []).map(itemName).filter(Boolean),
+            equipped: Object.entries(sess.equipment || {}).filter(entry => entry[1]).map(entry =>
+                entry[0] + ': ' + itemName((sess.inventory || []).find(item => item && item.id === entry[1])))
+        }), 2, 1600);
+    }
+
+    // FF Beholder — long-run NPC dossier observations + validated Labs sensor.
+    add('agent_beholder', 'OBSERVATIONS', jsonText({
+        dossier_claims: String(opt.dossierClaimsContext || '').trim(),
+        labs_micro_sensor: String(opt.labsWorldHint || '').trim(),
+        note: 'Derived observations, not canonical facts. Newer directly witnessed events override them.'
+    }), 3, 2600);
+
+    // Horde-native <context> sections.
+    add('cast_knowledge', 'CAST KNOWLEDGE BOUNDARIES', opt.npcContext, 1, 3600);
+    const absentParts = [
+        String(opt.absentNpcManifest || '').trim(),
+        String(opt.referencedNpcContext || '').trim(),
+        String(opt.deadNpcManifest || '').trim()
+    ].filter(Boolean);
+    if (absentParts.length) {
+        absentParts.push('ABSENT characters must NOT appear, speak, or act in this scene. If the story needs one of them here, author their arrival clearly and name it in the hidden handoff — characters walk in, they do not materialize.');
+        add('absent_cast', 'ABSENT AND DEPARTED CAST', absentParts.join('\n'), 2, 1600);
+    }
+    const secretBase = String(opt.secretContext || '').trim();
+    if (secretBase) {
+        add('secrets', 'SCENE SECRETS', secretBase + '\nSecret discipline: LOCKED SECRET entries carry hints only; the truth is withheld from you. If the player investigates a locked secret, do not invent its truth; name an investigate_secret request with the label in the hidden <scene_handoff> so the truth can be prepared for a later beat. Only incorporate a truth already supplied in canonical context. Do not reveal secrets prematurely; foreshadow only.', 2, 2200);
+    }
+    const diceConfig = opt.diceConfig || {};
+    const mechanics = [
+        'Rules Profile: ' + (rules && rules.profileId || 'default') + '. Enabled modules: ' + (WORLD_RULE_MODULE_KEYS.filter(key => ruleModules[key]).join(', ') || 'none') + '. Disabled modules: ' + (WORLD_RULE_MODULE_KEYS.filter(key => !ruleModules[key]).join(', ') || 'none') + '.',
+        ruleModules.checks
+            ? 'Check Engine: d' + diceConfig.sides + ', ' + diceConfig.resolution + ' resolution, ' + diceConfig.visibility + ' visibility. Do not invent a roll or reducer payload. If this beat reaches a mechanically uncertain action, stop at the uncertainty and identify the needed check in the hidden handoff so Sidecar can reconcile it.'
+            : 'Check Engine: disabled — resolve through fiction without dice.',
+        String(opt.statContext || '').trim() ? 'Player stats: ' + opt.statContext : '',
+        'Mechanics are narrative-only in this mode: apply their meaning in prose and leave all mechanical persistence to Horde Sidecar.'
+    ].filter(Boolean).join('\n');
+    add('mechanics', 'MECHANICS', mechanics, 2, 1600);
+    add('engine_events', 'ENGINE EVENTS — WEAVE INTO THIS BEAT', opt.engineEventsPrompt, 1, 1200);
+    add('memories', 'SEMANTIC RECALL — derived memory, never objective canon', jsonText(opt.recall), 2, 3000);
+    add('memory_summaries', 'VALIDATED MEMORY SUMMARIES', jsonText(opt.replacementMemory), 3, 2200);
+    add('questions', 'OPEN QUESTIONS', (packet.pendingQuestions || []).length
+        ? 'Unresolved authorial questions; stay consistent with them and answer them in play:\n' + jsonText(packet.pendingQuestions)
+        : '', 2, 1400);
+    const obligations = {
+        reconciliation_backlog: packet.reconciliationBacklog || [],
+        pending_requests: packet.pendingRequests || [],
+        background_proposals: packet.backgroundProposals || [],
+        authorial_refinements: packet.recentAuthorialRefinements || []
+    };
+    add('obligations', 'RECONCILIATION OBLIGATIONS', jsonText(obligations), 3, 1800);
+    add('traversal', 'TRAVERSAL AND VEHICLES', jsonText(packet.traversal || null), 2, 1200);
+    add('world_conditions', 'LIVING WORLD', opt.livingWorldPrompt, 3, 2400);
+    add('world_conditions', 'SOCIETY', opt.societyPrompt, 3, 1800);
+    add('threads', 'OPEN STORY THREADS', opt.threadsPrompt, 3, 1200);
+    add('lore', 'TRIGGERED WORLD LORE', opt.relevantLore, 3, 2400);
+
+    // Relevant committed cognition — private character thought, epistemic-restricted.
+    const graph = opt.memoryGraph || null;
+    const cognition = ((graph && graph.cognition) || [])
+        .filter(record => (record.status || 'active') === 'active'
+            && (!castIds.length || castIds.indexOf(record.characterId) !== -1))
+        .sort((a, b) => (Number(b.importance) || 0) - (Number(a.importance) || 0))
+        .slice(0, 8)
+        .map(record => ({
+            characterId: record.characterId,
+            status: record.epistemicStatus || '',
+            thought: String(record.text || '').slice(0, 600),
+            importance: record.importance,
+            confidence: record.confidence
+        }));
+    add('cognition', 'COMMITTED CHARACTER COGNITION — private, epistemic-restricted', cognition.length
+        ? jsonText(cognition) + '\nThis is authorial awareness only. A character acts on only their own committed cognition; it is never a license for omniscience.'
+        : '', 2, 1800);
+
+    // --- dedup + budget selection ---
+    const kept = [];
+    const seenKeys = [];
+    let used = 0;
+    const sorted = candidates.slice().sort((a, b) => (a.priority - b.priority) || (a.order - b.order));
+    sorted.forEach(candidate => {
+        if (candidate.reason === 'empty') return;
+        if (candidate.key && seenKeys.indexOf(candidate.key) !== -1) { candidate.reason = 'duplicate'; return; }
+        const laneTexts = kept.filter(item => item.lane === candidate.lane).map(item => item.key);
+        if (candidate.key && laneTexts.some(key => key.indexOf(candidate.key) !== -1 || candidate.key.indexOf(key) !== -1)) {
+            candidate.reason = 'contained';
+            return;
+        }
+        if (used + candidate.content.length > budgetMax) { candidate.reason = 'over_budget'; return; }
+        candidate.kept = true;
+        candidate.reason = 'included';
+        if (candidate.key) seenKeys.push(candidate.key);
+        kept.push(candidate);
+        used += candidate.content.length;
+    });
+
+    const contextLanes = ['author_config', 'cast_knowledge', 'absent_cast', 'secrets', 'mechanics', 'engine_events', 'memories', 'memory_summaries', 'questions', 'obligations', 'traversal', 'world_conditions', 'threads', 'lore', 'cognition'];
+    const agentLanes = ['agent_persona_stats', 'agent_character_tracker', 'agent_quest', 'agent_world_state', 'agent_inventory_tracker', 'agent_beholder'];
+    const laneRank = lane => {
+        const index = contextLanes.indexOf(lane);
+        return index !== -1 ? index : 90;
+    };
+    const contextSections = kept.filter(candidate => contextLanes.indexOf(candidate.lane) !== -1)
+        .sort((a, b) => (laneRank(a.lane) - laneRank(b.lane)) || (a.order - b.order))
+        .map(candidate => '[' + candidate.label + ']\n' + candidate.content);
+    const agentBlocks = agentLanes.map(lane => {
+        const laneCandidates = kept.filter(candidate => candidate.lane === lane);
+        if (!laneCandidates.length) return '';
+        return '<' + lane + '>\n' + laneCandidates.map(candidate => candidate.content).join('\n\n') + '\n</' + lane + '>';
+    }).filter(Boolean);
+    const contextBlock = '<context>\nEngine-managed Horde continuity snapshot. It was committed after an earlier completed response; it is prior state, not current-turn output. Current actions may freely change anything it describes; newer directly witnessed events override it. Do not quote it or expose its structure.\n\n' + contextSections.join('\n\n') + '\n</context>\n' + agentBlocks.join('\n');
+    const manifest = {
+        budget: budgetMax,
+        used: used,
+        candidateCount: candidates.length,
+        includedCount: kept.length,
+        droppedCount: candidates.filter(candidate => !candidate.kept).length,
+        candidates: candidates.map(candidate => ({
+            lane: candidate.lane, label: candidate.label, priority: candidate.priority,
+            chars: candidate.chars, clipped: candidate.clipped === true, kept: candidate.kept, reason: candidate.reason
+        }))
+    };
+    return { contextBlock: contextBlock, manifest: manifest };
+}
+
+
 function beginSidecarTurnAttempt(world, sess, options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return { protocol: null, turnRecord: null };
