@@ -31610,6 +31610,17 @@ ${modularMandate}
         document.getElementById('world-messages-container').appendChild(aiMsgDiv);
         const textTarget = aiMsgDiv.querySelector('.msg-text');
 
+        // Stream the visible prose through the same cinematic presenter as the
+        // committed message, so FF voice-color dialogue becomes character voice
+        // lines as soon as each line completes — and once the narrator moves on
+        // to the hidden <scene_handoff>, the visible prose is final and gets a
+        // guaranteed last presenter pass at that boundary.
+        const streamPresentation = world ? normalizeWorldPresentation(world) : null;
+        const streamPresentationMode = ['classic', 'cinematic'].includes(sess?.presentationMode)
+            ? sess.presentationMode
+            : (streamPresentation?.enabled ? streamPresentation.mode : 'classic');
+        let streamRenderBudgetAt = 0;
+        let streamVisibleRenderedUpTo = -1;
         let buffer = "";
         const processWorldStreamLine = line => {
             if (!line.startsWith('data:')) return;
@@ -31638,7 +31649,18 @@ ${modularMandate}
                         dmTypingLabel.textContent = 'GM is writing handoff notes…';
                     }
                     const visibleStreamingText = handoffStart >= 0 ? fullText.slice(0, handoffStart) : fullText;
-                    textTarget.innerHTML = parseHordeMarkdown(visibleStreamingText);
+                    // The presenter re-reads the full visible text, so throttle
+                    // it while prose streams; the handoff boundary always gets a
+                    // final render because that is where the prose is complete.
+                    const handoffBoundaryRender = handoffStart >= 0 && streamVisibleRenderedUpTo !== handoffStart;
+                    const now = Date.now();
+                    if (handoffBoundaryRender || (handoffStart < 0 && now - streamRenderBudgetAt >= 120)) {
+                        streamRenderBudgetAt = now;
+                        if (handoffBoundaryRender) streamVisibleRenderedUpTo = handoffStart;
+                        textTarget.innerHTML = streamPresentationMode === 'cinematic'
+                            ? renderWorldNarrativeHtml(world, visibleStreamingText, sess)
+                            : parseHordeMarkdown(stripFFVoiceTags(visibleStreamingText));
+                    }
                     const container = document.getElementById('world-messages-container');
                     container.scrollTop = container.scrollHeight;
                 }
