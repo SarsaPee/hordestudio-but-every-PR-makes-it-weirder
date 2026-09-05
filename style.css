@@ -5226,6 +5226,11 @@ input[type=number].form-input::-webkit-inner-spin-button {
     z-index: 1000;
 }
 
+
+/* The default image model picker holds a long catalog: give it a real
+   scroll surface and stop wheel events chaining into the studio panel. */
+#w-visual-image-model-results { max-height: min(480px, 62vh); overscroll-behavior: contain; }
+
 .searchable-dropdown-results::-webkit-scrollbar {
     width: 6px;
 }
