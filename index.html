@@ -748,7 +748,7 @@
                             <label>Vertical focus <input id="world-visual-crop-y" type="range" min="0" max="100" value="50"></label>
                             <label>Zoom <input id="world-visual-crop-zoom" type="range" min="100" max="300" value="100"></label>
                         </div>
-                        <p class="form-hint">Drag the image or use the sliders. Apply Crop creates a new portable image asset; it does not alter simulation state.</p>
+                        <p class="form-hint">Generated images are stored whole at their provider aspect ratio. NPC profiles render as a 1:1 frame cropped from that source: drag and zoom to frame it, then Apply Crop saves the profile image while the full source stays editable. Crop &amp; Fill asks the revision model to outpaint missing frame areas instead of cutting the source.</p>
                     </div>
                     <div class="world-visual-editor-fields">
                         <div class="form-section">
@@ -801,6 +801,7 @@
                 <div class="modal-ft world-visual-editor-actions">
                     <button class="btn btn-ghost" id="world-visual-save-brief" type="button">Save visual brief</button>
                     <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
+                    <button class="btn btn-ghost" id="world-visual-crop-fill" type="button" title="Use the revision image pipeline to outpaint missing areas into the selected final aspect ratio">Crop &amp; Fill</button>
                     <button class="btn btn-ghost" id="world-visual-revise" type="button">Revise current</button>
                     <button class="btn btn-primary" id="world-visual-regenerate" type="button">Generate new</button>
                 </div>
@@ -5373,6 +5374,6 @@
      HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->
 <script src="melbourne-bunnyrx-registry.js?v=20260905-wm-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260905-v1700-visual-pipelines-v3"></script>
+<script src="app.js?v=20260905-v1700-visual-source-v1"></script>
 </body>
 </html>

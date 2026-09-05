@@ -2798,7 +2798,7 @@ function validateWorldData(value, label = 'World') {
             requireString(entity[key], `${label} entity ${index + 1} ${key}`, { optional: true }));
         if (entity.visuals !== undefined) {
             requirePlainObject(entity.visuals, `${label} entity ${index + 1} visuals`);
-            ['portraitAssetId', 'portraitPosition', 'dialogueColor'].forEach(key =>
+            ['portraitAssetId', 'portraitPosition', 'portraitDisplayAssetId', 'dialogueColor'].forEach(key =>
                 requireString(entity.visuals[key], `${label} entity ${index + 1} visuals ${key}`, { optional: true, max: 200 }));
         }
         requireArray(entity.goalSteps, `${label} entity ${index + 1} goal steps`, { optional: true, max: 20 });
@@ -5150,7 +5150,10 @@ function worldMediaReferenceIds(world) {
     const add = value => { if (typeof value === 'string' && value) ids.add(value); };
     add(world?.presentation?.mapSkinAssetId);
     (world?.locations || []).forEach(location => add(location?.visuals?.backgroundAssetId));
-    (world?.entities || []).forEach(entity => add(entity?.visuals?.portraitAssetId));
+    (world?.entities || []).forEach(entity => {
+        add(entity?.visuals?.portraitAssetId);
+        add(entity?.visuals?.portraitDisplayAssetId);
+    });
     return ids;
 }
 
@@ -23179,7 +23182,7 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
         section.innerHTML = `<summary><strong>${escapeHTML(label.replace(/^./, char => char.toUpperCase()))}</strong><span>${entities.length} ${isItems ? 'item' : 'person'}${entities.length === 1 ? '' : 's'}</span></summary><div class="world-directory-grid"></div>`;
         const grid = section.querySelector('.world-directory-grid');
         entities.sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(entity => {
-            const image = worldMediaSource(world, entity.visuals?.portraitAssetId);
+            const image = worldNpcPortraitSource(world, entity);
             const home = getLocationRef(world, entity.homeLocation || entity.startLocation);
             const depth = entity.simulationDepth || 'background';
             const card = document.createElement('button');
@@ -23377,8 +23380,8 @@ function renderWorldEntities(mode = 'people') {
 
                 ${ent.type === 'npc' ? `
                     <div class="world-media-editor world-inspector-section" data-inspector-section="visuals">
-                        <div class="world-media-preview is-portrait" style="${worldMediaSource(world, ent.visuals?.portraitAssetId) ? `background-image:url('${cssUrl(worldMediaSource(world, ent.visuals.portraitAssetId))}')` : ''}">
-                            ${worldMediaSource(world, ent.visuals?.portraitAssetId) ? '' : escapeHTML((ent.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}
+                        <div class="world-media-preview is-portrait" style="${worldNpcPortraitSource(world, ent) ? `background-image:url('${cssUrl(worldNpcPortraitSource(world, ent))}')` : ''}">
+                            ${worldNpcPortraitSource(world, ent) ? '' : escapeHTML((ent.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}
                         </div>
                         <div>
                             <label class="form-label" style="font-size:.75rem;">NPC Portrait</label>
@@ -23583,6 +23586,11 @@ function renderWorldEntities(mode = 'people') {
                     const image = await normalizeUploadedImage(file, 2048, 0.88);
                     registerWorldVisualVariant(world, ent, 'npc',
                         addWorldMediaAsset(world, image, 'npc_portrait', ent.name));
+                    // Uploads can arrive at any aspect ratio: derive a
+                    // centered 1:1 profile frame so the record renders
+                    // deliberately even if the editor is closed without
+                    // further framing.
+                    await deriveWorldNpcPortraitDisplay(world, ent);
                     pruneWorldMediaAssets(world);
                     renderWorldEntities();
                     openWorldVisualEditor(world, ent, 'npc');
@@ -28966,7 +28974,7 @@ function renderWorldPlayState() {
             div.style.borderLeft = '3px solid var(--accent)';
             div.style.cursor = 'pointer';
             div.title = 'Open dossier';
-            const portrait = activePresentation ? worldMediaSource(world, npc.visuals?.portraitAssetId) : '';
+            const portrait = activePresentation ? worldNpcPortraitSource(world, npc) : '';
             if (activePresentation) {
                 const initials = String(npc.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
                 div.innerHTML = `<span class="world-present-npc-avatar" style="${portrait ? `background-image:url('${cssUrl(portrait)}')` : ''}">${portrait ? '' : escapeHTML(initials)}</span><span>${escapeHTML(npc.name)}</span>`;
@@ -29491,7 +29499,7 @@ function worldDialogueSpeaker(world, paragraph, quoteStart, quoteEnd, currentFoc
 }
 
 function renderWorldDialogueCard(world, speaker, dialogue, className = 'world-npc-dialogue', options = {}) {
-    const portrait = worldMediaSource(world, speaker?.visuals?.portraitAssetId);
+    const portrait = worldNpcPortraitSource(world, speaker);
     const initials = String(speaker?.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
     // An FF voice color tag, when present, wins over the entity's configured
     // dialogue color: the narrator issued it for this exact line.
@@ -35527,11 +35535,15 @@ function normalizeAuthoredWorld(world) {
     world.entities.forEach(entity => {
         if (!isPlainObject(entity.visuals)) entity.visuals = {};
         entity.visuals.portraitAssetId = String(entity.visuals.portraitAssetId || '').slice(0, 160);
+        entity.visuals.portraitDisplayAssetId = String(entity.visuals.portraitDisplayAssetId || '').slice(0, 160);
         entity.visuals.portraitPosition = String(entity.visuals.portraitPosition || 'center').slice(0, 80);
         entity.visuals.dialogueColor = /^#[0-9a-f]{6}$/i.test(String(entity.visuals.dialogueColor || ''))
             ? String(entity.visuals.dialogueColor).toUpperCase() : '';
         if (entity.visuals.portraitAssetId && !validMediaIds.has(entity.visuals.portraitAssetId)) {
             entity.visuals.portraitAssetId = '';
+        }
+        if (entity.visuals.portraitDisplayAssetId && !validMediaIds.has(entity.visuals.portraitDisplayAssetId)) {
+            entity.visuals.portraitDisplayAssetId = '';
         }
         // A vendor bound to a location that no longer exists is not a vendor.
         if (entity.vendorFor && !world.locations.some(l => l.id === entity.vendorFor)) {
@@ -49216,11 +49228,79 @@ async function cropWorldVisual(source, aspectRatio, maxDimension, focusX, focusY
     return canvas.toDataURL('image/jpeg', quality);
 }
 
+async function frameWorldVisualForFill(source, aspectRatio, maxDimension, focusX = 50, focusY = 50) {
+    // Unlike cropWorldVisual(), this preserves every source pixel. The
+    // transparent space is deliberate evidence for an image-to-image model:
+    // it is the portion of the requested frame which needs outpainting.
+    const image = await loadEmbeddedImage(source);
+    const output = worldVisualDimensions(aspectRatio, maxDimension);
+    const scale = Math.min(output.width / image.naturalWidth, output.height / image.naturalHeight);
+    const renderedWidth = Math.max(1, Math.round(image.naturalWidth * scale));
+    const renderedHeight = Math.max(1, Math.round(image.naturalHeight * scale));
+    const x = Math.round((output.width - renderedWidth) * Math.max(0, Math.min(1, Number(focusX) / 100)));
+    const y = Math.round((output.height - renderedHeight) * Math.max(0, Math.min(1, Number(focusY) / 100)));
+    const canvas = document.createElement('canvas');
+    canvas.width = output.width;
+    canvas.height = output.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This browser could not prepare an outpainting frame.');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.clearRect(0, 0, output.width, output.height);
+    context.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight,
+        x, y, renderedWidth, renderedHeight);
+    return canvas.toDataURL('image/png');
+}
+
+function worldVisualCropFillPrompt(editor, aspectRatio, correction = '') {
+    const subject = editor.kind === 'npc' ? 'character portrait' : 'location visual';
+    const extra = String(correction || '').trim();
+    return [
+        `Outpaint the supplied ${subject} into a complete ${aspectRatio} final frame.`,
+        'Keep every already-visible person, face, clothing, tattoo, object and environment detail intact. The transparent or empty margins represent missing image data only: extend the existing environment naturally into them.',
+        'Do not crop, zoom into, replace, duplicate or redesign the visible source. Preserve its identity, composition, lighting and visual style while completing only the missing edges.',
+        extra ? `Additional authorised adjustment: ${extra}` : ''
+    ].filter(Boolean).join('\n\n');
+}
+
 function worldVisualEditorAssetId(editor = worldVisualEditorState) {
     if (!editor) return '';
     return editor.kind === 'npc'
         ? editor.target.visuals?.portraitAssetId || ''
         : editor.target.visuals?.backgroundAssetId || '';
+}
+
+// NPC portraits render in a fixed 1:1 profile frame everywhere in the app.
+// The generated source keeps its provider aspect ratio; the profile image is
+// a derived, deliberately framed crop of that source, never a silent trim.
+const WORLD_NPC_PORTRAIT_DISPLAY_ASPECT = '1:1';
+
+function worldNpcPortraitDisplayAssetId(entity) {
+    return String(entity?.visuals?.portraitDisplayAssetId || '').slice(0, 160);
+}
+
+function worldNpcPortraitSource(world, entity) {
+    const displayId = worldNpcPortraitDisplayAssetId(entity);
+    if (displayId) {
+        const display = worldMediaSource(world, displayId);
+        if (display) return display;
+    }
+    return worldMediaSource(world, entity?.visuals?.portraitAssetId);
+}
+
+async function deriveWorldNpcPortraitDisplay(world, entity, focusX = 50, focusY = 50, zoom = 1) {
+    const sourceId = String(entity?.visuals?.portraitAssetId || '');
+    const source = worldMediaSource(world, sourceId);
+    if (!source) return '';
+    const resolution = normalizedWorldVisualResolution(entity?.visuals?.portraitResolution, 1200);
+    const cropped = await cropWorldVisual(source, WORLD_NPC_PORTRAIT_DISPLAY_ASPECT, resolution,
+        focusX, focusY, zoom, 0.84);
+    const assetId = addWorldMediaAsset(world, cropped, 'npc_portrait',
+        `${entity?.name || 'NPC'} (profile frame)`,
+        { prompt: `Derived ${WORLD_NPC_PORTRAIT_DISPLAY_ASPECT} profile frame of source asset ${sourceId}.` });
+    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    entity.visuals.portraitDisplayAssetId = assetId;
+    return assetId;
 }
 
 function worldVisualHistoryKeys(kind) {
@@ -49258,6 +49338,7 @@ function clearWorldVisualVariants(target, kind) {
     const keys = worldVisualHistoryKeys(kind);
     target.visuals[keys.current] = '';
     target.visuals[keys.history] = [];
+    if (kind === 'npc') target.visuals.portraitDisplayAssetId = '';
 }
 
 function selectWorldVisualVariant(editor, offset) {
@@ -49271,6 +49352,14 @@ function selectWorldVisualVariant(editor, offset) {
     document.getElementById('world-visual-crop-y').value = '50';
     document.getElementById('world-visual-crop-zoom').value = '100';
     updateWorldVisualCropPreview();
+    if (editor.kind === 'npc') {
+        // Switching variants switches the source; the 1:1 profile frame is
+        // re-derived from the newly selected source so a record never shows
+        // one variant's crop over another variant's pixels.
+        deriveWorldNpcPortraitDisplay(editor.world, editor.target)
+            .then(() => renderWorldEntities())
+            .catch(() => {});
+    }
 }
 
 function updateWorldVisualCropPreview() {
@@ -49279,15 +49368,21 @@ function updateWorldVisualCropPreview() {
     const image = document.getElementById('world-visual-crop-image');
     const empty = document.getElementById('world-visual-crop-empty');
     if (!editor || !stage || !image) return;
-    const aspect = normalizedWorldVisualAspect(document.getElementById('world-visual-aspect')?.value,
+    // The crop stage previews the frame the record will actually display:
+    // NPC portraits render as fixed 1:1 profile images, so their editable
+    // frame is square even when the source was generated at another ratio.
+    // Location backgrounds render as responsive cover art, so their frame
+    // follows the selected generation aspect.
+    const generationAspect = normalizedWorldVisualAspect(document.getElementById('world-visual-aspect')?.value,
         editor.kind === 'npc' ? '3:4' : '16:9');
+    const aspect = editor.kind === 'npc' ? WORLD_NPC_PORTRAIT_DISPLAY_ASPECT : generationAspect;
     const [width, height] = aspect.split(':').map(Number);
     stage.style.aspectRatio = `${width} / ${height}`;
     const resolution = normalizedWorldVisualResolution(document.getElementById('world-visual-resolution')?.value,
         editor.kind === 'npc' ? 1200 : 1600);
     const output = worldVisualDimensions(aspect, resolution);
     const guide = document.getElementById('world-visual-crop-guide');
-    if (guide) guide.dataset.label = `${aspect} final frame · ${output.width} × ${output.height}px`;
+    if (guide) guide.dataset.label = `${aspect} ${editor.kind === 'npc' ? 'profile' : 'final'} frame · ${output.width} × ${output.height}px`;
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
     const history = worldVisualHistory(editor.world, editor.target, editor.kind);
     const selectedIndex = history.indexOf(worldVisualEditorAssetId(editor));
@@ -49301,6 +49396,7 @@ function updateWorldVisualCropPreview() {
     image.hidden = !source;
     empty.hidden = !!source;
     document.getElementById('world-visual-apply-crop').disabled = !source;
+    document.getElementById('world-visual-crop-fill').disabled = !source;
     if (!source) return;
     if (image.src !== source) image.src = source;
     const draw = () => {
@@ -49410,6 +49506,9 @@ async function runWorldVisualGeneration(revisionOnly, event) {
             ? await generateWorldNpcPortrait(editor.world, editor.target, options)
             : await generateWorldLocationBackground(editor.world, editor.target, options);
         registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+        // Fresh and revised sources both need their 1:1 profile frame derived
+        // so the record immediately shows a deliberate crop of the new image.
+        if (editor.kind === 'npc') await deriveWorldNpcPortraitDisplay(editor.world, editor.target);
         if (revisionOnly) {
             document.getElementById('world-visual-correction').value = '';
             if (editor.kind === 'npc') editor.target.visuals.portraitCorrection = '';
@@ -49423,6 +49522,54 @@ async function runWorldVisualGeneration(revisionOnly, event) {
     } finally {
         button.disabled = false;
         button.textContent = revisionOnly ? 'Revise current' : 'Generate new';
+        updateWorldVisualCropPreview();
+    }
+}
+
+async function runWorldVisualCropFill(event) {
+    const editor = worldVisualEditorState;
+    if (!editor) return;
+    const button = event.currentTarget;
+    const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
+    if (!source) return showToast('Generate or select an image before using Crop & Fill.', 'error');
+    button.disabled = true;
+    button.textContent = 'Filling…';
+    try {
+        saveWorldVisualEditorFields();
+        // NPC crop-and-fill completes the fixed 1:1 profile frame; locations
+        // fill toward their selected display aspect.
+        const aspectRatio = editor.kind === 'npc'
+            ? WORLD_NPC_PORTRAIT_DISPLAY_ASPECT
+            : document.getElementById('world-visual-aspect').value;
+        const maxDimension = Number(document.getElementById('world-visual-resolution').value);
+        const fillReference = await frameWorldVisualForFill(source, aspectRatio, maxDimension,
+            document.getElementById('world-visual-crop-x').value,
+            document.getElementById('world-visual-crop-y').value);
+        const correctionInput = document.getElementById('world-visual-correction');
+        const prompt = worldVisualCropFillPrompt(editor, aspectRatio, correctionInput.value);
+        const assetId = await generateWorldVisual(editor.world, prompt, {
+            aspectRatio, maxDimension,
+            quality: editor.kind === 'npc' ? 0.84 : 0.82,
+            kind: editor.kind === 'npc' ? 'npc_portrait' : 'location_background',
+            label: editor.target.name,
+            referenceImage: fillReference,
+            requireReference: true
+        });
+        registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+        // A filled NPC image is already a complete 1:1 profile frame, so it
+        // serves as its own display asset instead of being cropped again.
+        if (editor.kind === 'npc') editor.target.visuals.portraitDisplayAssetId = assetId;
+        correctionInput.value = '';
+        if (editor.kind === 'npc') editor.target.visuals.portraitCorrection = '';
+        else editor.target.visuals.backgroundCorrection = '';
+        pruneWorldMediaAssets(editor.world);
+        refreshWorldVisualEditorAfterAsset();
+        showToast(`Filled ${editor.target.name} into a ${aspectRatio} frame as image ${worldVisualHistory(editor.world, editor.target, editor.kind).length}.`, 'success');
+    } catch (error) {
+        showToast(`Crop & Fill failed: ${error.message}`, 'error');
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Crop & Fill';
         updateWorldVisualCropPreview();
     }
 }
@@ -49458,19 +49605,33 @@ function ensureWorldVisualEditorBound() {
             saveWorldVisualEditorFields();
             const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
             if (!source) throw new Error('Generate or upload an image before cropping it.');
-            const cropped = await cropWorldVisual(source,
-                document.getElementById('world-visual-aspect').value,
-                document.getElementById('world-visual-resolution').value,
-                document.getElementById('world-visual-crop-x').value,
-                document.getElementById('world-visual-crop-y').value,
-                Number(document.getElementById('world-visual-crop-zoom').value) / 100);
-            const assetId = addWorldMediaAsset(editor.world, cropped,
-                editor.kind === 'npc' ? 'npc_portrait' : 'location_background', editor.target.name,
-                { prompt: 'Manual crop of an existing portable world visual.' });
-            registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
-            pruneWorldMediaAssets(editor.world);
-            refreshWorldVisualEditorAfterAsset();
-            showToast(`Cropped ${editor.target.name} to the selected frame.`, 'success');
+            if (editor.kind === 'npc') {
+                // The NPC profile frame is a derived display asset: the source
+                // image stays current so reopening the editor always offers
+                // the full, uncropped picture for further edits.
+                const displayId = await deriveWorldNpcPortraitDisplay(editor.world, editor.target,
+                    document.getElementById('world-visual-crop-x').value,
+                    document.getElementById('world-visual-crop-y').value,
+                    Number(document.getElementById('world-visual-crop-zoom').value) / 100);
+                if (!displayId) throw new Error('The profile frame could not be derived from this image.');
+                pruneWorldMediaAssets(editor.world);
+                refreshWorldVisualEditorAfterAsset();
+                showToast(`Profile frame saved for ${editor.target.name}. The full image is preserved for future edits.`, 'success');
+            } else {
+                const cropped = await cropWorldVisual(source,
+                    document.getElementById('world-visual-aspect').value,
+                    document.getElementById('world-visual-resolution').value,
+                    document.getElementById('world-visual-crop-x').value,
+                    document.getElementById('world-visual-crop-y').value,
+                    Number(document.getElementById('world-visual-crop-zoom').value) / 100);
+                const assetId = addWorldMediaAsset(editor.world, cropped,
+                    'location_background', editor.target.name,
+                    { prompt: 'Manual crop of an existing portable world visual.' });
+                registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+                pruneWorldMediaAssets(editor.world);
+                refreshWorldVisualEditorAfterAsset();
+                showToast(`Cropped ${editor.target.name} to the selected frame.`, 'success');
+            }
         } catch (error) {
             showToast(`Crop failed: ${error.message}`, 'error');
         } finally {
@@ -49478,6 +49639,7 @@ function ensureWorldVisualEditorBound() {
             button.textContent = 'Apply Crop';
         }
     };
+    document.getElementById('world-visual-crop-fill').onclick = event => runWorldVisualCropFill(event);
     document.getElementById('world-visual-regenerate').onclick = event => runWorldVisualGeneration(false, event);
     document.getElementById('world-visual-revise').onclick = event => runWorldVisualGeneration(true, event);
 
@@ -49639,8 +49801,11 @@ async function generateWorldVisual(world, prompt, {
         generated = await requestCompanionPhoto(buildBody(false), provider);
     }
     const portable = await makeWorldVisualPortable(generated, maxDimension, quality);
-    const framed = await cropWorldVisual(portable, aspectRatio, maxDimension, 50, 50, 1, quality);
-    return addWorldMediaAsset(world, framed, kind, label, { generated: true, model, prompt });
+    // A model's generated composition is the source asset. Do not silently
+    // trim it into the editor's display frame: cropping is an explicit,
+    // reversible derived-asset action and Crop & Fill is the API-backed way
+    // to outpaint a new target frame without sacrificing source pixels.
+    return addWorldMediaAsset(world, portable, kind, label, { generated: true, model, prompt });
 }
 
 function worldVisualStylePrompt(world) {
