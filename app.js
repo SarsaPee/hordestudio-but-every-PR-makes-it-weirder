@@ -12944,6 +12944,7 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
         preClock: safeJsonClone(options.preClock || buildSidecarClockEvidence(world, sess)),
         model: String(options.model || ''),
         provider: String(options.provider || ''),
+        ff54: safeJsonClone(sess && sess.sidecar && sess.sidecar.ff54) || null,
         receipt: null,
         audit: null,
         failure: null,
@@ -29323,6 +29324,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     let committedOutfit = null;
     let turnCallAudit = null;
     let labsWorldFrame = null;
+    let ffPrefill = '';
     let sidecarMode = false;
 
     try {
@@ -29771,8 +29773,8 @@ async function executeWorldTurn(commandOrReroll = null) {
 
     const locationManifest = buildKernelLocationManifest(world, sess, userInput);
     
-    // --- MEMORY MATRIX INJECTION ---
-    const memoryContext = await getMemoryMatrixContext(world, sess, userInput);
+    // --- MEMORY MATRIX INJECTION (Inline Legacy only; Sidecar routes memory through the FF Context Compiler) ---
+    const memoryContext = sidecarMode ? '' : await getMemoryMatrixContext(world, sess, userInput);
 
     // --- KNOWLEDGE BARRIER ---
     const knowledgeBarrier = `
@@ -29830,7 +29832,7 @@ Characters in this world are NOT omniscient. They only know what they have perso
         : '';
     const dossierClaimsContext = window.HordeDossierClaims?.promptContext?.(world, sess, presentNPCs) || '';
 
-    let systemPrompt = `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
+    let systemPrompt = sidecarMode ? '' : `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
 
 ${HORDE_NARRATIVE_RULES}
 ${state.globalSettings.immersionMode !== false ? '\n' + HORDE_IMMERSION_DIRECTIVE + '\n' : ''}
@@ -29914,7 +29916,7 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
     let injectedHistory = [];
     let directorNotesRequired = false;
 
-    if (preset && preset.data && preset.data.prompts) {
+    if (!sidecarMode && preset && preset.data && preset.data.prompts) {
         const overrides = (!world.presetOverridesFor || world.presetOverridesFor === preset.id)
             ? (world.presetOverrides || {})
             : {};
@@ -29946,8 +29948,8 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
         });
     }
 
-    // Author's Note Injection
-    if (world.authorNote) {
+    // Author's Note Injection (Sidecar: routed through the FF Context Compiler)
+    if (world.authorNote && !sidecarMode) {
         systemPrompt += `\n\n[AUTHOR'S NOTE: ${world.authorNote}]`;
     }
 
@@ -29978,8 +29980,72 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
             ...(memoryGraph?.scenes || []).filter(record => record.sceneId === hierarchy?.scene?.id && record.summary),
             ...(memoryGraph?.episodes || []).filter(record => record.status === 'active' && record.summary).slice(-3)
         ].slice(-6).map(record => ({ kind: record.kind || 'episode', id: record.id, summary: record.summary, keyFacts: record.keyFacts || '' }));
-        systemPrompt += `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.`;
-        systemPrompt += `\n\n[VALIDATED MEMORY REPLACEMENTS]\nThese source-pinned summaries replace older raw turns in active context only after successful consolidation. They do not erase source history or change canon.\n${JSON.stringify(replacementMemory)}`;
+        // FF 5.4 Agentic full replacement: the Roleplay OS stack IS the
+        // narrator system prompt. Every semantic item the legacy plumbing
+        // used to inject (persona, lore, memory matrix, ledger, NPC context,
+        // world state) is routed through the Sidecar Context Compiler into
+        // <context> and the FF agent-data markers instead.
+        const ffTurnBrief = String(systemPrompt || '').trim();
+        const ffCompilation = compileFF54SidecarContext(world, sess, {
+            packet: priorPacket,
+            recall: sidecarRecall,
+            replacementMemory,
+            memoryGraph,
+            personaContext,
+            storyPrefsPrompt,
+            secretContext,
+            npcContext,
+            dossierClaimsContext,
+            livingWorldPrompt,
+            societyPrompt,
+            threadsPrompt,
+            engineEventsPrompt,
+            relevantLore,
+            labsWorldHint,
+            statContext,
+            playerRulesState,
+            diceConfig,
+            exactTimeStr,
+            period,
+            weekdayName,
+            days,
+            weather,
+            locName,
+            locDesc,
+            locExits,
+            presentNPCs,
+            absentNpcManifest,
+            referencedNpcContext,
+            deadNpcManifest,
+            canonicalSceneFrame,
+            recentCanonicalEvents
+        });
+        const ffOS = worldRoleplayOS(world);
+        const ffAgentLanes = (((ffCompilation.manifest || {}).candidates) || [])
+            .filter(candidate => candidate.kept && String(candidate.lane || '').indexOf('agent_') === 0)
+            .map(candidate => candidate.lane);
+        const ffStack = buildFF54NarratorSystemStack(world, ffOS, ffCompilation.contextBlock, { agentAvailability: ffAgentLanes });
+        const ffHandoffContract = `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.`;
+        systemPrompt = ffStack.prompt + ffHandoffContract + (ffTurnBrief ? `\n\n${ffTurnBrief}` : '');
+        const ffUserToken = (persona && persona.name) || 'the player';
+        const ffSubstitute = value => String(value || '').replace(/\{\{user\}\}/g, ffUserToken);
+        systemPrompt = ffSubstitute(systemPrompt);
+        if (Array.isArray(ffStack.injectedHistory)) {
+            injectedHistory = ffStack.injectedHistory.map(entry => ({ role: entry.role, content: ffSubstitute(entry.content), depth: entry.depth }));
+        }
+        ffPrefill = ffSubstitute(ffStack.prefill || '');
+        if (sess.sidecar) {
+            sess.sidecar.ff54 = {
+                os: ffStack.os,
+                choices: ffStack.choices,
+                enabledSections: ffStack.enabledSections,
+                disabledSections: ffStack.disabledSections,
+                compilation: ffCompilation.manifest,
+                contextChars: ffCompilation.contextBlock.length,
+                turnBrief: ffTurnBrief,
+                capturedAt: new Date().toISOString()
+            };
+        }
     }
 
     // Show persistent typing indicator
@@ -30118,6 +30184,9 @@ ${modularMandate}
                 : finalMandate) },
             ...historyToSend
         ];
+        if (sidecarMode && ffPrefill) {
+            messages.push({ role: 'assistant', content: ffPrefill });
+        }
 
         // Stealth Injection: If there's an arrival context, append it to the last user message for the API only
         if (arrivalContext && messages.length > 0) {
