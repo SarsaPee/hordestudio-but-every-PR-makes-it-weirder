@@ -14517,7 +14517,7 @@ function openWorldSidecarInspector(view = 'scene') {
             <button class="tool-btn sidecar-inspector-tab" data-view="timelines">Timelines</button>
         </div>`;
         if (view === 'line') { openWorldSidecarLine(); return; }
-        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
+        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, roleplayOS: latestTurn?.ff54 || null, temporalBreakdown: latestTurn?.sceneHeader || null, controlledCharacterEvidence: latestTurn?.controlledCharacterEvidence || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
         else if (view === 'memory') body = `${tabs}${sidecarInspectorJson({
             configuration: effectiveSidecarMemoryConfig(world),
@@ -28785,7 +28785,71 @@ function renderWorldPlayerMessageHtml(sess, text) {
     </div>`;
 }
 
-function renderSidecarBackstageCard(backstage, turnNumber) {
+function renderSidecarRoleplayOSChain(turnRecord) {
+    const ff54 = turnRecord && isPlainObject(turnRecord.ff54) ? turnRecord.ff54 : null;
+    if (!ff54) return '';
+    const os = isPlainObject(ff54.os) ? ff54.os : {};
+    const upstream = isPlainObject(os.upstream) ? os.upstream : null;
+    const choices = isPlainObject(ff54.choices) ? ff54.choices : {};
+    const enabled = Array.isArray(ff54.enabledSections) ? ff54.enabledSections : [];
+    const disabled = Array.isArray(ff54.disabledSections) ? ff54.disabledSections : [];
+    const compilation = isPlainObject(ff54.compilation) ? ff54.compilation : null;
+    const temporal = turnRecord && isPlainObject(turnRecord.sceneHeader) ? turnRecord.sceneHeader : null;
+    const evidence = turnRecord && Array.isArray(turnRecord.controlledCharacterEvidence) ? turnRecord.controlledCharacterEvidence : [];
+    const take = turnRecord && isPlainObject(turnRecord.provenance) ? Number(turnRecord.provenance.take) || 0 : 0;
+    const sourceLine = upstream
+        ? `${upstream.presetName} · content hash ${String(upstream.contentHash || '').slice(0, 12)} · adapter v${upstream.adapter}`
+        : 'Built-in adapted registry';
+    const choiceChips = Object.keys(choices).filter(key => key !== 'state_mode')
+        .map(key => `<span>${escapeHTML(key)}: ${escapeHTML(Array.isArray(choices[key]) ? choices[key].join(', ') : String(choices[key]))}</span>`)
+        .join('');
+    const enabledList = enabled.map(section => `<li><b>${escapeHTML(section.name)}</b> · ${Number(section.chars) || 0} chars · ${escapeHTML(section.placement || 'system')}${section.reason ? ` · ${escapeHTML(section.reason)}` : ''}</li>`).join('');
+    const disabledList = disabled.map(section => `<li><b>${escapeHTML(section.name)}</b> · ${escapeHTML(section.reason || 'not enabled')}</li>`).join('');
+    const laneSummary = {};
+    (compilation && Array.isArray(compilation.candidates) ? compilation.candidates : []).forEach(candidate => {
+        const lane = String(candidate.lane || 'unknown');
+        if (!laneSummary[lane]) laneSummary[lane] = { kept: 0, dropped: 0, chars: 0 };
+        if (candidate.kept) { laneSummary[lane].kept += 1; laneSummary[lane].chars += Number(candidate.chars) || 0; }
+        else laneSummary[lane].dropped += 1;
+    });
+    const laneChips = Object.keys(laneSummary).sort().map(lane =>
+        `<span>${escapeHTML(lane)} · ${laneSummary[lane].kept}/${laneSummary[lane].kept + laneSummary[lane].dropped}${laneSummary[lane].kept ? ` · ${laneSummary[lane].chars} chars` : ''}</span>`).join('');
+    const candidateLog = (compilation && Array.isArray(compilation.candidates) ? compilation.candidates : [])
+        .map(candidate => `${candidate.kept ? 'kept ' : 'drop '} · ${candidate.lane} · ${candidate.label}${candidate.reason ? ' · ' + candidate.reason : ''}${candidate.clipped ? ' · clipped' : ''}`)
+        .join('\n');
+    const evidenceList = evidence.map(item => `<li>${escapeHTML(String((item && item.evidence) || ''))} <i class="sidecar-os-provenance">· ${escapeHTML(String((item && item.provenance) || ''))}</i></li>`).join('');
+    const rawPrompt = String(ff54.prompt || '');
+    const prefill = String(ff54.prefill || '');
+    return `<section class="sidecar-backstage-section sidecar-os-chain">
+        <header><span>&#10694;</span><div><b>Narrator OS causal chain</b><small>${escapeHTML(os.name || 'Freaky Frankenstein 5.4')} · ${escapeHTML(sourceLine)}</small></div></header>
+        <div class="sidecar-backstage-chips"><span>${take ? `take ${take + 1}` : 'primary take'}</span><span>state backend ${escapeHTML(os.stateMode || 'AGENTS')}</span></div>
+        ${choiceChips ? `<div class="sidecar-backstage-chips">${choiceChips}</div>` : ''}
+        ${enabledList || disabledList ? `<details class="sidecar-backstage-raw"><summary>Sections manifest · ${enabled.length} resolved · ${disabled.length} not applied</summary><ul class="sidecar-os-list">${enabledList}${disabledList}</ul></details>` : ''}
+        ${compilation ? `<details class="sidecar-backstage-raw"><summary>Context compilation · ${compilation.includedCount}/${compilation.candidateCount} candidates · ${compilation.used}/${compilation.budget} chars</summary><div class="sidecar-backstage-chips">${laneChips}</div><details class="sidecar-backstage-raw"><summary>Candidate log</summary><pre>${escapeHTML(candidateLog)}</pre></details></details>` : ''}
+        ${renderSidecarTemporalBreakdown(temporal)}
+        ${evidenceList ? `<details class="sidecar-backstage-raw"><summary>Controlled character evidence · ${evidence.length} item${evidence.length === 1 ? '' : 's'}</summary><ul class="sidecar-os-list">${evidenceList}</ul></details>` : ''}
+        ${rawPrompt ? `<details class="sidecar-backstage-raw"><summary>Raw narrator stack · ${rawPrompt.length} chars${prefill ? ` · assistant prefill ${prefill.length} chars` : ''}</summary><pre>${escapeHTML(rawPrompt)}</pre>${prefill ? `<pre>${escapeHTML(prefill)}</pre>` : ''}</details>` : ''}
+    </section>`;
+}
+
+function renderSidecarTemporalBreakdown(temporal) {
+    if (!isPlainObject(temporal)) return '';
+    const prev = temporal.previousTurnEnd || {};
+    const jump = temporal.interTurnJump || {};
+    const start = temporal.currentTurnStart || {};
+    const elapsed = temporal.inTurnElapsed || {};
+    const end = temporal.currentTurnEnd || {};
+    const header = temporal.narratorHeader;
+    return `<details class="sidecar-backstage-raw"><summary>Two-phase temporal evidence · ${escapeHTML(String(prev.display || '—'))} → ${escapeHTML(String(start.display || '—'))} → ${escapeHTML(String(end.display || '—'))}</summary><ul class="sidecar-os-list">
+        <li><b>Prev committed end</b> ${escapeHTML(String(prev.display || '—'))}${prev.day ? ` · day ${escapeHTML(String(prev.day))}` : ''}</li>
+        <li><b>Inter-turn jump</b> ${escapeHTML(String(jump.minutes || 0))} min · ${escapeHTML(String(jump.status || 'none'))}${jump.basis ? ` · ${escapeHTML(String(jump.basis))}` : ''}</li>
+        <li><b>Beat start</b> ${escapeHTML(String(start.display || '—'))}${start.basis ? ` · ${escapeHTML(String(start.basis))}` : ''}</li>
+        <li><b>In-turn elapsed</b> ${escapeHTML(String(elapsed.minutes || 0))} min · ${escapeHTML(String(elapsed.status || 'none'))}${elapsed.basis ? ` · ${escapeHTML(String(elapsed.basis))}` : ''}</li>
+        <li><b>Beat end</b> ${escapeHTML(String(end.display || '—'))}${end.basis ? ` · ${escapeHTML(String(end.basis))}` : ''}</li>
+    </ul>${header && header.raw ? `<div class="sidecar-backstage-chips"><span>header: ${escapeHTML(String(header.raw).slice(0, 200))}</span></div>` : ''}</details>`;
+}
+
+function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
     if (!backstage) return '';
     const receipt = backstage.receipt || {};
     const packet = backstage.packet || {};
@@ -28804,6 +28868,7 @@ function renderSidecarBackstageCard(backstage, turnNumber) {
         : '';
     const failed = backstage.status === 'reconciliation_failed' || backstage.unresolved === true;
     const incompleteHandoff = backstage.handoffComplete === false;
+    const roleplayOSChain = renderSidecarRoleplayOSChain(turnRecord);
     const activeLocationLabel = isPlainObject(packet.activeLocation)
         ? `${packet.activeLocation.name || packet.activeLocation.id || 'Unknown'}${packet.activeLocation.id ? ` · ${packet.activeLocation.id}` : ''}`
         : String(packet.activeLocation || '');
@@ -28818,6 +28883,7 @@ function renderSidecarBackstageCard(backstage, turnNumber) {
             ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next-beat pacing</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next narrator turn receives this reconciled scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending reconciliation</small>${escapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
             ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(jobSummary.queued || 0))} queued</span><span>${escapeHTML(String(jobSummary.running || 0))} running</span><span>${escapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${escapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
             ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
+            ${roleplayOSChain}
             <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${escapeHTML(JSON.stringify({ status: backstage.status || null, handoffComplete: backstage.handoffComplete !== false, handoff: backstage.handoff || null, reader: backstage.reader || null, receipt: backstage.receipt || null, failure: backstage.failure || null, audit: backstage.audit || null, preFrame: backstage.preFrame || null, postFrame: backstage.postFrame || null, packet: backstage.packet || null }, null, 2))}</pre></details>
         </div>
     </details>`;
@@ -28905,7 +28971,10 @@ function appendWorldMessageUI(msg, index = null) {
         : '';
     const turnNumber = msg.role === 'dm' && index !== null
         ? activeSession.history.slice(0, index + 1).filter(entry => entry.role === 'dm').length : 0;
-    const backstageHtml = renderSidecarBackstageCard(msg.sidecarBackstage, turnNumber);
+    const backstageTurnId = msg.sidecarBackstage?.sidecarTurnId || msg.sidecarTurnId || null;
+    const backstageTurn = backstageTurnId && activeSession?.sidecar?.turns
+        ? activeSession.sidecar.turns.find(turn => turn && turn.id === backstageTurnId) : null;
+    const backstageHtml = renderSidecarBackstageCard(msg.sidecarBackstage, turnNumber, backstageTurn);
 
     // Version nav restores that take's world-state snapshot — only safe on the
     // LAST entry. Allowing it mid-history rewound stats/NPCs/ledger underneath
@@ -29859,6 +29928,7 @@ async function executeWorldTurn(commandOrReroll = null) {
                 },
                 sidecarBackstage: sidecarMode ? {
                     status: openingSidecar?.failure ? 'reconciliation_failed' : 'committed',
+                    sidecarTurnId: openingSidecar?.turnId || null,
                     handoffComplete: true,
                     handoff: openingSidecar?.handoff || '',
                     reader: openingSidecar?.turnId ? sess.sidecar?.turns?.find(turn => turn.id === openingSidecar.turnId)?.reader : null,
@@ -30487,6 +30557,14 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
                 disabledSections: ffStack.disabledSections,
                 compilation: ffCompilation.manifest,
                 contextChars: ffCompilation.contextBlock.length,
+                // The causal chain needs what was actually sent: the composed
+                // raw stack (post {{user}} substitution), the assistant
+                // prefill, and any depth-position in-chat splices.
+                prompt: String(systemPrompt || '').slice(0, 120000),
+                prefill: String(ffPrefill || '').slice(0, 24000),
+                injectedHistory: Array.isArray(injectedHistory)
+                    ? injectedHistory.map(entry => ({ role: entry.role, content: String(entry.content || '').slice(0, 24000), depth: Number(entry.depth) || 0 }))
+                    : [],
                 turnBrief: ffTurnBrief,
                 capturedAt: new Date().toISOString()
             };
@@ -32070,6 +32148,7 @@ ${modularMandate}
                 } : undefined,
                 sidecarBackstage: sidecarMode ? {
                     status: sidecarReconciliationFailed ? 'reconciliation_failed' : 'committed',
+                    sidecarTurnId: sidecarTurnId || null,
                     handoffComplete: sidecarTurnId
                         ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.handoffComplete !== false
                         : !!sidecarHandoff,
