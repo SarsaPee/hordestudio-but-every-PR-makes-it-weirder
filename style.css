@@ -10089,3 +10089,6 @@ label[data-help] > span:first-child::after,
 .sidecar-os-chain ul.sidecar-os-list li { color: #a6c9c2; font-size: 0.66rem; line-height: 1.5; }
 .sidecar-os-chain ul.sidecar-os-list li b { color: var(--text); }
 .sidecar-os-provenance { color: var(--text-3); font-style: normal; font-size: 0.6rem; }
+
+/* FF voice-color line: tagged dialogue whose speaker could not be resolved. */
+.world-voice-line { margin:14px 0; padding:11px 16px; border-left:4px solid var(--speaker-color,var(--accent)); border-radius:12px; background:color-mix(in srgb,var(--speaker-color,var(--accent)) 12%,rgba(8,8,13,.72)); color:var(--text); font-size:1.02rem; line-height:1.55; }
