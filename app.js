@@ -4974,6 +4974,58 @@ const WORLD_MEDIA_SCHEMA_VERSION = 1;
 const WORLD_MEDIA_ASSET_LIMIT = 10000;
 const WORLD_MEDIA_ASSET_BYTES_LIMIT = 8_000_000;
 
+// --- Fal Advanced Request Settings ----------------------------------------
+// Optional fal request overrides authored per world in the Visuals tab.
+// Deliberately a flat allowlist, NOT a per-model capability registry: some
+// fal endpoints accept these fields and some do not, so a populated value
+// passes through untouched and a blank value is omitted entirely, leaving the
+// endpoint's own default in charge. Adding a field later means one entry
+// here plus its bridge pass-through — no provider-layer rewrite.
+const FAL_ADVANCED_REQUEST_FIELDS = Object.freeze([
+    { key: 'safetyTolerance', requestKey: 'safetyTolerance', numeric: true }
+]);
+
+function normalizeFalAdvancedSettings(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const settings = {};
+    FAL_ADVANCED_REQUEST_FIELDS.forEach(field => {
+        const value = source[field.key];
+        if (value === undefined || value === null || String(value).trim() === '') {
+            settings[field.key] = '';
+            return;
+        }
+        const numeric = typeof value === 'number' ? value : Number(String(value).trim());
+        settings[field.key] = Number.isFinite(numeric) && numeric >= 0 && numeric <= 100
+            ? numeric : '';
+    });
+    return settings;
+}
+
+function falAdvancedRequestBody(world) {
+    // Request-body fragment for the world's authored fal overrides. Blank
+    // fields are omitted so the endpoint default applies.
+    const presentation = isPlainObject(world?.presentation) ? world.presentation : {};
+    const settings = normalizeFalAdvancedSettings(presentation.falAdvancedSettings);
+    const fragment = {};
+    FAL_ADVANCED_REQUEST_FIELDS.forEach(field => {
+        const value = settings[field.key];
+        if (value !== '' && value !== undefined && value !== null) fragment[field.requestKey] = value;
+    });
+    return fragment;
+}
+
+function falAdvancedRequestFieldsFromBody(body) {
+    // Generic forward of advanced fal fields from an image request body to
+    // the bridge payload. Unknown or non-numeric values never travel.
+    const forwarded = {};
+    if (!isPlainObject(body)) return forwarded;
+    FAL_ADVANCED_REQUEST_FIELDS.forEach(field => {
+        const value = body[field.requestKey];
+        if (typeof value === 'number' && Number.isFinite(value)) forwarded[field.requestKey] = value;
+    });
+    return forwarded;
+}
+
 function normalizeWorldPresentation(world) {
     if (!world || typeof world !== 'object') return null;
     const raw = isPlainObject(world.presentation) ? world.presentation : {};
@@ -4996,7 +5048,8 @@ function normalizeWorldPresentation(world) {
         backgroundDim: livingClamp(raw.backgroundDim == null ? 68 : raw.backgroundDim, 0, 95),
         mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),
         imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
-        imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500)
+        imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500),
+        falAdvancedSettings: normalizeFalAdvancedSettings(raw.falAdvancedSettings)
     });
     world.presentation = raw;
     if (!Array.isArray(world.mediaAssets)) world.mediaAssets = [];
@@ -20062,6 +20115,29 @@ function renderWorldVisuals() {
     byId('w-visual-art-direction').value = presentation.artDirection;
     byId('w-visual-image-provider').value = presentation.imageProvider;
     byId('w-visual-image-model').value = presentation.imageModel;
+    // Fal advanced request settings: visible only when the resolved image
+    // provider is fal (including inherit falling back to a fal global).
+    const falAdvancedSection = byId('w-visual-fal-advanced');
+    const falToleranceInput = byId('w-visual-fal-safety-tolerance');
+    const syncFalAdvancedVisibility = () => {
+        falAdvancedSection?.classList.toggle('hidden', worldVisualProvider(world) !== 'fal');
+    };
+    const advancedSettings = normalizeFalAdvancedSettings(presentation.falAdvancedSettings);
+    if (falToleranceInput) {
+        falToleranceInput.value = advancedSettings.safetyTolerance === ''
+            ? '' : String(advancedSettings.safetyTolerance);
+        falToleranceInput.onchange = event => {
+            // Blank means "use the endpoint default": the value is omitted
+            // from the fal request entirely. Invalid text normalizes back
+            // to blank rather than travelling to the provider.
+            presentation.falAdvancedSettings = normalizeFalAdvancedSettings({
+                safetyTolerance: event.target.value
+            });
+            const next = presentation.falAdvancedSettings.safetyTolerance;
+            falToleranceInput.value = next === '' ? '' : String(next);
+        };
+    }
+    syncFalAdvancedVisibility();
     byId('w-visual-accent').value = presentation.accent;
     byId('w-visual-background-dim').value = presentation.backgroundDim;
     byId('w-visual-panel-opacity').value = presentation.panelOpacity;
@@ -20135,6 +20211,7 @@ function renderWorldVisuals() {
             presentation.imageModel = companionImageModelFallback(worldVisualProvider(world));
         }
         byId('w-visual-image-model').value = presentation.imageModel;
+        syncFalAdvancedVisibility();
         renderWorldVisualModelSearch(world);
     };
     const imageModelInput = byId('w-visual-image-model');
@@ -48468,7 +48545,8 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
                 apiKey: state.falApiKey, model: body.model, prompt: body.prompt,
                 imageDataUrl: body.imageDataUrl || '',
                 aspectRatio: body.aspect_ratio || (String(body.size || '').includes('16_9') ? '16:9' : '1:1'),
-                enableSafetyChecker: state.globalSettings.falSafetyChecker !== false
+                enableSafetyChecker: state.globalSettings.falSafetyChecker !== false,
+                ...falAdvancedRequestFieldsFromBody(body)
             }
         });
         if (!result.image) throw new Error('Fal completed without returning an image.');
@@ -49322,6 +49400,7 @@ async function generateWorldVisual(world, prompt, {
         if (provider === 'fal') {
             body.aspect_ratio = aspectRatio;
             body.enable_safety_checker = state.globalSettings.falSafetyChecker !== false;
+            Object.assign(body, falAdvancedRequestBody(world));
         }
         return body;
     };

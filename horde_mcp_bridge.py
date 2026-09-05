@@ -1802,6 +1802,31 @@ FAL_IMAGE_MODELS = {
 }
 
 
+def fal_advanced_image_fields(body: dict[str, Any]) -> dict[str, Any]:
+    """Optional fal request parameters from Horde's Advanced Request Settings.
+
+    Deliberately not a per-model capability registry: some fal endpoints
+    accept these fields and some do not, so a populated value passes through
+    untouched and the endpoint's own validation is the only authority. Blank
+    or missing values are omitted entirely so the endpoint default applies.
+    Adding a field later means one mapping here — no provider-layer rewrite.
+    """
+    fields: dict[str, Any] = {}
+    raw_tolerance = body.get("safetyTolerance")
+    if raw_tolerance is None or str(raw_tolerance).strip() == "":
+        return fields
+    if isinstance(raw_tolerance, bool):
+        raise ValueError("safety_tolerance must be a number or blank.")
+    try:
+        tolerance = float(raw_tolerance)
+    except (TypeError, ValueError):
+        raise ValueError("safety_tolerance must be a number or blank.")
+    if not 0 <= tolerance <= 100:
+        raise ValueError("safety_tolerance must be between 0 and 100.")
+    fields["safety_tolerance"] = int(tolerance) if tolerance.is_integer() else tolerance
+    return fields
+
+
 def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     """Generate a portable image through a small curated Fal model surface."""
     key = fal_key(body.get("apiKey"))
@@ -1833,6 +1858,7 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
         "prompt": prompt, "num_images": 1, "output_format": "jpeg",
         "enable_safety_checker": body.get("enableSafetyChecker") is not False,
     }
+    payload.update(fal_advanced_image_fields(body))
     if model == "fal-ai/wan-25-preview/image-to-image":
         payload["image_urls"] = [image_url]
         payload["aspect_ratio"] = aspect if aspect in {"16:9", "9:16", "1:1"} else "auto"
