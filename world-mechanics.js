@@ -1570,6 +1570,24 @@
         const pacingContext = pacingNotes.length
             ? `\n\n[BUNNYRX — PACING CHECK]\n${pacingNotes.join('\n')}\n`
             : '';
+        // Feasibility envelope (Annex A hybrid): the narrator receives the
+        // legality classes for declared competences under tracked states,
+        // plus what compensation the scene could support. The engine still
+        // validates the declared execution at commit; this block is the
+        // affordance information FF renders within.
+        const envelopeByActor = {};
+        Object.entries(state.alteredStates || {}).forEach(([actorId, records]) => {
+            if (!list(records).some(record => record?.status !== 'resolved')) return;
+            const envelope = computeFeasibilityEnvelope(world, session, actorId, registry);
+            const impaired = Object.entries(envelope.tasks || {})
+                .filter(([, def]) => def.legality && def.legality !== 'succeeds')
+                .map(([task, def]) => ({ task, legality: def.legality, phase: def.phase,
+                    meaningful_compensations: def.meaningfulCompensations || [] }));
+            if (impaired.length) envelopeByActor[actorId] = impaired;
+        });
+        const envelopeContext = Object.keys(envelopeByActor).length
+            ? `\n\n[FEASIBILITY — WHAT THIS STATE ALLOWS]\nLegality classes for declared competences under tracked altered states — never a script, never a demand for failure:\n${JSON.stringify(envelopeByActor)}\nA declared competence may fail-forward only at strong + observably-obvious impairment; every other declared goal succeeds, possibly with degraded execution. A player who explicitly accounts for their tracked state (bracing, slowing, simplifying, asking for help) is playing the mechanic, not dodging it — reward that: the goal succeeds and the execution visibly carries the impairment. Compensations that need the environment (bracing, railings, a helping hand) qualify only when the current scene actually supplies that support; scene supports come from the present environment, not from this block. Separate what a character DECLARES (intent, explicit compensation) from what the state DOES to the execution, and never announce mechanics — write the resolved execution as diegetic behaviour.`
+            : '';
         // Hoisted out of the JSON blob into its own instruction block, so state
         // competes with the voice rules instead of sitting below them as data.
         const directives = [];
@@ -1623,7 +1641,61 @@
             + bunnyRxContext
             + directiveContext
             + pacingContext
+            + envelopeContext
             + dossierContext;
+    }
+
+    // Reconciler-facing pre-turn frame. The Reconciler sees engine-owned
+    // truth (phases, dose arithmetic, containers, cognition) and supplies
+    // evidence only — it never computes phases or quantities itself.
+    function reconcilerFrame(world, session, registry) {
+        if (!isEnabled(world)) return '';
+        const state = ensureSession(world, session);
+        const nowMinutes = Number(globalThis.getWorldTimeData?.(world, session)?.currentTotalMinutes);
+        const activeStates = [];
+        const envelopeByActor = {};
+        Object.entries(state.alteredStates || {}).forEach(([actorId, records]) => {
+            const active = list(records).filter(record => record?.status !== 'resolved');
+            if (!active.length) return;
+            active.forEach(record => {
+                const events = list(record.doseEvents);
+                activeStates.push({
+                    actorId, profileKey: record.profileKey,
+                    enginePhase: record.phase,
+                    phaseAuthority: profilePhasePolicy(registry?.profiles?.[record.profileKey] || {}).authority,
+                    minutesSinceOnset: Number.isFinite(Number(record.onsetTotalMinutes)) && Number.isFinite(nowMinutes)
+                        ? Math.max(0, Math.round(nowMinutes - Number(record.onsetTotalMinutes))) : null,
+                    doseCount: Number(record.doseCount) || 0,
+                    explicitDoses: events.filter(event => event.provenance === 'explicit'
+                        || event.provenance === 'authorial').length,
+                    inferredDoses: events.filter(event => event.provenance === 'inferred_continuation').length,
+                    lastDoseAt: events.length && Number.isFinite(Number((events[events.length - 1] || {}).atTotalMinutes))
+                        ? Number(events[events.length - 1].atTotalMinutes) : null,
+                    recentCadence: recentInputCadence(world, session, actorId, record.profileKey),
+                    continuityModel: record.continuityModel || 'legacy'
+                });
+            });
+            const envelope = computeFeasibilityEnvelope(world, session, actorId, registry);
+            const impaired = Object.entries(envelope.tasks || {})
+                .filter(([, def]) => def.legality && def.legality !== 'succeeds')
+                .map(([task, def]) => ({ task, legality: def.legality,
+                    meaningful_compensations: def.meaningfulCompensations || [] }));
+            if (impaired.length) envelopeByActor[actorId] = impaired;
+        });
+        const containers = Object.entries(state.inventory.containers).map(([containerId, value]) => ({
+            id: containerId, name: value.name, kind: value.kind, holderId: value.holderId,
+            count: value.count, currentQuantity: value.currentQuantity,
+            quantityUnit: value.quantityUnit, exhaustive: value.exhaustive
+        }));
+        const frame = {
+            activeStates,
+            impairedTaskEnvelope: envelopeByActor,
+            inventoryContainers: containers,
+            relationshipAxes: state.relationshipAxes,
+            recentCognition: state.cognition.slice(-12)
+        };
+        return `\n[WORLD MECHANICS — PRE-TURN FRAME]\n${JSON.stringify(frame)}\n`
+            + `The engine owns phases and dose arithmetic. INFER IT, FROM PROSE: a round arriving, a glass refilled, a baggie going round are doses for everyone involved — commit altered_state_updates with redose:true for each actor who took one. Never set a phase: restate phase only as an evidence-shaped transition (profile_key + source_event_ids + domains); illegal transitions are dropped with a report, never void the receipt. COMPRESSED TIME inside an ongoing consumption activity: submit a continuation entry {interval_minutes, rate_relation, basis} and let the engine compute inferred doses from canonical cadence; supply quantity_delta only when the narration states an exact count; use rate_relation "stopped" when the narration establishes explicit cessation. THE PLAYER IS TRACKED LIKE ANY CHARACTER: when the player's input has them taking a dose, commit it for actor "player" with redose:true, every time. Containers: unobserved is not zero; quantity observations stay evidence-backed.`;
     }
 
     function extendReceiptSchema(world, parameters) {
@@ -1835,6 +1907,7 @@
         recentInputCadence,
         resolveContinuation,
         normalizeContinuationUpdate,
+        reconcilerFrame,
         isEnabled,
         ensureSession,
         normalizeCheckpointOverlay,
