@@ -718,7 +718,96 @@
             </div>
         </div>
 
-        <!-- ────────── WORLD STUDIO VIEW ────────── -->
+        <div id="world-visual-editor-modal" class="modal-bg hidden">
+            <div class="modal modal-xl world-visual-editor" role="dialog" aria-labelledby="world-visual-editor-title">
+                <div class="modal-hd">
+                    <div>
+                        <span class="vh-eyebrow">WORLD VISUAL</span>
+                        <h2 id="world-visual-editor-title">Image editor</h2>
+                    </div>
+                    <div class="world-visual-editor-header-actions">
+                        <button class="btn btn-primary" id="world-visual-save-close" type="button">Save &amp; Close</button>
+                        <button class="tool-btn" id="world-visual-editor-close" type="button" aria-label="Close image editor without saving">&#10005;</button>
+                    </div>
+                </div>
+                <div class="modal-body world-visual-editor-body">
+                    <div class="world-visual-editor-preview-column">
+                        <div id="world-visual-crop-stage" class="world-visual-crop-stage">
+                            <img id="world-visual-crop-image" alt="Current world visual">
+                            <div id="world-visual-crop-guide" class="world-visual-crop-guide" aria-hidden="true"></div>
+                            <div id="world-visual-crop-empty" class="world-visual-crop-empty">Generate or upload an image to crop it.</div>
+                        </div>
+                        <div class="world-visual-variant-bar">
+                            <button class="tool-btn" id="world-visual-previous" type="button" aria-label="Previous image">&#8249;</button>
+                            <span id="world-visual-variant-count">No images</span>
+                            <button class="tool-btn" id="world-visual-next" type="button" aria-label="Next image">&#8250;</button>
+                            <button class="tool-btn world-visual-export" id="world-visual-export" type="button">Export image</button>
+                        </div>
+                        <div class="world-visual-crop-controls">
+                            <label>Horizontal focus <input id="world-visual-crop-x" type="range" min="0" max="100" value="50"></label>
+                            <label>Vertical focus <input id="world-visual-crop-y" type="range" min="0" max="100" value="50"></label>
+                            <label>Zoom <input id="world-visual-crop-zoom" type="range" min="100" max="300" value="100"></label>
+                        </div>
+                        <p class="form-hint">Drag the image or use the sliders. Apply Crop creates a new portable image asset; it does not alter simulation state.</p>
+                    </div>
+                    <div class="world-visual-editor-fields">
+                        <div class="form-section">
+                            <label id="world-visual-primary-label" class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span id="world-visual-primary-label-text">Stable visual identity</span><span class="ai-field-actions" id="ai-visual-primary-actions"></span></label>
+                            <textarea id="world-visual-primary" class="form-textarea" rows="6"></textarea>
+                        </div>
+                        <div class="form-section">
+                            <label class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span>Authored image prompt</span><span class="ai-field-actions" id="ai-visual-prompt-actions"></span></label>
+                            <textarea id="world-visual-prompt" class="form-textarea" rows="6" placeholder="Specific visual direction, characteristic expression, environment and avoid instructions..."></textarea>
+                        </div>
+                        <div class="world-visual-generation-grid">
+                            <div id="world-visual-framing-field">
+                                <label class="form-label">Framing</label>
+                                <select id="world-visual-framing" class="form-select">
+                                    <option value="auto">Automatic and identity-aware</option>
+                                    <option value="close-up">Close-up</option>
+                                    <option value="waist-up">Waist-up</option>
+                                    <option value="three-quarter">Three-quarter</option>
+                                    <option value="full-body">Full-body</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label">Aspect ratio</label>
+                                <select id="world-visual-aspect" class="form-select">
+                                    <option value="1:1">1:1 Square</option>
+                                    <option value="3:4">3:4 Portrait</option>
+                                    <option value="2:3">2:3 Tall portrait</option>
+                                    <option value="4:3">4:3 Landscape</option>
+                                    <option value="16:9">16:9 Wide</option>
+                                    <option value="9:16">9:16 Vertical</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label">Stored resolution</label>
+                                <select id="world-visual-resolution" class="form-select">
+                                    <option value="768">Compact - 768 px</option>
+                                    <option value="1200">Standard - 1200 px</option>
+                                    <option value="1600">High - 1600 px</option>
+                                    <option value="2048">Maximum - 2048 px</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-section">
+                            <label class="form-label">Revision instruction</label>
+                            <textarea id="world-visual-correction" class="form-textarea" rows="3" placeholder="Make the makeup darker and keep everything else unchanged..."></textarea>
+                            <p class="form-hint">Revision sends only this instruction and the currently selected image. It does not resend the character, location, world art brief or earlier corrections.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-ft world-visual-editor-actions">
+                    <button class="btn btn-ghost" id="world-visual-save-brief" type="button">Save visual brief</button>
+                    <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
+                    <button class="btn btn-ghost" id="world-visual-revise" type="button">Revise current</button>
+                    <button class="btn btn-primary" id="world-visual-regenerate" type="button">Generate new</button>
+                </div>
+            </div>
+        </div>
+
+<!-- ────────── WORLD STUDIO VIEW ────────── -->
         <section id="world-studio-view" class="view hidden">
             <div class="studio-wrap">
                 <div class="studio-nav">
@@ -5245,6 +5334,7 @@
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
 <script src="dossier-claims.js?v=20260902-generic-claims-v1"></script>
 <script src="world-mechanics.js?v=20260905-wm-v1"></script>
+<script src="world-portrait-prompt.js?v=20260905-w7-v1"></script>
 <!-- Live instance only: curated BunnyRx reference registry for the imported
      Melbourne world (published as MELBOURNE_BUNNYRX_REGISTRY with the
      HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->

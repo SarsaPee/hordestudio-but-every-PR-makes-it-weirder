@@ -19844,6 +19844,212 @@ async function renderWorldVisualModelSearch(world, force = false) {
         : `${models.length} compatible image model${models.length === 1 ? '' : 's'} available from ${providerDisplayName(provider)}${input.value.trim() ? ' · custom ID entered' : ''}.`;
 }
 
+const AI_FIELD_DESCRIPTORS = Object.freeze({
+    'ent-desc': {
+        label: 'Basic description',
+        guidance: 'Two or three sentences of stable physical identity: build, colouring, face, habitual dress. Present tense, no scene-specific action, no backstory.'
+    },
+    'ent-persona': {
+        label: 'Persona / backstory',
+        guidance: 'One dense paragraph on temperament, competence, what they want and what they protect. Third person. Reveal private truths only if the transcript already established them.'
+    },
+    'ent-goal': {
+        label: 'Living-world agenda',
+        guidance: 'A single sentence naming one persistent thing this character pursues off-screen. Concrete and ongoing, not a plot beat.'
+    },
+    'ent-image-prompt': {
+        label: 'Portrait image prompt',
+        guidance: 'A single image-generation prompt describing this character\'s appearance for a portrait: age, build, colouring, hair, face, characteristic clothing and expression. Obey the world art bible. No camera brand names, no negative prompts, no narrative.'
+    },
+    'world-visual-primary': {
+        label: 'Stable visual identity',
+        guidance: 'Two or three sentences of unchanging physical identity used to keep every generated image consistent: age, build, colouring, hair, face, default clothing register. No pose, no lighting, no scene.'
+    },
+    // Dossier fields. These write authored claims, so the user always reviews
+    // before Save — but identity fields (name, age, pronouns) are deliberately
+    // absent: those are the player's to decide, never the model's.
+    'dossier-description': {
+        label: 'Physical description',
+        guidance: 'Two or three sentences of stable appearance: build, colouring, face, habitual dress. Present tense, no scene-specific action.'
+    },
+    'dossier-persona': {
+        label: 'Personality and persona',
+        guidance: 'One dense paragraph on voice, temperament, competence, needs and what they protect. Third person.'
+    },
+    'dossier-values': {
+        label: 'Values',
+        guidance: 'Three to five short lines, ONE PER LINE, no bullets or numbering. Each names something this person actually protects or believes.'
+    },
+    'dossier-vulnerabilities': {
+        label: 'Vulnerabilities',
+        guidance: 'Three to five short lines, ONE PER LINE, no bullets or numbering. Each names a real pressure point — fear, need, blind spot. Not weaknesses as flaws-list filler.'
+    },
+    'dossier-boundaries': {
+        label: 'Hard and personal boundaries',
+        guidance: 'Three to five short lines, ONE PER LINE, no bullets. What this person will not do or will not accept. Character boundaries, not content policy.'
+    },
+    'dossier-current-outfit': {
+        label: 'Current outfit',
+        guidance: 'One or two sentences describing what they are wearing right now, consistent with the current scene and time of day in the transcript.'
+    },
+    'dossier-affiliations': {
+        label: 'Affiliations',
+        guidance: 'Short lines, ONE PER LINE, no bullets. Groups, workplaces or scenes this person genuinely belongs to. Only ones established elsewhere.'
+    },
+    'dossier-routines': {
+        label: 'Routines and ordinary schedule',
+        guidance: 'Short lines, ONE PER LINE, no bullets. What this person ordinarily does and when. Everyday rhythm, not plot.'
+    },
+    'loc-desc': {
+        label: 'Location description',
+        guidance: 'Two or three sentences on what is physically present and how the place feels to stand in. No characters by name, no events.'
+    },
+    'fac-desc': {
+        label: 'Faction description',
+        guidance: 'Two sentences on who belongs to this group and what holds them together. No invented leaders.'
+    }
+});
+
+// Engine placeholders read as populated but carry no information. Treating
+// them as filled meant the sparkle button offered "embellish" on the string
+// "A person you just met." — so they count as empty everywhere.
+const AI_FIELD_PLACEHOLDERS = Object.freeze([
+    'a person you just met.',
+    'a person you just met',
+    'an unremarkable place.',
+    'nothing specified.',
+    'unknown'
+]);
+
+function isPlaceholderFieldValue(value) {
+    const clean = String(value || '').trim().toLowerCase();
+    if (!clean) return true;
+    return AI_FIELD_PLACEHOLDERS.includes(clean);
+}
+
+function aiFieldWorldContext(world, entity) {
+    const parts = [];
+    if (world?.name) parts.push(`World: ${world.name}`);
+    if (world?.description) parts.push(`Premise: ${String(world.description).slice(0, 400)}`);
+    if (world?.artBible) parts.push(`Art direction: ${String(world.artBible).slice(0, 400)}`);
+    if (entity) {
+        const sib = ['name', 'role', 'description', 'persona', 'goal', 'appearance']
+            .map(key => (entity[key] && !isPlaceholderFieldValue(entity[key]))
+                ? `${key}: ${String(entity[key]).slice(0, 400)}` : null)
+            .filter(Boolean);
+        if (sib.length) parts.push(`Known about this subject:\n${sib.join('\n')}`);
+    }
+    return parts.join('\n\n');
+}
+
+// Only the transcript that actually mentions the subject. Sending the whole
+// history would bury the few lines that describe them.
+function aiFieldTranscriptContext(entity, limit = 14) {
+    const sess = getCurrentWorldSession();
+    if (!sess || !entity?.name) return '';
+    const names = String(entity.name).split(/\s+/).filter(n => n.length > 2).concat([entity.name]);
+    const hits = (sess.history || [])
+        .filter(m => m.role === 'dm' || m.role === 'user')
+        .filter(m => names.some(n => String(m.text || '').toLowerCase().includes(n.toLowerCase())))
+        .slice(-limit)
+        .map(m => `${m.role === 'user' ? 'Player' : 'Narrator'}: ${String(m.text || '').slice(0, 600)}`);
+    return hits.length ? `Recent transcript mentioning them:\n${hits.join('\n\n')}` : '';
+}
+
+async function completeFieldWithAI(fieldKey, currentValue, entity, world, mode) {
+    const descriptor = AI_FIELD_DESCRIPTORS[fieldKey];
+    if (!descriptor) throw new Error(`No descriptor for field "${fieldKey}"`);
+    if (isPlaceholderFieldValue(currentValue)) { currentValue = ''; mode = 'fill'; }
+    const intent = mode === 'rewrite'
+        ? 'The subject has changed during play. Rewrite this field to match who they are NOW, preserving anything still true.'
+        : mode === 'embellish'
+            ? 'Enrich the existing text. Keep every fact already written and add specificity. Never contradict it.'
+            : 'This field is empty. Write it from scratch using only what is established below.';
+    const model = String(state.globalSettings?.structuredModel || '').trim()
+        || world?.model || state.globalSettings?.defaultModel;
+    const body = applyOpenRouterRouting({
+        model,
+        max_tokens: 700,
+        messages: [
+            {
+                role: 'system',
+                content: `You write a single field of a roleplay world's character/location database.\n\nFIELD: ${descriptor.label}\nREQUIREMENT: ${descriptor.guidance}\n\n${intent}\n\nReturn ONLY the field's new text. No preamble, no quotes, no markdown headings, no explanation.`
+            },
+            {
+                role: 'user',
+                content: [
+                    aiFieldWorldContext(world, entity),
+                    aiFieldTranscriptContext(entity),
+                    currentValue ? `Current value of this field:\n${currentValue}` : 'This field is currently empty.'
+                ].filter(Boolean).join('\n\n---\n\n')
+            }
+        ]
+    }, world, { scope: 'utility' });
+    const response = await fetch(apiBase() + '/chat/completions', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 160)}`);
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim();
+    if (!text) {
+        const reasoning = Number(data.usage?.completion_tokens_details?.reasoning_tokens) || 0;
+        throw new Error(reasoning
+            ? `model returned nothing after ${reasoning} reasoning tokens — pick a non-reasoning model for structured fields`
+            : 'model returned an empty field');
+    }
+    return text.replace(/^["'`]+|["'`]+$/g, '').trim();
+}
+
+// Empty fields offer "write it"; populated fields offer "embellish" and
+// "rewrite", because a character who changed across 40 turns needs replacing,
+// not padding.
+function aiFieldButtonMarkup(fieldKey, isEmpty, targetId = '') {
+    if (!AI_FIELD_DESCRIPTORS[fieldKey]) return '';
+    if (typeof isEmpty === 'string') isEmpty = isPlaceholderFieldValue(isEmpty);
+    const t = targetId ? ` data-ai-target="${targetId}"` : '';
+    return isEmpty
+        ? `<button type="button" class="ai-field-btn" data-ai-field="${fieldKey}"${t} data-ai-mode="fill" title="Write this field from the rest of the world and the transcript">✨</button>`
+        : `<button type="button" class="ai-field-btn" data-ai-field="${fieldKey}"${t} data-ai-mode="embellish" title="Embellish: keep what is written, add specificity">✨</button>
+           <button type="button" class="ai-field-btn" data-ai-field="${fieldKey}"${t} data-ai-mode="rewrite" title="Rewrite to match who they have become in play">↻</button>`;
+}
+
+function bindAiFieldButtons(root, getEntity, world) {
+    root.querySelectorAll('.ai-field-btn').forEach(btn => {
+        if (btn.dataset.aiBound === '1') return;
+        btn.dataset.aiBound = '1';
+        btn.onclick = async (event) => {
+            // These buttons sometimes sit inside a <label> that wraps the field;
+            // without this the click also activates the label and re-focuses it.
+            event.preventDefault();
+            event.stopPropagation();
+            const wrap = btn.closest('[data-ai-field-wrap]') || btn.parentElement?.parentElement;
+            const input = btn.dataset.aiTarget
+                ? document.getElementById(btn.dataset.aiTarget)
+                : (wrap?.querySelector(`.${btn.dataset.aiField}`)
+                    || document.getElementById(btn.dataset.aiField));
+            if (!input) return showToast('Could not find the field to fill.', 'error');
+            const original = input.value;
+            btn.disabled = true;
+            const label = btn.textContent;
+            btn.textContent = '⏳';
+            try {
+                const text = await completeFieldWithAI(
+                    btn.dataset.aiField, original, getEntity(), world, btn.dataset.aiMode);
+                input.value = text;
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                showToast('Field written. Review it, then Save World.', 'success');
+            } catch (error) {
+                showToast(`AI fill failed — ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = label;
+            }
+        };
+    });
+}
+
 function renderWorldVisuals() {
     const world = state.editingWorld;
     if (!world) return;
@@ -21138,33 +21344,20 @@ function renderWorldLocations() {
                 const file = event.target.files?.[0];
                 if (!file) return;
                 try {
-                    const image = await normalizeUploadedImage(file, 1600, 0.78);
-                    loc.visuals.backgroundAssetId = addWorldMediaAsset(world, image, 'location_background', loc.name);
+                    const image = await normalizeUploadedImage(file, 2048, 0.86);
+                    registerWorldVisualVariant(world, loc, 'location',
+                        addWorldMediaAsset(world, image, 'location_background', loc.name));
                     pruneWorldMediaAssets(world);
                     renderWorldLocations();
-                    showToast(`Background added to ${loc.name}. It will be included in world saves.`, 'success');
+                    openWorldVisualEditor(world, loc, 'location');
+                    showToast(`Background added to ${loc.name}. Frame and crop it before closing the editor.`, 'success');
                 } catch (error) {
                     showToast(`Background upload failed: ${error.message}`, 'error');
                 } finally { event.target.value = ''; }
             };
-            div.querySelector('.loc-background-generate').onclick = async event => {
-                const button = event.currentTarget;
-                button.disabled = true;
-                button.textContent = 'Generating…';
-                try {
-                    loc.visuals.backgroundAssetId = await generateWorldLocationBackground(world, loc);
-                    pruneWorldMediaAssets(world);
-                    renderWorldLocations();
-                    showToast(`Generated a portable background for ${loc.name}.`, 'success');
-                } catch (error) {
-                    showToast(`Background generation failed: ${error.message}`, 'error');
-                } finally {
-                    button.disabled = false;
-                    button.textContent = '✨ Generate';
-                }
-            };
+            div.querySelector('.loc-background-generate').onclick = () => openWorldVisualEditor(world, loc, 'location');
             div.querySelector('.loc-background-clear').onclick = () => {
-                loc.visuals.backgroundAssetId = '';
+                clearWorldVisualVariants(loc, 'location');
                 pruneWorldMediaAssets(world);
                 renderWorldLocations();
             };
@@ -23109,37 +23302,25 @@ function renderWorldEntities(mode = 'people') {
                 const file = event.target.files?.[0];
                 if (!file) return;
                 try {
-                    const image = await normalizeUploadedImage(file, 768, 0.82);
-                    ent.visuals.portraitAssetId = addWorldMediaAsset(world, image, 'npc_portrait', ent.name);
+                    const image = await normalizeUploadedImage(file, 2048, 0.88);
+                    registerWorldVisualVariant(world, ent, 'npc',
+                        addWorldMediaAsset(world, image, 'npc_portrait', ent.name));
                     pruneWorldMediaAssets(world);
                     renderWorldEntities();
-                    showToast(`Portrait added to ${ent.name}. It will be included in world saves.`, 'success');
+                    openWorldVisualEditor(world, ent, 'npc');
+                    showToast(`Portrait added to ${ent.name}. Frame and crop it before closing the editor.`, 'success');
                 } catch (error) {
                     showToast(`Portrait upload failed: ${error.message}`, 'error');
                 } finally { event.target.value = ''; }
             };
-            div.querySelector('.ent-portrait-generate').onclick = async event => {
-                const button = event.currentTarget;
-                button.disabled = true;
-                button.textContent = 'Generating…';
-                try {
-                    ent.visuals.portraitAssetId = await generateWorldNpcPortrait(world, ent);
-                    pruneWorldMediaAssets(world);
-                    renderWorldEntities();
-                    showToast(`Generated a portable portrait for ${ent.name}.`, 'success');
-                } catch (error) {
-                    showToast(`Portrait generation failed: ${error.message}`, 'error');
-                } finally {
-                    button.disabled = false;
-                    button.textContent = '✨ Generate';
-                }
-            };
+            div.querySelector('.ent-portrait-generate').onclick = () => openWorldVisualEditor(world, ent, 'npc');
             div.querySelector('.ent-portrait-clear').onclick = () => {
-                ent.visuals.portraitAssetId = '';
+                clearWorldVisualVariants(ent, 'npc');
                 pruneWorldMediaAssets(world);
                 renderWorldEntities();
             };
-            div.querySelector('.ent-simulation-depth').onchange = (e) => {
+
+div.querySelector('.ent-simulation-depth').onchange = (e) => {
                 ent.simulationDepth = WORLD_DIRECTORY_DEPTHS.includes(e.target.value) ? e.target.value : 'background';
                 ent.isMajor = ent.simulationDepth === 'core';
                 updateWorldTokenCount();
@@ -48643,7 +48824,422 @@ async function makeWorldVisualPortable(source, maxDimension, quality) {
     return optimizeImage(data, maxDimension, quality);
 }
 
-async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label } = {}) {
+const WORLD_VISUAL_ASPECTS = new Set(['1:1', '3:4', '2:3', '4:3', '16:9', '9:16']);
+const WORLD_VISUAL_RESOLUTIONS = new Set([768, 1200, 1600, 2048]);
+let worldVisualEditorState = null;
+let worldVisualEditorBound = false;
+
+function normalizedWorldVisualAspect(value, fallback) {
+    return WORLD_VISUAL_ASPECTS.has(String(value || '')) ? String(value) : fallback;
+}
+
+function normalizedWorldVisualResolution(value, fallback) {
+    const numeric = Number(value);
+    return WORLD_VISUAL_RESOLUTIONS.has(numeric) ? numeric : fallback;
+}
+
+function worldVisualDimensions(aspectRatio, maxDimension) {
+    const [rawWidth, rawHeight] = String(aspectRatio || '1:1').split(':').map(Number);
+    const ratioWidth = Number.isFinite(rawWidth) && rawWidth > 0 ? rawWidth : 1;
+    const ratioHeight = Number.isFinite(rawHeight) && rawHeight > 0 ? rawHeight : 1;
+    const longest = normalizedWorldVisualResolution(maxDimension, 1200);
+    if (ratioWidth >= ratioHeight) {
+        return { width: longest, height: Math.max(1, Math.round(longest * ratioHeight / ratioWidth)) };
+    }
+    return { width: Math.max(1, Math.round(longest * ratioWidth / ratioHeight)), height: longest };
+}
+
+function loadEmbeddedImage(source) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => image.naturalWidth && image.naturalHeight
+            ? resolve(image) : reject(new Error('The image has no readable dimensions.'));
+        image.onerror = () => reject(new Error('The selected image could not be decoded.'));
+        image.src = source;
+    });
+}
+
+async function cropWorldVisual(source, aspectRatio, maxDimension, focusX, focusY, zoom, quality = 0.86) {
+    const image = await loadEmbeddedImage(source);
+    const output = worldVisualDimensions(aspectRatio, maxDimension);
+    const baseScale = Math.max(output.width / image.naturalWidth, output.height / image.naturalHeight);
+    const scale = baseScale * Math.max(1, Math.min(3, Number(zoom) || 1));
+    const sourceWidth = Math.min(image.naturalWidth, output.width / scale);
+    const sourceHeight = Math.min(image.naturalHeight, output.height / scale);
+    const x = (image.naturalWidth - sourceWidth) * Math.max(0, Math.min(1, Number(focusX) / 100));
+    const y = (image.naturalHeight - sourceHeight) * Math.max(0, Math.min(1, Number(focusY) / 100));
+    const canvas = document.createElement('canvas');
+    canvas.width = output.width;
+    canvas.height = output.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This browser could not create an image canvas.');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(image, x, y, sourceWidth, sourceHeight, 0, 0, output.width, output.height);
+    return canvas.toDataURL('image/jpeg', quality);
+}
+
+function worldVisualEditorAssetId(editor = worldVisualEditorState) {
+    if (!editor) return '';
+    return editor.kind === 'npc'
+        ? editor.target.visuals?.portraitAssetId || ''
+        : editor.target.visuals?.backgroundAssetId || '';
+}
+
+function worldVisualHistoryKeys(kind) {
+    return kind === 'npc'
+        ? { current: 'portraitAssetId', history: 'portraitAssetHistory' }
+        : { current: 'backgroundAssetId', history: 'backgroundAssetHistory' };
+}
+
+function worldVisualHistory(world, target, kind) {
+    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    const keys = worldVisualHistoryKeys(kind);
+    const valid = new Set((world?.mediaAssets || []).map(asset => asset.id));
+    const history = [];
+    (Array.isArray(target.visuals[keys.history]) ? target.visuals[keys.history] : []).forEach(id => {
+        if (valid.has(id) && !history.includes(id)) history.push(id);
+    });
+    const current = String(target.visuals[keys.current] || '');
+    if (valid.has(current) && !history.includes(current)) history.push(current);
+    target.visuals[keys.history] = history;
+    target.visuals[keys.current] = valid.has(current) ? current : (history.at(-1) || '');
+    return history;
+}
+
+function registerWorldVisualVariant(world, target, kind, assetId) {
+    const keys = worldVisualHistoryKeys(kind);
+    const history = worldVisualHistory(world, target, kind);
+    if (assetId && !history.includes(assetId)) history.push(assetId);
+    target.visuals[keys.history] = history;
+    target.visuals[keys.current] = assetId || '';
+    return assetId;
+}
+
+function clearWorldVisualVariants(target, kind) {
+    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    const keys = worldVisualHistoryKeys(kind);
+    target.visuals[keys.current] = '';
+    target.visuals[keys.history] = [];
+}
+
+function selectWorldVisualVariant(editor, offset) {
+    const history = worldVisualHistory(editor.world, editor.target, editor.kind);
+    if (!history.length) return;
+    const keys = worldVisualHistoryKeys(editor.kind);
+    const current = Math.max(0, history.indexOf(editor.target.visuals[keys.current]));
+    const next = Math.max(0, Math.min(history.length - 1, current + offset));
+    editor.target.visuals[keys.current] = history[next];
+    document.getElementById('world-visual-crop-x').value = '50';
+    document.getElementById('world-visual-crop-y').value = '50';
+    document.getElementById('world-visual-crop-zoom').value = '100';
+    updateWorldVisualCropPreview();
+}
+
+function updateWorldVisualCropPreview() {
+    const editor = worldVisualEditorState;
+    const stage = document.getElementById('world-visual-crop-stage');
+    const image = document.getElementById('world-visual-crop-image');
+    const empty = document.getElementById('world-visual-crop-empty');
+    if (!editor || !stage || !image) return;
+    const aspect = normalizedWorldVisualAspect(document.getElementById('world-visual-aspect')?.value,
+        editor.kind === 'npc' ? '3:4' : '16:9');
+    const [width, height] = aspect.split(':').map(Number);
+    stage.style.aspectRatio = `${width} / ${height}`;
+    const resolution = normalizedWorldVisualResolution(document.getElementById('world-visual-resolution')?.value,
+        editor.kind === 'npc' ? 1200 : 1600);
+    const output = worldVisualDimensions(aspect, resolution);
+    const guide = document.getElementById('world-visual-crop-guide');
+    if (guide) guide.dataset.label = `${aspect} final frame · ${output.width} × ${output.height}px`;
+    const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
+    const history = worldVisualHistory(editor.world, editor.target, editor.kind);
+    const selectedIndex = history.indexOf(worldVisualEditorAssetId(editor));
+    const counter = document.getElementById('world-visual-variant-count');
+    if (counter) counter.textContent = history.length ? `Image ${selectedIndex + 1} of ${history.length}` : 'No images';
+    document.getElementById('world-visual-previous').disabled = selectedIndex <= 0;
+    document.getElementById('world-visual-next').disabled = selectedIndex < 0 || selectedIndex >= history.length - 1;
+    document.getElementById('world-visual-export').disabled = !source;
+    document.getElementById('world-visual-revise').disabled = !source;
+    if (guide) guide.hidden = !source;
+    image.hidden = !source;
+    empty.hidden = !!source;
+    document.getElementById('world-visual-apply-crop').disabled = !source;
+    if (!source) return;
+    if (image.src !== source) image.src = source;
+    const draw = () => {
+        const stageWidth = stage.clientWidth;
+        const stageHeight = stage.clientHeight;
+        if (!stageWidth || !stageHeight || !image.naturalWidth || !image.naturalHeight) return;
+        const zoom = Number(document.getElementById('world-visual-crop-zoom').value) / 100;
+        const focusX = Number(document.getElementById('world-visual-crop-x').value) / 100;
+        const focusY = Number(document.getElementById('world-visual-crop-y').value) / 100;
+        const scale = Math.max(stageWidth / image.naturalWidth, stageHeight / image.naturalHeight) * zoom;
+        const renderedWidth = image.naturalWidth * scale;
+        const renderedHeight = image.naturalHeight * scale;
+        image.style.width = `${renderedWidth}px`;
+        image.style.height = `${renderedHeight}px`;
+        image.style.left = `${(stageWidth - renderedWidth) * focusX}px`;
+        image.style.top = `${(stageHeight - renderedHeight) * focusY}px`;
+    };
+    image.onload = draw;
+    draw();
+}
+
+function saveWorldVisualEditorFields() {
+    const editor = worldVisualEditorState;
+    if (!editor) return;
+    const target = editor.target;
+    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    const aspect = normalizedWorldVisualAspect(document.getElementById('world-visual-aspect').value,
+        editor.kind === 'npc' ? '3:4' : '16:9');
+    const resolution = normalizedWorldVisualResolution(document.getElementById('world-visual-resolution').value,
+        editor.kind === 'npc' ? 1200 : 1600);
+    const correction = document.getElementById('world-visual-correction').value.trim().slice(0, 4000);
+    if (editor.kind === 'npc') {
+        target.appearance = document.getElementById('world-visual-primary').value.trim().slice(0, 8000);
+        target.imagePrompt = document.getElementById('world-visual-prompt').value.trim().slice(0, 8000);
+        target.visuals.portraitFraming = document.getElementById('world-visual-framing').value;
+        target.visuals.portraitAspectRatio = aspect;
+        target.visuals.portraitResolution = resolution;
+        target.visuals.portraitCorrection = correction;
+    } else {
+        target.visualDescription = document.getElementById('world-visual-primary').value.trim().slice(0, 8000);
+        target.imagePrompt = document.getElementById('world-visual-prompt').value.trim().slice(0, 8000);
+        target.visuals.backgroundAspectRatio = aspect;
+        target.visuals.backgroundResolution = resolution;
+        target.visuals.backgroundCorrection = correction;
+    }
+    updateWorldTokenCount();
+}
+
+function refreshWorldVisualEditorAfterAsset() {
+    const editor = worldVisualEditorState;
+    if (!editor) return;
+    document.getElementById('world-visual-crop-x').value = '50';
+    document.getElementById('world-visual-crop-y').value = '50';
+    document.getElementById('world-visual-crop-zoom').value = '100';
+    updateWorldVisualCropPreview();
+    if (editor.kind === 'npc') renderWorldEntities();
+    else renderWorldLocations();
+}
+
+function closeWorldVisualEditor() {
+    const editor = worldVisualEditorState;
+    document.getElementById('world-visual-editor-modal')?.classList.add('hidden');
+    worldVisualEditorState = null;
+    if (editor?.kind === 'npc') renderWorldEntities();
+    else if (editor?.kind === 'location') renderWorldLocations();
+}
+
+function exportCurrentWorldVisual() {
+    const editor = worldVisualEditorState;
+    if (!editor) return;
+    const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
+    if (!source) return showToast('There is no selected image to export.', 'error');
+    const mime = source.match(/^data:(image\/[a-z0-9.+-]+)/i)?.[1]?.toLowerCase() || 'image/jpeg';
+    const extension = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : mime.includes('gif') ? 'gif' : 'jpg';
+    const stem = String(editor.target.name || (editor.kind === 'npc' ? 'portrait' : 'location'))
+        .trim().replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 100) || 'world_visual';
+    const history = worldVisualHistory(editor.world, editor.target, editor.kind);
+    const number = Math.max(1, history.indexOf(worldVisualEditorAssetId(editor)) + 1);
+    const anchor = document.createElement('a');
+    anchor.href = source;
+    anchor.download = `${stem}_${editor.kind === 'npc' ? 'portrait' : 'location'}_${number}.${extension}`;
+    anchor.click();
+    showToast(`Exported image ${number} for ${editor.target.name || 'this visual'}.`, 'success');
+}
+
+async function runWorldVisualGeneration(revisionOnly, event) {
+    const editor = worldVisualEditorState;
+    if (!editor) return;
+    const button = event.currentTarget;
+    const correction = document.getElementById('world-visual-correction').value.trim();
+    const referenceImage = revisionOnly
+        ? worldMediaSource(editor.world, worldVisualEditorAssetId(editor)) : '';
+    if (revisionOnly && !referenceImage) return showToast('Select an existing image before revising it.', 'error');
+    if (revisionOnly && !correction) return showToast('Write the adjustment you want before revising the image.', 'error');
+    button.disabled = true;
+    button.textContent = revisionOnly ? 'Revising...' : 'Generating...';
+    try {
+        saveWorldVisualEditorFields();
+        const options = {
+            revisionOnly,
+            correction: revisionOnly ? correction : '',
+            aspectRatio: document.getElementById('world-visual-aspect').value,
+            maxDimension: Number(document.getElementById('world-visual-resolution').value),
+            referenceImage
+        };
+        const assetId = editor.kind === 'npc'
+            ? await generateWorldNpcPortrait(editor.world, editor.target, options)
+            : await generateWorldLocationBackground(editor.world, editor.target, options);
+        registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+        if (revisionOnly) {
+            document.getElementById('world-visual-correction').value = '';
+            if (editor.kind === 'npc') editor.target.visuals.portraitCorrection = '';
+            else editor.target.visuals.backgroundCorrection = '';
+        }
+        pruneWorldMediaAssets(editor.world);
+        refreshWorldVisualEditorAfterAsset();
+        showToast(`${revisionOnly ? 'Revised' : 'Generated'} ${editor.target.name} as image ${worldVisualHistory(editor.world, editor.target, editor.kind).length}.`, 'success');
+    } catch (error) {
+        showToast(`${revisionOnly ? 'Image revision' : 'Image generation'} failed: ${error.message}`, 'error');
+    } finally {
+        button.disabled = false;
+        button.textContent = revisionOnly ? 'Revise current' : 'Generate new';
+        updateWorldVisualCropPreview();
+    }
+}
+
+function ensureWorldVisualEditorBound() {
+    if (worldVisualEditorBound) return;
+    worldVisualEditorBound = true;
+    const modal = document.getElementById('world-visual-editor-modal');
+    document.getElementById('world-visual-editor-close').onclick = closeWorldVisualEditor;
+    document.getElementById('world-visual-save-close').onclick = () => {
+        saveWorldVisualEditorFields();
+        const label = worldVisualEditorState?.target?.name || 'Visual';
+        closeWorldVisualEditor();
+        showToast(`${label} visual settings saved.`, 'success');
+    };
+    modal.addEventListener('click', event => { if (event.target === modal) closeWorldVisualEditor(); });
+    document.getElementById('world-visual-previous').onclick = () => selectWorldVisualVariant(worldVisualEditorState, -1);
+    document.getElementById('world-visual-next').onclick = () => selectWorldVisualVariant(worldVisualEditorState, 1);
+    document.getElementById('world-visual-export').onclick = exportCurrentWorldVisual;
+    ['world-visual-aspect', 'world-visual-resolution', 'world-visual-crop-x', 'world-visual-crop-y', 'world-visual-crop-zoom']
+        .forEach(id => document.getElementById(id).oninput = updateWorldVisualCropPreview);
+    document.getElementById('world-visual-save-brief').onclick = () => {
+        saveWorldVisualEditorFields();
+        showToast('Visual brief and generation settings saved with the world.', 'success');
+    };
+    document.getElementById('world-visual-apply-crop').onclick = async event => {
+        const editor = worldVisualEditorState;
+        if (!editor) return;
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = 'Cropping...';
+        try {
+            saveWorldVisualEditorFields();
+            const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
+            if (!source) throw new Error('Generate or upload an image before cropping it.');
+            const cropped = await cropWorldVisual(source,
+                document.getElementById('world-visual-aspect').value,
+                document.getElementById('world-visual-resolution').value,
+                document.getElementById('world-visual-crop-x').value,
+                document.getElementById('world-visual-crop-y').value,
+                Number(document.getElementById('world-visual-crop-zoom').value) / 100);
+            const assetId = addWorldMediaAsset(editor.world, cropped,
+                editor.kind === 'npc' ? 'npc_portrait' : 'location_background', editor.target.name,
+                { prompt: 'Manual crop of an existing portable world visual.' });
+            registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+            pruneWorldMediaAssets(editor.world);
+            refreshWorldVisualEditorAfterAsset();
+            showToast(`Cropped ${editor.target.name} to the selected frame.`, 'success');
+        } catch (error) {
+            showToast(`Crop failed: ${error.message}`, 'error');
+        } finally {
+            button.disabled = false;
+            button.textContent = 'Apply Crop';
+        }
+    };
+    document.getElementById('world-visual-regenerate').onclick = event => runWorldVisualGeneration(false, event);
+    document.getElementById('world-visual-revise').onclick = event => runWorldVisualGeneration(true, event);
+
+    const stage = document.getElementById('world-visual-crop-stage');
+    let drag = null;
+    stage.onpointerdown = event => {
+        if (!worldVisualEditorState
+            || !worldMediaSource(worldVisualEditorState.world, worldVisualEditorAssetId())) return;
+        drag = {
+            x: event.clientX, y: event.clientY,
+            focusX: Number(document.getElementById('world-visual-crop-x').value),
+            focusY: Number(document.getElementById('world-visual-crop-y').value)
+        };
+        stage.setPointerCapture(event.pointerId);
+    };
+    stage.onpointermove = event => {
+        if (!drag) return;
+        const image = document.getElementById('world-visual-crop-image');
+        const overflowX = Math.max(1, image.offsetWidth - stage.clientWidth);
+        const overflowY = Math.max(1, image.offsetHeight - stage.clientHeight);
+        const nextX = Math.max(0, Math.min(100, drag.focusX - (event.clientX - drag.x) / overflowX * 100));
+        const nextY = Math.max(0, Math.min(100, drag.focusY - (event.clientY - drag.y) / overflowY * 100));
+        document.getElementById('world-visual-crop-x').value = String(nextX);
+        document.getElementById('world-visual-crop-y').value = String(nextY);
+        updateWorldVisualCropPreview();
+    };
+    stage.onpointerup = stage.onpointercancel = () => { drag = null; };
+}
+
+function openWorldVisualEditor(world, target, kind) {
+    ensureWorldVisualEditorBound();
+    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    worldVisualEditorState = { world, target, kind };
+    const npc = kind === 'npc';
+    document.getElementById('world-visual-editor-title').textContent = `${target.name || 'Untitled'} - ${npc ? 'portrait' : 'location visual'}`;
+    // Write only the text node: the label also hosts the AI-fill buttons, and
+    // assigning textContent to the whole label would delete them.
+    (document.getElementById('world-visual-primary-label-text')
+        || document.getElementById('world-visual-primary-label')).textContent =
+        npc ? 'Stable visual identity' : 'Visible physical description';
+    document.getElementById('world-visual-primary').value = npc
+        ? target.appearance || target.description || ''
+        : target.visualDescription || target.description || '';
+    document.getElementById('world-visual-prompt').value = target.imagePrompt || '';
+    document.getElementById('world-visual-framing-field').classList.toggle('hidden', !npc);
+    document.getElementById('world-visual-framing').value = npc
+        ? target.visuals.portraitFraming || 'auto' : 'auto';
+    document.getElementById('world-visual-aspect').value = npc
+        ? normalizedWorldVisualAspect(target.visuals.portraitAspectRatio, '3:4')
+        : normalizedWorldVisualAspect(target.visuals.backgroundAspectRatio, '16:9');
+    document.getElementById('world-visual-resolution').value = String(npc
+        ? normalizedWorldVisualResolution(target.visuals.portraitResolution, 1200)
+        : normalizedWorldVisualResolution(target.visuals.backgroundResolution, 1600));
+    document.getElementById('world-visual-correction').value = npc
+        ? target.visuals.portraitCorrection || '' : target.visuals.backgroundCorrection || '';
+    worldVisualHistory(world, target, kind);
+    document.getElementById('world-visual-regenerate').textContent = 'Generate new';
+    document.getElementById('world-visual-crop-x').value = '50';
+    document.getElementById('world-visual-crop-y').value = '50';
+    document.getElementById('world-visual-crop-zoom').value = '100';
+    // Sparkle affordances for the two authored text fields. Story-born
+    // characters arrive with prose but no image prompt, so this is the only
+    // route by which they ever become illustratable.
+    {
+        const primaryEl = document.getElementById('world-visual-primary');
+        const promptEl = document.getElementById('world-visual-prompt');
+        const primarySlot = document.getElementById('ai-visual-primary-actions');
+        const promptSlot = document.getElementById('ai-visual-prompt-actions');
+        if (primarySlot) primarySlot.innerHTML = aiFieldButtonMarkup(
+            'world-visual-primary', String(primaryEl?.value || ''), 'world-visual-primary');
+        if (promptSlot) promptSlot.innerHTML = aiFieldButtonMarkup(
+            'ent-image-prompt', String(promptEl?.value || ''), 'world-visual-prompt');
+        bindAiFieldButtons(document.getElementById('world-visual-editor-modal'), () => target, world);
+    }
+    document.getElementById('world-visual-editor-modal').classList.remove('hidden');
+    requestAnimationFrame(updateWorldVisualCropPreview);
+}
+
+function attachWorldVisualReference(body, provider, model, referenceImage) {
+    if (!referenceImage) return body;
+    if (provider === 'fal') {
+        // The live fal bridge route consumes a single inline reference.
+        body.imageDataUrl = referenceImage;
+    } else     if (provider === 'nanogpt') {
+        const mode = nanoGPTImageReferenceMode(model);
+        if (mode === 'multiple') body.imageDataUrls = [referenceImage];
+        else body.imageDataUrl = referenceImage;
+    } else if (provider === 'gptproto') {
+        body.image = referenceImage;
+    } else {
+        body.input_references = [{ type: 'image_url', image_url: { url: referenceImage } }];
+    }
+    return body;
+}
+
+async function generateWorldVisual(world, prompt, {
+    aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label,
+    referenceImage = '', requireReference = false
+} = {}) {
     const presentation = normalizeWorldPresentation(world);
     const provider = worldVisualProvider(world);
     if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
@@ -48660,22 +49256,50 @@ async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDim
         modelInfo = ranked.find(item => item.id === model) || null;
     }
     const endpoints = await getCompanionImageEndpoints(model, false, provider);
-    const endpoint = chooseCompanionImageEndpoint(endpoints, { imageProviderTag: '' }, false);
+    const endpoint = chooseCompanionImageEndpoint(endpoints, { imageProviderTag: '' }, !!referenceImage);
+    const capabilities = companionImageCapabilities(modelInfo, endpoint);
+    const referenceDescriptor = capabilities.input_references;
+    const advertisedReference = !!referenceDescriptor
+        && (referenceDescriptor.type !== 'range' || Number(referenceDescriptor.max) > 0);
+    const providerReference = provider === 'fal'
+        ? true
+        : provider === 'nanogpt'
+        ? !!nanoGPTImageReferenceMode(model)
+        : provider === 'gptproto' ? !!gptProtoImageReferenceProfile(model) : false;
+    const canUseReference = !!referenceImage && (advertisedReference || providerReference);
+    if (requireReference && !referenceImage) {
+        throw new Error('Revision requires the currently selected image as its source.');
+    }
+    if (requireReference && !canUseReference) {
+        throw new Error(`${model} does not expose reference-image editing through its selected endpoint. Choose a reference-capable image model before revising.`);
+    }
     const requestConfig = {
         imageModel: model,
         imageParameters: { aspect_ratio: aspectRatio },
         imageProviderOptions: {},
         imageProviderTag: ''
     };
-    const body = applyCompanionImageParameters({ model, prompt }, requestConfig,
-        companionImageCapabilities(modelInfo, endpoint), endpoint);
-    if (provider === 'fal') {
-        body.aspect_ratio = aspectRatio;
-        body.enable_safety_checker = state.globalSettings.falSafetyChecker !== false;
+    const buildBody = includeReference => {
+        const body = attachWorldVisualReference(
+            applyCompanionImageParameters({ model, prompt }, requestConfig, capabilities, endpoint),
+            provider, model, includeReference ? referenceImage : '');
+        if (provider === 'fal') {
+            body.aspect_ratio = aspectRatio;
+            body.enable_safety_checker = state.globalSettings.falSafetyChecker !== false;
+        }
+        return body;
+    };
+    let generated;
+    try {
+        generated = await requestCompanionPhoto(buildBody(canUseReference), provider);
+    } catch (error) {
+        if (requireReference || !canUseReference
+            || (!error.referencePrivacyRejected && !error.referenceTransportRejected)) throw error;
+        generated = await requestCompanionPhoto(buildBody(false), provider);
     }
-    const generated = await requestCompanionPhoto(body, provider);
     const portable = await makeWorldVisualPortable(generated, maxDimension, quality);
-    return addWorldMediaAsset(world, portable, kind, label, { generated: true, model, prompt });
+    const framed = await cropWorldVisual(portable, aspectRatio, maxDimension, 50, 50, 1, quality);
+    return addWorldMediaAsset(world, framed, kind, label, { generated: true, model, prompt });
 }
 
 function worldVisualStylePrompt(world) {
@@ -48694,19 +49318,51 @@ function worldVisualStylePrompt(world) {
     return `${namedStyles[presentation.artStyle] || namedStyles.cinematic}. ${presentation.artDirection || 'Maintain one coherent visual language across this world.'}`;
 }
 
-async function generateWorldLocationBackground(world, location) {
-    const prompt = `Create a wide establishing background for an interactive text RPG location.\nWorld: ${world.name}.\nWorld premise: ${world.description || 'Not specified.'}\nLocation: ${location.name}.\nVisible description: ${location.description || 'Use the location name and world premise.'}\nRegion: ${location.region || 'Not specified.'}\nArt direction: ${worldVisualStylePrompt(world)}\nShow the physical space clearly from a useful eye-level viewpoint. No text, labels, interface, frame, watermark, map markers or prominent posed characters. Do not reveal secrets or invent a story event. This is a reusable location background, not a one-time action scene.`;
+async function generateWorldLocationBackground(world, location, options = {}) {
+    if (options.revisionOnly) {
+        const instruction = String(options.correction || '').trim();
+        if (!instruction) throw new Error('Write a revision instruction first.');
+        return generateWorldVisual(world, instruction, {
+            aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || location.visuals?.backgroundAspectRatio, '16:9'),
+            maxDimension: normalizedWorldVisualResolution(options.maxDimension || location.visuals?.backgroundResolution, 1600),
+            quality: 0.82, kind: 'location_background', label: location.name,
+            referenceImage: options.referenceImage || '', requireReference: true
+        });
+    }
+    const visibleDescription = location.visualDescription || location.description || 'Use the location name and world premise.';
+    const authoredPrompt = location.imagePrompt ? `\nAuthored location brief: ${location.imagePrompt}` : '';
+    const prompt = `Create an establishing visual for an interactive text RPG location.\nWorld: ${world.name}.\nWorld premise: ${world.description || 'Not specified.'}\nLocation: ${location.name}.\nVisible physical description: ${visibleDescription}\nRegion: ${location.region || 'Not specified.'}${authoredPrompt}\nArt direction: ${worldVisualStylePrompt(world)}\nShow the physical space clearly from a useful eye-level viewpoint in the requested frame. No text, labels, interface, frame, watermark, map markers or prominent posed characters. Do not reveal secrets or invent a story event. This is a reusable location background, not a one-time action scene.`;
     return generateWorldVisual(world, prompt, {
-        aspectRatio: '16:9', maxDimension: 1600, quality: 0.78,
-        kind: 'location_background', label: location.name
+        aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || location.visuals?.backgroundAspectRatio, '16:9'),
+        maxDimension: normalizedWorldVisualResolution(options.maxDimension || location.visuals?.backgroundResolution, 1600),
+        quality: 0.82, kind: 'location_background', label: location.name,
+        referenceImage: ''
     });
 }
 
-async function generateWorldNpcPortrait(world, npc) {
-    const prompt = `Create a square identity portrait for a persistent NPC in an interactive text RPG.\nWorld: ${world.name}.\nCharacter: ${npc.name}.\nCanonical visible appearance: ${npc.description || 'Derive a grounded appearance from the world and character name.'}\nArt direction: ${worldVisualStylePrompt(world)}\nUse only the visible description above; do not infer or depict secrets, hidden allegiances, future events or private goals. Chest-up single-character portrait, face clearly readable, neutral reusable expression, clothing appropriate to the setting. No text, border, watermark, duplicate person, glamour retouching or sexualization. Preserve distinctive physical details so this portrait can become the character identity reference later.`;
-    return generateWorldVisual(world, prompt, {
-        aspectRatio: '1:1', maxDimension: 768, quality: 0.82,
-        kind: 'npc_portrait', label: npc.name
+async function generateWorldNpcPortrait(world, npc, options = {}) {
+    if (options.revisionOnly) {
+        const instruction = String(options.correction || '').trim();
+        if (!instruction) throw new Error('Write a revision instruction first.');
+        return generateWorldVisual(world, instruction, {
+            aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || npc.visuals?.portraitAspectRatio, '3:4'),
+            maxDimension: normalizedWorldVisualResolution(options.maxDimension || npc.visuals?.portraitResolution, 1200),
+            quality: 0.84, kind: 'npc_portrait', label: npc.name,
+            referenceImage: options.referenceImage || '', requireReference: true
+        });
+    }
+    const compiler = globalThis.HordePortraitPromptCompiler;
+    const request = compiler?.worldNpcPortraitRequest
+        ? compiler.worldNpcPortraitRequest(world, npc, normalizeWorldPresentation(world), { ...options, correction: '' })
+        : {
+            prompt: `Create a reusable environmental identity portrait for ${npc.name || 'this character'}.\nStable visual identity: ${npc.appearance || npc.description || 'Use the authored character description.'}\nAuthored portrait brief: ${npc.imagePrompt || 'None.'}\nWorld rendering style: ${worldVisualStylePrompt(world)}\nPreserve identity, age, build, styling and characteristic expression. No text, frame, watermark or duplicate person.`,
+            aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || npc.visuals?.portraitAspectRatio, '3:4'),
+            maxDimension: normalizedWorldVisualResolution(options.maxDimension || npc.visuals?.portraitResolution, 1200),
+            quality: 0.84
+        };
+    return generateWorldVisual(world, request.prompt, {
+        aspectRatio: request.aspectRatio, maxDimension: request.maxDimension, quality: request.quality,
+        kind: 'npc_portrait', label: npc.name, referenceImage: ''
     });
 }
 
