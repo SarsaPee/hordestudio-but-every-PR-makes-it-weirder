@@ -1451,199 +1451,358 @@
         };
     }
 
-    function promptContext(world, session, registry) {
+    // --- Context candidates (Worlds V2 context architecture) ---
+    // Domain audience contracts: which audiences a mechanics domain may
+    // ever serve. The Narrator receives canonical truth and portrayal
+    // guidance only — non-authoritative derived material (GM proposals)
+    // is contractually excluded from every narrative audience.
+    const DOMAIN_AUDIENCES = Object.freeze({
+        alteredState: Object.freeze(['narrator', 'reader', 'reconciler', 'bunnymo', 'ff']),
+        portrayalDirective: Object.freeze(['narrator', 'ff']),
+        pacingCorrection: Object.freeze(['narrator']),
+        bunnyRxReference: Object.freeze(['narrator', 'ff']),
+        executionConstraint: Object.freeze(['narrator', 'ff']),
+        continuity: Object.freeze(['narrator', 'reader', 'reconciler']),
+        relationshipAxes: Object.freeze(['narrator', 'reconciler']),
+        inventoryContainer: Object.freeze(['narrator', 'reconciler']),
+        sceneTelemetry: Object.freeze(['narrator']),
+        checkpointFacts: Object.freeze(['narrator', 'reader', 'reconciler']),
+        gmProposals: Object.freeze(['gm'])
+    });
+    const serves = (domain, audience) => list(DOMAIN_AUDIENCES[domain]).includes(audience);
+
+    function contextCandidates(world, session, registry, context = {}) {
+        if (!isEnabled(world)) return [];
         const state = ensureSession(world, session);
-        if (!state) return '';
+        const audience = text(context.audience, 40) || 'narrator';
+        const relevant = new Set(list(context.relevantEntityIds).map(value => id(value)).filter(Boolean));
+        const controlledEntityId = id(context.controlledEntityId) || 'player';
+        const names = object(context.entityNames) ? context.entityNames : {};
+        const nameOf = actorId => text(names[actorId], 80)
+            || (actorId === 'player' ? 'Player' : id(actorId));
         const nowTurn = Math.max(1, parseInt(session.turnCount) || 1);
         const nowMinutes = Number(globalThis.getWorldTimeData?.(world, session)?.currentTotalMinutes);
-        const pacingNotes = [];
-        const activeAlteredStates = Object.fromEntries(Object.entries(state.alteredStates)
-            .map(([actorId, values]) => [actorId, list(values)
-                .filter(value => value?.status !== 'resolved')
-                .map(value => {
-                    const profile = registry?.profiles?.[value.profileKey];
-                    const note = profile ? alteredStatePacingNote({ ...value, actorId }, profile, nowTurn, nowMinutes,
-                        alteredStatePacingContext(session, { ...value, actorId })) : null;
-                    if (note) pacingNotes.push(note);
-                    return {
-                        profileKey: value.profileKey,
-                        phase: value.phase,
-                        domains: value.domains,
-                        selfAssessmentReliability: value.selfAssessmentReliability,
-                        observable: value.observable,
-                        sourceEventIds: value.sourceEventIds,
-                        doseCount: value.doseCount || 1,
-                        turnsSinceOnset: Number.isFinite(value.onsetTurn) ? nowTurn - value.onsetTurn : null
-                    };
-                })])
-            .filter(([, values]) => values.length));
-        const combinationProfiles = {};
-        if (registry?.profiles) {
-            Object.entries(activeAlteredStates).forEach(([actorId, values]) => {
-                const keys = values.map(value => value.profileKey)
-                    .filter(key => registry.profiles[key] && !registry.profiles[key].combination);
-                const matches = [];
-                for (let left = 0; left < keys.length; left++) {
-                    for (let right = left + 1; right < keys.length; right++) {
-                        const match = [`${keys[left]}_${keys[right]}`, `${keys[right]}_${keys[left]}`]
-                            .find(key => registry.profiles[key]?.combination);
-                        if (match && !matches.includes(match)) matches.push(match);
-                    }
-                }
-                if (matches.length) combinationProfiles[actorId] = matches;
-            });
-        }
-        const inventory = Object.fromEntries(Object.entries(state.inventory.containers).map(([containerId, value]) => [containerId, {
-            name: value.name,
-            kind: value.kind,
-            holderId: value.holderId,
-            count: value.count,
-            currentQuantity: value.currentQuantity,
-            quantityUnit: value.quantityUnit,
-            exhaustive: value.exhaustive,
-            observations: list(value.observations).slice(-3)
-        }]));
-        // Explicit-vs-inferred dose provenance stays visible so the model
-        // writes the approximate reality ("~8 drinks, 5 explicit + ~3
-        // inferred") rather than false precision, and so the Reconciler can
-        // see cadence and continuity evidence when it reconstructs
-        // compressed intervals.
-        const continuity = [];
-        Object.entries(state.alteredStates).forEach(([actorId, records]) => {
-            list(records).forEach(record => {
-                const events = list(record.doseEvents);
-                if (!events.length) return;
-                continuity.push({
-                    actorId, profileKey: record.profileKey,
-                    doseCount: Number(record.doseCount) || events.length,
-                    explicitDoseCount: events.filter(event => event.provenance === 'explicit'
-                        || event.provenance === 'authorial').length,
-                    inferredDoseCount: events.filter(event => event.provenance === 'inferred_continuation').length,
-                    lastDoseAt: Number.isFinite(Number((events[events.length - 1] || {}).atTotalMinutes))
-                        ? Number((events[events.length - 1] || {}).atTotalMinutes) : null,
-                    recentCadence: recentInputCadence(world, session, actorId, record.profileKey),
-                    continuityModel: record.continuityModel || 'legacy'
+        const revision = Number(session.worldStateVersion) || 0;
+        const candidates = [];
+        const push = candidate => {
+            if (!text(candidate.text, 6000)) return;
+            candidates.push(candidate);
+        };
+        const onStage = actorId => !relevant.size || relevant.has(id(actorId));
+
+        // ---- Domain: altered states ----
+        // One candidate per actor x profile: small, unavoidable truth.
+        // Mandatory when the impairment is substantial and the actor is
+        // on stage; authority and budget are separate concepts.
+        if (serves('alteredState', audience)) {
+            Object.entries(state.alteredStates || {}).forEach(([actorId, records]) => {
+                if (!onStage(actorId)) return;
+                list(records).filter(record => record?.status !== 'resolved').forEach(record => {
+                    const profile = registry?.profiles?.[record.profileKey] || {};
+                    const events = list(record.doseEvents);
+                    const effective = effectiveDoseCount(record);
+                    const estimated = events.filter(event => event.provenance === 'inferred_continuation').length > 0
+                        || (Number(record.authorialDoseOffset) || 0) !== 0;
+                    const minutesSinceOnset = Number.isFinite(Number(record.onsetTotalMinutes)) && Number.isFinite(nowMinutes)
+                        ? Math.max(0, Math.round(nowMinutes - Number(record.onsetTotalMinutes))) : null;
+                    const affectedDomains = list(profile.domains).length ? list(profile.domains) : list(record.domains);
+                    const pieces = [
+                        `${profile.label || record.profileKey} — phase "${record.phase}"`,
+                        record.observable && record.observable !== 'unknown' ? `observable ${record.observable}` : '',
+                        minutesSinceOnset !== null ? `~${minutesSinceOnset} min since onset` : '',
+                        `${estimated ? '~' : ''}${effective} dose(s)${estimated ? ' (approximate)' : ''}`
+                            + ` — ${events.filter(event => event.provenance === 'explicit' || event.provenance === 'authorial').length} explicit,`
+                            + ` ${events.filter(event => event.provenance === 'inferred_continuation').length} inferred`,
+                        affectedDomains.length ? `affected: ${affectedDomains.join('; ')}` : '',
+                        record.selfAssessmentReliability && record.selfAssessmentReliability !== 'unknown'
+                            ? `self-assessment ${record.selfAssessmentReliability}` : ''
+                    ].filter(Boolean).join(' · ');
+                    push({
+                        id: `mech_state_${id(actorId)}_${id(record.profileKey)}_r${revision}`,
+                        lane: 'mechanics',
+                        title: `ALTERED STATE — ${nameOf(actorId)}`,
+                        text: pieces,
+                        audience, entityIds: [actorId], mechanicId: record.profileKey,
+                        authority: 'canonical', priority: 1,
+                        mandatory: (PHASE_IMPAIRMENT[record.phase] || 0) >= 2,
+                        inclusionReason: 'on-stage actor with an active tracked state',
+                        stableKey: `altered.${id(actorId)}.${id(record.profileKey)}`,
+                        freshness: 'per-turn', budgetHint: 700
+                    });
                 });
             });
-        });
-        const compact = {
-            checkpoint: state.checkpoint,
-            sceneTelemetry: state.sceneTelemetry,
-            relationships: state.relationshipAxes,
-            alteredStates: activeAlteredStates,
-            relevantCombinationProfiles: combinationProfiles,
-            inventory,
-            recentCognition: state.cognition.slice(-24),
-            openGmProposals: state.gmProposals.filter(proposal => !proposal.stale && !proposal.approved).slice(-12),
-            bunnyRxRegistry: registry ? { id: registry.id, profileKeys: Object.keys(registry.profiles || {}) } : null,
-            continuity: continuity.slice(-12)
-        };
+        }
+        // Pacing corrections: committed mechanical truth that contradicts
+        // prose. Never optional.
+        if (serves('pacingCorrection', audience)) {
+            Object.entries(state.alteredStates || {}).forEach(([actorId, records]) => {
+                if (!onStage(actorId)) return;
+                list(records).filter(record => record?.status !== 'resolved').forEach(record => {
+                    const profile = registry?.profiles?.[record.profileKey];
+                    if (!profile) return;
+                    const note = alteredStatePacingNote({ ...record, actorId }, profile, nowTurn, nowMinutes,
+                        alteredStatePacingContext(session, { ...record, actorId }));
+                    if (!note) return;
+                    push({
+                        id: `mech_pacing_${id(actorId)}_${id(record.profileKey)}_r${revision}`,
+                        lane: 'mechanics',
+                        title: `PACING CORRECTION — ${nameOf(actorId)}`,
+                        text: `The engine owns canonical phases; this corrects prose that drifted from committed state. Fix it in this response without announcing mechanics.\n${note}`,
+                        audience, entityIds: [actorId], mechanicId: record.profileKey,
+                        authority: 'canonical', priority: 1, mandatory: true,
+                        inclusionReason: 'recorded phase contradicts committed mechanical state',
+                        stableKey: '', freshness: 'per-turn', budgetHint: 1200
+                    });
+                });
+            });
+        }
+        // Portrayal directives: how to write this person for the whole
+        // response. Guidance, not truth — droppable, but usually earned.
+        if (serves('portrayalDirective', audience)) {
+            Object.entries(state.alteredStates || {}).forEach(([actorId, records]) => {
+                if (!onStage(actorId)) return;
+                list(records).filter(record => record?.status !== 'resolved').forEach(record => {
+                    const profile = registry?.profiles?.[record.profileKey];
+                    if (!profile) return;
+                    const directive = alteredStateDirective({ ...record, actorId }, profile, nowMinutes);
+                    if (!directive) return;
+                    push({
+                        id: `mech_directive_${id(actorId)}_${id(record.profileKey)}_r${revision}`,
+                        lane: 'mechanics',
+                        title: `PORTRAYAL DIRECTIVE — ${nameOf(actorId)}`,
+                        text: `Not a label to acknowledge — this is how the character behaves for the whole response.\n${directive}`,
+                        audience, entityIds: [actorId], mechanicId: record.profileKey,
+                        authority: 'guidance', priority: 2, mandatory: false,
+                        inclusionReason: 'active state with committed portrayal guidance',
+                        stableKey: `directive.${id(actorId)}.${id(record.profileKey)}`,
+                        freshness: 'per-turn', budgetHint: 1400
+                    });
+                });
+            });
+        }
+        // Stable BunnyRx profile references: byte-identical across calls,
+        // separate from the mutable state candidates so caching works and
+        // the truth never depends on the reference surviving.
+        if (serves('bunnyRxReference', audience)) {
+            const resolveExcerpt = value => globalThis.replaceMacros ? globalThis.replaceMacros(value, null) : value;
+            unique(Object.entries(state.alteredStates || {})
+                .filter(([actorId]) => onStage(actorId))
+                .flatMap(([, values]) => list(values)
+                    .filter(record => record?.status !== 'resolved')
+                    .map(record => record.profileKey))).forEach(key => {
+                const profile = registry?.profiles?.[key];
+                if (!profile?.referenceExcerpt) return;
+                push({
+                    id: `mech_reference_${id(key)}`,
+                    lane: 'mechanics',
+                    title: `BUNNYRX PROFILE REFERENCE — ${profile.label || key}`,
+                    text: `Curated reference for a substance active in this scene. Guidance for portrayal, not a source of new mechanical facts.\n--- ${profile.label || key} ---\n${resolveExcerpt(profile.referenceExcerpt)}`,
+                    audience, entityIds: [], mechanicId: key,
+                    authority: 'reference', priority: 3, mandatory: false,
+                    inclusionReason: 'active profile with curated reference material',
+                    stableKey: `bunnyrx.reference.${id(key)}`,
+                    freshness: 'stable', budgetHint: 3200
+                });
+            });
+        }
+        // Execution constraint: action-specific only. Emitted exclusively
+        // when the caller supplies real pre-FF action evidence (an
+        // attempted-task classification from the controlled-input seam);
+        // the generic impaired-task matrix is engine-internal and never a
+        // substitute.
+        if (serves('executionConstraint', audience)) {
+            const attemptedTasks = unique(list(context.attemptedTasks)
+                .map(value => text(value, 40))).filter(Boolean);
+            if (attemptedTasks.length) {
+                const envelope = computeFeasibilityEnvelope(world, session, controlledEntityId, registry);
+                const impairedTasks = Object.entries(envelope.tasks || {})
+                    .filter(([task, def]) => attemptedTasks.includes(task)
+                        && def.legality && def.legality !== 'succeeds')
+                    .map(([task, def]) => ({ task, legality: def.legality, phase: def.phase,
+                        meaningful_compensations: def.meaningfulCompensations || [] }));
+                if (impairedTasks.length) push({
+                    id: `mech_execution_${id(controlledEntityId)}_r${revision}`,
+                    lane: 'mechanics',
+                    title: 'EXECUTION CONSTRAINT — CONTROLLED CHARACTER',
+                    text: `The controlled character's attempted task conflicts with tracked impairment: ${JSON.stringify(impairedTasks)}\nA declared competence may fail-forward only at strong + observably-obvious impairment; every other declared goal succeeds, possibly with degraded execution. A player who explicitly accounts for their tracked state (bracing, slowing, simplifying, asking for help) is playing the mechanic, not dodging it — reward that: the goal succeeds and the execution visibly carries the impairment. Compensations that need the environment qualify only when the current scene actually supplies that support.`,
+                    audience, entityIds: [controlledEntityId],
+                    mechanicId: impairedTasks.map(item => item.task).join('+') || null,
+                    authority: 'canonical', priority: 1, mandatory: true,
+                    inclusionReason: 'attempted task evidence conflicts with tracked impairment',
+                    stableKey: '', freshness: 'per-turn', budgetHint: 1200
+                });
+            }
+        }
+        // Compressed-time continuity: trigger-gated by temporal evidence —
+        // a committed compressed/discontinuous boundary, or continuation
+        // evidence within the last two revisions. Never a recent-dose
+        // heuristic.
+        if (serves('continuity', audience)) {
+            const boundaryType = text(state.lastTransition?.boundary_type
+                || state.lastTransition?.boundaryType, 40);
+            const compressedBoundary = ['time_skip', 'sequence_change'].includes(boundaryType);
+            Object.entries(state.alteredStates || {}).forEach(([actorId, records]) => {
+                if (!onStage(actorId)) return;
+                list(records).forEach(record => {
+                    if (record?.status === 'resolved') return;
+                    const history = list(record.continuationHistory);
+                    const recentContinuation = history.some(entry =>
+                        revision - (Number(entry?.acceptedRevision) || 0) <= 2);
+                    if (!compressedBoundary && !recentContinuation) return;
+                    const events = list(record.doseEvents);
+                    if (!events.length) return;
+                    push({
+                        id: `mech_continuity_${id(actorId)}_${id(record.profileKey)}_r${revision}`,
+                        lane: 'mechanics',
+                        title: `INPUT CONTINUITY — ${nameOf(actorId)}`,
+                        text: `${registry?.profiles?.[record.profileKey]?.label || record.profileKey}: ${effectiveDoseCount(record)} total dose(s). ${JSON.stringify({
+                            explicitDoseCount: events.filter(event => event.provenance === 'explicit' || event.provenance === 'authorial').length,
+                            inferredDoseCount: events.filter(event => event.provenance === 'inferred_continuation').length,
+                            recentCadence: recentInputCadence(world, session, actorId, record.profileKey),
+                            continuityModel: record.continuityModel || 'legacy',
+                            compressedBoundary
+                        })}\nCounts marked inferred are engine estimates, not precision. If this beat meaningfully compresses time inside the ongoing activity, continuation evidence carries the interval — never hand-computed doses.`,
+                        audience, entityIds: [actorId], mechanicId: record.profileKey,
+                        authority: 'canonical', priority: 2, mandatory: false,
+                        inclusionReason: 'temporal boundary or recent continuation evidence makes cadence relevant',
+                        stableKey: '', freshness: 'per-turn', budgetHint: 900
+                    });
+                });
+            });
+        }
+        // Relationship axes: per tracked pair, relevance-gated to the stage.
+        if (serves('relationshipAxes', audience)) {
+            Object.entries(state.relationshipAxes || {}).forEach(([pair, axes]) => {
+                const [sourceId, targetId] = String(pair).split('->');
+                if (!onStage(sourceId) && !onStage(targetId)) return;
+                push({
+                    id: `mech_relationship_${id(sourceId)}_${id(targetId)}_r${revision}`,
+                    lane: 'mechanics',
+                    title: `RELATIONSHIP AXIS — ${nameOf(sourceId)} → ${nameOf(targetId)}`,
+                    text: `${JSON.stringify(axes)}\nDirectional durable judgement, not a running mood meter; it should move in small increments whenever the scene gives real accepted evidence.`,
+                    audience, entityIds: [sourceId, targetId], mechanicId: 'relationship_axes',
+                    authority: 'canonical', priority: 2, mandatory: false,
+                    inclusionReason: 'tracked relationship involving on-stage actors',
+                    stableKey: `relationship.${id(sourceId)}.${id(targetId)}`,
+                    freshness: 'per-turn', budgetHint: 600
+                });
+            });
+        }
+        // Inventory containers: per holder-relevant container.
+        if (serves('inventoryContainer', audience)) {
+            Object.entries(state.inventory.containers || {}).forEach(([containerId, container]) => {
+                if (relevant.size && !relevant.has(id(container.holderId))) return;
+                push({
+                    id: `mech_container_${id(containerId)}_r${revision}`,
+                    lane: 'mechanics',
+                    title: `MECHANICS CONTAINER — ${container.name || containerId}`,
+                    text: `${JSON.stringify({ kind: container.kind, holderId: container.holderId, count: container.count, currentQuantity: container.currentQuantity, quantityUnit: container.quantityUnit, exhaustive: container.exhaustive, lastObservations: list(container.observations).slice(-2) })}\nUnobserved is not zero; known inventory is not exhaustive unless explicitly marked.`,
+                    audience, entityIds: container.holderId ? [container.holderId] : [],
+                    mechanicId: 'inventory',
+                    authority: 'canonical', priority: 2, mandatory: false,
+                    inclusionReason: 'tracked quantity container held on stage',
+                    stableKey: `container.${id(containerId)}`,
+                    freshness: 'per-turn', budgetHint: 500
+                });
+            });
+        }
+        // Scene telemetry: committed ending telemetry of the previous beat.
+        if (serves('sceneTelemetry', audience)
+            && object(state.sceneTelemetry) && Object.keys(state.sceneTelemetry).length) {
+            push({
+                id: `mech_telemetry_r${revision}`,
+                lane: 'mechanics',
+                title: 'SCENE TELEMETRY',
+                text: `${JSON.stringify(state.sceneTelemetry)}\nCommitted ending-scene telemetry from the previous beat; carry the mood and tension forward, do not contradict it.`,
+                audience, entityIds: [], mechanicId: 'scene_telemetry',
+                authority: 'canonical', priority: 3, mandatory: false,
+                inclusionReason: 'committed scene telemetry exists',
+                stableKey: 'scene.telemetry', freshness: 'per-turn', budgetHint: 600
+            });
+        }
+        // Checkpoint durable facts: stable across the whole session.
+        if (serves('checkpointFacts', audience) && list(state.durableFacts).length) {
+            push({
+                id: 'mech_checkpoint',
+                lane: 'mechanics',
+                title: 'CHECKPOINT — DURABLE FACTS',
+                text: `${list(state.durableFacts).map(fact => `- ${fact}`).join('\n')}\nCommitted by the selected starting life; never contradict these.`,
+                audience, entityIds: [], mechanicId: 'checkpoint',
+                authority: 'canonical', priority: 2, mandatory: false,
+                inclusionReason: 'session checkpoint carries durable facts',
+                stableKey: 'checkpoint.durableFacts', freshness: 'stable', budgetHint: 700
+            });
+        }
+        // GM proposals: contractually excluded from narrative audiences.
+        // Served only to the GM audience (World Agent / GM dossier).
+        if (serves('gmProposals', audience)) {
+            list(state.gmProposals).filter(proposal => !proposal.stale && !proposal.approved)
+                .slice(-6).forEach(proposal => {
+                    push({
+                        id: `mech_proposal_${id(proposal.id)}`,
+                        lane: 'mechanics',
+                        title: `GM PROPOSAL — ${id(proposal.id)}`,
+                        text: `${JSON.stringify({ provenance: proposal.provenance, affectedEntities: proposal.affectedEntities, suggestedDeltas: proposal.suggestedDeltas, basis: proposal.basis })}\nNon-authoritative derived material — never fiction until committed canon accepts it.`,
+                        audience, entityIds: list(proposal.affectedEntities), mechanicId: 'gm_proposals',
+                        authority: 'guidance', priority: 2, mandatory: false,
+                        inclusionReason: 'open engine-derived proposal for GM review',
+                        stableKey: `proposal.${id(proposal.id)}`,
+                        freshness: 'per-turn', budgetHint: 900
+                    });
+                });
+        }
+        // Standing narrator discipline: only when mechanics are actually in
+        // play this call. A scene with nothing tracked emits nothing at all —
+        // enabling mechanics never ships the whole mechanics universe.
+        if (audience === 'narrator' && candidates.length) {
+            push({
+                id: 'mech_discipline',
+                lane: 'mechanics',
+                title: 'MECHANICS DISCIPLINE — WRITING AND COMMITTING',
+                text: [
+                    'A committed commit_world_turn receipt is the only generated-fiction path to durable truth. Prose, FF5 reasoning, BunnyRX and World GM proposals are not storage.',
+                    'Separate objective result, actor intention, observation, interpretation, belief and memory. Durable cognition requires accepted provenance and may build on prior accepted cognition.',
+                    'Relationship axes are directional durable judgements, not a running mood meter — but they should move often, in small increments, whenever a scene gives real accepted evidence either way; do not save updates only for watershed moments. A shared vulnerability, an admission, an act of trust, a small betrayal or friction are all real evidence and each deserves its own small shift (a few points), not silence until something dramatic happens.',
+                    'BunnyRX is reference knowledge only. Persist only compact Altered State. Never infer exact substance, quantity, time or phase for an observer without evidence.',
+                    'Once a state reaches "resolved", the physiological aftermath (fatigue, low mood, soreness, mental fog — whatever this profile\'s own comedown describes) is fair game to keep writing for as long as it\'s earned, but active craving or urge to redose is NOT an automatic consequence — only write it when that specific character\'s own established relationship with the substance and the scene genuinely support it. Going quiet about it, or even having visibly not touched more of it, is a legitimate and often better read on a character than manufactured yearning.',
+                    'APPETITE IS A DRIVE, NOT A PERMISSION. Within an ACTIVE session (not yet resolved), intoxication WANTS MORE OF ITSELF. Drinking begets drinking; a line makes the next line obvious; the whole point of the night is that it escalates. An NPC with supply, company and no hard reason to stop is not waiting to be offered — they pour the next one, cut the next one, wave the bartender down, push it on everyone else, and get impatient with anyone slowing them down. Do NOT wait for the player to prompt it and do NOT keep them politely level while the player does all the consuming: the player is one person at this table, not the only one with a body.',
+                    'Every turn, for each intoxicated character, ask: has enough happened that this person would have had another? If yes — and across a normal scene the answer is yes often — narrate them taking it and commit altered_state_updates with redose:true. A character whose doseCount never moves across a long night is being written wrong.',
+                    'INFER IT. You do not need the player to state a dose. A round arriving, a glass being refilled, a baggie going round, someone disappearing to the bathroom together, "one more before we go" — these ARE doses and must be committed as such for everyone involved, not just whoever spoke last.',
+                    'The appetite is SHARPEST while declining: that is the chase, when people redose hardest to hold the feeling rather than let it go. Declining is not winding down, it is when someone goes looking for more.',
+                    'THE PLAYER IS TRACKED EXACTLY LIKE ANY OTHER CHARACTER. When the player\'s own message has them taking a dose — another bump, another drink, another cap — you MUST record it: altered_state_updates for actor "player" with redose:true, every single time, even when they already have that substance active. Updating only their phase is wrong; a fresh dose restarts their clock and increments the dose count, and skipping it makes the engine treat a line taken thirty seconds ago as one taken half an hour ago. Their persona is a character with a body, appetites and a tolerance, not a viewpoint.',
+                    'For relevant social exchanges derive qualitative interaction resonance (aligned / partially_aligned / neutral / mismatched / strongly_mismatched) from both Altered States, personality, familiarity, directional relationship, VAD, knowledge and context. Never calculate drug buffs or automatically change relationships.',
+                    'Continuous inventory keeps append-only quantity observations. Unknown is not zero; unobserved is not nonexistent; known inventory is not exhaustive unless explicitly marked.',
+                    'GM proposals and scene cards are non-authoritative derived material until an explicit accepted canon mutation receipt.'
+                ].join('\n'),
+                audience, entityIds: [], mechanicId: null,
+                authority: 'instruction', priority: 1, mandatory: true,
+                inclusionReason: 'mechanics in play: standing writing and committing discipline',
+                stableKey: 'mechanics.narrator.discipline',
+                freshness: 'stable', budgetHint: 3600
+            });
+        }
+        return candidates;
+    }
+
+    function composeMechanicsContext(candidates) {
+        return list(candidates).map(candidate =>
+            `\n\n[${candidate.title}]\n${candidate.text}`).join('');
+    }
+
+    // Compatibility renderer over the structured candidates. Harnesses and
+    // diagnostics may want the whole block; the Context Compiler is the
+    // real consumer and works from the candidates directly.
+    function promptContext(world, session, registry) {
+        const candidates = contextCandidates(world, session, registry, { audience: 'narrator' });
         const dossierContext = globalThis.HordeDossierClaims?.promptContext?.(
             world, session, list(world.entities).filter(entity => entity?.type === 'npc'), {
                 worldTime: session.worldTime || ''
             }
         ) || '';
-        // The registry carries a full curated write-up per substance, but
-        // sending all 37 every turn would be pure waste — and previously
-        // nothing beyond the bare profile key ever left this function, so the
-        // model wrote every altered state from its own general knowledge with
-        // zero grounding in the curated pack. Send the real excerpt only for
-        // whichever profiles are actually in play this turn.
-        const activeProfileKeys = unique(Object.values(activeAlteredStates)
-            .flatMap(values => values.map(value => value.profileKey))
-            .concat(Object.values(combinationProfiles).flat()));
-        // The source pack authors these with SillyTavern {{random::a::b::c}}
-        // attention-nudge macros (e.g. a rotating "what does the evidence
-        // look like right now" prompt). Left raw, the model sees the literal
-        // "{{random::...}}" syntax with every option run together instead of
-        // one picked line — replaceMacros is app.js's existing resolver for
-        // exactly this, exposed on globalThis since app.js is a plain script.
-        const resolveExcerpt = text => globalThis.replaceMacros ? globalThis.replaceMacros(text, null) : text;
-        const excerpts = registry?.profiles ? activeProfileKeys
-            .map(key => registry.profiles[key])
-            .filter(profile => profile?.referenceExcerpt)
-            .map(profile => `--- ${profile.label} ---\n${resolveExcerpt(profile.referenceExcerpt)}`)
-            : [];
-        const bunnyRxContext = excerpts.length
-            ? `\n\n[BUNNYRX — ACTIVE PROFILE REFERENCE]\nCurated reference for the substances currently active in this scene. Use it to ground how the affected character behaves, speaks, and perceives — it is guidance for portrayal, not a source of new mechanical facts; only commit_world_turn receipts create durable state.\n${excerpts.join('\n\n')}\n`
-            : '';
-        const pacingContext = pacingNotes.length
-            ? `\n\n[BUNNYRX — PACING CHECK]\n${pacingNotes.join('\n')}\n`
-            : '';
-        // Feasibility envelope (Annex A hybrid): the narrator receives the
-        // legality classes for declared competences under tracked states,
-        // plus what compensation the scene could support. The engine still
-        // validates the declared execution at commit; this block is the
-        // affordance information FF renders within.
-        const envelopeByActor = {};
-        Object.entries(state.alteredStates || {}).forEach(([actorId, records]) => {
-            if (!list(records).some(record => record?.status !== 'resolved')) return;
-            const envelope = computeFeasibilityEnvelope(world, session, actorId, registry);
-            const impaired = Object.entries(envelope.tasks || {})
-                .filter(([, def]) => def.legality && def.legality !== 'succeeds')
-                .map(([task, def]) => ({ task, legality: def.legality, phase: def.phase,
-                    meaningful_compensations: def.meaningfulCompensations || [] }));
-            if (impaired.length) envelopeByActor[actorId] = impaired;
-        });
-        const envelopeContext = Object.keys(envelopeByActor).length
-            ? `\n\n[FEASIBILITY — WHAT THIS STATE ALLOWS]\nLegality classes for declared competences under tracked altered states — never a script, never a demand for failure:\n${JSON.stringify(envelopeByActor)}\nA declared competence may fail-forward only at strong + observably-obvious impairment; every other declared goal succeeds, possibly with degraded execution. A player who explicitly accounts for their tracked state (bracing, slowing, simplifying, asking for help) is playing the mechanic, not dodging it — reward that: the goal succeeds and the execution visibly carries the impairment. Compensations that need the environment (bracing, railings, a helping hand) qualify only when the current scene actually supplies that support; scene supports come from the present environment, not from this block. Separate what a character DECLARES (intent, explicit compensation) from what the state DOES to the execution, and never announce mechanics — write the resolved execution as diegetic behaviour.`
-            : '';
-        // Hoisted out of the JSON blob into its own instruction block, so state
-        // competes with the voice rules instead of sitting below them as data.
-        const directives = [];
-        Object.entries(state.alteredStates || {}).forEach(([actorId, values]) => {
-            list(values).filter(value => value?.status !== 'resolved' && value?.phase !== 'resolved')
-                .forEach(value => {
-                    const profile = registry?.profiles?.[value.profileKey];
-                    const directive = alteredStateDirective({ ...value, actorId }, profile, nowMinutes);
-                    if (directive) directives.push(directive);
-                });
-        });
-        const directiveContext = directives.length
-            ? `\n\n[ALTERED STATE — WRITE THESE PEOPLE THIS WAY]\nThese are not labels to acknowledge; they are how these characters behave for the whole response. Intoxication changes speech before it changes anything else.\n${directives.join('\n\n')}\n`
-            : '';
-        return `\n\n[WORLD MECHANICS — COMMITTED STATE AND AUTHORITY]\n${JSON.stringify(compact)}\n`
-            + `A committed commit_world_turn receipt is the only generated-fiction path to durable truth. Prose, FF5 reasoning, BunnyRX and World GM proposals are not storage. `
-            + `Separate objective result, actor intention, observation, interpretation, belief and memory. Durable cognition requires accepted provenance and may build on prior accepted cognition. `
-            + `Relationship axes are directional durable judgements, not a running mood meter — but they should move often, in small increments, whenever a scene gives real accepted evidence either way; do not save updates only for watershed moments. A shared vulnerability, an admission, an act of trust, a small betrayal or friction are all real evidence and each deserves its own small shift (a few points), not silence until something dramatic happens. `
-            + `BunnyRX is reference knowledge only. Persist only compact Altered State. Never infer exact substance, quantity, time or phase for an observer without evidence. `
-            // The physiological tail (hungover, drained, foggy, serotonin-flat)
-            // is real and worth writing. Craving is a different, narrower
-            // claim: it's a fact about that character's relationship with the
-            // substance, not an automatic side effect of using it, and it must
-            // never be conjured just because a phase resolved. A character who
-            // used once and doesn't think about it again is not a data gap —
-            // Chloe leaving an 8-ball untouched for a week and that reading as
-            // restraint worth noticing is good characterisation; that instinct
-            // should survive this system, not get mechanically overridden by it.
-            + `Once a state reaches "resolved", the physiological aftermath (fatigue, low mood, soreness, mental fog — whatever this profile's own comedown describes) is fair game to keep writing for as long as it's earned, but active craving or urge to redose is NOT an automatic consequence — only write it when that specific character's own established relationship with the substance and the scene genuinely support it. Going quiet about it, or even having visibly not touched more of it, is a legitimate and often better read on a character than manufactured yearning. `
-            // Separately from craving: within a single active session, a
-            // character isn't a vending machine waiting for the player to say
-            // "do another line." If it's in character and the substance,
-            // company and supply are all still there, let them act on their
-            // own initiative — call altered_state_updates with redose:true
-            // unprompted. This is ordinary scene agency, not compulsion.
-            + `APPETITE IS A DRIVE, NOT A PERMISSION. Within an ACTIVE session (not yet resolved), intoxication WANTS MORE OF ITSELF. Drinking begets drinking; a line makes the next line obvious; the whole point of the night is that it escalates. An NPC with supply, company and no hard reason to stop is not waiting to be offered — they pour the next one, cut the next one, wave the bartender down, push it on everyone else, and get impatient with anyone slowing them down. Do NOT wait for the player to prompt it and do NOT keep them politely level while the player does all the consuming: the player is one person at this table, not the only one with a body. `
-            + `Every turn, for each intoxicated character, ask: has enough happened that this person would have had another? If yes — and across a normal scene the answer is yes often — narrate them taking it and commit altered_state_updates with redose:true. A character whose doseCount never moves across a long night is being written wrong. `
-            + `INFER IT. You do not need the player to state a dose. A round arriving, a glass being refilled, a baggie going round, someone disappearing to the bathroom together, "one more before we go" — these ARE doses and must be committed as such for everyone involved, not just whoever spoke last. `
-            + `The appetite is SHARPEST while declining: that is the chase, when people redose hardest to hold the feeling rather than let it go. Declining is not winding down, it is when someone goes looking for more. `
-            // The rules above are written about NPCs, and the player kept being
-            // read as the thing that PROMPTS a dose rather than someone who takes
-            // them. Result: the player narrates two bumps in a row, the model
-            // faithfully updates their phase, and doseCount stays at 1 — so the
-            // engine ages them off a single dose taken half an hour ago while the
-            // fiction has them freshly lit. The player is a body in the scene, not
-            // just the camera.
-            + `THE PLAYER IS TRACKED EXACTLY LIKE ANY OTHER CHARACTER. When the player's own message has them taking a dose — another bump, another drink, another cap — you MUST record it: altered_state_updates for actor "player" with redose:true, every single time, even when they already have that substance active. Updating only their phase is wrong; a fresh dose restarts their clock and increments the dose count, and skipping it makes the engine treat a line taken thirty seconds ago as one taken half an hour ago. Their persona is a character with a body, appetites and a tolerance, not a viewpoint. `
-            + `For relevant social exchanges derive qualitative interaction resonance (aligned / partially_aligned / neutral / mismatched / strongly_mismatched) from both Altered States, personality, familiarity, directional relationship, VAD, knowledge and context. Never calculate drug buffs or automatically change relationships. `
-            + `Continuous inventory keeps append-only quantity observations. Unknown is not zero; unobserved is not nonexistent; known inventory is not exhaustive unless explicitly marked. `
-            + `GM proposals and scene cards are non-authoritative derived material until an explicit accepted canon mutation receipt.`
-            + bunnyRxContext
-            + directiveContext
-            + pacingContext
-            + envelopeContext
-            + dossierContext;
+        return composeMechanicsContext(candidates) + dossierContext;
     }
+
+
 
     // Reconciler-facing pre-turn frame. The Reconciler sees engine-owned
     // truth (phases, dose arithmetic, containers, cognition) and supplies
@@ -1665,7 +1824,7 @@
                     phaseAuthority: profilePhasePolicy(registry?.profiles?.[record.profileKey] || {}).authority,
                     minutesSinceOnset: Number.isFinite(Number(record.onsetTotalMinutes)) && Number.isFinite(nowMinutes)
                         ? Math.max(0, Math.round(nowMinutes - Number(record.onsetTotalMinutes))) : null,
-                    doseCount: Number(record.doseCount) || 0,
+                    doseCount: effectiveDoseCount(record),
                     explicitDoses: events.filter(event => event.provenance === 'explicit'
                         || event.provenance === 'authorial').length,
                     inferredDoses: events.filter(event => event.provenance === 'inferred_continuation').length,
@@ -1696,6 +1855,108 @@
         };
         return `\n[WORLD MECHANICS — PRE-TURN FRAME]\n${JSON.stringify(frame)}\n`
             + `The engine owns phases and dose arithmetic. INFER IT, FROM PROSE: a round arriving, a glass refilled, a baggie going round are doses for everyone involved — commit altered_state_updates with redose:true for each actor who took one. Never set a phase: restate phase only as an evidence-shaped transition (profile_key + source_event_ids + domains); illegal transitions are dropped with a report, never void the receipt. COMPRESSED TIME inside an ongoing consumption activity: submit a continuation entry {interval_minutes, rate_relation, basis} and let the engine compute inferred doses from canonical cadence; supply quantity_delta only when the narration states an exact count; use rate_relation "stopped" when the narration establishes explicit cessation. THE PLAYER IS TRACKED LIKE ANY CHARACTER: when the player's input has them taking a dose, commit it for actor "player" with redose:true, every time. Containers: unobserved is not zero; quantity observations stay evidence-backed.`;
+    }
+
+    // --- Authorial canonical-input controls + visible panel (Annex A1/A2) ---
+    // The panel is deliberately approximate: counts carry their provenance
+    // ("~N (est.)" when inference contributed) and never reveal the outcome
+    // of the next action. Manual controls adjust canonical INPUTS; the
+    // engine recomputes everything downstream.
+    function effectiveDoseCount(record) {
+        return Math.max(0, (Number(record?.doseCount) || 0) + (Number(record?.authorialDoseOffset) || 0));
+    }
+
+    function adjustDoseCount(world, session, actorId, profileKey, delta) {
+        if (!isEnabled(world)) return { ok: false, reason: 'disabled' };
+        const state = ensureSession(world, session);
+        const actor = id(actorId), key = id(profileKey);
+        const record = list(state.alteredStates[actor]).find(item => item?.profileKey === key);
+        if (!record || record.status === 'resolved') return { ok: false, reason: 'no_active_state' };
+        const step = parseInt(delta) || 0;
+        if (!step) return { ok: false, reason: 'no_change' };
+        const nowMinutes = Number(globalThis.getWorldTimeData?.(world, session)?.currentTotalMinutes);
+        const nowTurn = Math.max(1, parseInt(session.turnCount) || 1);
+        if (step > 0) {
+            // An authorial "they had another" is a fresh canonical input:
+            // it appends authorial dose events and restarts the onset clock,
+            // exactly like a narrated redose.
+            for (let count = 0; count < step; count++) {
+                record.doseEvents.push({
+                    atTotalMinutes: Number.isFinite(nowMinutes) ? nowMinutes : null,
+                    quantity: 1, provenance: 'authorial'
+                });
+            }
+            record.doseEvents = record.doseEvents.slice(-80);
+            record.doseCount = (Number(record.doseCount) || 0) + step;
+            if (Number.isFinite(nowMinutes)) {
+                record.onsetTotalMinutes = nowMinutes;
+                record.onsetTurn = nowTurn;
+            }
+        } else {
+            // A negative adjustment never deletes committed evidence. It
+            // offsets the count authorially; the display and future
+            // arithmetic use the effective count.
+            record.authorialDoseOffset = (Number(record.authorialDoseOffset) || 0) + step;
+            if (effectiveDoseCount(record) <= 0) {
+                record.status = 'resolved';
+                record.phase = 'resolved';
+                record.resolvedTurn = nowTurn;
+                record.resolvedTotalMinutes = Number.isFinite(nowMinutes) ? nowMinutes : undefined;
+                record.phaseTransitionReason = 'authorial_dose_adjustment';
+                return { ok: true, record, resolved: true };
+            }
+        }
+        const profile = globalThis.HordeWorldMechanicsRegistry?.profiles?.[key] || null;
+        return { ok: true, record, resolved: false };
+    }
+
+    function resolveAlteredState(world, session, actorId, profileKey) {
+        if (!isEnabled(world)) return { ok: false, reason: 'disabled' };
+        const state = ensureSession(world, session);
+        const record = list(state.alteredStates[id(actorId)]).find(item => item?.profileKey === id(profileKey));
+        if (!record || record.status === 'resolved') return { ok: false, reason: 'no_active_state' };
+        const nowMinutes = Number(globalThis.getWorldTimeData?.(world, session)?.currentTotalMinutes);
+        record.status = 'resolved';
+        record.phase = 'resolved';
+        record.resolvedTurn = Math.max(1, parseInt(session.turnCount) || 1);
+        record.resolvedTotalMinutes = Number.isFinite(nowMinutes) ? nowMinutes : undefined;
+        record.phaseTransitionReason = 'authorial_resolution';
+        return { ok: true, record };
+    }
+
+    function actorStatePanel(world, session, actorId, registry) {
+        if (!isEnabled(world)) return { enabled: false, states: [] };
+        const state = ensureSession(world, session);
+        const nowMinutes = Number(globalThis.getWorldTimeData?.(world, session)?.currentTotalMinutes);
+        const envelope = computeFeasibilityEnvelope(world, session, actorId, registry);
+        const impairedTasks = Object.entries(envelope.tasks || {})
+            .filter(([, def]) => def.legality && def.legality !== 'succeeds')
+            .map(([task, def]) => ({ task, legality: def.legality }));
+        const states = list(state.alteredStates[id(actorId)])
+            .filter(record => record?.status !== 'resolved')
+            .map(record => {
+                const profile = registry?.profiles?.[record.profileKey] || {};
+                const events = list(record.doseEvents);
+                const effective = effectiveDoseCount(record);
+                return {
+                    profileKey: record.profileKey,
+                    label: profile.label || record.profileKey,
+                    phase: record.phase,
+                    observable: record.observable || 'unknown',
+                    // Approximate by design: inferred doses mark the count
+                    // as an estimate, never false precision.
+                    effectiveDoseCount: effective,
+                    estimated: (events.filter(event => event.provenance === 'inferred_continuation').length
+                        + (Number(record.authorialDoseOffset) || 0)) > 0,
+                    approximateLevel: ['none', 'mild', 'noticeable', 'significant'][PHASE_IMPAIRMENT[record.phase] || 0] || 'noticeable',
+                    minutesSinceOnset: Number.isFinite(Number(record.onsetTotalMinutes)) && Number.isFinite(nowMinutes)
+                        ? Math.max(0, Math.round(nowMinutes - Number(record.onsetTotalMinutes))) : null,
+                    selfAssessment: record.selfAssessment || '',
+                    selfAssessmentReliability: record.selfAssessmentReliability || 'unknown',
+                    impairedTasks
+                };
+            });
+        return { enabled: true, states };
     }
 
     function extendReceiptSchema(world, parameters) {
@@ -1908,6 +2169,11 @@
         resolveContinuation,
         normalizeContinuationUpdate,
         reconcilerFrame,
+        effectiveDoseCount,
+        adjustDoseCount,
+        resolveAlteredState,
+        actorStatePanel,
+        contextCandidates,
         isEnabled,
         ensureSession,
         normalizeCheckpointOverlay,

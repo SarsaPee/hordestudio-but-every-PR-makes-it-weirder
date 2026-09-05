@@ -12898,7 +12898,7 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
     const jsonText = value => { try { return JSON.stringify(value); } catch (_) { return ''; } };
     const normKey = text => String(text || '').toLowerCase()
         .replace(/\s+/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 180);
-    const add = (lane, label, text, priority, cap) => {
+    const add = (lane, label, text, priority, cap, options = {}) => {
         const content = String(text || '').trim();
         orderCounter += 1;
         if (!content) {
@@ -12908,7 +12908,7 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
         const clipped = content.length > cap;
         const candidate = {
             lane: String(lane), label: String(label || lane), priority: Math.max(1, priority || 3),
-            order: orderCounter, chars: content.length,
+            order: orderCounter, chars: content.length, mandatory: options.mandatory === true,
             content: clipped ? content.slice(0, cap) + '\n[truncated by context budget]' : content,
             clipped, kept: false, reason: 'pending'
         };
@@ -13027,17 +13027,31 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
         String(opt.statContext || '').trim() ? 'Player stats: ' + opt.statContext : '',
         'Mechanics are narrative-only in this mode: apply their meaning in prose and leave all mechanical persistence to Horde Sidecar.'
     ].filter(Boolean).join('\n');
-    // World mechanics: the engine's narrator block (committed state,
-    // BunnyRx active-profile reference, altered-state directives, pacing
-    // check, feasibility envelope) is authoritative committed state, so it
-    // rides the mechanics lane at priority 1.
-    const mechanicsContextBlock = window.HordeWorldMechanics?.isEnabled?.(world)
-        ? String(window.HordeWorldMechanics.promptContext?.(world, sess,
-            world.mechanicsRegistry || window.HordeWorldMechanicsRegistry || null) || '').trim()
-        : '';
-    if (mechanicsContextBlock) {
-        add('mechanics', 'MECHANICS — COMMITTED WORLD STATE', mechanicsContextBlock, 1, 12000);
-    }
+    // World mechanics context is candidateized like everything else: the
+    // engine emits the smallest mechanically meaningful facts for this
+    // audience and these on-stage entities, and each candidate competes
+    // for the budget on its own relevance. Mandatory candidates are real:
+    // the compiler keeps them even under budget pressure.
+    const mechanicsCandidates = window.HordeWorldMechanics?.isEnabled?.(world)
+        ? (window.HordeWorldMechanics.contextCandidates?.(world, sess,
+            world.mechanicsRegistry || window.HordeWorldMechanicsRegistry || null, {
+            audience: 'narrator',
+            relevantEntityIds: ['player', ...castIds],
+            controlledEntityId: 'player',
+            locationId: String(sess.playerLocation || ''),
+            entityNames: (Array.isArray(world.entities) ? world.entities : [])
+                .filter(entity => entity?.id).reduce((map, entity) => {
+                    map[entity.id] = String(entity.name || entity.id);
+                    return map;
+                }, {})
+        }) || [])
+        : [];
+    mechanicsCandidates.forEach(candidate => {
+        add(String(candidate.lane || 'mechanics'), String(candidate.title || 'WORLD MECHANICS'),
+            candidate.text, Number(candidate.priority) || 1,
+            Number(candidate.budgetHint) || 2000,
+            { mandatory: candidate.mandatory === true });
+    });
     add('mechanics', 'MECHANICS', mechanics, 2, 1600);
     add('engine_events', 'ENGINE EVENTS — WEAVE INTO THIS BEAT', opt.engineEventsPrompt, 1, 1200);
     add('memories', 'SEMANTIC RECALL — derived memory, never objective canon', jsonText(opt.recall), 2, 3000);
@@ -13089,7 +13103,9 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
             candidate.reason = 'contained';
             return;
         }
-        if (used + candidate.content.length > budgetMax) { candidate.reason = 'over_budget'; return; }
+        // Mandatory candidates cannot lose the budget competition: token
+        // budgeting must not silently repeal committed mechanical truth.
+        if (!candidate.mandatory && used + candidate.content.length > budgetMax) { candidate.reason = 'over_budget'; return; }
         candidate.kept = true;
         candidate.reason = 'included';
         if (candidate.key) seenKeys.push(candidate.key);
@@ -13120,7 +13136,8 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
         droppedCount: candidates.filter(candidate => !candidate.kept).length,
         candidates: candidates.map(candidate => ({
             lane: candidate.lane, label: candidate.label, priority: candidate.priority,
-            chars: candidate.chars, clipped: candidate.clipped === true, kept: candidate.kept, reason: candidate.reason
+            chars: candidate.chars, clipped: candidate.clipped === true,
+            mandatory: candidate.mandatory === true, kept: candidate.kept, reason: candidate.reason
         }))
     };
     return { contextBlock: contextBlock, manifest: manifest };
