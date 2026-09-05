@@ -28693,21 +28693,97 @@ function worldDialogueSpeaker(world, paragraph, quoteStart, quoteEnd, currentFoc
     return unique.length === 1 ? nearby[nearby.length - 1].entity : null;
 }
 
-function renderWorldDialogueCard(world, speaker, dialogue, className = 'world-npc-dialogue') {
+function renderWorldDialogueCard(world, speaker, dialogue, className = 'world-npc-dialogue', options = {}) {
     const portrait = worldMediaSource(world, speaker?.visuals?.portraitAssetId);
     const initials = String(speaker?.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
-    const color = cssColor(speaker?.visuals?.dialogueColor || 'var(--accent)');
+    // An FF voice color tag, when present, wins over the entity's configured
+    // dialogue color: the narrator issued it for this exact line.
+    const color = cssColor(options.color || speaker?.visuals?.dialogueColor || 'var(--accent)');
     return `<div class="${className}" data-speaker-id="${escapeHTML(speaker?.id || '')}" style="--speaker-color:${color}">
         <span class="world-npc-dialogue-avatar" style="${portrait ? `background-image:url('${cssUrl(portrait)}')` : ''}">${portrait ? '' : escapeHTML(initials)}</span>
         <span class="world-npc-dialogue-copy"><strong>${escapeHTML(speaker?.name || 'Unknown')}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
     </div>`;
 }
 
-function renderWorldNarrativeHtml(world, text) {
+// ---------------------------------------------------------------------------
+// FF Voice Color groundwork. The narrator's Voice Color sections already do
+// the speaker detection inside the prose, wrapping each character's speech in
+// a color tag (<salmon>"..."</salmon> for one character, a different color for
+// the next). The presenter consumes that signal: tagged spans are marked
+// dialogue by construction, the tag color drives the voice-line styling, and
+// color identity maps to a canonical character across the whole conversation
+// (same color later in the chat, or in a later turn, is the same speaker).
+// ---------------------------------------------------------------------------
+const FF_VOICE_COLOR_NAMES = new Set('aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchard darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen'.split(' '));
+
+// worldId -> Map(lowercased color -> canonical entity id). Rebuilt in message
+// order on each render pass, so later turns inherit earlier attributions.
+const worldVoiceColorSpeakers = new Map();
+
+function isFFVoiceColorTag(name) {
+    return FF_VOICE_COLOR_NAMES.has(String(name || '').toLowerCase());
+}
+
+function stripFFVoiceTags(text) {
+    return String(text || '').replace(/<([a-z][a-z0-9]*)>([\s\S]*?)<\/\1>/gi, (full, name, inner) =>
+        isFFVoiceColorTag(name) ? inner : full);
+}
+
+function worldVoiceColorSpeaker(world, color) {
+    const lowered = String(color || '').toLowerCase();
+    const map = worldVoiceColorSpeakers.get(String(world?.id || ''));
+    if (map && map.has(lowered)) {
+        const entity = (world?.entities || []).find(item => item && item.id === map.get(lowered));
+        if (entity) return entity;
+    }
+    const byConfiguredColor = (world?.entities || []).find(item => item
+        && String(item?.visuals?.dialogueColor || '').toLowerCase() === lowered);
+    return byConfiguredColor || null;
+}
+
+function recordWorldVoiceColorSpeaker(world, color, speaker) {
+    if (!world?.id || !speaker?.id || !color) return;
+    let map = worldVoiceColorSpeakers.get(world.id);
+    if (!map) { map = new Map(); worldVoiceColorSpeakers.set(world.id, map); }
+    map.set(String(color).toLowerCase(), speaker.id);
+}
+
+// FF narrates in 2nd person, so the player's own spoken lines appear inside
+// "You ..." narration. Keep them with the persona instead of letting a nearby
+// NPC mention (someone else's desk, for instance) steal the attribution.
+function worldSpeechIsPlayerVoice(lead, after) {
+    const leadText = String(lead || '');
+    const lastSentence = leadText.trim().split(/(?<=[.!?])\s+/).pop() || '';
+    const youSubject = /^\s*(?:And\s+|But\s+|So\s+|Then\s+)?[Yy]ou\b/.test(lastSentence)
+        || /\b[Yy]ou\s+(?:'ll\s+|will\s+)?(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|tell|tells|told|call|calls|called|greet|greets|greeted|offer|offers|offered|mutter|mutters|muttered|snap|snaps|snapped|whisper|whispers|whispered|shout|shouts|shouted|quip|quips|quipped|add|adds|added)\b/.test(lastSentence);
+    const afterTag = /^\s*[,—–-]?\s*[Yy]ou\s+(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|add|adds|added|offer|offers|offered)\b/.test(String(after || ''));
+    return youSubject || afterTag;
+}
+
+function renderWorldPlayerVoiceCard(sess, dialogue) {
+    const persona = state.personas.find(item => item.id === (sess?.personaId || state.activePersonaId));
+    const name = persona?.name || 'You';
+    const avatar = persona?.avatar || '';
+    const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
+    const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
+    return `<div class="world-npc-dialogue world-player-dialogue" data-speaker-id="player" style="--speaker-color:${color}">
+        <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${cssUrl(avatar)}')` : ''}">${avatar ? '' : escapeHTML(initials)}</span>
+        <span class="world-npc-dialogue-copy"><strong>${escapeHTML(name)}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
+    </div>`;
+}
+
+function renderWorldVoiceLineCard(color, dialogue) {
+    // Tagged dialogue whose speaker could not be resolved: still a voice
+    // line, in the narrator-issued color, without a name or portrait.
+    return `<div class="world-voice-line" style="--speaker-color:${cssColor(color)}">${parseHordeMarkdown(dialogue)}</div>`;
+}
+
+function renderWorldNarrativeHtml(world, text, sess = null) {
     const source = String(text || '');
-    if (!world || !source) return parseHordeMarkdown(source);
+    if (!world || !source) return parseHordeMarkdown(stripFFVoiceTags(source));
     const paragraphs = source.split(/\n{2,}/);
     const quotePattern = /“([^”\n]+)”|"([^"\n]+)"/g;
+    const voiceTagPattern = /<([a-z][a-z0-9]*)>((?:(?!<\/\1>)[\s\S])*?)<\/\1>/gi;
     let recognized = 0;
     let carriedSpeaker = null;
     let carryAge = 99;
@@ -28726,8 +28802,26 @@ function renderWorldNarrativeHtml(world, text) {
             }
         }
 
-        const matches = [...paragraph.matchAll(quotePattern)];
-        if (!matches.length) {
+        // FF Voice Color spans are marked dialogue: the narrator already did
+        // the speaker detection and issued the color, so they always become
+        // voice lines even when this paragraph cannot name a speaker.
+        const voiceTags = [...paragraph.matchAll(voiceTagPattern)]
+            .map(match => ({ name: match[1], inner: match[2], index: match.index || 0, end: (match.index || 0) + match[0].length }))
+            .filter(tag => isFFVoiceColorTag(tag.name));
+        const tagRanges = voiceTags.map(tag => [tag.index, tag.end]);
+        const quoteMatches = [...paragraph.matchAll(quotePattern)]
+            .filter(match => !tagRanges.some(([start, end]) => (match.index || 0) >= start && (match.index || 0) < end));
+        const items = [
+            ...voiceTags.map(tag => ({
+                index: tag.index, end: tag.end, tagged: true, color: String(tag.name).toLowerCase(),
+                dialogue: tag.inner.replace(/^[\s"“”']+/, '').replace(/[\s"“”']+$/, '')
+            })),
+            ...quoteMatches.map(match => ({
+                index: match.index || 0, end: (match.index || 0) + match[0].length, tagged: false, color: null,
+                dialogue: String(match[1] ?? match[2] ?? '')
+            }))
+        ].sort((a, b) => a.index - b.index);
+        if (!items.length) {
             const nextFocus = worldNarrativeFocus(world, paragraph, carriedSpeaker);
             if (nextFocus) {
                 carriedSpeaker = nextFocus;
@@ -28741,20 +28835,58 @@ function renderWorldNarrativeHtml(world, text) {
 
         let cursor = 0;
         let paragraphHtml = '';
-        matches.forEach(match => {
-            const start = match.index || 0;
-            const end = start + match[0].length;
-            const lead = paragraph.slice(cursor, start);
+        items.forEach(item => {
+            const lead = stripFFVoiceTags(paragraph.slice(cursor, item.index));
             const leadFocus = worldNarrativeFocus(world, lead, carriedSpeaker);
             if (leadFocus) carriedSpeaker = leadFocus;
-            let speaker = worldDialogueSpeaker(world, paragraph, start, end, carriedSpeaker);
-            // Ambiguous dialogue remains ordinary prose. A missing portrait is
-            // preferable to confidently putting another person's face/name on
-            // the line.
-            if (!speaker) return;
+            // The player's own speech in 2nd-person narration belongs to the
+            // persona, not to an NPC that happens to be mentioned nearby.
+            if (!item.tagged && sess && worldSpeechIsPlayerVoice(lead, paragraph.slice(item.end, item.end + 160))) {
+                if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
+                paragraphHtml += renderWorldPlayerVoiceCard(sess, item.dialogue);
+                cursor = item.end;
+                carriedSpeaker = null;
+                carryAge = 0;
+                recognized++;
+                return;
+            }
+            let speaker = null;
+            let speakerColor = null;
+            if (item.tagged) {
+                // The tag color is the speaker's voice identity: resolve it to
+                // a canonical character (earlier attribution, configured
+                // dialogue color, or this paragraph's context) and keep the
+                // narrator-issued color on the card either way.
+                speakerColor = item.color;
+                speaker = worldVoiceColorSpeaker(world, item.color);
+                if (!speaker) {
+                    speaker = (carryAge <= 1 && carriedSpeaker)
+                        ? carriedSpeaker
+                        : worldDialogueSpeaker(world, paragraph, item.index, item.end, carriedSpeaker);
+                }
+                if (speaker) recordWorldVoiceColorSpeaker(world, item.color, speaker);
+            } else {
+                speaker = worldDialogueSpeaker(world, paragraph, item.index, item.end, carriedSpeaker);
+            }
+            if (!speaker) {
+                if (item.tagged) {
+                    // Ambiguous attribution still renders as a colored voice
+                    // line; the tag guarantees a character is speaking.
+                    if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
+                    paragraphHtml += renderWorldVoiceLineCard(item.color, item.dialogue);
+                    cursor = item.end;
+                    carryAge = 0;
+                    recognized++;
+                    return;
+                }
+                // Ambiguous plain dialogue remains ordinary prose. A missing
+                // portrait is preferable to confidently putting another
+                // person's face/name on the line.
+                return;
+            }
             if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
-            paragraphHtml += renderWorldDialogueCard(world, speaker, match[1] ?? match[2] ?? '');
-            cursor = end;
+            paragraphHtml += renderWorldDialogueCard(world, speaker, item.dialogue, 'world-npc-dialogue', { color: speakerColor });
+            cursor = item.end;
             carriedSpeaker = speaker;
             carryAge = 0;
             recognized++;
@@ -28765,7 +28897,7 @@ function renderWorldNarrativeHtml(world, text) {
             else carryAge++;
             return `<div class="world-narrative-prose">${parseHordeMarkdown(paragraph)}</div>`;
         }
-        const tail = paragraph.slice(cursor);
+        const tail = stripFFVoiceTags(paragraph.slice(cursor));
         if (tail.trim()) {
             paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(tail)}</div>`;
             const tailFocus = worldNarrativeFocus(world, tail, carriedSpeaker);
@@ -28773,7 +28905,7 @@ function renderWorldNarrativeHtml(world, text) {
         }
         return paragraphHtml;
     }).join('');
-    return recognized ? html : parseHordeMarkdown(source);
+    return recognized ? html : parseHordeMarkdown(stripFFVoiceTags(source));
 }
 
 function renderWorldPlayerMessageHtml(sess, text) {
@@ -28909,10 +29041,10 @@ function appendWorldMessageUI(msg, index = null) {
         ? activeSession.presentationMode
         : (presentation?.enabled ? presentation.mode : 'classic');
     const messageHtml = msg.role === 'dm' && presentationMode !== 'classic'
-        ? renderWorldNarrativeHtml(world, displayText)
+        ? renderWorldNarrativeHtml(world, displayText, activeSession)
         : msg.role === 'user' && presentationMode !== 'classic'
             ? renderWorldPlayerMessageHtml(activeSession, displayText)
-            : parseHordeMarkdown(displayText);
+            : parseHordeMarkdown(msg.role === 'dm' ? stripFFVoiceTags(displayText) : displayText);
     const metaParts = [];
     if (msg.location) {
         const locObj = world ? world.locations.find(l => l.id === msg.location) : null;
