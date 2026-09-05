@@ -9223,6 +9223,7 @@ function enhanceAccessibility(root = document) {
 function getVisibleDialog() {
     const visible = [...document.querySelectorAll('.modal-bg, .modal-overlay')]
         .filter(dialog => !dialog.classList.contains('hidden') && getComputedStyle(dialog).display !== 'none');
+    if (!visible.length) return null;
     // Stacked dialogs: the visual editor opens above the record inspector
     // even though the inspector sits later in the DOM. The layer that owns
     // focus wins first; otherwise the topmost painted layer (highest
@@ -11879,7 +11880,57 @@ function deriveSidecarExplicitTimeSkip(handoff, clockEvidence, startAnchor) {
     };
 }
 
-function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal) {
+// The Reader does not author a duration. It may, however, resolve the
+// Narrator's already-authored temporal meaning to an endpoint when both the
+// source and result are explicitly attributable to this beat. This is the
+// semantic path for statements such as "roughly one minute elapsed"; the
+// original language remains stored as the evidence, while the normalized
+// endpoint is used only by the clock reducer.
+function deriveSidecarReaderTemporalResolution(readerPacket, clockEvidence, temporal) {
+    const evidence = readerPacket?.valid === true && isPlainObject(readerPacket.timeEvidence)
+        ? readerPacket.timeEvidence : null;
+    if (!evidence) return null;
+    const resolution = String(evidence.resolution || evidence.status || '').toLowerCase();
+    if (['unknown', 'unresolved', 'none', 'no_change'].includes(resolution)) return null;
+    const sourceText = String(evidence.source_clock || evidence.sourceClock || evidence.start_clock || evidence.startClock || '').trim();
+    const targetText = String(evidence.end_clock || evidence.endClock || evidence.target_clock || evidence.targetClock || '').trim();
+    const canonicalMinute = Number(clockEvidence?.canonicalTotalMinutes);
+    if (!sourceText || !targetText || !Number.isFinite(canonicalMinute)) return null;
+    const canonicalMinuteOfDay = ((canonicalMinute % 1440) + 1440) % 1440;
+    const fallbackMeridiem = canonicalMinuteOfDay >= 720 ? 'pm' : 'am';
+    const source = parseSidecarClockEndpoint(sourceText);
+    const target = parseSidecarClockEndpoint(targetText);
+    if (!source || !target) return null;
+    const sourceMinuteOfDay = sidecarEndpointMinuteOfDay(source, fallbackMeridiem);
+    const headerStart = temporal?.currentTurnStart;
+    const headerMinuteOfDay = Number(headerStart?.minuteOfDay);
+    const anchoredToHeader = sourceMinuteOfDay !== canonicalMinuteOfDay
+        && Number.isFinite(headerMinuteOfDay)
+        && sourceMinuteOfDay === headerMinuteOfDay
+        && String(headerStart?.basis || '') === 'header';
+    if (sourceMinuteOfDay !== canonicalMinuteOfDay && !anchoredToHeader) return null;
+    const targetMinuteOfDay = sidecarEndpointMinuteOfDay(target,
+        target.meridiem ? '' : (source.meridiem || (sourceMinuteOfDay >= 720 ? 'pm' : 'am')));
+    if (targetMinuteOfDay === null) return null;
+    let minutes = targetMinuteOfDay - sourceMinuteOfDay;
+    if (minutes <= 0 && (source.meridiem === 'pm' || sourceMinuteOfDay >= 720) && target.meridiem === 'am') minutes += 1440;
+    if (minutes <= 0 || minutes > SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES) return null;
+    return {
+        minutes,
+        source: sourceText,
+        target: targetText,
+        sourceMinuteOfDay,
+        targetMinuteOfDay,
+        anchoredToHeader,
+        precision: ['exact', 'approximate'].includes(String(evidence.precision || '').toLowerCase())
+            ? String(evidence.precision).toLowerCase() : 'semantic',
+        authoredMeaning: String(evidence.authored_meaning || evidence.authoredMeaning || '').slice(0, 1200),
+        rationale: String(evidence.rationale || evidence.reason || '').slice(0, 1200),
+        basis: 'reader_source_anchored_semantic_resolution'
+    };
+}
+
+function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal, readerPacket = null) {
     if (!isPlainObject(receipt)) return null;
     const breakdown = isPlainObject(temporal)
         ? temporal
@@ -11892,15 +11943,24 @@ function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal
     let totalMinutes = 0;
     if (phaseSupported(breakdown.interTurnJump)) totalMinutes += Number(breakdown.interTurnJump.minutes) || 0;
     if (phaseSupported(breakdown.inTurnElapsed)) totalMinutes += Number(breakdown.inTurnElapsed.minutes) || 0;
+    const readerResolution = deriveSidecarReaderTemporalResolution(readerPacket, clockEvidence, breakdown);
+    if (readerResolution) {
+        // A source anchored at the pre-turn clock already covers the whole
+        // beat; a header-anchored source covers only its in-turn second phase.
+        totalMinutes = readerResolution.anchoredToHeader
+            ? (phaseSupported(breakdown.interTurnJump) ? Number(breakdown.interTurnJump.minutes) || 0 : 0) + readerResolution.minutes
+            : readerResolution.minutes;
+    }
     if (totalMinutes > 0 && totalMinutes <= SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES) {
         receipt.state_updates.time_skip_minutes = totalMinutes;
         return {
             minutes: totalMinutes,
             interTurnMinutes: phaseSupported(breakdown.interTurnJump) ? Number(breakdown.interTurnJump.minutes) || 0 : 0,
             inTurnMinutes: phaseSupported(breakdown.inTurnElapsed) ? Number(breakdown.inTurnElapsed.minutes) || 0 : 0,
-            basis: 'two_phase_header_and_endpoints',
+            basis: readerResolution?.basis || 'two_phase_header_and_endpoints',
             header: breakdown.narratorHeader,
-            statement: sidecarTemporalStatement(handoff)
+            statement: sidecarTemporalStatement(handoff),
+            readerResolution: readerResolution ? safeJsonClone(readerResolution) : null
         };
     }
     return null;
@@ -13368,7 +13428,9 @@ function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock, explic
             target: explicitEndpointEvidence.target,
             derivedMinutes: explicitEndpointEvidence.minutes,
             sourceMinuteOfDay: explicitEndpointEvidence.sourceMinuteOfDay,
-            targetMinuteOfDay: explicitEndpointEvidence.targetMinuteOfDay
+            targetMinuteOfDay: explicitEndpointEvidence.targetMinuteOfDay,
+            basis: explicitEndpointEvidence.basis || 'two_phase_header_and_endpoints',
+            readerResolution: safeJsonClone(explicitEndpointEvidence.readerResolution || null)
         } : null,
         beforeCanonicalMinutes: beforeClock?.currentTotalMinutes ?? null,
         afterCanonicalMinutes: afterClock.currentTotalMinutes,
@@ -13739,7 +13801,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
             worldMechanicsRegistryFor(world)) || '')
         : '';
     const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, or canonical identity is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence.\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock.\n\nCANONICAL REFERENCE MANIFEST:\n${JSON.stringify(references)}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
-    const messages = [{ role: 'system', content: prompt }, { role: 'user', content: 'Read this authored beat and return the semantic evidence packet.' }];
+    const messages = [{ role: 'system', content: prompt }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
     let finalPayload = null;
     for (let round = 0; round < 3; round++) {
@@ -14021,7 +14083,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             throw missing;
         }
         const receipt = unwrapSidecarCommitReceipt(toolCall.function?.arguments || '{}');
-        const explicitEndpointEvidence = applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporalBreakdown);
+        const explicitEndpointEvidence = applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporalBreakdown, readerPacket);
         const receiptContext = {
             ...(options.receiptContext || {}),
             sidecarTemporalAuthority: true,
