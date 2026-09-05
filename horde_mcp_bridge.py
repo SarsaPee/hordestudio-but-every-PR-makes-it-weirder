@@ -1916,7 +1916,28 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
         payload["aspect_ratio"] = aspect
         if image_url:
             payload["image_url"] = image_url
-    result = fal_json_request(f"https://fal.run/{model}", key, method="POST", payload=payload, timeout=180)
+    submit = lambda: fal_json_request(f"https://fal.run/{model}", key, method="POST", payload=payload, timeout=180)
+    try:
+        result = submit()
+    except FalRequestError as error:
+        # Reference-image conventions differ across fal generations
+        # (image_url vs image_urls). For generic live-catalog models a
+        # validation error naming the other field is a free, unbilled 422:
+        # adapt the field once and resubmit.
+        generic_model = model not in FAL_IMAGE_MODELS and model != "fal-ai/wan-25-preview/image-to-image"
+        wanted = ""
+        if image_url and generic_model and error.status == 422 and error.error_type == "missing":
+            wanted = "image_urls" if "image_urls" in error.fields else (
+                "image_url" if "image_url" in error.fields else "")
+        if not wanted:
+            raise
+        payload.pop("image_url", None)
+        payload.pop("image_urls", None)
+        if wanted == "image_urls":
+            payload["image_urls"] = [image_url]
+        else:
+            payload["image_url"] = image_url
+        result = submit()
     images = result.get("images") if isinstance(result.get("images"), list) else []
     first = images[0] if images and isinstance(images[0], dict) else {}
     single_image = result.get("image") if isinstance(result.get("image"), dict) else {}
