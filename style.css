@@ -10063,3 +10063,23 @@ label[data-help] > span:first-child::after,
     .or-provider-option small { max-width: 100%; text-align: left; }
     .or-routing-controls > label:last-child { width: 100%; min-width: 0; }
 }
+
+/* ═══════════════ NARRATOR ROLEPLAY OS (FF 5.4) CHOICE SURFACE ═══════════════ */
+.os-choice-row { margin-top: 10px; }
+.os-choice-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.os-choice-label { font-size: 0.8rem; font-weight: 600; color: var(--text); }
+.os-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.os-chip { border: 1px solid var(--border2); background: var(--surface3); color: var(--text-2); border-radius: 999px; padding: 4px 12px; font-size: 0.72rem; cursor: pointer; transition: border-color .15s ease, color .15s ease; }
+.os-chip:hover { border-color: var(--accent); color: var(--text); }
+.os-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.os-chip.locked { cursor: default; opacity: 0.7; }
+.os-chip.locked:hover { border-color: var(--border2); color: var(--text-2); }
+.os-chip.replaced { border-style: dashed; }
+.os-chip.preserved { border-style: dashed; opacity: 0.85; }
+.os-tag { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border2); color: var(--text-3); }
+.os-tag-pinned { color: var(--danger); border-color: var(--danger); }
+.os-tag-replaced { color: var(--success); border-color: var(--success); }
+.os-choice-note { margin-top: 4px; }
+.os-builtin-value { display: inline-block; background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 0.72rem; color: var(--text-2); }
+.os-migration-report { border: 1px solid var(--danger); border-radius: 8px; padding: 8px 12px; }
+.os-migration-report ul { margin: 6px 0 8px; padding-left: 18px; }

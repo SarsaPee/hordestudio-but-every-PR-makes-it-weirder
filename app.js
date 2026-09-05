@@ -11953,7 +11953,15 @@ function normalizeRoleplayOSConfig(raw) {
         source: FF54_AGENTIC_OS.source,
         choices: normalizeFF54Choices(config.choices),
         sourceId: String(config.sourceId || '').slice(0, 120),
-        defaultsApplied: !isPlainObject(config.choices)
+        defaultsApplied: !isPlainObject(config.choices),
+        // Last choice reconciliation against a repointed source, kept visible
+        // in the config surface until dismissed. Reconciliation itself never
+        // silently resets a selection; the notes say exactly what moved.
+        lastMigration: isPlainObject(config.lastMigration) ? {
+            at: String(config.lastMigration.at || '').slice(0, 40),
+            sourceId: String(config.lastMigration.sourceId || '').slice(0, 120),
+            notes: (Array.isArray(config.lastMigration.notes) ? config.lastMigration.notes : []).map(note => String(note || '').slice(0, 400)).slice(0, 24)
+        } : null
     };
 }
 
@@ -12135,9 +12143,14 @@ function worldRoleplayOS(world) {
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world);
     const os = normalizeRoleplayOSConfig(config?.roleplayOS);
     const registry = typeof getInstalledRoleplayOSSources === 'function' ? getInstalledRoleplayOSSources() : [];
-    const sourcePreset = os.sourceId
-        ? (registry.find(entry => entry.id === os.sourceId) || registry.find(entry => entry.presetId === os.sourceId) || null)
-        : (registry.find(entry => /freaky frankenstein/i.test(entry.presetName)) || null);
+    // 'builtin' is an explicit pin to the built-in adapted registry; an empty
+    // sourceId keeps auto-detection (the installed FF source when one exists,
+    // built-in otherwise).
+    const sourcePreset = os.sourceId === 'builtin'
+        ? null
+        : (os.sourceId
+            ? (registry.find(entry => entry.id === os.sourceId) || registry.find(entry => entry.presetId === os.sourceId) || null)
+            : (registry.find(entry => /freaky frankenstein/i.test(entry.presetName)) || null));
     const defaults = sourcePreset && isPlainObject(sourcePreset.defaults)
         ? sourcePreset.defaults : FF54_BUILT_IN_DEFAULTS;
     const effectiveChoices = { ...defaults, ...os.choices, state_mode: FF54_STATE_MODE_PIN };
@@ -17518,6 +17531,10 @@ function setSidecarStudioFeatureAvailability(world = state.editingWorld) {
             feature.removeAttribute('title');
         }
     });
+    // In Sidecar mode the FF 5.4 Roleplay OS owns the narrator prompt, so the
+    // legacy world preset selector has nothing left to contribute there.
+    const legacyPresetSection = document.getElementById('w-legacy-preset-section');
+    if (legacyPresetSection) legacyPresetSection.classList.toggle('hidden', sidecarActive);
 }
 
 function renderWorldOverviewSidecarMigration(world = state.editingWorld) {
@@ -17746,6 +17763,7 @@ function setupWorldStudioLogic() {
     };
     document.getElementById('w-sidecar-fetch-model-btn').onclick = fetchSidecarModelSettings;
     setupSidecarModelSearch();
+    setupRoleplayOSConfigHandlers();
     document.getElementById('w-sidecar-memory-inherit').onchange = event => {
         if (!state.editingWorld) return;
         const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
@@ -18176,6 +18194,311 @@ function updateSidecarOverrideVisibility() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Narrator Roleplay OS (FF 5.4 Agentic) config surface.
+// The installed source's own choiceBlocks are the real setting surface: every
+// option stays selectable, unknown upstream choices survive visibly, and the
+// two architectural facts of the Sidecar adaptation are shown as annotations
+// rather than removals. state_mode is pinned (Sidecar is the state authority)
+// and the upstream Internal States tracking modules are replaced by native
+// Sidecar receipts and the compiled context block.
+// ---------------------------------------------------------------------------
+const FF54_CHOICE_ANNOTATIONS = Object.freeze({
+    state_mode: {
+        pinned: true,
+        note: 'Pinned to AGENTS: Horde Sidecar is the canonical state authority, so the upstream Internal States backend, macro persistence and regex state machinery are architecturally replaced. Every other choice resolves through the preset\'s own gating.'
+    },
+    internal_states: {
+        replaced: true,
+        note: 'Replaced by Sidecar native state: these upstream tracking modules are covered by Sidecar receipts and the compiled context. Selections are kept and still gate matching sections for compatibility.'
+    },
+    nsfw_mode: {
+        requiresSource: true,
+        note: 'Resolves only from an imported source preset; the built-in adapted registry does not include the upstream NSFW sections.'
+    },
+    bypass_mode: {
+        requiresSource: true,
+        note: 'Resolves only from an imported source preset; the built-in adapted registry does not include the upstream jailbreak and bypass sections.'
+    }
+});
+
+function roleplayOSDraft(world) {
+    if (!isPlainObject(world.sidecarConfig)) world.sidecarConfig = {};
+    if (!isPlainObject(world.sidecarConfig.roleplayOS)) world.sidecarConfig.roleplayOS = {};
+    return world.sidecarConfig.roleplayOS;
+}
+
+function roleplayOSChoiceNotes(variable, hasSource) {
+    const annotation = FF54_CHOICE_ANNOTATIONS[variable];
+    if (!annotation) return [];
+    if ((annotation.pinned || annotation.replaced) || (annotation.requiresSource && !hasSource)) return [annotation.note];
+    return [];
+}
+
+function renderRoleplayOSChoiceChipRow(variable, options, effective, { multi = false, locked = false, replaced = false } = {}) {
+    const chips = options.map(option => {
+        const value = String(option.value || '');
+        const active = multi ? effective.indexOf(value) !== -1 : effective === value;
+        const classes = ['os-chip'];
+        if (active) classes.push('active');
+        if (locked) classes.push('locked');
+        if (replaced) classes.push('replaced');
+        if (option.stray) classes.push('preserved');
+        return '<button type="button" class="' + classes.join(' ') + '" data-os-variable="' + escapeHTML(variable) + '" data-os-value="' + escapeHTML(value) + '"'
+            + (locked ? ' disabled' : '')
+            + ' title="' + escapeHTML(value) + '">' + escapeHTML(option.label || value) + '</button>';
+    });
+    return '<div class="os-chip-row">' + chips.join('') + '</div>';
+}
+
+function renderRoleplayOSChoiceBlock(block, os, hasSource) {
+    const annotation = FF54_CHOICE_ANNOTATIONS[block.variableName] || {};
+    const locked = annotation.pinned === true;
+    const replaced = annotation.replaced === true;
+    const raw = os.choices[block.variableName];
+    const multi = block.multiSelect === true;
+    const effective = multi
+        ? (Array.isArray(raw) ? raw : [])
+        : (raw === undefined || raw === null ? '' : String(raw));
+    // Stray values: stored selections that this source no longer offers. They
+    // survive leniently and still gate whatever references them, so they stay
+    // on the surface as removable preserved chips.
+    const knownValues = block.options.map(option => String(option.value || ''));
+    const strays = (multi ? effective : (effective ? [effective] : [])).filter(value => knownValues.indexOf(value) === -1);
+    const tags = [];
+    if (locked) tags.push('<span class="os-tag os-tag-pinned">pinned</span>');
+    if (replaced) tags.push('<span class="os-tag os-tag-replaced">replaced</span>');
+    if (multi) tags.push('<span class="os-tag">multi-select</span>');
+    if (strays.length) tags.push('<span class="os-tag">preserved</span>');
+    const options = block.options.concat(strays.map(value => ({ value, label: value, stray: true })));
+    const chipRow = renderRoleplayOSChoiceChipRow(block.variableName, options, effective, { multi, locked, replaced });
+    const notes = roleplayOSChoiceNotes(block.variableName, hasSource);
+    return '<div class="os-choice-row">'
+        + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(block.question || block.variableName) + '</span>' + tags.join('') + '</div>'
+        + chipRow
+        + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(escapeHTML).join(' ') + '</div>' : '')
+        + (strays.length ? '<div class="form-hint os-choice-note">Preserved values are kept from an earlier source; they still gate any sections that reference them.</div>' : '')
+        + '</div>';
+}
+
+function renderRoleplayOSConfigEditor(world) {
+    const host = document.getElementById('w-roleplay-os-choices');
+    const sourceSelect = document.getElementById('w-roleplay-os-source');
+    if (!host || !sourceSelect || !world) return;
+    const registry = getInstalledRoleplayOSSources();
+    const stored = isPlainObject(world?.sidecarConfig?.roleplayOS) ? world.sidecarConfig.roleplayOS : {};
+    const os = worldRoleplayOS(world);
+    const source = os.sourcePreset || null;
+    const hasSource = !!source;
+
+    // Source dropdown. FF versions coexist in the registry; each world pins
+    // one. 'builtin' is an explicit pin to the built-in adapted registry; an
+    // empty sourceId keeps auto-detection of the installed FF source.
+    const selected = stored.sourceId || (source ? source.id : 'builtin');
+    const options = ['<option value="builtin"' + (selected === 'builtin' ? ' selected' : '') + '>Built-in adapted registry</option>'];
+    registry.forEach(entry => {
+        options.push('<option value="' + escapeHTML(entry.id) + '"' + (selected === entry.id ? ' selected' : '') + '>'
+            + escapeHTML(entry.presetName) + ' &middot; ' + entry.sections.length + ' sections</option>');
+    });
+    if (stored.sourceId && stored.sourceId !== 'builtin' && !registry.some(entry => entry.id === stored.sourceId)) {
+        options.push('<option value="' + escapeHTML(stored.sourceId) + '" selected disabled>Missing pinned source &middot; ' + escapeHTML(stored.sourceId.slice(0, 48)) + '</option>');
+    }
+    sourceSelect.innerHTML = options.join('');
+
+    const info = document.getElementById('w-roleplay-os-source-info');
+    if (info) {
+        if (source) {
+            const label = stored.sourceId && stored.sourceId !== 'builtin' ? 'Source active' : 'Auto-detected source';
+            info.innerHTML = '<strong>' + label + ':</strong> ' + escapeHTML(source.presetName)
+                + ' &middot; ' + source.sections.length + ' sections resolved verbatim through the preset\'s own gating'
+                + ' &middot; content hash <code>' + escapeHTML(source.provenance.contentHash.slice(0, 12)) + '</code>'
+                + ' &middot; adapter v' + escapeHTML(String(source.provenance.adapter));
+        } else {
+            info.innerHTML = '<strong>Built-in adapted registry active.</strong> Import the author\'s Marinara export to resolve the full upstream stack &mdash; including its policy, NSFW and bypass sections &mdash; verbatim, with every choice exposed below.';
+        }
+    }
+
+    const stateBadge = document.getElementById('w-roleplay-os-state');
+    if (stateBadge) {
+        const customCount = Object.keys(isPlainObject(stored.choices) ? stored.choices : {}).filter(key => key !== 'state_mode').length;
+        stateBadge.textContent = customCount ? 'Customized &middot; ' + customCount + ' choice' + (customCount === 1 ? '' : 's') : 'Defaults active';
+    }
+
+    // Choice surface: the source's own choiceBlocks when a source resolves,
+    // otherwise an informational view of the adapter-curated built-in defaults.
+    const blocks = hasSource && Array.isArray(source.choiceBlocks)
+        ? source.choiceBlocks.slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        : [];
+    const html = [];
+    if (!blocks.length) {
+        html.push('<div class="os-choice-row">'
+            + '<div class="os-choice-head"><span class="os-choice-label">state_mode</span><span class="os-tag os-tag-pinned">pinned</span></div>'
+            + renderRoleplayOSChoiceChipRow('state_mode', [{ value: FF54_STATE_MODE_PIN, label: FF54_STATE_MODE_PIN }], FF54_STATE_MODE_PIN, { locked: true })
+            + '<div class="form-hint os-choice-note">' + escapeHTML(FF54_CHOICE_ANNOTATIONS.state_mode.note) + '</div>'
+            + '</div>');
+        html.push('<div class="form-hint" style="margin:8px 0 0;">Built-in defaults (adapter-curated). Import a source preset to configure the complete choice surface.</div>');
+        Object.keys(FF54_BUILT_IN_DEFAULTS).filter(key => key !== 'state_mode').forEach(variable => {
+            const value = FF54_BUILT_IN_DEFAULTS[variable];
+            const shown = Array.isArray(value) ? value.join(', ') : String(value);
+            const notes = roleplayOSChoiceNotes(variable, hasSource);
+            const annotation = FF54_CHOICE_ANNOTATIONS[variable] || {};
+            html.push('<div class="os-choice-row">'
+                + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(variable) + '</span>'
+                + (annotation.pinned ? '<span class="os-tag os-tag-pinned">pinned</span>' : '')
+                + (annotation.replaced ? '<span class="os-tag os-tag-replaced">replaced</span>' : '') + '</div>'
+                + '<code class="os-builtin-value">' + escapeHTML(shown || '&mdash;') + '</code>'
+                + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(escapeHTML).join(' ') + '</div>' : '')
+                + '</div>');
+        });
+    } else {
+        const seen = new Set(['state_mode']);
+        blocks.forEach(block => {
+            seen.add(block.variableName);
+            html.push(renderRoleplayOSChoiceBlock(block, os, hasSource));
+        });
+        // Lenient survival: stored choices without a matching block still gate
+        // whatever sections reference them, so they stay visible and removable.
+        Object.keys(os.choices).filter(variable => !seen.has(variable)).forEach(variable => {
+            const value = os.choices[variable];
+            if (Array.isArray(value)) {
+                if (!value.length) return;
+                html.push('<div class="os-choice-row">'
+                    + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(variable) + '</span><span class="os-tag">preserved</span><span class="os-tag">multi-select</span></div>'
+                    + renderRoleplayOSChoiceChipRow(variable, value.map(item => ({ value: item, label: item })), value.slice(), { multi: true })
+                    + '<div class="form-hint os-choice-note">Kept from an earlier source; it still gates any sections that reference it.</div>'
+                    + '</div>');
+            } else if (value !== undefined && value !== null && String(value)) {
+                html.push('<div class="os-choice-row">'
+                    + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(variable) + '</span><span class="os-tag">preserved</span></div>'
+                    + renderRoleplayOSChoiceChipRow(variable, [{ value: String(value), label: String(value) }], String(value), {})
+                    + '<div class="form-hint os-choice-note">Kept from an earlier source; it still gates any sections that reference it.</div>'
+                    + '</div>');
+            }
+        });
+    }
+    host.innerHTML = html.join('');
+    renderRoleplayOSMigration(world);
+}
+
+function renderRoleplayOSMigration(world) {
+    const host = document.getElementById('w-roleplay-os-migration');
+    if (!host) return;
+    const migration = isPlainObject(world?.sidecarConfig?.roleplayOS?.lastMigration) ? world.sidecarConfig.roleplayOS.lastMigration : null;
+    const notes = migration ? (Array.isArray(migration.notes) ? migration.notes : []) : [];
+    if (!notes.length) {
+        host.innerHTML = '';
+        return;
+    }
+    host.innerHTML = '<div class="os-migration-report"><strong>Selection reconciliation</strong>'
+        + '<ul>' + notes.map(note => '<li>' + escapeHTML(note) + '</li>').join('') + '</ul>'
+        + '<button type="button" id="w-roleplay-os-migration-dismiss" class="btn btn-ghost" style="font-size:0.7rem; padding:2px 10px;">Dismiss</button></div>';
+}
+
+function setRoleplayOSChoice(world, variable, value) {
+    if (!world || variable === 'state_mode') return;
+    const os = worldRoleplayOS(world);
+    const block = os.sourcePreset && Array.isArray(os.sourcePreset.choiceBlocks)
+        ? os.sourcePreset.choiceBlocks.find(item => item.variableName === variable) : null;
+    const multi = block ? block.multiSelect === true : Array.isArray(os.choices[variable]);
+    const draft = roleplayOSDraft(world);
+    const stored = { ...(isPlainObject(draft.choices) ? draft.choices : {}) };
+    if (multi) {
+        const effective = Array.isArray(os.choices[variable]) ? os.choices[variable].slice() : [];
+        const next = effective.indexOf(value) !== -1
+            ? effective.filter(item => item !== value)
+            : effective.concat([value]);
+        const defaults = os.sourcePreset && isPlainObject(os.sourcePreset.defaults) ? os.sourcePreset.defaults : FF54_BUILT_IN_DEFAULTS;
+        const defaultList = Array.isArray(defaults[variable]) ? defaults[variable] : [];
+        const sameAsDefault = next.length === defaultList.length && next.every(item => defaultList.indexOf(item) !== -1);
+        if (sameAsDefault) delete stored[variable];
+        else stored[variable] = next;
+    } else if (stored[variable] === value) {
+        delete stored[variable];
+    } else {
+        stored[variable] = value;
+    }
+    draft.choices = stored;
+    renderRoleplayOSConfigEditor(world);
+}
+
+async function pinRoleplayOSSource(world, sourceId) {
+    if (!world) return;
+    const registry = getInstalledRoleplayOSSources();
+    const entry = registry.find(item => item.id === sourceId) || null;
+    const draft = roleplayOSDraft(world);
+    const stored = isPlainObject(draft.choices) ? draft.choices : {};
+    if (entry) {
+        const reconciled = reconcileFF54WorldChoices(stored, entry);
+        draft.sourceId = entry.id;
+        draft.choices = reconciled.choices;
+        draft.lastMigration = reconciled.migration.length
+            ? { at: new Date().toISOString(), sourceId: entry.id, notes: reconciled.migration.map(item => item.note) }
+            : null;
+    } else {
+        // 'builtin' (or an id that is no longer installed) pins the built-in
+        // adapted registry. Stored selections are kept: they still gate the
+        // built-in sections, and a future repoint reconciles them.
+        draft.sourceId = 'builtin';
+    }
+    await saveState();
+    renderRoleplayOSConfigEditor(world);
+    showToast(entry
+        ? 'World pinned to Roleplay OS source "' + entry.presetName + '".' + (draft.lastMigration ? ' Selections reconciled; see the migration notes.' : '')
+        : 'World pinned to the built-in adapted Roleplay OS registry.', 'info');
+}
+
+async function importRoleplayOSourcePreset(raw) {
+    const entry = installRoleplayOSSource(raw);
+    if (!entry) {
+        showToast('Roleplay OS import failed: no sections found in that file (expected a Marinara or SillyTavern preset export).', 'error');
+        return;
+    }
+    await saveState();
+    const world = state.editingWorld;
+    if (world) await pinRoleplayOSSource(world, entry.id);
+    showToast('Installed Roleplay OS source "' + entry.presetName + '" (' + entry.sections.length + ' sections' + (entry.choiceBlocks.length ? ', ' + entry.choiceBlocks.length + ' choice blocks' : '') + ').', 'success');
+}
+
+function setupRoleplayOSConfigHandlers() {
+    const host = document.getElementById('w-roleplay-os-choices');
+    if (host) host.onclick = event => {
+        const chip = event.target.closest('[data-os-variable]');
+        if (!chip || chip.disabled) return;
+        setRoleplayOSChoice(state.editingWorld, chip.dataset.osVariable, chip.dataset.osValue);
+    };
+    const sourceSelect = document.getElementById('w-roleplay-os-source');
+    if (sourceSelect) sourceSelect.onchange = event => pinRoleplayOSSource(state.editingWorld, event.target.value);
+    const importBtn = document.getElementById('w-roleplay-os-import-btn');
+    const fileInput = document.getElementById('w-roleplay-os-file-input');
+    if (importBtn && fileInput) {
+        importBtn.onclick = () => fileInput.click();
+        fileInput.onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async event => {
+                try {
+                    await importRoleplayOSourcePreset(JSON.parse(event.target.result));
+                } catch (err) {
+                    showToast('Roleplay OS import failed: ' + err.message, 'error');
+                } finally {
+                    e.target.value = '';
+                }
+            };
+            reader.readAsText(file);
+        };
+    }
+    const migrationHost = document.getElementById('w-roleplay-os-migration');
+    if (migrationHost) migrationHost.onclick = async event => {
+        if (!event.target.closest('#w-roleplay-os-migration-dismiss')) return;
+        const world = state.editingWorld;
+        if (!world) return;
+        delete roleplayOSDraft(world).lastMigration;
+        await saveState();
+        renderRoleplayOSConfigEditor(world);
+    };
+}
+
 function renderWorldSidecarConfigEditor(world) {
     if (!world) return;
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world);
@@ -18272,6 +18595,7 @@ function renderWorldSidecarConfigEditor(world) {
     initializeOpenRouterRoutingPanel('sidecar');
     renderWorldOverviewSidecarMigration(world);
     setSidecarStudioFeatureAvailability(world);
+    renderRoleplayOSConfigEditor(world);
 }
 
 function openWorldStudio(worldId = null, options = {}) {
