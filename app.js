@@ -1,5 +1,279 @@
 window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 
+/*
+ * Permanent provider-call flight recorder. Every request which leaves Horde's
+ * local runtime is captured as a locally persisted request/response pair and
+ * echoed to the browser console. Local UI/bridge, IndexedDB, and shared-library
+ * synchronisation are deliberately not recorded: they are not model/API calls
+ * and dumping their enormous app snapshots obscures the prompt diagnostics.
+ * Headers are redacted so a useful trace never records a credential.
+ */
+(function installHordeApiFlightRecorder(global) {
+    if (global.__hordeApiFlightRecorderInstalled || typeof global.fetch !== 'function') return;
+    const nativeFetch = global.fetch.bind(global);
+    const redactUrl = value => String(value || '').replace(/([?&](?:api[_-]?key|token|authorization)=)[^&]*/gi, '$1[REDACTED]');
+    const redactHeaders = headers => {
+        const result = {};
+        try {
+            new Headers(headers || {}).forEach((value, name) => {
+                result[name] = /authorization|api[_-]?key|token|cookie/i.test(name) ? '[REDACTED]' : value;
+            });
+        } catch (_) {}
+        return result;
+    };
+    const isRemoteEndpoint = value => {
+        try {
+            const url = new URL(String(value || ''), global.location?.href || undefined);
+            if (!/^https?:$/.test(url.protocol)) return false;
+            const host = String(url.hostname || '').toLowerCase();
+            // The browser runtime and its local Horde/MCP bridges are internal.
+            return url.origin !== global.location?.origin
+                && host !== 'localhost' && host !== '::1'
+                && !/^127(?:\.\d{1,3}){3}$/.test(host)
+                && !/^0\.0\.0\.0$/.test(host);
+        } catch (_) { return false; }
+    };
+    const remember = trace => {
+        global.__hordeApiCallTraces = Array.isArray(global.__hordeApiCallTraces) ? global.__hordeApiCallTraces : [];
+        global.__hordeApiCallTraces.push(trace);
+        global.__hordeApiCallTraces = global.__hordeApiCallTraces.slice(-500);
+        global.__hordePersistApiTrace?.(trace);
+    };
+    global.fetch = async function hordeFlightRecordedFetch(input, init = {}) {
+        const request = input instanceof Request ? input : null;
+        const requestUrl = redactUrl(request?.url || input);
+        // Do not turn ordinary local browser/bridge work into fake "API" logs.
+        // Provider calls (narrator, Sidecar, consolidation and embeddings) use
+        // remote HTTP endpoints and are recorded in full below.
+        if (!isRemoteEndpoint(requestUrl)) return nativeFetch(input, init);
+        const trace = {
+            id: `api_trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+            startedAt: new Date().toISOString(), status: 'pending',
+            request: {
+                url: requestUrl,
+                method: String(init.method || request?.method || 'GET').toUpperCase(),
+                headers: redactHeaders(init.headers || request?.headers),
+                body: typeof init.body === 'string' ? init.body : (init.body == null ? '' : '[non-text request body]')
+            },
+            response: null,
+            error: ''
+        };
+        remember(trace);
+        console.groupCollapsed(`[Horde API] Request · ${trace.request.method} ${trace.request.url}`);
+        console.log(JSON.stringify({ request: trace.request }, null, 2));
+        console.groupEnd();
+        try {
+            const response = await nativeFetch(input, init);
+            trace.status = response.ok ? 'ok' : 'http_error';
+            trace.completedAt = new Date().toISOString();
+            trace.response = { status: response.status, statusText: response.statusText, headers: redactHeaders(response.headers), body: '' };
+            response.clone().text().then(body => {
+                trace.response.body = body;
+                global.__hordePersistApiTrace?.(trace);
+                console.groupCollapsed(`[Horde API] Response · ${response.status} ${trace.request.url}`);
+                console.log(JSON.stringify({ response: trace.response }, null, 2));
+                console.groupEnd();
+            }).catch(error => {
+                trace.response.body = `[response body unavailable: ${error?.message || error}]`;
+                global.__hordePersistApiTrace?.(trace);
+            });
+            return response;
+        } catch (error) {
+            trace.status = 'network_error';
+            trace.completedAt = new Date().toISOString();
+            trace.error = String(error?.stack || error);
+            global.__hordePersistApiTrace?.(trace);
+            console.groupCollapsed(`[Horde API] Network error · ${trace.request.url}`);
+            console.error(error);
+            console.groupEnd();
+            throw error;
+        }
+    };
+    global.__hordeApiFlightRecorderInstalled = true;
+})(window);
+
+/*
+ * Sidecar runtime.  This deliberately lives in app.js: Sidecar and the world
+ * engine share one browser runtime and communicate through direct state, not
+ * separately loaded globals.  sidecar/ remains an archival/upstream source
+ * bundle only; it is never requested by the running application.
+ */
+(function installIntegratedSidecarRuntime(global) {
+    'use strict';
+    const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
+    const clean = (value, max = 240) => String(value || '').trim().slice(0, max);
+    const stamp = () => new Date().toISOString();
+    const key = value => clean(value, 160).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const identifier = kind => `${kind}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    const mode = value => value === 'sidecar' || value === 'inline_legacy' ? value : 'inline_legacy';
+    const numeric = (value, fallback, max) => { const parsed = Math.trunc(Number(value)); return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, max) : fallback; };
+    function worldConfig(world, options = {}) {
+        if (!object(world)) return null;
+        const current = object(world.sidecarConfig) ? world.sidecarConfig : {}, tracker = object(current.tracker) ? current.tracker : {}, debug = object(current.debug) ? current.debug : {}, memory = object(current.memory) ? current.memory : {};
+        const reasoningMode = ['inherit', 'enabled', 'disabled'].includes(tracker.reasoningMode)
+            ? tracker.reasoningMode : (tracker.reasoning === true ? 'enabled' : 'inherit');
+        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
+        return world.sidecarConfig;
+    }
+    function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], traversalState: {}, packet: null, memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
+    function timelineProtocol(world, timeline, options = {}) {
+        if (!object(timeline)) return null;
+        const config = worldConfig(world, options) || { mode: 'inline_legacy', debug: {} }, current = object(timeline.sidecar) ? timeline.sidecar : {};
+        const protocol = { ...emptyProtocol(mode(config.mode)), ...current };
+        protocol.schemaVersion = 1; protocol.mode = mode(current.mode || (object(timeline.sidecar) ? config.mode : (options.newWorld ? 'sidecar' : 'inline_legacy')));
+        ['sequences','scenes','turns','takes','questions','requests','proposals','backgroundProposals','refinements','conversations','provisionalLocations','provisionalEntities','jobs'].forEach(field => { if (!Array.isArray(protocol[field])) protocol[field] = []; });
+        ['takeIndex','temporalState','traversalState','memoryGraph','diagnostics','migration','coreAnswers'].forEach(field => { if (!object(protocol[field])) protocol[field] = {}; });
+        protocol.inputMode = protocol.inputMode === 'sidecar' ? 'sidecar' : 'narrator'; protocol.activeSequenceId = clean(protocol.activeSequenceId, 120); protocol.activeSceneId = clean(protocol.activeSceneId, 120); protocol.packet = object(protocol.packet) ? protocol.packet : null;
+        const debug = object(protocol.debug) ? protocol.debug : {}; protocol.debug = { enabled: debug.enabled === true || config.debug?.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, config.debug?.retainTraceCount || 20, 200), traces: Array.isArray(debug.traces) ? debug.traces.slice(-200) : [] };
+        timeline.sidecar = protocol; return protocol;
+    }
+    function current(protocol, field, id) { return (protocol[field] || []).find(item => item?.id === id) || null; }
+    function entityId(timeline) { return clean(timeline?.controlledEntityId || timeline?.playerEntityId || 'player', 120) || 'player'; }
+    function createSequence(protocol, timeline, options = {}) { const previous = current(protocol, 'sequences', protocol.activeSequenceId); if (previous?.status === 'active') { previous.status = 'closed'; previous.closedAt = stamp(); previous.closeReason = clean(options.closePreviousReason || 'new_sequence', 160); } const sequence = { id: identifier('sequence'), timelineId: clean(timeline?.id,120), status: options.status === 'planning' ? 'planning' : 'active', title: clean(options.title || `Sequence ${(protocol.sequences || []).length + 1}`,180) || 'Untitled sequence', controlledEntityId: clean(options.controlledEntityId || entityId(timeline),120), createdAt: stamp(), startedAt: options.status === 'planning' ? '' : stamp(), closedAt: '', startTurnId: clean(options.startTurnId,160), endTurnId: '', predecessorSequenceId: clean(options.predecessorSequenceId || previous?.id,120), transitionMode: options.transitionMode === 'discontinuous' ? 'discontinuous' : 'continuous', planning: object(options.planning) ? options.planning : { status: options.status === 'planning' ? 'draft' : 'approved', authorIntent: '' }, continuationTail: Array.isArray(options.continuationTail) ? options.continuationTail.slice(-6) : [], closure: null, provenance: { source: clean(options.source || 'sidecar',80), createdAt: stamp() } }; protocol.sequences.push(sequence); protocol.activeSequenceId = sequence.id; return sequence; }
+    function createScene(protocol, options = {}) { const scene = { id: identifier('scene'), timelineId: clean(options.timelineId,120), sequenceIds: Array.isArray(options.sequenceIds) ? options.sequenceIds.map(value => clean(value,120)).filter(Boolean) : [], status: options.status === 'closed' ? 'closed' : 'active', title: clean(options.title || 'Current scene',180) || 'Current scene', mode: options.mode === 'discontinuous' ? 'discontinuous' : 'continuous', openedAt: stamp(), closedAt: '', startTurnId: clean(options.startTurnId,160), endTurnId: '', source: clean(options.source || 'sidecar',80), boundaryEvidence: clean(options.boundaryEvidence,2000), continuation: object(options.continuation) ? options.continuation : {}, provisionalReview: { status: 'pending', reviewedAt: '' } }; protocol.scenes.push(scene); protocol.activeSceneId = scene.id; return scene; }
+    function hierarchy(protocol, timeline, options = {}) {
+        if (!protocol || !timeline) return null;
+        // Older first-turn saves can contain an active sequence/scene while
+        // their pointer IDs are blank. Recover those records rather than
+        // misclassifying the timeline as deliberately closed.
+        let sequence = current(protocol, 'sequences', protocol.activeSequenceId)
+            || (protocol.sequences || []).find(item => item?.status === 'active') || null;
+        if (!sequence || sequence.status === 'closed') {
+            if (protocol.sequences.length && options.createWhenMissing !== true) return null;
+            sequence = createSequence(protocol, timeline, {
+                title: protocol.sequences.length ? `Sequence ${protocol.sequences.length + 1}` : 'Opening sequence',
+                controlledEntityId: entityId(timeline), source: 'migration'
+            });
+        }
+        let scene = current(protocol, 'scenes', protocol.activeSceneId)
+            || (protocol.scenes || []).find(item => item?.status === 'active'
+                && (!Array.isArray(item.sequenceIds) || item.sequenceIds.includes(sequence.id))) || null;
+        if (!scene || scene.status === 'closed') {
+            if (protocol.scenes.length && options.createWhenMissing !== true) return null;
+            scene = createScene(protocol, {
+                timelineId: timeline.id, sequenceIds: [sequence.id],
+                title: protocol.scenes.length ? 'Current scene' : 'Opening scene', source: 'migration'
+            });
+        }
+        if (!Array.isArray(scene.sequenceIds)) scene.sequenceIds = [];
+        if (!scene.sequenceIds.includes(sequence.id)) scene.sequenceIds.push(sequence.id);
+        protocol.activeSequenceId = sequence.id;
+        protocol.activeSceneId = scene.id;
+        return { sequence, scene };
+    }
+    function beginPlanning(protocol,timeline,authorIntent='') { const active=hierarchy(protocol,timeline); const planning={id:identifier('sequence_plan'),status:'draft',authorIntent:clean(authorIntent,4000),createdAt:stamp(),predecessorSequenceId:active?.sequence?.id||'',constraints:[],openQuestions:(protocol.questions||[]).filter(question=>question.status==='open').map(question=>question.id).slice(-20),proposedStartPacket:null,revisionCount:0,provenance:{source:'direct_user_refinement'}}; protocol.sequencePlanning=planning; return planning; }
+    function approvePlanning(protocol,timeline,packet={},options={}) { const planning=object(protocol?.sequencePlanning)?protocol.sequencePlanning:null; if(!planning)return null; const previous=hierarchy(protocol,timeline), prior=previous?.scene; if(prior?.status==='active'&&options.closePriorScene===true){prior.status='closed';prior.closedAt=stamp();prior.provisionalReview={status:'pending',reviewedAt:''};} const tail=(protocol.turns||[]).filter(turn=>turn.sequenceId===previous?.sequence?.id).slice(-4).map(turn=>({id:turn.id,narration:clean(turn.narration,1200)})); const sequence=createSequence(protocol,timeline,{title:options.title||packet.title||'New sequence',controlledEntityId:options.controlledEntityId||previous?.sequence?.controlledEntityId||entityId(timeline),transitionMode:options.transitionMode||packet.transitionMode||'continuous',planning:{...planning,status:'approved',approvedAt:stamp(),proposedStartPacket:packet},continuationTail:options.transitionMode==='discontinuous'?[]:tail,source:'direct_user_refinement'}); const scene=createScene(protocol,{timelineId:timeline.id,sequenceIds:[sequence.id],title:packet.sceneTitle||packet.title||(sequence.transitionMode==='continuous'?'Continuing scene':'New scene'),mode:sequence.transitionMode,continuation:packet,source:'direct_user_refinement'}); protocol.sequencePlanning={...planning,status:'approved',approvedAt:stamp(),sequenceId:sequence.id,sceneId:scene.id}; return {sequence,scene,planning:protocol.sequencePlanning}; }
+    function closeSequence(protocol,timeline,reason='author_closed') { const active=hierarchy(protocol,timeline); if(!active)return null; const {sequence,scene}=active; sequence.status='closed';sequence.closedAt=stamp();sequence.closeReason=clean(reason,240);sequence.endTurnId=(protocol.turns||[]).filter(turn=>turn.sequenceId===sequence.id).at(-1)?.id||'';sequence.closure={closedAt:sequence.closedAt,unresolvedQuestionIds:(protocol.questions||[]).filter(question=>question.status==='open').map(question=>question.id).slice(-40),provisionalLocationIds:(protocol.provisionalLocations||[]).filter(location=>location.status!=='resolved').map(location=>location.id).slice(-40),provisionalEntityIds:(protocol.provisionalEntities||[]).filter(entity=>entity.status!=='resolved').map(entity=>entity.id).slice(-40),status:'reconciliation_pending'}; if(scene.status==='active'){scene.status='closed';scene.closedAt=stamp();scene.endTurnId=sequence.endTurnId;scene.provisionalReview={status:'pending',reviewedAt:''};} protocol.activeSequenceId='';protocol.activeSceneId='';return sequence; }
+    function recordTimelineTurn(protocol,timeline,turn){const active=hierarchy(protocol,timeline);if(!active||!turn)return turn;turn.sequenceId=active.sequence.id;turn.sceneId=active.scene.id;turn.controlledEntityId=active.sequence.controlledEntityId;active.sequence.endTurnId=turn.id;active.scene.endTurnId=turn.id;return turn;}
+    function pressure(protocol,timeline,options={}) { const f=object(options.factors)?options.factors:{}, values={contextRatio:Math.max(0,Math.min(1,Number(options.contextRatio)||0)),historyCount:Math.max(0,Number(options.historyCount)||0),sceneTurns:(protocol.turns||[]).filter(turn=>turn.sceneId===protocol.activeSceneId).length,openQuestions:(protocol.questions||[]).filter(question=>question.status==='open').length,blockingQuestions:Math.max(0,Number(f.blockingQuestions)||0),activeCast:Math.max(0,Number(f.activeCast)||0),retrievedMemoryCount:Math.max(0,Number(f.retrievedMemoryCount)||0),canonicalChars:Math.max(0,Number(f.canonicalChars)||0),sceneChars:Math.max(0,Number(f.sceneChars)||0),sequenceTurns:Math.max(0,Number(f.sequenceTurns)||0),reconciliationFriction:Math.max(0,Number(f.reconciliationFriction)||0),sourceRetirement:Math.max(0,Number(f.sourceRetirement)||0)}, weights={contextRatio:45,historyCount:.08,sceneTurns:2,openQuestions:2,blockingQuestions:5,activeCast:1.5,retrievedMemoryCount:.5,canonicalChars:.002,sceneChars:.002,sequenceTurns:.5,reconciliationFriction:3,sourceRetirement:2,...(object(options.weights)?options.weights:{})}; const score=Math.min(100,Math.round(Object.entries(values).reduce((total,[name,value])=>total+value*Number(weights[name]||0),0))), threshold=object(options.thresholds)?options.thresholds:{},watch=Math.max(1,Math.min(99,Number(threshold.watch)||45)),refresh=Math.max(watch+1,Math.min(100,Number(threshold.refresh)||70));return {score,recommendation:score>=refresh?'recommend_refresh':score>=watch?'watch':'clear',factors:values,weights,thresholds:{watch,refresh},generatedAt:stamp()}; }
+    function stage(protocol,kind,raw,evidence={}) { if(!protocol)return null; const field=kind==='location'?'provisionalLocations':'provisionalEntities';if(!Array.isArray(protocol[field]))protocol[field]=[];const name=clean(raw?.name,180);if(!name)return null;let entry=protocol[field].find(record=>record.status!=='promoted'&&key(record.name)===key(name));if(!entry){entry={id:identifier(kind==='location'?'provisional_location':'provisional_entity'),kind,name,status:'implicit',createdAt:stamp(),updatedAt:stamp(),evidence:[],candidateCanonicalIds:[],promotionRequested:false,promotedCanonicalId:''};protocol[field].push(entry);}const proof={at:stamp(),source:clean(evidence.source||'narrator_handoff',80),turnId:clean(evidence.turnId,160),narration:clean(evidence.narration,3000),handoff:clean(evidence.handoff,3000),proposed:raw};entry.evidence=[...(entry.evidence||[]),proof].slice(-20);entry.updatedAt=proof.at;entry.description=clean(raw?.description,1800)||entry.description||'';entry.parentHint=clean(raw?.parent_location_id||raw?.connects_to||raw?.home_location,180)||entry.parentHint||'';if(kind==='location'){entry.region=clean(raw?.region,180)||entry.region||'';entry.mapType=clean(raw?.map_type,40)||entry.mapType||'';entry.floor=clean(raw?.floor,80)||entry.floor||'';}else entry.persona=clean(raw?.persona,1800)||entry.persona||'';return entry; }
+    function stageIntroductions(protocol,receipt,evidence={}) { if(!protocol||!object(receipt))return [];const staged=[];[['location_introduced','location'],['npc_introduced','entity']].forEach(([field,kind])=>{if(Array.isArray(receipt[field])){receipt[field].forEach(raw=>{const entry=stage(protocol,kind,raw,evidence);if(entry)staged.push(entry);});delete receipt[field];}});return staged; }
+    function promotionFlag(protocol,provisionalId,source='direct_user_refinement'){const entry=[...(protocol?.provisionalLocations||[]),...(protocol?.provisionalEntities||[])].find(record=>record.id===provisionalId);if(!entry)return null;entry.promotionRequested=true;entry.promotionRequestedAt=stamp();entry.promotionProvenance={source};entry.status='promotion_requested';return entry;}
+    function promoted(protocol,provisionalId,canonicalId){const entry=[...(protocol?.provisionalLocations||[]),...(protocol?.provisionalEntities||[])].find(record=>record.id===provisionalId);if(!entry)return null;entry.status='promoted';entry.promotedCanonicalId=clean(canonicalId,160);entry.promotedAt=stamp();return entry;}
+    function normalizeTraversal(world){if(!object(world))return null;const source=object(world.traversalConfig)?world.traversalConfig:{}, methods=Array.isArray(source.methods)?source.methods:[];world.traversalConfig={schemaVersion:1,methods:methods.map((raw,index)=>{const coverageType=raw?.coverageType==='route_based'?'route_based':'point_to_point';return{id:clean(raw?.id||`traversal_${index+1}`,100)||`traversal_${index+1}`,name:clean(raw?.name||`Traversal ${index+1}`,140)||`Traversal ${index+1}`,enabled:raw?.enabled!==false,coverageType,exclusions:Array.isArray(raw?.exclusions)?raw.exclusions.map(value=>clean(value,160)).filter(Boolean).slice(0,100):[],routeStops:coverageType==='route_based'&&Array.isArray(raw?.routeStops)?raw.routeStops.map(value=>clean(value,160)).filter(Boolean).slice(0,500):[],tags:Array.isArray(raw?.tags)?raw.tags.map(value=>clean(value,80)).filter(Boolean).slice(0,32):[],provider:clean(raw?.provider,140),notes:clean(raw?.notes,1200)}})};return world.traversalConfig;}
+    function normalizeVehicle(entity){if(!object(entity)||String(entity.type||'').toLowerCase()!=='vehicle')return null;const raw=object(entity.vehicle)?entity.vehicle:{};entity.vehicle={persistent:raw.persistent!==false,parkedAnchorId:clean(raw.parkedAnchorId||entity.startLocation,160),ownerEntityId:clean(raw.ownerEntityId||raw.owners?.[0]?.entityId||raw.owners?.[0],160),owners:Array.isArray(raw.owners)?raw.owners.map(entry=>({entityId:clean(entry?.entityId||entry,160),role:'owner'})).filter(entry=>entry.entityId).slice(0,20):[],access:Array.isArray(raw.access)?raw.access.map(entry=>({entityId:clean(entry?.entityId,160),role:['owner','driver','passenger','guest'].includes(entry?.role)?entry.role:'guest'})).filter(entry=>entry.entityId).slice(0,80):[],interiorHint:clean(raw.interiorHint||entity.description,1800),tags:Array.isArray(raw.tags)?raw.tags.map(value=>clean(value,80)).filter(Boolean).slice(0,32):[]};if(entity.vehicle.ownerEntityId&&!entity.vehicle.owners.some(entry=>entry.entityId===entity.vehicle.ownerEntityId))entity.vehicle.owners.unshift({entityId:entity.vehicle.ownerEntityId,role:'owner'});return entity.vehicle;}
+    function resolveLocation(world,ref){const needle=clean(ref,180).toLowerCase();return(world?.locations||[]).find(location=>String(location?.id||'').toLowerCase()===needle||String(location?.name||'').trim().toLowerCase()===needle)||null;}
+    function anchor(world,ref){let location=resolveLocation(world,ref);const seen=new Set();while(location&&!seen.has(location.id)){seen.add(location.id);if(String(location.mapType||'').toLowerCase()!=='room')return location;location=resolveLocation(world,location.parentLocationId);}return null;}
+    function coverage(world,methodId,originRef,destinationRef){const method=normalizeTraversal(world)?.methods.find(entry=>entry.id===methodId&&entry.enabled);if(!method)return{ok:false,reason:'unknown_or_disabled_method'};const origin=anchor(world,originRef),destination=anchor(world,destinationRef);if(!origin||!destination)return{ok:false,reason:'no_eligible_pickup_or_dropoff',origin,destination,method};const exclusions=new Set(method.exclusions.map(value=>value.toLowerCase()));if(exclusions.has(origin.id.toLowerCase())||exclusions.has(destination.id.toLowerCase()))return{ok:false,reason:'method_exclusion',origin,destination,method};if(method.coverageType==='route_based'){const from=method.routeStops.indexOf(origin.id)>=0?method.routeStops.indexOf(origin.id):method.routeStops.indexOf(origin.name),to=method.routeStops.indexOf(destination.id)>=0?method.routeStops.indexOf(destination.id):method.routeStops.indexOf(destination.name);if(from<0||to<0||from===to)return{ok:false,reason:'route_stop_not_authored',origin,destination,method};return{ok:true,origin,destination,method,route:method.routeStops.slice(Math.min(from,to),Math.max(from,to)+1)};}return{ok:true,origin,destination,method,route:[]};}
+    function traversalState(protocol){if(!protocol)return null;if(!object(protocol.traversalState))protocol.traversalState={};if(!Array.isArray(protocol.traversalState.journeys))protocol.traversalState.journeys=[];if(!Array.isArray(protocol.traversalState.recentRuntimeContainers))protocol.traversalState.recentRuntimeContainers=[];return protocol.traversalState;}
+    function createJourney(protocol,world,options={}){const state=traversalState(protocol);if(!state)return null;const result=options.methodId?coverage(world,options.methodId,options.originId,options.destinationId):null;if(result&&!result.ok)return{error:result.reason,coverage:result};const vehicle=options.vehicleId?(world.entities||[]).find(entity=>entity.id===options.vehicleId&&entity.type==='vehicle'):null,runtime=vehicle?null:{id:identifier('runtime_vehicle'),kind:clean(options.runtimeKind||'rideshare',80)||'rideshare',createdAt:stamp(),interiorHint:clean(options.interiorHint,1800),persistent:false},journey={id:identifier('journey'),status:'prepared',createdAt:stamp(),updatedAt:stamp(),methodId:clean(options.methodId,120),vehicleEntityId:vehicle?.id||'',runtimeContainer:runtime,originAnchorId:result?.origin?.id||clean(options.originId,160),destinationAnchorId:result?.destination?.id||clean(options.destinationId,160),occupants:Array.isArray(options.occupants)?options.occupants.map(value=>clean(value,160)).filter(Boolean).slice(0,20):[],provenance:{source:clean(options.source||'sidecar',80),evidence:clean(options.evidence,2000)},temporalEvidence:clean(options.temporalEvidence,1200)};state.journeys.push(journey);state.journeys=state.journeys.slice(-80);return journey;}
+    function reconcileVehicleEvents(protocol,world,receipt,options={}){const state=traversalState(protocol);if(!state)return[];const changes=[];(receipt?.events||[]).forEach(event=>{if(event?.type!=='movement'||event?.movement_mode!=='vehicle')return;const actorId=clean(event.actor_id,160),vehicleId=clean(event.vehicle_id||event.vehicleId,160),status=clean(event.status,40)||'completed';if(['intended','attempted','in_progress'].includes(status)){let journey=state.journeys.find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey){journey=createJourney(protocol,world,{vehicleId,originId:event.from_location_id||options.playerLocationId,destinationId:event.to_location_id||'',occupants:[actorId],source:'narrator_handoff',evidence:event.evidence||event.cause||'',runtimeKind:vehicleId?'':'rideshare'});if(journey?.id)changes.push({type:'journey_prepared',journeyId:journey.id});}return;}if(status!=='completed')return;const journey=[...state.journeys].reverse().find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey)return;journey.status='completed';journey.completedAt=stamp();journey.destinationAnchorId=clean(event.to_location_id||journey.destinationAnchorId,160);if(journey.vehicleEntityId){const vehicle=(world.entities||[]).find(entity=>entity.id===journey.vehicleEntityId),data=normalizeVehicle(vehicle);if(data)data.parkedAnchorId=journey.destinationAnchorId||data.parkedAnchorId;}else if(journey.runtimeContainer){state.recentRuntimeContainers.push({...journey.runtimeContainer,departedAt:stamp(),journeyId:journey.id});state.recentRuntimeContainers=state.recentRuntimeContainers.slice(-20);}changes.push({type:'journey_completed',journeyId:journey.id});});return changes;}
+    function graph(protocol){if(!protocol)return null;const prior=object(protocol.memoryGraph)?protocol.memoryGraph:{};protocol.memoryGraph={schemaVersion:1,worldHistory:Array.isArray(prior.worldHistory)?prior.worldHistory:[],episodes:Array.isArray(prior.episodes)?prior.episodes:[],scenes:Array.isArray(prior.scenes)?prior.scenes:[],sequences:Array.isArray(prior.sequences)?prior.sequences:[],cognition:Array.isArray(prior.cognition)?prior.cognition:[],locationReferences:Array.isArray(prior.locationReferences)?prior.locationReferences:[],lastEpisodeTurnCount:Math.max(0,Number(prior.lastEpisodeTurnCount)||0),...prior};return protocol.memoryGraph;}
+    function jobs(protocol){if(!protocol)return[];if(!Array.isArray(protocol.jobs))protocol.jobs=[];return protocol.jobs;}
+    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record)return record;record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
+    /* Bring pre-Sidecar visible narration into the same source-pinned graph.
+       This is deliberately an evidence import, not a retroactive receipt: it
+       never invents a handoff, state update, cognition, or scene boundary.
+       The imported raw turn stays active until an Episode has succeeded. */
+    function backfillWorldHistory(protocol,timeline,options={}){
+        const memory=graph(protocol); if(!memory||!timeline)return {added:0,skipped:0};
+        const active=hierarchy(protocol,timeline); const messages=Array.isArray(timeline.history)?timeline.history:[];
+        let added=0, skipped=0;
+        messages.forEach((message,index)=>{
+            const role=String(message?.role||'').toLowerCase();
+            if(role!=='dm'&&role!=='assistant'){return;}
+            const narration=clean(message?.text||message?.content||'',24000); if(!narration){skipped++;return;}
+            const messageId=clean(message?.id||`history_${index}`,160);
+            const turnId=clean(message?.sidecarTurnId||`historical_turn_${messageId}`,180);
+            if(memory.worldHistory.some(record=>record.turnId===turnId||record.timelineMessageId===messageId)){skipped++;return;}
+            const user=messages.slice(0,index).reverse().find(candidate=>String(candidate?.role||'').toLowerCase()==='user');
+            const sourceMessageIds=[user?.id,messageId].map(value=>clean(value,160)).filter(Boolean);
+            const handoff=clean(message?.sidecarBackstage?.handoff||message?.handoff||'',6000);
+            memory.worldHistory.push({id:identifier('world_history'),kind:'world_history',turnId,sequenceId:clean(active?.sequence?.id,160),sceneId:clean(active?.scene?.id,160),status:'active',createdAt:clean(message?.createdAt||message?.timestamp||stamp(),80)||stamp(),narration,sceneReading:handoff,text:narration,timelineMessageId:messageId,sourceMessageIds,provenance:{source:'sidecar_migration_history_backfill',rawSourcePinned:true,legacyMessageId:messageId,semanticHandoffAvailable:!!handoff}}); added++;
+        });
+        memory.worldHistory=memory.worldHistory.slice(-2000);
+        memory.backfill={version:1,completedAt:stamp(),added:(Number(memory.backfill?.added)||0)+added,lastRunAdded:added,skipped:(Number(memory.backfill?.skipped)||0)+skipped};
+        return {added,skipped};
+    }
+    function queueEpisode(protocol,options={}){const memory=graph(protocol), pending=jobs(protocol);if(!memory)return null;const active=memory.worldHistory.filter(record=>record.status==='active'),size=Math.max(1,Math.min(20,Number(options.batchSize)||5)),cadence=Math.max(1,Math.min(50,Number(options.cadenceTurns)||size)),available=active.length-memory.lastEpisodeTurnCount;if(available<(options.force?1:cadence))return null;const source=active.slice(memory.lastEpisodeTurnCount,memory.lastEpisodeTurnCount+size);if(!source.length||(!options.force&&source.length<size))return null;const ids=source.map(record=>record.turnId),previous=pending.find(job=>job.type==='episode_consolidation'&&job.status!=='completed'&&Array.isArray(job.sourceTurnIds)&&job.sourceTurnIds.join('|')===ids.join('|'));if(previous)return previous;const job={id:identifier('memory_job'),type:'episode_consolidation',status:'queued',createdAt:stamp(),attempts:0,sourceTurnIds:ids,dependencies:[],priority:options.priority||'background',sourceRange:{start:source[0].id,end:source.at(-1).id},retryAt:'',diagnostics:[],provenance:{source:options.source||'sidecar_memory_dispatcher',forced:options.force===true}};pending.push(job);return job;}
+    function queueScope(protocol,scope,id,options={}){const memory=graph(protocol),pending=jobs(protocol),type=scope==='sequence'?'sequence_consolidation':'scene_consolidation',key=scope==='sequence'?'sequenceId':'sceneId';if(!memory||!id)return null;const recordField=scope==='sequence'?'sequenceIds':'sceneIds';const episodes=(memory.episodes||[]).filter(episode=>episode.status==='active'&&(episode[recordField]||[]).includes(id));const sourceTurns=[...new Set(episodes.flatMap(episode=>episode.sourceTurnIds||[]))];let job=pending.find(candidate=>candidate.type===type&&candidate[key]===id&&candidate.status!=='completed');if(job){job.episodeIds=[...new Set([...(job.episodeIds||[]),...episodes.map(episode=>episode.id)])];job.sourceTurnIds=[...new Set([...(job.sourceTurnIds||[]),...sourceTurns])];return job;}if(!episodes.length&&!options.allowEmpty)return null;job={id:identifier('memory_job'),type,status:'queued',createdAt:stamp(),attempts:0,[key]:id,episodeIds:episodes.map(episode=>episode.id),sourceTurnIds,dependencies:episodes.map(episode=>episode.jobId).filter(Boolean),priority:options.priority||'background',retryAt:'',diagnostics:[],provenance:{source:options.source||'scope_transition',sourcePinned:true}};pending.push(job);return job;}
+    /* An Episode is a successful, source-pinned replacement layer.  Completing
+       it is the dispatcher boundary: it creates the next work, but never
+       retires its underlying Turn evidence.  Failed children stay inspectable
+       and retryable rather than making a hole in continuity. */
+    function completeEpisode(protocol,jobId,output={}){
+        const memory=graph(protocol),pending=jobs(protocol),job=pending.find(entry=>entry.id===jobId);
+        if(!memory||!job)return null;
+        const records=memory.worldHistory.filter(record=>(job.sourceTurnIds||[]).includes(record.turnId));
+        const sceneIds=[...new Set(records.map(record=>record.sceneId).filter(Boolean))];
+        const sequenceIds=[...new Set(records.map(record=>record.sequenceId).filter(Boolean))];
+        const episode={
+            id:identifier('episode'),kind:'episode',status:'active',createdAt:stamp(),jobId,
+            sourceTurnIds:Array.isArray(job.sourceTurnIds)?job.sourceTurnIds:[],
+            sequenceIds:sequenceIds.length?sequenceIds:(Array.isArray(output.sequenceIds)?output.sequenceIds:[]),
+            sceneIds:sceneIds.length?sceneIds:(Array.isArray(output.sceneIds)?output.sceneIds:[]),
+            summary:clean(output.summary,8000),objectiveHistory:clean(output.objectiveHistory,8000),
+            text:clean([output.summary,output.objectiveHistory].filter(Boolean).join('\n'),12000),
+            perceptionCoverage:Array.isArray(output.perceptionCoverage)?output.perceptionCoverage:[],
+            locationReferences:Array.isArray(output.locationReferences)?output.locationReferences:[],
+            provenance:{source:'episode_consolidation',rawSourcePinned:true,sourceJobId:job.id}
+        };
+        memory.episodes.push(episode);memory.episodes=memory.episodes.slice(-500);
+        memory.locationReferences.push(...episode.locationReferences.map(reference=>({id:identifier('location_reference'),...reference,episodeId:episode.id,status:reference.locationId?'assigned':'unresolved',createdAt:stamp(),provenance:{sourceEpisodeId:episode.id}})));
+        memory.locationReferences=memory.locationReferences.slice(-1000);
+        memory.lastEpisodeTurnCount+=job.sourceTurnIds.length;
+        job.status='completed';job.completedAt=stamp();job.outputId=episode.id;
+        const upsert=(kind,key,collection)=>{
+            let target=collection.find(record=>record[`${kind}Id`]===key&&record.status==='active');
+            if(!target){target={id:identifier(kind),kind,status:'active',createdAt:stamp(),[`${kind}Id`]:key,episodeIds:[],sourceTurnIds:[],summary:'',keyFacts:'',provenance:{source:'episode_hierarchy',rawSourcePinned:true}};collection.push(target);}
+            target.episodeIds=[...new Set([...(target.episodeIds||[]),episode.id])];
+            target.sourceTurnIds=[...new Set([...(target.sourceTurnIds||[]),...episode.sourceTurnIds])];
+            target.updatedAt=stamp();return target;
+        };
+        episode.sceneIds.forEach(id=>upsert('scene',id,memory.scenes));
+        episode.sequenceIds.forEach(id=>upsert('sequence',id,memory.sequences));
+        const queue=(type,identity)=>{
+            const key=type==='scene_consolidation'?'sceneId':'sequenceId';
+            let child=pending.find(candidate=>candidate.type===type&&candidate[key]===identity&&candidate.status!=='completed');
+            if(child){child.episodeIds=[...new Set([...(child.episodeIds||[]),episode.id])];child.sourceTurnIds=[...new Set([...(child.sourceTurnIds||[]),...episode.sourceTurnIds])];return child;}
+            child={id:identifier('memory_job'),type,status:'queued',createdAt:stamp(),attempts:0,[key]:identity,episodeIds:[episode.id],sourceTurnIds:episode.sourceTurnIds.slice(),dependencies:[job.id],priority:'background',retryAt:'',diagnostics:[],provenance:{source:'episode_hierarchy',sourceEpisodeId:episode.id}};pending.push(child);return child;
+        };
+        // A scene/sequence record may collect several Episodes while it is
+        // live, but it is only a replacement layer once that dramatic scope
+        // has actually closed.  Summarising an open scope and then removing
+        // its raw context is how information gets silently lost mid-scene.
+        // The closure transition is therefore the dispatcher boundary for
+        // Scene and Sequence consolidation; the source Episodes remain
+        // pinned either way.
+        episode.sceneIds.forEach(id=>{ if((protocol.scenes||[]).some(scene=>scene.id===id&&scene.status==='closed')) queue('scene_consolidation',id); });
+        episode.sequenceIds.forEach(id=>{ if((protocol.sequences||[]).some(sequence=>sequence.id===id&&sequence.status==='closed')) queue('sequence_consolidation',id); });
+        episode.perceptionCoverage.forEach(coverage=>{
+            const characterId=clean(coverage?.characterId,160),access=clean(coverage?.access,80).toLowerCase();
+            if(!characterId||access==='absent')return;
+            if(pending.some(candidate=>candidate.type==='cognition_consolidation'&&candidate.episodeId===episode.id&&candidate.characterId===characterId))return;
+            pending.push({id:identifier('memory_job'),type:'cognition_consolidation',status:'queued',createdAt:stamp(),attempts:0,episodeId:episode.id,characterId,access,perceptionEvidence:clean(coverage?.detail,2400),dependencies:[job.id],priority:'background',retryAt:'',diagnostics:[],provenance:{source:'episode_perception_coverage',sourceEpisodeId:episode.id}});
+        });
+        return episode;
+    }
+    function failJob(protocol,jobId,error){const job=jobs(protocol).find(entry=>entry.id===jobId);if(!job)return null;job.attempts=(Number(job.attempts)||0)+1;job.diagnostics=[...(job.diagnostics||[]),{at:stamp(),error:clean(error,1200)}].slice(-12);if(job.attempts>=3)job.status='blocked';else{job.status='queued';job.retryAt=new Date(Date.now()+Math.min(300000,1000*(2**job.attempts))).toISOString();}return job;}
+    global.HordeSidecarMode=Object.freeze({SCHEMA_VERSION:1,MODES:Object.freeze({INLINE_LEGACY:'inline_legacy',SIDECAR:'sidecar'}),normalizeMode:mode,normalizeWorldConfig:worldConfig,normalizeTimelineProtocol:timelineProtocol,isSidecarTimeline:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar'});
+    global.HordeSidecarTimeline=Object.freeze({ensureHierarchy:hierarchy,beginPlanning,approvePlanning,closeActiveSequence:closeSequence,recordTurn:recordTimelineTurn,contextPressure:pressure});
+    global.HordeSidecarPromotion=Object.freeze({ensure:protocol=>protocol,stage,stageReceiptIntroductions:stageIntroductions,markPromotionRequested:promotionFlag,markPromoted:promoted});
+    global.HordeSidecarTraversal=Object.freeze({normalizeWorldTraversal:normalizeTraversal,normalizeVehicle,accessibleVehicles:(world,id)=>(world?.entities||[]).filter(entity=>String(entity?.type||'').toLowerCase()==='vehicle'&&(normalizeVehicle(entity)?.ownerEntityId===clean(id,160)||normalizeVehicle(entity)?.access.some(entry=>entry.entityId===clean(id,160)))),resolveEligibleAnchor:anchor,evaluateCoverage:coverage,ensureState:traversalState,createJourney,reconcileVehicleEvents});
+    global.HordeSidecarMemoryGraph=Object.freeze({graph,ensureJobs:jobs,recordTurn:recordMemoryTurn,backfillWorldHistory,queueEpisode,queueScope,completeEpisode,failJob});
+    global.HordeSidecarHooks=Object.freeze({normalizeWorldTimeline:(world,timeline,options={})=>{const protocol=timelineProtocol(world,timeline,options);normalizeTraversal(world);(world?.entities||[]).forEach(normalizeVehicle);return protocol;},isSidecarWorld:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar',ensureNarrativeHierarchy:(world,timeline)=>{const protocol=timelineProtocol(world,timeline);return protocol?.mode==='sidecar'?hierarchy(protocol,timeline):null;}});
+})(window);
+
 // --- Horde Persistence (IndexedDB) ---
 const DB_NAME = 'HordeStudioDB';
 const DB_VERSION = 1;
@@ -7,8 +281,8 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '16.7.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-09-01T13:22:39+05:00';
+const HORDE_STUDIO_VERSION = '17.0.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-09-02T01:38:52+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
@@ -81,18 +355,28 @@ const HordeDB = {
 
 // --- Shared Library Sync ---------------------------------------------------
 // Horde remains a browser-first application. This small layer gives its
-// IndexedDB library a canonical, versioned snapshot on the Mac's bridge so a
-// phone can safely pick up the same library without sharing credentials or
-// machine-local service URLs.
+// IndexedDB library a canonical, versioned snapshot on the owner's bridge.
+// This is a personal, local mirror, so it deliberately carries the owner's
+// credentials and local service configuration. Portable exports remain
+// credential-free.
 const SHARED_LIBRARY_SYNC_META_KEY = 'horde_shared_library_sync_v1';
 const SHARED_LIBRARY_SYNC_DEVICE_ID_KEY = 'horde_shared_library_device_id_v1';
 const SHARED_LIBRARY_SYNC_DEVICE_LABEL_KEY = 'horde_shared_library_device_label_v1';
 const SHARED_LIBRARY_BACKUP_POLICY_KEY = 'horde_shared_library_backup_policy_v1';
-const SHARED_LIBRARY_LOCAL_SETTING_KEYS = Object.freeze([
-    'mcpBridgeUrl', 'localBaseUrl', 'localApiKey', 'localGenerationTimeoutSeconds',
-    'embeddingBaseUrl', 'embeddingApiKey', 'localTtsBaseUrl', 'localTtsApiKey',
-    'localImageBaseUrl', 'localImageApiKey', 'comfyUiBaseUrl', 'comfyWorkflowProfiles',
+const SHARED_LIBRARY_CREDENTIAL_FIELDS = Object.freeze([
+    ['apiKey', 'horde_api_key'],
+    ['gptprotoApiKey', 'horde_gptproto_api_key'],
+    ['evolinkApiKey', 'horde_evolink_api_key'],
+    ['wavespeedApiKey', 'horde_wavespeed_api_key'],
+    ['falApiKey', 'horde_fal_api_key'],
+    ['nanogptApiKey', 'horde_nanogpt_api_key'],
+    ['nvidiaApiKey', 'horde_nvidia_api_key'],
+    ['bedrockApiKey', 'horde_bedrock_api_key'],
+    ['customApiKey', 'horde_custom_api_key'],
+    ['customHeaders', 'horde_custom_headers'],
 ]);
+const SHARED_LIBRARY_EMBEDDING_CACHE_BYTES = 6 * 1024 * 1024;
+const SHARED_LIBRARY_EMBEDDING_CACHE_ENTRIES = 2000;
 const sharedLibrarySync = {
     ready: false,
     applying: false,
@@ -111,6 +395,8 @@ const sharedLibrarySync = {
     lastPublishedFingerprint: '',
     history: [],
     dirty: false,
+    blockedFingerprint: '',
+    blockedBytes: 0,
     assistantTurnsSincePublish: 0,
     autoBackupTimer: null,
 };
@@ -183,8 +469,71 @@ function persistSharedLibraryMeta(partial) {
 }
 
 function sharedLibraryBridgeUrl() {
-    const origin = String(globalThis.location?.origin || '').replace(/\/+$/, '');
-    return /^http:\/\//i.test(origin) ? origin : getMcpBridgeUrl();
+    // Reuse the canonical bridge resolver. The shared-library path used an
+    // obsolete helper name, which broke file:// launches before any request.
+    return mcpBridgeBase();
+}
+
+function resizeWorldMessageInput(input = document.getElementById('world-user-input')) {
+    if (!input) return;
+    const defaultHeight = Number(input.dataset.defaultHeight)
+        || Math.max(1, Math.ceil(parseFloat(getComputedStyle(input).minHeight) || input.clientHeight || 22));
+    input.dataset.defaultHeight = String(defaultHeight);
+    const maximumHeight = defaultHeight * 5;
+    input.style.height = 'auto';
+    const automaticHeight = Math.min(input.scrollHeight, maximumHeight);
+    const manualHeight = Number(input.dataset.manualHeight) || 0;
+    const height = Math.max(automaticHeight, manualHeight);
+    input.style.height = `${Math.max(defaultHeight, height)}px`;
+    input.style.overflowY = input.scrollHeight > height ? 'auto' : 'hidden';
+}
+
+function resetWorldMessageInput(input = document.getElementById('world-user-input')) {
+    if (!input) return;
+    input.value = '';
+    delete input.dataset.manualHeight;
+    input.style.height = '';
+    input.style.overflowY = '';
+}
+
+function setWorldMessageInputManualHeight(input, requestedHeight) {
+    if (!input) return;
+    const defaultHeight = Number(input.dataset.defaultHeight)
+        || Math.max(1, Math.ceil(parseFloat(getComputedStyle(input).minHeight) || input.clientHeight || 22));
+    input.dataset.defaultHeight = String(defaultHeight);
+    const maximumHeight = Math.max(defaultHeight * 5, Math.floor(window.innerHeight * 0.7));
+    const height = Math.max(defaultHeight, Math.min(maximumHeight, Math.round(requestedHeight)));
+    input.dataset.manualHeight = String(height);
+    input.style.height = `${height}px`;
+    input.style.overflowY = input.scrollHeight > height ? 'auto' : 'hidden';
+}
+
+function installWorldMessageResizeHandle(input, handle) {
+    if (!input || !handle) return;
+    let drag = null;
+    const stop = event => {
+        if (!drag) return;
+        if (event?.pointerId !== undefined) handle.releasePointerCapture?.(event.pointerId);
+        drag = null;
+    };
+    handle.addEventListener('pointerdown', event => {
+        event.preventDefault();
+        const height = input.getBoundingClientRect().height || Number(input.dataset.defaultHeight) || 22;
+        drag = { pointerId: event.pointerId, startY: event.clientY, startHeight: height };
+        handle.setPointerCapture?.(event.pointerId);
+    });
+    handle.addEventListener('pointermove', event => {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        setWorldMessageInputManualHeight(input, drag.startHeight + drag.startY - event.clientY);
+    });
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+    handle.addEventListener('keydown', event => {
+        if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        const current = input.getBoundingClientRect().height || Number(input.dataset.defaultHeight) || 22;
+        setWorldMessageInputManualHeight(input, current + (event.key === 'ArrowUp' ? 16 : -16));
+    });
 }
 
 async function sharedLibraryRequest(path, options = {}) {
@@ -216,18 +565,81 @@ function sharedLibraryDeviceQuery() {
 }
 
 function sharedSettingsForSync(settings = state.globalSettings) {
-    const clean = safeJsonClone(isPlainObject(settings) ? settings : {});
-    SHARED_LIBRARY_LOCAL_SETTING_KEYS.forEach(key => delete clean[key]);
-    return clean;
+    return safeJsonClone(isPlainObject(settings) ? settings : {});
+}
+
+function sharedLibraryCredentialsForSync() {
+    return Object.fromEntries(SHARED_LIBRARY_CREDENTIAL_FIELDS.map(([field]) => [
+        field, typeof state[field] === 'string' ? state[field] : ''
+    ]));
+}
+
+function sharedEmbeddingCacheForSync() {
+    const namespace = HordeVectorMemory.namespace();
+    const prefix = `${namespace}|`;
+    const entries = [];
+    let bytes = 0;
+    for (const [key, vector] of HordeVectorMemory.cache.entries()) {
+        if (typeof key !== 'string' || !key.startsWith(prefix) || key.length > 600
+            || !Array.isArray(vector) || !vector.length || vector.length > 10000
+            || !vector.every(value => Number.isFinite(value))) continue;
+        const entry = [key, vector.slice()];
+        const entryBytes = new TextEncoder().encode(JSON.stringify(entry)).byteLength;
+        if (entries.length >= SHARED_LIBRARY_EMBEDDING_CACHE_ENTRIES
+            || bytes + entryBytes > SHARED_LIBRARY_EMBEDDING_CACHE_BYTES) break;
+        entries.push(entry);
+        bytes += entryBytes;
+    }
+    return { version: 1, namespace, entries };
+}
+
+function normalizeSharedEmbeddingCache(raw) {
+    if (!isPlainObject(raw) || raw.version !== 1 || typeof raw.namespace !== 'string'
+        || raw.namespace !== HordeVectorMemory.namespace() || !Array.isArray(raw.entries)) return null;
+    const cache = new Map();
+    let bytes = 0;
+    for (const entry of raw.entries) {
+        if (!Array.isArray(entry) || entry.length !== 2) continue;
+        const [key, vector] = entry;
+        if (typeof key !== 'string' || !key.startsWith(`${raw.namespace}|`) || key.length > 600
+            || !Array.isArray(vector) || !vector.length || vector.length > 10000
+            || !vector.every(value => Number.isFinite(value))) continue;
+        const entryBytes = new TextEncoder().encode(JSON.stringify(entry)).byteLength;
+        if (cache.size >= SHARED_LIBRARY_EMBEDDING_CACHE_ENTRIES
+            || bytes + entryBytes > SHARED_LIBRARY_EMBEDDING_CACHE_BYTES) break;
+        cache.set(key, vector.slice());
+        bytes += entryBytes;
+    }
+    return cache;
+}
+
+function cloneWorldForSharedLibrary(world) {
+    const copy = safeJsonClone(world);
+    // Sidecar migration rollback records are device-local recovery data. They
+    // can recursively contain earlier full worlds, and sending them through
+    // the shared mirror makes every retained bridge revision grow geometrically.
+    delete copy.sidecarMigrationBackups;
+    return copy;
+}
+
+function cloneSidecarMigrationRollbackWorld(world) {
+    const copy = safeJsonClone(world);
+    // A new rollback point must describe the source world, never carry its
+    // earlier rollback tree forward into another full-world snapshot.
+    delete copy.sidecarMigrationBackups;
+    return copy;
 }
 
 function buildSharedLibrarySnapshot() {
-    const worlds = safeJsonClone(state.worlds || []);
+    const worlds = (state.worlds || []).map(cloneWorldForSharedLibrary);
     return {
-        version: 1,
+        version: 2,
         globalSettings: sharedSettingsForSync(),
+        credentials: sharedLibraryCredentialsForSync(),
+        embeddingCache: sharedEmbeddingCacheForSync(),
         characters: safeJsonClone(state.characters || []),
         chats: safeJsonClone(state.chats || {}),
+        chatContinuities: safeJsonClone(state.chatContinuities || {}),
         activeSessionId: safeJsonClone(state.activeSessionId || {}),
         personas: safeJsonClone(state.personas || []),
         activePersonaId: state.activePersonaId || null,
@@ -267,8 +679,11 @@ function normalizeSharedLibrarySnapshot(raw) {
     if (!isPlainObject(raw)) throw new Error('The shared library snapshot is invalid.');
     return {
         globalSettings: isPlainObject(raw.globalSettings) ? raw.globalSettings : {},
+        credentials: isPlainObject(raw.credentials) ? raw.credentials : null,
+        embeddingCache: raw.embeddingCache,
         characters: Array.isArray(raw.characters) ? raw.characters : [],
         chats: isPlainObject(raw.chats) ? raw.chats : {},
+        chatContinuities: isPlainObject(raw.chatContinuities) ? raw.chatContinuities : {},
         activeSessionId: isPlainObject(raw.activeSessionId) ? raw.activeSessionId : {},
         personas: Array.isArray(raw.personas) ? raw.personas : [],
         activePersonaId: raw.activePersonaId || null,
@@ -289,15 +704,26 @@ function normalizeSharedLibrarySnapshot(raw) {
 
 async function applySharedLibrarySnapshot(rawSnapshot, revision) {
     const snapshot = normalizeSharedLibrarySnapshot(rawSnapshot);
-    const localSettings = safeJsonClone(state.globalSettings || {});
+    const localMigrationBackups = new Map((state.worlds || [])
+        .filter(world => world?.id && Array.isArray(world.sidecarMigrationBackups)
+            && world.sidecarMigrationBackups.length)
+        .map(world => [world.id, safeJsonClone(world.sidecarMigrationBackups)]));
     sharedLibrarySync.applying = true;
     try {
         state.globalSettings = { ...snapshot.globalSettings };
-        SHARED_LIBRARY_LOCAL_SETTING_KEYS.forEach(key => {
-            if (localSettings[key] !== undefined) state.globalSettings[key] = localSettings[key];
-        });
+        if (snapshot.credentials) {
+            SHARED_LIBRARY_CREDENTIAL_FIELDS.forEach(([field, sessionKey]) => {
+                if (typeof snapshot.credentials[field] !== 'string') return;
+                state[field] = snapshot.credentials[field];
+                sessionStorage.setItem(sessionKey, state[field]);
+            });
+            // A personal mirror is an explicit opt-in to retaining these keys
+            // on this owned browser profile after its first successful pull.
+            state.globalSettings.rememberApiKey = true;
+        }
         state.characters = snapshot.characters;
         state.chats = snapshot.chats;
+        state.chatContinuities = snapshot.chatContinuities;
         state.activeSessionId = snapshot.activeSessionId;
         state.personas = snapshot.personas;
         state.activePersonaId = snapshot.activePersonaId;
@@ -305,7 +731,12 @@ async function applySharedLibrarySnapshot(rawSnapshot, revision) {
         state.theme = snapshot.theme;
         state.systemPresets = snapshot.systemPresets;
         state.regexScripts = snapshot.regexScripts;
-        state.worlds = snapshot.worlds;
+        // Rollback records intentionally never cross devices. Preserve this
+        // browser's local recovery points while accepting all shared world data.
+        state.worlds = snapshot.worlds.map(world => {
+            const localBackups = localMigrationBackups.get(world?.id);
+            return localBackups ? { ...world, sidecarMigrationBackups: localBackups } : world;
+        });
         state.worldInstances = snapshot.worldInstances;
         state.activeWorldId = snapshot.activeWorldId;
         state.companions = snapshot.companions;
@@ -315,6 +746,11 @@ async function applySharedLibrarySnapshot(rawSnapshot, revision) {
         state.labsDiagnostics = snapshot.labsDiagnostics;
         worldMediaDirty = true;
         repairLoadedState();
+        const embeddingCache = normalizeSharedEmbeddingCache(snapshot.embeddingCache);
+        if (embeddingCache) {
+            HordeVectorMemory.cache = embeddingCache;
+            await HordeVectorMemory.saveCache();
+        }
         await saveState();
         sharedLibrarySync.lastPublishedFingerprint = sharedLibrarySnapshotFingerprint(buildSharedLibrarySnapshot());
         persistSharedLibraryMeta({ revision: Number(revision) || 0, pulledAt: Date.now() });
@@ -373,25 +809,46 @@ async function pullSharedLibrarySnapshot({ reload = false } = {}) {
 }
 
 async function pushSharedLibrarySnapshot({ manual = false, trigger = 'manual' } = {}) {
-    if (sharedLibrarySync.applying || sharedLibrarySync.pushing) return;
+    if (sharedLibrarySync.applying || sharedLibrarySync.pushing
+        || (!manual && sharedLibrarySync.blockedFingerprint)) return;
     sharedLibrarySync.pushing = true;
     try {
         const snapshot = buildSharedLibrarySnapshot();
         const fingerprint = sharedLibrarySnapshotFingerprint(snapshot);
         if (!manual && fingerprint === sharedLibrarySync.lastPublishedFingerprint) return;
+        const payload = {
+            deviceId: sharedLibraryDeviceId(),
+            label: sharedLibraryDeviceLabel(),
+            baseRevision: Number(sharedLibrarySync.revision) || 0,
+            snapshot,
+            trigger,
+        };
+        // The bridge rejects payloads at 30 MiB.  Do the check before sending
+        // anything so an oversized local library does not create an endless
+        // 400/retry loop or interfere with the running world.  The local
+        // IndexedDB library remains fully saved; only its bridge mirror waits
+        // for the user to trim/export/archive material.
+        const payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+        const bridgeSafetyLimit = 29 * 1024 * 1024;
+        if (payloadBytes >= bridgeSafetyLimit) {
+            sharedLibrarySync.blockedFingerprint = fingerprint;
+            sharedLibrarySync.blockedBytes = payloadBytes;
+            sharedLibrarySync.dirty = false;
+            const sizeMb = (payloadBytes / (1024 * 1024)).toFixed(1);
+            const message = `Shared-library mirror paused: local snapshot is ${sizeMb} MB (bridge limit is 30 MB). Local Horde data is still saved.`;
+            if (manual) showToast(message, 'warning');
+            else console.warn(message);
+            return;
+        }
         const data = await sharedLibraryRequest('/sync/push', {
             method: 'POST',
-            body: {
-                deviceId: sharedLibraryDeviceId(),
-                label: sharedLibraryDeviceLabel(),
-                baseRevision: Number(sharedLibrarySync.revision) || 0,
-                snapshot,
-                trigger,
-            },
+            body: payload,
         });
         applySharedLibraryStatus(data);
         persistSharedLibraryMeta({ revision: Number(data.revision) || 0, pushedAt: Date.now() });
         sharedLibrarySync.lastPublishedFingerprint = fingerprint;
+        sharedLibrarySync.blockedFingerprint = '';
+        sharedLibrarySync.blockedBytes = 0;
         sharedLibrarySync.conflict = false;
         sharedLibrarySync.dirty = false;
         sharedLibrarySync.assistantTurnsSincePublish = 0;
@@ -417,6 +874,10 @@ async function pushSharedLibrarySnapshot({ manual = false, trigger = 'manual' } 
 function scheduleSharedLibraryPush() {
     if (!sharedLibrarySync.ready || sharedLibrarySync.applying) return;
     sharedLibrarySync.dirty = true;
+    // An oversized snapshot is a transport limitation, not a transient world
+    // error. Keep local persistence running, but do not rebuild and warn about
+    // the same 100+ MB payload on every ordinary state save.
+    if (sharedLibrarySync.blockedFingerprint) return;
     if (sharedLibraryBackupPolicy().afterEveryChangeEnabled) {
         // Coalesce the small cluster of saves a single edit normally creates.
         clearTimeout(sharedLibrarySync.pushTimer);
@@ -430,7 +891,9 @@ function configureSharedLibraryAutoBackup() {
     const policy = sharedLibraryBackupPolicy();
     if (!policy.periodicEnabled || !sharedLibrarySync.ready) return;
     sharedLibrarySync.autoBackupTimer = setInterval(() => {
-        if (sharedLibrarySync.dirty) void pushSharedLibrarySnapshot({ trigger: 'periodic' });
+        if (sharedLibrarySync.dirty && !sharedLibrarySync.blockedFingerprint) {
+            void pushSharedLibrarySnapshot({ trigger: 'periodic' });
+        }
     }, policy.intervalMinutes * 60 * 1000);
 }
 
@@ -544,6 +1007,10 @@ function renderSharedLibrarySyncStatus(errorMessage = '') {
     if (!status) return;
     if (errorMessage) {
         status.textContent = errorMessage;
+        return;
+    }
+    if (sharedLibrarySync.blockedFingerprint) {
+        status.textContent = `Shared-library mirror paused at ${(sharedLibrarySync.blockedBytes / (1024 * 1024)).toFixed(1)} MB (30 MB bridge limit). Local Horde data remains saved.`;
         return;
     }
     if (!sharedLibrarySync.remoteRevision) {
@@ -1120,6 +1587,10 @@ function mcpBridgeBase() {
 async function mcpBridgeRequest(path, options = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+    const externalSignal = options.signal;
+    const abortFromCaller = () => controller.abort();
+    if (externalSignal?.aborted) controller.abort();
+    else externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
         const response = await fetch(mcpBridgeBase() + path, {
             method: options.method || 'GET',
@@ -1137,13 +1608,14 @@ async function mcpBridgeRequest(path, options = {}) {
         }
         return data;
     } catch (error) {
-        if (controller.signal.aborted) throw new Error('The local MCP bridge timed out.');
+        if (controller.signal.aborted) throw new Error(externalSignal?.aborted ? 'Request cancelled.' : 'The local MCP bridge timed out.');
         if (/Failed to fetch|NetworkError|Load failed/i.test(String(error.message || error))) {
             throw new Error('Horde Studio cannot reach its local bridge. Run the launcher for your OS from Settings → Launch Horde Studio.');
         }
         throw error;
     } finally {
         clearTimeout(timeout);
+        externalSignal?.removeEventListener('abort', abortFromCaller);
     }
 }
 function apiBase() {
@@ -1264,6 +1736,7 @@ function providerAttributionHeaders(providerId) {
 }
 
 function providerHasCredentials(providerId) {
+    if (String(providerId || '').toLowerCase() === 'fal') return !!String(state.falApiKey || '').trim();
     const provider = normalizedProviderId(providerId);
     if (provider === 'local') return true;
     if (provider === 'custom') return !!normalizeRemoteApiBase(state.globalSettings?.customBaseUrl);
@@ -1274,6 +1747,7 @@ function providerHasCredentials(providerId) {
 }
 
 function providerDisplayName(providerId) {
+    if (String(providerId || '').toLowerCase() === 'fal') return 'Fal';
     return ({ openrouter: 'OpenRouter', gptproto: 'GPTProto', nanogpt: 'NanoGPT', nvidia: 'NVIDIA NIM', bedrock: 'AWS Bedrock', custom: customProviderName(), local: 'Local provider' })[
         normalizedProviderId(providerId)
     ];
@@ -1284,7 +1758,7 @@ function providerDisplayName(providerId) {
 // Virtual Human can talk through OpenRouter, make photos through GPTProto and
 // render clips through WaveSpeed without any provider silently replacing the
 // others.
-const VIDEO_PROVIDER_IDS = Object.freeze(['openrouter', 'evolink', 'wavespeed']);
+const VIDEO_PROVIDER_IDS = Object.freeze(['openrouter', 'evolink', 'wavespeed', 'fal']);
 const VIDEO_MODEL_FALLBACKS = Object.freeze({
     openrouter: [
         { id: 'bytedance/seedance-2.0-fast', name: 'Seedance 2.0 Fast', reference: true },
@@ -1301,6 +1775,12 @@ const VIDEO_MODEL_FALLBACKS = Object.freeze({
         { id: 'bytedance/seedance-v2.0-fast/image-to-video', name: 'Seedance 2.0 Fast · image to video', reference: true },
         { id: 'bytedance/seedance-v2.0/image-to-video', name: 'Seedance 2.0 · image to video', reference: true },
         { id: 'minimax/hailuo-2.3/image-to-video', name: 'MiniMax Hailuo 2.3 · image to video', reference: true }
+    ],
+    fal: [
+        { id: 'minimax/h3-max', name: 'MiniMax H3 Max · native dialogue', reference: true, audio: true },
+        { id: 'alibaba/wan-3.0', name: 'Wan 3.0 · audio', reference: true, audio: true },
+        { id: 'fal-ai/ltx-2.3/fast', name: 'LTX-2.3 Fast · audio', reference: true, audio: true },
+        { id: 'alibaba/wan-3.0-prime', name: 'Wan 3.0 Prime · audio', reference: true, audio: true }
     ]
 });
 const videoModelCatalogCache = new Map();
@@ -1311,7 +1791,7 @@ function normalizedVideoProviderId(value) {
 }
 
 function videoProviderDisplayName(value) {
-    return ({ openrouter: 'OpenRouter', evolink: 'EvoLink', wavespeed: 'WaveSpeed' })[normalizedVideoProviderId(value)];
+    return ({ openrouter: 'OpenRouter', evolink: 'EvoLink', wavespeed: 'WaveSpeed', fal: 'Fal' })[normalizedVideoProviderId(value)];
 }
 
 function videoProviderApiBase(value) {
@@ -1324,7 +1804,8 @@ function videoProviderApiBase(value) {
 function videoProviderApiKey(value) {
     const provider = normalizedVideoProviderId(value);
     return provider === 'evolink' ? state.evolinkApiKey
-        : provider === 'wavespeed' ? state.wavespeedApiKey : state.apiKey;
+        : provider === 'wavespeed' ? state.wavespeedApiKey
+            : provider === 'fal' ? state.falApiKey : state.apiKey;
 }
 
 function videoProviderHasCredentials(value) {
@@ -1363,6 +1844,11 @@ async function fetchVideoModels(providerValue, force = false) {
     const cached = videoModelCatalogCache.get(provider);
     if (!force && cached?.at > Date.now() - 10 * 60 * 1000) return cached.models;
     let models = [];
+    if (provider === 'fal') {
+        models = VIDEO_MODEL_FALLBACKS.fal.map(item => normalizeVideoModel(item, provider));
+        videoModelCatalogCache.set(provider, { at: Date.now(), models });
+        return models;
+    }
     if (provider === 'openrouter' && videoProviderHasCredentials(provider)) {
         try {
             const response = await fetch(`${videoProviderApiBase(provider)}/videos/models`, { headers: videoProviderHeaders(provider) });
@@ -1628,6 +2114,7 @@ function companionTextProviderId(companion) {
 }
 
 function companionImageProviderId(companion) {
+    if (companion?.imageSource === 'fal') return 'fal';
     const requested = ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(companion?.imageSource)
         ? companion.imageSource : normalizedProviderId();
     return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(requested) ? requested : 'openrouter';
@@ -1774,11 +2261,16 @@ let state = {
     gptprotoApiKey: '',
     evolinkApiKey: '',
     wavespeedApiKey: '',
+    falApiKey: '',
     nanogptApiKey: '',
     nvidiaApiKey: '',
     bedrockApiKey: '',
     customApiKey: '',
     customHeaders: '',
+    // Full raw request/reply flight recorder. Retained locally so a failed
+    // provider or Sidecar turn remains inspectable after refresh; credentials
+    // are redacted before an entry ever reaches this collection.
+    apiCallTraces: [],
     globalSettings: {
         defaultModel: 'deepseek/deepseek-v4-flash',
         openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
@@ -1788,6 +2280,10 @@ let state = {
         customBaseUrl: '',
         evolinkBaseUrl: 'https://api.evolink.ai/v1',
         wavespeedBaseUrl: 'https://api.wavespeed.ai/api/v3',
+        falRate480: 0.05,
+        falRate768: 0.08,
+        falPricingVersion: 2,
+        falSafetyChecker: true,
         editFontSize: 15,
         editFontColor: '#ffffff',
         editBgColor: '#2b2b36',
@@ -1877,6 +2373,20 @@ let state = {
     activeWorldId: null,
     worldInstances: {}, // worldId -> current state
     editingWorld: null,
+    view: null,
+    editingCharId: null,
+    lastWorldStudioId: null,
+    lastWorldStudioTab: null,
+    lastStudioTab: null,
+    lastCompanionStudioTab: null,
+    settingsOpen: false,
+    settingsSection: 'models',
+    // Video Adventures are a separate product surface and persistence graph. They
+    // intentionally share no definitions, sessions or canonical state with Worlds.
+    videoWorlds: [],
+    videoWorldSessions: {}, // videoWorldId -> { activeSessionId, sessions[] }
+    activeVideoWorldId: null,
+    editingVideoWorldId: null,
     companions: [],
     companionThreads: {}, // legacy companionId -> message array; migrated on load
     companionTimelines: {}, // companionId -> { activeSessionId, sessions[] }
@@ -1891,6 +2401,35 @@ const worldLoadWarnings = new Map();
 function getAllPresets() {
     return [...DEFAULT_SYSTEM_PRESETS, ...(state.systemPresets || [])];
 }
+
+let apiTracePersistTimer = null;
+window.__hordePersistApiTrace = trace => {
+    if (!trace || !state) return;
+    const traces = Array.isArray(state.apiCallTraces) ? state.apiCallTraces : [];
+    const index = traces.findIndex(entry => entry?.id === trace.id);
+    const safeTrace = safeJsonClone(trace);
+    if (/\/sync\/(?:push|snapshot|history|restore|status)(?:[?#]|$)/.test(String(safeTrace?.request?.url || ''))) {
+        if (safeTrace.request) safeTrace.request.body = '[omitted: shared-library mirror payload]';
+        if (safeTrace.response) safeTrace.response.body = '[omitted: shared-library mirror payload]';
+    }
+    if (index >= 0) traces[index] = safeTrace;
+    else traces.push(safeTrace);
+    state.apiCallTraces = traces.slice(-500);
+    // A streaming reply may update several times in quick succession. Coalesce
+    // persistence without making the trace itself temporary or best-effort.
+    clearTimeout(apiTracePersistTimer);
+    apiTracePersistTimer = setTimeout(() => {
+        // Trace history is deliberately device-local diagnostic material. Save
+        // it directly instead of routing every provider reply through the
+        // shared-library publisher (which mirrors worlds, not diagnostics).
+        if (!HordeDB?.db) return;
+        HordeDB.set('apiCallTraces', safeJsonClone(state.apiCallTraces)).catch(error =>
+            console.warn('Horde API trace persistence failed.', error));
+    }, 250);
+};
+// Fetches made before state finished initialising remain in the in-page buffer;
+// adopt them once persistence is available.
+(window.__hordeApiCallTraces || []).forEach(trace => window.__hordePersistApiTrace(trace));
 
 /**
  * Resolve a SillyTavern-style preset's prompts into the exact SEQUENCE and
@@ -1964,6 +2503,7 @@ function isPlainObject(value) {
 }
 
 function safeJsonClone(value) {
+    if (value === undefined) return undefined;
     return JSON.parse(JSON.stringify(value, (key, item) => {
         if (key === '__proto__' || key === 'prototype' || key === 'constructor') return undefined;
         return item;
@@ -2196,6 +2736,7 @@ function validateWorldData(value, label = 'World') {
         }
         if (value.sidecarConfig.tracker !== undefined) {
             requirePlainObject(value.sidecarConfig.tracker, `${label} Sidecar tracker`);
+            requireString(value.sidecarConfig.tracker.provider, `${label} Sidecar tracker provider`, { optional: true, max: 40 });
             requireString(value.sidecarConfig.tracker.model, `${label} Sidecar tracker model`, { optional: true, max: 160 });
             validateOpenRouterRoutingData(value.sidecarConfig.tracker.openRouterRouting, `${label} Sidecar tracker OpenRouter routing`);
         }
@@ -2340,6 +2881,7 @@ function validateBackupData(value) {
     requireArray(value.rooms, 'Backup rooms', { optional: true, max: 1000 });
     requireArray(value.systemPresets, 'Backup presets', { optional: true, max: 1000 });
     requireArray(value.worlds, 'Backup worlds', { optional: true, max: 1000 });
+    requireArray(value.videoWorlds, 'Backup Video Adventures', { optional: true, max: 1000 });
     requireArray(value.companions, 'Backup Virtual Humans', { optional: true, max: 1000 });
     (value.characters || []).forEach((item, index) => validateCharacterData(item, `Backup character ${index + 1}`));
     (value.rooms || []).forEach((item, index) => validateRoomData(item, `Backup room ${index + 1}`));
@@ -2351,6 +2893,13 @@ function validateBackupData(value) {
         requireSafeId(item.id, `Backup persona ${index + 1} id`, { optional: true });
     });
     (value.worlds || []).forEach((item, index) => validateWorldData(item, `Backup world ${index + 1}`));
+    (value.videoWorlds || []).forEach((item, index) => {
+        requirePlainObject(item, `Backup Video Adventure ${index + 1}`);
+        requireSafeId(item.id, `Backup Video Adventure ${index + 1} id`);
+        requireString(item.name, `Backup Video Adventure ${index + 1} name`, { max: 120 });
+        ['tagline', 'premise', 'visualStyle', 'openingShot', 'resolution', 'aspectRatio'].forEach(key =>
+            requireString(item[key], `Backup Video Adventure ${index + 1} ${key}`, { optional: true, max: key === 'openingShot' ? 6000 : 4000 }));
+    });
     (value.companions || []).forEach((item, index) =>
         validateCompanionData(item, `Backup Virtual Human ${index + 1}`));
     if (value.companionTimelines !== undefined) {
@@ -2380,7 +2929,7 @@ function validateBackupData(value) {
         requireSafeId(item.id, `Backup preset ${index + 1} id`, { optional: true });
         validatePresetData(item.data, `Backup preset ${index + 1}`);
     });
-    ['chats', 'chatContinuities', 'activeSessionId', 'globalSettings', 'theme', 'worldInstances'].forEach(key => {
+    ['chats', 'chatContinuities', 'activeSessionId', 'globalSettings', 'theme', 'worldInstances', 'videoWorldSessions'].forEach(key => {
         if (value[key] !== undefined) requirePlainObject(value[key], `Backup ${key}`);
     });
     Object.entries(value.chatContinuities || {}).forEach(([continuityId, continuity]) => {
@@ -2477,6 +3026,10 @@ function validateBackupData(value) {
 }
 
 function repairLoadedState() {
+    const loadedGlobalSettings = isPlainObject(state.globalSettings) ? state.globalSettings : {};
+    const migrateExpiredFalLaunchRates = Number(loadedGlobalSettings.falPricingVersion || 0) < 2
+        && Number(loadedGlobalSettings.falRate480) === 0.025
+        && Number(loadedGlobalSettings.falRate768) === 0.04;
     state.globalSettings = {
         defaultModel: 'deepseek/deepseek-v4-flash',
         openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
@@ -2491,6 +3044,10 @@ function repairLoadedState() {
         embeddingApiKey: '',
         localTtsBaseUrl: 'http://127.0.0.1:8000/v1',
         localTtsApiKey: '',
+        falRate480: 0.05,
+        falRate768: 0.08,
+        falPricingVersion: 2,
+        falSafetyChecker: true,
         mcpBridgeUrl: HORDE_MCP_BRIDGE_DEFAULT,
         localImageBaseUrl: 'http://127.0.0.1:7860/v1',
         localImagePath: '/images/generations',
@@ -2510,8 +3067,13 @@ function repairLoadedState() {
         companionAlwaysOnClientId: '',
         companionAgencyPaused: false,
         labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } },
-        ...(isPlainObject(state.globalSettings) ? state.globalSettings : {})
+        ...loadedGlobalSettings
     };
+    if (migrateExpiredFalLaunchRates) {
+        state.globalSettings.falRate480 = 0.05;
+        state.globalSettings.falRate768 = 0.08;
+    }
+    state.globalSettings.falPricingVersion = 2;
     state.globalSettings.defaultModel = typeof state.globalSettings.defaultModel === 'string' ? state.globalSettings.defaultModel.slice(0, 500) : 'deepseek/deepseek-v4-flash';
     state.globalSettings.openRouterRouting = normalizeOpenRouterRouting(state.globalSettings.openRouterRouting);
     // Blank is meaningful here: it means "fall back to the world's own model".
@@ -2545,6 +3107,9 @@ function repairLoadedState() {
     state.globalSettings.localTtsBaseUrl = normalizeOpenAICompatibleBase(
         state.globalSettings.localTtsBaseUrl, 'http://127.0.0.1:8000/v1');
     state.globalSettings.localTtsApiKey = String(state.globalSettings.localTtsApiKey || '').slice(0, 500);
+    state.globalSettings.falRate480 = Math.max(0, Math.min(100, Number(state.globalSettings.falRate480) || 0.05));
+    state.globalSettings.falRate768 = Math.max(0, Math.min(100, Number(state.globalSettings.falRate768) || 0.08));
+    state.globalSettings.falSafetyChecker = state.globalSettings.falSafetyChecker !== false;
     state.globalSettings.companionAlwaysOnEnabled = state.globalSettings.companionAlwaysOnEnabled === true;
     state.globalSettings.companionAlwaysOnMessages = state.globalSettings.companionAlwaysOnMessages !== false;
     state.globalSettings.companionAlwaysOnSocial = state.globalSettings.companionAlwaysOnSocial !== false;
@@ -2577,6 +3142,8 @@ function repairLoadedState() {
     state.chatContinuities = isPlainObject(state.chatContinuities) ? state.chatContinuities : {};
     state.activeSessionId = isPlainObject(state.activeSessionId) ? state.activeSessionId : {};
     state.worldInstances = isPlainObject(state.worldInstances) ? state.worldInstances : {};
+    state.videoWorlds = Array.isArray(state.videoWorlds) ? state.videoWorlds.filter(isPlainObject) : [];
+    state.videoWorldSessions = isPlainObject(state.videoWorldSessions) ? state.videoWorldSessions : {};
     state.characters = Array.isArray(state.characters) ? state.characters.filter(c => {
         try { validateCharacterData(c); return true; } catch (err) { console.warn('Dropped invalid stored character:', err.message); return false; }
     }) : [];
@@ -2668,9 +3235,223 @@ function repairLoadedState() {
     });
 }
 
+const WORKSPACE_STATE_MIRROR_KEY = 'horde_workspace_state_v2';
+const WORKSPACE_STATE_VERSION = 2;
+let workspaceRestoring = false;
+let workspacePersistTimer = null;
+let pendingWorkspaceState = null;
+
+function validWorkspaceView(value) {
+    return ['library', 'chat', 'studio', 'worlds', 'worldStudio', 'worldPlay',
+        'videoWorlds', 'videoWorldStudio', 'videoWorldPlay', 'companions',
+        'companionStudio', 'companionChat', 'multiplayer', 'pip'].includes(value);
+}
+
+function workspaceString(value) {
+    return typeof value === 'string' && value.length <= 200 ? value : null;
+}
+
+function captureWorkspaceState() {
+    return {
+        version: WORKSPACE_STATE_VERSION,
+        savedAt: Date.now(),
+        view: validWorkspaceView(state.view) ? state.view : 'library',
+        activeCharId: workspaceString(state.activeCharId),
+        activeRoomId: workspaceString(state.activeRoomId),
+        editingCharId: workspaceString(state.editingChar?.id || state.editingCharId),
+        activeWorldId: workspaceString(state.activeWorldId),
+        lastWorldStudioId: workspaceString(state.lastWorldStudioId),
+        lastWorldStudioTab: workspaceString(state.lastWorldStudioTab),
+        activeVideoWorldId: workspaceString(state.activeVideoWorldId),
+        editingVideoWorldId: workspaceString(state.editingVideoWorldId),
+        activeCompanionId: workspaceString(state.activeCompanionId),
+        editingCompanionId: workspaceString(state.editingCompanionId),
+        lastStudioTab: workspaceString(state.lastStudioTab),
+        lastCompanionStudioTab: workspaceString(state.lastCompanionStudioTab),
+        settingsOpen: state.settingsOpen === true,
+        settingsSection: SETTINGS_SECTION_LABELS?.[state.settingsSection]
+            ? state.settingsSection : activeSettingsSection
+    };
+}
+
+function applyWorkspaceState(raw) {
+    if (!isPlainObject(raw)) return;
+    state.view = validWorkspaceView(raw.view) ? raw.view : state.view;
+    ['activeCharId', 'activeRoomId', 'editingCharId', 'activeWorldId',
+        'lastWorldStudioId', 'lastWorldStudioTab', 'activeVideoWorldId',
+        'editingVideoWorldId', 'activeCompanionId', 'editingCompanionId',
+        'lastStudioTab', 'lastCompanionStudioTab'].forEach(key => {
+        if (raw[key] !== undefined) state[key] = workspaceString(raw[key]);
+    });
+    if (raw.settingsOpen !== undefined) state.settingsOpen = raw.settingsOpen === true;
+    if (SETTINGS_SECTION_LABELS?.[raw.settingsSection]) {
+        state.settingsSection = raw.settingsSection;
+        activeSettingsSection = raw.settingsSection;
+    }
+}
+
+function readWorkspaceStateMirror() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(WORKSPACE_STATE_MIRROR_KEY) || 'null');
+        return isPlainObject(raw) && Number(raw.version) === WORKSPACE_STATE_VERSION ? raw : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function writeWorkspaceStateMirror(snapshot = captureWorkspaceState()) {
+    try {
+        localStorage.setItem(WORKSPACE_STATE_MIRROR_KEY, JSON.stringify(snapshot));
+    } catch (_) { /* IndexedDB remains the durable fallback. */ }
+    return snapshot;
+}
+
+async function persistWorkspaceState(snapshot = captureWorkspaceState()) {
+    writeWorkspaceStateMirror(snapshot);
+    if (HordeDB.db) await HordeDB.set('workspaceStateV2', snapshot);
+}
+
+function persistWorkspaceSoon() {
+    if (workspaceRestoring) return;
+    const snapshot = writeWorkspaceStateMirror();
+    clearTimeout(workspacePersistTimer);
+    workspacePersistTimer = setTimeout(() => {
+        persistWorkspaceState(snapshot).catch(() => {});
+    }, 80);
+}
+
+window.addEventListener('pagehide', () => {
+    if (!workspaceRestoring) writeWorkspaceStateMirror();
+});
+
+async function loadWorkspaceState() {
+    const mirror = readWorkspaceStateMirror();
+    let stored = null;
+    let legacy = null;
+    try {
+        stored = await HordeDB.get('workspaceStateV2');
+        if (!stored) {
+            legacy = {
+                view: await HordeDB.get('view'),
+                activeCharId: await HordeDB.get('activeCharId'),
+                activeRoomId: await HordeDB.get('activeRoomId'),
+                lastWorldStudioId: await HordeDB.get('lastWorldStudioId'),
+                lastWorldStudioTab: await HordeDB.get('lastWorldStudioTab'),
+                lastStudioTab: await HordeDB.get('lastStudioTab'),
+                lastCompanionStudioTab: await HordeDB.get('lastCompanionStudioTab'),
+                editingCompanionId: await HordeDB.get('editingCompanionId')
+            };
+        }
+    } catch (_) { /* The local mirror still permits a fast refresh restore. */ }
+    const candidates = [mirror, stored, legacy].filter(isPlainObject);
+    return candidates.sort((a, b) => (Number(b.savedAt) || 0) - (Number(a.savedAt) || 0))[0] || null;
+}
+
+function workspaceEntityExists(list, id) {
+    return !!id && Array.isArray(list) && list.some(item => item && item.id === id);
+}
+
+function restoreLastWorkspace() {
+    const lastView = state.view;
+    const lastWorldTab = state.lastWorldStudioTab;
+    const lastStudioTab = state.lastStudioTab;
+    const lastCompanionTab = state.lastCompanionStudioTab;
+    const lastWorldStudioId = state.lastWorldStudioId;
+    workspaceRestoring = true;
+    try {
+        if (lastView === 'worldPlay' && workspaceEntityExists(state.worlds, state.activeWorldId)) {
+            enterWorld(state.activeWorldId);
+            return;
+        }
+        if (lastView === 'worldStudio') {
+            const worldId = workspaceEntityExists(state.worlds, lastWorldStudioId)
+                ? lastWorldStudioId
+                : (workspaceEntityExists(state.worlds, state.activeWorldId) ? state.activeWorldId : null);
+            if (worldId) openWorldStudio(worldId, { tab: lastWorldTab || 'w-overview' });
+            else switchView('worlds');
+            return;
+        }
+        if (lastView === 'studio') {
+            const characterId = workspaceEntityExists(state.characters, state.editingCharId)
+                ? state.editingCharId : state.activeCharId;
+            if (workspaceEntityExists(state.characters, characterId)) {
+                state.activeCharId = characterId;
+                switchView('studio');
+                if (lastStudioTab) {
+                    document.querySelector(`#studio-view .studio-tab[data-tab="${lastStudioTab}"]`)?.click();
+                }
+            } else if (workspaceEntityExists(state.rooms, state.activeRoomId)) {
+                switchView('chat');
+            } else {
+                switchView('library');
+            }
+            return;
+        }
+        if (lastView === 'companionStudio') {
+            const companionId = workspaceEntityExists(state.companions, state.editingCompanionId)
+                ? state.editingCompanionId
+                : (workspaceEntityExists(state.companions, state.activeCompanionId) ? state.activeCompanionId : null);
+            if (companionId) state.editingCompanionId = companionId;
+            if (companionId) {
+                switchView('companionStudio');
+                if (lastCompanionTab) activateCompanionStudioTab(lastCompanionTab);
+            } else {
+                switchView('companions');
+            }
+            return;
+        }
+        if (lastView === 'chat') {
+            if (!workspaceEntityExists(state.characters, state.activeCharId)) state.activeCharId = null;
+            if (!workspaceEntityExists(state.rooms, state.activeRoomId)) state.activeRoomId = null;
+            if (state.activeCharId || state.activeRoomId) switchView('chat');
+            else switchView('library');
+            return;
+        }
+        if (lastView === 'companionChat') {
+            if (workspaceEntityExists(state.companions, state.activeCompanionId)) switchView('companionChat');
+            else switchView('companions');
+            return;
+        }
+        if (lastView === 'videoWorldStudio') {
+            const worldId = workspaceEntityExists(state.videoWorlds, state.editingVideoWorldId)
+                ? state.editingVideoWorldId : state.activeVideoWorldId;
+            if (workspaceEntityExists(state.videoWorlds, worldId)) {
+                state.editingVideoWorldId = worldId;
+                state.activeVideoWorldId = worldId;
+                switchView('videoWorldStudio');
+            } else {
+                switchView('videoWorlds');
+            }
+            return;
+        }
+        if (lastView === 'videoWorldPlay') {
+            if (workspaceEntityExists(state.videoWorlds, state.activeVideoWorldId)) switchView('videoWorldPlay');
+            else switchView('videoWorlds');
+            return;
+        }
+        if (lastView === 'multiplayerSession') {
+            switchView('multiplayer');
+            return;
+        }
+        if (lastView && views[lastView]) {
+            switchView(lastView);
+            return;
+        }
+        switchView('library');
+    } finally {
+        workspaceRestoring = false;
+        if (lastView === 'worldStudio') state.lastWorldStudioTab = lastWorldTab || state.lastWorldStudioTab;
+        if (lastView === 'studio') state.lastStudioTab = lastStudioTab || state.lastStudioTab;
+        if (lastView === 'companionStudio') state.lastCompanionStudioTab = lastCompanionTab || state.lastCompanionStudioTab;
+        persistWorkspaceSoon();
+    }
+}
+
 async function loadState() {
     await HordeDB.init();
     await HordeVectorMemory.init();
+    pendingWorkspaceState = await loadWorkspaceState();
+    applyWorkspaceState(pendingWorkspaceState);
     // Shipped worlds are authored against the same schema users migrate to.
     // Do this at startup (after the whole script has initialized) rather than
     // baking a second, divergent compatibility format into starter content.
@@ -2692,6 +3473,7 @@ async function loadState() {
         state.gptprotoApiKey = sessionStorage.getItem('horde_gptproto_api_key') || '';
         state.evolinkApiKey = sessionStorage.getItem('horde_evolink_api_key') || '';
         state.wavespeedApiKey = sessionStorage.getItem('horde_wavespeed_api_key') || '';
+        state.falApiKey = sessionStorage.getItem('horde_fal_api_key') || '';
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || '';
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || '';
         state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || '';
@@ -2724,6 +3506,7 @@ async function loadState() {
         const storedGPTProtoApiKey = await HordeDB.get('gptprotoApiKey') || '';
         const storedEvolinkApiKey = await HordeDB.get('evolinkApiKey') || '';
         const storedWaveSpeedApiKey = await HordeDB.get('wavespeedApiKey') || '';
+        const storedFalApiKey = await HordeDB.get('falApiKey') || '';
         const storedNanoGPTApiKey = await HordeDB.get('nanogptApiKey') || '';
         const storedNvidiaApiKey = await HordeDB.get('nvidiaApiKey') || '';
         const storedBedrockApiKey = await HordeDB.get('bedrockApiKey') || '';
@@ -2737,6 +3520,8 @@ async function loadState() {
         if (state.evolinkApiKey) sessionStorage.setItem('horde_evolink_api_key', state.evolinkApiKey);
         state.wavespeedApiKey = sessionStorage.getItem('horde_wavespeed_api_key') || storedWaveSpeedApiKey;
         if (state.wavespeedApiKey) sessionStorage.setItem('horde_wavespeed_api_key', state.wavespeedApiKey);
+        state.falApiKey = sessionStorage.getItem('horde_fal_api_key') || storedFalApiKey;
+        if (state.falApiKey) sessionStorage.setItem('horde_fal_api_key', state.falApiKey);
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || storedNanoGPTApiKey;
         if (state.nanogptApiKey) sessionStorage.setItem('horde_nanogpt_api_key', state.nanogptApiKey);
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || storedNvidiaApiKey;
@@ -2760,6 +3545,10 @@ async function loadState() {
             console.warn('Recovered Settings from the local fallback snapshot.');
         }
         state.labsDiagnostics = await HordeDB.get('labsDiagnostics') || [];
+        state.apiCallTraces = await HordeDB.get('apiCallTraces') || [];
+        // The fetch recorder starts before IndexedDB finishes opening. Merge
+        // those startup calls now that its local-only store is available.
+        (window.__hordeApiCallTraces || []).forEach(trace => window.__hordePersistApiTrace(trace));
         if (state.globalSettings.memoryThreshold === undefined) state.globalSettings.memoryThreshold = 0.35;
         if (state.globalSettings.memoryTopK === undefined) state.globalSettings.memoryTopK = 8;
         if (state.globalSettings.consolidationMaxTokens === undefined) state.globalSettings.consolidationMaxTokens = 1400;
@@ -2786,6 +3575,8 @@ async function loadState() {
         if (state.globalSettings.customBaseUrl === undefined) state.globalSettings.customBaseUrl = '';
         if (state.globalSettings.evolinkBaseUrl === undefined) state.globalSettings.evolinkBaseUrl = 'https://api.evolink.ai/v1';
         if (state.globalSettings.wavespeedBaseUrl === undefined) state.globalSettings.wavespeedBaseUrl = 'https://api.wavespeed.ai/api/v3';
+        if (state.globalSettings.falRate480 === undefined) state.globalSettings.falRate480 = 0.05;
+        if (state.globalSettings.falRate768 === undefined) state.globalSettings.falRate768 = 0.08;
         if (state.globalSettings.localBaseUrl === undefined) state.globalSettings.localBaseUrl = '';
         if (state.globalSettings.localApiKey === undefined) state.globalSettings.localApiKey = '';
         if (state.globalSettings.localGenerationTimeoutSeconds === undefined) state.globalSettings.localGenerationTimeoutSeconds = 300;
@@ -2820,6 +3611,9 @@ async function loadState() {
         });
         state.worldInstances = await HordeDB.get('worldInstances') || {};
         state.activeWorldId = await HordeDB.get('activeWorldId') || null;
+        state.videoWorlds = await HordeDB.get('videoWorlds') || [];
+        state.videoWorldSessions = await HordeDB.get('videoWorldSessions') || {};
+        state.activeVideoWorldId = await HordeDB.get('activeVideoWorldId') || null;
         repairedCompanionIds = await loadCompanionsState();
         
         // --- MIGRATION: Convert chats to sessions if needed ---
@@ -3277,6 +4071,12 @@ async function loadState() {
         });
         if (changed) await saveState();
     }
+
+    // Library records load after the initial workspace snapshot. Reapply the
+    // small local snapshot only after validation and migrations have finished,
+    // so active IDs point at this freshly loaded library rather than getting
+    // overwritten by the regular persistence reads above.
+    applyWorkspaceState(pendingWorkspaceState);
 }
 
 let saveStateInFlight = null;
@@ -3316,6 +4116,7 @@ async function persistStateSnapshot() {
             gptprotoApiKey: state.globalSettings.rememberApiKey ? (state.gptprotoApiKey || '') : '',
             evolinkApiKey: state.globalSettings.rememberApiKey ? (state.evolinkApiKey || '') : '',
             wavespeedApiKey: state.globalSettings.rememberApiKey ? (state.wavespeedApiKey || '') : '',
+            falApiKey: state.globalSettings.rememberApiKey ? (state.falApiKey || '') : '',
             nanogptApiKey: state.globalSettings.rememberApiKey ? (state.nanogptApiKey || '') : '',
             nvidiaApiKey: state.globalSettings.rememberApiKey ? (state.nvidiaApiKey || '') : '',
             bedrockApiKey: state.globalSettings.rememberApiKey ? (state.bedrockApiKey || '') : '',
@@ -3336,6 +4137,10 @@ async function persistStateSnapshot() {
             worldRecoverySnapshots: state.worldRecoverySnapshots,
             worldInstances: state.worldInstances,
             activeWorldId: state.activeWorldId,
+            ...captureWorkspaceState(),
+            videoWorlds: state.videoWorlds,
+            videoWorldSessions: state.videoWorldSessions,
+            activeVideoWorldId: state.activeVideoWorldId,
             companions: state.companions,
             companionThreads: state.companionThreads,
             companionTimelines: state.companionTimelines,
@@ -3442,6 +4247,7 @@ async function persistGlobalSettingsOnly() {
         gptprotoApiKey: remember ? (state.gptprotoApiKey || '') : '',
         evolinkApiKey: remember ? (state.evolinkApiKey || '') : '',
         wavespeedApiKey: remember ? (state.wavespeedApiKey || '') : '',
+        falApiKey: remember ? (state.falApiKey || '') : '',
         nanogptApiKey: remember ? (state.nanogptApiKey || '') : '',
         nvidiaApiKey: remember ? (state.nvidiaApiKey || '') : '',
         bedrockApiKey: remember ? (state.bedrockApiKey || '') : '',
@@ -4181,7 +4987,7 @@ function normalizeWorldPresentation(world) {
         panelOpacity: livingClamp(raw.panelOpacity == null ? 88 : raw.panelOpacity, 35, 100),
         backgroundDim: livingClamp(raw.backgroundDim == null ? 68 : raw.backgroundDim, 0, 95),
         mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),
-        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
+        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
         imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500)
     });
     world.presentation = raw;
@@ -4290,6 +5096,9 @@ const views = {
     worlds: document.getElementById('worlds-view'),
     worldStudio: document.getElementById('world-studio-view'),
     worldPlay: document.getElementById('world-play-view'),
+    videoWorlds: document.getElementById('video-worlds-view'),
+    videoWorldStudio: document.getElementById('video-world-studio-view'),
+    videoWorldPlay: document.getElementById('video-world-play-view'),
     companions: document.getElementById('companions-view'),
     companionStudio: document.getElementById('companion-studio-view'),
     companionChat: document.getElementById('companion-chat-view')
@@ -4425,9 +5234,16 @@ function openRouterRoutingModel(scope) {
 }
 
 function openRouterRoutingVisible(scope) {
+    // Sidecar inherits the entire Narrator request contract, including routing.
+    // Do not render a second routing schema while that inheritance is selected.
+    if (scope === 'sidecar' && document.getElementById('w-sidecar-inherit-narrator')?.checked !== false) {
+        return false;
+    }
     const selected = scope === 'global'
         ? document.getElementById('global-api-provider')?.value
-        : state.globalSettings.apiProvider;
+        : scope === 'sidecar'
+            ? (document.getElementById('w-sidecar-provider')?.value || state.globalSettings.apiProvider)
+            : state.globalSettings.apiProvider;
     return normalizedProviderId(selected) === 'openrouter';
 }
 
@@ -4676,7 +5492,7 @@ function renderOpenRouterRoutingPanel(scope) {
     host.innerHTML = `<section class="openrouter-routing-panel" data-or-scope="${scope}">
         <div class="or-routing-head">
             <div><span class="or-routing-kicker">OPENROUTER</span><h3>Provider Routing</h3></div>
-            <span class="or-routing-model" title="The connection test uses this model">${escapeHTML(openRouterRoutingModel(scope) || 'No model selected')}</span>
+            <span class="or-routing-model">${escapeHTML(openRouterRoutingModel(scope) || 'No model selected')}</span>
         </div>
         <p class="form-hint">Preferred providers are tried in this order. If they fail, OpenRouter ranks the remaining endpoints by the fallback strategy below.</p>
         ${definition.inheritLabel ? `<label class="or-inherit-toggle"><input type="checkbox" data-or-inherit ${draft.inherit ? 'checked' : ''}> ${escapeHTML(definition.inheritLabel)}</label>` : ''}
@@ -6021,7 +6837,24 @@ function labsSocialContext(result) {
 }
 
 // --- Initialization ---
+function applyPersistedSidebarState() {
+    try {
+        document.getElementById('app')?.classList.toggle('sidebar-collapsed', localStorage.getItem('hordeSidebarCollapsed') === 'true');
+    } catch (_) { /* localStorage may be unavailable */ }
+}
+
+function initGlobalSidebarToggle() {
+    const button = document.getElementById('global-sidebar-toggle');
+    if (!button) return;
+    button.onclick = () => {
+        const collapsed = document.getElementById('app')?.classList.toggle('sidebar-collapsed');
+        try { localStorage.setItem('hordeSidebarCollapsed', String(Boolean(collapsed))); } catch (_) { /* localStorage may be unavailable */ }
+    };
+}
+
 async function init() {
+    applyPersistedSidebarState();
+    initGlobalSidebarToggle();
     // Ask the browser to protect our IndexedDB from storage-pressure eviction
     if (navigator.storage && navigator.storage.persist) {
         navigator.storage.persist().catch(() => {});
@@ -6046,6 +6879,7 @@ async function init() {
     setupWorldStudioLogic();
     setupAIBuilderLogic(); // ✨ AI Builder & Verification Layer setup
     setupWorldPlayLogic();
+    window.HordeVideoWorlds?.setup?.();
     setupMultiplayerHub();
     window.HordeMultiplayer?.setup?.({
         bridgeRequest: mcpBridgeRequest,
@@ -6079,9 +6913,15 @@ async function init() {
     });
     
     renderLibrary();
-    
-    switchView('library');
-    if (!hasApiCredentials()) showGlobalSettings();
+
+    // Resume wherever the user last actually was, rather than always
+    // dropping back to the library on every refresh. worldPlay is a special
+    // case: its real setup (session, history, DM intro) lives in enterWorld,
+    // not in switchView itself, so it needs the dedicated entry point.
+    restoreLastWorkspace();
+    // Settings is a workspace pane. Do not cover the restored screen merely
+    // because a provider key is absent, users can open it when they are ready.
+    if (state.settingsOpen) showGlobalSettings();
     applyGlobalStyles();
     applyTheme();
     setupCustomizeModal();
@@ -6325,6 +7165,7 @@ function setupNavigation() {
 
 function switchView(viewName) {
     state.view = viewName;
+    persistWorkspaceSoon();
     
     // Update Nav Buttons
     const navParent = {
@@ -6334,6 +7175,8 @@ function switchView(viewName) {
         companionChat: 'companions',
         worldStudio: 'worlds',
         worldPlay: 'worlds',
+        videoWorldStudio: 'videoWorlds',
+        videoWorldPlay: 'videoWorlds',
         multiplayerSession: 'multiplayer'
     }[viewName] || viewName;
     navBtns.forEach(btn => {
@@ -6376,6 +7219,7 @@ function switchView(viewName) {
     if (viewName === 'worlds') {
         renderWorlds();
     }
+    window.HordeVideoWorlds?.onView?.(viewName);
 
     if (viewName === 'worldStudio') {
         if (!state.editingWorld) {
@@ -6714,6 +7558,8 @@ function setupStudioTabs() {
             tab.classList.add('active');
             const target = document.getElementById(`tab-${tab.dataset.tab}`);
             if (target) target.classList.remove('hidden');
+            state.lastStudioTab = tab.dataset.tab || null;
+            persistWorkspaceSoon();
         };
     });
     document.querySelectorAll('[data-chat-studio-target]').forEach(button => {
@@ -7153,14 +7999,21 @@ function createNewCharacter() {
         chatHud: normalizeChatHudConfig({})
     };
     loadStudioData();
-    document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    if (!workspaceRestoring) {
+        document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    }
 }
 
 function editCharacter(id) {
     const char = state.characters.find(c => c.id === id);
+    if (!char) return;
     state.editingChar = JSON.parse(JSON.stringify(char)); // Deep clone
+    state.editingCharId = char.id;
+    persistWorkspaceSoon();
     loadStudioData();
-    document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    if (!workspaceRestoring) {
+        document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
+    }
 }
 
 async function autoSaveStudioChanges() {
@@ -8709,7 +9562,42 @@ function updateRegexCount() {
 
 function openRegexManager() {
     document.getElementById('regex-modal-overlay').classList.remove('hidden');
+    populateRegexSuitePicker();
     renderRegexList();
+}
+
+function getBundledRegexSuites() {
+    return typeof DEFAULT_REGEX_SUITES !== 'undefined' && Array.isArray(DEFAULT_REGEX_SUITES)
+        ? DEFAULT_REGEX_SUITES : [];
+}
+
+function populateRegexSuitePicker() {
+    const select = document.getElementById('regex-suite-select');
+    const install = document.getElementById('install-regex-suite-btn');
+    if (!select || !install) return;
+    const selected = select.value;
+    const suites = getBundledRegexSuites();
+    select.innerHTML = '<option value="">Install a bundled regex suite…</option>' +
+        suites.map(suite => `<option value="${escapeHTML(suite.id)}">${escapeHTML(suite.name)}</option>`).join('');
+    select.value = suites.some(suite => suite.id === selected) ? selected : '';
+    install.disabled = !select.value;
+}
+
+function installBundledRegexSuite(suiteId) {
+    const suite = getBundledRegexSuites().find(candidate => candidate.id === suiteId);
+    if (!suite || !Array.isArray(suite.scripts)) return;
+    const existing = new Set((state.regexScripts || []).map(script => script?.id).filter(Boolean));
+    const additions = suite.scripts
+        .filter(script => script?.id && !existing.has(script.id))
+        .map(script => ({ ...script }));
+    if (!additions.length) {
+        showToast(`${suite.name} is already installed`, 'info');
+        return;
+    }
+    state.regexScripts.push(...additions);
+    renderRegexList();
+    updateRegexCount();
+    showToast(`${suite.name} installed, save to keep it`, 'success');
 }
 
 function renderRegexList() {
@@ -8731,6 +9619,7 @@ function renderRegexList() {
                 <select class="form-select rx-target" style="width:130px;">
                     <option value="ai" ${s.target === 'ai' ? 'selected' : ''}>AI output</option>
                     <option value="user" ${s.target === 'user' ? 'selected' : ''}>User input</option>
+                    <option value="context" ${s.target === 'context' ? 'selected' : ''}>Model context</option>
                     <option value="both" ${s.target === 'both' ? 'selected' : ''}>Both</option>
                 </select>
                 <button class="tool-btn tool-btn-danger rx-del">✕</button>
@@ -9220,6 +10109,7 @@ Do not emit a memory line for ordinary dialogue, repeated information, mood, des
                 .map(c => c.name);
             content = redactPrivateWhispers(content, targetChar.name, otherNames);
         }
+        content = applyRegexScripts(content, 'context');
 
         const msgTokens = Math.ceil(content.length / 3.5);
         if (availableTokens - msgTokens > 0) {
@@ -9859,7 +10749,11 @@ function buildKernelLocationManifest(world, sess, userInput) {
     const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
     const locations = view.locations;
     const kernel = normalizeWorldKernelConfig(world);
-    if (!kernel.enabled || locations.length <= kernel.sceneLocationLimit) {
+    // Sidecar has its own canonical scene packet and reference manifest.
+    // Applying the older Kernel trim before the Narrator sees the turn can
+    // hide locations that Sidecar subsequently needs to reconcile.
+    const sidecarTimeline = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    if (sidecarTimeline || !kernel.enabled || locations.length <= kernel.sceneLocationLimit) {
         return locations.map(location => `  - "${location.name}" → id: "${location.id}"`).join('\n');
     }
     const selected = new Map();
@@ -9981,6 +10875,10 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
     const entityPatches = [];
     const legacyArgs = { ...receipt.state_updates };
     const modules = normalizeWorldGameRules(world).modules;
+    const sidecarTemporalAuthority = context.sidecarTemporalAuthority === true;
+    const authorizedTimeSkipMinutes = sidecarTemporalAuthority
+        ? Math.max(0, Math.min(SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES, parseInt(context.authorizedTimeSkipMinutes) || 0))
+        : null;
     // A naked location_id was the source of actor confusion. It is never
     // committed; only an accepted player movement event may set this field.
     delete legacyArgs.location_id;
@@ -10000,6 +10898,15 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
             actor_id: String(event?.actor_id || '').slice(0, 120)
         });
     };
+    if (sidecarTemporalAuthority) {
+        const suppliedMinutes = Math.max(0, parseInt(legacyArgs.time_skip_minutes) || 0);
+        if (suppliedMinutes !== authorizedTimeSkipMinutes) {
+            reject(-1, { type: 'time' }, 'sidecar_time_not_authorized',
+                `receipt requested ${suppliedMinutes} minutes; endpoint evidence authorized ${authorizedTimeSkipMinutes}.`);
+        }
+        if (authorizedTimeSkipMinutes) legacyArgs.time_skip_minutes = authorizedTimeSkipMinutes;
+        else delete legacyArgs.time_skip_minutes;
+    }
     const acceptedNpcMoves = [];
     const currentFrame = buildWorldSceneFrame(world, sess);
     const projectedLocations = new Map([['player', String(sess.playerLocation || '')]]);
@@ -10134,6 +11041,11 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
         }
         if (type === 'time') {
             const minutes = Math.max(0, Math.min(14400, parseInt(event.minutes_elapsed ?? event.minutes) || 0));
+            if (sidecarTemporalAuthority && minutes !== authorizedTimeSkipMinutes) {
+                reject(index, event, 'sidecar_time_not_authorized',
+                    `event requested ${minutes} minutes; endpoint evidence authorized ${authorizedTimeSkipMinutes}.`);
+                return;
+            }
             if (minutes) legacyArgs.time_skip_minutes = Math.max(parseInt(legacyArgs.time_skip_minutes) || 0, minutes);
             acceptedEvents.push({ ...base, minutes_elapsed: minutes });
             return;
@@ -10569,7 +11481,21 @@ function commitEngineWorldNoOp(world, sess, source = 'engine', summary = 'Engine
 function extractSidecarNarratorHandoff(value) {
     const raw = String(value || '');
     const match = raw.match(/<scene_handoff>\s*([\s\S]*?)\s*<\/scene_handoff>/i);
-    if (!match) return { narration: raw.trim(), handoff: '', complete: false };
+    if (!match) {
+        // A provider can exhaust its budget after opening the hidden handoff.
+        // Never expose those partial backstage notes as visible roleplay. The
+        // Sidecar can still use the partial evidence and its canonical frame,
+        // while `complete:false` keeps the omission visible in diagnostics.
+        const opening = raw.match(/<scene_handoff>\s*/i);
+        if (opening) {
+            return {
+                narration: raw.slice(0, opening.index).trim(),
+                handoff: raw.slice((opening.index || 0) + opening[0].length).trim(),
+                complete: false
+            };
+        }
+        return { narration: raw.trim(), handoff: '', complete: false };
+    }
     return {
         narration: `${raw.slice(0, match.index)}${raw.slice((match.index || 0) + match[0].length)}`.trim(),
         handoff: String(match[1] || '').trim(),
@@ -10577,9 +11503,151 @@ function extractSidecarNarratorHandoff(value) {
     };
 }
 
+function buildSidecarOpeningHandoff(world, sess, narration) {
+    const frame = buildWorldSceneFrame(world, sess);
+    const location = getLocationRef(world, frame.player_location_id);
+    const clock = buildSidecarClockEvidence(world, sess);
+    return `SCENE READING
+- This is the opening narrator response for a newly initialized timeline. It establishes the starting scene only; it does not imply a completed player action.
+
+ANSWER core.time
+- Opening scene starts at canonical time ${clock.display || 'as established by the world'}. No elapsed time is asserted.
+
+ANSWER core.location
+- The player begins at the canonical starting location ${location?.name || frame.player_location_id || 'Unknown'}. No movement is completed.
+
+ANSWER core.cast
+- Treat only characters explicitly established as physically present in the opening narration as present.
+
+ANSWER core.world_changes
+- Opening narration: ${String(narration || '').replace(/\s+/g, ' ').slice(0, 1600) || 'No visible narration was available.'}
+
+REQUESTS
+- None.
+
+ACCEPTED PLAYER DETAILS
+- None.`;
+}
+
+async function bootstrapSidecarOpeningTurn(world, sess, narration) {
+    const handoff = buildSidecarOpeningHandoff(world, sess, narration);
+    const model = world.model || state.globalSettings.defaultModel;
+    const provider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    try {
+        const reconciled = await runSidecarReconciliation(world, sess, {
+            handoff,
+            narration,
+            playerInput: '[Timeline initialization: narrator opening response]',
+            receiptContext: {
+                playerStartLocationId: sess.playerLocation,
+                narrativeText: narration,
+                openingTurn: true
+            },
+            commitTool: safeJsonClone(worldStateTool),
+            handoffComplete: true
+        });
+        sess.lastTurnStateSource = 'sidecar';
+        return { ...reconciled, handoff, failure: null };
+    } catch (error) {
+        // The opening remains visible even if a provider outage prevents
+        // Sidecar from completing its first receipt. Preserve a failed
+        // Sidecar turn, rather than treating the intro as an untracked engine
+        // turn that can leave a later sequence looking closed or broken.
+        let failed = error?.sidecarAttempt || null;
+        if (!failed) {
+            const attempt = beginSidecarTurnAttempt(world, sess, {
+                handoff, narration,
+                playerInput: '[Timeline initialization: narrator opening response]',
+                preFrame: buildWorldSceneFrame(world, sess),
+                preClock: buildSidecarClockEvidence(world, sess),
+                model, provider, handoffComplete: true
+            });
+            failed = failSidecarTurnAttempt(world, sess, attempt, error, {
+                code: 'sidecar_opening_reconciliation_failed', model, provider
+            });
+        }
+        sess.lastTurnStateSource = 'sidecar_unresolved';
+        return {
+            committed: null, receipt: null, packet: failed?.packet || sess.sidecar?.packet || null,
+            turnId: failed?.turnId || null, handoff, failure: failed?.failure || {
+                code: 'sidecar_opening_reconciliation_failed',
+                message: String(error?.message || error || 'Opening reconciliation failed.')
+            }
+        };
+    }
+}
+
 function sidecarTemporalStatement(handoff) {
     const match = String(handoff || '').match(/ANSWER\s+core\.time\s*(?::|\n)\s*-?\s*([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i);
     return String(match?.[1] || '').replace(/\s+/g, ' ').trim().slice(0, 1200);
+}
+
+// Only paired clock endpoints can authorize a Sidecar clock change. The
+// authored source endpoint must exactly match the canonical pre-turn clock,
+// which makes an unmarked "8:57 → 8:58" safe without treating ordinary
+// temporal prose as a mechanical duration.
+const SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES = 1440;
+
+function parseSidecarClockEndpoint(value) {
+    const match = String(value || '').trim().match(/^(\d{1,2}):([0-5]\d)\s*(a\.?m\.?|p\.?m\.?)?$/i);
+    if (!match) return null;
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    const marker = String(match[3] || '').replace(/\./g, '').toLowerCase();
+    if (hour > 23 || (marker && (!hour || hour > 12))) return null;
+    return { hour, minute, meridiem: marker || '', is24Hour: !marker && (hour === 0 || hour > 12) };
+}
+
+function sidecarEndpointMinuteOfDay(endpoint, fallbackMeridiem = '') {
+    if (!endpoint) return null;
+    if (endpoint.is24Hour) return endpoint.hour * 60 + endpoint.minute;
+    const marker = endpoint.meridiem || fallbackMeridiem;
+    if (!marker) return null;
+    return (endpoint.hour % 12) * 60 + endpoint.minute + (marker === 'pm' ? 720 : 0);
+}
+
+function deriveSidecarExplicitTimeSkip(handoff, clockEvidence) {
+    const statement = sidecarTemporalStatement(handoff);
+    const pair = statement.match(/\b((?:[01]?\d|2[0-3]):[0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?)\s*(?:→|->|–|—|\b(?:into|to|through)\b)\s*((?:[01]?\d|2[0-3]):[0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?)\b/i);
+    if (!pair) return null;
+    const source = parseSidecarClockEndpoint(pair[1]);
+    const target = parseSidecarClockEndpoint(pair[2]);
+    const canonicalMinute = Number(clockEvidence?.canonicalTotalMinutes);
+    if (!source || !target || !Number.isFinite(canonicalMinute)) return null;
+    const preTurnMinuteOfDay = ((canonicalMinute % 1440) + 1440) % 1440;
+    const canonicalMeridiem = preTurnMinuteOfDay >= 720 ? 'pm' : 'am';
+    const sourceMinute = sidecarEndpointMinuteOfDay(source, canonicalMeridiem);
+    // An unmarked 12-hour source is valid only when it names the actual
+    // canonical clock. It cannot silently select AM or PM.
+    if (sourceMinute !== preTurnMinuteOfDay) return null;
+    const inheritedTargetMeridiem = target.meridiem ? '' : (source.meridiem || canonicalMeridiem);
+    const targetMinute = sidecarEndpointMinuteOfDay(target, inheritedTargetMeridiem);
+    if (targetMinute === null) return null;
+    let minutes = targetMinute - sourceMinute;
+    // Crossing midnight must be explicit (PM source to AM target). A bare
+    // decreasing pair is ambiguous and intentionally does not move the clock.
+    if (minutes <= 0 && source.meridiem === 'pm' && target.meridiem === 'am') minutes += 1440;
+    if (minutes <= 0 || minutes > SIDECAR_MAX_EXPLICIT_TIME_SKIP_MINUTES) return null;
+    return {
+        minutes,
+        statement,
+        source: pair[1].trim(),
+        target: pair[2].trim(),
+        beforeCanonicalMinutes: canonicalMinute,
+        sourceMinuteOfDay: sourceMinute,
+        targetMinuteOfDay: targetMinute
+    };
+}
+
+function applySidecarTemporalAuthority(receipt, handoff, clockEvidence) {
+    if (!isPlainObject(receipt)) return null;
+    const evidence = deriveSidecarExplicitTimeSkip(handoff, clockEvidence);
+    receipt.events = (Array.isArray(receipt.events) ? receipt.events : [])
+        .filter(event => String(event?.type || '').toLowerCase() !== 'time');
+    receipt.state_updates = isPlainObject(receipt.state_updates) ? receipt.state_updates : {};
+    delete receipt.state_updates.time_skip_minutes;
+    if (evidence) receipt.state_updates.time_skip_minutes = evidence.minutes;
+    return evidence;
 }
 
 const SIDECAR_CORE_QUESTION_IDS = Object.freeze(['core.time', 'core.location', 'core.cast', 'core.world_changes']);
@@ -10589,6 +11657,192 @@ function sidecarHandoffAnswer(handoff, questionId) {
     const match = String(handoff || '').match(new RegExp(
         `ANSWER\\s+${escaped}\\s*(?::|\\n)\\s*-?\\s*([\\s\\S]*?)(?=\\n\\s*(?:ANSWER|REQUEST|ACCEPTED\\s+PLAYER\\s+DETAILS)\\b|$)`, 'i'));
     return String(match?.[1] || '').replace(/\s+/g, ' ').trim().slice(0, 1600);
+}
+
+function sidecarHandoffSection(handoff, heading) {
+    const escaped = String(heading || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = String(handoff || '').match(new RegExp(
+        `${escaped}\\s*(?::|\\n)\\s*-?\\s*([\\s\\S]*?)(?=\\n\\s*(?:SCENE\\s+READING|ANSWER|REQUESTS?|ACCEPTED\\s+PLAYER\\s+DETAILS)\\b|$)`, 'i'));
+    return String(match?.[1] || '').trim().slice(0, 6000);
+}
+
+function buildSidecarClockEvidence(world, sess) {
+    const clock = getWorldTimeData(world, sess);
+    const hour12 = clock.hours24 % 12 || 12;
+    return {
+        day: clock.days,
+        display: `${hour12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`,
+        format: '12-hour clock with AM/PM',
+        canonicalTotalMinutes: clock.currentTotalMinutes,
+        startTotalMinutes: clock.startMinutes,
+        authoredOffsetMinutes: Number(sess.bonusTimeMinutes) || 0,
+        authoredOffsetSeconds: Number(sess.bonusTimeSeconds) || 0,
+        authority: 'semantic_sidecar',
+        note: 'A model call is not a unit of world time. The legacy per-turn timeStep is intentionally omitted.'
+    };
+}
+
+function buildSidecarCanonicalReferenceManifest(world, sess, evidenceText = '') {
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const frame = buildWorldSceneFrame(world, sess);
+    const evidence = String(evidenceText || '').toLowerCase();
+    const currentLocationId = String(frame.player_location_id || '');
+    const present = new Set(frame.present_character_ids || []);
+    const entityRows = (Array.isArray(view?.entities) ? view.entities : [])
+        .filter(entity => entity?.id && entity?.name)
+        .map(entity => {
+            const runtime = sess.entityStates?.[entity.id] || {};
+            const referenced = evidence.includes(String(entity.name).toLowerCase())
+                || evidence.includes(String(entity.id).toLowerCase());
+            return {
+                id: String(entity.id), name: String(entity.name), type: String(entity.type || 'npc'),
+                present: present.has(entity.id), referenced,
+                status: String(runtime.status || entity.status || 'active'),
+                locationId: String(runtime.location || entity.startLocation || ''),
+                homeLocationId: String(entity.homeLocation || entity.homeLocationId || ''),
+                sessionOwned: entity.sessionOrigin === sess.id
+            };
+        })
+        .sort((a, b) => Number(b.present) - Number(a.present)
+            || Number(b.referenced) - Number(a.referenced)
+            || a.name.localeCompare(b.name));
+    const locationRows = (Array.isArray(view?.locations) ? view.locations : [])
+        .filter(location => location?.id && location?.name)
+        .map(location => {
+            const referenced = evidence.includes(String(location.name).toLowerCase())
+                || evidence.includes(String(location.id).toLowerCase());
+            return {
+                id: String(location.id), name: String(location.name),
+                type: String(location.mapType || location.type || 'location'),
+                parentLocationId: String(location.parentLocationId || ''),
+                current: location.id === currentLocationId, referenced,
+                aliases: (Array.isArray(location.aliases) ? location.aliases : []).map(String).slice(0, 8)
+            };
+        })
+        .sort((a, b) => Number(b.current) - Number(a.current)
+            || Number(b.referenced) - Number(a.referenced)
+            || a.name.localeCompare(b.name));
+    const entityLimit = 400;
+    const locationLimit = 600;
+    return {
+        controlledEntity: {
+            id: window.HordeSidecarTimeline?.ensureHierarchy?.(
+                window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess), sess
+            )?.sequence?.controlledEntityId || 'player',
+            personaId: String(sess.personaId || state.activePersonaId || ''),
+            personaName: String(state.personas?.find(persona => persona.id === (sess.personaId || state.activePersonaId))?.name || 'Player')
+        },
+        entities: entityRows.slice(0, entityLimit),
+        locations: locationRows.slice(0, locationLimit),
+        omitted: {
+            entities: Math.max(0, entityRows.length - entityLimit),
+            locations: Math.max(0, locationRows.length - locationLimit)
+        },
+        instruction: 'Resolve authored names to these canonical IDs. A known off-scene entity is not a new entity. Never invent an ID or re-introduce a canonical record.'
+    };
+}
+
+
+/*
+ * Roleplay OS — Freaky Frankenstein 5.4 Agentic (Marinara Agent Gating).
+ *
+ * Built-in Narrator operating framework. This deliberately lives in app.js:
+ * there is no separate FF/Marinara runtime, no FF globals, and no second
+ * initialization lifecycle. FF shapes how the Narrator authors the current
+ * scene; Horde Sidecar + native reducers remain the only canonical state
+ * authority. state_mode is AGENTS here by construction. The source preset's
+ * Internal States backend, mutable macro persistence, regex state
+ * management, and policy-override sections are intentionally excluded from
+ * this runtime; they are recorded as provenance, not executed.
+ */
+function beginSidecarTurnAttempt(world, sess, options = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) return { protocol: null, turnRecord: null };
+    recordSidecarCoreAnswers(world, sess, options.handoff || '');
+    recordSidecarRequests(world, sess, options.handoff || '');
+    const turnRecord = {
+        id: `sidecar_turn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+        status: 'reconciliation_pending',
+        reconciliationStatus: 'pending',
+        createdAt: new Date().toISOString(),
+        narration: String(options.narration || '').slice(0, 24000),
+        handoff: String(options.handoff || '').slice(0, 12000),
+        handoffComplete: options.handoffComplete !== false,
+        sceneReading: sidecarHandoffSection(options.handoff, 'SCENE READING'),
+        acceptedPlayerDetails: sidecarHandoffSection(options.handoff, 'ACCEPTED PLAYER DETAILS'),
+        temporalStatement: sidecarTemporalStatement(options.handoff),
+        playerInput: String(options.playerInput || '').slice(0, 6000),
+        preFrame: safeJsonClone(options.preFrame || buildWorldSceneFrame(world, sess)),
+        preClock: safeJsonClone(options.preClock || buildSidecarClockEvidence(world, sess)),
+        model: String(options.model || ''),
+        provider: String(options.provider || ''),
+        receipt: null,
+        audit: null,
+        failure: null,
+        provenance: {
+            source: 'narrator_handoff',
+            turn: Math.max(1, Number(sess.turnCount) || 1),
+            take: Number(options.takeIndex) || 0,
+            revisionId: String(options.revisionId || ''),
+            handoffComplete: options.handoffComplete !== false
+        }
+    };
+    window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
+    protocol.turns.push(turnRecord);
+    protocol.turns = protocol.turns.slice(-500);
+    if (!isPlainObject(protocol.diagnostics)) protocol.diagnostics = {};
+    if (!Array.isArray(protocol.diagnostics.reconciliationAttempts)) protocol.diagnostics.reconciliationAttempts = [];
+    protocol.diagnostics.reconciliationAttempts.push({
+        turnId: turnRecord.id, status: 'pending', createdAt: turnRecord.createdAt,
+        model: turnRecord.model, provider: turnRecord.provider
+    });
+    protocol.diagnostics.reconciliationAttempts = protocol.diagnostics.reconciliationAttempts.slice(-100);
+    protocol.packet = buildSidecarScenePacket(world, sess, turnRecord.handoff);
+    return { protocol, turnRecord };
+}
+
+function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
+    const protocol = attempt?.protocol || window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const turnRecord = attempt?.turnRecord;
+    const failure = {
+        code: String(detail.code || error?.code || 'sidecar_reconciliation_failed'),
+        message: String(error?.message || error || 'Sidecar reconciliation failed.').slice(0, 1600),
+        finishReason: String(detail.finishReason || ''),
+        provider: String(detail.provider || turnRecord?.provider || ''),
+        model: String(detail.model || turnRecord?.model || ''),
+        failedAt: new Date().toISOString(),
+        response: detail.response ? safeJsonClone(detail.response) : null
+    };
+    if (turnRecord) {
+        turnRecord.status = 'reconciliation_failed';
+        turnRecord.reconciliationStatus = 'failed';
+        turnRecord.failure = failure;
+        turnRecord.postFrame = buildWorldSceneFrame(world, sess);
+    }
+    const diagnostic = protocol?.diagnostics?.reconciliationAttempts?.find(item => item.turnId === turnRecord?.id);
+    if (diagnostic) Object.assign(diagnostic, { status: 'failed', failure });
+    if (protocol && turnRecord) {
+        queueSidecarQuestion(world, sess,
+            'The preceding authored beat has not yet been committed to canonical state. On the next pass, reconcile any durable changes from it that remain true; do not replay or embellish the prose.',
+            `${failure.message}\n\n${turnRecord.handoff || turnRecord.narration}`, {
+                id: `reconcile.transport.${turnRecord.id}`,
+                origin: 'reconciliation_transport', target: 'sidecar', pressure: 'high',
+                scope: 'turn', sceneId: turnRecord.sceneId, sequenceId: turnRecord.sequenceId,
+                provenance: { sourceTurnId: turnRecord.id, finishReason: failure.finishReason }
+            });
+        protocol.packet = buildSidecarScenePacket(world, sess, turnRecord.handoff);
+    }
+    return {
+        turnId: turnRecord?.id || '',
+        packet: protocol?.packet || null,
+        failure,
+        backstage: turnRecord ? {
+            status: 'reconciliation_failed', handoff: turnRecord.handoff,
+            handoffComplete: turnRecord.handoffComplete !== false,
+            reader: turnRecord.reader || null, receipt: null, packet: protocol?.packet || null, failure,
+            preFrame: turnRecord.preFrame, postFrame: turnRecord.postFrame
+        } : null
+    };
 }
 
 function recordSidecarCoreAnswers(world, sess, handoff) {
@@ -10627,7 +11881,7 @@ function recordSidecarRequests(world, sess, handoff) {
     return created;
 }
 
-function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock) {
+function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock, explicitEndpointEvidence = null) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return null;
     const afterClock = getWorldTimeData(world, sess);
@@ -10640,6 +11894,13 @@ function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock) {
         authoredText: authoredMeaning,
         kind: 'semantic',
         authoredMeaning,
+        explicitEndpointEvidence: explicitEndpointEvidence ? {
+            source: explicitEndpointEvidence.source,
+            target: explicitEndpointEvidence.target,
+            derivedMinutes: explicitEndpointEvidence.minutes,
+            sourceMinuteOfDay: explicitEndpointEvidence.sourceMinuteOfDay,
+            targetMinuteOfDay: explicitEndpointEvidence.targetMinuteOfDay
+        } : null,
         beforeCanonicalMinutes: beforeClock?.currentTotalMinutes ?? null,
         afterCanonicalMinutes: afterClock.currentTotalMinutes,
         mechanicalDeltaMinutes: beforeClock
@@ -10661,8 +11922,27 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         + String(location?.description || '').length + String(sess.ledger || '').length;
     const configuredContext = Math.max(1024, Number(world.contextSize) || 8192);
     const contextRatio = Math.min(1, (historyChars + sceneChars) / (configuredContext * 3.5));
-    const questions = (protocol?.questions || []).filter(question => question.status === 'open' && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)).slice(-8)
+    const questions = (protocol?.questions || []).filter(question => question.status === 'open'
+        && !SIDECAR_CORE_QUESTION_IDS.includes(question.id)
+        && ['narrator', 'user'].includes(question.target || 'narrator')).slice(-8)
         .map(question => ({ id: question.id, prompt: question.prompt, target: question.target, priority: question.priority || question.pressure || 'low', blocking: question.blocking === true, origin: question.origin, evidence: String(question.evidence || '').slice(0, 800) }));
+    const reconciliationBacklog = (protocol?.turns || [])
+        .filter(turn => ['reconciliation_pending', 'reconciliation_failed'].includes(turn.status)
+            && turn.status !== 'superseded')
+        .slice(-4)
+        .map(turn => ({
+            turnId: turn.id,
+            status: turn.reconciliationStatus || turn.status,
+            sceneReading: String(turn.sceneReading || '').slice(0, 1800),
+            acceptedPlayerDetails: String(turn.acceptedPlayerDetails || '').slice(0, 1200),
+            temporalStatement: String(turn.temporalStatement || '').slice(0, 800),
+            failure: turn.failure ? {
+                code: turn.failure.code,
+                message: String(turn.failure.message || '').slice(0, 800),
+                finishReason: turn.failure.finishReason || ''
+            } : null,
+            provenance: turn.provenance || null
+        }));
     const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
     const memoryGraph = window.HordeSidecarMemoryGraph?.graph(protocol);
     const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
@@ -10687,6 +11967,10 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         generatedAt: new Date().toISOString(),
         worldTime: `${hour12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`,
         activeLocation: { id: frame.player_location_id, name: location?.name || frame.player_location_id },
+        canonicalStateStatus: reconciliationBacklog.length ? 'prior_authored_beat_pending_reconciliation' : 'reconciled',
+        sceneState: reconciliationBacklog.length
+            ? 'Canonical state is unchanged for one or more authored beats whose Sidecar reconciliation did not complete. Their evidence remains pinned below.'
+            : 'Canonical state reflects the latest successfully reconciled authored beat.',
         // The scene packet is a narrator viewport, so include the controlled
         // actor as well as the NPCs whose canonical presence checksum is kept
         // in `frame.present_character_ids`. The reducer still validates the
@@ -10722,9 +12006,11 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         activities: frame.activities,
         temporalContinuity: handoff ? sidecarTemporalStatement(handoff).slice(0, 600) : String(protocol?.temporalState?.authoredMeaning || '').slice(0, 600),
         temporalEvidence: protocol?.temporalState || null,
-        sceneReading: String(handoff.match(/SCENE\s+READING\s*[:\n]([\s\S]*?)(?=\n\s*(?:ANSWER|REQUEST|ACCEPTED\s+PLAYER\s+DETAILS)\b|$)/i)?.[1] || '').trim().slice(0, 2400),
+        sceneReading: sidecarHandoffSection(handoff, 'SCENE READING').slice(0, 2400),
+        acceptedPlayerDetails: sidecarHandoffSection(handoff, 'ACCEPTED PLAYER DETAILS').slice(0, 2400),
         coreReview: protocol?.coreAnswers || {},
         pendingQuestions: questions,
+        reconciliationBacklog,
         pendingRequests: (protocol?.requests || []).filter(request => request.status === 'open').slice(-8)
             .map(request => ({ id: request.id, text: request.text, origin: request.origin })),
         backgroundProposals: (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status))
@@ -10751,6 +12037,260 @@ function recordSidecarTrace(world, sess, trace) {
     if (!protocol?.debug?.enabled) return;
     protocol.debug.traces.push({ id: `trace_${Date.now().toString(36)}`, at: new Date().toISOString(), ...trace });
     protocol.debug.traces = protocol.debug.traces.slice(-Math.max(1, protocol.debug.retainTraceCount || 20));
+}
+
+// Sidecar is an authored two-call loop. Keep its live console trail visible
+// even when durable trace retention is off: debugging an unexpected state
+// result must not depend on a Studio checkbox or an opaque network inspector.
+// Request payloads deliberately contain no headers, so API credentials never
+// enter the console.
+function logSidecarConsoleTrace(stage, payload) {
+    const label = `[Horde Sidecar] ${stage}`;
+    console.groupCollapsed(label);
+    // Stringify rather than logging expandable objects: Chrome's console
+    // export/remote inspector otherwise collapses exact prompt/reply evidence
+    // to the useless label "Object".
+    console.log(JSON.stringify(payload || {}, null, 2));
+    console.groupEnd();
+}
+
+// The Reader is intentionally incapable of changing canon. It can ask the
+// application to inspect small, attributable slices of the active world, then
+// gives the Reconciler an evidence packet. This keeps a model from burning its
+// commit budget debating whether an already-authored person such as Denton
+// Pike exists, while preserving the Reconciler as the only mutation authority.
+function sidecarReasoningPolicy(tracker = {}, world = {}) {
+    const mode = ['inherit', 'enabled', 'disabled'].includes(tracker.reasoningMode)
+        ? tracker.reasoningMode : (tracker.reasoning === true ? 'enabled' : 'inherit');
+    const enabled = mode === 'enabled' || (mode === 'inherit' && world.reasoning === true);
+    const configured = String(tracker.reasoningEffort || 'auto').toLowerCase();
+    if (mode === 'enabled' && ['low', 'medium', 'high'].includes(configured)) return { mode, enabled, effort: configured };
+    const narrator = String(world.reasoningEffort || '').toLowerCase();
+    return { mode, enabled, effort: ['low', 'medium', 'high'].includes(narrator) ? narrator : 'medium' };
+}
+
+function applySidecarReasoning(body, provider, tracker = {}, world = {}, options = {}) {
+    const policy = sidecarReasoningPolicy(tracker, world);
+    if (!policy.enabled || options.withoutReasoning === true) {
+        // Omission is the only compatible fallback for providers whose model
+        // mandates native reasoning and rejects an explicit disable request.
+        return body;
+    }
+    const model = String(body.model || '').toLowerCase();
+    const supported = Array.isArray(tracker.supportedParams) && tracker.supportedParams.length
+        ? tracker.supportedParams : (Array.isArray(world.supportedParams) ? world.supportedParams : []);
+    if (supported.includes('reasoning_effort') || /(o1|o3|o4|deepseek)/.test(model)) body.reasoning_effort = policy.effort;
+    else body.reasoning = { effort: policy.effort };
+    return body;
+}
+
+function sidecarTokenLimitIncomplete(payload) {
+    const choice = payload?.choices?.[0] || {};
+    const finish = String(choice.finish_reason || choice.native_finish_reason || payload?.status || '').toLowerCase();
+    return ['length', 'max_tokens', 'token_limit', 'incomplete'].includes(finish);
+}
+
+async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal } = {}) {
+    const policy = sidecarReasoningPolicy(tracker, world);
+    const request = async withoutReasoning => {
+        const payload = safeJsonClone(body);
+        delete payload.reasoning;
+        delete payload.reasoning_effort;
+        applySidecarReasoning(payload, provider, tracker, world, { withoutReasoning });
+        return fetch(providerApiBase(provider) + '/chat/completions', {
+            method: 'POST', signal,
+            headers: { ...providerAuthHeaders(provider), 'Content-Type': 'application/json', ...providerAttributionHeaders(provider) },
+            body: JSON.stringify(applyOpenRouterRouting(payload, owner || world, { scope, providerId: provider }))
+        });
+    };
+    let response = await request(false);
+    if (!policy.enabled || !response.ok) return response;
+    const payload = await response.clone().json().catch(() => null);
+    if (!sidecarTokenLimitIncomplete(payload)) return response;
+    showToast('Sidecar thought too hard, retrying without reasoning.', 'info');
+    logSidecarConsoleTrace('Sidecar retry without optional reasoning', { model: body.model, provider, finishReason: payload?.choices?.[0]?.finish_reason || payload?.choices?.[0]?.native_finish_reason || '' });
+    return request(true);
+}
+
+function sidecarCanonicalEntityRecord(world, sess, entityId) {
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const entity = (view?.entities || []).find(item => String(item?.id) === String(entityId));
+    if (!entity) return null;
+    const runtime = sess.entityStates?.[entity.id] || {};
+    return {
+        id: String(entity.id), name: String(entity.name || ''), type: String(entity.type || 'npc'),
+        aliases: (entity.aliases || []).map(String).slice(0, 12),
+        description: String(entity.description || entity.appearance || '').slice(0, 1800),
+        tags: (entity.tags || []).map(String).slice(0, 20),
+        homeLocationId: String(entity.homeLocation || entity.homeLocationId || ''),
+        initialLocationId: String(entity.initialLocation || entity.startLocation || ''),
+        currentState: {
+            status: String(runtime.status || entity.status || 'active'),
+            locationId: String(runtime.location || entity.startLocation || ''),
+            activity: String(runtime.currentActivity || ''),
+            outfit: String(runtime.outfit || ''),
+            conditions: Array.isArray(runtime.conditions) ? runtime.conditions.slice(0, 12).map(String) : []
+        },
+        provenance: { canonical: true, sessionOwned: entity.sessionOrigin === sess.id }
+    };
+}
+
+function sidecarCanonicalLocationRecord(world, sess, locationId) {
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const location = getLocationRef(view, locationId) || (view?.locations || []).find(item => String(item?.id) === String(locationId));
+    if (!location) return null;
+    return {
+        id: String(location.id), name: String(location.name || ''), type: String(location.mapType || location.type || 'location'),
+        aliases: (location.aliases || []).map(String).slice(0, 12),
+        parentLocationId: String(location.parentLocationId || ''),
+        description: String(location.description || '').slice(0, 1800),
+        tags: (location.tags || []).map(String).slice(0, 20),
+        exits: (location.exits || []).slice(0, 40).map(exit => typeof exit === 'string' ? exit : String(exit?.to || exit?.id || '')),
+        provenance: { canonical: true }
+    };
+}
+
+function sidecarReadOnlyTools() {
+    return [
+        {
+            type: 'function', function: {
+                name: 'search_world_state',
+                description: 'Search canonical entity and location records by a narrated name, alias, ID, or descriptive phrase. Read-only; never creates anything.',
+                parameters: { type: 'object', properties: {
+                    query: { type: 'string' }, kinds: { type: 'array', items: { type: 'string', enum: ['entity', 'location'] } }, limit: { type: 'integer', minimum: 1, maximum: 20 }
+                }, required: ['query'], additionalProperties: false }
+            }
+        },
+        {
+            type: 'function', function: {
+                name: 'get_world_entity', description: 'Read a known canonical entity by its exact ID, including current session state. Read-only.',
+                parameters: { type: 'object', properties: { entity_id: { type: 'string' } }, required: ['entity_id'], additionalProperties: false }
+            }
+        },
+        {
+            type: 'function', function: {
+                name: 'get_world_location', description: 'Read a known canonical location by its exact ID, including hierarchy and exits. Read-only.',
+                parameters: { type: 'object', properties: { location_id: { type: 'string' } }, required: ['location_id'], additionalProperties: false }
+            }
+        },
+        {
+            type: 'function', function: {
+                name: 'get_current_scene_state', description: 'Read the current canonical scene frame, clock evidence and open continuity questions. Read-only.',
+                parameters: { type: 'object', properties: {}, additionalProperties: false }
+            }
+        }
+    ];
+}
+
+function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
+    const args = isPlainObject(rawArgs) ? rawArgs : safeParseJSONRepair(String(rawArgs || '{}')) || {};
+    if (name === 'get_world_entity') {
+        const entity = sidecarCanonicalEntityRecord(world, sess, args.entity_id);
+        return { found: !!entity, entity };
+    }
+    if (name === 'get_world_location') {
+        const location = sidecarCanonicalLocationRecord(world, sess, args.location_id);
+        return { found: !!location, location };
+    }
+    if (name === 'get_current_scene_state') return {
+        found: true, scene: buildWorldSceneFrame(world, sess), clock: buildSidecarClockEvidence(world, sess),
+        questions: (window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-12)
+    };
+    if (name === 'search_world_state') {
+        const needle = String(args.query || '').toLowerCase().trim();
+        const kinds = new Set(Array.isArray(args.kinds) && args.kinds.length ? args.kinds : ['entity', 'location']);
+        const limit = Math.max(1, Math.min(20, Number(args.limit) || 8));
+        const manifest = buildSidecarCanonicalReferenceManifest(world, sess, needle);
+        const score = record => {
+            const corpus = [record.id, record.name, ...(record.aliases || [])].join(' ').toLowerCase();
+            if (!needle) return record.referenced ? 2 : 0;
+            if (corpus === needle) return 12;
+            if (corpus.includes(needle)) return 8;
+            return needle.split(/\s+/).reduce((total, token) => total + (token.length > 2 && corpus.includes(token) ? 1 : 0), 0);
+        };
+        const entities = kinds.has('entity') ? manifest.entities.map(record => ({ ...record, _score: score(record) })).filter(record => record._score > 0).sort((a, b) => b._score - a._score).slice(0, limit).map(({ _score, ...record }) => record) : [];
+        const locations = kinds.has('location') ? manifest.locations.map(record => ({ ...record, _score: score(record) })).filter(record => record._score > 0).sort((a, b) => b._score - a._score).slice(0, limit).map(({ _score, ...record }) => record) : [];
+        return { found: entities.length + locations.length > 0, query: String(args.query || ''), entities, locations };
+    }
+    return { found: false, error: `Unknown read-only Sidecar tool: ${String(name || '')}` };
+}
+
+function parseSidecarReaderOutput(content, fallback = {}) {
+    const raw = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const parsed = safeParseJSONRepair(raw);
+    if (!isPlainObject(parsed)) return {
+        valid: false, summary: 'The Sidecar Reader returned no usable structured reading.',
+        canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000)
+    };
+    return {
+        valid: true,
+        summary: String(parsed.summary || parsed.scene_reading || '').slice(0, 6000),
+        canonicalReferences: isPlainObject(parsed.canonical_references) ? parsed.canonical_references : fallback,
+        semanticInterpretation: isPlainObject(parsed.semantic_interpretation) ? parsed.semantic_interpretation : {},
+        reconciliationFocus: Array.isArray(parsed.reconciliation_focus) ? parsed.reconciliation_focus.slice(0, 30) : [],
+        unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved.slice(0, 20) : [],
+        proposedQuestions: Array.isArray(parsed.proposed_questions) ? parsed.proposed_questions.slice(0, 12) : [],
+        timeEvidence: parsed.time_evidence || null,
+        raw: raw.slice(0, 12000)
+    };
+}
+
+function queueSidecarReaderQuestions(world, sess, readerPacket, turnRecord) {
+    const proposed = Array.isArray(readerPacket?.proposedQuestions) ? readerPacket.proposedQuestions : [];
+    proposed.forEach((proposal, index) => {
+        const prompt = typeof proposal === 'string' ? proposal : String(proposal?.prompt || proposal?.question || '');
+        if (!prompt.trim()) return;
+        const target = typeof proposal === 'object' && ['narrator', 'sidecar', 'user'].includes(proposal.target) ? proposal.target : 'narrator';
+        const priority = typeof proposal === 'object' && ['low', 'medium', 'high'].includes(proposal.priority) ? proposal.priority : 'low';
+        queueSidecarQuestion(world, sess, prompt, typeof proposal === 'object' ? String(proposal.evidence || proposal.reason || '') : '', {
+            id: typeof proposal === 'object' && proposal.id ? String(proposal.id).slice(0, 180) : `reader.${turnRecord?.id || 'turn'}.${index + 1}`,
+            origin: 'semantic_reader', target, priority, pressure: priority,
+            scope: 'turn', sceneId: turnRecord?.sceneId || '', sequenceId: turnRecord?.sequenceId || '',
+            provenance: { sourceTurnId: turnRecord?.id || '', source: 'sidecar_reader' }
+        });
+    });
+}
+
+async function runSidecarSemanticReading(world, sess, options = {}) {
+    const tracker = options.tracker || {};
+    const provider = options.provider;
+    const model = options.model;
+    const sidecarWorld = options.sidecarWorld || world;
+    const references = options.references || buildSidecarCanonicalReferenceManifest(world, sess, `${options.playerInput || ''}\n${options.narration || ''}\n${options.handoff || ''}`);
+    const defaultTokens = tracker.reasoning === true ? 5000 : 3000;
+    const configuredTokens = Number(tracker.readerMaxTokens) || 0;
+    const maxTokens = configuredTokens > 0 ? Math.max(1200, Math.min(100000, Math.trunc(configuredTokens))) : defaultTokens;
+    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, or canonical identity is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, and time_evidence.\n\nCANONICAL REFERENCE MANIFEST:\n${JSON.stringify(references)}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
+    const messages = [{ role: 'system', content: prompt }, { role: 'user', content: 'Read this authored beat and return the semantic evidence packet.' }];
+    const tools = sidecarReadOnlyTools();
+    let finalPayload = null;
+    for (let round = 0; round < 3; round++) {
+        const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: safeJsonClone(messages), tools, tool_choice: 'auto', parallel_tool_calls: false };
+        applySidecarReasoning(body, provider, tracker, world);
+        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt, request: safeJsonClone(body) });
+        const response = await fetchSidecarCompletion(body, {
+            provider, tracker, world, owner: sidecarWorld, scope: 'sidecar_reader', signal: options.signal
+        });
+        if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar Reader failed (${response.status})`);
+        finalPayload = await response.json();
+        const choice = finalPayload?.choices?.[0] || {};
+        const message = choice.message || {};
+        logSidecarConsoleTrace(`Reader response · round ${round + 1}`, { model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message) });
+        recordSidecarTrace(world, sess, { kind: 'semantic_reader', round: round + 1, prompt, reply: message, model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '' });
+        const calls = (message.tool_calls || []).filter(call => sidecarReadOnlyTools().some(tool => tool.function.name === call?.function?.name));
+        if (!calls.length) {
+            const packet = parseSidecarReaderOutput(message.content, references);
+            packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
+            return packet;
+        }
+        messages.push({ role: 'assistant', content: message.content || '', tool_calls: safeJsonClone(message.tool_calls || []) });
+        calls.forEach(call => {
+            const result = runSidecarReadOnlyTool(world, sess, call.function?.name, call.function?.arguments || '{}');
+            messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+        });
+        if (round === 2) messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided.' });
+    }
+    return parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references);
 }
 
 function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) {
@@ -10815,9 +12355,20 @@ async function runSidecarQuestionRepair(world, sess, questionId) {
     const question = protocol?.questions?.find(item => item.id === questionId && item.status === 'open');
     if (!question) throw new Error('Question is no longer open.');
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {}; const tracker = config.tracker || {};
-    const model = tracker.model || world.model || state.globalSettings.defaultModel;
+    const narratorModel = world.model || state.globalSettings.defaultModel;
+    const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
+    const narratorProvider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const provider = tracker.inheritNarrator !== false || !tracker.provider
+        ? narratorProvider : normalizedProviderId(tracker.provider);
     const prompt = `[SIDECAR QUESTION REPAIR]\nAnswer only this one unresolved authorial question from the supplied evidence. Do not mutate canon and do not infer adjacent facts. Return JSON only: {"answer":"YES|NO|UNKNOWN|CLARIFICATION","explanation":"brief"}.\nQUESTION: ${JSON.stringify({ id: question.id, prompt: question.prompt, evidence: question.evidence, dependencies: question.dependencies })}\nPACKET: ${JSON.stringify(buildSidecarScenePacket(world, sess))}`;
-    const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() }, body: JSON.stringify(applyOpenRouterRouting({ model, max_tokens: 400, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] }, { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }, { scope: 'sidecar' })) });
+    const body = { model, max_tokens: 800, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] };
+    // A narrow repair should inherit the world's Sidecar reasoning policy;
+    // it is still capped tightly so it cannot become an unbounded debate.
+    applySidecarReasoning(body, provider, tracker, world);
+    const response = await fetchSidecarCompletion(body, {
+        provider, tracker, world,
+        owner: { ...world, model, provider, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }
+    });
     if (!response.ok) throw new Error((await response.text()).slice(0, 500) || `Question repair failed (${response.status})`);
     const reply = (await response.json())?.choices?.[0]?.message?.content || '{}'; const parsed = safeParseJSONRepair(reply) || {};
     recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'explicit_repair', answer: parsed.answer || 'UNKNOWN', explanation: parsed.explanation || '' });
@@ -10845,50 +12396,158 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const tracker = config.tracker || {};
     const narratorModel = world.model || state.globalSettings.defaultModel;
     const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
+    const narratorProvider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const provider = tracker.inheritNarrator !== false || !tracker.provider
+        ? narratorProvider : normalizedProviderId(tracker.provider);
     const sidecarWorld = {
         ...world,
         model,
+        provider,
         openRouterRouting: tracker.openRouterRouting || world.openRouterRouting
     };
     const preFrame = buildWorldSceneFrame(world, sess);
     const preClock = getWorldTimeData(world, sess);
+    const clockEvidence = buildSidecarClockEvidence(world, sess);
     const handoff = String(options.handoff || '').trim();
     const narration = String(options.narration || '').trim();
     const commitTool = safeJsonClone(options.commitTool);
-    if (!commitTool?.function?.parameters) throw new Error('The native world commit tool is unavailable.');
-    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against the canonical frame and mechanics. Mechanics constrain outcomes; they never author them. If something is uncertain, leave it unchanged.\n\nReturn exactly one native commit_world_turn tool call. Preserve actor IDs. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range in the handoff context. Only set existing mechanical time fields when the authored beat establishes a defensible canonical delta. Never choose a duration merely because it says "immediate", "brief", or "a few seconds".\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK:\n${JSON.stringify(preClock)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 3000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 18000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
+    const priorPacket = buildSidecarScenePacket(world, sess);
+    const priorReconciliationEvidence = (window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.turns || [])
+        .filter(turn => ['reconciliation_pending', 'reconciliation_failed'].includes(turn.status))
+        .slice(-4)
+        .map(turn => ({
+            turnId: turn.id,
+            status: turn.reconciliationStatus || turn.status,
+            playerInput: String(turn.playerInput || '').slice(0, 1600),
+            visibleNarration: String(turn.narration || '').slice(0, 8000),
+            handoff: String(turn.handoff || '').slice(0, 6000),
+            failure: turn.failure ? {
+                code: turn.failure.code,
+                message: String(turn.failure.message || '').slice(0, 800),
+                finishReason: turn.failure.finishReason || ''
+            } : null,
+            provenance: turn.provenance || null
+        }));
+    const references = buildSidecarCanonicalReferenceManifest(world, sess,
+        `${options.playerInput || ''}\n${narration}\n${handoff}`);
+    const attempt = beginSidecarTurnAttempt(world, sess, {
+        handoff, narration, playerInput: options.playerInput,
+        preFrame, preClock: clockEvidence, model, provider,
+        takeIndex: options.takeIndex, revisionId: options.revisionId,
+        handoffComplete: options.handoffComplete !== false
+    });
+    let readerPacket;
+    try {
+        options.onStage?.('reading');
+        readerPacket = await runSidecarSemanticReading(world, sess, {
+            tracker, provider, model, sidecarWorld, references, preFrame, clockEvidence,
+            playerInput: options.playerInput, narration, handoff, signal: options.signal
+        });
+    } catch (readerError) {
+        // Reading failure is diagnostic rather than state authority. The
+        // Reconciler can still conservatively commit an authored no-op or a
+        // plainly established change from the source evidence it receives.
+        readerPacket = {
+            valid: false, summary: 'Sidecar Reader failed; Reconciler received raw authored evidence directly.',
+            canonicalReferences: references, unresolved: [], proposedQuestions: [],
+            failure: { message: String(readerError?.message || readerError).slice(0, 1200) }
+        };
+        logSidecarConsoleTrace('Reader failure', { model, provider, error: readerPacket.failure });
+        recordSidecarTrace(world, sess, { kind: 'semantic_reader_failure', model, provider, error: readerPacket.failure.message });
+    }
+    if (attempt.turnRecord) {
+        attempt.turnRecord.reader = safeJsonClone(readerPacket);
+        queueSidecarReaderQuestions(world, sess, readerPacket, attempt.turnRecord);
+    }
+    options.onStage?.('reconciling');
+    const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from an exact handoff source-to-target endpoint that matches the canonical pre-turn clock; "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
+    const configuredTokens = Number(tracker.maxTokens) || 0;
+    const maxTokens = configuredTokens > 0
+        ? Math.max(1800, Math.min(100000, Math.trunc(configuredTokens)))
+        : (tracker.reasoning === true ? 8000 : 6000);
     const body = {
         model, stream: false,
-        max_tokens: Math.max(600, Number(tracker.maxTokens) || 1400),
+        max_tokens: maxTokens,
         temperature: 0,
-        messages: [{ role: 'system', content: `${sidecarPrompt}\n\n[CURRENT SIDECAR PACKET — Background World Agent entries are proposals only, never canon]\n${JSON.stringify(buildSidecarScenePacket(world, sess))}` }, { role: 'user', content: 'Reconcile this authored turn now.' }],
-        tools: [commitTool], tool_choice: { type: 'function', function: { name: 'commit_world_turn' } }
+        messages: [{ role: 'system', content: `${sidecarPrompt}\n\n[NARRATOR HANDOFF STATUS]\n${options.handoffComplete === false ? 'INCOMPLETE OR MISSING. Use visible narration and canonical evidence conservatively; never invent the missing authorial interpretation.' : 'COMPLETE.'}\n\n[CURRENT SIDECAR PACKET — Background World Agent entries and unresolved handoffs are evidence/proposals, never silently canonical]\n${JSON.stringify(priorPacket)}\n\n[PINNED PRIOR RECONCILIATION EVIDENCE — unresolved authored beats, not automatically canonical]\n${JSON.stringify(priorReconciliationEvidence)}` }, { role: 'user', content: 'Reconcile this authored turn now. Emit the native commit tool call before the output budget ends.' }],
+        tools: commitTool ? [commitTool] : [],
+        tool_choice: { type: 'function', function: { name: 'commit_world_turn' } },
+        parallel_tool_calls: false
     };
-    if (tracker.reasoning === true) body.reasoning_effort = 'low';
-    const response = await fetch(apiBase() + '/chat/completions', {
-        method: 'POST', signal: options.signal,
-        headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld, { scope: 'sidecar' }))
+    applySidecarReasoning(body, provider, tracker, world);
+    logSidecarConsoleTrace('Reconciliation request', {
+        model, provider, maxTokens,
+        prompt: sidecarPrompt,
+        request: safeJsonClone(body)
     });
-    if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar request failed (${response.status})`);
-    const payload = await response.json();
-    const message = payload?.choices?.[0]?.message || {};
-    const toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn');
-    recordSidecarTrace(world, sess, { kind: 'reconciliation', prompt: sidecarPrompt, reply: message, model });
-    if (!toolCall) throw new Error('Sidecar returned no commit_world_turn tool call.');
-    const receipt = unwrapSidecarCommitReceipt(toolCall.function?.arguments || '{}');
-    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(protocol, receipt, {
-        source: 'narrator_handoff', narration, handoff, turnId: receipt.turn_id || ''
-    }) || [];
-    const committed = commitWorldTurnReceipt(world, sess, receipt, options.receiptContext || {}, 'sidecar');
-    if (protocol) {
-        recordSidecarCoreAnswers(world, sess, handoff);
-        recordSidecarRequests(world, sess, handoff);
-        recordSidecarTemporalEvidence(world, sess, handoff, preClock);
-        const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(protocol, world, receipt, {
-            playerLocationId: preFrame.player_location_id
+    try {
+        if (!commitTool?.function?.parameters) {
+            const unavailable = new Error('The native world commit tool is unavailable.');
+            unavailable.code = 'commit_tool_unavailable';
+            throw unavailable;
+        }
+        const response = await fetchSidecarCompletion(body, {
+            provider, tracker, world, owner: sidecarWorld, signal: options.signal
+        });
+        if (!response.ok) {
+            const providerBody = await response.text().catch(() => '');
+            const requestError = new Error(providerBody.slice(0, 800) || `Sidecar request failed (${response.status})`);
+            requestError.code = 'sidecar_http_error';
+            requestError.httpStatus = response.status;
+            throw requestError;
+        }
+        const payload = await response.json();
+        const choice = payload?.choices?.[0] || {};
+        const message = choice.message || {};
+        logSidecarConsoleTrace('Reconciliation response', {
+            model, provider: payload?.provider || provider,
+            finishReason: choice.finish_reason || choice.native_finish_reason || '',
+            assistant: safeJsonClone(message)
+        });
+        const toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn')
+            || (message.function_call?.name === 'commit_world_turn'
+                ? { id: message.function_call.id || '', type: 'function', function: message.function_call }
+                : null);
+        recordSidecarTrace(world, sess, {
+            kind: 'reconciliation', prompt: sidecarPrompt, reply: message, model,
+            provider: payload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || ''
+        });
+        if (!toolCall) {
+            const truncated = choice.finish_reason === 'length' || choice.native_finish_reason === 'length';
+            const missing = new Error(truncated
+                ? `Sidecar exhausted its ${maxTokens}-token output budget before emitting commit_world_turn.`
+                : 'Sidecar responded without the required native commit_world_turn tool call.');
+            missing.code = truncated ? 'sidecar_output_truncated' : 'missing_commit_tool_call';
+            missing.sidecarDetail = {
+                code: missing.code,
+                finishReason: choice.finish_reason || choice.native_finish_reason || '',
+                provider: payload?.provider || provider,
+                model,
+                response: {
+                    content: typeof message.content === 'string' ? message.content.slice(0, 12000) : message.content,
+                    reasoning: String(message.reasoning || message.reasoning_content || '').slice(0, 16000),
+                    toolCalls: safeJsonClone(message.tool_calls || [])
+                }
+            };
+            throw missing;
+        }
+        const receipt = unwrapSidecarCommitReceipt(toolCall.function?.arguments || '{}');
+        const explicitEndpointEvidence = applySidecarTemporalAuthority(receipt, handoff, clockEvidence);
+        const receiptContext = {
+            ...(options.receiptContext || {}),
+            sidecarTemporalAuthority: true,
+            authorizedTimeSkipMinutes: explicitEndpointEvidence?.minutes || 0
+        };
+        const protocol = attempt.protocol || window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(protocol, receipt, {
+            source: 'narrator_handoff', narration, handoff, turnId: attempt.turnRecord?.id || receipt.turn_id || ''
         }) || [];
+        const committed = commitWorldTurnReceipt(world, sess, receipt, receiptContext, 'sidecar');
+        if (protocol) {
+            recordSidecarTemporalEvidence(world, sess, handoff, preClock, explicitEndpointEvidence);
+            const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(protocol, world, receipt, {
+                playerLocationId: preFrame.player_location_id
+            }) || [];
         // World Agent output is never independently applied. A normal Sidecar
         // reconciliation is its review pass: the resulting native receipt is
         // the only evidence that any proposed fact was accepted into canon.
@@ -10899,35 +12558,75 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                 proposal.reviewReceiptId = receipt.turn_id || '';
                 proposal.reviewOutcome = committed.audit?.rejected?.length ? 'reviewed_with_rejections' : 'reviewed_no_automatic_commit';
             });
-        queueSidecarReconciliationQuestions(world, sess, committed.audit);
-        const packet = buildSidecarScenePacket(world, sess, handoff);
-        protocol.packet = packet;
-        const turnId = receipt.turn_id || `sidecar_turn_${Date.now().toString(36)}`;
-        const turnRecord = { id: turnId, status: 'active',
-            createdAt: new Date().toISOString(), narration: narration.slice(0, 24000), handoff,
-            preFrame, postFrame: buildWorldSceneFrame(world, sess), receipt: safeJsonClone(receipt), audit: safeJsonClone(committed.audit),
-            provisionalIntroductions: stagedIntroductions.map(entry => entry.id), traversalChanges };
-        window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
-        protocol.turns.push(turnRecord);
-        protocol.turns = protocol.turns.slice(-500);
-        window.HordeSidecarMemoryGraph?.recordTurn(protocol, turnRecord);
-        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, {
-            batchSize: Number(state.globalSettings?.episodeChunkTurns) || 5,
-            cadenceTurns: Number(state.globalSettings?.episodeCadenceTurns) || 5
+            queueSidecarReconciliationQuestions(world, sess, committed.audit);
+            const reconciledPriorIds = Array.isArray(receipt.state_updates?.reconciled_prior_turn_ids)
+                ? receipt.state_updates.reconciled_prior_turn_ids.map(String) : [];
+            reconciledPriorIds.forEach(id => {
+                const prior = protocol.turns.find(turn => turn.id === id && turn.reconciliationStatus === 'failed');
+                if (!prior) return;
+                prior.status = 'reconciled_late';
+                prior.reconciliationStatus = 'committed_late';
+                prior.reconciledByTurnId = attempt.turnRecord?.id || '';
+                prior.reconciledAt = new Date().toISOString();
+                updateSidecarQuestion(world, sess, `reconcile.transport.${id}`, {
+                    status: 'resolved', resolutionType: 'later_sidecar_reconciliation',
+                    answer: `Reconciled by ${attempt.turnRecord?.id || receipt.turn_id || 'a later Sidecar turn'}.`,
+                    provenance: { source: 'sidecar_receipt', turnId: attempt.turnRecord?.id || '' }
+                });
+            });
+            const turnRecord = attempt.turnRecord;
+            if (turnRecord) {
+                turnRecord.status = 'active';
+                turnRecord.reconciliationStatus = 'committed';
+                turnRecord.committedAt = new Date().toISOString();
+                turnRecord.receiptTurnId = String(receipt.turn_id || '');
+                turnRecord.postFrame = buildWorldSceneFrame(world, sess);
+                turnRecord.postClock = buildSidecarClockEvidence(world, sess);
+                turnRecord.receipt = safeJsonClone(receipt);
+                turnRecord.audit = safeJsonClone(committed.audit);
+                turnRecord.explicitEndpointEvidence = safeJsonClone(explicitEndpointEvidence);
+                turnRecord.provisionalIntroductions = stagedIntroductions.map(entry => entry.id);
+                turnRecord.traversalChanges = traversalChanges;
+                window.HordeSidecarMemoryGraph?.recordTurn(protocol, turnRecord);
+            }
+            const diagnostic = protocol.diagnostics?.reconciliationAttempts?.find(item => item.turnId === turnRecord?.id);
+            if (diagnostic) Object.assign(diagnostic, {
+                status: 'committed', committedAt: turnRecord?.committedAt,
+                finishReason: choice.finish_reason || choice.native_finish_reason || '',
+                provider: payload?.provider || provider,
+                receiptTurnId: receipt.turn_id || '', audit: safeJsonClone(committed.audit),
+                explicitEndpointEvidence: safeJsonClone(explicitEndpointEvidence)
+            });
+            const packet = buildSidecarScenePacket(world, sess, handoff);
+            protocol.packet = packet;
+            const memoryConfig = effectiveSidecarMemoryConfig(world);
+            window.HordeSidecarMemoryGraph?.queueEpisode(protocol, {
+                batchSize: memoryConfig.episodeChunkTurns,
+                cadenceTurns: memoryConfig.episodeCadenceTurns
+            });
+            return { committed, receipt, packet: protocol.packet || null, turnId: turnRecord?.id || null };
+        }
+        return { committed, receipt, packet: protocol?.packet || null, turnId: attempt.turnRecord?.id || null };
+    } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        const failed = failSidecarTurnAttempt(world, sess, attempt, error, error.sidecarDetail || {
+            code: error.code,
+            provider, model
         });
-        return { committed, receipt, packet: protocol.packet || null, turnId };
+        error.sidecarAttempt = failed;
+        throw error;
     }
-    return { committed, receipt, packet: protocol?.packet || null, turnId: null };
 }
 
 function parseSidecarConversationResponse(content) {
     const raw = String(content || '').trim();
     const parsed = safeParseJSONRepair(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-    if (!isPlainObject(parsed)) return { reply: raw || 'Sidecar did not return a usable reply.', resolutions: [], proposedReceipt: null };
+    if (!isPlainObject(parsed)) return { reply: raw || 'Sidecar did not return a usable reply.', resolutions: [], proposedReceipt: null, workspaceAction: 'none' };
     return {
         reply: String(parsed.reply || '').trim() || 'I have recorded the discussion.',
         resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions.slice(0, 12) : [],
-        proposedReceipt: isPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null
+        proposedReceipt: isPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null,
+        workspaceAction: ['none', 'close_scene', 'begin_sequence_plan', 'approve_sequence_plan', 'context_refresh'].includes(parsed.workspace_action) ? parsed.workspace_action : 'none'
     };
 }
 
@@ -11003,7 +12702,7 @@ async function vectorizeSidecarMemoryRecords(records, options = {}) {
     return { attempted: pending.length, completed: pending.filter(record => Array.isArray(record.embedding)).length };
 }
 
-async function retrieveSidecarMemory(world, sess, query, limit = 8) {
+async function retrieveSidecarMemory(world, sess, query, limit = 8, options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
     const text = String(query || '').trim();
@@ -11019,8 +12718,9 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8) {
     if (missingBase.length) await vectorizeSidecarMemoryRecords(missingBase.map(candidate => candidate.record));
     const prerequisitesMet = historyCandidates.some(candidate => Array.isArray(candidate.record.embedding))
         && episodeCandidates.some(candidate => Array.isArray(candidate.record.embedding));
+    const allowedCharacters = new Set(Array.isArray(options.characterIds) ? options.characterIds.filter(Boolean) : []);
     const derivedCandidates = prerequisitesMet ? [
-        ...(graph.cognition || []).filter(record => record.status === 'active').map(record => ({ kind: 'cognition', text: record.text, record })),
+        ...(graph.cognition || []).filter(record => record.status === 'active' && (!allowedCharacters.size || allowedCharacters.has(record.characterId))).map(record => ({ kind: 'cognition', text: record.text, record })),
         ...(graph.scenes || []).filter(record => record.status === 'active' && record.vectorText).map(record => ({ kind: 'scene', text: record.vectorText || record.summary, record })),
         ...(graph.sequences || []).filter(record => record.status === 'active' && record.vectorText).map(record => ({ kind: 'sequence', text: record.vectorText || record.summary, record })),
         ...(graph.locationReferences || []).filter(record => record.status !== 'resolved').map(record => ({ kind: 'unresolved_place', text: `${record.name || ''} ${record.evidence || ''}`, record })),
@@ -11033,22 +12733,59 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8) {
     return candidates.map(candidate => ({ ...candidate, score: cosineSimilarity(queryEmbedding, candidate.record.embedding || []) }))
         .filter(candidate => Number.isFinite(candidate.score) && candidate.score > 0)
         .sort((a, b) => b.score - a.score).slice(0, limit)
-        .map(candidate => ({ kind: candidate.kind, score: Math.round(candidate.score * 1000) / 1000, text: candidate.text.slice(0, 1600), id: candidate.record.id, characterId: candidate.record.characterId || '' }));
+        .map(candidate => ({ kind: candidate.kind, score: Math.round(candidate.score * 1000) / 1000, text: candidate.text.slice(0, 1600), id: candidate.record.id, characterId: candidate.record.characterId || '', epistemicStatus: candidate.record.epistemicStatus || '' }));
 }
 
-async function runSidecarBackgroundMemoryJobs(world, sess) {
+function effectiveSidecarMemoryConfig(world) {
+    const global = state.globalSettings || {};
+    const local = world?.sidecarConfig?.memory && typeof world.sidecarConfig.memory === 'object'
+        ? world.sidecarConfig.memory : {};
+    const inherited = name => local.inheritGlobal === false ? local[name] : (global[name] ?? local[name]);
+    const pick = (name, fallback, min, max) => {
+        const candidate = inherited(name);
+        const numeric = Math.round(Number(candidate));
+        return Number.isFinite(numeric) ? Math.max(min, Math.min(max, numeric)) : fallback;
+    };
+    return {
+        inheritGlobal: local.inheritGlobal !== false,
+        episodeChunkTurns: pick('episodeChunkTurns', 5, 1, 20),
+        episodeCadenceTurns: pick('episodeCadenceTurns', 5, 1, 50),
+        verbatimTurnWindow: pick('verbatimTurnWindow', 5, 0, 30),
+        consolidationConcurrency: pick('consolidationConcurrency', 6, 1, 12),
+        backgroundProviderConcurrency: pick('backgroundProviderConcurrency', 2, 1, 12),
+        retrievalLimit: pick('retrievalLimit', 8, 1, 24),
+        cognitionRecentLimit: pick('cognitionRecentLimit', 8, 1, 30),
+        cognitionSemanticTopK: pick('cognitionSemanticTopK', 6, 1, 20),
+        consolidationModel: String(inherited('consolidationModel') || global.consolidationModel || world?.model || state.globalSettings?.defaultModel || '').trim(),
+        consolidationMaxTokens: Number(inherited('consolidationMaxTokens')) || 1400,
+        consolidationTemperature: Number(inherited('consolidationTemperature')) || 0,
+        consolidationReasoning: inherited('consolidationReasoning') === true
+    };
+}
+
+async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
     if (!hasApiCredentials() || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return;
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
     const graph = window.HordeSidecarMemoryGraph?.graph(protocol);
     if (!graph) return;
+    // Sidecar migration retains visible history as evidence.  Materialise that
+    // evidence before looking for an Episode so manual archive and ordinary
+    // cadence have the same truthful source set.
+    window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
     const startMemoryEpoch = Number(sess._memEpoch) || 0;
-    const memoryDefaults = state.globalSettings || {};
+    const memoryDefaults = effectiveSidecarMemoryConfig(world);
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
     const model = tracker.inheritNarrator !== false || !tracker.model
-        ? (state.globalSettings?.consolidationModel || world.model || state.globalSettings.defaultModel)
+        ? (memoryDefaults.consolidationModel || world.model || state.globalSettings.defaultModel)
         : tracker.model;
-    window.HordeSidecarMemoryGraph.queueEpisode(protocol, { batchSize: Number(memoryDefaults.episodeChunkTurns) || 5, cadenceTurns: Number(memoryDefaults.episodeCadenceTurns) || 5 });
+    window.HordeSidecarMemoryGraph.queueEpisode(protocol, {
+        batchSize: memoryDefaults.episodeChunkTurns,
+        cadenceTurns: memoryDefaults.episodeCadenceTurns,
+        force: options.force === true,
+        source: options.source || 'sidecar_memory_dispatcher',
+        priority: options.priority || (options.force === true ? 'manual' : 'background')
+    });
     const providerLimit = Math.max(1, Math.min(12, Number(memoryDefaults.backgroundProviderConcurrency) || 2));
     const overallLimit = Math.max(1, Math.min(12, Number(memoryDefaults.consolidationConcurrency) || 6));
     const queuedJobs = (protocol.jobs || []).filter(job => ['episode_consolidation', 'scene_consolidation', 'sequence_consolidation', 'cognition_consolidation'].includes(job.type) && ['queued', 'dependency_waiting'].includes(job.status)
@@ -11060,7 +12797,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
             job.status = 'dependency_waiting'; job.waitingSince = job.waitingSince || new Date().toISOString();
         } else if (job.status === 'dependency_waiting') job.status = 'queued';
         job.provider = job.provider || state.globalSettings?.apiProvider || 'openrouter';
-        job.model = job.model || state.globalSettings?.consolidationModel || model;
+        job.model = job.model || memoryDefaults.consolidationModel || model;
     });
     const runnable = queuedJobs.filter(job => job.status === 'queued').slice(0, overallLimit);
     if (!runnable.length) return;
@@ -11086,9 +12823,14 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
                 window.HordeSidecarMemoryGraph.failJob(protocol, job.id, !episode ? 'Episode no longer exists.' : 'Character is not a tracked participant.');
                 return;
             }
-            const prior = (graph.cognition || []).filter(record => record.characterId === character.id && record.status === 'active').slice(-12)
+            const prior = (graph.cognition || []).filter(record => record.characterId === character.id && record.status === 'active').slice(-memoryDefaults.cognitionRecentLimit)
                 .map(record => ({ text: record.text, epistemicStatus: record.epistemicStatus }));
-            const prompt = `[SIDECAR CHARACTER COGNITION]\nWrite only experiential memories for ${character.name} [${character.id}]. This is private character cognition, never objective canon. Return JSON only: {"memories":[{"text":"first-person memory","epistemicStatus":"self_action|direct_observation|disclosure|interpretation|belief|influence","importance":0.0,"confidence":0.0,"sourceTurnIds":["turn id"]}]}.\nKeep witnessed actions distinct from self-actions; disclosures must identify who told them; interpretations and suspicions must remain uncertain. Do not create a memory merely because the character was present, and do not infer interiority beyond the available character grounding.\n\nCHARACTER GROUNDING:\n${JSON.stringify({ id: character.id, name: character.name, persona: character.persona || '', description: character.description || '', access: job.access })}\n\nEPISODE:\n${JSON.stringify({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, perceptionCoverage: episode.perceptionCoverage })}\n\nRELEVANT PRIOR COGNITION:\n${JSON.stringify(prior)}`;
+            const sourceTurns = graph.worldHistory.filter(record => (episode.sourceTurnIds || []).includes(record.turnId) && record.status === 'active')
+                .map(record => ({ turnId: record.turnId, narration: record.narration, sceneReading: record.sceneReading }));
+            const characterState = sess.entityStates?.[character.id] || {};
+            const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(character.id)).slice(-12);
+            const authorial = { ledger: String(sess.ledger || '').slice(-3000), scenePacket: protocol.packet || null };
+            const prompt = `[SIDECAR CHARACTER COGNITION]\nWrite only experiential memories for ${character.name} [${character.id}]. This is private character cognition, never objective canon. Return JSON only: {"memories":[{"text":"first-person memory","epistemicStatus":"self_action|direct_observation|disclosure|interpretation|belief|influence","importance":0.0,"confidence":0.0,"sourceTurnIds":["turn id"]}]}.\nKeep witnessed actions distinct from self-actions; disclosures must identify who told them; interpretations and suspicions must remain uncertain. Do not create a memory merely because the character was present, and do not infer interiority beyond the available character grounding. Ordinary absence belongs in episode coverage, not as a durable memory.\n\nCHARACTER-SCOPED PERCEPTION EVIDENCE:\n${JSON.stringify({ characterId: character.id, access: job.access, evidence: job.perceptionEvidence || '', episodeCoverage: (episode.perceptionCoverage || []).filter(item => item.characterId === character.id) })}\n\nEXACT SOURCE RANGE (only what was authored):\n${JSON.stringify(sourceTurns)}\n\nCHARACTER GROUNDING:\n${JSON.stringify({ id: character.id, name: character.name, persona: character.persona || '', description: character.description || '', currentState: characterState, relationships })}\n\nOBJECTIVE EPISODE (context, not character knowledge by itself):\n${JSON.stringify({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory })}\n\nAUTHORIAL CONTEXT (explains stakes only; never grants knowledge):\n${JSON.stringify(authorial)}\n\nRELEVANT PRIOR COGNITION:\n${JSON.stringify(prior)}`;
             try {
                 const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
                     method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
@@ -11106,9 +12848,10 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
                     characterId: character.id, characterName: character.name, episodeId: episode.id, text: memory.text,
                     epistemicStatus: memory.epistemicStatus, importance: memory.importance, confidence: memory.confidence,
                     sourceTurnIds: memory.sourceTurnIds.length ? memory.sourceTurnIds : episode.sourceTurnIds,
-                    provenance: { source: 'character_cognition_consolidation', access: job.access }
+                    provenance: { source: 'character_cognition_consolidation', access: job.access, perceptionEvidence: job.perceptionEvidence || '', sourceEpisodeId: episode.id }
                 }));
                 graph.cognition = graph.cognition.slice(-4000);
+                await vectorizeSidecarMemoryRecords(graph.cognition.filter(record => record.episodeId === episode.id && record.characterId === character.id));
                 job.status = 'completed'; job.completedAt = new Date().toISOString();
                 protocol.packet = buildSidecarScenePacket(world, sess);
             } catch (error) {
@@ -11179,6 +12922,16 @@ async function runSidecarBackgroundMemoryJobs(world, sess) {
         }
     }));
     await saveState();
+    // Episode completion creates dependent cognition and hierarchy jobs after
+    // this wave was selected.  Yield once, then dispatch a fresh bounded wave;
+    // this is deliberately background-only and never becomes a third turn call.
+    const hasDependentWave = (protocol.jobs || []).some(job => job.status === 'queued' && job.provenance?.source !== 'sidecar_memory_dispatcher');
+    const activeCount = (graph.worldHistory || []).filter(record => record.status === 'active').length;
+    const hasForcedRemainder = options.force === true && activeCount > Number(graph.lastEpisodeTurnCount || 0)
+        && scheduled.some(job => job.type === 'episode_consolidation' && job.status === 'completed');
+    if (hasDependentWave || hasForcedRemainder) {
+        setTimeout(() => runSidecarBackgroundMemoryJobs(world, sess, options).catch(error => console.warn('Sidecar memory follow-up wave skipped —', error.message)), 0);
+    }
 }
 
 async function runSidecarConversation(world, sess, userText, options = {}) {
@@ -11188,24 +12941,32 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     const tracker = config.tracker || {};
     const narratorModel = world.model || state.globalSettings.defaultModel;
     const model = tracker.inheritNarrator !== false || !tracker.model ? narratorModel : tracker.model;
+    const narratorProvider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const provider = tracker.inheritNarrator !== false || !tracker.provider
+        ? narratorProvider : normalizedProviderId(tracker.provider);
     const packet = protocol.packet || buildSidecarScenePacket(world, sess);
     const openQuestions = (protocol.questions || []).filter(question => question.status === 'open').slice(-20);
-    const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay, and a conversation must not itself advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts. Implied people and places are evidence-backed provisional records, not canonical entities: explain their status, but only propose promotion when the author explicitly asks.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers, including a clearly requested clock correction. It must be a complete native commit_world_turn receipt, and must never turn a conversation into an automatic tick, arrival, traversal progression, presence change, or speculative fact. If no state change is requested, use null.\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nIMPLIED RECORDS AWAITING REVIEW:\n${JSON.stringify([...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])].filter(record => record.status !== 'promoted').slice(-20))}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
+    const workspaceContract = `\n\nWORKSPACE:\n${JSON.stringify(protocol.workspace || { kind: 'world_gm' })}\nIf and only if the author explicitly approves an available workspace action, include an additional JSON field "workspace_action" with one of: "close_scene", "begin_sequence_plan", "approve_sequence_plan", "context_refresh". Otherwise set it to "none". Never infer approval from merely opening a workspace.`;
+    const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay, and a conversation must not itself advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts. Implied people and places are evidence-backed provisional records, not canonical entities: explain their status, but only propose promotion when the author explicitly asks.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers, including a clearly requested clock correction. It must be a complete native commit_world_turn receipt, and must never turn a conversation into an automatic tick, arrival, traversal progression, presence change, or speculative fact. If no state change is requested, use null. Use only IDs from CANONICAL REFERENCES.\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nCANONICAL REFERENCES:\n${JSON.stringify(buildSidecarCanonicalReferenceManifest(world, sess, userText))}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nIMPLIED RECORDS AWAITING REVIEW:\n${JSON.stringify([...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])].filter(record => record.status !== 'promoted').slice(-20))}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
     const body = {
         model, stream: false,
-        max_tokens: Math.max(400, Number(tracker.maxTokens) || 1200),
+        max_tokens: Math.max(1200, Number(tracker.maxTokens) || 3000),
         temperature: 0.2,
-        messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Respond as Sidecar.' }]
+        messages: [{ role: 'system', content: prompt + workspaceContract }, { role: 'user', content: 'Respond as Sidecar.' }]
     };
-    if (tracker.reasoning === true) body.reasoning_effort = 'low';
-    const sidecarWorld = { ...world, model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
-    const response = await fetch(apiBase() + '/chat/completions', {
-        method: 'POST', signal: options.signal,
-        headers: { ...authHeaders(), 'Content-Type': 'application/json', ...attributionHeaders() },
-        body: JSON.stringify(applyOpenRouterRouting(body, sidecarWorld, { scope: 'sidecar' }))
+    applySidecarReasoning(body, provider, tracker, world);
+    const sidecarWorld = { ...world, model, provider, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
+    logSidecarConsoleTrace('World GM request', { model, provider, request: safeJsonClone(body) });
+    const response = await fetchSidecarCompletion(body, {
+        provider, tracker, world, owner: sidecarWorld, signal: options.signal
     });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar conversation failed (${response.status})`);
     const data = await response.json();
+    logSidecarConsoleTrace('World GM response', {
+        model, provider: data?.provider || provider,
+        finishReason: data?.choices?.[0]?.finish_reason || '',
+        assistant: safeJsonClone(data?.choices?.[0]?.message || {})
+    });
     const result = parseSidecarConversationResponse(data?.choices?.[0]?.message?.content || '');
     const authorEntry = { id: `sidecar_author_${Date.now().toString(36)}`, role: 'user', text: String(userText || '').trim(), createdAt: new Date().toISOString() };
     const sidecarEntry = { id: `sidecar_reply_${Date.now().toString(36)}`, role: 'sidecar', text: result.reply, createdAt: new Date().toISOString(), provenance: { source: 'direct_user_refinement' } };
@@ -11229,25 +12990,85 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'sidecar_conversation', status: resolution.status, answer: resolution.answer || '' });
         updateSidecarQuestion(world, sess, question.id, { status: resolution.status, answer: resolution.answer || '', resolutionType: resolution.status === 'resolved' ? 'direct_user_answer' : 'direct_user_deferral', provenance: { source: 'direct_user_refinement', conversationId: authorEntry.id } });
     });
+    if (result.workspaceAction === 'close_scene') {
+        const active = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+        if (active?.scene?.status === 'active') {
+            const closedSceneId = active.scene.id;
+            active.scene.status = 'closed'; active.scene.closedAt = new Date().toISOString();
+            active.scene.endTurnId = (protocol.turns || []).filter(turn => turn.sceneId === closedSceneId).at(-1)?.id || '';
+            active.scene.provisionalReview = { status: 'author_approved', reviewedAt: new Date().toISOString(), provenance: { source: 'sidecar_conversation', conversationId: authorEntry.id } };
+            const memory = effectiveSidecarMemoryConfig(world);
+            window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'scene_transition', priority: 'scene_transition' });
+            protocol.activeSceneId = '';
+            // Closing a scene does not close its sequence. Open the next
+            // scene immediately so normal narration remains available.
+            const next = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: true });
+            sidecarEntry.workspaceAction = {
+                type: 'close_scene', sceneId: closedSceneId, nextSceneId: next?.scene?.id || '',
+                source: 'explicit_author_approval'
+            };
+        }
+    } else if (result.workspaceAction === 'begin_sequence_plan') {
+        const plan = window.HordeSidecarTimeline?.beginPlanning(protocol, sess, authorEntry.text);
+        if (plan) sidecarEntry.workspaceAction = { type: 'begin_sequence_plan', planId: plan.id, source: 'explicit_author_approval' };
+    } else if (result.workspaceAction === 'approve_sequence_plan') {
+        const previous = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false });
+        const memory = effectiveSidecarMemoryConfig(world);
+        // Queue the final evidence before close.  The closure itself is then
+        // observed by Episode completion and fans out the Scene/Sequence jobs.
+        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'sequence_transition', priority: 'closure' });
+        const transitionMode = /(?:cut|skip|later|tomorrow|following|new scene)/i.test(authorEntry.text) ? 'discontinuous' : 'continuous';
+        const approved = window.HordeSidecarTimeline?.approvePlanning(protocol, sess, {
+            title: protocol.sequencePlanning?.title || 'New sequence',
+            sceneTitle: protocol.sequencePlanning?.sceneTitle || '',
+            transitionMode,
+            authorIntent: authorEntry.text
+        }, { closePriorScene: true, transitionMode });
+        if (approved) sidecarEntry.workspaceAction = { type: 'approve_sequence_plan', sequenceId: approved.sequence.id, sceneId: approved.scene.id, source: 'explicit_author_approval', priorSceneId: previous?.scene?.id || '' };
+    } else if (result.workspaceAction === 'context_refresh') {
+        const memory = effectiveSidecarMemoryConfig(world);
+        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'context_refresh', priority: 'context_refresh' });
+        sidecarEntry.workspaceAction = { type: 'context_refresh', source: 'explicit_author_approval' };
+    }
     protocol.conversations.push(authorEntry, sidecarEntry);
     protocol.conversations = protocol.conversations.slice(-200);
     protocol.refinements.push({ id: `refinement_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), userText: authorEntry.text,
         source: 'direct_user_refinement', committed: !!commit, audit: commit ? safeJsonClone(commit.audit) : null });
     protocol.refinements = protocol.refinements.slice(-200);
     protocol.packet = buildSidecarScenePacket(world, sess);
-    recordSidecarTrace(world, sess, { kind: 'conversation', prompt, reply: data?.choices?.[0]?.message || {}, model });
+    recordSidecarTrace(world, sess, { kind: 'conversation', prompt, reply: data?.choices?.[0]?.message || {}, model, provider });
+    if (sidecarEntry.workspaceAction) runSidecarBackgroundMemoryJobs(world, sess).catch(error => console.warn('Sidecar workspace memory dispatch skipped —', error.message));
     return { ...result, commit, packet: protocol.packet };
+}
+
+function returnToWorldNarrator() {
+    // The Sidecar panel can be redrawn while background work heals a session.
+    // Resolve the active timeline at click time, never through a stale panel
+    // closure, so Return always changes the composer that is actually shown.
+    const activeWorld = state.worlds.find(item => item.id === state.activeWorldId);
+    const activeSession = getCurrentWorldSession();
+    const activeProtocol = activeWorld && activeSession
+        ? window.HordeSidecarHooks?.normalizeWorldTimeline?.(activeWorld, activeSession)
+        : null;
+    if (!activeProtocol) return;
+    activeProtocol.inputMode = 'narrator';
+    activeProtocol.workspace = {};
+    renderWorldPlayState();
+    document.getElementById('world-user-input')?.focus();
+    saveState().catch(error => console.warn('Could not persist narrator mode:', error));
 }
 
 function renderSidecarConversation(world, sess) {
     const panel = document.getElementById('world-sidecar-conversation');
     const log = document.getElementById('world-sidecar-conversation-log');
-    const mode = document.getElementById('world-conversation-mode');
-    if (!panel || !log || !mode) return;
+    if (!panel || !log) return;
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const enabled = mode.value === 'sidecar' && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const enabled = protocol?.inputMode === 'sidecar'
+        && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     panel.classList.toggle('hidden', !enabled);
     if (!enabled) return;
+    const closeSidecarConversation = document.getElementById('world-close-sidecar-conversation');
+    if (closeSidecarConversation) closeSidecarConversation.onclick = returnToWorldNarrator;
     const entries = (protocol?.conversations || []).slice(-80);
     const questionCards = (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-20).map(question => `
         <details style="margin:0 0 8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.03);">
@@ -11257,13 +13078,15 @@ function renderSidecarConversation(world, sess) {
             ${question.evidence ? `<div style="font-size:.68rem; color:var(--text-3); margin-top:4px;">Evidence: ${escapeHTML(question.evidence.slice(0, 600))}</div>` : ''}
             ${question.priority === 'high' ? `<button class="tool-btn sidecar-question-repair" data-question-id="${escapeHTML(question.id)}" style="margin-top:6px;">Run narrow repair</button>` : ''}
         </details>`).join('');
+    const memoryJobs = (protocol?.jobs || []).filter(job => ['queued', 'dependency_waiting', 'running', 'blocked'].includes(job.status)).slice(-20);
+    const memoryJobCards = memoryJobs.length ? `<details style="margin:0 0 8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:rgba(108,92,231,.06);"><summary style="cursor:pointer; font-size:.72rem; color:var(--accent);">Memory pipeline · ${memoryJobs.length} pending or reviewable job${memoryJobs.length === 1 ? '' : 's'}</summary><div style="display:grid; gap:5px; margin-top:7px;">${memoryJobs.map(job => `<div style="font-size:.72rem; color:var(--text-2);"><b>${escapeHTML(String(job.type || '').replace(/_/g, ' '))}</b> · ${escapeHTML(job.status || '')}${job.characterId ? ` · ${escapeHTML(job.characterId)}` : ''}${job.episodeId ? ` · episode ${escapeHTML(job.episodeId)}` : ''}${job.diagnostics?.at(-1)?.error ? `<br><span style="color:var(--warning);">${escapeHTML(job.diagnostics.at(-1).error)}</span>` : ''}</div>`).join('')}</div></details>` : '';
     const proposalCards = (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved', 'sidecar_reviewed'].includes(proposal.status)).slice(-12).map(proposal => `
         <div style="margin:0 0 9px; padding:9px; border-radius:7px; background:rgba(255,180,70,.08); border:1px solid var(--border);">
             <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${escapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : proposal.status === 'sidecar_reviewed' ? `Sidecar reviewed · ${proposal.reviewOutcome || 'no automatic commit'}` : 'awaiting review')}</div>
             <div style="font-size:.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML((proposal.summary || []).join('\n') || 'No readable proposal summary.')}</div>
             <div style="display:flex; gap:6px; margin-top:7px; flex-wrap:wrap;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}${proposal.status !== 'sidecar_reviewed' ? `<button class="tool-btn sidecar-proposal-revise" data-proposal-id="${escapeHTML(proposal.id)}">Refine proposal</button><button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button>` : ''}</div>
         </div>`).join('');
-    log.innerHTML = questionCards + proposalCards + entries.map(entry => {
+    log.innerHTML = questionCards + memoryJobCards + proposalCards + entries.map(entry => {
         const author = entry.role === 'user';
         return `<div style="margin:0 0 9px; padding:8px 9px; border-radius:7px; background:${author ? 'var(--surface)' : 'rgba(108, 92, 231, 0.12)'}; border-left:3px solid ${author ? 'var(--accent)' : '#6c5ce7'};">
             <div style="font-size:0.66rem; color:var(--text-3); font-weight:800; text-transform:uppercase; margin-bottom:3px;">${author ? 'Author → Sidecar' : 'Sidecar'}</div>
@@ -11304,6 +13127,114 @@ function renderSidecarConversation(world, sess) {
         finally { renderSidecarConversation(world, sess); }
     });
     log.scrollTop = log.scrollHeight;
+}
+
+// The old V3 toolbar survived the 17.0 UI migration without its panel
+// controller.  Keep its familiar controls, but make them a thin, observable
+// view over the active Sidecar timeline instead of reviving the old parallel
+// V3 world-state system.
+function closeWorldSidecarInspector() {
+    document.getElementById('world-sidecar-inspector-overlay')?.remove();
+}
+
+function sidecarInspectorJson(value, fallback = 'Nothing has been recorded yet.') {
+    if (value == null) return `<div class="form-hint">${escapeHTML(fallback)}</div>`;
+    return `<pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:48vh; overflow:auto; margin:0; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text-2); font-size:.74rem;">${escapeHTML(JSON.stringify(value, null, 2))}</pre>`;
+}
+
+function openWorldSidecarLine(workspace = {}) {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return;
+    if (window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) !== true) return openWorldSidecarInspector('migration');
+    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+    protocol.workspace = {
+        kind: ['sequence_planning', 'context_refresh', 'sequence_closure'].includes(workspace.kind) ? workspace.kind : 'world_gm',
+        title: String(workspace.title || 'World GM').slice(0, 160),
+        guidance: String(workspace.guidance || '').slice(0, 3000),
+        openedAt: new Date().toISOString(),
+        provenance: { source: 'direct_user_refinement' }
+    };
+    const input = document.getElementById('world-user-input');
+    protocol.inputMode = 'sidecar';
+    if (input) {
+        input.placeholder = workspace.placeholder || 'Ask Sidecar about continuity, questions, or a refinement…';
+        input.value = workspace.draft || '';
+        input.focus();
+    }
+    protocol.packet = buildSidecarScenePacket(world, sess);
+    saveState().catch(() => {});
+    renderSidecarConversation(world, sess);
+}
+
+function openWorldSidecarInspector(view = 'scene') {
+    closeWorldSidecarInspector();
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return;
+    const isSidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    // Scene State and Backstage are part of the transcript.  The user should
+    // inspect the handoff beside the turn it explains, not in a second generic
+    // JSON window. Keep the modal only for legacy migration and true actions.
+    if (isSidecar && (view === 'scene' || view === 'backstage')) {
+        const cards = [...document.querySelectorAll('.world-sidecar-backstage')];
+        const card = cards.at(-1);
+        if (card) {
+            card.open = true;
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+        }
+        showToast('No committed Sidecar handoff exists yet for this timeline.', 'info');
+        return;
+    }
+    const protocol = isSidecar ? window.HordeSidecarHooks.normalizeWorldTimeline(world, sess) : null;
+    const packet = isSidecar ? (protocol.packet || buildSidecarScenePacket(world, sess)) : null;
+    const latestTurn = isSidecar ? (protocol.turns || []).at(-1) : null;
+    const title = view === 'line' ? 'World GM · private Sidecar line'
+        : view === 'backstage' ? 'Backstage handoff'
+        : view === 'migration' ? 'Enable Sidecar for this world'
+        : 'Scene State';
+    const overlay = document.createElement('div');
+    overlay.id = 'world-sidecar-inspector-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.style.zIndex = '1100';
+    const legacy = `<section style="display:grid; gap:12px; padding:4px 0;">
+        <div class="fallback-banner" style="display:block; margin:0;"><span class="banner-icon">◌</span><span class="banner-text"><strong>This timeline is using Inline Legacy.</strong> Sidecar packets, private Sidecar conversation, scene reconciliation and Sidecar-only controls are intentionally unavailable until this timeline is migrated.</span></div>
+        <div class="form-hint">The existing narration history and canonical receipts will be retained. Derived vectors are rebuilt after migration; this does not create a new world.</div>
+        <div><button class="btn btn-primary" id="world-sidecar-inspector-migrate">Open Sidecar migration wizard</button></div>
+    </section>`;
+    let body = legacy;
+    if (isSidecar) {
+        const tabs = `<div style="display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px;">
+            <button class="tool-btn sidecar-inspector-tab" data-view="scene">Scene state</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="backstage">Backstage</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="questions">Questions</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="memory">Memory jobs</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="line">Private Sidecar line</button>
+            <button class="tool-btn sidecar-inspector-tab" data-view="timelines">Timelines</button>
+        </div>`;
+        if (view === 'line') { openWorldSidecarLine(); return; }
+        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
+        else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
+        else if (view === 'memory') body = `${tabs}${sidecarInspectorJson({
+            configuration: effectiveSidecarMemoryConfig(world),
+            jobs: (protocol.jobs || []).slice(-120),
+            graph: {
+                worldHistory: (protocol.memoryGraph?.worldHistory || []).map(record => ({ id: record.id, turnId: record.turnId, status: record.status, sceneId: record.sceneId, sequenceId: record.sequenceId, vectorizedAt: record.vectorizedAt || '' })),
+                episodes: (protocol.memoryGraph?.episodes || []).map(record => ({ id: record.id, sourceTurnIds: record.sourceTurnIds, sceneIds: record.sceneIds, sequenceIds: record.sequenceIds, status: record.status, vectorizedAt: record.vectorizedAt || '' })),
+                scenes: protocol.memoryGraph?.scenes || [], sequences: protocol.memoryGraph?.sequences || [], cognition: protocol.memoryGraph?.cognition || []
+            }
+        }, 'No Sidecar memory work has been recorded yet.')}`;
+        else if (view === 'timelines') body = `${tabs}<p class="form-hint">Forks are immutable copies of a selected committed revision. Superseded takes stay auditable but do not leak into the active timeline.</p><button class="btn btn-primary" id="world-sidecar-inspector-timelines">Open timeline and fork browser</button>`;
+        else body = `${tabs}${sidecarInspectorJson(packet, 'The next-turn scene packet has not been prepared yet.')}`;
+    }
+    overlay.innerHTML = `<div class="modal" style="width:min(900px, calc(100vw - 36px)); max-height:86vh; display:flex; flex-direction:column;"><div class="modal-header"><h2>${escapeHTML(title)}</h2><button class="modal-close" id="close-world-sidecar-inspector">×</button></div><div class="modal-body" style="overflow:auto;">${body}</div></div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', event => { if (event.target === overlay) closeWorldSidecarInspector(); });
+    document.getElementById('close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
+    document.getElementById('world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });
+    document.querySelectorAll('.sidecar-inspector-tab').forEach(button => button.addEventListener('click', () => openWorldSidecarInspector(button.dataset.view)));
+    document.getElementById('world-sidecar-inspector-timelines')?.addEventListener('click', () => { closeWorldSidecarInspector(); openWorldTimelineBrowser(); });
 }
 
 async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
@@ -12251,6 +14182,8 @@ function activateSettingsSection(sectionId, options = {}) {
     const search = document.getElementById('settings-search-input');
     const validId = SETTINGS_SECTION_LABELS[sectionId] ? sectionId : 'models';
     activeSettingsSection = validId;
+    state.settingsSection = validId;
+    persistWorkspaceSoon();
     if (options.clearSearch !== false && search) search.value = '';
     if (content) content.classList.remove('is-searching');
     document.querySelectorAll('[data-settings-section]').forEach(section => {
@@ -12484,6 +14417,9 @@ function setupGlobalSettings() {
         state.wavespeedApiKey = document.getElementById('global-wavespeed-key')?.value.trim() || '';
         if (state.wavespeedApiKey) sessionStorage.setItem('horde_wavespeed_api_key', state.wavespeedApiKey);
         else sessionStorage.removeItem('horde_wavespeed_api_key');
+        state.falApiKey = document.getElementById('global-fal-key')?.value.trim() || '';
+        if (state.falApiKey) sessionStorage.setItem('horde_fal_api_key', state.falApiKey);
+        else sessionStorage.removeItem('horde_fal_api_key');
         applyNanoGPTApiKeyForSession(document.getElementById('global-nanogpt-key').value);
         state.nvidiaApiKey = document.getElementById('global-nvidia-key').value.trim();
         if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
@@ -12539,6 +14475,12 @@ function setupGlobalSettings() {
             || 'https://api.evolink.ai/v1';
         state.globalSettings.wavespeedBaseUrl = normalizeRemoteApiBase(document.getElementById('global-wavespeed-url')?.value)
             || 'https://api.wavespeed.ai/api/v3';
+        state.globalSettings.falRate480 = Math.max(0, Math.min(100,
+            Number(document.getElementById('global-fal-rate-480')?.value) || 0.05));
+        state.globalSettings.falRate768 = Math.max(0, Math.min(100,
+            Number(document.getElementById('global-fal-rate-768')?.value) || 0.08));
+        state.globalSettings.falPricingVersion = 2;
+        state.globalSettings.falSafetyChecker = document.getElementById('global-fal-safety-checker')?.checked !== false;
         const rawCustomHeaders = document.getElementById('global-custom-headers').value.trim();
         if (rawCustomHeaders) {
             try {
@@ -12606,7 +14548,7 @@ function setupGlobalSettings() {
         syncCompanionAlwaysOnRuntime({ announce: true }).catch(() => {});
         const enteredCloudKey = !!(state.apiKey || state.gptprotoApiKey || state.nanogptApiKey
             || state.nvidiaApiKey || state.bedrockApiKey || state.customApiKey
-            || state.evolinkApiKey || state.wavespeedApiKey);
+            || state.evolinkApiKey || state.wavespeedApiKey || state.falApiKey);
         showToast(enteredCloudKey && !state.globalSettings.rememberApiKey
             ? 'Settings saved. API keys remain in this tab only; enable “Remember API keys” to keep them after closing the browser.'
             : 'Settings saved for future sessions.', 'success');
@@ -12648,6 +14590,15 @@ function setupGlobalSettings() {
         state.regexScripts.push({ id: 'rx_' + Date.now(), name: 'New Rule', find: '', replace: '', flags: 'gi', target: 'ai', enabled: true });
         renderRegexList();
     };
+    const regexSuiteSelect = document.getElementById('regex-suite-select');
+    if (regexSuiteSelect) regexSuiteSelect.onchange = () => {
+        const install = document.getElementById('install-regex-suite-btn');
+        if (install) install.disabled = !regexSuiteSelect.value;
+    };
+    const installRegexSuiteBtn = document.getElementById('install-regex-suite-btn');
+    if (installRegexSuiteBtn) installRegexSuiteBtn.onclick = () => {
+        installBundledRegexSuite(document.getElementById('regex-suite-select')?.value);
+    };
     const saveRegexBtn = document.getElementById('save-regex-btn');
     if (saveRegexBtn) saveRegexBtn.onclick = async () => {
         await saveState();
@@ -12677,7 +14628,7 @@ function setupGlobalSettings() {
             if (fpWarn) fpWarn.style.display = (local && location.protocol === 'file:') ? 'block' : 'none';
         };
     }
-    ['global-api-key', 'global-gptproto-key', 'global-nanogpt-key', 'global-nvidia-key',
+    ['global-api-key', 'global-gptproto-key', 'global-fal-key', 'global-nanogpt-key', 'global-nvidia-key',
         'global-bedrock-key', 'global-custom-api-key'].forEach(inputId => {
         document.getElementById(inputId)?.addEventListener('input', () => refreshSettingsProviderCards(providerSel?.value));
     });
@@ -12779,6 +14730,33 @@ function setupGlobalSettings() {
             if (result) result.textContent = `NanoGPT generation test failed: ${humanizeApiError(error, 'nanogpt')}`;
         } finally {
             testNanoGPTBtn.disabled = false;
+        }
+    };
+    const testFalBtn = document.getElementById('test-fal-conn-btn');
+    if (testFalBtn) testFalBtn.onclick = async () => {
+        const result = document.getElementById('fal-conn-result');
+        const key = document.getElementById('global-fal-key')?.value.trim() || '';
+        if (!key) {
+            if (result) result.textContent = 'Enter a Fal API key first.';
+            return;
+        }
+        testFalBtn.disabled = true;
+        if (result) result.textContent = 'Checking Fal authentication without generating or charging…';
+        try {
+            const response = await mcpBridgeRequest('/fal/video/test', {
+                method: 'POST', body: { apiKey: key }, timeoutMs: 30000
+            });
+            state.falApiKey = key;
+            sessionStorage.setItem('horde_fal_api_key', key);
+            refreshSettingsProviderCards(document.getElementById('global-api-provider')?.value);
+            if (result) result.textContent = `Connected to Fal${response.modelsVisible ? ` · ${response.modelsVisible} models returned by the catalog probe` : ''}. The key is active for this browser session; Save changes to keep your settings.`;
+        } catch (error) {
+            const oldBridge = /Unknown MCP provider|Unknown bridge endpoint|request failed \(404\)/i.test(error.message || '');
+            if (result) result.textContent = oldBridge
+                ? 'Fal test unavailable because an older local bridge is still running. Restart Horde Studio once, reopen Settings, and test again.'
+                : `Fal connection failed: ${humanizeApiError(error)}`;
+        } finally {
+            testFalBtn.disabled = false;
         }
     };
     const setupOpenAICompatibleCloudTest = ({ buttonId, resultId, keyId, label, baseUrl }) => {
@@ -13075,6 +15053,9 @@ async function exportFullBackup() {
         worlds: state.worlds,
         worldInstances: state.worldInstances,
         activeWorldId: state.activeWorldId,
+        videoWorlds: state.videoWorlds,
+        videoWorldSessions: state.videoWorldSessions,
+        activeVideoWorldId: state.activeVideoWorldId,
         companions: state.companions,
         companionThreads: state.companionThreads,
         companionTimelines: state.companionTimelines,
@@ -13109,12 +15090,16 @@ function importFullBackup(file) {
                     if (data.companionThreads === undefined) data.companionThreads = {};
                     if (data.companionTimelines === undefined) data.companionTimelines = {};
                     if (data.activeCompanionId === undefined) data.activeCompanionId = null;
+                    if (data.videoWorlds === undefined) data.videoWorlds = [];
+                    if (data.videoWorldSessions === undefined) data.videoWorldSessions = {};
+                    if (data.activeVideoWorldId === undefined) data.activeVideoWorldId = null;
                     if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
                     if (data.chatContinuities === undefined) data.chatContinuities = {};
                     const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
                         'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
                         'worlds', 'worldInstances', 'activeWorldId', 'companions',
-                        'companionThreads', 'companionTimelines', 'activeCompanionId'];
+                        'companionThreads', 'companionTimelines', 'activeCompanionId',
+                        'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
                     keys.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
                     for (const [assetId, source] of Object.entries(data.companionVideoAssets || {})) {
                         if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
@@ -13155,6 +15140,10 @@ function purgeAllData() {
 function showGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) {
+        state.settingsOpen = true;
+        state.settingsSection = SETTINGS_SECTION_LABELS[state.settingsSection]
+            ? state.settingsSection : activeSettingsSection;
+        persistWorkspaceSoon();
         modal.classList.remove('hidden');
         const settingsSearch = document.getElementById('settings-search-input');
         if (settingsSearch) settingsSearch.value = '';
@@ -13165,6 +15154,10 @@ function showGlobalSettings() {
         document.getElementById('global-gptproto-key').value = state.gptprotoApiKey;
         document.getElementById('global-evolink-key').value = state.evolinkApiKey;
         document.getElementById('global-wavespeed-key').value = state.wavespeedApiKey;
+        document.getElementById('global-fal-key').value = state.falApiKey;
+        document.getElementById('global-fal-rate-480').value = String(state.globalSettings.falRate480 ?? 0.05);
+        document.getElementById('global-fal-rate-768').value = String(state.globalSettings.falRate768 ?? 0.08);
+        document.getElementById('global-fal-safety-checker').checked = state.globalSettings.falSafetyChecker !== false;
         document.getElementById('global-evolink-url').value = state.globalSettings.evolinkBaseUrl || 'https://api.evolink.ai/v1';
         document.getElementById('global-wavespeed-url').value = state.globalSettings.wavespeedBaseUrl || 'https://api.wavespeed.ai/api/v3';
         document.getElementById('global-nanogpt-key').value = state.nanogptApiKey;
@@ -13266,6 +15259,8 @@ function showGlobalSettings() {
 function hideGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) modal.classList.add('hidden');
+    state.settingsOpen = false;
+    persistWorkspaceSoon();
 }
 
 // --- Feedback ---
@@ -14164,7 +16159,7 @@ function createNewWorld() {
         sidecarConfig: {
             schemaVersion: 1,
             mode: 'sidecar',
-            tracker: { inheritNarrator: true, model: '', openRouterRouting: null, reasoning: false, maxTokens: 0 },
+            tracker: { inheritNarrator: true, provider: '', model: '', openRouterRouting: null, reasoning: false, maxTokens: 0 },
             debug: { enabled: false, retainTraceCount: 20 }
         },
         dossierClaims: { version: 1, enabled: true },
@@ -14195,12 +16190,79 @@ function createNewWorld() {
     document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
 }
 
+const SIDECAR_PIPELINE_DISABLED_MESSAGE = "disabled because the current state pipeline doesn't utilise this feature";
+
+function worldUsesSidecarPipeline(world = state.editingWorld) {
+    return window.HordeSidecarMode?.normalizeWorldConfig?.(world)?.mode === 'sidecar';
+}
+
+function renderStatePipelineConfig(world = state.editingWorld) {
+    const mode = worldUsesSidecarPipeline(world) ? 'sidecar' : 'inline_legacy';
+    document.querySelectorAll('[data-pipeline-settings]').forEach(section => {
+        const visible = section.dataset.pipelineSettings === mode;
+        section.classList.toggle('hidden', !visible);
+        section.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    });
+    const hint = document.getElementById('w-state-pipeline-hint');
+    if (hint) hint.textContent = mode === 'sidecar'
+        ? 'Sidecar is active. It is the only canonical state authority for this world.'
+        : 'Compatibility mode for existing timelines. Inline Legacy owns its receipt repair and classifier paths.';
+}
+
+// Sidecar is deliberately visible in Studio before migration: authors should
+// be able to discover what the new pipeline unlocks.  It must not, however,
+// look editable while Inline Legacy still owns state, otherwise a world can be
+// configured with mechanics that its active turn pipeline will never consume.
+function setSidecarStudioFeatureAvailability(world = state.editingWorld) {
+    const sidecarActive = worldUsesSidecarPipeline(world);
+    renderStatePipelineConfig(world);
+    document.querySelectorAll('[data-sidecar-feature]').forEach(feature => {
+        const unavailable = !sidecarActive;
+        feature.classList.toggle('sidecar-feature-disabled', unavailable);
+        feature.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
+        if (unavailable) {
+            feature.setAttribute('title', SIDECAR_PIPELINE_DISABLED_MESSAGE);
+        } else if (feature.getAttribute('title') === SIDECAR_PIPELINE_DISABLED_MESSAGE) {
+            feature.removeAttribute('title');
+        }
+    });
+}
+
+function renderWorldOverviewSidecarMigration(world = state.editingWorld) {
+    const host = document.getElementById('w-overview-sidecar-migration');
+    if (!host) return;
+    const inlineLegacy = !!world && !worldUsesSidecarPipeline(world);
+    host.classList.toggle('hidden', !inlineLegacy);
+    if (!inlineLegacy) {
+        host.innerHTML = '';
+        return;
+    }
+    const sessions = state.worldInstances?.[world.id]?.sessions || [];
+    const timelineLabel = sessions.length
+        ? `${sessions.length} existing timeline${sessions.length === 1 ? '' : 's'} will be reviewed before migration.`
+        : 'This world has no timeline yet, so the wizard will simply enable Sidecar for its first session.';
+    host.innerHTML = `
+        <div class="world-overview-sidecar-migration-head">
+            <div>
+                <span class="vh-eyebrow">STATE PIPELINE</span>
+                <h3>This world is using Inline Legacy</h3>
+                <p>Move this world to Sidecar before authoring Sidecar-only travel, vehicle, and reconciliation features. The migration wizard creates a recoverable backup and retains raw roleplay and canonical records. ${escapeHTML(timelineLabel)}</p>
+            </div>
+            <button id="w-overview-sidecar-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button>
+        </div>`;
+    document.getElementById('w-overview-sidecar-migrate-btn')?.addEventListener('click', () => openSidecarMigrationWizard(world.id));
+}
+
 function setupWorldStudioTabs() {
     const tabs = document.querySelectorAll('.world-studio-tab');
     const panels = document.querySelectorAll('#world-studio-view .studio-panel');
 
     tabs.forEach(tab => {
         tab.onclick = () => {
+            if (tab.classList.contains('sidecar-feature-disabled')) {
+                showToast('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
+                return;
+            }
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             const target = tab.dataset.tab;
@@ -14216,6 +16278,8 @@ function setupWorldStudioTabs() {
             // makes a perfectly editable starter look read-only. Build only the
             // panel the author actually opens.
             renderWorldStudioPanel(target);
+            state.lastWorldStudioTab = target;
+            persistWorkspaceSoon();
         };
     });
     document.querySelectorAll('[data-world-studio-target]').forEach(button => {
@@ -14226,6 +16290,7 @@ function setupWorldStudioTabs() {
 function renderWorldStudioPanel(target) {
     if (!state.editingWorld) return;
     const renderers = {
+        'w-overview': () => renderWorldOverviewSidecarMigration(state.editingWorld),
         'w-visuals': renderWorldVisuals,
         'w-locations': renderWorldLocations,
         'w-entities': renderWorldEntities,
@@ -14234,12 +16299,34 @@ function renderWorldStudioPanel(target) {
         'w-factions': renderWorldFactions,
         'w-sandbox': renderWorldSandboxStudio,
         'w-lore': renderWorldLore,
-        'w-visual-map': renderWorldArchitectMap
+        'w-visual-map': renderWorldArchitectMap,
+        'w-ai': () => renderWorldSidecarConfigEditor(state.editingWorld)
     };
     if (renderers[target]) renderers[target]();
+    setSidecarStudioFeatureAvailability(state.editingWorld);
 }
 
 function setupWorldStudioLogic() {
+
+    // Do not merely make Sidecar controls look inactive: prevent pointer and
+    // keyboard changes while Inline Legacy is the selected pipeline.  The
+    // migration card and pipeline selector are intentionally outside these
+    // marked surfaces so an author always has a clear route forward.
+    if (!document.body.dataset.sidecarFeatureGuard) {
+        const blockUnavailableSidecarFeature = event => {
+            const feature = event.target instanceof Element
+                ? event.target.closest('[data-sidecar-feature].sidecar-feature-disabled')
+                : null;
+            if (!feature) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (event.type === 'click') showToast('This feature is available after the world is migrated to the Sidecar state pipeline.', 'info');
+        };
+        document.addEventListener('click', blockUnavailableSidecarFeature, true);
+        document.addEventListener('pointerdown', blockUnavailableSidecarFeature, true);
+        document.addEventListener('keydown', blockUnavailableSidecarFeature, true);
+        document.body.dataset.sidecarFeatureGuard = 'true';
+    }
 
     const recordOverlay = document.getElementById('world-record-overlay');
     document.getElementById('world-record-close').onclick = closeWorldRecordInspector;
@@ -14345,12 +16432,33 @@ function setupWorldStudioLogic() {
         if (!config) return;
         config.mode = event.target.value === 'sidecar' ? 'sidecar' : 'inline_legacy';
         renderWorldSidecarConfigEditor(state.editingWorld);
+        renderWorldOverviewSidecarMigration(state.editingWorld);
+        setSidecarStudioFeatureAvailability(state.editingWorld);
+    };
+    document.getElementById('w-inline-legacy-migrate-btn').onclick = () => {
+        if (state.editingWorld?.id) openSidecarMigrationWizard(state.editingWorld.id);
     };
     document.getElementById('w-sidecar-inherit-narrator').onchange = event => {
         if (!state.editingWorld) return;
         const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
         if (!config) return;
         config.tracker.inheritNarrator = event.target.checked;
+        renderWorldSidecarConfigEditor(state.editingWorld);
+    };
+    document.getElementById('w-sidecar-reasoning-mode').onchange = event => {
+        document.getElementById('w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', event.target.value === 'disabled');
+    };
+    document.getElementById('w-sidecar-provider').onchange = () => {
+        renderSidecarModelOptions(normalizedProviderId(document.getElementById('w-sidecar-provider').value));
+        updateSidecarOverrideVisibility();
+    };
+    document.getElementById('w-sidecar-fetch-model-btn').onclick = fetchSidecarModelSettings;
+    setupSidecarModelSearch();
+    document.getElementById('w-sidecar-memory-inherit').onchange = event => {
+        if (!state.editingWorld) return;
+        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!config) return;
+        config.memory.inheritGlobal = event.target.checked;
         renderWorldSidecarConfigEditor(state.editingWorld);
     };
 
@@ -14635,21 +16743,189 @@ async function fetchWorldModelSettings() {
     await fetchModelData(modelInput, 'w-', state.editingWorld);
 }
 
+const sidecarProviderModelCatalogs = new Map();
+
+function updateSidecarProviderConnectionHint(providerId) {
+    const hint = document.getElementById('w-sidecar-provider-connection-hint');
+    if (!hint) return;
+    const provider = normalizedProviderId(providerId);
+    const configured = providerHasCredentials(provider);
+    hint.textContent = `${providerDisplayName(provider)} uses its global Settings connection: endpoint, credentials, and provider-specific headers. ${configured ? 'Connection settings are configured.' : 'Configure this provider in Settings before fetching models or running Sidecar.'}`;
+    hint.classList.toggle('form-warning', !configured);
+}
+
+function renderSidecarModelOptions(provider, selected = '') {
+    const input = document.getElementById('w-sidecar-model');
+    if (!input) return;
+    const models = sidecarProviderModelCatalogs.get(provider) || [];
+    input.value = String(selected || '').trim();
+    input.placeholder = models.length ? 'Search provider models or type an exact ID' : 'Fetch models or type an exact model ID';
+    input.setAttribute('aria-expanded', 'false');
+    document.getElementById('w-sidecar-model-results')?.classList.add('hidden');
+}
+
+function renderSidecarModelSearchResults() {
+    const input = document.getElementById('w-sidecar-model');
+    const results = document.getElementById('w-sidecar-model-results');
+    if (!input || !results) return;
+    const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+    const query = input.value.trim().toLowerCase();
+    const models = (sidecarProviderModelCatalogs.get(provider) || []).filter(model =>
+        !query || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)
+    ).slice(0, 60);
+    results.innerHTML = '';
+    if (!models.length) {
+        const empty = document.createElement('div');
+        empty.className = 'vh-search-empty';
+        empty.textContent = sidecarProviderModelCatalogs.has(provider)
+            ? 'No provider model matches. You can still enter an exact model ID.'
+            : 'Fetch this provider’s models, or enter an exact model ID.';
+        results.appendChild(empty);
+    } else {
+        models.forEach(model => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.className = 'searchable-dropdown-item';
+            option.setAttribute('role', 'option');
+            option.innerHTML = `<span class="model-display-name">${escapeHTML(model.name || model.id)}</span><span class="model-display-id">${escapeHTML(model.id)}</span>`;
+            option.onclick = () => {
+                input.value = model.id;
+                results.classList.add('hidden');
+                input.setAttribute('aria-expanded', 'false');
+                applySidecarSelectedModelMetadata();
+            };
+            results.appendChild(option);
+        });
+    }
+    results.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+}
+
+function setupSidecarModelSearch() {
+    const input = document.getElementById('w-sidecar-model');
+    const results = document.getElementById('w-sidecar-model-results');
+    if (!input || !results || input.dataset.sidecarSearchReady === 'true') return;
+    input.dataset.sidecarSearchReady = 'true';
+    input.addEventListener('focus', renderSidecarModelSearchResults);
+    input.addEventListener('input', renderSidecarModelSearchResults);
+    input.addEventListener('change', applySidecarSelectedModelMetadata);
+    input.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            results.classList.add('hidden');
+            input.setAttribute('aria-expanded', 'false');
+        }
+    });
+    document.addEventListener('click', event => {
+        if (!input.contains(event.target) && !results.contains(event.target)) {
+            results.classList.add('hidden');
+            input.setAttribute('aria-expanded', 'false');
+        }
+    });
+}
+
+function applySidecarSelectedModelMetadata() {
+    const world = state.editingWorld;
+    const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+    const model = document.getElementById('w-sidecar-model')?.value || '';
+    const match = (sidecarProviderModelCatalogs.get(provider) || []).find(item => item.id === model);
+    const config = world && window.HordeSidecarMode?.normalizeWorldConfig?.(world);
+    if (config && match) config.tracker.supportedParams = Array.isArray(match.supported_parameters)
+        ? match.supported_parameters : [];
+    else if (config && model !== String(config.tracker.model || '').trim()) config.tracker.supportedParams = [];
+    const status = document.getElementById('w-sidecar-model-status');
+    if (status && model) status.textContent = match
+        ? `${match.name || match.id} selected${config?.tracker?.supportedParams?.length ? ` · ${config.tracker.supportedParams.join(', ')}` : ''}`
+        : `${model} will be sent as an exact custom model ID.`;
+}
+
+async function fetchSidecarModelSettings() {
+    const world = state.editingWorld;
+    const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+    const status = document.getElementById('w-sidecar-model-status');
+    const button = document.getElementById('w-sidecar-fetch-model-btn');
+    if (!world) return;
+    if (status) status.textContent = `Fetching ${provider} model metadata…`;
+    if (button) { button.disabled = true; button.textContent = 'Fetching…'; }
+    try {
+        const response = await fetch(`${providerApiBase(provider)}/models`, {
+            headers: { ...providerAuthHeaders(provider), ...providerAttributionHeaders(provider) }
+        });
+        if (!response.ok) throw new Error(`Model catalog request failed (${response.status})`);
+        const data = await response.json();
+        const models = (Array.isArray(data) ? data : data?.data || data?.models || [])
+            .filter(item => item?.id).map(item => ({ ...item, id: String(item.id), name: String(item.name || item.id) }))
+            .sort((left, right) => left.name.localeCompare(right.name));
+        if (!models.length) throw new Error(`${provider} did not return any usable models.`);
+        const selected = document.getElementById('w-sidecar-model')?.value || '';
+        sidecarProviderModelCatalogs.set(provider, models);
+        renderSidecarModelOptions(provider, selected);
+        applySidecarSelectedModelMetadata();
+        if (document.activeElement === document.getElementById('w-sidecar-model')) renderSidecarModelSearchResults();
+        if (status) status.textContent = `${models.length} ${provider} models available. Choose one to use it for Sidecar.`;
+        showToast(`${models.length} Sidecar models loaded from ${provider}.`, 'success');
+    } catch (error) {
+        if (status) status.textContent = `Could not fetch metadata: ${error.message}`;
+        showToast(`Sidecar model metadata failed: ${error.message}`, 'error');
+    } finally {
+        if (button) { button.disabled = false; button.textContent = 'Fetch models'; }
+    }
+}
+
+function updateSidecarOverrideVisibility() {
+    const inheriting = document.getElementById('w-sidecar-inherit-narrator')?.checked !== false;
+    document.getElementById('w-sidecar-override-config')?.classList.toggle('hidden', inheriting);
+    document.getElementById('world-sidecar-openrouter-routing')?.classList.toggle('hidden',
+        inheriting || normalizedProviderId(document.getElementById('w-sidecar-provider')?.value) !== 'openrouter');
+    if (!inheriting) {
+        const provider = normalizedProviderId(document.getElementById('w-sidecar-provider')?.value);
+        renderSidecarModelOptions(provider, document.getElementById('w-sidecar-model')?.value || '');
+        updateSidecarProviderConnectionHint(provider);
+        initializeOpenRouterRoutingPanel('sidecar', { force: false });
+    }
+}
+
 function renderWorldSidecarConfigEditor(world) {
     if (!world) return;
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world);
     if (!config) return;
+    renderStatePipelineConfig(world);
     const tracker = config.tracker || {};
     const debug = config.debug || {};
     document.getElementById('w-sidecar-mode').value = config.mode;
     document.getElementById('w-sidecar-inherit-narrator').checked = tracker.inheritNarrator !== false;
-    document.getElementById('w-sidecar-model').value = tracker.model || '';
-    document.getElementById('w-sidecar-reasoning').checked = tracker.reasoning === true;
-    document.getElementById('w-sidecar-max-tokens').value = Number(tracker.maxTokens) || 0;
+    document.getElementById('w-sidecar-provider').value = tracker.provider || '';
+    renderSidecarModelOptions(normalizedProviderId(tracker.provider), tracker.model || '');
+    document.getElementById('w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
+    document.getElementById('w-sidecar-reasoning-effort').value = tracker.reasoningEffort || 'auto';
+    document.getElementById('w-sidecar-reasoning-effort-row').classList.toggle('hidden',
+        (tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit')) === 'disabled');
+    const reasoningEnabled = sidecarReasoningPolicy(tracker, world).enabled;
+    const readerTokens = Number(tracker.readerMaxTokens) || 0;
+    const receiptTokens = Number(tracker.maxTokens) || 0;
+    const readerInput = document.getElementById('w-sidecar-reader-max-tokens');
+    const receiptInput = document.getElementById('w-sidecar-max-tokens');
+    readerInput.value = readerTokens || '';
+    receiptInput.value = receiptTokens || '';
+    readerInput.placeholder = `Adaptive default · ${(reasoningEnabled ? 5000 : 3000).toLocaleString()}`;
+    receiptInput.placeholder = `Adaptive default · ${(reasoningEnabled ? 8000 : 6000).toLocaleString()}`;
     document.getElementById('w-sidecar-debug').checked = debug.enabled === true;
     document.getElementById('w-sidecar-trace-count').value = Number(debug.retainTraceCount) || 20;
+    const memory = config.memory || {};
+    const effectiveMemory = effectiveSidecarMemoryConfig(world);
+    document.getElementById('w-sidecar-memory-inherit').checked = memory.inheritGlobal !== false;
+    document.getElementById('w-sidecar-episode-size').value = effectiveMemory.episodeChunkTurns;
+    document.getElementById('w-sidecar-episode-cadence').value = effectiveMemory.episodeCadenceTurns;
+    document.getElementById('w-sidecar-verbatim-window').value = effectiveMemory.verbatimTurnWindow;
+    document.getElementById('w-sidecar-retrieval-limit').value = effectiveMemory.retrievalLimit;
+    document.getElementById('w-sidecar-job-concurrency').value = effectiveMemory.consolidationConcurrency;
+    document.getElementById('w-sidecar-provider-concurrency').value = effectiveMemory.backgroundProviderConcurrency;
+    document.querySelectorAll('#w-sidecar-memory-grid input').forEach(input => input.disabled = memory.inheritGlobal !== false);
+    const memoryStatus = document.getElementById('w-sidecar-memory-status');
+    if (memoryStatus) memoryStatus.textContent = memory.inheritGlobal !== false
+        ? `Using global controls · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns · ${effectiveMemory.consolidationConcurrency}/${effectiveMemory.backgroundProviderConcurrency} jobs · ${effectiveMemory.consolidationModel || 'default consolidation model'} / ${effectiveMemory.consolidationMaxTokens} tokens.`
+        : `World override active · ${effectiveMemory.episodeChunkTurns}-turn Episodes · ${effectiveMemory.verbatimTurnWindow} active verbatim turns · ${effectiveMemory.consolidationConcurrency}/${effectiveMemory.backgroundProviderConcurrency} jobs · ${effectiveMemory.consolidationModel || 'global model'} / ${effectiveMemory.consolidationMaxTokens} tokens.`;
     const inheriting = tracker.inheritNarrator !== false;
-    document.getElementById('w-sidecar-model').disabled = inheriting;
+    updateSidecarOverrideVisibility();
     const hint = document.getElementById('w-sidecar-mode-hint');
     hint.textContent = config.mode === 'sidecar'
         ? 'Active: Narrator writes visible prose and hidden handoff notes; Sidecar performs one native canonical commit. Legacy repair and Chronicle classifier paths are bypassed.'
@@ -14676,31 +16952,45 @@ function renderWorldSidecarConfigEditor(world) {
     if (migrate) {
         const sessions = state.worldInstances?.[world.id]?.sessions || [];
         const inlineSessions = sessions.filter(session => window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
-        migrate.classList.toggle('hidden', !inlineSessions.length);
-        migrate.textContent = config.mode === 'sidecar' ? 'Review & migrate Inline timelines' : 'Review & migrate this world';
-        migrate.onclick = async () => {
-            openSidecarMigrationWizard(world.id);
-        };
+        migrate.classList.remove('hidden');
+        migrate.disabled = false;
+        if (!sessions.length && config.mode !== 'sidecar') migrate.textContent = 'Enable Sidecar for this world';
+        else if (inlineSessions.length) migrate.textContent = config.mode === 'sidecar' ? 'Review & migrate Inline timelines' : 'Review & migrate this world';
+        else migrate.textContent = 'Review Sidecar migration';
+        migrate.onclick = () => openSidecarMigrationWizard(world.id);
     }
     const report = document.getElementById('w-sidecar-migration-report');
     if (report) {
         const sessions = state.worldInstances?.[world.id]?.sessions || [];
+        const inlineSessions = sessions.filter(session => window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, session)?.mode !== 'sidecar');
         const migrations = sessions.map(session => session.sidecar?.migration).filter(Boolean);
         const warnings = migrations.flatMap(migration => migration.warnings || []);
-        report.innerHTML = migrations.length
-            ? `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${escapeHTML(warnings.join(' · '))}</span>` : ''}`
-            : (sessions.length ? `<strong>Migration readiness:</strong> ${sessions.length} timeline${sessions.length === 1 ? '' : 's'} will be analysed and backed up on save.` : 'Migration applies only when this world has existing timelines.');
+        if (migrations.length) {
+            report.innerHTML = `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${escapeHTML(warnings.join(' · '))}</span>` : ''}`;
+        } else if (inlineSessions.length) {
+            report.innerHTML = `<strong>Migration readiness:</strong> ${inlineSessions.length} Inline timeline${inlineSessions.length === 1 ? '' : 's'} can be backed up and switched to Sidecar without rewriting raw history.`;
+        } else if (sessions.length) {
+            report.innerHTML = '<strong>Migration readiness:</strong> every existing timeline is already on Sidecar.';
+        } else if (config.mode === 'sidecar') {
+            report.innerHTML = 'This world is already set to Sidecar. New play sessions will use the Sidecar pipeline.';
+        } else {
+            report.innerHTML = 'This world is still on Inline Legacy. Enable Sidecar here to switch the world; existing play sessions, if any, stay Inline until you migrate them.';
+        }
     }
     initializeOpenRouterRoutingPanel('sidecar');
+    renderWorldOverviewSidecarMigration(world);
+    setSidecarStudioFeatureAvailability(world);
 }
 
-function openWorldStudio(worldId = null) {
+function openWorldStudio(worldId = null, options = {}) {
     if (worldId) {
         const world = state.worlds.find(w => w.id === worldId);
         if (!world) return;
         // Proposals belong to the world they were generated for.
         if (calibrationPassState && calibrationPassState.worldId !== worldId) calibrationPassState = null;
         state.editingWorld = JSON.parse(JSON.stringify(world));
+        state.lastWorldStudioId = worldId;
+        persistWorkspaceSoon();
     }
 
     const w = state.editingWorld;
@@ -14782,7 +17072,10 @@ function openWorldStudio(worldId = null) {
     updateWorldTokenCount();
     switchView('worldStudio');
 
-    if (worldId) document.querySelector('.world-studio-tab[data-tab="w-overview"]')?.click();
+    const preferredTab = options.tab
+        || (workspaceRestoring ? state.lastWorldStudioTab : null)
+        || (worldId ? 'w-overview' : null);
+    if (preferredTab) document.querySelector(`.world-studio-tab[data-tab="${preferredTab}"]`)?.click();
 
     // Preserve the selected authoring tab, but hydrate only that tab. Basics,
     // AI Config, HUD and notes are plain controls already populated above.
@@ -14819,13 +17112,17 @@ function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}
             legacyConfig: safeJsonClone(legacyConfig || world.sidecarConfig || {})
         };
         protocol.mode = 'sidecar';
-        protocol.packet = null;
         (sess.history || []).forEach(message => { delete message.embedding; });
         delete sess.vectorMemory;
         delete sess.embeddingCache;
         // These are derived retrieval material; raw turns and canonical
         // receipts remain, then rebuild under Sidecar when requested.
         sess.episodicMemories = [];
+        // Migration does not retroactively fabricate Sidecar handoffs for
+        // Legacy turns. It does make existing raw history available as pinned
+        // evidence and prepares a real Sidecar packet for the next turn.
+        window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
+        protocol.packet = buildSidecarScenePacket(world, sess);
         reports.push({ id: sess.id, warnings });
     });
     return reports;
@@ -14842,6 +17139,7 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
         const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         return protocol?.mode !== 'sidecar';
     });
+    const alreadySidecar = world.sidecarConfig?.mode === 'sidecar';
     list.innerHTML = inline.length ? inline.map(sess => {
         const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         const warnings = [
@@ -14850,8 +17148,17 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
             (sess.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length) ? 'rejected legacy proposals' : ''
         ].filter(Boolean);
         return `<label class="world-migration-card" style="display:flex; align-items:flex-start; gap:10px; padding:10px; cursor:pointer;"><input type="checkbox" class="sidecar-migration-session" data-session-id="${escapeHTML(sess.id)}" checked><span style="flex:1;"><strong>${escapeHTML(sess.name || sess.id)}</strong><small style="display:block; color:var(--text-3);">${sess.history?.length || 0} messages · ${sess.worldTurnReceipts?.length || 0} receipts · ${protocol?.mode === 'sidecar' ? 'already Sidecar' : 'Inline Legacy'}${warnings.length ? ` · <span style="color:var(--warning)">${escapeHTML(warnings.join(', '))}</span>` : ''}</small></span></label>`;
-    }).join('') : '<div class="form-hint">No Inline Legacy timelines are waiting for migration.</div>';
-    status.textContent = inline.length ? `${inline.length} timeline${inline.length === 1 ? '' : 's'} available. Select the timelines to migrate.` : 'The world is already fully migrated.';
+    }).join('') : (sessions.length
+        ? '<div class="form-hint">No Inline Legacy timelines are waiting for migration.</div>'
+        : `<div class="form-hint">${alreadySidecar ? 'This world is already set to Sidecar. New play sessions will use the Sidecar pipeline.' : 'This world has no play sessions yet. Enabling Sidecar switches the world so the next session uses the new pipeline.'}</div>`);
+    status.textContent = inline.length
+        ? `${inline.length} timeline${inline.length === 1 ? '' : 's'} available. Select the timelines to migrate.`
+        : (sessions.length ? 'Every existing timeline is already on Sidecar.' : (alreadySidecar ? 'The world is already on Sidecar.' : 'No timelines to migrate. You can still enable Sidecar for this world.'));
+    const runBtn = document.getElementById('run-sidecar-migration-btn');
+    if (runBtn) {
+        runBtn.disabled = alreadySidecar && !inline.length;
+        runBtn.textContent = inline.length ? 'Back up & migrate selected' : 'Back up & enable Sidecar';
+    }
     overlay.classList.remove('hidden');
     const close = () => overlay.classList.add('hidden');
     document.getElementById('close-sidecar-migration-wizard-btn').onclick = close;
@@ -14863,21 +17170,28 @@ function openSidecarMigrationWizard(worldId = state.editingWorld?.id) {
     };
     document.getElementById('run-sidecar-migration-btn').onclick = async () => {
         const selectedIds = [...list.querySelectorAll('.sidecar-migration-session:checked')].map(box => box.dataset.sessionId);
-        if (!selectedIds.length) return showToast('Select at least one Inline timeline to migrate.', 'info');
-        const selectedSessions = sessions.filter(sess => selectedIds.includes(String(sess.id)));
+        if (inline.length && !selectedIds.length) return showToast('Select at least one Inline timeline to migrate.', 'info');
+        if (!inline.length && world.sidecarConfig?.mode === 'sidecar') return showToast('This world is already on Sidecar.', 'info');
         const backupList = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
-        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: safeJsonClone(world), runtime: safeJsonClone(state.worldInstances?.[world.id] || null), note: 'Selected-timeline migration backup.' });
+        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: cloneSidecarMigrationRollbackWorld(world), runtime: safeJsonClone(state.worldInstances?.[world.id] || null), note: inline.length ? 'Selected-timeline migration backup.' : 'World-level Sidecar enablement backup.' });
         world.sidecarMigrationBackups = backupList.slice(-5);
-        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } });
-        const reports = migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds });
+        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } }) || { ...(world.sidecarConfig || {}), mode: 'sidecar' };
+        const reports = inline.length ? migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds }) : [];
         const index = state.worlds.findIndex(item => item.id === world.id);
         if (index >= 0) state.worlds[index] = safeJsonClone(world);
-        if (state.editingWorld?.id === world.id) state.editingWorld = safeJsonClone(world);
+        if (state.editingWorld?.id === world.id) {
+            state.editingWorld = safeJsonClone(world);
+            const modeSelect = document.getElementById('w-sidecar-mode');
+            if (modeSelect) modeSelect.value = 'sidecar';
+        }
         await saveState();
         close();
         renderWorlds();
+        if (state.activeWorldId === world.id) renderWorldPlayState();
         if (state.editingWorld?.id === world.id) { renderWorldSidecarConfigEditor(state.editingWorld); }
-        showToast(`Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`, 'success');
+        showToast(reports.length
+            ? `Migrated ${reports.length} timeline${reports.length === 1 ? '' : 's'} to Sidecar.`
+            : 'Sidecar enabled for this world.', 'success');
     };
 }
 
@@ -14919,15 +17233,29 @@ async function saveWorld() {
             tracker: {
                 ...(priorSidecarConfig.tracker || {}),
                 inheritNarrator: document.getElementById('w-sidecar-inherit-narrator').checked,
+                provider: document.getElementById('w-sidecar-provider').value,
                 model: document.getElementById('w-sidecar-model').value.trim(),
                 openRouterRouting: readOpenRouterRoutingPanel('sidecar'),
-                reasoning: document.getElementById('w-sidecar-reasoning').checked,
+                reasoningMode: document.getElementById('w-sidecar-reasoning-mode').value,
+                reasoning: document.getElementById('w-sidecar-reasoning-mode').value === 'enabled',
+                reasoningEffort: document.getElementById('w-sidecar-reasoning-effort').value,
+                readerMaxTokens: document.getElementById('w-sidecar-reader-max-tokens').value,
                 maxTokens: document.getElementById('w-sidecar-max-tokens').value
             },
             debug: {
                 ...(priorSidecarConfig.debug || {}),
                 enabled: document.getElementById('w-sidecar-debug').checked,
                 retainTraceCount: document.getElementById('w-sidecar-trace-count').value
+            },
+            memory: {
+                ...(priorSidecarConfig.memory || {}),
+                inheritGlobal: document.getElementById('w-sidecar-memory-inherit').checked,
+                episodeChunkTurns: document.getElementById('w-sidecar-episode-size').value,
+                episodeCadenceTurns: document.getElementById('w-sidecar-episode-cadence').value,
+                verbatimTurnWindow: document.getElementById('w-sidecar-verbatim-window').value,
+                retrievalLimit: document.getElementById('w-sidecar-retrieval-limit').value,
+                consolidationConcurrency: document.getElementById('w-sidecar-job-concurrency').value,
+                backgroundProviderConcurrency: document.getElementById('w-sidecar-provider-concurrency').value
             }
         }
     };
@@ -14945,7 +17273,7 @@ async function saveWorld() {
             id: `sidecar_migration_${Date.now().toString(36)}`,
             createdAt: new Date().toISOString(),
             from: 'inline_legacy', to: 'sidecar',
-            world: safeJsonClone(storedBeforeSave),
+            world: cloneSidecarMigrationRollbackWorld(storedBeforeSave),
             runtime: safeJsonClone(state.worldInstances?.[w.id] || null),
             note: 'Raw history and canonical receipts are preserved in the migrated runtime; this backup exists for explicit rollback/re-import.'
         });
@@ -15001,10 +17329,21 @@ async function saveWorld() {
 
     worldMediaDirty = true;
     await saveState();
-    showToast(migrationReports.length
-        ? `World saved; ${migrationReports.length} timeline${migrationReports.length === 1 ? '' : 's'} prepared for Sidecar.`
-        : 'World Saved!', 'success');
     renderWorlds();
+    // Never leave a world-looking Sidecar-enabled while its existing play
+    // timelines silently remain on the Legacy path. The wizard still owns
+    // selection, backup and the actual migration; opening it makes that
+    // required next action visible at the moment the setting changes.
+    const inlineTimelines = (state.worldInstances?.[savedWorld.id]?.sessions || []).filter(session =>
+        window.HordeSidecarHooks?.normalizeWorldTimeline?.(savedWorld, session)?.mode !== 'sidecar');
+    if (switchingToSidecar && inlineTimelines.length) {
+        showToast('Sidecar is configured. Select the existing timeline(s) to migrate before generating another turn.', 'info');
+        openSidecarMigrationWizard(savedWorld.id);
+    } else {
+        showToast(migrationReports.length
+            ? `World saved; ${migrationReports.length} timeline${migrationReports.length === 1 ? '' : 's'} prepared for Sidecar.`
+            : 'World Saved!', 'success');
+    }
 }
 
 async function deleteWorld() {
@@ -15718,8 +18057,8 @@ async function renderWorldVisualModelSearch(world, force = false) {
     if (!world || !input || !results || !status) return;
     const renderId = ++worldVisualModelSearchRenderId;
     const provider = worldVisualProvider(world);
-    if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
-        status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter, GPTProto or NanoGPT, or enter the exact model ID used by your provider.';
+    if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
+        status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter, GPTProto, NanoGPT or Fal, or enter the exact model ID used by your provider.';
         results.innerHTML = '<div class="smart-input-empty">Choose a catalog-backed image provider to browse compatible models.</div>';
         setCompanionSearchOpen(input, results, true);
         return;
@@ -15863,8 +18202,8 @@ function renderWorldVisuals() {
     byId('w-visual-refresh-models').onclick = async event => {
         const button = event.currentTarget;
         const provider = worldVisualProvider(world);
-        if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
-            return showToast('Choose OpenRouter, GPTProto or NanoGPT to browse cloud image models.', 'info');
+        if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
+            return showToast('Choose OpenRouter, GPTProto, NanoGPT or Fal to browse cloud image models.', 'info');
         }
         button.disabled = true;
         button.textContent = '↻ Loading…';
@@ -18656,10 +20995,20 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
     container.appendChild(directory);
 }
 
+function ensureWorldTraversalConfig(world) {
+    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world);
+    if (config) return config;
+    if (!world.traversalConfig || typeof world.traversalConfig !== 'object') {
+        world.traversalConfig = { schemaVersion: 1, methods: [] };
+    }
+    if (!Array.isArray(world.traversalConfig.methods)) world.traversalConfig.methods = [];
+    return world.traversalConfig;
+}
+
 function addWorldTraversalMethod() {
     const world = state.editingWorld;
     if (!world) return;
-    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world) || (world.traversalConfig = { schemaVersion: 1, methods: [] });
+    const config = ensureWorldTraversalConfig(world);
     config.methods.push({
         id: `traversal_${Date.now().toString(36)}`,
         name: 'New traversal method', enabled: true, coverageType: 'point_to_point',
@@ -18674,7 +21023,7 @@ function renderWorldTravel() {
     const methodsHost = document.getElementById('w-traversal-methods-list');
     const vehiclesHost = document.getElementById('w-vehicles-list');
     const journeysHost = document.getElementById('w-journeys-list');
-    const config = window.HordeSidecarTraversal?.normalizeWorldTraversal?.(world) || { methods: [] };
+    const config = ensureWorldTraversalConfig(world);
     const locations = Array.isArray(world.locations) ? world.locations : [];
     const locationName = id => locations.find(location => location.id === id)?.name || id || '—';
     const lines = value => String(value || '').split('\n').map(item => item.trim()).filter(Boolean);
@@ -20227,6 +22576,11 @@ function renderWorlds() {
     list.forEach(world => {
         const card = document.createElement('div');
         card.className = 'char-card';
+        const timelines = state.worldInstances?.[world.id]?.sessions || [];
+        const selectedTimelineId = state.worldInstances?.[world.id]?.activeSessionId || timelines[0]?.id || '';
+        const timelineOptions = timelines.map(session =>
+            `<option value="${escapeHTML(session.id)}"${session.id === selectedTimelineId ? ' selected' : ''}>${escapeHTML(session.name || session.id)} · ${Number(session.turnCount || 0)} turns</option>`
+        ).join('');
         const bannerStyle = world.banner ? `background-image: url('${cssUrl(world.banner)}'); background-size: cover; background-position: center;` : `background: linear-gradient(135deg, var(--red), var(--surface));`;
         card.innerHTML = `
             <div class="char-card-banner" style="height: 100px; ${bannerStyle}"></div>
@@ -20238,6 +22592,10 @@ function renderWorlds() {
                     <button class="btn btn-ghost btn-full enter-world-btn">Enter World →</button>
                     <button class="btn btn-ghost edit-world-btn" title="Open this world in World Studio">Edit</button>
                 </div>
+                <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+                    <select class="form-select world-hub-timeline-select" ${timelines.length ? '' : 'disabled'} style="min-width:0; flex:1;"><option value="">${timelines.length ? 'Choose timeline…' : 'No timelines yet'}</option>${timelineOptions}</select>
+                    <button class="btn btn-ghost world-hub-enter-timeline-btn" ${timelines.length ? '' : 'disabled'} title="Enter the selected timeline">Enter timeline</button>
+                </div>
             </div>
         `;
         card.querySelector('.edit-world-btn').onclick = (e) => {
@@ -20247,6 +22605,11 @@ function renderWorlds() {
         card.querySelector('.enter-world-btn').onclick = (e) => {
             e.stopPropagation();
             enterWorld(world.id);
+        };
+        card.querySelector('.world-hub-enter-timeline-btn').onclick = (e) => {
+            e.stopPropagation();
+            const sessionId = card.querySelector('.world-hub-timeline-select').value;
+            if (sessionId) enterWorld(world.id, sessionId);
         };
         grid.appendChild(card);
     });
@@ -20838,7 +23201,181 @@ async function hardResetActiveWorldTimeline() {
     return true;
 }
 
+function initWorldStatusResizeHandle() {
+    const handle = document.getElementById('world-status-resize-handle');
+    const column = document.querySelector('#world-play-view .world-status-col');
+    if (!handle || !column || handle.dataset.initialized) return;
+    handle.dataset.initialized = 'true';
+    const applyWidth = value => {
+        const width = Math.max(240, Math.min(720, Number(value) || 320));
+        document.documentElement.style.setProperty('--world-status-w', `${width}px`);
+        return width;
+    };
+    try {
+        const saved = Number(localStorage.getItem('hordeWorldStatusWidth'));
+        if (Number.isFinite(saved)) applyWidth(saved);
+    } catch (_) { /* localStorage may be unavailable */ }
+    let dragging = false;
+    handle.addEventListener('pointerdown', event => {
+        dragging = true;
+        handle.classList.add('is-dragging');
+        handle.setPointerCapture?.(event.pointerId);
+    });
+    handle.addEventListener('pointermove', event => {
+        if (dragging) applyWidth(column.getBoundingClientRect().right - event.clientX);
+    });
+    const stop = event => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('is-dragging');
+        try { handle.releasePointerCapture?.(event.pointerId); } catch (_) { /* already released */ }
+        try { localStorage.setItem('hordeWorldStatusWidth', String(parseInt(getComputedStyle(document.documentElement).getPropertyValue('--world-status-w'), 10))); } catch (_) { /* localStorage may be unavailable */ }
+    };
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+}
+
+function prepareWorldStatusSections(container) {
+    const titles = {
+        'hud-section-clock': 'Time & Weather',
+        'hud-section-ledger': 'World Ledger',
+        'hud-section-quests': 'Active Quests',
+        'hud-section-secrets': 'Secrets Uncovered',
+        'hud-section-threads': 'Story Threads',
+        'hud-section-living-world': 'Living World'
+    };
+    const sections = [...container.children].filter(node => node.classList?.contains('world-status-section'));
+    sections.forEach((section, index) => {
+        if (!section.dataset.hudId) section.dataset.hudId = section.id?.replace(/^hud-section-/, '') || `panel-${index + 1}`;
+        if (section.querySelector(':scope > .hud-head')) return;
+        const children = [...section.children];
+        const existingHeading = children.find(child => child.matches('h3'));
+        const existingHeader = children.find(child => child !== existingHeading && child.querySelector?.('h3'));
+        const head = existingHeader || document.createElement('div');
+        head.classList.add('hud-head');
+        if (!existingHeader) {
+            const heading = existingHeading || document.createElement('h3');
+            if (!existingHeading) heading.textContent = titles[section.id] || section.dataset.hudId.replace(/[-_]/g, ' ');
+            head.appendChild(heading);
+            section.insertBefore(head, section.firstChild);
+        }
+        let actions = head.querySelector(':scope > .hud-head-actions');
+        if (!actions) {
+            actions = document.createElement('div');
+            actions.className = 'hud-head-actions';
+            head.appendChild(actions);
+        }
+        actions.insertAdjacentHTML('beforeend', `
+            <button class="hud-compact-btn" type="button" title="Compact this section" aria-pressed="false">↕</button>
+            <button class="hud-collapse-btn" type="button" title="Collapse this section" aria-expanded="true">︿</button>
+            <span class="hud-drag-handle" draggable="true" title="Drag to reorder">⠿</span>`);
+        const body = document.createElement('div');
+        body.className = 'hud-body';
+        [...section.children].filter(child => child !== head).forEach(child => body.appendChild(child));
+        section.appendChild(body);
+    });
+}
+
+function initWorldStatusPanel() {
+    const container = document.getElementById('world-status-columns');
+    const columnsButton = document.getElementById('world-status-columns-toggle');
+    if (!container || container.dataset.initialized) return;
+    container.dataset.initialized = 'true';
+    prepareWorldStatusSections(container);
+    const allSections = () => [...container.querySelectorAll('.world-status-section[data-hud-id]')];
+    const ids = allSections().map(section => section.dataset.hudId);
+    const read = key => { try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; } catch (_) { return []; } };
+    const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* localStorage may be unavailable */ } };
+    const storedOrder = read('hordeWorldStatusOrder').filter(id => ids.includes(id));
+    const panelState = {
+        order: storedOrder.length ? [...storedOrder, ...ids.filter(id => !storedOrder.includes(id))] : ids,
+        collapsed: new Set(read('hordeWorldStatusCollapsed')),
+        compact: new Set(read('hordeWorldStatusCompact')),
+        twoColumns: (() => { try { return localStorage.getItem('hordeWorldStatusTwoCol') === 'true'; } catch (_) { return false; } })()
+    };
+    const layout = () => {
+        const byId = new Map(allSections().map(section => [section.dataset.hudId, section]));
+        const ordered = panelState.order.map(id => byId.get(id)).filter(Boolean);
+        container.replaceChildren();
+        container.classList.toggle('is-two-col', panelState.twoColumns);
+        const groups = panelState.twoColumns ? [ordered.slice(0, Math.ceil(ordered.length / 2)), ordered.slice(Math.ceil(ordered.length / 2))] : [ordered];
+        groups.forEach(group => {
+            const column = document.createElement('div');
+            column.className = 'hud-col';
+            group.forEach(section => column.appendChild(section));
+            container.appendChild(column);
+        });
+    };
+    const updateColumnsButton = () => {
+        if (!columnsButton) return;
+        columnsButton.setAttribute('aria-pressed', String(panelState.twoColumns));
+        columnsButton.textContent = panelState.twoColumns ? '▦ 2 columns' : '▦ 1 column';
+    };
+    if (columnsButton) columnsButton.onclick = () => {
+        panelState.twoColumns = !panelState.twoColumns;
+        try { localStorage.setItem('hordeWorldStatusTwoCol', String(panelState.twoColumns)); } catch (_) { /* localStorage may be unavailable */ }
+        updateColumnsButton(); layout();
+    };
+    const indicator = document.createElement('div');
+    indicator.className = 'hud-drop-indicator';
+    let draggingId = '';
+    const clearDrag = () => { draggingId = ''; indicator.remove(); allSections().forEach(section => section.classList.remove('is-dragging')); };
+    container.addEventListener('dragover', event => {
+        if (!draggingId) return;
+        event.preventDefault();
+        const columns = [...container.querySelectorAll('.hud-col')];
+        const column = columns.reduce((best, candidate) => {
+            const rect = candidate.getBoundingClientRect();
+            const distance = event.clientX < rect.left ? rect.left - event.clientX : event.clientX > rect.right ? event.clientX - rect.right : 0;
+            return !best || distance < best.distance ? { candidate, distance } : best;
+        }, null)?.candidate;
+        if (!column) return;
+        const target = [...column.children].find(node => node !== indicator && node.classList.contains('world-status-section') && event.clientY < node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2);
+        column.insertBefore(indicator, target || null);
+    });
+    container.addEventListener('drop', event => {
+        event.preventDefault();
+        if (!draggingId || !indicator.isConnected) return clearDrag();
+        const next = indicator.nextElementSibling?.dataset?.hudId || '';
+        panelState.order = panelState.order.filter(id => id !== draggingId);
+        const at = next ? panelState.order.indexOf(next) : -1;
+        panelState.order.splice(at < 0 ? panelState.order.length : at, 0, draggingId);
+        write('hordeWorldStatusOrder', panelState.order);
+        clearDrag(); layout();
+    });
+    allSections().forEach(section => {
+        const id = section.dataset.hudId;
+        const collapse = section.querySelector('.hud-collapse-btn');
+        const compact = section.querySelector('.hud-compact-btn');
+        const handle = section.querySelector('.hud-drag-handle');
+        section.classList.toggle('is-collapsed', panelState.collapsed.has(id));
+        section.classList.toggle('is-compact', panelState.compact.has(id));
+        collapse?.setAttribute('aria-expanded', String(!panelState.collapsed.has(id)));
+        compact?.setAttribute('aria-pressed', String(panelState.compact.has(id)));
+        collapse?.addEventListener('click', () => { const next = section.classList.toggle('is-collapsed'); collapse.setAttribute('aria-expanded', String(!next)); next ? panelState.collapsed.add(id) : panelState.collapsed.delete(id); write('hordeWorldStatusCollapsed', [...panelState.collapsed]); });
+        compact?.addEventListener('click', () => { const next = section.classList.toggle('is-compact'); compact.setAttribute('aria-pressed', String(next)); next ? panelState.compact.add(id) : panelState.compact.delete(id); write('hordeWorldStatusCompact', [...panelState.compact]); });
+        handle?.addEventListener('dragstart', event => { draggingId = id; section.classList.add('is-dragging'); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', id); });
+        handle?.addEventListener('dragend', clearDrag);
+    });
+    updateColumnsButton();
+    layout();
+}
+
+function initWorldScrollToBottom() {
+    const button = document.getElementById('world-scroll-bottom-btn');
+    const container = document.getElementById('world-messages-container');
+    if (!button || !container || button.dataset.initialized) return;
+    button.dataset.initialized = 'true';
+    const update = () => button.classList.toggle('hidden', container.scrollHeight - container.scrollTop - container.clientHeight < 120);
+    container.addEventListener('scroll', update, { passive: true });
+    button.onclick = () => container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    update();
+}
+
 function setupWorldPlayLogic() {
+    initWorldStatusResizeHandle();
+    initWorldStatusPanel();
+    initWorldScrollToBottom();
     document.getElementById('world-exit-btn').onclick = () => switchView('worlds');
     document.getElementById('world-map-btn').onclick = renderWorldMap;
     document.getElementById('world-more-btn').onclick = () => {
@@ -20965,23 +23502,12 @@ function setupWorldPlayLogic() {
     
     const sendBtn = document.getElementById('world-send-btn');
     const input = document.getElementById('world-user-input');
-    const conversationMode = document.getElementById('world-conversation-mode');
-
-    conversationMode.onchange = async () => {
-        const world = state.worlds.find(item => item.id === state.activeWorldId);
-        const sess = getCurrentWorldSession();
-        if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-            conversationMode.value = 'narrator';
-            return;
-        }
-        const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
-        protocol.inputMode = conversationMode.value === 'sidecar' ? 'sidecar' : 'narrator';
-        input.placeholder = protocol.inputMode === 'sidecar'
-            ? 'Ask Sidecar about continuity, questions, or a refinement…'
-            : 'What do you do?...';
-        await saveState();
-        renderWorldPlayState();
-    };
+    const resizeHandle = document.getElementById('world-message-resize-handle');
+    if (input) {
+        input.addEventListener('input', () => resizeWorldMessageInput(input));
+        input.addEventListener('change', () => resizeWorldMessageInput(input));
+    }
+    installWorldMessageResizeHandle(input, resizeHandle);
 
     const sendWorldInput = async () => {
         if (worldTurnInProgress) {
@@ -20990,13 +23516,14 @@ function setupWorldPlayLogic() {
         }
         const world = state.worlds.find(item => item.id === state.activeWorldId);
         const sess = getCurrentWorldSession();
-        const sidecarSelected = conversationMode?.value === 'sidecar'
-            && world && sess && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+        const sidecarSelected = world && sess
+            && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true
+            && window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.inputMode === 'sidecar';
         if (!sidecarSelected) return executeWorldTurn();
         const text = input.value.trim();
         if (!text) return;
         worldTurnInProgress = true;
-        input.value = '';
+        resetWorldMessageInput(input);
         sendBtn.classList.add('stop');
         sendBtn.innerHTML = '⏹';
         const typing = document.getElementById('world-dm-typing');
@@ -21202,7 +23729,6 @@ function setupWorldPlayLogic() {
 
     // Parity Features
     document.getElementById('world-new-session-btn').onclick = createNewWorldSession;
-    document.getElementById('world-fork-session-btn').onclick = forkCurrentWorldTimeline;
     document.getElementById('world-timeline-browser-btn')?.addEventListener('click', openWorldTimelineBrowser);
     document.getElementById('close-world-timeline-browser-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
     document.getElementById('close-world-timeline-browser-ft-btn')?.addEventListener('click', () => document.getElementById('world-timeline-browser-overlay')?.classList.add('hidden'));
@@ -21223,19 +23749,21 @@ function setupWorldPlayLogic() {
     };
     
     document.getElementById('world-del-session-btn').onclick = () => {
-        const inst = state.worldInstances[state.activeWorldId];
-        if (!inst || inst.sessions.length <= 1) return showToast('Cannot delete the last session', 'info');
-        
-        showConfirmModal('Delete Session', 'Permanently delete this timeline? This cannot be undone.', async () => {
-            const currentIdx = inst.sessions.findIndex(s => s.id === inst.activeSessionId);
-            if (currentIdx !== -1) {
-                inst.sessions.splice(currentIdx, 1);
-                inst.activeSessionId = inst.sessions[0].id;
-                await saveState();
-                renderWorldPlayState();
-                showToast('Session Deleted');
-            }
-        });
+        const sess = getCurrentWorldSession();
+        if (!sess) return;
+        showConfirmModal('Delete current timeline',
+            `Delete “${sess.name || 'this timeline'}”? Its history and branch-local state will be permanently removed. Any child forks remain available as independent timelines.`,
+            async () => {
+                const result = await deleteWorldTimeline(sess.id);
+                if (!result) return;
+                if (!result.replacementCreated) {
+                    renderWorldPlayState();
+                    renderWorldTimelineBrowser();
+                }
+                showToast(result.replacementCreated
+                    ? 'Timeline deleted. A fresh Sidecar timeline is ready for setup.'
+                    : 'Timeline deleted. A remaining timeline is now active.', 'success');
+            }, 'Delete timeline');
     };
 
     document.getElementById('world-session-select').onchange = (e) => {
@@ -21246,12 +23774,11 @@ function setupWorldPlayLogic() {
 
     document.getElementById('world-session-zero-btn').onclick = () => openSessionZero(null);
 
-    document.getElementById('world-plan-sequence-btn').onclick = () => {
-        void planAndApproveWorldSequence();
-    };
-    document.getElementById('world-context-refresh-btn').onclick = () => {
-        void planAndApproveWorldSequence();
-    };
+    document.getElementById('world-plan-sequence-btn').onclick = () => openWorldSidecarLine({
+        kind: 'sequence_planning', title: 'New Sequence planning',
+        guidance: 'Discuss the intended cut, constraints, continuity and unresolved questions. When the plan is ready, explicitly tell Sidecar that it may prepare the approval packet.',
+        placeholder: 'Describe the next sequence you want to author…'
+    });
     document.getElementById('world-close-sequence-btn').onclick = async () => {
         const world = state.worlds.find(item => item.id === state.activeWorldId);
         const sess = getCurrentWorldSession();
@@ -21264,20 +23791,37 @@ function setupWorldPlayLogic() {
         try { reconciliation = await requestSequenceClosureReconciliation(world, sess); }
         catch (error) { showToast(`Sequence closure review failed: ${error.message || error}`, 'error'); return; }
         if (reconciliation.status !== 'ready') {
-            showToast(reconciliation.summary || 'Sequence remains open until its closure questions are resolved.', 'info');
+            openWorldSidecarLine({
+                kind: 'sequence_closure', title: 'Sequence closure questions',
+                guidance: reconciliation.summary || 'Resolve the outstanding closure questions. The sequence remains open until they are resolved or deliberately deferred.',
+                placeholder: 'Answer or defer the sequence closure questions…'
+            });
             renderWorldPlayState();
             return;
         }
         const closed = window.HordeSidecarTimeline?.closeActiveSequence(protocol, sess, 'author_closed');
         if (!closed) return showToast('There is no active sequence to close.', 'info');
+        // A deliberate sequence closure flushes the short final chunk instead
+        // of waiting for cadence.  The raw sources remain pinned; Scene and
+        // Sequence jobs are fanned out only after that Episode succeeds.
+        const memory = effectiveSidecarMemoryConfig(world);
+        window.HordeSidecarMemoryGraph?.queueEpisode(protocol, { batchSize: memory.episodeChunkTurns, cadenceTurns: memory.episodeCadenceTurns, force: true, source: 'sequence_closure', priority: 'closure' });
         protocol.packet = buildSidecarScenePacket(world, sess);
         await saveState();
+        runSidecarBackgroundMemoryJobs(world, sess).catch(error => console.warn('Sequence memory closure dispatch skipped —', error.message));
         renderWorldPlayState();
         showToast('Sequence closed. Plan and approve the next sequence before resuming narration.', 'success');
     };
     document.getElementById('world-v3-end-scene-btn')?.addEventListener('click', async () => {
         const world = state.worlds.find(item => item.id === state.activeWorldId); const sess = getCurrentWorldSession();
-        if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return showToast('Scene review is available in Sidecar worlds.', 'info');
+        if (!world || !sess) return;
+        if (!window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return openWorldSidecarInspector('migration');
+        openWorldSidecarLine({
+            kind: 'scene_boundary', title: 'Scene boundary review',
+            guidance: 'Discuss whether a material scene boundary has actually occurred, what the next scene should inherit, and any unresolved continuity. Do not close the scene until the author explicitly approves it.',
+            placeholder: 'Describe the scene boundary you want to review…'
+        });
+        return;
         try {
             const review = await requestSceneBoundaryReview(world, sess, { reason: 'author_requested' });
             if (!review.shouldClose) return showToast('Sidecar found no material scene boundary yet.', 'info');
@@ -21287,9 +23831,7 @@ function setupWorldPlayLogic() {
             });
         } catch (error) { showToast(`Scene review failed: ${error.message || error}`, 'error'); }
     });
-    document.getElementById('world-promote-implied-btn').onclick = () => {
-        void promoteImpliedWorldRecord();
-    };
+    document.getElementById('world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarLine());
 
     document.getElementById('world-continue-btn').onclick = () => {
         if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
@@ -21481,7 +24023,7 @@ function resetWorldTimeline(world, sess) {
     return sess;
 }
 
-function getCurrentWorldSession() {
+function getCurrentWorldSession(options = {}) {
     const inst = state.worldInstances[state.activeWorldId];
     if (!inst) return null;
     
@@ -21496,6 +24038,10 @@ function getCurrentWorldSession() {
         inst.sessions = [{
             id: 'wsess_' + Date.now(),
             name: 'Default Timeline',
+            // This branch also creates a genuinely new instance when a World
+            // is opened for the first time. Mark its protocol before any
+            // ordinary render can apply the legacy-compatibility fallback.
+            ...(options.newWorld === true ? { sidecar: { schemaVersion: 1, mode: 'sidecar' } } : {}),
             playerLocation: oldLoc,
             inventory: oldInv,
             ledger: oldLedger,
@@ -21594,7 +24140,12 @@ function getCurrentWorldSession() {
         normalizeLivingWorldState(world, session);
         normalizePlayerRulesState(world, session);
         normalizeQuestState(world, session);
-        window.HordeSidecarHooks?.normalizeWorldTimeline(world, session);
+        window.HordeSidecarHooks?.normalizeWorldTimeline(world, session, {
+            // Only an instance created now may receive the new Sidecar
+            // default. Existing saved instances still migrate as legacy until
+            // the author explicitly chooses migration in Studio.
+            newWorld: options.newWorld === true && !session.history?.length && session.setupComplete !== true
+        });
         window.HordeDossierClaims?.normalizeWorldConfig(world);
         window.HordeDossierClaims?.ensureSession(world, session);
     }
@@ -21673,9 +24224,9 @@ function normalizeWorldKernelConfig(world) {
     const config = {
         enabled: raw.enabled !== false,
         sceneLocationLimit: Math.max(8, Math.min(80, parseInt(raw.sceneLocationLimit) || 24)),
-        memoryMode: ['ledger', 'semantic'].includes(raw.memoryMode) ? raw.memoryMode : 'ledger',
+        memoryMode: ['ledger', 'semantic'].includes(raw.memoryMode) ? raw.memoryMode : 'semantic',
         repairMode: ['adaptive', 'always', 'never'].includes(raw.repairMode) ? raw.repairMode : 'adaptive',
-        compactTools: raw.compactTools !== false
+        compactTools: raw.compactTools === true
     };
     if (world) world.kernel = config;
     return config;
@@ -22807,7 +25358,7 @@ function applyQuestUpdates(world, sess, updates) {
     return evaluateQuestProgress(world, sess);
 }
 
-function getQuestPrompt(world, sess) {
+function getQuestPrompt(world, sess, options = {}) {
     if (!normalizeWorldGameRules(world).modules.quests) return '';
     normalizeQuestState(world, sess);
     const active = sess.quests.filter(quest => quest.status === 'active').slice(0, 50);
@@ -22830,8 +25381,13 @@ function getQuestPrompt(world, sess) {
     // The ledger used to explain only how to UPDATE quests, so a DM with an
     // empty ledger had no reason to ever create one — the quest system simply
     // never started. State plainly when a quest comes into existence.
-    lines.push('WHEN TO OPEN A QUEST: the moment the player takes on anything that outlives this scene — accepts a job, errand, favour or bargain; makes a promise; sets themselves a goal; is given a deadline, a debt, or a warning to act on — call quests_update with a title and, where the fiction supports it, concrete objectives. This is true of everyday obligations ("pick Emily up at six", "pay Greg back by Friday") as much as of grand adventures. Do not wait for the player to ask for a quest, and do not announce it as a game mechanic — record it and keep narrating.');
-    lines.push('Use these exact quest and objective IDs in quests_update. Never recreate an existing quest under a new title. The engine evaluates structured objectives and grants declared rewards exactly once; do not duplicate declared rewards through inventory_add or stat_changes.');
+    if (options.sidecar === true) {
+        lines.push('When the fiction establishes a new obligation, promise, deadline, or objective that outlives this scene, identify that durable meaning in the hidden handoff. Never expose quest bookkeeping in the prose or invent an objective merely to fill the ledger.');
+        lines.push('Existing IDs identify continuity only. Sidecar owns creation, progress, completion, and reward reconciliation.');
+    } else {
+        lines.push('WHEN TO OPEN A QUEST: the moment the player takes on anything that outlives this scene — accepts a job, errand, favour or bargain; makes a promise; sets themselves a goal; is given a deadline, a debt, or a warning to act on — call quests_update with a title and, where the fiction supports it, concrete objectives. This is true of everyday obligations ("pick Emily up at six", "pay Greg back by Friday") as much as of grand adventures. Do not wait for the player to ask for a quest, and do not announce it as a game mechanic — record it and keep narrating.');
+        lines.push('Use these exact quest and objective IDs in quests_update. Never recreate an existing quest under a new title. The engine evaluates structured objectives and grants declared rewards exactly once; do not duplicate declared rewards through inventory_add or stat_changes.');
+    }
     return `\n${lines.join('\n')}\n`;
 }
 
@@ -22929,6 +25485,10 @@ async function createNewWorldSession() {
     const newSess = {
         id: 'wsess_' + Date.now(),
         name: 'New Timeline ' + (inst.sessions.length + 1),
+        // A timeline created now is always born on Sidecar. Persist the mode
+        // on the record before any render, setup modal, or healing pass can
+        // normalize it as an older timeline with an absent protocol.
+        sidecar: { schemaVersion: 1, mode: 'sidecar' },
         playerLocation: defaultStartId,
         inventory: [],
         ledger: "",
@@ -22996,6 +25556,11 @@ async function createNewWorldSession() {
     });
     normalizePlayerRulesState(world, newSess);
     normalizeWorldSocietyState(world, newSess);
+    // A timeline created now inherits the world pipeline. Existing timelines
+    // are deliberately left untouched by migration code elsewhere.
+    window.HordeSidecarHooks?.normalizeWorldTimeline(world, newSess, {
+        newWorld: true
+    });
 
     inst.sessions.push(newSess);
     inst.activeSessionId = newSess.id;
@@ -23005,20 +25570,90 @@ async function createNewWorldSession() {
     showToast('New Timeline Created');
 }
 
-async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount = null) {
+function timelineForkLineage(session) {
+    return session?.forkedFrom || session?.sidecar?.migration?.forkedFrom || null;
+}
+
+function reparentTimelineDescendants(sessions, removedTimeline) {
+    const parentLineage = timelineForkLineage(removedTimeline);
+    const reparented = [];
+    sessions.forEach(session => {
+        if (session?.id === removedTimeline.id) return;
+        const lineage = timelineForkLineage(session);
+        if (!lineage || lineage.sessionId !== removedTimeline.id) return;
+        const detachedFrom = {
+            sessionId: removedTimeline.id,
+            name: String(removedTimeline.name || '').slice(0, 180),
+            turnCount: Number(lineage.turnCount || 0),
+            deletedAt: new Date().toISOString()
+        };
+        if (parentLineage) {
+            session.forkedFrom = safeJsonClone(parentLineage);
+        } else {
+            delete session.forkedFrom;
+        }
+        if (session.sidecar?.migration) {
+            if (parentLineage) session.sidecar.migration.forkedFrom = safeJsonClone(parentLineage);
+            else delete session.sidecar.migration.forkedFrom;
+            session.sidecar.migration.reparentedFrom = detachedFrom;
+        }
+        session.reparentedFrom = detachedFrom;
+        reparented.push(session.id);
+    });
+    return reparented;
+}
+
+async function deleteWorldTimeline(timelineId) {
+    const inst = state.worldInstances?.[state.activeWorldId];
+    const targetIndex = inst?.sessions?.findIndex(session => session.id === timelineId) ?? -1;
+    if (!inst || targetIndex < 0) return null;
+    const target = inst.sessions[targetIndex];
+    const wasActive = target.id === inst.activeSessionId;
+    const reparented = reparentTimelineDescendants(inst.sessions, target);
+    inst.sessions.splice(targetIndex, 1);
+    let replacementCreated = false;
+    if (inst.sessions.length) {
+        if (wasActive || !inst.sessions.some(session => session.id === inst.activeSessionId)) {
+            inst.activeSessionId = inst.sessions[Math.min(targetIndex, inst.sessions.length - 1)].id;
+        }
+        await saveState();
+    } else {
+        // The final timeline can be deleted too. Replace it immediately with a
+        // genuinely new timeline rather than silently resurrecting deleted
+        // state through the legacy session-healing path.
+        inst.activeSessionId = null;
+        await saveState();
+        replacementCreated = true;
+        await createNewWorldSession();
+    }
+    return { deletedId: target.id, wasActive, reparented, replacementCreated };
+}
+
+async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount = null, options = {}) {
     const world = state.worlds.find(item => item.id === state.activeWorldId);
     const inst = state.worldInstances?.[state.activeWorldId];
     const source = sourceSessionId ? (inst?.sessions || []).find(session => session.id === sourceSessionId) : getCurrentWorldSession();
     if (!world || !inst || !source) return;
     const maxTurn = Number(source.turnCount || 0);
     const requestedTurn = targetTurnCount == null ? maxTurn : Math.max(0, Math.min(maxTurn, Number(targetTurnCount) || maxTurn));
-    const name = prompt('Name this timeline fork:', `Fork of ${source.name || 'current timeline'}${requestedTurn < maxTurn ? ` · turn ${requestedTurn}` : ''}`);
+    const defaultName = `Fork of ${source.name || 'current timeline'}${requestedTurn < maxTurn ? ` · turn ${requestedTurn}` : ''}`;
+    // Native prompt dialogs are unreliable in embedded/local Chromium shells.
+    // A one-click fork gets a truthful default name and can be renamed through
+    // the existing timeline toolbar immediately afterwards.
+    const name = options.useDefaultName ? defaultName : prompt('Name this timeline fork:', defaultName);
     if (name === null) return;
     const fork = safeJsonClone(source);
     fork.id = `wsess_${Date.now()}`;
-    fork.name = String(name || '').trim() || `Fork of ${source.name || 'timeline'}`;
+    fork.name = String(name || '').trim() || defaultName;
     fork.createdAt = new Date().toISOString();
-    fork.forkedFrom = { sessionId: source.id, turnCount: requestedTurn, createdAt: fork.createdAt };
+    const forkLineage = { sessionId: source.id, turnCount: requestedTurn, createdAt: fork.createdAt };
+    fork.forkedFrom = safeJsonClone(forkLineage);
+    // A fork created now is a new timeline, not an imported legacy timeline.
+    // It may retain its source history, but all future turns must use the
+    // world’s Sidecar pipeline when Sidecar is configured in Studio.
+    if (world.sidecarConfig?.mode === 'sidecar') {
+        fork.sidecar = { ...(isPlainObject(fork.sidecar) ? fork.sidecar : {}), mode: 'sidecar' };
+    }
     if (requestedTurn < maxTurn) {
         const dmTurns = fork.history.map((message, index) => ({ message, index })).filter(item => item.message.role === 'dm' && Array.isArray(item.message.versionSnapshots));
         const selected = requestedTurn === 0 ? (dmTurns[0] || null) : (dmTurns[requestedTurn - 1] || null);
@@ -23032,6 +25667,12 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
                 snapshot.world = snapshot.world || {};
                 snapshot.world.dynamicEntities = (snapshot.world.dynamicEntities || []).map(entity => ({ ...entity, sessionOrigin: fork.id }));
                 restoreWorldTurnState(world, fork, snapshot);
+                // Snapshot restoration deliberately replaces session state.
+                // Fork lineage belongs to the wrapper, not historical state,
+                // so put it back after the restore rather than letting a
+                // pre-fork snapshot erase the branch's identity.
+                fork.forkedFrom = safeJsonClone(forkLineage);
+                fork.createdAt = forkLineage.createdAt;
                 fork.history = fork.history.slice(0, requestedTurn === 0 ? selected.index : selected.index + 1);
                 fork.turnCount = requestedTurn;
             }
@@ -23039,7 +25680,11 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     }
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, fork);
     if (protocol) {
-        protocol.migration = { ...(protocol.migration || {}), forkedFrom: safeJsonClone(fork.forkedFrom) };
+        protocol.migration = {
+            ...(protocol.migration || {}),
+            forkedFrom: safeJsonClone(forkLineage),
+            ...(world.sidecarConfig?.mode === 'sidecar' ? { forkCreatedAfterSidecarDefault: true } : {})
+        };
         protocol.packet = buildSidecarScenePacket(world, fork);
     }
     inst.sessions.push(fork);
@@ -23047,6 +25692,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     await saveState();
     renderWorldPlayState();
     showToast('Timeline forked from committed continuity.', 'success');
+    return fork;
 }
 
 function renderWorldTimelineBrowser() {
@@ -23062,7 +25708,8 @@ function renderWorldTimelineBrowser() {
         return `<div class="world-inspector-section" style="padding:14px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border)'}; border-radius:10px;">
             <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;"><div><strong>${escapeHTML(session.name || session.id)}</strong>${selected ? ' <span class="model-badge">ACTIVE</span>' : ''}<div class="form-hint">${escapeHTML(session.id)} · ${Number(session.turnCount || 0)} committed turn${Number(session.turnCount || 0) === 1 ? '' : 's'}</div></div><button class="tool-btn timeline-select-btn" data-session-id="${escapeHTML(session.id)}">${selected ? 'Selected' : 'Select'}</button></div>
             <div class="form-hint" style="margin-top:8px;">${fork ? `Fork of <strong>${escapeHTML(source?.name || fork.sessionId)}</strong> at committed turn ${Number(fork.turnCount || 0)} · ${escapeHTML(fork.createdAt || '')}` : 'Root timeline · no fork parent'}</div>
-            <div style="display:flex; gap:8px; margin-top:10px; align-items:center;"><label class="form-hint">Fork after turn <input class="form-input timeline-fork-turn" data-session-id="${escapeHTML(session.id)}" type="number" min="0" max="${Number(session.turnCount || 0)}" value="${Number(session.turnCount || 0)}" style="width:80px; display:inline-block; padding:4px 6px;"></label><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button>${fork ? `<span class="form-hint">Source history retained; later derived memory is branch-local.</span>` : ''}</div>
+            <div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap;"><label class="form-hint">Fork after turn <input class="form-input timeline-fork-turn" data-session-id="${escapeHTML(session.id)}" type="number" min="0" max="${Number(session.turnCount || 0)}" value="${Number(session.turnCount || 0)}" style="width:80px; display:inline-block; padding:4px 6px;"></label><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button><button class="tool-btn tool-btn-danger timeline-delete-btn" data-session-id="${escapeHTML(session.id)}">🗑 Delete timeline</button>${fork ? '<span class="form-hint">Source history is immutable; child forks remain available if this timeline is deleted.</span>' : '<span class="form-hint">Root timeline. Child forks remain available if this timeline is deleted.</span>'}</div>
+            <div class="timeline-delete-confirm hidden" data-session-id="${escapeHTML(session.id)}" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:9px; padding:8px 10px; border:1px solid var(--warning); border-radius:7px; background:rgba(245,158,11,.08); font-size:.76rem; color:var(--text-2);"><span>Delete this timeline? Child forks will remain as independent timelines.</span><button type="button" class="timeline-delete-yes btn btn-primary" data-session-id="${escapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">Yes</button><button type="button" class="timeline-delete-no btn btn-ghost" data-session-id="${escapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">No</button></div>
         </div>`;
     }).join('') : '<div class="form-hint">No timelines exist yet. Create a new timeline from Session Setup.</div>';
     host.querySelectorAll('.timeline-select-btn').forEach(button => button.onclick = async () => {
@@ -23075,8 +25722,25 @@ function renderWorldTimelineBrowser() {
     });
     host.querySelectorAll('.timeline-fork-btn').forEach(button => button.onclick = async () => {
         const turnInput = [...host.querySelectorAll('.timeline-fork-turn')].find(input => input.dataset.sessionId === button.dataset.sessionId);
-        await forkCurrentWorldTimeline(button.dataset.sessionId, Number(turnInput?.value));
+        await forkCurrentWorldTimeline(button.dataset.sessionId, Number(turnInput?.value), { useDefaultName: true });
         renderWorldTimelineBrowser();
+    });
+    host.querySelectorAll('.timeline-delete-btn').forEach(button => button.onclick = () => {
+        const confirm = host.querySelector(`.timeline-delete-confirm[data-session-id="${CSS.escape(button.dataset.sessionId)}"]`);
+        if (confirm) { confirm.classList.remove('hidden'); confirm.style.display = 'flex'; }
+    });
+    host.querySelectorAll('.timeline-delete-no').forEach(button => button.onclick = () => {
+        const confirm = host.querySelector(`.timeline-delete-confirm[data-session-id="${CSS.escape(button.dataset.sessionId)}"]`);
+        if (confirm) { confirm.classList.add('hidden'); confirm.style.display = 'none'; }
+    });
+    host.querySelectorAll('.timeline-delete-yes').forEach(button => button.onclick = async () => {
+        const result = await deleteWorldTimeline(button.dataset.sessionId);
+        if (!result) return showToast('That timeline no longer exists.', 'info');
+        renderWorldTimelineBrowser();
+        if (!result.replacementCreated) renderWorldPlayState();
+        showToast(result.replacementCreated
+            ? 'Timeline deleted. A fresh Sidecar timeline is ready for setup.'
+            : 'Timeline deleted. Child forks were kept as independent timelines.', 'success');
     });
 }
 
@@ -23431,7 +26095,13 @@ function openNpcDossier(npcId) {
     const dispo = Math.max(0, Math.min(100, Number.isFinite(parsedDisposition) ? parsedDisposition : 50));
     const dispoColor = dispo < 35 ? 'var(--red)' : (dispo < 65 ? 'var(--warning, #FF8C42)' : 'var(--success)');
     const locName = world.locations.find(l => l.id === entState.location)?.name || 'Unknown';
-    const obs = (entState.observations || []).map(o => typeof o === 'string' ? { text: o } : o);
+    const sidecarWorld = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    const sidecarGraph = sidecarWorld ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
+    // A Sidecar dossier deliberately exposes only character-specific cognition.
+    // Objective transcript snippets remain World History, never pseudo-memories.
+    const obs = sidecarWorld
+        ? (sidecarGraph?.cognition || []).filter(memory => memory.characterId === npc.id && memory.status === 'active')
+        : (entState.observations || []).map(o => typeof o === 'string' ? { text: o } : o);
     const goalProgress = livingClamp(entState.goalProgress || 0, 0, 100);
     const goalAutonomy = ['paused', 'low', 'medium', 'high'].includes(entState.goalAutonomy) ? entState.goalAutonomy : 'medium';
     const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(npc.id));
@@ -23497,7 +26167,8 @@ function openNpcDossier(npcId) {
             </div>
         </div>` : ''}
         <div class="form-section">
-            <label class="form-label">Memories & Observations (${obs.length})</label>
+            <label class="form-label">${sidecarWorld ? 'Private cognition' : 'Memories & Observations'} (${obs.length})</label>
+            ${sidecarWorld ? '<p class="form-hint">These are first-person, epistemically typed memories produced only from this character’s perception evidence. Objective turn text is not displayed as cognition.</p>' : ''}
             <div id="dossier-obs-list" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;">
                 ${obs.length === 0 ? '<div style="color:var(--text-3); font-size:0.75rem; font-style:italic;">Nothing witnessed yet.</div>' : ''}
             </div>
@@ -23567,11 +26238,12 @@ function openNpcDossier(npcId) {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex; gap:8px; align-items:flex-start; background:var(--surface2); padding:8px 10px; border-radius:8px; border:1px solid var(--border);';
         row.innerHTML = `
-            <div style="flex:1; font-size:0.78rem; color:var(--text-2);">${escapeHTML(o.text || '')}${o.turn ? ` <span style="font-size:0.65rem; color:var(--text-3);">(turn ${escapeHTML(String(o.turn))})</span>` : ''}</div>
+            <div style="flex:1; font-size:0.78rem; color:var(--text-2);">${escapeHTML(o.text || '')}${o.epistemicStatus ? ` <span style="font-size:0.65rem; color:var(--text-3);">(${escapeHTML(String(o.epistemicStatus).replace(/_/g, ' '))})</span>` : ''}${o.turn ? ` <span style="font-size:0.65rem; color:var(--text-3);">(turn ${escapeHTML(String(o.turn))})</span>` : ''}</div>
             <button class="tool-btn tool-btn-danger" style="font-size:10px; padding:2px 6px;" title="Delete this memory">✕</button>
         `;
         row.querySelector('button').onclick = async () => {
-            entState.observations.splice(idx, 1);
+            if (sidecarWorld) sidecarGraph.cognition = sidecarGraph.cognition.filter(memory => memory.id !== o.id);
+            else entState.observations.splice(idx, 1);
             await saveState();
             openNpcDossier(npcId); // re-render
         };
@@ -23582,14 +26254,15 @@ function openNpcDossier(npcId) {
     overlay.classList.remove('hidden');
 }
 
-function enterWorld(worldId) {
+function enterWorld(worldId, sessionId = null) {
     const world = state.worlds.find(w => w.id === worldId);
     if (!world) return;
     
     state.activeWorldId = worldId;
     
     // Init Instance if not present
-    if (!state.worldInstances[worldId]) {
+    const isNewInstance = !state.worldInstances[worldId];
+    if (isNewInstance) {
         state.worldInstances[worldId] = {
             sessions: [],
             activeSessionId: null
@@ -23597,7 +26270,12 @@ function enterWorld(worldId) {
         // This will trigger migration/init in getCurrentWorldSession()
     }
     
-    const sess = getCurrentWorldSession();
+    const inst = state.worldInstances[worldId];
+    if (sessionId && inst.sessions?.some(session => session.id === sessionId)) {
+        inst.activeSessionId = sessionId;
+        saveState().catch(() => {});
+    }
+    const sess = getCurrentWorldSession({ newWorld: isNewInstance });
     normalizeLivingWorldState(world, sess);
     // Schedules remain useful constraints for Sidecar, but they must not
     // silently author arrivals merely because a world was opened.
@@ -24197,6 +26875,13 @@ function renderWorldPlayState() {
             sessSelect.appendChild(opt);
         });
     }
+    const deleteActiveTimelineButton = document.getElementById('world-del-session-btn');
+    if (deleteActiveTimelineButton) {
+        deleteActiveTimelineButton.disabled = false;
+        deleteActiveTimelineButton.title = 'Delete current timeline';
+        deleteActiveTimelineButton.style.opacity = '';
+        deleteActiveTimelineButton.style.cursor = '';
+    }
 
     // Render World Ledger
     const ledgerContent = document.getElementById('world-ledger-content');
@@ -24231,20 +26916,13 @@ function renderWorldPlayState() {
     });
     container.scrollTop = container.scrollHeight;
     const sidecarProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const conversationMode = document.getElementById('world-conversation-mode');
-    if (conversationMode) {
+    {
         const sidecarAvailable = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
-        const requested = sidecarProtocol?.inputMode === 'sidecar' ? 'sidecar' : 'narrator';
-        conversationMode.value = sidecarAvailable ? requested : 'narrator';
-        conversationMode.disabled = !sidecarAvailable;
-        conversationMode.title = sidecarAvailable
-            ? 'Choose whether the input addresses the narrator or the out-of-world Sidecar tracker'
-            : 'Sidecar conversations are available after this world is migrated to Sidecar mode.';
         const worldInput = document.getElementById('world-user-input');
-        if (worldInput) worldInput.placeholder = conversationMode.value === 'sidecar'
+        if (worldInput) worldInput.placeholder = sidecarAvailable && sidecarProtocol?.inputMode === 'sidecar'
             ? 'Ask Sidecar about continuity, questions, or a refinement…'
             : 'What do you do?...';
-        ['world-plan-sequence-btn', 'world-context-refresh-btn', 'world-close-sequence-btn', 'world-promote-implied-btn'].forEach(id => {
+        ['world-plan-sequence-btn', 'world-close-sequence-btn', 'world-v3-gm-btn'].forEach(id => {
             const button = document.getElementById(id);
             if (!button) return;
             button.disabled = !sidecarAvailable;
@@ -24257,6 +26935,15 @@ function renderWorldPlayState() {
         if (closeButton && sidecarAvailable) {
             closeButton.disabled = !hierarchy;
             closeButton.title = hierarchy ? `Close ${hierarchy.sequence.title}` : 'No active sequence — plan the next sequence';
+        }
+        const pipelineButton = document.getElementById('world-pipeline-status-btn');
+        if (pipelineButton) {
+            pipelineButton.textContent = sidecarAvailable ? '◉ Sidecar' : '⚠ Legacy · migrate';
+            pipelineButton.title = sidecarAvailable
+                ? 'This timeline is using the two-call Sidecar reconciliation pipeline. Each narrator response contains its own handoff and receipt.'
+                : 'This world may be configured for Sidecar, but this existing timeline is still Inline Legacy. Migrate it before generating a Sidecar turn.';
+            pipelineButton.style.color = sidecarAvailable ? 'var(--success)' : 'var(--warning)';
+            pipelineButton.style.borderColor = sidecarAvailable ? 'var(--success)' : 'var(--warning)';
         }
     }
     renderSidecarConversation(world, sess);
@@ -24482,6 +27169,44 @@ function renderWorldPlayerMessageHtml(sess, text) {
     </div>`;
 }
 
+function renderSidecarBackstageCard(backstage, turnNumber) {
+    if (!backstage) return '';
+    const receipt = backstage.receipt || {};
+    const packet = backstage.packet || {};
+    const events = Array.isArray(receipt.events) ? receipt.events.slice(0, 8) : [];
+    const changes = [
+        ...(Array.isArray(receipt.entity_updates) ? receipt.entity_updates.map(change => change.activity || change.label || change.entity_id) : []),
+        ...(isPlainObject(receipt.state_updates) ? Object.entries(receipt.state_updates)
+            .filter(([, value]) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && !value.length))
+            .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`) : [])
+    ].filter(Boolean).slice(0, 8);
+    const handoff = String(backstage.handoff || '').trim();
+    const reader = backstage.reader || null;
+    const jobSummary = backstage.memoryJobs || null;
+    const formatHandoff = handoff
+        ? escapeHTML(handoff).replace(/^(SCENE READING|ANSWER [^\n:]+|REQUEST|ACCEPTED PLAYER DETAILS)\s*:?[ \t]*(.*)$/gim, '<strong class="sidecar-backstage-label">$1</strong><span>$2</span>')
+        : '';
+    const failed = backstage.status === 'reconciliation_failed' || backstage.unresolved === true;
+    const incompleteHandoff = backstage.handoffComplete === false;
+    const activeLocationLabel = isPlainObject(packet.activeLocation)
+        ? `${packet.activeLocation.name || packet.activeLocation.id || 'Unknown'}${packet.activeLocation.id ? ` · ${packet.activeLocation.id}` : ''}`
+        : String(packet.activeLocation || '');
+    return `<details class="world-sidecar-backstage${failed ? ' sidecar-backstage-failed' : ''}" data-sidecar-turn="${Number(turnNumber) || 0}">
+        <summary><span class="sidecar-backstage-mark">${failed ? '⚠' : '🎭'}</span><span><b>Backstage handoff</b><small>Narrator → Sidecar → next beat${turnNumber ? ` · Turn ${turnNumber}` : ''}</small></span><i>${failed ? 'Narration saved · state pending' : 'Committed continuity'}</i></summary>
+        <div class="sidecar-backstage-body">
+            ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Narrator’s handoff notes</b><small>What the narrated beat means for continuity.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
+            ${reader ? `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Sidecar’s semantic reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'Reader fell back to the canonical manifest.' : 'Read-only canonical evidence before reconciliation.'))}</small></div></header>${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${reader.failure ? `<div class="form-hint">Reader diagnostic: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>` : ''}
+            ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Narrator handoff was incomplete</b><small>Sidecar still ran from the visible scene and canonical frame; missing interpretation was not invented.</small></div></header></section>` : ''}
+            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Canonical commit did not land</b><small>${escapeHTML(backstage.failure?.message || 'Sidecar did not produce a valid native state receipt.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Failure</b><span>${escapeHTML(backstage.failure?.code || 'sidecar_reconciliation_failed')}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>Safety result</b><span>Visible narration and handoff evidence were preserved. Disputed world state was not mutated.</span></div><div><b>Recovery</b><span>This beat remains in the next Sidecar packet until a later reconciliation or explicit World GM refinement resolves it.</span></div></div></section>` : ''}
+            ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Sidecar’s canonical reading</b><small>${escapeHTML(receipt.summary || 'Reconciled from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
+            ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next-beat pacing</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next narrator turn receives this reconciled scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending reconciliation</small>${escapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
+            ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(jobSummary.queued || 0))} queued</span><span>${escapeHTML(String(jobSummary.running || 0))} running</span><span>${escapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${escapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
+            ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
+            <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${escapeHTML(JSON.stringify({ status: backstage.status || null, handoffComplete: backstage.handoffComplete !== false, handoff: backstage.handoff || null, reader: backstage.reader || null, receipt: backstage.receipt || null, failure: backstage.failure || null, audit: backstage.audit || null, preFrame: backstage.preFrame || null, postFrame: backstage.postFrame || null, packet: backstage.packet || null }, null, 2))}</pre></details>
+        </div>
+    </details>`;
+}
+
 function appendWorldMessageUI(msg, index = null) {
     const container = document.getElementById('world-messages-container');
     const div = document.createElement('div');
@@ -24562,15 +27287,9 @@ function appendWorldMessageUI(msg, index = null) {
     const metaHtml = metaParts.length
         ? `<div class="world-msg-meta">${metaParts.join(' &nbsp;·&nbsp; ')}</div>`
         : '';
-    const backstage = msg.sidecarBackstage;
-    const backstageHtml = backstage ? `
-        <details class="world-sidecar-backstage" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); padding:7px 9px; font-size:0.76rem;">
-            <summary style="cursor:pointer; color:var(--text-2); font-weight:700;">🎭 Backstage handoff${backstage.unresolved ? ' · needs reconciliation' : ''}</summary>
-            ${backstage.handoff ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Narrator → Sidecar · scene handoff</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(backstage.handoff)}</pre></details>` : ''}
-            ${backstage.receipt ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Sidecar → Canon · reconciliation receipt</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(JSON.stringify(backstage.receipt, null, 2))}</pre></details>` : ''}
-            ${backstage.packet ? `<details style="margin-top:8px;"><summary style="cursor:pointer;">Sidecar → Narrator · next-beat packet</summary><pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:330px; overflow:auto; margin:7px 0 0; color:var(--text-2);">${escapeHTML(JSON.stringify(backstage.packet, null, 2))}</pre></details>` : ''}
-            ${backstage.questionCount ? `<div style="margin-top:8px; color:var(--warning, #ffb347);">${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'}</div>` : ''}
-        </details>` : '';
+    const turnNumber = msg.role === 'dm' && index !== null
+        ? activeSession.history.slice(0, index + 1).filter(entry => entry.role === 'dm').length : 0;
+    const backstageHtml = renderSidecarBackstageCard(msg.sidecarBackstage, turnNumber);
 
     // Version nav restores that take's world-state snapshot — only safe on the
     // LAST entry. Allowing it mid-history rewound stats/NPCs/ledger underneath
@@ -24585,6 +27304,11 @@ function appendWorldMessageUI(msg, index = null) {
             ${metaHtml}
             ${backstageHtml}
             <textarea class="msg-edit-area hidden" style="width:100%; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:8px; margin-top:8px; font-family:inherit; font-size:inherit;"></textarea>
+            <div class="msg-rewind-confirm hidden" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; padding:8px 10px; border:1px solid var(--warning); border-radius:7px; background:rgba(245,158,11,.08); font-size:.76rem; color:var(--text-2);">
+                <span>Rewind this turn to the edited draft?</span>
+                <button type="button" class="msg-rewind-yes btn btn-primary" style="padding:4px 9px; font-size:.72rem;">Yes</button>
+                <button type="button" class="msg-rewind-no btn btn-ghost" style="padding:4px 9px; font-size:.72rem;">No</button>
+            </div>
             ${msg.role === 'dm' && versions.length > 1 && !isLastEntry ? `
                 <div style="font-size:0.65rem; color:var(--text-3); margin-top:6px;" title="Takes can only be switched on the latest response — switching older ones would rewind the world state underneath everything that happened since.">🔒 take ${currentVersionIdx + 1}/${versions.length} (locked — older turn)</div>
             ` : ''}
@@ -24599,6 +27323,8 @@ function appendWorldMessageUI(msg, index = null) {
             <div class="msg-actions" style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
                 ${index !== null ? `
                 <button class="msg-edit-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">✎ Edit</button>
+                ${msg.role === 'user' ? `<button class="msg-rewind-draft-btn hidden" style="background:none; border:none; color:var(--warning); font-size:0.7rem; cursor:pointer;">↶ Rewind to draft</button>` : ''}
+                ${msg.role === 'dm' ? `<button class="msg-fork-btn" data-fork-turn="${turnNumber}" title="Create a new timeline from this committed turn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">⑂ Fork</button>` : ''}
                 <button class="msg-del-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">🗑️ Delete</button>
                 ` : ''}
             </div>
@@ -24607,10 +27333,28 @@ function appendWorldMessageUI(msg, index = null) {
 
     if (index !== null) {
         const editBtn = div.querySelector('.msg-edit-btn');
+        const forkBtn = div.querySelector('.msg-fork-btn');
         const delBtn = div.querySelector('.msg-del-btn');
         const editArea = div.querySelector('.msg-edit-area');
         const textDiv = div.querySelector('.msg-text');
+        const rewindDraftBtn = div.querySelector('.msg-rewind-draft-btn');
+        const rewindConfirm = div.querySelector('.msg-rewind-confirm');
+        const rewindYes = div.querySelector('.msg-rewind-yes');
+        const rewindNo = div.querySelector('.msg-rewind-no');
         const sess = getCurrentWorldSession();
+        let pendingRewind = null;
+        const hideRewindConfirm = () => {
+            pendingRewind = null;
+            if (rewindConfirm) { rewindConfirm.classList.add('hidden'); rewindConfirm.style.display = 'none'; }
+        };
+        rewindNo?.addEventListener('click', hideRewindConfirm);
+        rewindYes?.addEventListener('click', async () => {
+            const action = pendingRewind;
+            hideRewindConfirm();
+            if (action) await action();
+        });
+
+        forkBtn?.addEventListener('click', () => forkCurrentWorldTimeline(sess.id, Number(forkBtn.dataset.forkTurn), { useDefaultName: true }));
 
         if (msg.role === 'dm' && versions.length > 1 && isLastEntry) {
             div.querySelector('.prev-ver').onclick = async () => {
@@ -24662,6 +27406,43 @@ function appendWorldMessageUI(msg, index = null) {
             });
         };
 
+        const prepareRewind = () => {
+            const editedText = editArea.value.trim();
+            if (!editedText) return showToast('The replay draft cannot be empty.', 'info');
+            const currentSession = getCurrentWorldSession();
+            const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
+            const affectedDm = messageIndex >= 0
+                ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
+                : null;
+            if (!affectedDm) return showToast('There is no committed response after this message to rewind.', 'info');
+            pendingRewind = async () => {
+                const world = state.worlds.find(item => item.id === state.activeWorldId);
+                if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
+                // The snapshot restores Sidecar's selected pre-turn revision
+                // and invalidates all derived Episode, cognition, scene and
+                // sequence output sourced by the discarded tail. The ordinary
+                // legacy archive receives the same rewind for Inline timelines.
+                invalidateEpisodicFrom(currentSession, messageIndex);
+                currentSession.history.splice(messageIndex);
+                const protocol = world && window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, currentSession);
+                if (protocol) protocol.inputMode = 'narrator';
+                const input = document.getElementById('world-user-input');
+                if (input) {
+                    input.value = editedText;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                await saveState();
+                renderWorldPlayState();
+                document.getElementById('world-user-input')?.focus();
+                showToast('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
+            };
+            if (rewindConfirm) {
+                rewindConfirm.classList.remove('hidden');
+                rewindConfirm.style.display = 'flex';
+            } else pendingRewind();
+        };
+        rewindDraftBtn?.addEventListener('click', prepareRewind);
+
         let isEditing = false;
         editBtn.onclick = async () => {
             if (!isEditing) {
@@ -24669,20 +27450,32 @@ function appendWorldMessageUI(msg, index = null) {
                 textDiv.classList.add('hidden');
                 editArea.classList.remove('hidden');
                 editArea.value = displayText;
+                // A player line with a later committed DM response is not a
+                // simple text field: changing it must restore the pre-turn
+                // world state and return the author to an unsent draft.
+                const draftable = msg.role === 'user' && sess?.history.slice(index + 1)
+                    .some(entry => entry.role === 'dm' && entry.turnSnapshot);
                 editBtn.textContent = '💾 Save';
+                rewindDraftBtn?.classList.toggle('hidden', !draftable);
                 editArea.focus();
             } else {
+                const editedText = editArea.value.trim();
+                if (!editedText) return showToast('The edited message cannot be empty.', 'info');
+                const currentSession = getCurrentWorldSession();
+                const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
                 if (msg.versions) {
-                    msg.versions[currentVersionIdx] = editArea.value;
+                    msg.versions[currentVersionIdx] = editedText;
                     // Displayed version IS the active version — keep .text canonical
-                    if (currentVersionIdx === (msg.currentVersion ?? msg.versions.length - 1)) {
-                        msg.text = editArea.value;
-                    }
-                } else {
-                    msg.text = editArea.value;
+                    if (currentVersionIdx === (msg.currentVersion ?? msg.versions.length - 1)) msg.text = editedText;
+                } else msg.text = editedText;
+                if (currentSession) invalidateEpisodicFrom(currentSession, messageIndex);
+                if (msg.role === 'user' && currentSession?.history.slice(messageIndex + 1).some(entry => entry.role === 'dm')) {
+                    msg.authorialEdit = {
+                        editedAt: new Date().toISOString(),
+                        mode: 'text_only',
+                        note: 'Visible player wording was edited without replaying the already committed response.'
+                    };
                 }
-                const sess = getCurrentWorldSession();
-                if (sess) invalidateEpisodicFrom(sess, sess.history.indexOf(msg));
                 await saveState();
                 renderWorldPlayState();
                 isEditing = false;
@@ -24723,9 +27516,17 @@ function selectSidecarTake(sess, message, takeIndex) {
     ids.forEach((id, index) => {
         const turn = protocol.turns.find(entry => entry.id === id);
         if (!turn) return;
-        turn.status = index === takeIndex ? 'active' : 'superseded';
-        if (index !== takeIndex) turn.supersededAt = new Date().toISOString();
-        else delete turn.supersededAt;
+        if (index !== takeIndex) {
+            turn.status = 'superseded';
+            turn.selectionStatus = 'superseded';
+            turn.supersededAt = new Date().toISOString();
+            return;
+        }
+        turn.selectionStatus = 'selected';
+        turn.status = turn.reconciliationStatus === 'failed' ? 'reconciliation_failed'
+            : turn.reconciliationStatus === 'pending' ? 'reconciliation_pending'
+                : turn.reconciliationStatus === 'committed_late' ? 'reconciled_late' : 'active';
+        delete turn.supersededAt;
     });
 }
 
@@ -24768,6 +27569,10 @@ function restoreWorldTurnState(world, sess, snapshot) {
     const liveManualLedger = String(sess.ledgerManualOverrideText ?? sess.ledger ?? '');
     const liveLedgerDiagnostics = safeJsonClone(sess.ledgerDiagnostics || {});
     const liveSidecarAudit = safeJsonClone(sess.sidecar || null);
+    // Pipeline migration is timeline infrastructure, not authored turn state.
+    // An Inline snapshot taken before migration must never demote a migrated
+    // timeline simply because a reroll/rewind restores that old turn snapshot.
+    const retainSidecarPipeline = liveSidecarAudit?.mode === 'sidecar';
     const snapshotActiveSidecarTurnIds = new Set((snapshot.session?.sidecar?.turns || [])
         .filter(turn => turn.status !== 'superseded').map(turn => turn.id));
     const preserved = {
@@ -24820,6 +27625,22 @@ function restoreWorldTurnState(world, sess, snapshot) {
         world.entities = (world.entities || []).filter(entity => entity?.sessionOrigin !== sess.id);
         world.entities.push(...safeJsonClone(snapshotDynamic));
     }
+    if (retainSidecarPipeline) {
+        // Do this after canonical snapshot restoration so the snapshot remains
+        // authoritative for story state, while the selected Sidecar pipeline
+        // and its migration provenance remain authoritative for execution.
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess) || sess.sidecar;
+        if (protocol) {
+            protocol.mode = 'sidecar';
+            protocol.migration = {
+                ...(isPlainObject(protocol.migration) ? protocol.migration : {}),
+                ...(isPlainObject(liveSidecarAudit.migration) ? liveSidecarAudit.migration : {}),
+                pipelinePreservedAcrossRestoreAt: new Date().toISOString(),
+                restoreSnapshotMode: String(snapshot.session?.sidecar?.mode || 'none')
+            };
+            protocol.packet = buildSidecarScenePacket(world, sess);
+        }
+    }
     bumpMemoryEpoch(sess); // any in-flight consolidation must now abort its commit
     if (typeof bumpWorldEpoch === 'function') bumpWorldEpoch(sess);  // and so must the asynchronous World Agent
     return true;
@@ -24847,7 +27668,7 @@ function addWorldMessage(role, text, metadata = {}) {
             // Scrub NPC observations for the previous version
             if (lastMsg.id) {
                 const world = state.worlds.find(w => w.id === state.activeWorldId);
-                if (world) {
+                if (world && !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
                     world.entities.forEach(ent => {
                         if (ent.type === 'npc' && sess.entityStates[ent.id]) {
                             const entState = sess.entityStates[ent.id];
@@ -24909,9 +27730,11 @@ function addWorldMessage(role, text, metadata = {}) {
         sess.history.push(newMsg);
         targetMsgRef = newMsg;
         
-        // NPC Observation Logic: NPCs only "observe" events in their current location
+        // Legacy observations are a compatibility cache only.  Sidecar worlds
+        // derive private cognition later from episode-scoped perception evidence;
+        // copying raw narration into every NPC dossier would grant false memory.
         const world = state.worlds.find(w => w.id === state.activeWorldId);
-        if (world) {
+        if (world && !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
             world.entities.forEach(ent => {
                 if (ent.type === 'npc') {
                     const entState = sess.entityStates[ent.id];
@@ -25079,6 +27902,12 @@ function getObservationWindow(npcId) {
     const sess = getCurrentWorldSession();
     const entState = sess ? sess.entityStates[npcId] : null;
     if (!entState) return [];
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    if (world && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
+        return (graph?.cognition || []).filter(memory => memory.characterId === npcId && memory.status === 'active')
+            .slice(-30).map(memory => ({ text: memory.text, id: memory.id, epistemicStatus: memory.epistemicStatus, sourceTurnIds: memory.sourceTurnIds }));
+    }
     // Normalize: old sessions may hold raw strings (pre-fix tool handler)
     return (entState.observations || []).map(o => typeof o === 'string' ? { text: o } : o);
 }
@@ -25337,9 +28166,27 @@ async function executeWorldTurn(commandOrReroll = null) {
         sidecarMode = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
         if (sidecarMode && command !== 'init') {
             const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline(world, sess);
-            const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+            let hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+            // Versions before the opening bootstrap could store a visible
+            // authored intro without any Sidecar turn. Repair exactly that
+            // orphaned opening before treating a closed sequence as an
+            // author-directed boundary. The repair is intentionally limited
+            // to timelines with no Sidecar turn record at all.
+            const opening = !protocol?.turns?.length
+                ? (sess.history || []).find(message => message?.role === 'dm' && String(message.text || '').trim())
+                : null;
+            if (!hierarchy && opening) {
+                hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: true });
+                await bootstrapSidecarOpeningTurn(world, sess, String(opening.text || ''));
+                hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess);
+                await saveState();
+            }
             if (!hierarchy) {
-                showToast('This sequence is closed. Plan and approve the next sequence before continuing narration.', 'info');
+                const activeSequence = (protocol?.sequences || []).find(sequence =>
+                    sequence?.id === protocol?.activeSequenceId && sequence.status === 'active');
+                showToast(activeSequence
+                    ? 'This scene is closed. Ask Sidecar to begin the next scene before continuing narration.'
+                    : 'This sequence is closed. Plan and approve the next sequence before continuing narration.', 'info');
                 return;
             }
         }
@@ -25373,14 +28220,19 @@ async function executeWorldTurn(commandOrReroll = null) {
             if (!sidecarMode) syncNPCSchedules(world, sess);
             // An authored opening is trusted world data, not uncertain model
             // prose. Make explicitly present named NPCs canonical before the
-            // no-op receipt snapshots the first scene.
+            // first Sidecar reading snapshots the scene.
             applyNarratedPresence(world, sess, authoredOpening);
-            const introCommit = commitEngineWorldNoOp(world, sess, 'engine_intro', 'Authored world introduction.');
+            const openingSidecar = sidecarMode
+                ? await bootstrapSidecarOpeningTurn(world, sess, authoredOpening)
+                : null;
+            const introCommit = openingSidecar?.committed
+                || commitEngineWorldNoOp(world, sess, sidecarMode ? 'sidecar_opening_fallback' : 'engine_intro',
+                    sidecarMode ? 'Opening Sidecar reconciliation was unavailable; state was frozen.' : 'Authored world introduction.');
             const introSnapshot = captureWorldTurnState(world, sess);
             const introMsg = addWorldMessage('dm', authoredOpening, {
                 location: sess.playerLocation,
                 turnSnapshot: introSnapshot,
-                stateSource: 'engine_intro',
+                stateSource: sidecarMode ? (openingSidecar?.failure ? 'sidecar_unresolved' : 'sidecar') : 'engine_intro',
                 worldAudit: {
                     accepted: introCommit.audit.accepted,
                     informational: introCommit.audit.informational,
@@ -25388,8 +28240,24 @@ async function executeWorldTurn(commandOrReroll = null) {
                     version: introCommit.audit.world_state_version,
                     castChecksum: introCommit.audit.cast_checksum_match
                 },
+                sidecarBackstage: sidecarMode ? {
+                    status: openingSidecar?.failure ? 'reconciliation_failed' : 'committed',
+                    handoffComplete: true,
+                    handoff: openingSidecar?.handoff || '',
+                    reader: openingSidecar?.turnId ? sess.sidecar?.turns?.find(turn => turn.id === openingSidecar.turnId)?.reader : null,
+                    receipt: openingSidecar?.receipt || null,
+                    packet: openingSidecar?.packet || sess.sidecar?.packet || null,
+                    failure: openingSidecar?.failure || null,
+                    audit: openingSidecar?.turnId ? sess.sidecar?.turns?.find(turn => turn.id === openingSidecar.turnId)?.audit : null,
+                    unresolved: !!openingSidecar?.failure
+                } : undefined,
+                sidecarTurnId: openingSidecar?.turnId || undefined,
                 deferPersist: true
             });
+            if (openingSidecar?.turnId) {
+                const sidecarTurn = sess.sidecar?.turns?.find(turn => turn.id === openingSidecar.turnId);
+                if (sidecarTurn) sidecarTurn.timelineMessageId = introMsg.id || '';
+            }
             introMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
             delete introMsg.postSnapshot;
             delete sess.pendingOriginIntro;
@@ -25426,7 +28294,7 @@ async function executeWorldTurn(commandOrReroll = null) {
 
         turnSnapshot = captureWorldTurnState(world, sess);
         historyStartLength = sess.history.length;
-        if (!command) document.getElementById('world-user-input').value = '';
+        if (!command) resetWorldMessageInput();
 
         // ⏩ Continue: silent directive — no user bubble, no movement detection
         if (command === "continue") {
@@ -25628,7 +28496,9 @@ async function executeWorldTurn(commandOrReroll = null) {
             const npcState = sess.entityStates[npc.id] || {};
             const where = getLocationRef(world, npcState.location)?.name || 'unknown';
             return `- ${npc.name} [id: "${npc.id}"] — currently at ${where}${npcState.currentActivity ? `, ${npcState.currentActivity}` : ''}. ${String(npc.description || '').slice(0, 220)}${npc.persona ? ` Personality: ${String(npc.persona).slice(0, 180)}` : ''}`;
-        }).join('\n')}\nThey remain absent unless the fiction actually brings them here. If one enters, record it with npc_moves using the exact id.`
+        }).join('\n')}\nThey remain absent unless the fiction actually brings them here.${sidecarMode
+            ? ' If one enters, establish the arrival clearly in prose and identify it in the hidden handoff; Sidecar owns the canonical move.'
+            : ' If one enters, record it with npc_moves using the exact id.'}`
         : '';
     // Permanence manifest: the dead do not walk back in
     const deadNpcManifest = visibleNpcs
@@ -25654,11 +28524,13 @@ async function executeWorldTurn(commandOrReroll = null) {
         threadsPrompt = `\n[OPEN STORY THREADS — unresolved hooks you planted]\n${openThreads.map(t => {
             const age = turnNow - (t.turnOpened || turnNow);
             return `- ${t.text}${age > 15 ? ' (long dormant — consider weaving it back in soon)' : ''}`;
-        }).join('\n')}\nResolve threads through play ('threads_update' status: resolved) — do not let them evaporate.`;
+        }).join('\n')}\n${sidecarMode
+            ? 'Resolve threads through authored play and identify the resolution in the hidden handoff — do not let them evaporate.'
+            : "Resolve threads through play ('threads_update' status: resolved) — do not let them evaporate."}`;
     }
-    const livingWorldPrompt = getLivingWorldPrompt(world, sess, presentNPCs);
+    const livingWorldPrompt = getLivingWorldPrompt(world, sess, presentNPCs, { sidecar: sidecarMode });
     const societyPrompt = getWorldSocietyPrompt(world, sess);
-    const questPrompt = getQuestPrompt(world, sess);
+    const questPrompt = getQuestPrompt(world, sess, { sidecar: sidecarMode });
 
     const playerRulesState = normalizePlayerRulesState(world, sess);
     const diceConfig = normalizeWorldDiceConfig(world);
@@ -25784,7 +28656,7 @@ Characters in this world are NOT omniscient. They only know what they have perso
         }));
 
     const labsWorldHint = labsWorldLens?.candidate && Number(labsWorldLens.candidate.confidence) >= 0.55
-        ? `\n\n[PRIVATE MICRO WORLD SENSOR — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor, intent, destination, outfit, explicit time and completion scope only. The graph still owns routes and travel time. It cannot create facts, replace commit_world_turn, or override canonical state. If it conflicts with the player's words or canonical frame, ignore it.`
+        ? `\n\n[PRIVATE MICRO WORLD SENSOR — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor, intent, destination, outfit, explicit time and completion scope only. The graph still owns routes and travel time. It cannot create facts${sidecarMode ? ' or replace Sidecar reconciliation' : ', replace commit_world_turn'}, or override canonical state. If it conflicts with the player's words or canonical frame, ignore it.`
         : '';
     const dossierClaimsContext = window.HordeDossierClaims?.promptContext?.(world, sess, presentNPCs) || '';
 
@@ -25795,11 +28667,16 @@ ${state.globalSettings.immersionMode !== false ? '\n' + HORDE_IMMERSION_DIRECTIV
 [ENGINE MANDATE: SHADOW LEDGER]
 You are the DM. You have access to "Hints" about secrets in this scene. 
 1. If a secret is [LOCKED SECRET], you only know the hint. You DO NOT know the actual truth.
-2. If the player's action (investigating, searching, questioning) suggests they have discovered or are about to discover the secret, you MUST call the 'investigate_secret' tool with the corresponding label.
-3. Once the tool returns the [TRUTH], you must incorporate it into your narrative.
+2. ${sidecarMode ? "If the player's action investigates a locked secret, do not invent its truth. Put an investigate_secret request with the label in the hidden Sidecar handoff so the truth can be prepared for a later beat." : "If the player's action (investigating, searching, questioning) suggests they have discovered or are about to discover the secret, you MUST call the 'investigate_secret' tool with the corresponding label."}
+3. ${sidecarMode ? 'Only incorporate a truth already supplied in canonical context; the handoff request does not reveal it during this same response.' : 'Once the tool returns the [TRUTH], you must incorporate it into your narrative.'}
 4. Do NOT blurt out secrets prematurely. Use the hints to foreshadow them only.
 
-[ENGINE MANDATE: CANONICAL TURN COMMIT]
+${sidecarMode ? `[SIDECAR NARRATOR AUTHORITY]
+You author what happens; you do not compile engine state and you never call commit_world_turn. A separate Sidecar reads your completed prose and hidden handoff after this response.
+- Dialogue attribution is part of the authorial contract. Put every change of speaker in its own paragraph and identify that speaker by exact full name before the line (prefer Full Name: “dialogue”).
+- Preserve the difference between intent, attempt, action in progress, and completed action in the prose itself.
+- Do not turn a mentioned destination into arrival, a nearby voice into physical presence, or a relationship interpretation into objective fact.
+- Do not invent IDs, reducer fields, automatic clock ticks, or state JSON. Explain semantic meaning in the final hidden scene_handoff instead.` : `[ENGINE MANDATE: CANONICAL TURN COMMIT]
 Every response MUST submit exactly one commit_world_turn receipt, including pure dialogue and no-change turns.
 - Dialogue attribution is part of the output contract, not decoration. Put every change of speaker in its own paragraph and identify that speaker by their exact full NPC name before the line (prefer Full Name: “dialogue”). Never introduce a new speaker with only he/she/they, and never leave alternating quoted lines unlabelled. Natural narration may surround those paragraphs.
 - Models propose events; the engine commits reality.
@@ -25810,9 +28687,9 @@ Every response MUST submit exactly one commit_world_turn receipt, including pure
 - A completed NPC arrival/departure requires its own movement event.
 - Include the complete ending cast in scene.present_character_ids, even when it did not change.
 - If the narrative visits a new place, register it with location_introduced in state_updates and use an actor-scoped movement event.
-- When the player truly gains or loses a title, rank, allegiance, legal status, privilege, duty or holding, persist it with player_identity_update. Aspirations, disguises and rumors are not identity changes.
+- When the player truly gains or loses a title, rank, allegiance, legal status, privilege, duty or holding, persist it with player_identity_update. Aspirations, disguises and rumors are not identity changes.`}
 
-[LOCATION MANIFEST — use these exact IDs in commit_world_turn]
+[LOCATION MANIFEST${sidecarMode ? ' — narrative reference labels' : ' — use these exact IDs in commit_world_turn'}]
 ${locationManifest}
 
 WORLD LORE:
@@ -25829,9 +28706,9 @@ Description: ${locDesc}${locHidden}
 Exits: ${locExits}
 NPCs Present: ${presentNPCs.map(n => n.name).join(', ') || 'None'}
 NPCs NOT Present (ABSENT): ${absentNpcManifest || 'None'}${referencedNpcContext}
-  ↳ ABSENT characters must NOT appear, speak, or act in this scene. If the story needs one of them here, move them with 'npc_moves' AND narrate their arrival — characters walk in, they do not materialize.${deadNpcManifest ? `
+  ↳ ABSENT characters must NOT appear, speak, or act in this scene. If the story needs one of them here, ${sidecarMode ? 'author their arrival clearly and name it in the hidden handoff' : "move them with 'npc_moves' AND narrate their arrival"} — characters walk in, they do not materialize.${deadNpcManifest ? `
 Dead / Departed (PERMANENT — they can NEVER appear again): ${deadNpcManifest}
-  ↳ The dead stay dead. They may be mourned, mentioned, or found as remains — never walking, talking, or acting. Only an explicit resurrection story event (with 'npc_status_changes' setting them alive) can undo this.` : ''}
+  ↳ The dead stay dead. They may be mourned, mentioned, or found as remains — never walking, talking, or acting. Only an explicitly authored resurrection${sidecarMode ? ' reconciled by Sidecar' : " story event (with 'npc_status_changes' setting them alive)"} can undo this.` : ''}
 Inventory: ${ruleModules.inventory ? (sess.inventory.map(item => globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', ') || 'None') : 'Disabled for this world'}
 Equipped: ${ruleModules.equipment ? Object.entries(sess.equipment || {}).filter(([, itemId]) => itemId).map(([slot, itemId]) => `${slot}: ${globalThis.HordeRpgMechanics?.itemName((sess.inventory || []).find(item => item?.id === itemId)) || 'unknown item'}`).join(', ') || 'None' : 'Disabled for this world'}
 Player Stats: ${statContext}
@@ -25840,12 +28717,21 @@ Player Condition: ${ruleModules.health || ruleModules.conditions
         : 'Disabled for this world'}
 Rules Profile: ${gameRules.profileId}. Enabled modules: ${WORLD_RULE_MODULE_KEYS.filter(key => ruleModules[key]).join(', ') || 'none'}. Disabled modules: ${WORLD_RULE_MODULE_KEYS.filter(key => !ruleModules[key]).join(', ') || 'none'}.
 Special rules: vital stat "${ruleModules.health ? (gameRules.vitalStatId || 'none') : 'disabled'}"; zero-health mode "${ruleModules.health ? gameRules.zeroHpMode : 'disabled'}"; currency stat "${ruleModules.commerce ? (gameRules.currencyStatId || 'none') : 'disabled'}" (${gameRules.currencyName}).
-Check Engine: ${ruleModules.checks ? `d${diceConfig.sides}, ${diceConfig.resolution} resolution, ${diceConfig.visibility} visibility, default difficulty ${diceConfig.defaultDifficulty}, stat modifier ${diceConfig.modifierMode}. Submit at most ONE check and put every result-dependent persistent mutation inside its on_success/on_failure object; completed top-level consequences beside a check are rejected. ${diceConfig.resolution === 'player' ? 'End at the moment of uncertainty. The player must resolve the queued check before any other action; the next response receives the canonical result.' : 'The engine resolves it immediately; never invent a roll.'}${diceConfig.visibility === 'hidden' ? ' Keep the die, target and modifier out of narration; reveal only fictional consequences.' : ''}` : 'Disabled — resolve through fiction without dice.'}
+Check Engine: ${ruleModules.checks ? (sidecarMode
+        ? `d${diceConfig.sides}, ${diceConfig.resolution} resolution, ${diceConfig.visibility} visibility. Do not invent a roll or reducer payload. If this beat reaches a mechanically uncertain action, stop at the uncertainty and identify the needed check in the hidden handoff so Sidecar can reconcile it.`
+        : `d${diceConfig.sides}, ${diceConfig.resolution} resolution, ${diceConfig.visibility} visibility, default difficulty ${diceConfig.defaultDifficulty}, stat modifier ${diceConfig.modifierMode}. Submit at most ONE check and put every result-dependent persistent mutation inside its on_success/on_failure object; completed top-level consequences beside a check are rejected. ${diceConfig.resolution === 'player' ? 'End at the moment of uncertainty. The player must resolve the queued check before any other action; the next response receives the canonical result.' : 'The engine resolves it immediately; never invent a roll.'}${diceConfig.visibility === 'hidden' ? ' Keep the die, target and modifier out of narration; reveal only fictional consequences.' : ''}`)
+        : 'Disabled — resolve through fiction without dice.'}
 Player Outfit: ${sess.outfit || 'Standard attire'}
 ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPrompt}${societyPrompt}${dossierClaimsContext}`;
     
     if (command === "look") {
         systemPrompt += "\n\n[IMMEDIATE TASK]\nThe player has just arrived at the location listed in 'CURRENT WORLD STATE'. \n1. DESCRIBE the transition and the new surroundings in detail.\n2. The player is already there: assert the current ID in commit_world_turn but emit no new player movement event.\n3. Focus entirely on narrative and atmosphere.";
+        if (sidecarMode) {
+            systemPrompt = systemPrompt.replace(
+                "2. The player is already there: assert the current ID in commit_world_turn but emit no new player movement event.",
+                "2. The player is already there. Do not author another arrival; describe the established location and report no completed movement in the handoff."
+            );
+        }
         userInput = "Describe what I see.";
     } else if (command === "init") {
         systemPrompt += "\n\nThis is the beginning of the journey. Introduce the world and the current scene.";
@@ -25911,8 +28797,19 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
 
     if (sidecarMode) {
         const priorPacket = sess.sidecar?.packet || buildSidecarScenePacket(world, sess);
-        const sidecarRecall = await retrieveSidecarMemory(world, sess, submittedInput || userInput, 8).catch(() => []);
-        systemPrompt += `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.\n\n[CURRENT SIDECAR SCENE PACKET]\n${JSON.stringify(priorPacket)}\n\n[SIDECAR SEMANTIC RECALL — derived memory, never objective canon]\n${JSON.stringify(sidecarRecall)}`;
+        const sidecarRecall = await retrieveSidecarMemory(world, sess, submittedInput || userInput,
+            effectiveSidecarMemoryConfig(world).retrievalLimit,
+            { characterIds: priorPacket.activeCast || [] }).catch(() => []);
+        if (sess.sidecar) sess.sidecar.lastRetrievalCount = sidecarRecall.length;
+        const memoryGraph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
+        const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy?.(sess.sidecar, sess);
+        const replacementMemory = [
+            ...(memoryGraph?.sequences || []).filter(record => record.sequenceId === hierarchy?.sequence?.id && record.summary),
+            ...(memoryGraph?.scenes || []).filter(record => record.sceneId === hierarchy?.scene?.id && record.summary),
+            ...(memoryGraph?.episodes || []).filter(record => record.status === 'active' && record.summary).slice(-3)
+        ].slice(-6).map(record => ({ kind: record.kind || 'episode', id: record.id, summary: record.summary, keyFacts: record.keyFacts || '' }));
+        systemPrompt += `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.`;
+        systemPrompt += `\n\n[VALIDATED MEMORY REPLACEMENTS]\nThese source-pinned summaries replace older raw turns in active context only after successful consolidation. They do not erase source history or change canon.\n${JSON.stringify(replacementMemory)}`;
     }
 
     // Show persistent typing indicator
@@ -25948,9 +28845,25 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
         }
         
         let historyToSend = [];
+        const retainedVerbatim = Math.max(0, effectiveSidecarMemoryConfig(world).verbatimTurnWindow);
+        const sidecarHistoryGraph = sidecarMode ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
+        const completedSourceTurnIds = new Set(sidecarMode
+            ? (sidecarHistoryGraph?.episodes || []).filter(episode => episode.status === 'active' && episode.summary).flatMap(episode => episode.sourceTurnIds || [])
+            : []);
+        const retainedTurnIds = new Set((sidecarHistoryGraph?.worldHistory || []).filter(record => record.status === 'active').slice(-retainedVerbatim).map(record => record.turnId));
+        const omittedMessageIds = new Set();
+        if (sidecarMode) {
+            (sidecarHistoryGraph?.worldHistory || []).forEach(record => {
+                if (completedSourceTurnIds.has(record.turnId) && !retainedTurnIds.has(record.turnId) && record.timelineMessageId) omittedMessageIds.add(record.timelineMessageId);
+            });
+            (sess.history || []).forEach((message, index) => {
+                if (omittedMessageIds.has(message.id) && sess.history[index - 1]?.role === 'user') omittedMessageIds.add(sess.history[index - 1].id);
+            });
+        }
         const startIdx = isReroll ? sess.history.length - 2 : sess.history.length - 1;
         for (let i = startIdx; i >= 0; i--) {
             const m = sess.history[i];
+            if (sidecarMode && omittedMessageIds.has(m.id)) continue;
             // Version-aware read: never send a rerolled-away take to the API
             const canonText = canonicalMsgText(m);
             if (!canonText) continue;
@@ -26030,7 +28943,9 @@ ${modularMandate}
         });
 
         const messages = [
-            { role: 'system', content: systemPrompt + finalMandate },
+            { role: 'system', content: systemPrompt + (sidecarMode
+                ? '\n\n[SIDECAR NARRATOR SAFETY]\nThe narrator is not a state reducer. Write visible prose and the hidden scene handoff only. Do not emit a legacy receipt, tool call, automatic tick, arrival, relationship change, schedule move, or inferred knowledge. Sidecar reconciles what was authored after this response.'
+                : finalMandate) },
             ...historyToSend
         ];
 
@@ -26049,7 +28964,9 @@ ${modularMandate}
             const mandate = command === "init" ? "Introduce the world and current scene."
                 : command === "continue" ? "Continue the scene naturally from exactly where the narration left off. Do not repeat or summarize previous text."
                 : `Describe the transition to ${locName} and the new surroundings. Focus on atmosphere and sensory details.`;
-            messages.push({ role: 'user', content: `[MANDATE: Respond with rich narrative prose only. No OOC talk.]\n\n${mandate}` });
+            messages.push({ role: 'user', content: sidecarMode
+                ? `[MANDATE: Respond with rich visible narrative prose, then the required hidden scene_handoff. No visible OOC talk and no state tool call.]\n\n${mandate}`
+                : `[MANDATE: Respond with rich narrative prose only. No OOC talk.]\n\n${mandate}` });
         }
 
         // Reroll Anti-Cache & Variance Directive
@@ -26731,6 +29648,13 @@ ${modularMandate}
             if (world.includeReasoning) requestBody.include_reasoning = true;
         }
 
+        if (sidecarMode) {
+            logSidecarConsoleTrace('Narrator request', {
+                model: modelId,
+                request: safeJsonClone(requestBody)
+            });
+        }
+
         let questFallbackMode = false;
         turnCallAudit.main++;
         let response = await fetch(apiBase() + '/chat/completions', {
@@ -26889,20 +29813,48 @@ ${modularMandate}
         let sidecarReceipt = null;
         let sidecarPacket = null;
         let sidecarTurnId = null;
+        let sidecarFailure = null;
         if (sidecarMode) {
+            logSidecarConsoleTrace('Narrator response', {
+                model: modelId,
+                assistant: fullText,
+                toolCalls: toolCalls.map(call => safeJsonClone(call))
+            });
+            // The Sidecar debug setting promises the complete two-call trail,
+            // not merely the second reconciliation request. Keep the exact
+            // narrator request assembled for this accepted take and the raw
+            // streamed reply (including its hidden handoff) together before
+            // presentation strips the handoff from visible prose.
+            recordSidecarTrace(world, sess, {
+                kind: 'narrator', model: modelId,
+                request: safeJsonClone({
+                    model: requestBody.model,
+                    messages: requestBody.messages,
+                    stream: requestBody.stream,
+                    max_tokens: requestBody.max_tokens,
+                    temperature: requestBody.temperature
+                }),
+                reply: { content: fullText, toolCalls: toolCalls.map(call => safeJsonClone(call)) }
+            });
             const narratorOutput = extractSidecarNarratorHandoff(fullText);
             fullText = narratorOutput.narration;
             sidecarHandoff = narratorOutput.handoff;
             receiptContext.narrativeText = fullText;
             if (dmTypingLabel) dmTypingLabel.textContent = 'GM is writing handoff notes…';
             try {
-                if (!narratorOutput.complete) throw new Error('Narrator omitted its required scene handoff.');
-                if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is reconciling world state…';
+                if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is reading the authored beat…';
                 turnCallAudit.sidecar = (turnCallAudit.sidecar || 0) + 1;
                 const reconciled = await runSidecarReconciliation(world, sess, {
                     handoff: narratorOutput.handoff, narration: fullText,
                     playerInput: submittedInput || userInput, receiptContext,
-                    commitTool: sidecarCommitTool, signal: controller.signal
+                    commitTool: sidecarCommitTool, signal: controller.signal,
+                    handoffComplete: narratorOutput.complete,
+                    onStage: stage => {
+                        if (!dmTypingLabel) return;
+                        dmTypingLabel.textContent = stage === 'reading'
+                            ? 'Sidecar is reading the authored beat…'
+                            : 'Sidecar is reconciling world state…';
+                    }
                 });
                 sidecarReceipt = reconciled.receipt;
                 sidecarPacket = reconciled.packet;
@@ -26914,9 +29866,29 @@ ${modularMandate}
             } catch (sidecarError) {
                 if (sidecarError?.name === 'AbortError') throw sidecarError;
                 sidecarReconciliationFailed = true;
-                queueSidecarQuestion(world, sess,
-                    'The latest narration was preserved, but Sidecar could not reconcile its state update. Review or clarify the beat before relying on a state change.',
-                    `${sidecarError.message || sidecarError}\n\n${narratorOutput.handoff || fullText}`);
+                let failedAttempt = sidecarError.sidecarAttempt || null;
+                if (!failedAttempt) {
+                    const attempt = beginSidecarTurnAttempt(world, sess, {
+                        handoff: narratorOutput.handoff, narration: fullText,
+                        playerInput: submittedInput || userInput,
+                        preFrame: buildWorldSceneFrame(world, sess),
+                        preClock: buildSidecarClockEvidence(world, sess),
+                        model: modelId,
+                        provider: normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter'),
+                        handoffComplete: narratorOutput.complete
+                    });
+                    failedAttempt = failSidecarTurnAttempt(world, sess, attempt, sidecarError, {
+                        code: narratorOutput.complete ? 'sidecar_reconciliation_failed' : 'narrator_handoff_missing',
+                        model: modelId,
+                        provider: normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter')
+                    });
+                }
+                sidecarPacket = failedAttempt.packet || sess.sidecar?.packet || null;
+                sidecarTurnId = failedAttempt.turnId || null;
+                sidecarFailure = failedAttempt.failure || {
+                    code: 'sidecar_reconciliation_failed',
+                    message: sidecarError.message || String(sidecarError)
+                };
                 recordSidecarTrace(world, sess, { kind: 'reconciliation_failure', error: sidecarError.message || String(sidecarError) });
                 console.warn('Horde Sidecar: reconciliation failed; no disputed state was committed.', sidecarError);
             }
@@ -27413,10 +30385,26 @@ ${modularMandate}
                     kernelMode: normalizeWorldKernelConfig(world).enabled ? 'scene_kernel' : 'legacy'
                 } : undefined,
                 sidecarBackstage: sidecarMode ? {
+                    status: sidecarReconciliationFailed ? 'reconciliation_failed' : 'committed',
+                    handoffComplete: sidecarTurnId
+                        ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.handoffComplete !== false
+                        : !!sidecarHandoff,
                     handoff: sidecarHandoff,
+                    reader: sidecarTurnId ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.reader : null,
                     receipt: sidecarReceipt,
                     packet: sidecarPacket || sess.sidecar?.packet || null,
+                    failure: sidecarFailure,
+                    preFrame: sidecarTurnId ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.preFrame : null,
+                    postFrame: sidecarTurnId ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.postFrame : null,
+                    audit: sidecarTurnId ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.audit : null,
                     questionCount: (sess.sidecar?.questions || []).filter(question => question.status === 'open').length,
+                    memoryJobs: (sess.sidecar?.jobs || []).reduce((summary, job) => {
+                        if (job.status === 'completed') summary.completed++;
+                        else if (job.status === 'running') summary.running++;
+                        else if (['blocked', 'failed'].includes(job.status)) summary.failed++;
+                        else if (['queued', 'dependency_waiting'].includes(job.status)) summary.queued++;
+                        return summary;
+                    }, { queued: 0, running: 0, completed: 0, failed: 0 }),
                     unresolved: sidecarReconciliationFailed
                 } : undefined,
                 sidecarTurnId: sidecarTurnId || undefined,
@@ -27429,6 +30417,22 @@ ${modularMandate}
                 if (sidecarTurn) {
                     sidecarTurn.timelineMessageId = dmMsg?.id || '';
                     sidecarTurn.takeIndex = dmMsg?.currentVersion ?? 0;
+                }
+                const memoryRecord = sess.sidecar?.memoryGraph?.worldHistory?.find(record => record.turnId === sidecarTurnId);
+                if (memoryRecord) {
+                    memoryRecord.timelineMessageId = dmMsg?.id || '';
+                    memoryRecord.takeIndex = dmMsg?.currentVersion ?? 0;
+                }
+            }
+            if (sidecarMode && sess.sidecar) {
+                // Reroll selection happens while addWorldMessage archives the
+                // previous Take. Rebuild afterward so the next-turn packet can
+                // never retain a superseded Take's failed handoff.
+                sidecarPacket = buildSidecarScenePacket(world, sess, sidecarHandoff);
+                sess.sidecar.packet = sidecarPacket;
+                if (dmMsg?.sidecarBackstage) dmMsg.sidecarBackstage.packet = sidecarPacket;
+                if (Array.isArray(dmMsg?.sidecarBackstages) && dmMsg.currentVersion != null) {
+                    dmMsg.sidecarBackstages[dmMsg.currentVersion] = dmMsg.sidecarBackstage;
                 }
             }
             const postSnapshot = captureWorldTurnState(world, sess);
@@ -27464,9 +30468,13 @@ ${modularMandate}
         } else if (command === "init") {
             // INIT RESCUE: If the AI failed to introduce the world, provide a basic descriptive fallback
             const fallbackIntro = `You arrive at ${locName}. ${locDesc}\n\n[SYSTEM: The AI failed to generate a custom introduction. You can now take your first action.]`;
-            const fallbackCommit = sess.lastTurnAudit
+            const openingSidecar = sidecarMode
+                ? await bootstrapSidecarOpeningTurn(world, sess, fallbackIntro)
+                : null;
+            const fallbackCommit = openingSidecar?.committed || (sess.lastTurnAudit
                 ? { audit: sess.lastTurnAudit }
-                : commitEngineWorldNoOp(world, sess, 'engine_intro', 'Engine fallback introduction.');
+                : commitEngineWorldNoOp(world, sess, sidecarMode ? 'sidecar_opening_fallback' : 'engine_intro',
+                    sidecarMode ? 'Opening Sidecar reconciliation was unavailable; state was frozen.' : 'Engine fallback introduction.'));
             const fallbackMsg = addWorldMessage('dm', fallbackIntro, {
                 location: sess.playerLocation, turnSnapshot, stateSource: 'engine_intro',
                 worldAudit: {
@@ -31527,7 +34535,7 @@ function runLivingWorldTick(world, sess) {
     };
 }
 
-function getLivingWorldPrompt(world, sess, presentNPCs = []) {
+function getLivingWorldPrompt(world, sess, presentNPCs = [], options = {}) {
     const modules = normalizeWorldGameRules(world).modules;
     if (!modules.livingWorld) return '';
     normalizeLivingWorldState(world, sess);
@@ -31550,7 +34558,9 @@ function getLivingWorldPrompt(world, sess, presentNPCs = []) {
                 .filter(entity => entity.type === 'npc' && entity.vendorFor === sess.playerLocation
                     && isVisibleToSession(entity, sess) && isNpcActive(sess.entityStates?.[entity.id]))
                 .map(entity => entity.name);
-            lines.push(`Local market: ${stock}.${vendors.length ? ` Traded by ${vendors.join(', ')}.` : ''} Record any purchase or sale with the transactions field so the money and goods actually move.`);
+            lines.push(`Local market: ${stock}.${vendors.length ? ` Traded by ${vendors.join(', ')}.` : ''} ${options.sidecar === true
+                ? 'Author any completed purchase or sale clearly and identify it in the hidden handoff; Sidecar owns the canonical transaction.'
+                : 'Record any purchase or sale with the transactions field so the money and goods actually move.'}`);
         }
     }
     const upcoming = sess.scheduledEvents.filter(event => event.status === 'scheduled')
@@ -35561,6 +38571,12 @@ function setupVectorMemoryViewerEvents() {
     
     if (worldOpenBtn) {
         worldOpenBtn.onclick = () => {
+            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            const sess = getCurrentWorldSession();
+            if (world && sess && window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
+                const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+                window.HordeSidecarMemoryGraph?.backfillWorldHistory?.(protocol, sess);
+            }
             currentVectorTab = 'episodic';
             overlay.classList.remove('hidden');
             updateVectorTabUI();
@@ -35625,11 +38641,11 @@ function setupVectorMemoryViewerEvents() {
             if (!sess) return showToast('No active world session.', 'error');
             if (currentVectorTab === 'episodic') {
                 if (window.HordeSidecarHooks?.isSidecarWorld?.(state.worlds.find(world => world.id === state.activeWorldId), sess)) {
-                    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol);
-                    if (graph) { graph.worldHistory = []; graph.episodes = []; graph.scenes = []; graph.sequences = []; graph.lastEpisodeTurnCount = 0; graph.locationReferences = []; graph.cognition = []; sess.sidecarProtocol.jobs = []; }
+                    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
+                    if (graph) { graph.worldHistory = []; graph.episodes = []; graph.scenes = []; graph.sequences = []; graph.lastEpisodeTurnCount = 0; graph.locationReferences = []; graph.cognition = []; sess.sidecar.jobs = []; }
                 } else sess.episodicMemories = [];
             } else {
-                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol);
+                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar);
                 if (!graph) return showToast('Sidecar memory is unavailable for this timeline.', 'error');
                 if (currentVectorTab === 'cognition') {
                     const characterId = characterFilter?.value || '';
@@ -35648,7 +38664,7 @@ function setupVectorMemoryViewerEvents() {
         vectorizeListedBtn.onclick = async () => {
             const isWorld = !document.getElementById('world-play-view').classList.contains('hidden');
             const sess = getCurrentWorldSession();
-            const graph = isWorld && window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+            const graph = isWorld && window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
             if (!graph || !['episodic', 'cognition', 'locations', 'unresolved'].includes(currentVectorTab)) {
                 return showToast('Choose a Sidecar memory tab first.', 'info');
             }
@@ -35709,7 +38725,8 @@ function setupVectorMemoryViewerEvents() {
                     const sess = getCurrentWorldSession();
                     if (!sess || !world) throw new Error('No active world session');
                     if (window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-                        await runSidecarBackgroundMemoryJobs(world, sess);
+                        const memory = effectiveSidecarMemoryConfig(world);
+                        await runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'manual_force_archive', priority: 'manual' });
                         renderVectorMemoryList();
                         return;
                     }
@@ -35772,7 +38789,7 @@ function updateVectorTabUI() {
     const selected = characterFilter.value;
     const sess = getCurrentWorldSession();
     const world = state.worlds.find(w => w.id === state.activeWorldId);
-    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+    const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
     const ids = [...new Set((graph?.cognition || []).map(record => record.characterId).filter(Boolean))];
     const names = new Map((world?.entities || []).map(entity => [entity.id, entity.name || entity.id]));
     characterFilter.innerHTML = '<option value="">All characters</option>' + ids.map(id =>
@@ -35798,7 +38815,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             const sess = getCurrentWorldSession();
             const world = state.worlds.find(item => item.id === state.activeWorldId);
             const graph = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)
-                ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecarProtocol) : null;
+                ? window.HordeSidecarMemoryGraph?.graph?.(sess.sidecar) : null;
             if (graph) {
                 currentEpisodicStore = [...graph.worldHistory, ...graph.episodes, ...(graph.scenes || []), ...(graph.sequences || [])];
                 candidates = currentEpisodicStore.filter(record => record.status === 'active').map(record => ({
@@ -35819,7 +38836,7 @@ async function renderVectorMemoryList(filterQuery = "") {
         }
     } else if (currentVectorTab === 'cognition' && isWorld) {
         const sess = getCurrentWorldSession();
-        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
         const characterId = document.getElementById('vector-character-filter')?.value || '';
         candidates = (graph?.cognition || [])
             .filter(memory => memory.status !== 'superseded' && (!characterId || memory.characterId === characterId))
@@ -35835,7 +38852,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             source: 'location', ref: location, type: location.mapType || 'location', status: 'canonical', importance: 0.8, sourceSessionId: location.id }));
     } else if (currentVectorTab === 'unresolved' && isWorld) {
         const sess = getCurrentWorldSession();
-        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
         candidates = (graph?.locationReferences || [])
             .filter(reference => !reference.locationId && reference.status !== 'resolved')
             .map(reference => ({
@@ -35921,7 +38938,7 @@ async function renderVectorMemoryList(filterQuery = "") {
     const statusEl = document.getElementById('vector-memory-status');
     if (statusEl && isWorld) {
         const sess = getCurrentWorldSession();
-        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+        const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
         const scoped = currentVectorTab === 'cognition' && document.getElementById('vector-character-filter')?.value
             ? candidates.filter(candidate => candidate.ref?.characterId === document.getElementById('vector-character-filter').value) : candidates;
         const missing = scoped.filter(candidate => !Array.isArray(candidate.ref?.embedding)).length;
@@ -36133,7 +39150,7 @@ async function renderVectorMemoryList(filterQuery = "") {
             const delBtn = card.querySelector('.sidecar-memory-del-btn');
             delBtn.onclick = async () => {
                 const sess = getCurrentWorldSession();
-                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecarProtocol);
+                const graph = window.HordeSidecarMemoryGraph?.graph?.(sess?.sidecar);
                 if (!graph) return;
                 if (currentVectorTab === 'cognition') {
                     graph.cognition = graph.cognition.filter(record => record !== item.ref);
@@ -37456,7 +40473,7 @@ function normalizeCompanion(raw) {
         intimacyBoundaries: String(c.intimacyBoundaries || '').trim().slice(0, 2400),
         textProvider: ['provider', ...TEXT_PROVIDER_IDS].includes(c.textProvider)
             ? c.textProvider : 'provider',
-        imageSource: ['provider', 'openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(c.imageSource)
+        imageSource: ['provider', 'openrouter', 'gptproto', 'nanogpt', 'fal', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(c.imageSource)
             ? c.imageSource : 'provider',
         imageModel: typeof c.imageModel === 'string' ? c.imageModel : '',
         mcpImageTool: typeof c.mcpImageTool === 'string' ? c.mcpImageTool.trim().slice(0, 300) : '',
@@ -37472,6 +40489,8 @@ function normalizeCompanion(raw) {
         allowVideoClips: c.allowVideoClips === true,
         videoProvider: normalizedVideoProviderId(c.videoProvider),
         videoModel: String(c.videoModel || '').trim().slice(0, 300),
+        videoFallbackModel: String(c.videoFallbackModel || '').trim().slice(0, 300),
+        videoFallbackModel2: String(c.videoFallbackModel2 || '').trim().slice(0, 300),
         videoResolution: ['480p', '720p', '1080p'].includes(c.videoResolution) ? c.videoResolution : '480p',
         videoDuration: livingClamp(Number(c.videoDuration) || 5, 2, 30),
         videoAudio: c.videoAudio !== false,
@@ -41501,6 +44520,25 @@ async function submitCompanionVideoJob(companion, job) {
     job.prompt = companionVideoPrompt(companion, job);
     job.status = 'queued'; job.progress = 3; job.updatedAt = Date.now(); job.error = '';
     renderCompanionSocialPanel(companion); await saveState();
+    if (provider === 'fal') {
+        const fallback = String(companion.videoFallbackModel || '').trim();
+        const fallback2 = String(companion.videoFallbackModel2 || '').trim();
+        const models = [job.model, fallback, fallback2].filter((item, index, list) => item && list.indexOf(item) === index);
+        const submitted = await mcpBridgeRequest('/fal/video/jobs', {
+            method: 'POST', timeoutMs: 15000,
+            body: {
+                apiKey: state.falApiKey, models, prompt: job.prompt,
+                duration: job.duration,
+                resolution: job.resolution === '720p' ? '768P' : job.resolution.toUpperCase(),
+                aspectRatio: '9:16', imageDataUrl: reference,
+                enableSafetyChecker: state.globalSettings.falSafetyChecker !== false
+            }
+        });
+        job.providerJobId = submitted.jobId;
+        job.status = 'generating'; job.progress = 5; job.updatedAt = Date.now();
+        await saveState(); renderCompanionSocialPanel(companion);
+        return pollCompanionFalVideoJob(companion, job);
+    }
     let endpoint = '';
     let body = {};
     if (provider === 'openrouter') {
@@ -41535,6 +44573,27 @@ async function submitCompanionVideoJob(companion, job) {
     job.status = 'generating'; job.progress = Math.max(5, Number(data?.progress) || 5); job.updatedAt = Date.now();
     await saveState(); renderCompanionSocialPanel(companion);
     return pollCompanionVideoJob(companion, job);
+}
+
+async function pollCompanionFalVideoJob(companion, job) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20 * 60 * 1000 && ['queued', 'generating'].includes(job.status)) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const result = await mcpBridgeRequest(`/fal/video/jobs/${encodeURIComponent(job.providerJobId)}`, { timeoutMs: 15000 });
+        job.model = result.currentModel || job.model;
+        job.progress = Math.min(94, job.progress + (result.status === 'running' ? 3 : 1));
+        job.updatedAt = Date.now();
+        if (result.status === 'completed') {
+            job.model = result.result?.model || job.model;
+            job.duration = Number(result.result?.duration) || job.duration;
+            return completeCompanionVideoJob(companion, job, `${mcpBridgeBase()}${result.result?.mediaUrl || ''}`);
+        }
+        if (['failed', 'cancelled'].includes(result.status)) {
+            throw new Error(result.error || `Fal video generation ${result.status}.`);
+        }
+        renderCompanionSocialPanel(companion);
+    }
+    throw new Error('Fal video generation timed out. The bridge retained the job for recovery.');
 }
 
 async function completeCompanionVideoJob(companion, job, outputUrl) {
@@ -42009,6 +45068,11 @@ const COMPANION_IMAGE_MODEL_FALLBACKS = [
     { id: 'black-forest-labs/flux-1-schnell', name: 'FLUX.1 Schnell' },
     { id: 'stabilityai/stable-diffusion-3.5-large', name: 'Stable Diffusion 3.5 Large' }
 ];
+const FAL_IMAGE_MODELS = Object.freeze([
+    { id: 'fal-ai/flux/schnell', name: 'FLUX.1 Schnell · fastest · $0.003/MP', architecture: { input_modalities: ['text'], output_modalities: ['image'] }, pricing: [{ billable: 'output_image', unit: 'image', cost_usd: 0.003 }] },
+    { id: 'fal-ai/flux/dev/image-to-image', name: 'FLUX.1 Dev · identity/reference', architecture: { input_modalities: ['text', 'image'], output_modalities: ['image'] }, supported_parameters: { input_references: { type: 'range', min: 1, max: 1 }, aspect_ratio: { type: 'enum', values: ['1:1', '16:9', '9:16', '4:3', '3:4'] } } },
+    { id: 'fal-ai/wan-25-preview/image-to-image', name: 'Wan 2.5 · reference · $0.05/image', architecture: { input_modalities: ['text', 'image'], output_modalities: ['image'] }, supported_parameters: { input_references: { type: 'range', min: 1, max: 1 }, aspect_ratio: { type: 'enum', values: ['auto', '1:1', '16:9', '9:16'] } }, pricing: [{ billable: 'output_image', unit: 'image', cost_usd: 0.05 }] }
+]);
 const GPTPROTO_IMAGE_MODELS = Object.freeze([
     {
         id: 'gpt-image-2', name: 'GPT Image 2',
@@ -42129,6 +45193,7 @@ function gptProtoImageEndpoint(modelId, usedReference = false) {
 }
 
 function companionImageModelFallback(providerId = state.globalSettings.apiProvider) {
+    if (String(providerId || '').toLowerCase() === 'fal') return 'fal-ai/flux/schnell';
     const provider = normalizedProviderId(providerId);
     if (provider === 'gptproto') return GPTPROTO_IMAGE_MODELS[0].id;
     if (provider === 'nanogpt') return 'hidream';
@@ -42283,12 +45348,17 @@ function imageParameterValueForDescriptor(key, value, descriptor) {
 }
 
 async function getCompanionOutputModels(modality, force = false, providerId = state.globalSettings.apiProvider) {
-    const provider = normalizedProviderId(providerId);
-    const base = providerApiBase(provider);
+    const provider = String(providerId || '').toLowerCase() === 'fal' ? 'fal' : normalizedProviderId(providerId);
+    const base = provider === 'fal' ? 'fal://local-bridge' : providerApiBase(provider);
     const key = `${base}|${modality}`;
     if (force) companionOutputModelCache.delete(key);
     if (companionOutputModelCache.has(key)) return companionOutputModelCache.get(key);
     let models = [];
+    if (provider === 'fal') {
+        models = modality === 'image' ? FAL_IMAGE_MODELS.map(model => safeJsonClone(model)) : [];
+        companionOutputModelCache.set(key, models);
+        return models;
+    }
     try {
         const queryModality = modality === 'audio' ? 'speech' : modality;
         const catalogPath = provider === 'nanogpt'
@@ -42386,7 +45456,7 @@ function isImageCapableModel(model) {
 }
 
 function rankCompanionImageModels(models, providerId = state.globalSettings.apiProvider) {
-    const provider = normalizedProviderId(providerId);
+    const provider = String(providerId || '').toLowerCase() === 'fal' ? 'fal' : normalizedProviderId(providerId);
     const source = provider === 'gptproto'
         ? (Array.isArray(models) ? models : []).map(enrichGptProtoImageModel)
         : provider === 'nanogpt'
@@ -42435,6 +45505,7 @@ function companionImageModelInfo(modelId) {
 }
 
 async function getCompanionImageEndpoints(modelId, force = false, providerId = state.globalSettings.apiProvider) {
+    if (String(providerId || '').toLowerCase() === 'fal') return [];
     const provider = normalizedProviderId(providerId);
     const id = String(modelId || '').trim();
     if (!id || provider !== 'openrouter') return [];
@@ -42667,7 +45738,9 @@ function buildCompanionImageRequest(companion, sceneDescription, options = {}) {
         prompt: buildCompanionPhotoPrompt(companion, sceneDescription, { ...options, hasReference: includeReference })
     };
     if (includeReference) {
-        if (provider === 'nanogpt') {
+        if (provider === 'fal') {
+            body.imageDataUrl = companion.basePhoto;
+        } else if (provider === 'nanogpt') {
             // NanoGPT accepts browser-local identity references directly as a
             // data URL. This avoids a public image host and keeps the photo on
             // the user's device until the generation request is submitted.
@@ -42896,12 +45969,26 @@ async function pollGptProtoImagePrediction(data, headers, signal, requestedMedia
 }
 
 async function requestCompanionPhoto(body, providerId = state.globalSettings.apiProvider) {
-    const provider = normalizedProviderId(providerId);
+    const provider = String(providerId || '').toLowerCase() === 'fal' ? 'fal' : normalizedProviderId(providerId);
     const catalogModel = companionImageModelCatalog.find(item => item.id === body.model);
     const usedReference = !!body.input_references?.length || !!body.image
         || !!body.imageDataUrl || !!body.imageDataUrls?.length;
     if (usedReference && catalogModel?.supportsReference === false) {
-        throw new Error(`${catalogModel.name} does not advertise reference-image input. Choose a model marked “reference ready” in Virtual Human Studio.`);
+        if (provider !== 'fal') throw new Error(`${catalogModel.name} does not advertise reference-image input. Choose a model marked “reference ready” in Virtual Human Studio.`);
+    }
+    if (provider === 'fal') {
+        if (!state.falApiKey) throw new Error('Add a Fal API key in Settings before generating images.');
+        const result = await mcpBridgeRequest('/fal/image/generate', {
+            method: 'POST', timeoutMs: 210000,
+            body: {
+                apiKey: state.falApiKey, model: body.model, prompt: body.prompt,
+                imageDataUrl: body.imageDataUrl || '',
+                aspectRatio: body.aspect_ratio || (String(body.size || '').includes('16_9') ? '16:9' : '1:1'),
+                enableSafetyChecker: state.globalSettings.falSafetyChecker !== false
+            }
+        });
+        if (!result.image) throw new Error('Fal completed without returning an image.');
+        return normalizeGeneratedImageSource(result.image);
     }
     const gptprotoProfile = provider === 'gptproto'
         ? gptProtoImageReferenceProfile({ id: body.model, ...(catalogModel || {}) }) : null;
@@ -43244,6 +46331,7 @@ function worldVisualProvider(world) {
     const presentation = normalizeWorldPresentation(world);
     const requested = presentation.imageProvider === 'inherit'
         ? normalizedProviderId(state.globalSettings.apiProvider) : presentation.imageProvider;
+    if (requested === 'fal') return 'fal';
     const provider = normalizedProviderId(requested);
     return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(provider) ? provider : 'openrouter';
 }
@@ -43291,8 +46379,8 @@ async function makeWorldVisualPortable(source, maxDimension, quality) {
 async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label } = {}) {
     const presentation = normalizeWorldPresentation(world);
     const provider = worldVisualProvider(world);
-    if (!['openrouter', 'gptproto', 'nanogpt'].includes(provider)) {
-        throw new Error('Choose OpenRouter, GPTProto or NanoGPT under World Studio → Visuals, or upload an image manually.');
+    if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
+        throw new Error('Choose OpenRouter, GPTProto, NanoGPT or Fal under World Studio → Visuals, or upload an image manually.');
     }
     if (!providerHasCredentials(provider)) {
         throw new Error(`Add a ${providerDisplayName(provider)} API key in Settings before generating world visuals.`);
@@ -43314,6 +46402,10 @@ async function generateWorldVisual(world, prompt, { aspectRatio = '16:9', maxDim
     };
     const body = applyCompanionImageParameters({ model, prompt }, requestConfig,
         companionImageCapabilities(modelInfo, endpoint), endpoint);
+    if (provider === 'fal') {
+        body.aspect_ratio = aspectRatio;
+        body.enable_safety_checker = state.globalSettings.falSafetyChecker !== false;
+    }
     const generated = await requestCompanionPhoto(body, provider);
     const portable = await makeWorldVisualPortable(generated, maxDimension, quality);
     return addWorldMediaAsset(world, portable, kind, label, { generated: true, model, prompt });
@@ -44817,6 +47909,7 @@ async function getSettingsEmbeddingCatalog() {
 function setupCatalogModelSearchFields() {
     const definitions = [
         { inputId: 'w-agent-model', resultsId: 'w-agent-model-results', blankLabel: 'Use this world’s DM model', kind: 'text' },
+        { inputId: 'video-world-director-model', resultsId: 'video-world-director-model-results', kind: 'text', providerAware: true },
         { inputId: 'global-default-model', resultsId: 'global-default-model-results', kind: 'text' },
         { inputId: 'global-consolidation-model', resultsId: 'global-consolidation-model-results', kind: 'text' },
         { inputId: 'global-embedding-model', resultsId: 'global-embedding-model-results', kind: 'embedding' },
@@ -44829,7 +47922,7 @@ function setupCatalogModelSearchFields() {
         const render = async () => {
             let rawModels = [];
             try {
-                rawModels = definition.inputId === 'global-default-model'
+                rawModels = definition.inputId === 'global-default-model' || definition.providerAware
                     ? await getSettingsProviderCatalog()
                     : definition.kind === 'embedding'
                         ? await getSettingsEmbeddingCatalog()
@@ -45029,8 +48122,9 @@ function renderIncludedHumansCatalog() {
 
 function openCompanionStudio(id) {
     state.editingCompanionId = id;
+    persistWorkspaceSoon();
     renderCompanionStudioForm();
-    activateCompanionStudioTab('cs-overview');
+    activateCompanionStudioTab((workspaceRestoring && state.lastCompanionStudioTab) || 'cs-overview');
 }
 
 function resetNewCompanionStudioState() {
@@ -45090,16 +48184,34 @@ function setupCompanionStudioTabs() {
         if (!companion) return;
         companion.videoProvider = normalizedVideoProviderId(videoProvider.value);
         companion.videoModel = '';
+        companion.videoFallbackModel = companion.videoProvider === 'fal' ? 'alibaba/wan-3.0' : '';
+        companion.videoFallbackModel2 = '';
         renderCompanionVideoStudio(companion, true);
     };
     const videoModel = document.getElementById('cs-video-model');
     if (videoModel) videoModel.onchange = () => {
         const companion = getCompanion(state.editingCompanionId);
-        if (companion) companion.videoModel = videoModel.value;
+        if (!companion) return;
+        companion.videoModel = videoModel.value;
+        renderCompanionVideoStudio(companion);
+    };
+    const videoFallbackModel = document.getElementById('cs-video-fallback-model');
+    if (videoFallbackModel) videoFallbackModel.onchange = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.videoFallbackModel = videoFallbackModel.value;
+        renderCompanionVideoStudio(companion);
+    };
+    const videoFallbackModel2 = document.getElementById('cs-video-fallback-model-2');
+    if (videoFallbackModel2) videoFallbackModel2.onchange = () => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.videoFallbackModel2 = videoFallbackModel2.value;
     };
 }
 
 function activateCompanionStudioTab(tabName) {
+    state.lastCompanionStudioTab = tabName || null;
+    persistWorkspaceSoon();
     document.querySelectorAll('.companion-studio-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
     });
@@ -45119,12 +48231,17 @@ async function renderCompanionVideoStudio(companion, refreshModels = false) {
     const toggle = document.getElementById('cs-video-enabled');
     const provider = document.getElementById('cs-video-provider');
     const model = document.getElementById('cs-video-model');
+    const fallbackModel = document.getElementById('cs-video-fallback-model');
+    const fallbackModel2 = document.getElementById('cs-video-fallback-model-2');
     const status = document.getElementById('cs-video-model-status');
     if (!toggle || !provider || !model) return;
     toggle.setAttribute('aria-pressed', String(companion.allowVideoClips));
     toggle.classList.toggle('active', companion.allowVideoClips);
     document.getElementById('cs-video-enabled-label').textContent = companion.allowVideoClips ? 'Clips on' : 'Clips off';
     provider.value = normalizedVideoProviderId(companion.videoProvider);
+    const falFallbacksEnabled = provider.value === 'fal';
+    if (fallbackModel) fallbackModel.disabled = !falFallbacksEnabled;
+    if (fallbackModel2) fallbackModel2.disabled = !falFallbacksEnabled;
     document.getElementById('cs-video-resolution').value = companion.videoResolution;
     document.getElementById('cs-video-duration').value = String(companion.videoDuration);
     document.getElementById('cs-video-reference').value = companion.videoReferencePolicy;
@@ -45140,6 +48257,22 @@ async function renderCompanionVideoStudio(companion, refreshModels = false) {
     }
     model.value = companion.videoModel || models[0]?.id || '';
     if (!companion.videoModel && model.value) companion.videoModel = model.value;
+    if (fallbackModel) {
+        fallbackModel.innerHTML = '<option value="">No automatic fallback</option>' + models
+            .filter(item => item.id !== model.value)
+            .map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || item.id)}</option>`).join('');
+        fallbackModel.value = models.some(item => item.id === companion.videoFallbackModel)
+            ? companion.videoFallbackModel : '';
+        companion.videoFallbackModel = fallbackModel.value;
+    }
+    if (fallbackModel2) {
+        fallbackModel2.innerHTML = '<option value="">None</option>' + models
+            .filter(item => ![model.value, fallbackModel?.value].includes(item.id))
+            .map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || item.id)}</option>`).join('');
+        fallbackModel2.value = models.some(item => item.id === companion.videoFallbackModel2)
+            ? companion.videoFallbackModel2 : '';
+        companion.videoFallbackModel2 = fallbackModel2.value;
+    }
     status.textContent = `${models.length} reference-capable model${models.length === 1 ? '' : 's'} · ${videoProviderDisplayName(provider.value)}${videoProviderHasCredentials(provider.value) ? ' connected' : ' key required before generation'}.`;
 }
 
@@ -45587,6 +48720,10 @@ function commitCompanionStudioForm() {
     if (videoProvider) companion.videoProvider = normalizedVideoProviderId(videoProvider.value);
     const videoModel = document.getElementById('cs-video-model');
     if (videoModel) companion.videoModel = videoModel.value.trim().slice(0, 300);
+    const videoFallbackModel = document.getElementById('cs-video-fallback-model');
+    if (videoFallbackModel) companion.videoFallbackModel = videoFallbackModel.value.trim().slice(0, 300);
+    const videoFallbackModel2 = document.getElementById('cs-video-fallback-model-2');
+    if (videoFallbackModel2) companion.videoFallbackModel2 = videoFallbackModel2.value.trim().slice(0, 300);
     const videoResolution = document.getElementById('cs-video-resolution');
     if (videoResolution) companion.videoResolution = videoResolution.value;
     const videoDuration = document.getElementById('cs-video-duration');
@@ -46274,7 +49411,7 @@ function companionMcpTool(companion) {
 }
 
 function updateCompanionImageSourceUI(companion) {
-    const source = ['provider', 'openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(companion.imageSource)
+    const source = ['provider', 'openrouter', 'gptproto', 'nanogpt', 'fal', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(companion.imageSource)
         ? companion.imageSource : 'provider';
     const isMcp = ['higgsfield', 'magnific'].includes(source);
     const isComfy = source === 'comfyui';
@@ -46291,6 +49428,7 @@ function updateCompanionImageSourceUI(companion) {
         : source === 'openrouter' ? 'OpenRouter'
         : source === 'gptproto' ? 'GPTProto'
         : source === 'nanogpt' ? 'NanoGPT'
+        : source === 'fal' ? 'Fal'
         : source === 'local' ? providerDisplayName(companionImageProviderId(companion))
         : source === 'local_image' ? 'local image server'
         : source === 'comfyui' ? `ComfyUI · ${activeComfyWorkflowProfile()?.name || 'active workflow'}`
@@ -47755,7 +50893,7 @@ function setupCompanionsLogic() {
     document.getElementById('cs-image-source').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
-        companion.imageSource = ['openrouter', 'gptproto', 'nanogpt', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(e.target.value)
+        companion.imageSource = ['openrouter', 'gptproto', 'nanogpt', 'fal', 'local', 'local_image', 'comfyui', 'higgsfield', 'magnific'].includes(e.target.value)
             ? e.target.value : 'provider';
         companion.imageModel = '';
         companion.imageProviderTag = '';
