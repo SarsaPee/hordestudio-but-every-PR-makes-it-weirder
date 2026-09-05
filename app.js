@@ -18321,7 +18321,7 @@ function renderRoleplayOSConfigEditor(world) {
     const stateBadge = document.getElementById('w-roleplay-os-state');
     if (stateBadge) {
         const customCount = Object.keys(isPlainObject(stored.choices) ? stored.choices : {}).filter(key => key !== 'state_mode').length;
-        stateBadge.textContent = customCount ? 'Customized &middot; ' + customCount + ' choice' + (customCount === 1 ? '' : 's') : 'Defaults active';
+        stateBadge.textContent = customCount ? 'Customized · ' + customCount + ' choice' + (customCount === 1 ? '' : 's') : 'Defaults active';
     }
 
     // Choice surface: the source's own choiceBlocks when a source resolves,
