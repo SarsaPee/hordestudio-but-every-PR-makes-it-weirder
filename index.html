@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260905-v1700-ff54-sidecar-v4">
+    <link rel="stylesheet" href="style.css?v=20260905-v1700-visual-pipelines-v2">
 </head>
 <body>
 <div id="app">
@@ -974,8 +974,8 @@
                             </div>
                             <div class="form-row">
                                 <div class="form-col">
-                                    <label class="form-label">Image Provider</label>
-                                    <select id="w-visual-image-provider" class="form-select">
+                                    <label class="form-label">New image provider <span class="help-glyph" title="Used when generating a new portrait, location visual or map skin from text alone. This pipeline never requires an existing image.">?</span></label>
+                                    <select id="w-visual-new-image-provider" class="form-select">
                                         <option value="inherit">Use provider from Settings</option>
                                         <option value="openrouter">OpenRouter</option>
                                         <option value="gptproto">GPTProto</option>
@@ -984,23 +984,49 @@
                                     </select>
                                 </div>
                                 <div class="form-col form-col-grow">
-                                    <label class="form-label">Default Image Model</label>
+                                    <label class="form-label">New image model <span class="help-glyph" title="The text-to-image model used for a fresh visual. It receives the compiled world, character and framing prompt, but no source image.">?</span></label>
                                     <div class="smart-input-row">
                                         <div class="searchable-dropdown-wrap" style="flex:1; min-width:0;">
-                                            <input id="w-visual-image-model" type="search" class="form-input" value="google/gemini-3.1-flash-lite-image" placeholder="Search compatible image models…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-image-model-results" aria-expanded="false">
-                                            <div id="w-visual-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Compatible image models"></div>
+                                            <input id="w-visual-new-image-model" type="search" class="form-input" value="google/gemini-3.1-flash-lite-image" placeholder="Search text-to-image models…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-new-image-model-results" aria-expanded="false">
+                                            <div id="w-visual-new-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Text-to-image models"></div>
                                         </div>
-                                        <button id="w-visual-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
+                                        <button id="w-visual-new-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
                                     </div>
-                                    <p id="w-visual-image-model-status" class="form-hint" aria-live="polite">Loading compatible image models…</p>
-                                    <p class="form-hint">Nano Banana 2 Lite is recommended. Select from the live provider catalog; an exact custom ID is still accepted for newly released models.</p>
+                                    <p id="w-visual-new-image-model-status" class="form-hint" aria-live="polite">Loading compatible image models…</p>
+                                    <p class="form-hint">Fresh visual generation uses this model only. Select from the live provider catalog; an exact custom ID is also accepted.</p>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col">
+                                    <label class="form-label">Revision image provider <span class="help-glyph" title="Used only by Revise current. It receives the selected existing image plus your revision instruction, so choose a provider with image-reference support.">?</span></label>
+                                    <select id="w-visual-revision-image-provider" class="form-select">
+                                        <option value="same_as_new">Use New Image Pipeline</option>
+                                        <option value="inherit">Use provider from Settings</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                        <option value="gptproto">GPTProto</option>
+                                        <option value="nanogpt">NanoGPT</option>
+                                        <option value="fal">Fal</option>
+                                    </select>
+                                </div>
+                                <div class="form-col form-col-grow">
+                                    <label class="form-label">Revision image model <span class="help-glyph" title="The reference-capable model used when revising an existing world image. It receives only the revision instruction and selected image, not the fresh-generation pipeline.">?</span></label>
+                                    <div class="smart-input-row">
+                                        <div class="searchable-dropdown-wrap" style="flex:1; min-width:0;">
+                                            <input id="w-visual-revision-image-model" type="search" class="form-input" value="" placeholder="Leave blank to use the new-image model…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-revision-image-model-results" aria-expanded="false">
+                                            <div id="w-visual-revision-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Reference-capable image models"></div>
+                                        </div>
+                                        <button id="w-visual-revision-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
+                                    </div>
+                                    <p id="w-visual-revision-image-model-status" class="form-hint" aria-live="polite">Loading reference-capable image models…</p>
+                                    <p class="form-hint">Leave blank to reuse the new-image model when it supports source-image revision. Otherwise choose a reference-capable model here. A revision always requires an existing selected image and a written instruction.</p>
                                 </div>
                             </div>
                             <div id="w-visual-fal-advanced" class="form-row hidden">
                                 <div class="form-col">
-                                    <label class="form-label">Fal · Advanced Request Settings</label>
+                                    <label class="form-label">Fal · Advanced Request Settings <span class="help-glyph" title="These optional request settings apply whenever either the new-image or revision pipeline uses Fal. Unsupported settings are omitted rather than guessed.">?</span></label>
                                     <label class="form-field"><span>safety_tolerance</span><input id="w-visual-fal-safety-tolerance" class="form-input" type="number" min="0" max="100" step="any" placeholder="5" autocomplete="off"></label>
-                                    <p class="form-hint">Optional fal request parameter. Leave blank to use the endpoint default. Some models may not support safety_tolerance; if generation fails with an input/validation error, clear this field.</p>
+                                    <label class="form-field"><span>enable_safety_checker</span><select id="w-visual-fal-enable-safety-checker" class="form-select"><option value="">Blank — omit this field</option><option value="true">true — request safety checking</option><option value="false">false — request no safety checking</option></select></label>
+                                    <p class="form-hint">Optional Fal request parameters. Leave either blank when that model does not use it; blank fields are omitted, so the endpoint default applies. Some models use <code>safety_tolerance</code>; Seedream uses <code>enable_safety_checker</code>. Fal may still enforce safety checking when an account is not authorised to disable it.</p>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -5334,7 +5360,7 @@
 <script src="labs-core.js?v=20260822-v161"></script>
 <script src="labs-tasks.js?v=20260822-v161"></script>
 <script src="labs-guide.js?v=20260822-v161"></script>
-<script src="help-system.js?v=20260902-fal-media-alpha8"></script>
+<script src="help-system.js?v=20260905-v1700-visual-pipelines-v1"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
@@ -5347,6 +5373,6 @@
      HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->
 <script src="melbourne-bunnyrx-registry.js?v=20260905-wm-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260905-v1700-ff54-sidecar-v4"></script>
+<script src="app.js?v=20260905-v1700-visual-pipelines-v3"></script>
 </body>
 </html>

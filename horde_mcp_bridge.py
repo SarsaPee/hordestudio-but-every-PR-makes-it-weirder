@@ -1852,17 +1852,25 @@ def fal_advanced_image_fields(body: dict[str, Any]) -> dict[str, Any]:
     """
     fields: dict[str, Any] = {}
     raw_tolerance = body.get("safetyTolerance")
-    if raw_tolerance is None or str(raw_tolerance).strip() == "":
-        return fields
-    if isinstance(raw_tolerance, bool):
-        raise ValueError("safety_tolerance must be a number or blank.")
-    try:
-        tolerance = float(raw_tolerance)
-    except (TypeError, ValueError):
-        raise ValueError("safety_tolerance must be a number or blank.")
-    if not 0 <= tolerance <= 100:
-        raise ValueError("safety_tolerance must be between 0 and 100.")
-    fields["safety_tolerance"] = int(tolerance) if tolerance.is_integer() else tolerance
+    if raw_tolerance is not None and str(raw_tolerance).strip() != "":
+        if isinstance(raw_tolerance, bool):
+            raise ValueError("safety_tolerance must be a number or blank.")
+        try:
+            tolerance = float(raw_tolerance)
+        except (TypeError, ValueError):
+            raise ValueError("safety_tolerance must be a number or blank.")
+        if not 0 <= tolerance <= 100:
+            raise ValueError("safety_tolerance must be between 0 and 100.")
+        fields["safety_tolerance"] = int(tolerance) if tolerance.is_integer() else tolerance
+
+    # Seedream and some other Fal endpoints use this boolean instead of a
+    # numeric tolerance. Missing means omit it entirely, allowing the model's
+    # default; false is intentionally preserved as an explicit request.
+    raw_checker = body.get("enableSafetyChecker")
+    if raw_checker is not None and str(raw_checker).strip() != "":
+        if not isinstance(raw_checker, bool):
+            raise ValueError("enable_safety_checker must be true, false or blank.")
+        fields["enable_safety_checker"] = raw_checker
     return fields
 
 
@@ -1895,7 +1903,6 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     }.get(aspect, "square_hd")
     payload: dict[str, Any] = {
         "prompt": prompt, "num_images": 1, "output_format": "jpeg",
-        "enable_safety_checker": body.get("enableSafetyChecker") is not False,
     }
     payload.update(fal_advanced_image_fields(body))
     if model == "fal-ai/wan-25-preview/image-to-image":
@@ -1929,15 +1936,35 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
         if image_url and generic_model and error.status == 422 and error.error_type == "missing":
             wanted = "image_urls" if "image_urls" in error.fields else (
                 "image_url" if "image_url" in error.fields else "")
-        if not wanted:
-            raise
-        payload.pop("image_url", None)
-        payload.pop("image_urls", None)
-        if wanted == "image_urls":
-            payload["image_urls"] = [image_url]
+        if wanted:
+            payload.pop("image_url", None)
+            payload.pop("image_urls", None)
+            if wanted == "image_urls":
+                payload["image_urls"] = [image_url]
+            else:
+                payload["image_url"] = image_url
+            result = submit()
+        elif (not image_url and generic_model and error.status == 422
+              and error.error_type == "missing"
+              and ({"image_url", "image_urls"} & set(error.fields or []))):
+            # A world portrait without an existing asset is text-to-image,
+            # even when a stale/live catalog entry led the UI to a
+            # reference-only endpoint. Do not send an empty reference field:
+            # fall back to the known text-only FAL endpoint and preserve the
+            # full compiled prompt, including its requested framing.
+            model = "fal-ai/flux/schnell"
+            payload.pop("image_url", None)
+            payload.pop("image_urls", None)
+            payload.pop("aspect_ratio", None)
+            payload.update({
+                "num_images": 1,
+                "output_format": "jpeg",
+                "enable_safety_checker": body.get("enableSafetyChecker") is not False,
+                "image_size": image_size,
+            })
+            result = submit()
         else:
-            payload["image_url"] = image_url
-        result = submit()
+            raise
     images = result.get("images") if isinstance(result.get("images"), list) else []
     first = images[0] if images and isinstance(images[0], dict) else {}
     single_image = result.get("image") if isinstance(result.get("image"), dict) else {}

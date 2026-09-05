@@ -2817,7 +2817,8 @@ function validateWorldData(value, label = 'World') {
     });
     if (value.presentation !== undefined) {
         requirePlainObject(value.presentation, `${label} presentation`);
-        ['mode', 'artStyle', 'artDirection', 'accent', 'mapSkinAssetId', 'imageProvider', 'imageModel'].forEach(key =>
+        ['mode', 'artStyle', 'artDirection', 'accent', 'mapSkinAssetId', 'imageProvider', 'imageModel',
+            'newImageProvider', 'newImageModel', 'revisionImageProvider', 'revisionImageModel'].forEach(key =>
             requireString(value.presentation[key], `${label} presentation ${key}`, { optional: true, max: key === 'artDirection' ? 4000 : 500 }));
         if (value.presentation.enabled !== undefined && typeof value.presentation.enabled !== 'boolean') {
             throw new Error(`${label} presentation enabled setting is invalid`);
@@ -4982,7 +4983,8 @@ const WORLD_MEDIA_ASSET_BYTES_LIMIT = 8_000_000;
 // endpoint's own default in charge. Adding a field later means one entry
 // here plus its bridge pass-through — no provider-layer rewrite.
 const FAL_ADVANCED_REQUEST_FIELDS = Object.freeze([
-    { key: 'safetyTolerance', requestKey: 'safetyTolerance', numeric: true }
+    { key: 'safetyTolerance', requestKey: 'safetyTolerance', type: 'number' },
+    { key: 'enableSafetyChecker', requestKey: 'enableSafetyChecker', type: 'boolean' }
 ]);
 
 function normalizeFalAdvancedSettings(raw) {
@@ -4992,6 +4994,14 @@ function normalizeFalAdvancedSettings(raw) {
         const value = source[field.key];
         if (value === undefined || value === null || String(value).trim() === '') {
             settings[field.key] = '';
+            return;
+        }
+        if (field.type === 'boolean') {
+            // The UI sends explicit strings, while imported worlds may already
+            // carry a real boolean. Anything else is treated as unset so the
+            // model's own default remains authoritative.
+            settings[field.key] = value === true || value === 'true' ? true
+                : value === false || value === 'false' ? false : '';
             return;
         }
         const numeric = typeof value === 'number' ? value : Number(String(value).trim());
@@ -5016,12 +5026,16 @@ function falAdvancedRequestBody(world) {
 
 function falAdvancedRequestFieldsFromBody(body) {
     // Generic forward of advanced fal fields from an image request body to
-    // the bridge payload. Unknown or non-numeric values never travel.
+    // the bridge payload. Unknown or ill-typed values never travel.
     const forwarded = {};
     if (!isPlainObject(body)) return forwarded;
     FAL_ADVANCED_REQUEST_FIELDS.forEach(field => {
         const value = body[field.requestKey];
-        if (typeof value === 'number' && Number.isFinite(value)) forwarded[field.requestKey] = value;
+        if (field.type === 'boolean') {
+            if (typeof value === 'boolean') forwarded[field.requestKey] = value;
+        } else if (typeof value === 'number' && Number.isFinite(value)) {
+            forwarded[field.requestKey] = value;
+        }
     });
     return forwarded;
 }
@@ -5047,8 +5061,25 @@ function normalizeWorldPresentation(world) {
         panelOpacity: livingClamp(raw.panelOpacity == null ? 88 : raw.panelOpacity, 35, 100),
         backgroundDim: livingClamp(raw.backgroundDim == null ? 68 : raw.backgroundDim, 0, 95),
         mapSkinAssetId: String(raw.mapSkinAssetId || '').slice(0, 160),
-        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit',
-        imageModel: String(raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500),
+        // Legacy imageProvider/imageModel are the fresh-image pipeline. Keep
+        // the aliases populated so existing world exports and integrations
+        // remain readable while revisions gain their own explicit pipeline.
+        newImageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.newImageProvider)
+            ? raw.newImageProvider
+            : (['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit'),
+        newImageModel: String(raw.newImageModel || raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500),
+        revisionImageProvider: ['same_as_new', 'inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.revisionImageProvider)
+            ? raw.revisionImageProvider
+            : 'same_as_new',
+        // Blank intentionally means "reuse the fresh-image model if it can
+        // accept a source image". A separate revision model is only needed
+        // when the fresh model is text-only or the author prefers another
+        // image-to-image endpoint.
+        revisionImageModel: String(raw.revisionImageModel || '').slice(0, 500),
+        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.newImageProvider)
+            ? raw.newImageProvider
+            : (['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal'].includes(raw.imageProvider) ? raw.imageProvider : 'inherit'),
+        imageModel: String(raw.newImageModel || raw.imageModel || 'google/gemini-3.1-flash-lite-image').slice(0, 500),
         falAdvancedSettings: normalizeFalAdvancedSettings(raw.falAdvancedSettings)
     });
     world.presentation = raw;
@@ -19922,28 +19953,44 @@ function renderWorldStudio() {
     updateWorldTokenCount();
 }
 
-let worldVisualModelSearchRenderId = 0;
+const WORLD_VISUAL_PIPELINE_UI = Object.freeze({
+    new: {
+        provider: 'w-visual-new-image-provider', model: 'w-visual-new-image-model',
+        results: 'w-visual-new-image-model-results', status: 'w-visual-new-image-model-status',
+        refresh: 'w-visual-new-refresh-models', providerField: 'newImageProvider',
+        modelField: 'newImageModel', label: 'new image'
+    },
+    revision: {
+        provider: 'w-visual-revision-image-provider', model: 'w-visual-revision-image-model',
+        results: 'w-visual-revision-image-model-results', status: 'w-visual-revision-image-model-status',
+        refresh: 'w-visual-revision-refresh-models', providerField: 'revisionImageProvider',
+        modelField: 'revisionImageModel', label: 'revision image'
+    }
+});
 
-async function renderWorldVisualModelSearch(world, force = false) {
-    const input = document.getElementById('w-visual-image-model');
-    const results = document.getElementById('w-visual-image-model-results');
-    const status = document.getElementById('w-visual-image-model-status');
+const worldVisualModelSearchRenderId = { new: 0, revision: 0 };
+
+async function renderWorldVisualModelSearch(world, pipeline = 'new', force = false) {
+    const ui = WORLD_VISUAL_PIPELINE_UI[pipeline] || WORLD_VISUAL_PIPELINE_UI.new;
+    const input = document.getElementById(ui.model);
+    const results = document.getElementById(ui.results);
+    const status = document.getElementById(ui.status);
     if (!world || !input || !results || !status) return;
-    const renderId = ++worldVisualModelSearchRenderId;
-    const provider = worldVisualProvider(world);
+    const renderId = ++worldVisualModelSearchRenderId[pipeline];
+    const provider = worldVisualProvider(world, pipeline);
     if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
         status.textContent = 'The inherited provider does not expose a cloud image catalog. Choose OpenRouter, GPTProto, NanoGPT or Fal, or enter the exact model ID used by your provider.';
         results.innerHTML = '<div class="smart-input-empty">Choose a catalog-backed image provider to browse compatible models.</div>';
         setCompanionSearchOpen(input, results, true);
         return;
     }
-    status.textContent = `Loading compatible image models from ${providerDisplayName(provider)}…`;
+    status.textContent = `Loading ${pipeline === 'revision' ? 'reference-capable ' : ''}image models from ${providerDisplayName(provider)}…`;
     // The live fal catalog can take a few seconds on first load. Open the
     // results box with a loading placeholder immediately so the dropdown is
     // visibly working instead of silently absent — clicks during the gap
     // used to land on nothing and look like dead options.
     setCompanionSearchOpen(input, results, true);
-    renderCompanionSearchResults(results, [], () => {}, 'Loading compatible image models…');
+    renderCompanionSearchResults(results, [], () => {}, `Loading ${pipeline === 'revision' ? 'reference-capable ' : ''}image models…`);
     let models = [];
     try {
         models = rankCompanionImageModels(
@@ -19951,10 +19998,15 @@ async function renderWorldVisualModelSearch(world, force = false) {
     } catch (error) {
         console.warn('Could not load the World Visuals image catalog:', error);
     }
-    if (renderId !== worldVisualModelSearchRenderId || state.editingWorld?.id !== world.id) return;
+    if (renderId !== worldVisualModelSearchRenderId[pipeline] || state.editingWorld?.id !== world.id) return;
     // A render that completes after the user picked an option (or clicked
     // away) must not rebuild and force the closed list back open.
     if (document.activeElement !== input && results.classList.contains('hidden')) return;
+    // Revision generation is deliberately an image-reference operation. A
+    // catalogue model which explicitly lacks that capability is not offered
+    // here; exact custom IDs remain available for providers whose catalogue
+    // cannot describe an endpoint yet.
+    if (pipeline === 'revision') models = models.filter(model => model.supportsReference === true);
     const query = input.value.trim().toLowerCase();
     const matches = models.filter(model => !query
         || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)).slice(0, 60);
@@ -19969,18 +20021,19 @@ async function renderWorldVisualModelSearch(world, force = false) {
         const liveWorld = state.editingWorld;
         if (!liveWorld) return;
         const presentation = normalizeWorldPresentation(liveWorld);
-        presentation.imageModel = option.value;
+        presentation[ui.modelField] = option.value;
+        if (pipeline === 'new') presentation.imageModel = option.value;
         input.value = option.value;
         setCompanionSearchOpen(input, results, false);
         status.textContent = `${option.label} selected · ${providerDisplayName(provider)}`;
     }, models.length
         ? 'No compatible model matches. Keep typing to use an exact custom model ID.'
-        : `No image models were returned by ${providerDisplayName(provider)}. You may still enter an exact model ID.`);
+        : `No ${pipeline === 'revision' ? 'reference-capable ' : ''}image models were returned by ${providerDisplayName(provider)}. You may still enter an exact model ID.`);
     input.setAttribute('aria-expanded', 'true');
     const selected = models.find(model => model.id === input.value.trim());
     status.textContent = selected
         ? `${selected.name || selected.id} · ${selected.supportsReference === true ? 'reference capable' : 'reference support not advertised'} · ${providerDisplayName(provider)}`
-        : `${models.length} compatible image model${models.length === 1 ? '' : 's'} available from ${providerDisplayName(provider)}${input.value.trim() ? ' · custom ID entered' : ''}.`;
+        : `${models.length} ${pipeline === 'revision' ? 'reference-capable ' : ''}image model${models.length === 1 ? '' : 's'} available from ${providerDisplayName(provider)}${input.value.trim() ? ' · custom ID entered' : (pipeline === 'revision' ? ' · blank uses the new-image model when it supports revision' : '')}.`;
 }
 
 const AI_FIELD_DESCRIPTORS = Object.freeze({
@@ -20199,14 +20252,18 @@ function renderWorldVisuals() {
     byId('w-visual-mode').value = presentation.mode;
     byId('w-visual-art-style').value = presentation.artStyle;
     byId('w-visual-art-direction').value = presentation.artDirection;
-    byId('w-visual-image-provider').value = presentation.imageProvider;
-    byId('w-visual-image-model').value = presentation.imageModel;
+    Object.entries(WORLD_VISUAL_PIPELINE_UI).forEach(([pipeline, ui]) => {
+        byId(ui.provider).value = presentation[ui.providerField];
+        byId(ui.model).value = presentation[ui.modelField];
+    });
     // Fal advanced request settings: visible only when the resolved image
     // provider is fal (including inherit falling back to a fal global).
     const falAdvancedSection = byId('w-visual-fal-advanced');
     const falToleranceInput = byId('w-visual-fal-safety-tolerance');
+    const falSafetyCheckerInput = byId('w-visual-fal-enable-safety-checker');
     const syncFalAdvancedVisibility = () => {
-        falAdvancedSection?.classList.toggle('hidden', worldVisualProvider(world) !== 'fal');
+        falAdvancedSection?.classList.toggle('hidden', worldVisualProvider(world, 'new') !== 'fal'
+            && worldVisualProvider(world, 'revision') !== 'fal');
     };
     const advancedSettings = normalizeFalAdvancedSettings(presentation.falAdvancedSettings);
     if (falToleranceInput) {
@@ -20217,10 +20274,23 @@ function renderWorldVisuals() {
             // from the fal request entirely. Invalid text normalizes back
             // to blank rather than travelling to the provider.
             presentation.falAdvancedSettings = normalizeFalAdvancedSettings({
+                ...presentation.falAdvancedSettings,
                 safetyTolerance: event.target.value
             });
             const next = presentation.falAdvancedSettings.safetyTolerance;
             falToleranceInput.value = next === '' ? '' : String(next);
+        };
+    }
+    if (falSafetyCheckerInput) {
+        falSafetyCheckerInput.value = advancedSettings.enableSafetyChecker === ''
+            ? '' : String(advancedSettings.enableSafetyChecker);
+        falSafetyCheckerInput.onchange = event => {
+            presentation.falAdvancedSettings = normalizeFalAdvancedSettings({
+                ...presentation.falAdvancedSettings,
+                enableSafetyChecker: event.target.value
+            });
+            const next = presentation.falAdvancedSettings.enableSafetyChecker;
+            falSafetyCheckerInput.value = next === '' ? '' : String(next);
         };
     }
     syncFalAdvancedVisibility();
@@ -20286,51 +20356,66 @@ function renderWorldVisuals() {
     assign('w-visual-art-style', 'artStyle');
     assign('w-visual-art-direction', 'artDirection');
     assign('w-visual-accent', 'accent');
-    byId('w-visual-image-provider').onchange = event => {
-        const previous = presentation.imageProvider;
-        presentation.imageProvider = event.target.value;
-        if (presentation.imageProvider === 'gptproto' && presentation.imageModel === 'google/gemini-3.1-flash-lite-image') {
-            presentation.imageModel = 'gemini-3.1-flash-lite-image';
-        } else if (previous === 'gptproto' && presentation.imageModel === 'gemini-3.1-flash-lite-image') {
-            presentation.imageModel = 'google/gemini-3.1-flash-lite-image';
-        } else if (previous !== presentation.imageProvider) {
-            presentation.imageModel = companionImageModelFallback(worldVisualProvider(world));
-        }
-        byId('w-visual-image-model').value = presentation.imageModel;
-        syncFalAdvancedVisibility();
-        renderWorldVisualModelSearch(world);
+    const bindPipeline = pipeline => {
+        const ui = WORLD_VISUAL_PIPELINE_UI[pipeline];
+        const providerInput = byId(ui.provider);
+        const modelInput = byId(ui.model);
+        const modelResults = byId(ui.results);
+        providerInput.onchange = event => {
+            const previous = presentation[ui.providerField];
+            presentation[ui.providerField] = event.target.value;
+            let nextModel = presentation[ui.modelField];
+            if (presentation[ui.providerField] === 'gptproto' && nextModel === 'google/gemini-3.1-flash-lite-image') {
+                nextModel = 'gemini-3.1-flash-lite-image';
+            } else if (previous === 'gptproto' && nextModel === 'gemini-3.1-flash-lite-image') {
+                nextModel = 'google/gemini-3.1-flash-lite-image';
+            } else if (pipeline === 'new' && previous !== presentation[ui.providerField]) {
+                nextModel = companionImageModelFallback(worldVisualProvider(world, pipeline));
+            }
+            presentation[ui.modelField] = nextModel;
+            if (pipeline === 'new') {
+                // Compatibility aliases remain the fresh pipeline for old
+                // exports and integrations that still read these fields.
+                presentation.imageProvider = presentation.newImageProvider;
+                presentation.imageModel = nextModel;
+            }
+            modelInput.value = nextModel;
+            syncFalAdvancedVisibility();
+            void renderWorldVisualModelSearch(world, pipeline);
+        };
+        modelInput.onfocus = () => void renderWorldVisualModelSearch(world, pipeline);
+        modelInput.oninput = event => {
+            presentation[ui.modelField] = event.target.value.trim().slice(0, 500);
+            if (pipeline === 'new') presentation.imageModel = presentation[ui.modelField];
+            void renderWorldVisualModelSearch(world, pipeline);
+        };
+        modelInput.onkeydown = event => {
+            if (event.key === 'Escape') setCompanionSearchOpen(modelInput, modelResults, false);
+        };
+        modelInput.onblur = () => setTimeout(() =>
+            setCompanionSearchOpen(modelInput, modelResults, false), 120);
+        byId(ui.refresh).onclick = async event => {
+            const button = event.currentTarget;
+            const provider = worldVisualProvider(world, pipeline);
+            if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
+                return showToast('Choose OpenRouter, GPTProto, NanoGPT or Fal to browse cloud image models.', 'info');
+            }
+            button.disabled = true;
+            button.textContent = '↻ Loading…';
+            try {
+                await renderWorldVisualModelSearch(world, pipeline, true);
+                modelInput.focus();
+                showToast(`${pipeline === 'revision' ? 'Reference-capable' : 'New image'} model catalog refreshed.`, 'success');
+            } catch (error) {
+                showToast(`Image model catalog failed: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = '↻ Refresh';
+            }
+        };
     };
-    const imageModelInput = byId('w-visual-image-model');
-    const imageModelResults = byId('w-visual-image-model-results');
-    imageModelInput.onfocus = () => renderWorldVisualModelSearch(world);
-    imageModelInput.oninput = event => {
-        presentation.imageModel = event.target.value.trim().slice(0, 500);
-        renderWorldVisualModelSearch(world);
-    };
-    imageModelInput.onkeydown = event => {
-        if (event.key === 'Escape') setCompanionSearchOpen(imageModelInput, imageModelResults, false);
-    };
-    imageModelInput.onblur = () => setTimeout(() =>
-        setCompanionSearchOpen(imageModelInput, imageModelResults, false), 120);
-    byId('w-visual-refresh-models').onclick = async event => {
-        const button = event.currentTarget;
-        const provider = worldVisualProvider(world);
-        if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
-            return showToast('Choose OpenRouter, GPTProto, NanoGPT or Fal to browse cloud image models.', 'info');
-        }
-        button.disabled = true;
-        button.textContent = '↻ Loading…';
-        try {
-            await renderWorldVisualModelSearch(world, true);
-            imageModelInput.focus();
-            showToast('Image model catalog refreshed.', 'success');
-        } catch (error) {
-            showToast(`Image model catalog failed: ${error.message}`, 'error');
-        } finally {
-            button.disabled = false;
-            button.textContent = '↻ Refresh';
-        }
-    };
+    bindPipeline('new');
+    bindPipeline('revision');
     byId('w-visual-background-dim').oninput = event => {
         presentation.backgroundDim = livingClamp(event.target.value, 0, 95);
         byId('w-visual-dim-value').textContent = `${presentation.backgroundDim}%`;
@@ -20341,7 +20426,8 @@ function renderWorldVisuals() {
     };
     // Opening the panel should be enough to discover compatible models; users
     // should never have to know that a catalog exists or press Refresh first.
-    void renderWorldVisualModelSearch(world);
+    void renderWorldVisualModelSearch(world, 'new');
+    void renderWorldVisualModelSearch(world, 'revision');
 }
 
 const WORLD_STUDIO_PAGE_SIZE = 24;
@@ -48676,7 +48762,6 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
                 apiKey: state.falApiKey, model: body.model, prompt: body.prompt,
                 imageDataUrl: body.imageDataUrl || '',
                 aspectRatio: body.aspect_ratio || (String(body.size || '').includes('16_9') ? '16:9' : '1:1'),
-                enableSafetyChecker: state.globalSettings.falSafetyChecker !== false,
                 ...falAdvancedRequestFieldsFromBody(body)
             }
         });
@@ -49020,17 +49105,24 @@ async function generateCompanionPhoto(companion, sceneDescription, options = {})
     }
 }
 
-function worldVisualProvider(world) {
+function worldVisualProvider(world, pipeline = 'new') {
     const presentation = normalizeWorldPresentation(world);
-    const requested = presentation.imageProvider === 'inherit'
-        ? normalizedProviderId(state.globalSettings.apiProvider) : presentation.imageProvider;
+    const requestedValue = pipeline === 'revision'
+        ? presentation.revisionImageProvider : presentation.newImageProvider;
+    if (pipeline === 'revision' && requestedValue === 'same_as_new') {
+        return worldVisualProvider(world, 'new');
+    }
+    const requested = requestedValue === 'inherit'
+        ? normalizedProviderId(state.globalSettings.apiProvider) : requestedValue;
     if (requested === 'fal') return 'fal';
     const provider = normalizedProviderId(requested);
     return ['openrouter', 'gptproto', 'nanogpt', 'local'].includes(provider) ? provider : 'openrouter';
 }
 
-function worldVisualModel(world, provider) {
-    const authored = String(normalizeWorldPresentation(world).imageModel || '').trim();
+function worldVisualModel(world, provider, pipeline = 'new') {
+    const presentation = normalizeWorldPresentation(world);
+    const authored = String(pipeline === 'revision'
+        ? (presentation.revisionImageModel || presentation.newImageModel) : presentation.newImageModel || '').trim();
     if (provider === 'gptproto' && authored === 'google/gemini-3.1-flash-lite-image') {
         return 'gemini-3.1-flash-lite-image';
     }
@@ -49486,14 +49578,15 @@ async function generateWorldVisual(world, prompt, {
     referenceImage = '', requireReference = false
 } = {}) {
     const presentation = normalizeWorldPresentation(world);
-    const provider = worldVisualProvider(world);
+    const pipeline = requireReference || referenceImage ? 'revision' : 'new';
+    const provider = worldVisualProvider(world, pipeline);
     if (!['openrouter', 'gptproto', 'nanogpt', 'fal'].includes(provider)) {
         throw new Error('Choose OpenRouter, GPTProto, NanoGPT or Fal under World Studio → Visuals, or upload an image manually.');
     }
     if (!providerHasCredentials(provider)) {
         throw new Error(`Add a ${providerDisplayName(provider)} API key in Settings before generating world visuals.`);
     }
-    const model = worldVisualModel(world, provider);
+    const model = worldVisualModel(world, provider, pipeline);
     let modelInfo = companionImageModelInfo(model);
     if (!modelInfo) {
         const ranked = rankCompanionImageModels(await getCompanionOutputModels('image', false, provider), provider);
@@ -49533,7 +49626,6 @@ async function generateWorldVisual(world, prompt, {
             provider, model, includeReference ? referenceImage : '');
         if (provider === 'fal') {
             body.aspect_ratio = aspectRatio;
-            body.enable_safety_checker = state.globalSettings.falSafetyChecker !== false;
             Object.assign(body, falAdvancedRequestBody(world));
         }
         return body;
@@ -50698,6 +50790,11 @@ function renderCompanionSearchResults(results, items, onSelect, emptyText) {
             meta.className = 'model-display-id';
             meta.textContent = item.meta || item.value || '';
             button.append(label, meta);
+            // Keep the associated search input focused while a pointer picks
+            // an option. Its blur handler otherwise races this click and can
+            // hide/rebuild the list before the model ID is committed.
+            // Keyboard activation still reaches onclick normally.
+            button.onmousedown = event => event.preventDefault();
             button.onclick = () => onSelect(item);
             results.appendChild(button);
         });
