@@ -1800,6 +1800,45 @@ FAL_IMAGE_MODELS = {
     "fal-ai/flux/dev/image-to-image",
     "fal-ai/wan-25-preview/image-to-image",
 }
+# Models above keep hand-authored payload shapes (flux image_size sizing,
+# wan image_urls, the schnell/dev -> dev/image-to-image remap). Everything
+# else from the live catalog travels with a minimal generic payload and the
+# endpoint's own validation is the only authority.
+
+
+def is_fal_endpoint_id(value: str) -> bool:
+    """A fal.run endpoint path: owner/model/... segments, no traversal."""
+    segments = str(value or "").split("/")
+    return (len(segments) >= 2
+            and all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", segment) for segment in segments))
+
+
+def list_fal_models(body: dict[str, Any]) -> dict[str, Any]:
+    """Live Fal model catalog, paginated server-side.
+
+    Horde's image pickers consume this instead of a hardcoded list, so newly
+    released endpoints (FLUX 2 and friends) are usable the day they appear.
+    Optional `categories` filters server-side to keep the payload small.
+    """
+    key = fal_key(body.get("apiKey"))
+    categories = {str(item) for item in body.get("categories", []) if str(item or "").strip()} \
+        if isinstance(body.get("categories"), list) else set()
+    models: list[dict[str, Any]] = []
+    cursor = ""
+    for _ in range(6):
+        url = "https://api.fal.ai/v1/models?limit=500" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+        data = fal_json_request(url, key, timeout=30)
+        page = data.get("models") if isinstance(data.get("models"), list) else []
+        for entry in page:
+            if not isinstance(entry, dict) or not str(entry.get("endpoint_id") or "").strip():
+                continue
+            if categories and str((entry.get("metadata") or {}).get("category") or "") not in categories:
+                continue
+            models.append(entry)
+        cursor = str(data.get("next_cursor") or "")
+        if not data.get("has_more") or not cursor:
+            break
+    return {"ok": True, "provider": "fal", "models": models}
 
 
 def fal_advanced_image_fields(body: dict[str, Any]) -> dict[str, Any]:
@@ -1836,8 +1875,8 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     if len(prompt) > 12000:
         raise ValueError("The image prompt exceeds the 12,000 character limit.")
     requested_model = str(body.get("model") or "fal-ai/flux/schnell").strip()
-    if requested_model not in FAL_IMAGE_MODELS:
-        raise ValueError("That Fal image model is not supported by this Horde Studio build.")
+    if not is_fal_endpoint_id(requested_model):
+        raise ValueError("That Fal model id is not a valid endpoint path.")
     image_url = str(body.get("imageDataUrl") or "").strip()
     if image_url:
         if not re.match(r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", image_url, re.I):
@@ -1862,11 +1901,21 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     if model == "fal-ai/wan-25-preview/image-to-image":
         payload["image_urls"] = [image_url]
         payload["aspect_ratio"] = aspect if aspect in {"16:9", "9:16", "1:1"} else "auto"
-    else:
+    elif model in FAL_IMAGE_MODELS:
         payload["image_size"] = image_size
         if image_url:
             payload["image_url"] = image_url
             payload["strength"] = float(body.get("strength") or 0.35)
+    else:
+        # Live-catalog model (FLUX 2 and anything else from the fal API):
+        # no hand-authored schema, so send the generic request shape and let
+        # the endpoint's own validation be the authority.
+        payload.pop("num_images", None)
+        payload.pop("output_format", None)
+        payload.pop("enable_safety_checker", None)
+        payload["aspect_ratio"] = aspect
+        if image_url:
+            payload["image_url"] = image_url
     result = fal_json_request(f"https://fal.run/{model}", key, method="POST", payload=payload, timeout=180)
     images = result.get("images") if isinstance(result.get("images"), list) else []
     first = images[0] if images and isinstance(images[0], dict) else {}
@@ -2810,6 +2859,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Fal image generation is loopback-only."})
                 return self.respond(200, generate_fal_image(self.read_json()))
+            if parsed_path == "/fal/models":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Fal catalog access is loopback-only."})
+                return self.respond(200, list_fal_models(self.read_json()))
             if parsed_path == "/fal/video/jobs":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Video Adventure generation is loopback-only."})

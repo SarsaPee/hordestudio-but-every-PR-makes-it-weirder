@@ -47640,6 +47640,34 @@ const FAL_IMAGE_MODELS = Object.freeze([
     { id: 'fal-ai/flux/dev/image-to-image', name: 'FLUX.1 Dev · identity/reference', architecture: { input_modalities: ['text', 'image'], output_modalities: ['image'] }, supported_parameters: { input_references: { type: 'range', min: 1, max: 1 }, aspect_ratio: { type: 'enum', values: ['1:1', '16:9', '9:16', '4:3', '3:4'] } } },
     { id: 'fal-ai/wan-25-preview/image-to-image', name: 'Wan 2.5 · reference · $0.05/image', architecture: { input_modalities: ['text', 'image'], output_modalities: ['image'] }, supported_parameters: { input_references: { type: 'range', min: 1, max: 1 }, aspect_ratio: { type: 'enum', values: ['auto', '1:1', '16:9', '9:16'] } }, pricing: [{ billable: 'output_image', unit: 'image', cost_usd: 0.05 }] }
 ]);
+// Fallback only: the fal image catalog is fetched live from the fal API
+// through the local bridge (see getCompanionOutputModels), so newly released
+// endpoints are usable the day they appear. These curated entries keep their
+// hand-authored payload shapes in the bridge and serve when the live catalog
+// is unreachable.
+
+function mapFalCatalogEntry(entry) {
+    // fal v1/models entry -> companion catalog shape. The endpoint's
+    // category is the reference-capability signal: image-to-image endpoints
+    // accept a reference image, text-to-image ones do not.
+    if (!isPlainObject(entry) || typeof entry.endpoint_id !== 'string') return null;
+    const meta = isPlainObject(entry.metadata) ? entry.metadata : {};
+    const category = String(meta.category || '').toLowerCase();
+    const referenceCapable = category === 'image-to-image';
+    return {
+        id: entry.endpoint_id,
+        name: String(meta.display_name || entry.endpoint_id),
+        description: String(meta.description || '').slice(0, 1200),
+        architecture: {
+            input_modalities: referenceCapable ? ['text', 'image'] : ['text'],
+            output_modalities: ['image']
+        },
+        supported_parameters: referenceCapable
+            ? { input_references: { type: 'range', min: 1, max: 1 } }
+            : {},
+        falCategory: category
+    };
+}
 const GPTPROTO_IMAGE_MODELS = Object.freeze([
     {
         id: 'gpt-image-2', name: 'GPT Image 2',
@@ -47922,7 +47950,24 @@ async function getCompanionOutputModels(modality, force = false, providerId = st
     if (companionOutputModelCache.has(key)) return companionOutputModelCache.get(key);
     let models = [];
     if (provider === 'fal') {
-        models = modality === 'image' ? FAL_IMAGE_MODELS.map(model => safeJsonClone(model)) : [];
+        if (modality !== 'image') {
+            companionOutputModelCache.set(key, []);
+            return [];
+        }
+        // Live fal catalog through the loopback bridge: image-capable
+        // endpoints only, so the pickers list every current fal image model
+        // (FLUX 2 and friends) instead of a frozen curated set.
+        try {
+            const catalog = await mcpBridgeRequest('/fal/models', {
+                method: 'POST', timeoutMs: 45000,
+                body: { apiKey: state.falApiKey, categories: ['text-to-image', 'image-to-image'] }
+            });
+            const entries = Array.isArray(catalog?.models) ? catalog.models : [];
+            models = entries.map(mapFalCatalogEntry).filter(Boolean);
+        } catch (error) {
+            console.warn('Could not load the live Fal image catalog:', error);
+        }
+        if (!models.length) models = FAL_IMAGE_MODELS.map(model => safeJsonClone(model));
         companionOutputModelCache.set(key, models);
         return models;
     }
@@ -49382,7 +49427,10 @@ async function generateWorldVisual(world, prompt, {
     const advertisedReference = !!referenceDescriptor
         && (referenceDescriptor.type !== 'range' || Number(referenceDescriptor.max) > 0);
     const providerReference = provider === 'fal'
-        ? true
+        // Live-catalog fal models carry reference capability from their
+        // endpoint category; unknown ids stay permissive and let the
+        // endpoint's own validation decide.
+        ? (modelInfo ? modelInfo.supportsReference !== false : true)
         : provider === 'nanogpt'
         ? !!nanoGPTImageReferenceMode(model)
         : provider === 'gptproto' ? !!gptProtoImageReferenceProfile(model) : false;
