@@ -18123,6 +18123,14 @@ function setupWorldImport() {
 
                     const world = validateWorldData(rawWorld);
 
+                    // Legacy Melbourne exports ran the bundled Melbourne
+                    // mechanics; the FF 5.4 OS world mechanics engine is its
+                    // universal successor. Remap the profile id at import so
+                    // the engine seams activate for these worlds.
+                    if (world.mechanicsProfile === 'melbourne_v1') {
+                        world.mechanicsProfile = 'world_mechanics_v1';
+                    }
+
                     // A portable export can also repair an orphaned library
                     // entry. If sessions still exist for its original ID and
                     // no visible world owns that ID, keep it so timelines,
@@ -23705,6 +23713,50 @@ function renderWorldSandboxStudio() {
     });
 }
 
+function importStWorldInfoPack(world, rawData) {
+    // SillyTavern world-info import: ST entries become ordinary world
+    // lorebook entries. Angle-bracket routing keys (<ROUTER:...>, <BSM:...>)
+    // are preserved verbatim — they do not collide with prose keyword
+    // triggers and stay addressable for mechanics reference routing.
+    if (!isPlainObject(rawData)) return { added: 0, skipped: 0, error: 'not a JSON object' };
+    const rawEntries = Array.isArray(rawData.entries)
+        ? rawData.entries
+        : (isPlainObject(rawData.entries) ? Object.values(rawData.entries) : null);
+    if (!rawEntries) return { added: 0, skipped: 0, error: 'no "entries" field — not a SillyTavern world-info pack' };
+    const packName = String(rawData.name || 'pack').replace(/[^a-z0-9_-]+/gi, '_')
+        .replace(/^_+|_+$/g, '').slice(0, 40) || 'pack';
+    const existing = new Set((world.lorebook || []).map(entry => String(entry.id || '')));
+    const added = [];
+    let skipped = 0;
+    rawEntries.forEach((raw, index) => {
+        if (!isPlainObject(raw)) { skipped += 1; return; }
+        const text = String(raw.content || '').trim();
+        if (!text || raw.disable === true) { skipped += 1; return; }
+        if ((world.lorebook || []).length + added.length >= 2000) { skipped += 1; return; }
+        const keys = (Array.isArray(raw.key) ? raw.key : [raw.key])
+            .map(key => String(key || '').trim()).filter(Boolean);
+        let keyword = keys.join(',').slice(0, 2000);
+        if (!keyword) {
+            // Keyless entries: derive trigger words from their comment so
+            // they remain reachable in the lore keyword scan.
+            keyword = String(raw.comment || '').replace(/[^A-Za-z0-9 ]+/g, ' ')
+                .split(/\s+/).filter(Boolean).slice(0, 5).join(',').slice(0, 2000);
+        }
+        let id = `st_${packName}_${Number.isFinite(Number(raw.uid)) ? raw.uid : index}`;
+        id = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+        while (existing.has(id)) id += '_';
+        existing.add(id);
+        const entry = { id, keyword, text };
+        if (raw.constant === true) entry.constant = true;
+        if (typeof raw.probability === 'number' && raw.probability >= 0 && raw.probability <= 100) {
+            entry.probability = raw.probability;
+        }
+        added.push(entry);
+    });
+    world.lorebook = (Array.isArray(world.lorebook) ? world.lorebook : []).concat(added);
+    return { added: added.length, skipped };
+}
+
 function addWorldLore() {
     const entry = {
         id: 'lore_' + Date.now(),
@@ -23720,6 +23772,37 @@ function renderWorldLore() {
     const container = document.getElementById('w-lore-list');
     if (!container) return;
     container.innerHTML = '';
+
+    const importBar = document.createElement('div');
+    importBar.style.cssText = 'display:flex; justify-content:flex-end; margin-bottom:8px;';
+    importBar.innerHTML = `<button class="tool-btn" id="w-lore-import-btn">Import SillyTavern Pack</button>`;
+    importBar.querySelector('#w-lore-import-btn').onclick = () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const result = importStWorldInfoPack(state.editingWorld, JSON.parse(ev.target.result));
+                    if (result.error) {
+                        showToast(`Import failed: ${result.error}`, 'error');
+                        return;
+                    }
+                    showToast(`Imported ${result.added} lore entries (${result.skipped} skipped).`, 'success');
+                    renderWorldLore();
+                    updateWorldTokenCount();
+                } catch (err) {
+                    showToast(`Import failed: ${err.message}`, 'error');
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    };
+    container.appendChild(importBar);
     
     const entries = state.editingWorld.lorebook || [];
     entries.forEach((entry, idx) => {
