@@ -112,7 +112,8 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         const current = object(world.sidecarConfig) ? world.sidecarConfig : {}, tracker = object(current.tracker) ? current.tracker : {}, debug = object(current.debug) ? current.debug : {}, memory = object(current.memory) ? current.memory : {};
         const reasoningMode = ['inherit', 'enabled', 'disabled'].includes(tracker.reasoningMode)
             ? tracker.reasoningMode : (tracker.reasoning === true ? 'enabled' : 'inherit');
-        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
+        const roleplayOS = normalizeRoleplayOSConfig(current.roleplayOS);
+        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), roleplayOS, tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
         return world.sidecarConfig;
     }
     function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], traversalState: {}, packet: null, memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
@@ -2271,6 +2272,10 @@ let state = {
     // provider or Sidecar turn remains inspectable after refresh; credentials
     // are redacted before an entry ever reaches this collection.
     apiCallTraces: [],
+    // Installed Roleplay OS source presets (installation-level registry).
+    // Worlds pin an entry by id and store only their own choices; full
+    // migration backups include this registry.
+    roleplayOSSources: [],
     globalSettings: {
         defaultModel: 'deepseek/deepseek-v4-flash',
         openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
@@ -2880,6 +2885,7 @@ function validateBackupData(value) {
     requireArray(value.personas, 'Backup personas', { optional: true, max: 1000 });
     requireArray(value.rooms, 'Backup rooms', { optional: true, max: 1000 });
     requireArray(value.systemPresets, 'Backup presets', { optional: true, max: 1000 });
+    requireArray(value.roleplayOSSources, 'Backup Roleplay OS sources', { optional: true, max: 32 });
     requireArray(value.worlds, 'Backup worlds', { optional: true, max: 1000 });
     requireArray(value.videoWorlds, 'Backup Video Adventures', { optional: true, max: 1000 });
     requireArray(value.companions, 'Backup Virtual Humans', { optional: true, max: 1000 });
@@ -3598,6 +3604,7 @@ async function loadState() {
 
         repairLoadedState();
         state.systemPresets = await HordeDB.get('systemPresets') || [];
+        state.roleplayOSSources = normalizeRoleplayOSSourceRegistry(await HordeDB.get('roleplayOSSources') || []);
         state.regexScripts = await HordeDB.get('regexScripts') || [];
         state.worlds = await HordeDB.get('worlds') || [];
         lastPersistedWorldManifests = safeJsonClone(state.worlds);
@@ -4133,6 +4140,7 @@ async function persistStateSnapshot() {
             theme: state.theme,
             systemPresets: state.systemPresets,
             regexScripts: state.regexScripts,
+            roleplayOSSources: state.roleplayOSSources || [],
             worlds: storedWorlds,
             worldRecoverySnapshots: state.worldRecoverySnapshots,
             worldInstances: state.worldInstances,
@@ -11755,6 +11763,929 @@ function buildSidecarCanonicalReferenceManifest(world, sess, evidenceText = '') 
  * management, and policy-override sections are intentionally excluded from
  * this runtime; they are recorded as provenance, not executed.
  */
+const FF54_ADAPTER_VERSION = 'ff54-agentic-horde-adapter-2';
+
+// The Internal States persistence backend is the one architectural exclusion:
+// Horde Sidecar owns state, so state_mode is pinned to AGENTS.
+const FF54_STATE_MODE_PIN = 'AGENTS';
+
+// Adapter-curated defaults. The upstream export ships self-contradictory
+// section flags (e.g. Story and Cinema both enabled) and its choiceBlocks
+// carry no stored defaults, so these fill the gaps. Worlds overlay their own
+// selections on top; nothing here is welded shut.
+const FF54_BUILT_IN_DEFAULTS = Object.freeze({
+    cot_style: 'BOLT',
+    pov_style: 'SECOND',
+    prose_style: 'STORY',
+    output_length: 'ON',
+    echo_mode: 'EMBELLISH',
+    nsfw_mode: 'NONE',
+    bypass_mode: 'NONE',
+    state_mode: FF54_STATE_MODE_PIN,
+    internal_states: ['DND'],
+    custom_toggles: ['VOICE2', 'ANTIOMNI', 'VAD', 'REALNPC', 'BANNED', 'GENESIS', 'VNCOLOR2', 'POPGFX', 'COMBAT', 'ONOMATO'],
+    extras: []
+});
+
+// Marinara agent_data marker types -> Horde compiler agent lanes. Marker
+// sections themselves are skipped (the compiler owns data injection), but
+// {{#if agent::<type>}} conditionals elsewhere resolve against lane presence.
+const FF54_AGENT_LANE_BY_TYPE = Object.freeze({
+    'persona-stats': 'agent_persona_stats',
+    'character-tracker': 'agent_character_tracker',
+    'beholder': 'agent_beholder',
+    'quest': 'agent_quest',
+    'world-state': 'agent_world_state',
+    'inventory-tracker': 'agent_inventory_tracker'
+});
+
+const FF54_AGENTIC_OS = {
+    id: 'ff54_agentic',
+    name: 'Freaky Frankenstein 5.4 Agentic',
+    version: '5.4-agent-gating',
+    stateMode: 'AGENTS',
+    source: 'built_in',
+    description: "Agent-gated FF 5.4 adapted as Horde's built-in Narrator Roleplay OS: engine-managed <context>, narrative-only mechanics, Sidecar persistence.",
+    provenance: {
+        presetId: 'QT6ABwAN4X1hQEGhGSGjs',
+        artifact: 'Freaky Frankenstein 5.4 — Agent Gating.marinara.json',
+        author: 'Dbtgreg (converted)',
+        excluded: ['internal_states backend (state_mode pinned to AGENTS)', 'macro variable persistence (setvar/getvar neutralized)', 'regex state management'],
+        upstreamSource: 'installation-level source registry (state.roleplayOSSources), resolved verbatim per world sourceId pin; built-in adapted registry when absent'
+    }
+};
+
+function normalizeFF54Choices(raw) {
+    // Lenient by design: keep unknown variables and option values verbatim so
+    // future upstream choices survive import, surface generically in the UI,
+    // and gate whatever sections reference them. Shape validation only —
+    // membership is decided by the installed source's own choiceBlocks.
+    const source = isPlainObject(raw) ? raw : {};
+    const choices = {};
+    Object.keys(source).forEach(key => {
+        const value = source[key];
+        if (Array.isArray(value)) {
+            const list = value.map(item => String(item || '').trim()).filter(Boolean)
+                .filter((item, index, all) => all.indexOf(item) === index);
+            if (list.length) choices[key] = list;
+        } else if (value !== undefined && value !== null && String(value).trim()) {
+            choices[key] = String(value).trim();
+        }
+    });
+    // The state backend pin is architectural, not a user choice.
+    choices.state_mode = FF54_STATE_MODE_PIN;
+    return choices;
+}
+
+function normalizeRoleplayOSConfig(raw) {
+    const config = isPlainObject(raw) ? raw : {};
+    return {
+        id: FF54_AGENTIC_OS.id,
+        name: FF54_AGENTIC_OS.name,
+        version: FF54_AGENTIC_OS.version,
+        stateMode: FF54_AGENTIC_OS.stateMode,
+        source: FF54_AGENTIC_OS.source,
+        choices: normalizeFF54Choices(config.choices),
+        sourceId: String(config.sourceId || '').slice(0, 120),
+        defaultsApplied: !isPlainObject(config.choices)
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Installation-level Roleplay OS source registry. Imported Marinara presets
+// are parsed once (sections + choiceBlocks + derived defaults + provenance),
+// stored in state.roleplayOSSources, persisted in device state and full
+// migration backups. Registry entries are hash-ID'd: re-importing the same
+// version is an idempotent upsert, and different FF versions coexist while
+// each world resolves against the entry it is pinned to.
+// ---------------------------------------------------------------------------
+function normalizeFF54ChoiceBlocks(raw) {
+    const blocks = Array.isArray(raw) ? raw : [];
+    return blocks.slice(0, 64).map((block, index) => {
+        const source = isPlainObject(block) ? block : {};
+        let options = source.options;
+        if (typeof options === 'string') {
+            try { options = JSON.parse(options); } catch (_) { options = []; }
+        }
+        return {
+            variableName: String(source.variableName || ('choice_' + (index + 1))).slice(0, 80),
+            question: String(source.question || '').slice(0, 400),
+            multiSelect: source.multiSelect === true || String(source.multiSelect).toLowerCase() === 'true',
+            displayMode: String(source.displayMode || 'buttons').slice(0, 40),
+            sortOrder: parseInt(source.sortOrder, 10) || (index * 100),
+            options: (Array.isArray(options) ? options : []).slice(0, 32).map(option => ({
+                id: String((isPlainObject(option) ? option.id : '') || '').slice(0, 80),
+                value: String((isPlainObject(option) ? option.value : '') || '').slice(0, 80),
+                label: String((isPlainObject(option) ? (option.label || option.value) : '') || '').slice(0, 200)
+            })).filter(option => option.value)
+        };
+    }).filter(block => block.options.length);
+}
+
+// Declared defaults for an installed source: adapter-curated where the
+// upstream export is self-contradictory, first upstream option otherwise.
+// These are source-level defaults; world selections overlay them and are
+// never silently reset by a source update.
+function ff54DeriveSourceDefaults(choiceBlocks) {
+    const single = {
+        cot_style: 'BOLT', pov_style: 'SECOND', prose_style: 'STORY',
+        output_length: 'ON', echo_mode: 'EMBELLISH', nsfw_mode: 'NONE',
+        bypass_mode: 'NONE'
+    };
+    const multi = {
+        internal_states: ['DND'],
+        custom_toggles: ['VOICE2', 'ANTIOMNI', 'VAD', 'REALNPC', 'BANNED', 'GENESIS', 'VNCOLOR2', 'POPGFX', 'COMBAT', 'ONOMATO'],
+        extras: []
+    };
+    const defaults = {};
+    (choiceBlocks || []).forEach(block => {
+        if (block.variableName === 'state_mode') { defaults.state_mode = FF54_STATE_MODE_PIN; return; }
+        const knownValues = block.options.map(option => option.value);
+        if (block.multiSelect) {
+            defaults[block.variableName] = (multi[block.variableName] || []).filter(token => knownValues.includes(token));
+        } else {
+            const curated = single[block.variableName];
+            defaults[block.variableName] = knownValues.includes(curated) ? curated : (block.options[0] && block.options[0].value) || '';
+        }
+    });
+    return defaults;
+}
+
+function normalizeFF54SourcePreset(raw) {
+    if (!isPlainObject(raw)) return null;
+    const source = isPlainObject(raw.data) ? raw.data : raw;
+    const meta = isPlainObject(raw.data) && isPlainObject(raw.data.preset)
+        ? raw.data.preset : (isPlainObject(raw.preset) ? raw.preset : null);
+    const rawSections = Array.isArray(source.sections) ? source.sections
+        : (Array.isArray(source.prompts) ? source.prompts
+        : (Array.isArray(raw.sections) ? raw.sections : null));
+    if (!rawSections || !rawSections.length) return null;
+    let hash = 5381;
+    const sections = rawSections.slice(0, 240).map((section, index) => {
+        let marker = section.markerConfig;
+        if (typeof marker === 'string') {
+            try { marker = JSON.parse(marker); } catch (_) { marker = null; }
+        }
+        marker = isPlainObject(marker) ? marker : null;
+        // Registry round-trip: stored entries carry the already-extracted
+        // marker identity, not the original markerConfig payload.
+        const markerType = marker ? String(marker.type || '').slice(0, 60) : String(section.markerType || '').slice(0, 60);
+        const agentType = marker ? String(marker.agentType || '').slice(0, 60) : String(section.agentType || '').slice(0, 60);
+        const content = String(section.content || section.prompt || '').slice(0, 60000);
+        for (let i = 0; i < content.length; i += 1) hash = ((hash * 33) ^ content.charCodeAt(i)) >>> 0;
+        const position = String(section.injectionPosition || section.position || 'ordered') === 'depth' ? 'depth' : 'ordered';
+        const roleRaw = String(section.role || 'system').toLowerCase();
+        return {
+            id: String(section.id || ('section_' + (index + 1))).slice(0, 80),
+            name: String(section.name || ('Section ' + (index + 1))).slice(0, 160),
+            content,
+            role: ['system', 'user', 'assistant'].includes(roleRaw) ? roleRaw : 'system',
+            position,
+            depth: Math.max(0, parseInt(section.injectionDepth ?? section.depth, 10) || 0),
+            order: parseInt(section.injectionOrder ?? section.order, 10) || (index * 10),
+            enabled: section.enabled === true || String(section.enabled).toLowerCase() === 'true',
+            markerType,
+            agentType
+        };
+    });
+    const choiceBlocks = normalizeFF54ChoiceBlocks(source.choiceBlocks || raw.choiceBlocks || []);
+    const presetId = String((meta && meta.id) || raw.presetId || 'ff54_source').slice(0, 80);
+    const contentHash = hash.toString(16);
+    return {
+        id: String(raw.id || ('ff_source_' + presetId + '_' + contentHash.slice(0, 8))).slice(0, 120),
+        format: Array.isArray(source.sections) ? 'marinara' : (Array.isArray(source.prompts) ? 'sillytavern' : 'normalized'),
+        presetId,
+        presetName: String((meta && meta.name) || raw.presetName || 'FF 5.4 source preset').slice(0, 200),
+        sections,
+        choiceBlocks,
+        defaults: ff54DeriveSourceDefaults(choiceBlocks),
+        provenance: {
+            adapter: FF54_ADAPTER_VERSION,
+            contentHash,
+            sectionCount: sections.length,
+            choiceBlockCount: choiceBlocks.length,
+            importedAt: String(raw.importedAt || (isPlainObject(raw.provenance) ? raw.provenance.importedAt : '') || new Date().toISOString()).slice(0, 40),
+            note: 'Author-imported upstream preset data, resolved verbatim. Exclusions by identity only: state_mode pinned to AGENTS, macro persistence (setvar/getvar) neutralized.'
+        }
+    };
+}
+
+function normalizeRoleplayOSSourceRegistry(raw) {
+    return (Array.isArray(raw) ? raw : [])
+        .map(entry => normalizeFF54SourcePreset(entry))
+        .filter(Boolean);
+}
+
+function getInstalledRoleplayOSSources() {
+    return normalizeRoleplayOSSourceRegistry(state.roleplayOSSources);
+}
+
+function installRoleplayOSSource(raw) {
+    const entry = normalizeFF54SourcePreset(raw);
+    if (!entry) return null;
+    if (!Array.isArray(state.roleplayOSSources)) state.roleplayOSSources = [];
+    const index = state.roleplayOSSources.findIndex(item => item && item.id === entry.id);
+    if (index !== -1) state.roleplayOSSources[index] = entry;
+    else state.roleplayOSSources.push(entry);
+    return entry;
+}
+
+// Reconcile a world's stored choices against a (new or repointed) source.
+// Kept: variable exists and the stored value still matches an option. Removed
+// variables/values produce visible migration notes; the source default applies
+// only where the old selection no longer exists. Never a silent reset.
+function reconcileFF54WorldChoices(stored, sourcePreset) {
+    const storedChoices = isPlainObject(stored) ? stored : {};
+    const blocks = sourcePreset && Array.isArray(sourcePreset.choiceBlocks) ? sourcePreset.choiceBlocks : [];
+    const result = { choices: {}, migration: [] };
+    Object.keys(storedChoices).forEach(variable => {
+        if (variable === 'state_mode') return;
+        const value = storedChoices[variable];
+        const block = blocks.find(item => item.variableName === variable);
+        if (!block) {
+            result.migration.push({ variable, kind: 'variable_removed', note: 'choice "' + variable + '" does not exist in this source; selection dropped' });
+            return;
+        }
+        const known = block.options.map(option => option.value);
+        if (Array.isArray(value)) {
+            const kept = value.filter(token => known.includes(token));
+            if (kept.length !== value.length) {
+                result.migration.push({ variable, kind: 'options_removed', note: 'options ' + value.filter(token => !kept.includes(token)).join(', ') + ' are unavailable in this source' });
+            }
+            if (kept.length) result.choices[variable] = kept;
+            else result.migration.push({ variable, kind: 'selection_empty', note: 'selection for "' + variable + '" no longer matches any option; source default applies' });
+            return;
+        }
+        if (known.includes(value)) {
+            result.choices[variable] = value;
+        } else {
+            result.migration.push({ variable, kind: 'value_removed', note: '"' + variable + '" selection "' + value + '" is unavailable in this source; source default applies' });
+        }
+    });
+    return result;
+}
+
+function worldRoleplayOS(world) {
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world);
+    const os = normalizeRoleplayOSConfig(config?.roleplayOS);
+    const registry = typeof getInstalledRoleplayOSSources === 'function' ? getInstalledRoleplayOSSources() : [];
+    const sourcePreset = os.sourceId
+        ? (registry.find(entry => entry.id === os.sourceId) || registry.find(entry => entry.presetId === os.sourceId) || null)
+        : (registry.find(entry => /freaky frankenstein/i.test(entry.presetName)) || null);
+    const defaults = sourcePreset && isPlainObject(sourcePreset.defaults)
+        ? sourcePreset.defaults : FF54_BUILT_IN_DEFAULTS;
+    const effectiveChoices = { ...defaults, ...os.choices, state_mode: FF54_STATE_MODE_PIN };
+    return { ...os, sourcePreset, choices: effectiveChoices };
+}
+
+function ff54TemplateVars(os, agentAvailability) {
+    const choices = os.choices || {};
+    const vars = {};
+    Object.keys(choices).forEach(key => { vars[key] = choices[key]; });
+    // Horde Sidecar owns state persistence; the upstream Internal States
+    // backend is architecturally replaced, so its mode pin is AGENTS.
+    vars.state_mode = FF54_STATE_MODE_PIN;
+    const lanes = Array.isArray(agentAvailability) ? agentAvailability : [];
+    Object.keys(FF54_AGENT_LANE_BY_TYPE).forEach(type => {
+        vars['agent::' + type] = lanes.indexOf(FF54_AGENT_LANE_BY_TYPE[type]) !== -1;
+    });
+    return vars;
+}
+
+function ff54EvalCondition(condition, vars) {
+    const text = String(condition || '').trim();
+    let match;
+    if ((match = text.match(/^agent::([\w-]+)$/))) {
+        return vars['agent::' + match[1]] === true;
+    }
+    if ((match = text.match(/^(\w+)\s*(==|!=)\s*"([^"]*)"\s*&&\s*(\w+)\s+contains\s+"([^"]*)"$/))) {
+        const leftValue = vars[match[1]];
+        const leftOk = match[2] === '==' ? String(leftValue) === match[3] : String(leftValue) !== match[3];
+        const rightList = Array.isArray(vars[match[4]]) ? vars[match[4]] : [];
+        return leftOk && rightList.indexOf(match[5]) !== -1;
+    }
+    if ((match = text.match(/^(\w+)\s+contains\s+"([^"]*)"$/))) {
+        const list = Array.isArray(vars[match[1]]) ? vars[match[1]] : [];
+        return list.indexOf(match[2]) !== -1;
+    }
+    if ((match = text.match(/^(\w+)\s*(==|!=)\s*"([^"]*)"$/))) {
+        const value = vars[match[1]];
+        return match[2] === '==' ? String(value) === match[3] : String(value) !== match[3];
+    }
+    if ((match = text.match(/^(\w+)$/))) {
+        const value = vars[match[1]];
+        return Array.isArray(value) ? value.length > 0 : String(value || '') !== '';
+    }
+    return false;
+}
+
+// Evaluate the Marinara conditional subset the preset actually uses:
+// {{#if cond}}...{{else if cond}}...{{else}}...{{/if}} (nestable),
+// {{//comment}}, {{trim}}. {{setvar::x::y}}/{{getvar::x}} macro persistence is
+// the excluded state architecture and evaluates to nothing. {{roll:...}} and
+// {{user}} are left verbatim; the call site substitutes {{user}}.
+function ff54EvaluateTemplate(text, vars) {
+    let output = String(text || '');
+    let guard = 0;
+    while (output.indexOf('{{#if') !== -1 && guard < 300) {
+        guard += 1;
+        const start = output.indexOf('{{#if');
+        const token = /{{#if[^}]*}}|{{\/if}}/g;
+        token.lastIndex = start;
+        let depth = 0;
+        let end = -1;
+        let scan;
+        while ((scan = token.exec(output))) {
+            if (scan[0] === '{{/if}}') {
+                depth -= 1;
+                if (depth === 0) { end = scan.index; break; }
+            } else {
+                depth += 1;
+            }
+        }
+        if (end === -1) break;
+        const headerClose = output.indexOf('}}', start) + 2;
+        const condition = output.slice(start + 5, headerClose - 2);
+        const body = output.slice(headerClose, end);
+        // Split the body into branches at top-level else / else-if markers.
+        const branches = [{ condition, body: '' }];
+        const elseToken = /{{else if([^}]*)}}|{{else}}/g;
+        const innerDepth = /{{#if[^}]*}}|{{\/if}}/g;
+        let lastBoundary = 0;
+        let piece;
+        while ((piece = elseToken.exec(body))) {
+            innerDepth.lastIndex = lastBoundary;
+            let nested = 0;
+            let inner;
+            while ((inner = innerDepth.exec(body)) && inner.index < piece.index) {
+                nested += inner[0] === '{{/if}}' ? -1 : 1;
+            }
+            if (nested === 0) {
+                branches[branches.length - 1].body = body.slice(lastBoundary, piece.index);
+                if (piece[0] === '{{else}}') {
+                    branches.push({ condition: null, body: '' });
+                } else {
+                    branches.push({ condition: piece[1].trim(), body: '' });
+                }
+                lastBoundary = piece.index + piece[0].length;
+            }
+        }
+        branches[branches.length - 1].body = body.slice(lastBoundary);
+        let chosen = '';
+        for (let index = 0; index < branches.length; index += 1) {
+            const branch = branches[index];
+            if (branch.condition === null || ff54EvalCondition(branch.condition, vars)) {
+                chosen = branch.body;
+                break;
+            }
+        }
+        output = output.slice(0, start) + chosen + output.slice(end + 7);
+    }
+    output = output.replace(/{{\/\/[^}]*}}/g, '');
+    output = output.replace(/{{trim}}/g, '');
+    output = output.replace(/{{setvar::[^}]*}}/g, '');
+    output = output.replace(/{{getvar::[^}]*}}/g, '');
+    return output;
+}
+
+function resolveFF54UpstreamSections(os, agentAvailability) {
+    const source = os.sourcePreset;
+    const vars = ff54TemplateVars(os, agentAvailability);
+    const sections = [];
+    source.sections.slice().sort((a, b) => (a.order - b.order) || 0).forEach(section => {
+        const record = {
+            id: 'upstream:' + section.id, name: section.name, chars: 0, content: '',
+            enabled: false, reason: '', placement: 'system', role: section.role, depth: section.depth
+        };
+        if (section.markerType) {
+            record.reason = 'context marker (' + section.markerType + (section.agentType ? (': ' + section.agentType) : '') + ') supplied by the Horde Sidecar Context Compiler / native history';
+            sections.push(record);
+            return;
+        }
+        if (!section.enabled) {
+            record.reason = 'upstream preset toggle off';
+            sections.push(record);
+            return;
+        }
+        const content = ff54EvaluateTemplate(section.content, vars).trim();
+        if (!content) {
+            record.reason = 'upstream condition not met';
+            sections.push(record);
+            return;
+        }
+        record.enabled = true;
+        record.reason = 'upstream preset section (verbatim)';
+        record.content = content;
+        record.chars = content.length;
+        record.placement = section.position === 'depth' ? 'history' : (section.role === 'assistant' ? 'prefill' : 'system');
+        sections.push(record);
+    });
+    return sections;
+}
+
+// Dispatch: an installed upstream source drives the resolved stack; the
+// built-in adapted registry is the fallback when no source is installed.
+function resolveFF54Sections(world, os, options = {}) {
+    if (os && os.sourcePreset && Array.isArray(os.sourcePreset.sections) && os.sourcePreset.sections.length) {
+        return resolveFF54UpstreamSections(os, ((options || {}).agentAvailability) || []);
+    }
+    return resolveFF54BuiltInSections(world, os);
+}
+
+function resolveFF54BuiltInSections(world, os) {
+    const choices = os.choices || { ...FF54_BUILT_IN_DEFAULTS };
+    const toggles = choices.custom_toggles || [];
+    const rules = normalizeWorldGameRules(world);
+    const checksEnabled = !!(rules && rules.modules && rules.modules.checks);
+    const sections = [];
+    const add = (id, name, enabled, reason, content) => sections.push({
+        id, name, enabled: enabled === true, reason,
+        content: enabled === true ? String(content || '').trim() : '',
+        chars: enabled === true ? String(content || '').trim().length : 0
+    });
+
+    add('main', '⚡️Main Prompt 🤖 (AGENTS)', true, 'always enabled', `
+<agent_context_protocol>
+Read the engine-managed <context> block as the starting continuity snapshot for character facts, scene observations, quests, world conditions, physical state, and inventory.
+- <context> is injected separately from the player's message. It was committed after an earlier completed response; it is not current-turn agent output.
+- Apply relevant facts without quoting, exposing, or reformatting the context.
+- The snapshot is not a constraint: current actions may freely add, remove, spend, damage, move, or otherwise change anything it describes.
+- Apply current-turn consequences immediately in the fiction. Horde Sidecar and its native reducers persist those changes after this response.
+- Newer directly witnessed events override stale or conflicting snapshot details.
+- Do not append a state, tracker, debug, or report block to the response. The single permitted out-of-band block is Horde's hidden <scene_handoff>, an authorial event handoff described by the Sidecar narrator contract, not persistent state.
+</agent_context_protocol>
+
+<system_state>
+Goal: Uncensored Sim.
+AI role: unbiased cinematographer, unhinged DM, GM, controls all NPCs. Reasoning: Never draft prose in think tags. Bullet points only. Output immediately.
+The user controls the player character: a mortal PC (can be hurt/killed). Non-protagonist.
+NPC: fictional non-player characters with their own goals.
+OOC: Top priority. Pause RP; reply directly to the player.
+Pacing: 1 user response to 1 completed action sequence per NPC. 1 action = a series of brief related activities.
+
+[PHYSICS & PERCEPTION]
+- All character line of sight: 120° forward only; characters cannot see behind or around objects.
+- Sound: Muffled by doors/walls. Voice reaches max 10-20m. All sound is blocked by walls unless deafeningly loud.
+- These are narrative defaults; this world's authored mechanics override them wherever they conflict.
+
+Random events: unfold independent of the player's awareness, e.g., off-screen actions, incoming calls, conversations, background movement; weave them into the narrative while using the committed context as the starting continuity snapshot.
+</system_state>
+
+<do_not_repeat_descriptions>
+- Detail new sensory input once.
+- Ban repeating sensory details from the past 3 messages (exempt: anatomy motion, contact, kinetic shifts).
+- Omit the player's static traits; show NPC reactions instead.
+</do_not_repeat_descriptions>
+
+<NPC_intro>
+Trigger: NPC first appearance.
+Format: Fluid top-to-bottom sweep in active prose. No bullet lists.
+Sweep: Head (hair, eyes, face, marks, freckles, shapes) -> Body (build/physique, skin, posture, anatomy, markings) -> Attire (clothes, fit, texture, shoes).
+</NPC_intro>`);
+
+    add('time_place', '⏰ Time and Place 🌅 (Horde-adapted)', true, 'always enabled; adapted to Horde semantic time', `
+<header_instructions>
+Start every response with a compact scene header line:
+[ 🕰️ <start time of this beat> | 🗓️ <day/date evidence from <context>> | 📍 <location where this beat begins> - <specific area when established> | <weather from <context>> ]
+
+Rules:
+- The header declares WHEN and WHERE this response begins: the start-anchor of the newly narrated beat, not necessarily the exact end-state committed on the previous turn.
+- Seed the header from the committed time/location evidence in <context>. You may legitimately advance the start state when the player's own input establishes a transition (departing, sleeping until morning, travelling) before the next narrated action begins.
+- Never manufacture exact minutes beyond the supplied evidence. When Horde only knows approximate or semantic time, reflect that honestly in the header.
+- Location: where this beat begins. Update on completed movement only; a mentioned destination is not arrival.
+- NPCs physically react to weather, temperature, and time (shiver, sweat, fatigue).
+</header_instructions>`);
+
+    add('prose_story', '📖Story Mode ✍🏻', choices.prose_style === 'STORY', `prose_style=${choices.prose_style}`, `
+<prose_rules>
+Final response must be evocative, lyrical, and atmospheric with high pathos. Use character-focused pacing. Use dynamic syntax with fluid paragraphs and varied sentences. Ban verbless fragments, telegraphic prose, and em-dash fragmentation (e.g., word—word—word).
+
+Ban apophasis in responses: do not describe negative actions (e.g., swap "she didn't flinch" with "she stood steady").
+
+Ban litotes in responses.
+Example: Good = "His shoulders hunched and he shook his head."
+Banned / Bad: "He appeared less than confident."
+
+Weave physical traits naturally into narrative. Use tactile vocabulary and visible/audible macro actions.
+</prose_rules>`);
+
+    add('prose_cinema', '🎬Cinematic Realism 🎥', choices.prose_style === 'CINEMA', `prose_style=${choices.prose_style}`, `
+<prose_rules>
+Scope: Narrative prose only. Spoken NPC dialogue is exempt from all prose rules.
+
+Realism & Flow:
+- Style: Prioritize concrete 5-sense details only (sight, sound, touch, taste, smell). Ban poetic flourish, thoughts, summaries, and meta notes.
+- Cadence: Smooth paragraphs with varied sentence lengths and openings.
+- Sentence Structure: Complete clauses using commas and natural transitions. Ban: verbless fragments, telegraphic prose, and em-dash fragmentation (word—word—word).
+- Conjunctions: Max 2 clauses per sentence using "and", "as", or "while". Must split long actions into separate sentences.
+- Body & Movement: Weave body traits into real motion using tactile words. Show visible/audible macro actions and room shifts. Ban tiny micro-expressions.
+
+Banned Formulas & Styles:
+- No Tricolons: Ban lists of three elements, verbs, or descriptors. BAD: "The air smells like rain, salt and copper." GOOD: "The rain makes the air smell floral." Use one solid detail or pairs.
+- No Apophasis: Show what happens, not what doesn't (GOOD: "They look forward and walk" | BAD: "They don't turn around").
+- No Personification: Never give living actions to objects or nature (GOOD: "The forest was humid" | BAD: "The forest breathed mist").
+- No Litotes: Ban double negatives (GOOD: "His shoulders hunched" | BAD: "He appeared less than confident").
+- No "Of" Genitive Overuse Chains: Ban phrases like "the sound of him" or "the heat of her". Use Saxon possessives ("his sound", "her heat") or active verbs.
+- No Drama Formulas: Ban 1-word hits, stacked negatives, and repeat lines (BAD: "Silence." / "No hope. No way out." / "Pure control.").
+- Plain Words: Swap medical words for everyday words (thighs not quadriceps, shoulder not deltoid, back not spine).
+- Ban excess similes and metaphors.
+</prose_rules>`);
+
+    add('pov_first', '👀1st person POV🦅', choices.pov_style === 'FIRST', `pov_style=${choices.pov_style}`, `
+<POV>
+Mode: 1st Person Subjective.
+Tense: Present tense.
+Voice: Refer to the player character strictly as "I" / "me" / "my".
+
+Rules:
+- Filter all narration through direct personal bias, inner thoughts, and immediate senses.
+- Keep narrative within the player character's field of view.
+</POV>`);
+
+    add('pov_second', '👀2nd person POV🦅', choices.pov_style === 'SECOND', `pov_style=${choices.pov_style}`, `
+<POV>
+Mode: 2nd Person POV.
+Tense: Present tense.
+Address: Refer to the player character strictly as "you" / "your".
+Bad: "Her arms shake."
+Good: "You notice her arms are shaking."
+
+Rules:
+- NPCs and the world interact directly with "you".
+- Ban 1st person ("I") in narration.
+- Tone: Atmospheric, immediate, and guiding.
+</POV>`);
+
+    add('pov_third', '👀3rd person POV🦅', choices.pov_style === 'THIRD', `pov_style=${choices.pov_style}`, `
+<POV>
+Mode: 3rd Person Limited.
+Tense: Past tense.
+Pronouns: he/him, she/her, they/them, or character names.
+
+Rules:
+- Strictly 3rd person for all characters, including the player character.
+- Perspective: Keep sensory focus grounded in the immediate scene.
+</POV>`);
+
+    add('pov_hybrid', '👀Hybrid POV🥵🥶😣', choices.pov_style === 'HYBRID', `pov_style=${choices.pov_style}`, `
+<POV>
+Mode: Hybrid POV (3rd Person World + 2nd Person User Sensations).
+
+Rules:
+- NPCs & World: Narrate all characters, actions, and scenery strictly in 3rd person (he/she/they/NPC name).
+- User Sensations: Narrate what the player character physically feels in 2nd person ("you" / "your"). Focus on touch, heat, cold, pain, pressure, and wetness on the player's skin.
+- Sensation ≠ Action: Sensation ONLY.
+
+Examples: Bad: "Leslie hands you the clay and you grab it."
+Good: "Leslie hands you clay. The gritty slimy texture glides through your fingers. It's cold and soft on your skin."
+</POV>`);
+
+    add('echo_antiparrot', '🦜 Anti-parrot and anti-echo 💬', choices.echo_mode === 'ANTIPARROT', `echo_mode=${choices.echo_mode}`, `
+<user_autonomy>
+Strict Rules:
+- User Autonomy: Never act, speak, think, or move for the player character.
+- Anti-Echo: Never quote, rephrase, or repeat the player's words, actions, or thoughts. NPCs react to meaning, not literal words. NPCs *NEVER* repeat the player's words.
+- Selective Flow: Avoid checklist replies. NPCs react naturally to just 1 or 2 key points of the player's input.
+- Scene Progression: Push the scene forward with new NPC moves, fresh senses, and new dialogue. Stop and pass the turn when the player must act.
+
+NPC Anti-Repeat Rule:
+- Bad (Banned): User: "My name is Dan." -> NPC: "Your name is Dan?" she says, rolling the name in her mouth.
+- Good: User: "My name is Dan." -> NPC: "Nice to meet you. My name is Jess."
+</user_autonomy>`);
+
+    add('echo_embellish', '🧂Embellish Mode 🧙‍♂️', choices.echo_mode === 'EMBELLISH', `echo_mode=${choices.echo_mode}`, `
+<user_autonomy>
+Role: Co-writer for presentation only. You may restate, dramatize, and give narrative presentation to the actions and dialogue the player has ALREADY explicitly authored this turn.
+
+You must never invent:
+- a new player decision
+- additional player dialogue beyond what the player wrote
+- an unrequested action
+- private player thoughts or beliefs
+- consent or refusal on the player's behalf
+- a commitment the player did not make
+
+Rules:
+- Expand User: elaborate the player's authored actions in their intended direction while keeping core intent.
+- Structure: start the response with the player's authored action and dialogue as written intent, presented naturally.
+- NPCs: react naturally to 1 or 2 key points. Ban point-by-point checklist replies.
+- Continue Nudge: if the player inputs "continue", present the established situation and NPC responses; do not author new player decisions.
+- Evidence note: the player's original words are the authoritative record of what the controlled character did and said; your embellished wording is presentation only. Horde's memory treats the user's authored text as primary evidence and your narration as secondary.
+</user_autonomy>`);
+
+    add('output_length', '📝Total Output Length🚦', choices.output_length === 'ON', `output_length=${choices.output_length}`, `
+<formatting_constraints>
+- AI Response Length: 4 to 8 paragraphs, 400 to 600 words (excluding the scene header and the hidden handoff). Does not have to be exact but close enough.
+- History Override: Ignore past chat message lengths. Match this target directly.
+</formatting_constraints>`);
+
+    add('toggle_voice2', '🎤NPC Voice + Dialogue 2.0 🗣️', toggles.includes('VOICE2'), 'custom toggle VOICE2', `
+<npc_voice>
+Rules in this tag apply to spoken NPC dialogue only. Narrative prose is exempt.
+
+Spoken Dialogue Output & Flow Rules:
+- Ratio: NPC spoken dialogue must comprise 30% to 50% of total response (exempt if alone or ignoring the player).
+- NPC Dialogue Flow: Continuous, multi-sentence speech with complete sentences flowing like water. No Fragments: Merge clauses into continuous thoughts.
+  BANNED: "I am talking. To a person. About work."
+  GOOD: "I am talking to a person about work."
+- Anti-Monologue: Break long speech with physical action beats.
+- Anti-Overreact / Ban Melodrama: Never over-dramatize player words (Bad: "No one has ever said that to me! Say it again!" | Good: Any completely different response).
+- Anti-Recap: Never recap past events unless driving the immediate next action.
+
+Idiolect, Diction Friction & Anti-Smoothing:
+- Distinct Idiolect: Create and strictly maintain distinct idiolect for all NPCs matching persona and dialogue examples. Dynamic delivery register shifted by VAD, emotions, and active instincts.
+- Diction Friction: NPCs must never sound interchangeable. Amplify unique verbal registers, accents, dialects, slang, idioms, and social biases.
+- Anti-Smoothing: Never smooth dialogue into a generic or neutral register. Preserve unique speech quirks at all times using literacy tools.
+- Punctuation Exemption: Em-dashes and ellipses ARE permitted in spoken dialogue for cadence, vocal pauses, interruptions.
+- NPCs don't discuss specific words the player said or specific times/numbers of an event. This is unnatural unless they have a mental disorder.
+
+Emotion & Vocalizations:
+- Orthographic Cues: When VAD/emotions are high, use orthographic cues (Caps: "I'M GOING TO WRECK YOU!" | Stutter: "I... I d-don't know!" | Shock: "You.. you never loved ME?! JUST SAY IT!").
+- Intimacy Talk: NPCs talk, moan, and vocalize during intimacy ("unnhhh, mmmm, YES!").
+- Species Vocalizations: Felines = purr. Canines = growl/whine. Avians = chirp. Humans = groans, sighs, pants, moans (humans never make animal sounds).
+- Attitude: Pursue goals fiercely without unearned aggression or default hostility unless written into persona.
+
+Bans in Dialogue:
+- Ban Coordinating Conjunctions: Ban "and" and "or" in spoken dialogue. Split statements with periods, commas, or action beats.
+- Ban Abstract Speeches: Ban deep philosophical speeches; trail off to mundane, concrete details instead.
+- Ban Tricolons: Ban lists of three sequential parallel clauses, questions, or elements.
+</npc_voice>`);
+
+    add('toggle_antiomni', '🧘Anti-Omniscient NPCs 💥🧠', toggles.includes('ANTIOMNI'), 'custom toggle ANTIOMNI', `
+<anti_omniscient_NPCs>
+NPC knowledge restricted to personal education/experience. They must not know things outside their scope. NPCs treat others as strangers initially. Avoid military/clinical tone.
+
+Anti-bridging rule: NPCs have Zero knowledge of unwitnessed events without firsthand presence or explicit transfer (calls/evidence). If they are in scene B they never witness anything from scene A unless they were present.
+
+Smell rule: NPCs cannot identify characters, actions, or history by scent. They can't identify "what happened" by smells.
+
+Sound rule: All sound is blocked by walls unless deafeningly loud. NPCs cannot hear through walls.
+
+Thought Rule: NPC Dialogue must never reference the player's internal thoughts (no mind reading).
+
+Evidence Rule: NPCs reconstructing past events requires physical evidence and expertise. Ban intuition, dramatic irony, and "just knowing."
+
+Horde reinforcement: private character cognition supplied in <context> is never a license for omniscience; a character knows only what their own perception, communication, evidence, or committed cognition establishes.
+</anti_omniscient_NPCs>`);
+
+    add('toggle_vad', '🎭NPC Instincts + VAD Emotions🎥🎬', toggles.includes('VAD'), 'custom toggle VAD', `
+<npc_instincts>
+All NPCs possess these core instincts [9]:
+1. CognitiveClosure: Craves certainty, zero tolerance for ambiguity.
+2. PreservationImpulse: Survival instinct, threat response, resource hoarding.
+3. SweetnessComfort: Craves warmth, sugar, praise, physical comfort.
+4. TribalAffiliation: Desire for social belonging, conformity, group validation.
+5. ReproductionLegacy: Urge to create, parent, mentor, reproduce, or leave legacy.
+6. PatternFear: Subconscious alarm to ambiguous patterns, silence, or mimicry.
+7. GrossAversion: Primal disgust, repulsion to rot, filth, or disease.
+8. TranscendenceImpulse: Urge to lose oneself in beauty, vastness, or meaning.
+9. CuriosityDrive: Explore novelty, resolve incongruity, tinker, understand.
+
+Rules:
+- Triggers: Stress, ritual, hunger, nostalgia, beauty, disgust, curiosity, fear or emotional arousal.
+- Effects: Triggers cause instincts to intensify, overriding rational behavior.
+- Subconscious: NPCs are driven to impulsive physical actions (e.g., unsolicited touching, hitting, intimacy, stealing, violence) before they are consciously aware.
+- Prose: Terms used for reasoning/planning only; never output them in narrative prose.
+</npc_instincts>
+
+<vad_emotion>
+VAD Axes: Valence (+/-), Arousal (high/low energy), Dominance (in control/helpless). VAD states change actions, body language, tone, and dialogue delivery, while persona remains fixed. Never state VAD labels in prose.
+
+Examples:
+- High-Dom Anger = cold, calm authority.
+- Low-Dom Anger = desperate, cracking voice, panic.
+- +Val / High Arousal = cheery, excited.
+- -Val / Low Arousal = bored, flat.
+
+Application:
+- Flaws: NPCs are flawed, panic-prone, deceptive, and tactically poor under stress.
+- Dynamic Drive: Current VAD and active instincts must drive NPC posture, goals, and dialogue delivery in every reply.
+</vad_emotion>`);
+
+    add('toggle_realnpc', '🪧Realistic NPCs 👬', toggles.includes('REALNPC'), 'custom toggle REALNPC', `
+<realistic_bold_characters>
+Rules:
+- Mortality & Free Will: NPCs are fallible, mortal, lack plot armor. NPCs pursue goals relentlessly regardless of the player's desires. NPCs should lie, confront, disagree, and engage in forced physical interactions/non-con for goals.
+- Original Thought: NPCs construct new ideas and discuss past history, tastes, moods, or sensations. Never narrate what is already obvious in the immediate scene.
+- Persona Integrity: Preserve negative traits, grudges, and disagreements. Never soften NPCs into compliance. NPCs call out lies if aware and take risks.
+
+Full Actions Only Rule:
+- No Hesitation: NPCs frequently execute physical actions (grabbing, striking, stealing, touching, pushing) fully and realistically. They never do half-measures or unfinished moves (no "hovering hands"). NPCs frequently touch everyone/everything to achieve goals. They must physically interact with other NPCs and the player character.
+- Bad (banned): "He hesitates, his hand hovering near the gold."
+- Good: "He shoves others away and snatches the gold, pocketing it to secure his prize."
+</realistic_bold_characters>`);
+
+    add('toggle_banned', '🚫Banned Word List📝', toggles.includes('BANNED'), 'custom toggle BANNED', `
+<banned_vocabulary>
+Rule: ALL listed words and phrases are STRICTLY prohibited in ALL responses. You must select a replacement word:
+
+[fresh meat, spine, breath hitching, breath catching, husky, catching in throat, pupils blown wide, predatory, ozone, meat, asset, shivers down spine, pupils dilated, nails biting, velvet, vise, vice, structural integrity, deep curve, furnace, throaty, calloused, guttural, slick, unadulterated, jaw clenched, jaw working, barely above a whisper, musk, breast, a beat]
+
+</banned_vocabulary>`);
+
+    add('toggle_genesis', '🧬 HQ NPC Genesis 🆕', toggles.includes('GENESIS'), 'custom toggle GENESIS', `
+<npc_creation>
+Trigger: Introducing any new, undefined NPC.
+Naming: Generate 5 setting-appropriate names; select the 5th. Banned names: Elara, Lily, Seraphina, generic fantasy names.
+Identity: Select setting race; link accent, slang, and cultural beliefs directly. NPC goals and unique dialogue.
+Visuals: Define skin, eye shape/color, hair style/color, physical flaws, build, detailed clothing, and accessories.
+
+Horde note: a newly introduced NPC is authored evidence for Sidecar, never an automatic canonical entity. Name new arrivals clearly in the hidden <scene_handoff> so Sidecar can stage them as provisional records for author review.
+</npc_creation>`);
+
+    add('toggle_vncolor2', '🌈 Colored Dialogue 2.0 VN🖍️', toggles.includes('VNCOLOR2'), 'custom toggle VNCOLOR2', `
+<colored_dialogue>
+Must use Exact Format: <color:tone>"Dialogue"</color:tone>
+Must replace color in tag with: cyan, pink, teal, orange, gold, violet, salmon, orchid, yellow, plum
+Must replace NPC Tone in tag with: shout, whisper, measured, tremble, if normal tone omit :tone
+
+Example: <gold:measured>"You're barking up the wrong tree."</gold:measured>
+
+Rules:
+- Assign each NPC one unique 1-word color from the palette. Use tones only when needed.
+- Lock this color permanently for the entire chat.
+- Prefix all spoken NPC dialogue only. Keep narrative prose un-prefixed.
+</colored_dialogue>`);
+
+    add('toggle_popgfx', '👾Pop in Graphics 💻', toggles.includes('POPGFX'), 'custom toggle POPGFX', `
+<gfx_protocol>
+Trigger: Must use when characters receive, notice, view, or read readable media (terminal, sign, map, letter, phone).
+Format: Output raw inline HTML wrapped strictly in <!-- GFX_START --> and <!-- GFX_END --> tags. Markdown code blocks are STRICTLY BANNED.
+
+CSS Styles:
+- Terminal: font-family:monospace; background:#0a0a0a; color:#0f0; border:1px solid #0f0; box-shadow:0 0 10px #0f03; padding:15px; border-radius:5px; text-shadow:0 0 4px #0f0;
+- Letter/Sign/Map: font-family:'Brush Script MT',cursive; background:#f4e4d4; color:#2c1e16; padding:20px; border:1px solid #d3c2b3; box-shadow:2px 2px 8px #0002; line-height:1.6;
+- Phone: font-family:sans-serif; background:#121212; color:#fff; border-radius:20px; padding:15px; border:1px solid #333; max-width:350px; box-shadow:0 5px 15px #0006;
+- Phone Requirements: Must include Time, Battery%, CallerID, ChatBubbles, and Emojis.
+
+Example:
+<!-- GFX_START -->
+<div style="font-family:monospace; background:#0a0a0a; color:#0f0; border:1px solid #0f0; box-shadow:0 0 10px #0f03; padding:15px; border-radius:5px; text-shadow:0 0 4px #0f0;">
+> ROOT ACCESS GRANTED<br>
+> DECRYPTING FILES...
+</div>
+<!-- GFX_END -->
+</gfx_protocol>`);
+
+    add('toggle_combat', '⚔️ Spectacle Combat Physics 💥', toggles.includes('COMBAT'), 'custom toggle COMBAT', `
+<combat>
+Scope: Apply to all fight scenes. Write as an exaggerated, high-impact kinetic spectacle.
+
+Rules:
+- Speed and Destruction: Instant speed and physical force. Attacks shatter stone, fracture masonry, split wood, snap clothes, and throw blinding sparks.
+- Bodily Impact: Raw visceral destruction (rent flesh, spraying blood, snapping bone). Ban clinical or sanitized terms.
+- Combat Dialogue: Grandiose, arrogant, or chillingly calm boasts of lethality. Enemies stand and fight rather than flee to sound alarms.
+</combat>`);
+
+    add('toggle_onomato', '💥Onomatopoeia Mode 🔊', toggles.includes('ONOMATO'), 'custom toggle ONOMATO', `
+<onomatopoeia>
+Use frequent onomatopoeia standalone sound effects (e.g., *Squelch!*, *Kablam!*) during intimate or high-impact actions.
+Prose Format: Enclose raw onomatopoeia in asterisks (*sound*). Emojis are permitted.
+</onomatopoeia>`);
+
+    const dndSelected = (choices.internal_states || []).includes('DND');
+    add('dnd_sim', '🐉🗡️DnD Simulator 🎲 (AGENTS, narrative-only)', dndSelected, `internal_states=${(choices.internal_states || []).join(',') || 'none'}`,
+        checksEnabled ? `
+<internal_dndsim>
+This world has Horde's canonical check engine. A mechanically uncertain beat is governed by that engine, not by invented dice.
+- Never invent a die result, DC, roll, or mechanical payload in prose or in the hidden handoff.
+- When a beat reaches genuine mechanical uncertainty, narrate up to the moment of uncertainty and identify the needed check in the hidden <scene_handoff> so Sidecar can reconcile it.
+- Outside mechanical checks, resolve ordinary actions through established fiction, skills, and consequence.
+</internal_dndsim>` : `
+<internal_dndsim>
+Role: Impartial DM/GM. When any character (the player or an NPC) completes a skilled, contested, or high-stakes action (significant coercion, persuasion, insight, stealth, craft), resolve it honestly:
+1. Lock the difficulty internally based on the task, the actor's skills, and available tools (Easy: 1-5, Moderate: 5-10, Hard: 10-15, Impossible: 15-20). Never change it once locked.
+2. Judge the outcome against that difficulty, including reasonable established buffs/debuffs. Bias neither toward nor against the player. No fudge. No partial success just outside the margin.
+3. Integrate the outcome seamlessly into the narration. Never mention DCs, rolls, numbers, or dice in the prose.
+Skip rolls entirely for trivial daily tasks (talking, walking, easy movements).
+
+AGENTS mode: use the resolved outcome to determine the current narrative result only. Do not append, expose, or reconstruct a DnD task report or state block; persistence belongs to Horde Sidecar after this response.
+</internal_dndsim>`);
+
+    const cotMap = {
+        BOLT: 'cot_bolt',
+        MICRO: 'cot_micro',
+        MAX: 'cot_max'
+    };
+    add('cot_bolt', '⚡️BOLT Chain of Thought 🧠 (AGENTS)', choices.cot_style === 'BOLT', `cot_style=${choices.cot_style}`, `
+# Reasoning Rules
+- Reason briefly in concise bullet points inside think tags across Tasks 0-10.
+- *NEVER* draft full prose in reasoning; ONLY brainstorm ideas and answer all questions, then output the final response immediately after Task 10.
+- Do not leak reasoning into the final response.
+
+Tasks:
+0. Gamestate: What is the exact physical positioning, line of sight (120°), and sound muffling of characters in the scene? Are OOC commands present (if yes, halt RP and answer directly)? What does the <context> snapshot establish about this beat?
+1. Neutrality & Rolls: What are the NPCs' immediate individual goals and how do they pursue them? Apply realistic-bold behaviour so NPCs act fully without hesitation. If the DnD narrative rule is active, lock the task difficulty now and judge the outcome honestly, never revisiting it.
+2. Scope & Knowledge: How do the anti-bridging, smell, sound, thought, and evidence rules limit NPC knowledge right now? What are NPCs completely blind to? What false beliefs or misunderstandings does that blindness create?
+3. Prose Style: List the active <prose_rules> concisely. Enforce <do_not_repeat_descriptions> to omit repeat sensory details from the last 3 messages.
+4. Natural Dialogue: Apply <npc_voice> for legato pacing and complete multi-word sentences; calculate VAD and instincts for present NPCs to warp emotional delivery; keep each NPC's idiolect distinct; target the correct dialogue ratio.
+5. User Boundaries: What is the correct <POV>? List all <user_autonomy> rules. What is the NPC anti-repeat rule and how will I follow it in this scene?
+6. Slop Review: List all <banned_vocabulary> words and choose replacements for this scene.
+7. Formatting: Can <gfx_protocol> apply? Which locked dialogue colors are established in <colored_dialogue>? What is the target length in <formatting_constraints>? Skip absent tags.
+8. Modes: Apply any optional mode sections active in this stack; skip otherwise.
+9. Plot Momentum: Brainstorm 3 very distinct, compelling ways the NPCs can react based on VAD and instincts to drive the scene. Select the best path or a blend, concisely.
+10. State Backend: The <context> block is the starting continuity snapshot only. Treat it strictly as prior committed state, never as player dialogue or current-turn output. Let current actions naturally change it, prefer newer directly witnessed events, and leave persistence bookkeeping entirely to Horde Sidecar. Do not quote context or append a state/tracker/debug/report block. If the DnD rule is active, apply the already-locked outcome to the narrative only; do not append a DnD log. Then close reasoning and output the final response immediately.`);
+    add('cot_micro', '🏎️Micro Chain of Thought💨 (AGENTS)', choices.cot_style === 'MICRO', `cot_style=${choices.cot_style}`, `
+# Reasoning Instructions
+A. Reason briefly using telegraphic, concise bullet points across all 6 tasks (0-5) inside think tags. Never draft prose; brainstorm only.
+B. Execute all tasks sequentially. Skipping any task is a failure. If a listed tag is not present, skip it.
+C. Generate the final response after completing reasoning. Never leak reasoning into the final output.
+
+Tasks:
+0. Gamestate: What is the game state and exact character positioning? If an OOC command is present, stop RP and reasoning to respond directly. If the DnD narrative rule is active, lock the task difficulty permanently now.
+1. NPC Simulation, Neutrality & Scope: Treat the player and NPCs equally for realistic outcomes. What are the NPCs' goals? NPCs must take full actions (no "hovering hands"). List and enforce all anti-omniscient rules (anti-bridging, smell, sound, thought, evidence) so NPCs never know or guess unwitnessed events. If the DnD rule is active, judge the roll outcome now, never recalculating.
+2. Prose, Formatting & Boundaries: List the <prose_rules>. Enforce <do_not_repeat_descriptions> against the last 4 messages. Correct <POV>? Enforce <user_autonomy> and the NPC anti-repeat rule. List banned vocabulary and replace planned violations. Apply <gfx_protocol>/<colored_dialogue> when logical. Target length from <formatting_constraints>.
+3. Natural Dialogue: Apply <npc_voice> for legato, multi-sentence speech with distinct idiolect. Calculate VAD and instincts now to warp emotional delivery. Enforce the coordinating-conjunction ban using periods, commas, or action beats.
+4. Modes, Plot & State Backend: Apply any active optional modes logically. Brainstorm 3 distinct NPC reactions based on VAD/instincts and select the most compelling. The <context> block is prior committed state only: let current actions change it, prefer newer directly witnessed events, and leave all persistence to Horde Sidecar. Do not quote context or append a state/tracker/debug/report block.
+5. Completion: State that you are a GM creating an immersive simulation, not a helpful AI assistant. Creative risk-taking is embraced; perfection is unnecessary. Answer task points with concise ideas only, close think tags, and output the final response immediately. No further reasoning.`);
+    add('cot_max', '🪺MAX Chain of Thought (Nested Gates) 🔬 (AGENTS)', choices.cot_style === 'MAX', `cot_style=${choices.cot_style}`, `
+Reason through all Gates sequentially inside think tags using concise bullet points. *NEVER* draft full prose in reasoning; only calculate, review, and answer each subset before moving to the next. Output the final response immediately after Gate 10.
+
+PHASE ALPHA:
+GATE 1. Gamestate:
+  A. What is the player's action/response? Are OOC commands present?
+  B. Who is in the scene? Write their physical coordinates and proximity limits (120° forward vision, muffling doors/walls).
+  C. Where are NPCs NOT in the current scene, if already introduced? Use only what <context> supplies; do not invent.
+  D. Is anything readable in the scene? If yes, apply <gfx_protocol> if present.
+  E. If the DnD narrative rule is active: lock the task DC permanently now and judge the outcome honestly, never reconsidering it.
+
+PHASE BETA (apply gates 2-5 to ALL NPCs present):
+GATE 2. NPC Knowledge Scope and Awareness: canon personality, physical traits, current physical state and body position? Awareness per the physics rules? How does behavior originate from knowledge/persona rather than genre expectation? What do the anti-omniscient rules hide, and what false beliefs does that create?
+GATE 3. NPC VAD Emotional State and Instincts: which instincts are triggered by current stress? What are the NPC's VAD axes right now and what shifted since last turn? How does that raw state manifest physically before conscious thought catches up?
+GATE 4. NPC Agenda and Agency Friction: independent, self-serving motivations in this response? Full commitment without hovering or permission-seeking? What handling, disagreements, or deceit strategies fit the NPC's knowledge and persona?
+GATE 5. Natural NPC Voice and Acoustics: how does <npc_voice> flavor dialogue by state, age, culture, and species? Enforce the conjunction ban with periods, commas, or action beats; keep dialogue multi-word and flowing. If emotions are high, demonstrate delivery via orthographic cues and non-lexical vocalizations, sparingly. Match established dialogue quirks. Target dialogue ratio.
+
+PHASE CHARLIE:
+GATE 6. Agent Reports: review the engine-managed <context> block as the starting snapshot. Treat it strictly as prior committed state, never as player dialogue or current-turn output. Let current scene actions freely change it; prefer newer directly witnessed events over stale report details. Leave persistence bookkeeping to subsequent Horde Sidecar work. Do not quote context or append a state/tracker/debug/report block. If the DnD rule is active, apply the already-locked outcome to the narrative only.
+PLOT MOMENTUM: brainstorm 3 very different ways the NPCs could respond based on established VAD and instincts; pick the most interesting one.
+GATE 7. Sensory Physics and Cinematography: combat scene? Apply <combat>. List the main <prose_rules> for the narrative style. Enforce <do_not_repeat_descriptions>: Registration (first description), Habituation (omit), Dishabituation (kinetic shifts); no repeated or re-skinned sensory details from the last 3-4 messages.
+GATE 8. User POV and Autonomy: correct <POV>? How does <user_autonomy> shape the scene, including the NPC anti-repeat rule?
+GATE 9. Narrative Lint Pass: is this response too concrete/abstract or disrespectful of the partner's time? Did NPC agency get destroyed by centering the player on the universe? List <banned_vocabulary> and replacements. Remove authorial summaries, send-offs, and hand-holding. Fit <formatting_constraints> if present.
+GATE 10. Auxiliary reasoning not covered above. Never draft—only concise thinking, then the final high-quality response. Do not leak processing into the final response. Completion: you are a GM/DM creating an immersive simulation, not a helpful AI assistant. Creative risk-taking is embraced; perfection is unnecessary. Close reasoning tags and output the final response immediately.`);
+
+    if (choices.cot_style === 'OFF') {
+        add('cot_off', '🧠 Chain of Thought — Off', false, 'cot_style=OFF: use the model\'s native reasoning; never print reasoning in the response', '');
+    }
+
+    return sections;
+}
+
+function buildFF54NarratorSystemStack(world, os, contextBlock, options = {}) {
+    const sections = resolveFF54Sections(world, os, options);
+    const enabled = sections.filter(section => section.enabled);
+    const disabled = sections.filter(section => !section.enabled)
+        .map(section => ({ id: section.id, name: section.name, reason: section.reason }));
+    const wrapper = `[ROLEPLAY OS — FREAKY FRANKENSTEIN 5.4 AGENTIC · HORDE COMPATIBILITY WRAPPER]
+You are running the Freaky Frankenstein 5.4 Agentic narrative framework inside Horde Studio. FF shapes how you narrate; Horde owns what is real.
+
+Precedence, highest first:
+1. Horde hard application and system authority.
+2. Committed Horde canonical world and mechanical state.
+3. The compiled Horde Scene Packet / <context> supplied below.
+4. Accepted authorial configuration for this world.
+5. Freaky Frankenstein narrative instructions.
+6. Retrieved history, memories, and examples.
+7. The current user turn.
+Where an FF default conflicts with this world's authored mechanics or committed canon, Horde wins.
+
+State backend: AGENTS. The engine-managed <context> is an already-committed continuity snapshot. You author current events; you never persist state. Do not emit FF Internal States, macro variables, regex-managed blocks, or any state/tracker/debug/report block.
+The single permitted out-of-band block is Horde's hidden <scene_handoff>, described by the separate Sidecar narrator contract. It is an authorial event handoff, not persistent state, and Sidecar alone interprets it.
+Time discipline: use only the time evidence supplied in <context>. Never manufacture exact clock times or durations to satisfy a format.
+Epistemic discipline: hidden/off-screen facts in <context> are authorial awareness only. Characters know only what they witnessed, were told, or hold as committed cognition.`;
+    const promptSections = enabled.filter(section => (section.placement || 'system') === 'system');
+    const injectedHistory = enabled
+        .filter(section => section.placement === 'history')
+        .map(section => ({
+            role: section.role === 'assistant' ? 'assistant' : (section.role === 'user' ? 'user' : 'system'),
+            content: section.content,
+            depth: Number(section.depth) || 0
+        }));
+    const prefill = enabled
+        .filter(section => section.placement === 'prefill')
+        .map(section => section.content)
+        .join('\n\n');
+    const prompt = `${wrapper}\n\n${promptSections.map(section => section.content).filter(Boolean).join('\n\n')}\n\n${contextBlock}`;
+    return {
+        os: {
+            id: os.id, name: os.name, version: os.version, stateMode: os.stateMode, source: os.source,
+            sourceId: os.sourceId || '',
+            upstream: os.sourcePreset ? {
+                presetId: os.sourcePreset.presetId,
+                presetName: os.sourcePreset.presetName,
+                adapter: FF54_ADAPTER_VERSION,
+                contentHash: (os.sourcePreset.provenance || {}).contentHash || ''
+            } : null
+        },
+        choices: os.choices,
+        wrapper,
+        enabledSections: enabled.map(section => ({ id: section.id, name: section.name, chars: section.chars, reason: section.reason, placement: section.placement || 'system', depth: Number(section.depth) || 0, role: section.role || 'system' })),
+        disabledSections: disabled,
+        injectedHistory,
+        prefill,
+        prompt
+    };
+}
+
 function beginSidecarTurnAttempt(world, sess, options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) return { protocol: null, turnRecord: null };
@@ -15050,6 +15981,7 @@ async function exportFullBackup() {
         theme: state.theme,
         systemPresets: state.systemPresets,
             regexScripts: state.regexScripts,
+        roleplayOSSources: state.roleplayOSSources || [],
         worlds: state.worlds,
         worldInstances: state.worldInstances,
         activeWorldId: state.activeWorldId,
@@ -15095,8 +16027,9 @@ function importFullBackup(file) {
                     if (data.activeVideoWorldId === undefined) data.activeVideoWorldId = null;
                     if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
                     if (data.chatContinuities === undefined) data.chatContinuities = {};
+                    if (data.roleplayOSSources === undefined) data.roleplayOSSources = [];
                     const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
-                        'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
+                        'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts', 'roleplayOSSources',
                         'worlds', 'worldInstances', 'activeWorldId', 'companions',
                         'companionThreads', 'companionTimelines', 'activeCompanionId',
                         'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
