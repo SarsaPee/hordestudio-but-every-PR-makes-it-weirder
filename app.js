@@ -11456,7 +11456,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         mechanicsGuard = mechanicsEngine.receiptIdentityGuard(world, sess, validation.receipt);
         if (mechanicsGuard.allowed) {
             preparedMechanics = mechanicsEngine.prepareCommit(world, sess, validation,
-                world.mechanicsRegistry || window.HordeWorldMechanicsRegistry || null,
+                worldMechanicsRegistryFor(world),
                 { origin: sidecarSource ? 'sidecar' : 'narrator' }) || preparedMechanics;
         }
     }
@@ -12888,6 +12888,16 @@ Epistemic discipline: hidden/off-screen facts in <context> are authorial awarene
 // lore/ledger prompt blocks) is NOT injected alongside this block; whatever
 // survived it as useful semantic information is routed here instead.
 // ---------------------------------------------------------------------------
+// Resolve the mechanics registry for a world: an explicit world-level
+// registry, the live global named by world.bunnyRxRegistry.globalName (the
+// BunnyRx live-import convention), or the shared global.
+function worldMechanicsRegistryFor(world) {
+    if (world?.mechanicsRegistry) return world.mechanicsRegistry;
+    const globalName = String(world?.bunnyRxRegistry?.globalName || '').trim();
+    if (globalName && window[globalName]) return window[globalName];
+    return window.HordeWorldMechanicsRegistry || null;
+}
+
 function compileFF54SidecarContext(world, sess, opt = {}) {
     const packet = isPlainObject(opt.packet) ? opt.packet : {};
     const rules = normalizeWorldGameRules(world);
@@ -13034,7 +13044,7 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
     // the compiler keeps them even under budget pressure.
     const mechanicsCandidates = window.HordeWorldMechanics?.isEnabled?.(world)
         ? (window.HordeWorldMechanics.contextCandidates?.(world, sess,
-            world.mechanicsRegistry || window.HordeWorldMechanicsRegistry || null, {
+            worldMechanicsRegistryFor(world), {
             audience: 'narrator',
             relevantEntityIds: ['player', ...castIds],
             controlledEntityId: 'player',
@@ -13658,7 +13668,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const maxTokens = configuredTokens > 0 ? Math.max(1200, Math.min(100000, Math.trunc(configuredTokens))) : defaultTokens;
     const readerMechanicsFrame = window.HordeWorldMechanics?.isEnabled?.(world)
         ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
-            world.mechanicsRegistry || window.HordeWorldMechanicsRegistry || null) || '')
+            worldMechanicsRegistryFor(world)) || '')
         : '';
     const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, or canonical identity is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence.\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock.\n\nCANONICAL REFERENCE MANIFEST:\n${JSON.stringify(references)}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
     const messages = [{ role: 'system', content: prompt }, { role: 'user', content: 'Read this authored beat and return the semantic evidence packet.' }];
@@ -13869,7 +13879,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     options.onStage?.('reconciling');
     const mechanicsFrame = window.HordeWorldMechanics?.isEnabled?.(world)
         ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
-            world.mechanicsRegistry || window.HordeWorldMechanicsRegistry || null) || '')
+            worldMechanicsRegistryFor(world)) || '')
         : '';
     const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nReconcile across the FF semantic domains: temporal (two-phase, header-anchored), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture (explicit commitments only), inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, cognition consistency (per-character epistemics), recovery obligations, and promotion candidates for genuinely new entities and places.\nWhere the SIDECAR READER REPORT carries controlled_character_evidence, treat user_explicit_action and user_explicit_dialogue as primary player-authored evidence and narrator_paraphrase as presentation only. Never canonize a persistent character trait from a single Narrator flourish; higher-order interpretations need repeated evidence or explicit authorial confirmation.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nWORLD MECHANICS FRAME (engine-owned state; the engine owns phases and dose arithmetic — you supply evidence only):\n${mechanicsFrame || '(no tracked mechanics state this turn)'}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const configuredTokens = Number(tracker.maxTokens) || 0;
@@ -28086,7 +28096,7 @@ function renderWorldPlayState() {
     const statsContainer = document.getElementById('world-stats-container');
     if (statsContainer) {
         statsContainer.innerHTML = '';
-        statsContainer.style.display = (ruleModules.stats || ruleModules.conditions) ? 'flex' : 'none';
+        statsContainer.style.display = (ruleModules.stats || ruleModules.conditions || window.HordeWorldMechanics?.isEnabled?.(world)) ? 'flex' : 'none';
         const playerState = normalizePlayerRulesState(world, sess);
         if ((ruleModules.health && playerState.status !== 'active')
             || (ruleModules.conditions && playerState.conditions.length)) {
@@ -28098,6 +28108,132 @@ function renderWorldPlayState() {
                 <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">Player State</div>
                 <div style="font-size:0.85rem; font-weight:800;">${playerState.status === 'dead' ? '☠️ GAME OVER' : playerState.status === 'incapacitated' ? '⚠️ INCAPACITATED' : 'ACTIVE'}${playerState.conditions.length ? ` · ${escapeHTML(playerState.conditions.join(', '))}` : ''}</div>`;
             statsContainer.appendChild(statusCard);
+        }
+        // World mechanics (Annex A1/A2): player-visible approximate altered
+        // state plus authorial canonical-input controls for on-screen
+        // actors. Controls adjust canonical INPUTS; the engine recomputes
+        // phases — never a downstream prose flag.
+        if (window.HordeWorldMechanics?.isEnabled?.(world)) {
+            const mechRegistry = worldMechanicsRegistryFor(world);
+            const mechCard = document.createElement('div');
+            mechCard.className = 'world-card';
+            mechCard.style.padding = '8px 12px';
+            mechCard.style.background = 'var(--surface2)';
+            mechCard.style.flex = '1 1 100%';
+            // Cast source: the canonical scene frame's current presence,
+            // not a raw entity.location comparison.
+            const mechFrame = buildWorldSceneFrame(world, sess);
+            const mechActors = [{ id: 'player', name: 'You' }].concat(
+                (mechFrame.present_character_ids || [])
+                    .map(npcId => {
+                        const frameNpc = (world.entities || []).find(ent => ent?.id === npcId);
+                        return { id: npcId, name: frameNpc?.name || npcId };
+                    }));
+            const mechRows = [];
+            mechActors.forEach(actorInfo => {
+                const mechPanel = window.HordeWorldMechanics.actorStatePanel(world, sess, actorInfo.id, mechRegistry);
+                (mechPanel.states || []).forEach(mechState => {
+                    mechRows.push(`
+                        <div class="wm-state-row" data-actor="${escapeHTML(actorInfo.id)}" data-profile="${escapeHTML(mechState.profileKey)}" style="display:flex; align-items:center; gap:6px; margin:3px 0; font-size:0.8rem; flex-wrap:wrap;">
+                            <span style="min-width:56px; color:var(--text-3);">${escapeHTML(actorInfo.name)}</span>
+                            <strong>${escapeHTML(mechState.label)}</strong>
+                            <span style="color:var(--text-3);">~${mechState.effectiveDoseCount}${mechState.estimated ? ' (est.)' : ''} · ${escapeHTML(mechState.phase)} · ${escapeHTML(mechState.approximateLevel)} impairment${mechState.selfAssessmentReliability && mechState.selfAssessmentReliability !== 'unknown' ? ` · self-assessment: ${escapeHTML(mechState.selfAssessmentReliability)}` : ''}</span>
+                            <button type="button" class="wm-dose-dec" title="Authorial input: one fewer dose — the engine recomputes the phase.">−</button>
+                            <button type="button" class="wm-dose-inc" title="Authorial input: one more dose — the engine recomputes the phase.">+</button>
+                            <button type="button" class="wm-state-clear" title="Authorial: resolve this state now.">×</button>
+                        </div>`);
+                });
+            });
+            const mechProfiles = mechRegistry?.profiles
+                ? Object.values(mechRegistry.profiles).filter(profile => profile && !profile.combination)
+                : [];
+            const gmProposals = (sess.worldMechanics?.gmProposals || [])
+                .filter(proposal => proposal.status === 'pending' && !proposal.stale).slice(-3);
+            mechCard.innerHTML = `
+                <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">World Mechanics — approximate state (authorial controls)</div>
+                ${mechRows.length ? mechRows.join('') : '<div style="font-size:0.8rem; color:var(--text-3); padding:2px 0;">No tracked altered states on screen.</div>'}
+                <div style="display:flex; gap:4px; margin-top:6px; font-size:0.75rem; flex-wrap:wrap;">
+                    <select class="wm-add-actor">${mechActors.map(actorInfo => `<option value="${escapeHTML(actorInfo.id)}">${escapeHTML(actorInfo.name)}</option>`).join('')}</select>
+                    <select class="wm-add-profile">${mechProfiles.map(profile => `<option value="${escapeHTML(profile.key)}">${escapeHTML(profile.label || profile.key)}</option>`).join('')}</select>
+                    <select class="wm-add-phase">${(window.HordeWorldMechanics.ALTERED_PHASES || []).map(phase => `<option value="${escapeHTML(phase)}">${escapeHTML(phase)}</option>`).join('')}</select>
+                    <button type="button" class="wm-add-apply">Set</button>
+                </div>
+                ${gmProposals.length ? `
+                <div style="margin-top:6px; font-size:0.75rem;">
+                    <div style="color:var(--text-3); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Open GM proposals</div>
+                    ${gmProposals.map(proposal => `
+                    <div class="wm-proposal" data-proposal="${escapeHTML(proposal.id)}" style="display:flex; gap:6px; align-items:center; margin:2px 0;">
+                        <span style="flex:1;">${escapeHTML(String(proposal.provenance || proposal.id).slice(0, 140))}</span>
+                        <button type="button" class="wm-proposal-approve">Approve & commit</button>
+                    </div>`).join('')}
+                </div>` : ''}`;
+            const mechApply = action => { action(); saveState().catch(() => {}); renderWorldPlayState(); };
+            mechCard.querySelectorAll('.wm-state-row').forEach(row => {
+                const actorId = row.dataset.actor, profileKey = row.dataset.profile;
+                row.querySelector('.wm-dose-dec')?.addEventListener('click', () => mechApply(() =>
+                    window.HordeWorldMechanics.adjustDoseCount(world, sess, actorId, profileKey, -1, mechRegistry)));
+                row.querySelector('.wm-dose-inc')?.addEventListener('click', () => mechApply(() =>
+                    window.HordeWorldMechanics.adjustDoseCount(world, sess, actorId, profileKey, 1, mechRegistry)));
+                row.querySelector('.wm-state-clear')?.addEventListener('click', () => mechApply(() =>
+                    window.HordeWorldMechanics.resolveAlteredState(world, sess, actorId, profileKey)));
+            });
+            mechCard.querySelector('.wm-add-apply')?.addEventListener('click', () => {
+                const actorId = mechCard.querySelector('.wm-add-actor')?.value || 'player';
+                const profileKey = mechCard.querySelector('.wm-add-profile')?.value || '';
+                const phase = mechCard.querySelector('.wm-add-phase')?.value || 'active';
+                const profile = mechRegistry?.profiles?.[profileKey];
+                if (!profile) return;
+                mechApply(() => window.HordeWorldMechanics.setManualAlteredState(world, sess, actorId, {
+                    profileKey, phase, observable: 'noticeable', domains: profile.domains || []
+                }, mechRegistry));
+            });
+            mechCard.querySelectorAll('.wm-proposal').forEach(row => {
+                row.querySelector('.wm-proposal-approve')?.addEventListener('click', () => {
+                    const proposal = (sess.worldMechanics?.gmProposals || [])
+                        .find(item => item.id === row.dataset.proposal);
+                    if (!proposal) return;
+                    // Approving a proposal means committing its suggested
+                    // deltas through the native receipt pipeline, then
+                    // marking it approved against that receipt.
+                    const frame = buildWorldSceneFrame(world, sess);
+                    // A fresh attempt id per commit: a failed attempt must be
+                    // retryable, and the receipt identity guard must not read
+                    // a failed earlier attempt as a duplicate.
+                    const receipt = {
+                        turn_id: `gm_proposal_${proposal.id}_r${(Number(sess.worldStateVersion) || 0) + 1}`.slice(0, 100),
+                        summary: String(proposal.provenance || 'GM proposal approved').slice(0, 300),
+                        scene: {
+                            player_location_id: frame.player_location_id || sess.playerLocation || '',
+                            player_location_changed: false,
+                            present_character_ids: frame.present_character_ids || []
+                        },
+                        events: [], entity_updates: [],
+                        state_updates: proposal.suggestedDeltas || {}
+                    };
+                    const proposalResult = commitWorldTurnReceipt(world, sess, receipt, {}, 'gm_proposal');
+                    const proposalAudit = proposalResult?.audit;
+                    const proposalRejected = Array.isArray(proposalAudit?.rejected) ? proposalAudit.rejected : [];
+                    const proposalMechanicsErrors = Array.isArray(proposalAudit?.mechanics?.errors)
+                        ? proposalAudit.mechanics.errors : [];
+                    // Approval is transactional: only a clean commit approves,
+                    // and the accepted commit id and revision are recorded. A
+                    // failed commit leaves the proposal pending.
+                    const cleanCommit = !!proposalAudit && proposalAudit.cast_checksum_match !== false
+                        && !proposalRejected.length && !proposalMechanicsErrors.length;
+                    if (!cleanCommit) {
+                        showToast('Proposal commit did not land cleanly; it stays pending for review', 'warning');
+                        saveState().catch(() => {});
+                        renderWorldPlayState();
+                        return;
+                    }
+                    window.HordeWorldMechanics?.approveGmProposal?.(world, sess, proposal.id,
+                        receipt.turn_id, proposalAudit.world_state_version);
+                    showToast('GM proposal committed and marked approved', 'success');
+                    saveState().catch(() => {});
+                    renderWorldPlayState();
+                });
+            });
+            statsContainer.appendChild(mechCard);
         }
         (ruleModules.stats ? (world.hudConfig?.stats || []) : []).forEach(stat => {
             const baseVal = Number(sess.playerStats[stat.id] !== undefined ? sess.playerStats[stat.id] : stat.value);
@@ -28298,6 +28434,18 @@ function renderWorldPlayState() {
             div.onclick = () => openNpcDossier(npc.id);
             div.onmouseenter = () => { div.style.background = 'var(--surface3)'; };
             div.onmouseleave = () => { div.style.background = 'var(--surface2)'; };
+            // World mechanics: altered-state chips for on-screen NPCs.
+            if (window.HordeWorldMechanics?.isEnabled?.(world)) {
+                const chipRegistry = worldMechanicsRegistryFor(world);
+                const mechPanel = window.HordeWorldMechanics.actorStatePanel(world, activeSess, npc.id, chipRegistry);
+                (mechPanel.states || []).forEach(mechState => {
+                    const chip = document.createElement('span');
+                    chip.style.cssText = 'margin-left:6px; padding:1px 6px; border-radius:10px; font-size:0.7rem; font-weight:700; background:rgba(139,92,246,0.25); color:#c4b5fd; white-space:nowrap;';
+                    chip.textContent = `${mechState.label} · ${mechState.phase}`;
+                    chip.title = `~${mechState.effectiveDoseCount}${mechState.estimated ? ' (est.)' : ''} · ${mechState.approximateLevel} impairment — manual controls in the HUD mechanics card`;
+                    div.appendChild(chip);
+                });
+            }
             presList.appendChild(div);
         });
     } else {
@@ -35608,6 +35756,12 @@ function applyStartingLifeToSession(world, sess, originId) {
     else delete sess.pendingOriginIntro;
     const label = life.title ? `${life.title}, ${life.role}` : life.role;
     sess.ledger = `Began this life as ${label}${life.factionId ? `, aligned with ${sess.factions.find(f => f.id === life.factionId)?.name || life.factionId}` : ''}.`;
+    // World mechanics checkpoint overlay: a starting life may carry durable
+    // facts, relationships, inventory containers, cognition and an intro
+    // that the engine applies before play begins.
+    if (window.HordeWorldMechanics?.isEnabled?.(world) && life.checkpointOverlay) {
+        window.HordeWorldMechanics.applyCheckpoint(world, sess, life);
+    }
     return life;
 }
 

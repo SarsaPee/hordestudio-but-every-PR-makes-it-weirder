@@ -887,7 +887,7 @@
         return proposal;
     }
 
-    function approveGmProposal(world, session, proposalId, committedReceiptId) {
+    function approveGmProposal(world, session, proposalId, committedReceiptId, committedRevision) {
         const state = ensureSession(world, session);
         const proposal = state?.gmProposals.find(item => item.id === proposalId);
         if (!proposal || proposal.stale || proposal.approved) return false;
@@ -898,6 +898,7 @@
         proposal.approved = true;
         proposal.status = 'committed';
         proposal.committedReceiptId = receiptId;
+        proposal.committedRevision = Number(committedRevision) || 0;
         return true;
     }
 
@@ -1866,7 +1867,7 @@
         return Math.max(0, (Number(record?.doseCount) || 0) + (Number(record?.authorialDoseOffset) || 0));
     }
 
-    function adjustDoseCount(world, session, actorId, profileKey, delta) {
+    function adjustDoseCount(world, session, actorId, profileKey, delta, registry) {
         if (!isEnabled(world)) return { ok: false, reason: 'disabled' };
         const state = ensureSession(world, session);
         const actor = id(actorId), key = id(profileKey);
@@ -1906,7 +1907,13 @@
                 return { ok: true, record, resolved: true };
             }
         }
-        const profile = globalThis.HordeWorldMechanicsRegistry?.profiles?.[key] || null;
+        // Engine owns the phase: recompute the derived phase after every
+        // adjustment so the panel never shows a stale canonical phase.
+        const profile = registry?.profiles?.[key];
+        if (profile && profilePhasePolicy(profile).authority === 'derived') {
+            record.phase = deriveCanonicalPhase(world, session, record, profile);
+            record.phaseTransitionReason = 'authorial_dose_adjustment';
+        }
         return { ok: true, record, resolved: false };
     }
 
