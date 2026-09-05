@@ -1194,6 +1194,23 @@
                                 <div id="w-sidecar-migration-controls" style="display:flex; gap:8px; margin-top:10px;"><button id="w-sidecar-migrate-btn" type="button" class="btn btn-primary">Review &amp; migrate this world</button><button id="w-sidecar-restore-backup" type="button" class="btn btn-ghost hidden">Restore latest Inline backup</button></div>
                             </div>
 
+                            <div id="w-roleplay-os-section" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
+                                <span class="vh-eyebrow">NARRATOR ROLEPLAY OS</span>
+                                <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin:4px 0 6px; flex-wrap:wrap;">
+                                    <h3 style="margin:0; font-size:1rem;">Freaky Frankenstein 5.4 &middot; Agent Gating</h3>
+                                    <span id="w-roleplay-os-state" class="form-hint" style="margin:0;"></span>
+                                </div>
+                                <p class="form-hint">The FF stack is the Narrator behaviour framework in Sidecar mode. Sections resolve from the pinned source preset verbatim through the preset&#39;s own gating; Horde compiles the engine-managed &lt;context&gt; block and agent data. Only the competing state backend is excluded &mdash; state_mode is pinned to AGENTS.</p>
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                                    <select id="w-roleplay-os-source" class="form-select" style="max-width:360px;" title="Installed Roleplay OS source presets. FF versions coexist; this world pins one."></select>
+                                    <button id="w-roleplay-os-import-btn" type="button" class="btn btn-ghost" style="font-size:0.75rem; padding:4px 10px;" title="Install a Marinara preset export into the installation-level source registry and pin this world to it.">+ Import source preset</button>
+                                    <input type="file" id="w-roleplay-os-file-input" hidden accept=".json">
+                                </div>
+                                <div id="w-roleplay-os-source-info" class="form-hint" style="margin-top:6px;"></div>
+                                <div id="w-roleplay-os-choices" style="margin-top:12px;"></div>
+                                <div id="w-roleplay-os-migration" style="margin-top:10px;"></div>
+                            </div>
+
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
                                 <label class="form-label" style="display:flex; align-items:center; gap:8px; margin:0;">
                                     <input type="checkbox" id="w-agent-enabled">
@@ -1223,7 +1240,7 @@
                             </div>
 
                             <!-- System Presets (Modular) -->
-                            <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
+                            <div id="w-legacy-preset-section" class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
                                     <label class="form-label" style="margin:0;">World / DM Preset</label>
                                     <div style="display:flex; gap:8px;">
