@@ -9225,11 +9225,20 @@ function getVisibleDialog() {
         .filter(dialog => !dialog.classList.contains('hidden') && getComputedStyle(dialog).display !== 'none');
     // Stacked dialogs: the visual editor opens above the record inspector
     // even though the inspector sits later in the DOM. The layer that owns
-    // focus wins before the last-in-DOM fallback, so a click inside the top
-    // layer is not treated as "focus escaped the dialog" and yanked back
-    // into the layer underneath.
+    // focus wins first; otherwise the topmost painted layer (highest
+    // z-index, DOM order breaking ties) — never raw DOM order, which put
+    // the layer underneath in charge and yanked focus out of the top one.
     const active = document.activeElement;
-    return visible.find(dialog => dialog.contains(active)) || visible[visible.length - 1];
+    const owning = visible.find(dialog => dialog.contains(active));
+    if (owning) return owning;
+    const zIndex = dialog => {
+        const value = parseInt(getComputedStyle(dialog).zIndex, 10);
+        return Number.isFinite(value) ? value : 0;
+    };
+    return visible.reduce((top, dialog) =>
+        zIndex(dialog) > zIndex(top) || (zIndex(dialog) === zIndex(top)
+            && !!(top.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING))
+            ? dialog : top);
 }
 
 function setupAccessibility() {
@@ -19867,6 +19876,12 @@ async function renderWorldVisualModelSearch(world, force = false) {
         return;
     }
     status.textContent = `Loading compatible image models from ${providerDisplayName(provider)}…`;
+    // The live fal catalog can take a few seconds on first load. Open the
+    // results box with a loading placeholder immediately so the dropdown is
+    // visibly working instead of silently absent — clicks during the gap
+    // used to land on nothing and look like dead options.
+    setCompanionSearchOpen(input, results, true);
+    renderCompanionSearchResults(results, [], () => {}, 'Loading compatible image models…');
     let models = [];
     try {
         models = rankCompanionImageModels(
@@ -19875,6 +19890,9 @@ async function renderWorldVisualModelSearch(world, force = false) {
         console.warn('Could not load the World Visuals image catalog:', error);
     }
     if (renderId !== worldVisualModelSearchRenderId || state.editingWorld?.id !== world.id) return;
+    // A render that completes after the user picked an option (or clicked
+    // away) must not rebuild and force the closed list back open.
+    if (document.activeElement !== input && results.classList.contains('hidden')) return;
     const query = input.value.trim().toLowerCase();
     const matches = models.filter(model => !query
         || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)).slice(0, 60);
