@@ -14046,6 +14046,7 @@ function sidecarCanonicalEntityRecord(world, sess, entityId) {
         id: String(entity.id), name: String(entity.name || ''), type: String(entity.type || 'npc'),
         aliases: (entity.aliases || []).map(String).slice(0, 12),
         gender: String(entity.gender || '').slice(0, 100),
+        currentOutfit: String(entity.currentOutfit || worldCurrentOutfit(entity)?.description || '').slice(0, 1200),
         outfits: entity.type === 'npc' ? worldOutfits(entity).map(outfit => ({ id: outfit.id, name: outfit.name, description: outfit.description, imageCount: (outfit.imageAssetIds || []).length })).slice(0, 30) : [],
         description: String(entity.description || entity.appearance || '').slice(0, 1800),
         tags: (entity.tags || []).map(String).slice(0, 20),
