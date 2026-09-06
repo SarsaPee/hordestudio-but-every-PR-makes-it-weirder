@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260906-v1700-outfits-v4">
+    <link rel="stylesheet" href="style.css?v=20260906-v1700-outfits-v5">
 </head>
 <body>
 <div id="app">
@@ -744,6 +744,7 @@
                             <select id="world-visual-variant-filter" class="form-select" aria-label="Filter character images by outfit" title="Show all character images or only images attached to one outfit"></select>
                             <button class="tool-btn world-visual-export" id="world-visual-export" type="button">Export image</button>
                         </div>
+                        <div id="world-visual-outfit-gallery" class="world-visual-outfit-gallery" hidden></div>
                         <div class="world-visual-crop-controls">
                             <label>Horizontal focus <input id="world-visual-crop-x" type="range" min="0" max="100" value="50"></label>
                             <label>Vertical focus <input id="world-visual-crop-y" type="range" min="0" max="100" value="50"></label>
@@ -770,6 +771,10 @@
                                     <option value="three-quarter">Three-quarter</option>
                                     <option value="full-body">Full-body</option>
                                 </select>
+                            </div>
+                            <div id="world-visual-outfit-field" class="hidden">
+                                <label class="form-label">Outfit <span class="help-glyph" title="Choose which authored outfit is worn for this generation. Gender and identity come from the dossier; clothing comes from this selection.">?</span></label>
+                                <select id="world-visual-outfit-select" class="form-select"></select>
                             </div>
                             <div id="world-visual-brief-field">
                                 <label class="form-label">Visual brief</label>
@@ -5519,6 +5524,6 @@
      HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->
 <script src="melbourne-bunnyrx-registry.js?v=20260905-wm-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260906-v1700-visual-identity-v3"></script>
+<script src="app.js?v=20260906-v1700-visual-identity-v4"></script>
 </body>
 </html>

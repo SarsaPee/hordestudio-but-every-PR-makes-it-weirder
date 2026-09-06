@@ -23877,6 +23877,14 @@ function renderWorldEntities(mode = 'people') {
                                 <button class="tool-btn ent-outfit-manager" type="button">Outfits</button>
                                 <button class="tool-btn ent-portrait-clear" type="button" ${ent.visuals?.portraitAssetId ? '' : 'disabled'}>Clear</button>
                             </div>
+                            <div class="world-inline-outfits">
+                                <div class="world-inline-outfits-head"><span class="form-label">Active outfits <span class="help-glyph" title="Select the outfit used for this character's next image generation and current visible presentation. Images stay grouped with the outfit.">?</span></span><button class="tool-btn ent-add-outfit" type="button">+ Add outfit</button></div>
+                                <div class="world-inline-outfit-list">${worldOutfits(ent).length ? worldOutfits(ent).map(outfit => {
+                                    const imageId = [...(outfit.imageAssetIds || [])].reverse().find(id => worldMediaSource(world, id));
+                                    const image = imageId ? worldMediaSource(world, imageId) : '';
+                                    return `<button type="button" class="world-inline-outfit ${outfit.id === ent.visuals?.currentOutfitId ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><span class="world-inline-outfit-thumb" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</span><span class="world-inline-outfit-name">${escapeHTML(outfit.name)}</span><span class="world-inline-outfit-count">${(outfit.imageAssetIds || []).length} image${(outfit.imageAssetIds || []).length === 1 ? '' : 's'}</span></button>`;
+                                }).join('') : '<span class="form-hint">No outfits yet. Add one to make clothing selectable for generation.</span>'}</div>
+                            </div>
                         </div>
                     </div>
                     <div class="world-inspector-section" data-inspector-section="visuals" style="display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px; align-items:end;">
@@ -24094,6 +24102,11 @@ function renderWorldEntities(mode = 'people') {
             };
             div.querySelector('.ent-portrait-generate').onclick = () => openWorldVisualEditor(world, ent, 'npc');
             div.querySelector('.ent-outfit-manager').onclick = () => openWorldOutfitManager(ent, world);
+            div.querySelector('.ent-add-outfit').onclick = () => openWorldOutfitManager(ent, world);
+            div.querySelectorAll('.world-inline-outfit').forEach(button => button.onclick = () => {
+                selectWorldOutfit(world, ent, button.dataset.outfitId);
+                renderWorldEntities();
+            });
             div.querySelector('.ent-portrait-clear').onclick = () => {
                 clearWorldVisualVariants(ent, 'npc');
                 pruneWorldMediaAssets(world);
@@ -49934,6 +49947,34 @@ function selectWorldVisualVariant(editor, offset) {
     }
 }
 
+function renderWorldVisualOutfitGallery() {
+    const editor = worldVisualEditorState;
+    const gallery = document.getElementById('world-visual-outfit-gallery');
+    if (!gallery) return;
+    if (!editor || editor.kind !== 'npc') {
+        gallery.hidden = true;
+        gallery.innerHTML = '';
+        return;
+    }
+    const groups = worldOutfits(editor.target).map(outfit => ({ outfit, assets: (outfit.imageAssetIds || []).filter(id => worldMediaSource(editor.world, id)) }));
+    const allAssigned = new Set(groups.flatMap(group => group.assets));
+    const unassigned = worldVisualHistory(editor.world, editor.target, 'npc').filter(id => !allAssigned.has(id));
+    if (unassigned.length) groups.push({ outfit: { id: 'unassigned', name: 'Unassigned images' }, assets: unassigned });
+    const populated = groups.filter(group => group.assets.length);
+    gallery.hidden = !populated.length;
+    gallery.innerHTML = populated.map(group => `<section class="world-visual-outfit-gallery-group"><div class="world-visual-outfit-gallery-title">${escapeHTML(group.outfit.name)} <span>${group.assets.length}</span></div><div class="world-visual-outfit-gallery-grid">${group.assets.map(assetId => {
+        const source = worldMediaSource(editor.world, assetId);
+        return `<button type="button" class="world-visual-outfit-gallery-thumb ${assetId === worldVisualEditorAssetId(editor) ? 'is-selected' : ''}" data-asset-id="${escapeHTML(assetId)}" data-outfit-id="${escapeHTML(group.outfit.id)}" title="Use ${escapeHTML(group.outfit.name)} image"><span style="background-image:url('${cssUrl(source)}')"></span></button>`;
+    }).join('')}</div></section>`).join('');
+    gallery.querySelectorAll('.world-visual-outfit-gallery-thumb').forEach(button => button.onclick = () => {
+        const outfitId = button.dataset.outfitId;
+        if (outfitId && outfitId !== 'unassigned') selectWorldOutfit(editor.world, editor.target, outfitId, { preferImage: false });
+        editor.target.visuals.portraitAssetId = button.dataset.assetId;
+        editor.target.visuals.portraitDisplayAssetId = '';
+        updateWorldVisualCropPreview();
+    });
+}
+
 function updateWorldVisualCropPreview() {
     const editor = worldVisualEditorState;
     const stage = document.getElementById('world-visual-crop-stage');
@@ -49960,6 +50001,7 @@ function updateWorldVisualCropPreview() {
     const selectedIndex = history.indexOf(worldVisualEditorAssetId(editor));
     const counter = document.getElementById('world-visual-variant-count');
     if (counter) counter.textContent = history.length ? `Image ${selectedIndex + 1} of ${history.length}` : 'No images';
+    renderWorldVisualOutfitGallery();
     document.getElementById('world-visual-previous').disabled = selectedIndex <= 0;
     document.getElementById('world-visual-next').disabled = selectedIndex < 0 || selectedIndex >= history.length - 1;
     document.getElementById('world-visual-export').disabled = !source;
@@ -50532,6 +50574,14 @@ function ensureWorldVisualEditorBound() {
         const editor = worldVisualEditorState;
         if (editor?.kind === 'npc') openWorldOutfitManager(editor.target, editor.world);
     };
+    const outfitSelect = document.getElementById('world-visual-outfit-select');
+    if (outfitSelect) outfitSelect.onchange = event => {
+        const editor = worldVisualEditorState;
+        if (!editor || editor.kind !== 'npc' || !event.target.value) return;
+        selectWorldOutfit(editor.world, editor.target, event.target.value, { preferImage: false });
+        saveWorldVisualEditorFields();
+        renderWorldVisualOutfitGallery();
+    };
     const briefPicker = document.getElementById('world-visual-brief-preset');
     if (briefPicker) briefPicker.onchange = () => {
         const editor = worldVisualEditorState;
@@ -50618,6 +50668,17 @@ function openWorldVisualEditor(world, target, kind) {
         }
     }
     document.getElementById('world-visual-outfits')?.classList.toggle('hidden', !npc);
+    const outfitField = document.getElementById('world-visual-outfit-field');
+    const outfitSelect = document.getElementById('world-visual-outfit-select');
+    if (outfitField && outfitSelect) {
+        outfitField.classList.toggle('hidden', !npc);
+        if (npc) {
+            const outfits = worldOutfits(target);
+            outfitSelect.innerHTML = '<option value="">No outfit selected</option>'
+                + outfits.map(outfit => `<option value="${escapeHTML(outfit.id)}">${escapeHTML(outfit.name)}</option>`).join('');
+            outfitSelect.value = String(target.visuals.currentOutfitId || '');
+        } else outfitSelect.innerHTML = '';
+    }
     // The shared AI instruction is transient: one authoring session, cleared
     // when the editor opens so stale instructions never leak into a fill.
     const aiInstruction = document.getElementById('world-visual-ai-instruction');
