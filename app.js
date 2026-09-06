@@ -50050,10 +50050,9 @@ function closeWorldVisualEditor() {
 }
 
 // --- Outfit manager: named wardrobe entries per character ---
-// Outfits are text-only: one description containing everything worn. The
-// worn outfit feeds Fibo's clothing string, the prose "current visible look"
-// and the dossier's current-outfit line. Portraits read it; no image belongs
-// to an outfit.
+// An outfit owns one complete clothing description plus zero or more generated
+// source images. The worn outfit feeds Fibo's clothing string, the prose
+// "current visible look" and the dossier's current-outfit line.
 
 let worldOutfitManagerState = null;
 let worldOutfitManagerBound = false;
