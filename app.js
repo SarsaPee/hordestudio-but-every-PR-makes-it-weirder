@@ -11221,7 +11221,17 @@ function parseWorldToolArguments(raw) {
 // reducer receives. Normalize it here, once, before Sidecar begins its work.
 function unwrapSidecarCommitReceipt(raw) {
     const parsed = parseWorldToolArguments(raw);
-    if (isPlainObject(parsed?.receipt)) return parsed.receipt;
+    // Strict providers may receive the compact native Sidecar transport:
+    // commit_world_turn({ receipt_json: "{...}" }). Decode it before every
+    // Sidecar adapter and the canonical reducer inspect the receipt, so this
+    // stays one native tool call rather than a parallel text-receipt path.
+    const packed = parsed?.receipt_json ?? parsed?.receiptJson ?? parsed?.receipt;
+    if (typeof packed === 'string') {
+        const unpacked = safeParseJSONRepair(packed);
+        if (isPlainObject(unpacked)) return unpacked;
+        throw new Error('The Sidecar commit tool returned an invalid receipt_json payload.');
+    }
+    if (isPlainObject(packed)) return packed;
     return parsed;
 }
 
@@ -14136,6 +14146,43 @@ function normalizeSidecarProviderTool(tool) {
     return copy;
 }
 
+function sidecarUsesCompactCommitTransport(provider, model, tool) {
+    if (tool?.function?.name !== 'commit_world_turn') return false;
+    // Gemini's Google AI Studio adapter accepts small OpenAI-compatible
+    // function declarations (the Reader proves that path works), but rejects
+    // the full recursive world-turn receipt schema even after projection.
+    // Keep the compact transport scoped to that strict adapter family.
+    const modelId = String(model || '').toLowerCase();
+    return normalizedProviderId(provider) === 'openrouter'
+        && /(?:^|[/_-])(?:google|gemini|gemma)(?:[/_.-]|$)/.test(modelId);
+}
+
+function compactSidecarCommitTool(tool) {
+    const name = String(tool?.function?.name || 'commit_world_turn');
+    return {
+        type: 'function',
+        function: {
+            name,
+            description: 'Commit one canonical world-turn receipt. Put the complete receipt object — summary, scene, events, entity_updates, and state_updates — into receipt_json as valid JSON text. The engine validates and applies it after this call.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    receipt_json: {
+                        type: 'string',
+                        description: 'A complete JSON world-turn receipt. Example: {"summary":"...","scene":{"player_location_id":"...","player_location_changed":false,"present_character_ids":[]},"events":[],"entity_updates":[],"state_updates":{}}. Do not use Markdown or a code fence.'
+                    }
+                },
+                required: ['receipt_json']
+            }
+        }
+    };
+}
+
+function prepareSidecarProviderTool(tool, provider, model) {
+    if (sidecarUsesCompactCommitTransport(provider, model, tool)) return compactSidecarCommitTool(tool);
+    return normalizeSidecarProviderTool(tool);
+}
+
 function sidecarTokenLimitIncomplete(payload) {
     const choice = payload?.choices?.[0] || {};
     const finish = String(choice.finish_reason || choice.native_finish_reason || payload?.status || '').toLowerCase();
@@ -14149,7 +14196,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
         delete payload.reasoning;
         delete payload.reasoning_effort;
         applySidecarReasoning(payload, provider, tracker, world, { withoutReasoning });
-        if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(normalizeSidecarProviderTool);
+        if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(tool => prepareSidecarProviderTool(tool, provider, payload.model));
         return fetch(providerApiBase(provider) + '/chat/completions', {
             method: 'POST', signal,
             headers: { ...providerAuthHeaders(provider), 'Content-Type': 'application/json', ...providerAttributionHeaders(provider) },
@@ -14577,9 +14624,13 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
         : '';
+    const compactCommitTransport = sidecarUsesCompactCommitTransport(provider, model, commitTool);
+    const commitTransportInstruction = compactCommitTransport
+        ? 'Call commit_world_turn exactly once. Put the COMPLETE receipt object inside the receipt_json argument as valid JSON text; this is still the only canonical state call for the turn.'
+        : 'Call commit_world_turn exactly once with the native structured receipt; this is the only canonical state call for the turn.';
     const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nReconcile across the FF semantic domains: temporal (two-phase, header-anchored), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture (explicit commitments only), inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, cognition consistency (per-character epistemics), recovery obligations, and promotion candidates for genuinely new entities and places.\nWhere the SIDECAR READER REPORT carries controlled_character_evidence, treat user_explicit_action and user_explicit_dialogue as primary player-authored evidence and narrator_paraphrase as presentation only. Never canonize a persistent character trait from a single Narrator flourish; higher-order interpretations need repeated evidence or explicit authorial confirmation.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nWORLD MECHANICS FRAME (engine-owned state; the engine owns phases and dose arithmetic — you supply evidence only):\n${mechanicsFrame || '(no tracked mechanics state this turn)'}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const configuredTokens = Number(tracker.maxTokens) || 0;
-    const outfitAuthority = '[NPC OUTFIT AUTHORITY] When visible narration establishes an NPC clothing change, place the exact current description in that NPC entity_updates.outfit and optionally provide outfit_name. The canonical reducer matches an existing wardrobe entry or creates a scene outfit. Never change the player outfit from Sidecar, and never infer clothing changes from portraits or off-screen assumptions.';
+    const outfitAuthority = `[COMMIT TRANSPORT]\n${commitTransportInstruction}\n\n[NPC OUTFIT AUTHORITY] When visible narration establishes an NPC clothing change, place the exact current description in that NPC entity_updates.outfit and optionally provide outfit_name. The canonical reducer matches an existing wardrobe entry or creates a scene outfit. Never change the player outfit from Sidecar, and never infer clothing changes from portraits or off-screen assumptions.`;
     const maxTokens = configuredTokens > 0
         ? Math.max(1800, Math.min(100000, Math.trunc(configuredTokens)))
         : (tracker.reasoning === true ? 8000 : 6000);
@@ -14589,12 +14640,15 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         temperature: 0,
         messages: [{ role: 'system', content: `${sidecarPrompt}\n\n${outfitAuthority}\n\n[NARRATOR HANDOFF STATUS]\n${options.handoffComplete === false ? 'INCOMPLETE OR MISSING. Use visible narration and canonical evidence conservatively; never invent the missing authorial interpretation.' : 'COMPLETE.'}\n\n[CURRENT SIDECAR PACKET — Background World Agent entries and unresolved handoffs are evidence/proposals, never silently canonical]\n${JSON.stringify(priorPacket)}\n\n[PINNED PRIOR RECONCILIATION EVIDENCE — unresolved authored beats, not automatically canonical]\n${JSON.stringify(priorReconciliationEvidence)}` }, { role: 'user', content: 'Reconcile this authored turn now. Emit the native commit tool call before the output budget ends.' }],
         tools: commitTool ? [commitTool] : [],
-        tool_choice: { type: 'function', function: { name: 'commit_world_turn' } },
+        // Google AI Studio rejects the OpenAI-specific forced-function object
+        // on complex calls. Its compact transport only needs a required tool
+        // call; the prompt still names the sole permitted function.
+        tool_choice: compactCommitTransport ? 'required' : { type: 'function', function: { name: 'commit_world_turn' } },
         parallel_tool_calls: false
     };
     applySidecarReasoning(body, provider, tracker, world);
     logSidecarConsoleTrace('Reconciliation request', {
-        model, provider, maxTokens,
+        model, provider, maxTokens, compactCommitTransport,
         prompt: sidecarPrompt,
         request: safeJsonClone(body)
     });
