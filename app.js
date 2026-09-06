@@ -49811,6 +49811,27 @@ function worldVisualEditorAssetId(editor = worldVisualEditorState) {
         : editor.target.visuals?.backgroundAssetId || '';
 }
 
+function worldVisualHistoryForEditor(editor = worldVisualEditorState) {
+    if (!editor?.world || !editor?.target) return [];
+    const history = worldVisualHistory(editor?.world, editor?.target, editor?.kind);
+    if (!editor || editor.kind !== 'npc' || !editor.variantFilter || editor.variantFilter === 'all') return history;
+    return history.filter(assetId => {
+        const outfit = worldOutfitForAsset(editor.target, assetId);
+        return editor.variantFilter === 'unassigned' ? !outfit : outfit?.id === editor.variantFilter;
+    });
+}
+
+function applyWorldVisualVariantFilter() {
+    const editor = worldVisualEditorState;
+    if (!editor || editor.kind !== 'npc') return;
+    const history = worldVisualHistoryForEditor(editor);
+    if (!history.includes(worldVisualEditorAssetId(editor))) {
+        editor.target.visuals.portraitAssetId = history.at(-1) || '';
+        editor.target.visuals.portraitDisplayAssetId = '';
+    }
+    updateWorldVisualCropPreview();
+}
+
 // NPC portraits render in a fixed 1:1 profile frame everywhere in the app.
 // The generated source keeps its provider aspect ratio; the profile image is
 // a derived, deliberately framed crop of that source, never a silent trim.
@@ -49893,7 +49914,7 @@ function clearWorldVisualVariants(target, kind) {
 }
 
 function selectWorldVisualVariant(editor, offset) {
-    const history = worldVisualHistory(editor.world, editor.target, editor.kind);
+    const history = worldVisualHistoryForEditor(editor);
     if (!history.length) return;
     const keys = worldVisualHistoryKeys(editor.kind);
     const current = Math.max(0, history.indexOf(editor.target.visuals[keys.current]));
@@ -49935,7 +49956,7 @@ function updateWorldVisualCropPreview() {
     const guide = document.getElementById('world-visual-crop-guide');
     if (guide) guide.dataset.label = `${aspect} ${editor.kind === 'npc' ? 'profile' : 'final'} frame · ${output.width} × ${output.height}px`;
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
-    const history = worldVisualHistory(editor.world, editor.target, editor.kind);
+    const history = worldVisualHistoryForEditor(editor);
     const selectedIndex = history.indexOf(worldVisualEditorAssetId(editor));
     const counter = document.getElementById('world-visual-variant-count');
     if (counter) counter.textContent = history.length ? `Image ${selectedIndex + 1} of ${history.length}` : 'No images';
@@ -50448,6 +50469,11 @@ function ensureWorldVisualEditorBound() {
     modal.addEventListener('click', event => { if (event.target === modal) closeWorldVisualEditor(); });
     document.getElementById('world-visual-previous').onclick = () => selectWorldVisualVariant(worldVisualEditorState, -1);
     document.getElementById('world-visual-next').onclick = () => selectWorldVisualVariant(worldVisualEditorState, 1);
+    document.getElementById('world-visual-variant-filter').onchange = event => {
+        if (!worldVisualEditorState) return;
+        worldVisualEditorState.variantFilter = event.target.value || 'all';
+        applyWorldVisualVariantFilter();
+    };
     document.getElementById('world-visual-export').onclick = exportCurrentWorldVisual;
     ['world-visual-aspect', 'world-visual-resolution', 'world-visual-crop-x', 'world-visual-crop-y', 'world-visual-crop-zoom']
         .forEach(id => document.getElementById(id).oninput = updateWorldVisualCropPreview);
@@ -50551,7 +50577,7 @@ function ensureWorldVisualEditorBound() {
 function openWorldVisualEditor(world, target, kind) {
     ensureWorldVisualEditorBound();
     target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
-    worldVisualEditorState = { world, target, kind };
+    worldVisualEditorState = { world, target, kind, variantFilter: 'all' };
     const npc = kind === 'npc';
     document.getElementById('world-visual-editor-title').textContent = `${target.name || 'Untitled'} - ${npc ? 'portrait' : 'location visual'}`;
     // Write only the text node: the label also hosts the AI-fill buttons, and
@@ -50616,6 +50642,20 @@ function openWorldVisualEditor(world, target, kind) {
     document.getElementById('world-visual-correction').value = npc
         ? target.visuals.portraitCorrection || '' : target.visuals.backgroundCorrection || '';
     worldVisualHistory(world, target, kind);
+    const variantFilter = document.getElementById('world-visual-variant-filter');
+    if (variantFilter) {
+        if (npc) {
+            const outfits = worldOutfits(target);
+            variantFilter.innerHTML = '<option value="all">All images</option>'
+                + outfits.map(outfit => `<option value="${escapeHTML(outfit.id)}">${escapeHTML(outfit.name)}</option>`).join('')
+                + '<option value="unassigned">Unassigned images</option>';
+            variantFilter.classList.remove('hidden');
+        } else {
+            variantFilter.innerHTML = '<option value="all">All images</option>';
+            variantFilter.classList.add('hidden');
+        }
+        variantFilter.value = 'all';
+    }
     document.getElementById('world-visual-regenerate').textContent = 'Generate new';
     document.getElementById('world-visual-crop-x').value = '50';
     document.getElementById('world-visual-crop-y').value = '50';

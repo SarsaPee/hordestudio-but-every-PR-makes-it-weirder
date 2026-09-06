@@ -9737,7 +9737,7 @@ label[data-help] > span:first-child::after,
 .world-visual-editor-header-actions { display:flex; align-items:center; gap:8px; }
 .world-visual-editor-header-actions .btn { min-height:34px; padding:7px 13px; white-space:nowrap; }
 .world-visual-crop-controls { display:grid; gap:8px; margin-top:12px; }
-.world-visual-variant-bar { display:grid; grid-template-columns:34px minmax(90px,auto) 34px 1fr; gap:7px; align-items:center; margin-top:10px; }
+.world-visual-variant-bar { display:grid; grid-template-columns:34px minmax(90px,auto) 34px minmax(150px,220px) 1fr; gap:7px; align-items:center; margin-top:10px; }
 .world-visual-variant-bar > span { color:var(--text-2); font-size:.72rem; text-align:center; white-space:nowrap; }
 .world-visual-variant-bar .tool-btn { height:32px; }
 .world-visual-variant-bar .world-visual-export { justify-self:end; padding-inline:12px; }
