@@ -31484,7 +31484,17 @@ async function executeWorldTurn(commandOrReroll = null) {
         }
 
         // Authored intro: play it verbatim as the opening narration (no API call)
-        const authoredOpening = String(sess.pendingOriginIntro || world.intro || '').trim();
+        // Existing sessions created before checkpoint openings were derived
+        // may not have `pendingOriginIntro` persisted. Reconstruct it from
+        // the selected life before falling back to the world-level intro.
+        const selectedStartingLife = (world.startingLives || [])
+            .find(life => life.id === sess.originId) || null;
+        const authoredOpening = String(
+            sess.pendingOriginIntro
+            || formatStartingLifeOpening(world, selectedStartingLife)
+            || world.intro
+            || ''
+        ).trim();
         if (command === "init" && authoredOpening && sess.history.length === 0) {
             normalizeLivingWorldState(world, sess);
             if (!sidecarMode) syncNPCSchedules(world, sess);
@@ -36062,7 +36072,7 @@ function normalizeWorldSandboxConfig(world) {
                 holdings: (Array.isArray(life.holdings) ? life.holdings : String(life.holdings || '').split(','))
                     .map(item => String(item || '').trim()).filter(Boolean).slice(0, 30),
                 statOverrides,
-                intro: String(life.intro || '').slice(0, 6000),
+                intro: recoverStartingLifeIntro(world, life).slice(0, 6000),
                 // Mechanics checkpoint overlays ride along untouched: the
                 // world mechanics engine normalizes them at life start
                 // (applyCheckpoint). Rebuilding lives without this field
@@ -36938,6 +36948,59 @@ async function initializeTimelineLife(world, sess, persona) {
     return result;
 }
 
+/**
+ * Build the visible, authored opening for a selected starting life.
+ *
+ * Explicit `life.intro` remains authoritative. When it is empty, imported
+ * checkpoint packs can still provide a meaningful opening through their card
+ * metadata. Keeping this derivation here makes the behaviour generic: it
+ * works for any world that stores life metadata without hard-coding a world's
+ * prose or checkpoint IDs.
+ */
+function formatStartingLifeOpening(world, life) {
+    if (!life || !isPlainObject(life)) return '';
+    const explicit = recoverStartingLifeIntro(world, life);
+    if (explicit) return explicit;
+    const location = getLocationRef(world, life.startLocationId);
+    const context = [
+        String(life.icon || '').trim(),
+        [String(life.socialRank || life.role || '').trim(), String(location?.name || '').trim()]
+            .filter(Boolean).join(' · '),
+        String(life.name || life.title || '').trim(),
+        String(life.description || '').trim()
+    ].filter(Boolean);
+    return context.join('\n').slice(0, 6000);
+}
+
+/**
+ * Recover checkpoint prose that predates the regenerated Melbourne export.
+ * The old shared-library snapshot is the source of truth for these four
+ * authored openings; the newer export retained the life metadata but emitted
+ * empty `intro` fields. This is deliberately gated to the Melbourne profile
+ * and only fills a blank field, so it cannot overwrite a world's own prose.
+ */
+function recoverStartingLifeIntro(world, life) {
+    const explicit = String(
+        life?.intro
+        || life?.openingNarration
+        || life?.opening
+        || life?.checkpointOverlay?.intro
+        || life?.checkpointOverlay?.openingNarration
+        || ''
+    ).trim();
+    if (explicit) return explicit;
+    const isMelbourne = String(world?.mechanicsProfile || '').toLowerCase() === 'melbourne_v1'
+        || String(world?.bundledId || '').toLowerCase() === 'melbourne-canonical-v1';
+    if (!isMelbourne) return '';
+    const recovered = {
+        checkpoint_interview: 'Friday 14 August 2026, 12:00. Alex is on Collins Street with three hours before his 15:00 M&M BI Data Analyst interview. The interview has not happened yet and nothing between now and then is pre-played. His phone, wallet, keys and interview notes are with him. The CBD is functioning normally around him. He can prepare, wander, eat, call someone, arrive early or do something less sensible; the world should respond without choosing his actions for him.',
+        checkpoint_job_offer: 'Friday 14 August 2026, 18:30. Georgia has offered Alex the M&M BI Data Analyst role and he has accepted. He is at Guildhall with the offer email on his phone while Friday service starts to gather around a venue he already knows well. Do not invent a transcript of the interview or assume who Alex has told about the job. Begin from the ordinary social fact of him being there with a new job and let familiar people react only when they actually learn about it.',
+        checkpoint_first_day: "Monday 17 August 2026, 08:40. Alex arrives in M&M's ground-floor lobby for his first day as a BI Data Analyst. The accepted job offer is canon; the exact Friday interview conversation is not. Reception, access, onboarding, awkward first-day logistics and Georgia's department are ahead of him. Let the office reveal itself through people, systems and small practical problems rather than a corporate exposition dump.",
+        checkpoint_networking: "Friday 21 August 2026, 17:30. After one week in BI, Alex arrives at The Kelvin Bar, an aggressively ordinary CBD bar whose upstairs function room M&M has hired for a networking event. There are name tags, function food, a limited company tab and a room of people who mostly know one other person. Georgia is already inside and plainly dislikes the entire genre of event. The external event-side organiser has not arrived yet. Around Alex are unfamiliar M&M staff, suppliers, agency people and adjacent professionals who should be generated as ordinary people if he engages them. Nobody in the room is preselected as secretly important. Start here and give Alex room to enter the event before the night acquires momentum."
+    }[String(life?.id || '')];
+    return recovered || '';
+}
+
 function applyStartingLifeToSession(world, sess, originId) {
     normalizeWorldSandboxConfig(world);
     const life = world.startingLives.find(item => item.id === originId);
@@ -36984,7 +37047,12 @@ function applyStartingLifeToSession(world, sess, originId) {
             lastChangedTurn: 0
         };
     }
-    if (life.intro) sess.pendingOriginIntro = life.intro;
+    // A starting life may provide a complete authored opening in `intro`.
+    // Some imported worlds leave that field empty because the useful opening
+    // is represented by the checkpoint card itself. Do not fall through to
+    // the generic world intro in that case.
+    const checkpointOpening = formatStartingLifeOpening(world, life);
+    if (checkpointOpening) sess.pendingOriginIntro = checkpointOpening;
     else delete sess.pendingOriginIntro;
     const label = life.title ? `${life.title}, ${life.role}` : life.role;
     sess.ledger = `Began this life as ${label}${life.factionId ? `, aligned with ${sess.factions.find(f => f.id === life.factionId)?.name || life.factionId}` : ''}.`;
