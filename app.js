@@ -14090,6 +14090,52 @@ function applySidecarReasoning(body, provider, tracker = {}, world = {}, options
     return body;
 }
 
+// OpenAI-compatible tool schemas are richer than the subset accepted by some
+// upstream adapters (notably Google AI Studio via OpenRouter). Keep the
+// canonical commit_world_turn contract intact in Horde, but project the
+// schema sent to the provider onto the portable function-schema subset. This
+// prevents a provider from rejecting the entire reconciliation request before
+// it can emit the native reducer call.
+function normalizeSidecarProviderSchema(schema) {
+    if (!isPlainObject(schema)) return schema;
+    if (Array.isArray(schema.anyOf) && schema.anyOf.length) {
+        // The only current union is the inventory item string/object form.
+        // Prefer the object branch when available so named item metadata is
+        // retained; the reducer still accepts the resulting object shape.
+        const preferred = schema.anyOf.find(item => isPlainObject(item) && item.type === 'object') || schema.anyOf[0];
+        const normalized = normalizeSidecarProviderSchema(preferred);
+        if (schema.description && normalized && !normalized.description) normalized.description = schema.description;
+        return normalized;
+    }
+    const allowed = new Set(['type', 'description', 'properties', 'required', 'items', 'enum', 'maxItems', 'minItems', 'nullable', 'format']);
+    const output = {};
+    Object.entries(schema).forEach(([key, value]) => {
+        if (!allowed.has(key)) return;
+        if (key === 'properties' && isPlainObject(value)) {
+            output.properties = Object.entries(value).reduce((properties, [name, child]) => {
+                properties[name] = normalizeSidecarProviderSchema(child);
+                return properties;
+            }, {});
+        } else if (key === 'items') {
+            output.items = normalizeSidecarProviderSchema(value);
+        } else if (key === 'required' && Array.isArray(value)) {
+            output.required = value.filter(name => !output.properties || Object.prototype.hasOwnProperty.call(output.properties, name));
+        } else {
+            output[key] = value;
+        }
+    });
+    if (Array.isArray(output.required) && output.properties) {
+        output.required = output.required.filter(name => Object.prototype.hasOwnProperty.call(output.properties, name));
+    }
+    return output;
+}
+
+function normalizeSidecarProviderTool(tool) {
+    const copy = safeJsonClone(tool);
+    if (copy?.function?.parameters) copy.function.parameters = normalizeSidecarProviderSchema(copy.function.parameters);
+    return copy;
+}
+
 function sidecarTokenLimitIncomplete(payload) {
     const choice = payload?.choices?.[0] || {};
     const finish = String(choice.finish_reason || choice.native_finish_reason || payload?.status || '').toLowerCase();
@@ -14103,6 +14149,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
         delete payload.reasoning;
         delete payload.reasoning_effort;
         applySidecarReasoning(payload, provider, tracker, world, { withoutReasoning });
+        if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(normalizeSidecarProviderTool);
         return fetch(providerApiBase(provider) + '/chat/completions', {
             method: 'POST', signal,
             headers: { ...providerAuthHeaders(provider), 'Content-Type': 'application/json', ...providerAttributionHeaders(provider) },
@@ -14110,6 +14157,17 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
         });
     };
     let response = await request(false);
+    // A provider may reject optional reasoning parameters even when the model
+    // catalogue advertises them. Retry the same request without reasoning so
+    // a transient provider capability mismatch cannot strand an otherwise
+    // valid native reconciliation receipt.
+    if (!response.ok && policy.enabled && response.status === 400) {
+        const detail = await response.clone().text().catch(() => '');
+        if (/invalid argument|reasoning|unsupported parameter/i.test(detail)) {
+            logSidecarConsoleTrace('Sidecar retry after provider 400', { model: body.model, provider, detail: detail.slice(0, 800) });
+            response = await request(true);
+        }
+    }
     if (!policy.enabled || !response.ok) return response;
     const payload = await response.clone().json().catch(() => null);
     if (!sidecarTokenLimitIncomplete(payload)) return response;
