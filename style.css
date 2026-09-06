@@ -9782,11 +9782,8 @@ label[data-help] > span:first-child::after,
 .world-inline-new-outfit { min-width:118px; min-height:80px; border:1px dashed var(--border2); border-radius:9px; background:transparent; color:var(--text-2); cursor:pointer; font-weight:700; }
 .world-inline-new-outfit:hover { border-color:var(--accent); color:var(--text); }
 .world-visual-active-outfit { margin-bottom:10px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:color-mix(in srgb,var(--surface2) 85%,transparent); }
-.world-visual-editor-preview-column { position:relative; }
-.world-visual-active-outfit.is-empty-overlay { position:absolute; inset:0 auto auto 0; width:100%; z-index:3; margin:0; overflow:hidden; background:var(--surface); display:flex; flex-direction:column; }
 .world-visual-active-outfit-list { display:grid; grid-template-columns:1fr; gap:7px; max-height:300px; overflow-y:auto; overflow-x:hidden; margin:8px 0; padding-right:4px; }
 .world-visual-active-outfit-list .world-inline-outfit-editor { min-width:0; width:100%; }
-.world-visual-active-outfit.is-empty-overlay .world-visual-active-outfit-list { flex:1; max-height:none; }
 .world-visual-active-outfit-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
 .world-visual-active-outfit-heading strong { display:block; font-size:.86rem; color:var(--text); }
 .world-visual-active-outfit-actions { display:flex; gap:7px; flex-wrap:wrap; }

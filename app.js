@@ -50070,8 +50070,6 @@ async function applyWorldOutfitAndGenerate(event) {
     if (!outfit) return showToast('Select an outfit before applying it.', 'error');
     renderWorldVisualActiveOutfit();
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
-    const outfitSurface = document.getElementById('world-visual-active-outfit');
-    if (outfitSurface) outfitSurface.classList.toggle('is-empty-overlay', !source);
     const instruction = `Replace the current outfit with the complete authored outfit “${outfit.name}”: ${outfit.description || '(the outfit has not been described yet; use the authored title only)'}. Preserve the person, identity, pose, framing, lighting, composition and every unrelated detail.`;
     button.disabled = true;
     try {
@@ -50110,12 +50108,6 @@ function updateWorldVisualCropPreview() {
     const counter = document.getElementById('world-visual-variant-count');
     if (counter) counter.textContent = history.length ? `Image ${selectedIndex + 1} of ${history.length}` : 'No images';
     renderWorldVisualActiveOutfit();
-    const outfitSurface = document.getElementById('world-visual-active-outfit');
-    if (outfitSurface) {
-        const emptyOverlay = editor.kind === 'npc' && !source;
-        outfitSurface.classList.toggle('is-empty-overlay', emptyOverlay);
-        outfitSurface.style.height = emptyOverlay ? `${stage.getBoundingClientRect().height}px` : '';
-    }
     renderWorldVisualOutfitGallery();
     document.getElementById('world-visual-previous').disabled = selectedIndex <= 0;
     document.getElementById('world-visual-next').disabled = selectedIndex < 0 || selectedIndex >= history.length - 1;
