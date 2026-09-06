@@ -14191,12 +14191,21 @@ function sidecarTokenLimitIncomplete(payload) {
 
 async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal } = {}) {
     const policy = sidecarReasoningPolicy(tracker, world);
-    const request = async withoutReasoning => {
+    const request = async (withoutReasoning, forceCompactCommitTransport = false) => {
         const payload = safeJsonClone(body);
         delete payload.reasoning;
         delete payload.reasoning_effort;
         applySidecarReasoning(payload, provider, tracker, world, { withoutReasoning });
-        if (Array.isArray(payload.tools)) payload.tools = payload.tools.map(tool => prepareSidecarProviderTool(tool, provider, payload.model));
+        if (Array.isArray(payload.tools)) {
+            payload.tools = payload.tools.map(tool => forceCompactCommitTransport && tool?.function?.name === 'commit_world_turn'
+                ? compactSidecarCommitTool(tool)
+                : prepareSidecarProviderTool(tool, provider, payload.model));
+        }
+        if (forceCompactCommitTransport && payload.tool_choice?.function?.name === 'commit_world_turn') {
+            // Required is the portable OpenAI-compatible equivalent of a
+            // forced function when a strict provider rejects the object form.
+            payload.tool_choice = 'required';
+        }
         return fetch(providerApiBase(provider) + '/chat/completions', {
             method: 'POST', signal,
             headers: { ...providerAuthHeaders(provider), 'Content-Type': 'application/json', ...providerAttributionHeaders(provider) },
@@ -14213,6 +14222,19 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
         if (/invalid argument|reasoning|unsupported parameter/i.test(detail)) {
             logSidecarConsoleTrace('Sidecar retry after provider 400', { model: body.model, provider, detail: detail.slice(0, 800) });
             response = await request(true);
+        }
+    }
+    // Keep the complete schema for providers that accept it, but retry once
+    // with the compact JSON-string transport when a provider rejects the
+    // declaration itself. This is still one native commit tool call from the
+    // model's perspective and is decoded before the existing reducer path.
+    const hasCommitTool = Array.isArray(body.tools) && body.tools.some(tool => tool?.function?.name === 'commit_world_turn');
+    if (!response.ok && response.status === 400 && hasCommitTool
+        && !sidecarUsesCompactCommitTransport(provider, body.model, body.tools.find(tool => tool?.function?.name === 'commit_world_turn'))) {
+        const detail = await response.clone().text().catch(() => '');
+        if (/invalid argument|tool|function|schema|parameter/i.test(detail)) {
+            logSidecarConsoleTrace('Sidecar retry with compact commit transport', { model: body.model, provider, detail: detail.slice(0, 800) });
+            response = await request(true, true);
         }
     }
     if (!policy.enabled || !response.ok) return response;
