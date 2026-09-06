@@ -11629,7 +11629,8 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
             activity: String(patch.activity || '').slice(0, 180),
             interacting_with: (Array.isArray(patch.interacting_with) ? patch.interacting_with : [])
                 .map(ref => resolveWorldActorId(world, sess, ref)).filter(Boolean).slice(0, 20),
-            outfit: String(patch.outfit || '').slice(0, 240),
+            outfit: String(patch.outfit || '').slice(0, 1200),
+            outfit_name: String(patch.outfit_name || '').slice(0, 80),
             conditions: (Array.isArray(patch.conditions) ? patch.conditions : [])
                 .map(value => String(value || '').slice(0, 120)).filter(Boolean).slice(0, 30),
             has_conditions: Array.isArray(patch.conditions)
@@ -11683,6 +11684,36 @@ function applyWorldEntityPatches(world, sess, patches) {
         if (patch.outfit) entState.outfit = patch.outfit;
         if (patch.has_conditions) entState.conditions = [...patch.conditions];
         applied.push(patch.entity_id);
+    });
+    return applied;
+}
+
+// Sidecar-only NPC wardrobe reconciliation. Inline Legacy keeps its existing
+// session-only outfit behaviour; Sidecar can promote narrator-evidenced NPC
+// clothing into the character's first-class wardrobe without changing the
+// player's manually controlled dress state.
+function applyWorldNpcOutfitPatches(world, sess, patches, source = 'tool_call') {
+    if (source !== 'sidecar' && source !== 'sidecar_conversation') return [];
+    const applied = [];
+    (Array.isArray(patches) ? patches : []).forEach(patch => {
+        const entity = (world.entities || []).find(item => item.id === patch.entity_id && item.type === 'npc');
+        const description = String(patch.outfit || '').trim().slice(0, 1200);
+        if (!entity || !description) return;
+        entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+        const outfits = worldOutfits(entity);
+        const exact = outfits.find(outfit => outfit.description.toLowerCase() === description.toLowerCase());
+        const named = String(patch.outfit_name || '').trim().slice(0, 80);
+        const outfit = exact || {
+            id: `outfit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+            name: named || `Scene outfit ${outfits.length + 1}`,
+            description,
+            imageAssetIds: []
+        };
+        if (!exact) outfits.push(outfit);
+        entity.visuals.outfits = outfits.slice(-30);
+        entity.visuals.currentOutfitId = outfit.id;
+        entity.currentOutfit = outfit.description;
+        applied.push({ entityId: entity.id, outfitId: outfit.id, created: !exact });
     });
     return applied;
 }
@@ -11863,6 +11894,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         }) || { enabled: false, claims: [], rejected: [] });
     const actionResult = processStructuredActions(validation.legacyArgs, world, sess, { sidecar: sidecarSource });
     applyWorldEntityPatches(world, sess, validation.entityPatches);
+    const npcOutfitUpdates = applyWorldNpcOutfitPatches(world, sess, validation.entityPatches, source);
     // Recover an omitted NPC movement only when two independent channels
     // agree: the structured ending checksum names the NPC and the visible
     // prose explicitly places that same named person in the player's scene.
@@ -11896,6 +11928,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         };
     }
     const audit = recordWorldTurnCommit(world, sess, validation, actionResult, source);
+    audit.npc_outfit_updates = npcOutfitUpdates;
     const dossierClaimResult = window.HordeDossierClaims?.applyPreparedCommit?.(world, sess, preparedDossierClaims)
         || { applied: [], rejected: [] };
     if (preparedDossierClaims.enabled) {
@@ -13978,6 +14011,8 @@ function sidecarCanonicalEntityRecord(world, sess, entityId) {
     return {
         id: String(entity.id), name: String(entity.name || ''), type: String(entity.type || 'npc'),
         aliases: (entity.aliases || []).map(String).slice(0, 12),
+        gender: String(entity.gender || '').slice(0, 100),
+        outfits: entity.type === 'npc' ? worldOutfits(entity).map(outfit => ({ id: outfit.id, name: outfit.name, description: outfit.description, imageCount: (outfit.imageAssetIds || []).length })).slice(0, 30) : [],
         description: String(entity.description || entity.appearance || '').slice(0, 1800),
         tags: (entity.tags || []).map(String).slice(0, 20),
         homeLocationId: String(entity.homeLocation || entity.homeLocationId || ''),
@@ -14340,6 +14375,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         : '';
     const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nReconcile across the FF semantic domains: temporal (two-phase, header-anchored), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture (explicit commitments only), inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, cognition consistency (per-character epistemics), recovery obligations, and promotion candidates for genuinely new entities and places.\nWhere the SIDECAR READER REPORT carries controlled_character_evidence, treat user_explicit_action and user_explicit_dialogue as primary player-authored evidence and narrator_paraphrase as presentation only. Never canonize a persistent character trait from a single Narrator flourish; higher-order interpretations need repeated evidence or explicit authorial confirmation.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nWORLD MECHANICS FRAME (engine-owned state; the engine owns phases and dose arithmetic — you supply evidence only):\n${mechanicsFrame || '(no tracked mechanics state this turn)'}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const configuredTokens = Number(tracker.maxTokens) || 0;
+    const outfitAuthority = '[NPC OUTFIT AUTHORITY] When visible narration establishes an NPC clothing change, place the exact current description in that NPC entity_updates.outfit and optionally provide outfit_name. The canonical reducer matches an existing wardrobe entry or creates a scene outfit. Never change the player outfit from Sidecar, and never infer clothing changes from portraits or off-screen assumptions.';
     const maxTokens = configuredTokens > 0
         ? Math.max(1800, Math.min(100000, Math.trunc(configuredTokens)))
         : (tracker.reasoning === true ? 8000 : 6000);
@@ -14347,7 +14383,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         model, stream: false,
         max_tokens: maxTokens,
         temperature: 0,
-        messages: [{ role: 'system', content: `${sidecarPrompt}\n\n[NARRATOR HANDOFF STATUS]\n${options.handoffComplete === false ? 'INCOMPLETE OR MISSING. Use visible narration and canonical evidence conservatively; never invent the missing authorial interpretation.' : 'COMPLETE.'}\n\n[CURRENT SIDECAR PACKET — Background World Agent entries and unresolved handoffs are evidence/proposals, never silently canonical]\n${JSON.stringify(priorPacket)}\n\n[PINNED PRIOR RECONCILIATION EVIDENCE — unresolved authored beats, not automatically canonical]\n${JSON.stringify(priorReconciliationEvidence)}` }, { role: 'user', content: 'Reconcile this authored turn now. Emit the native commit tool call before the output budget ends.' }],
+        messages: [{ role: 'system', content: `${sidecarPrompt}\n\n${outfitAuthority}\n\n[NARRATOR HANDOFF STATUS]\n${options.handoffComplete === false ? 'INCOMPLETE OR MISSING. Use visible narration and canonical evidence conservatively; never invent the missing authorial interpretation.' : 'COMPLETE.'}\n\n[CURRENT SIDECAR PACKET — Background World Agent entries and unresolved handoffs are evidence/proposals, never silently canonical]\n${JSON.stringify(priorPacket)}\n\n[PINNED PRIOR RECONCILIATION EVIDENCE — unresolved authored beats, not automatically canonical]\n${JSON.stringify(priorReconciliationEvidence)}` }, { role: 'user', content: 'Reconcile this authored turn now. Emit the native commit tool call before the output budget ends.' }],
         tools: commitTool ? [commitTool] : [],
         tool_choice: { type: 'function', function: { name: 'commit_world_turn' } },
         parallel_tool_calls: false
@@ -32185,6 +32221,7 @@ ${modularMandate}
                                     activity: { type: "string" },
                                     interacting_with: { type: "array", items: { type: "string" } },
                                     outfit: { type: "string" },
+                                    outfit_name: { type: "string", description: "Optional name for a newly narrated NPC wardrobe entry." },
                                     conditions: { type: "array", items: { type: "string" } }
                                 },
                                 required: ["entity_id", "location_id", "activity", "interacting_with"]
