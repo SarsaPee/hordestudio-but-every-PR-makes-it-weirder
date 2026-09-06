@@ -5296,9 +5296,13 @@ function createBlankWorldOutfit(entity, name = 'New outfit') {
     return outfit;
 }
 
-function scrollWorldOutfitListToEnd(list, behavior = 'smooth') {
+function scrollWorldOutfitListToEnd(list, behavior = 'smooth', axis = 'vertical') {
     if (!list) return;
-    requestAnimationFrame(() => { list.scrollTo({ top: list.scrollHeight, behavior }); });
+    requestAnimationFrame(() => {
+        list.scrollTo(axis === 'horizontal'
+            ? { left: list.scrollWidth, behavior }
+            : { top: list.scrollHeight, behavior });
+    });
 }
 
 function worldCurrentOutfit(entity) {
@@ -24139,7 +24143,7 @@ function renderWorldEntities(mode = 'people') {
                 if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
                 renderWorldEntities();
                 const outfitRegion = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id);
-                scrollWorldOutfitListToEnd(outfitRegion?.querySelector('.world-inline-outfit-list'));
+                scrollWorldOutfitListToEnd(outfitRegion?.querySelector('.world-inline-outfit-list'), 'smooth', 'horizontal');
                 showToast('Blank outfit added. Fill in its title and description inline.', 'success');
             });
             div.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
