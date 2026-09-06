@@ -5122,10 +5122,10 @@ function worldImageGuide(world) {
 
 // Saved briefs are reusable look presets. A character can select one for its
 // portrait without changing every other visual in the world.
-function worldImageGuideForTarget(world, target, kind = 'npc') {
+function worldImageGuideForTarget(world, target, kind = 'npc', briefIdOverride = '') {
     const base = worldImageGuide(world) || {};
     if (kind !== 'npc') return Object.keys(base).length ? base : null;
-    const briefId = String(target?.visuals?.portraitBriefId || '').trim();
+    const briefId = String(briefIdOverride || target?.visuals?.portraitBriefId || '').trim();
     const preset = briefId ? normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)[briefId] : null;
     if (!preset) return Object.keys(base).length ? base : null;
     const merged = { ...base };
@@ -5268,9 +5268,8 @@ function normalizeWorldOutfits(raw) {
     list.forEach(entry => {
         if (!isPlainObject(entry)) return;
         const id = String(entry.id || '').trim().slice(0, 80);
-        const name = String(entry.name || '').trim().slice(0, 80);
+        const name = String(entry.name || '').trim().slice(0, 80) || 'Untitled outfit';
         const description = String(entry.description || '').trim().slice(0, 1200);
-        if (!name || !description) return;
         const key = id || name;
         if (seen.has(key)) return;
         seen.add(key);
@@ -5283,6 +5282,18 @@ function normalizeWorldOutfits(raw) {
 
 function worldOutfits(entity) {
     return normalizeWorldOutfits(entity?.visuals?.outfits);
+}
+
+function createBlankWorldOutfit(entity, name = 'New outfit') {
+    if (!entity || entity.type !== 'npc') return null;
+    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    const outfits = worldOutfits(entity);
+    if (outfits.length >= 30) return null;
+    const outfit = { id: `outfit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, name: String(name || 'New outfit').trim().slice(0, 80) || 'New outfit', description: '', imageAssetIds: [] };
+    outfits.push(outfit);
+    entity.visuals.outfits = outfits;
+    if (!entity.visuals.currentOutfitId) { entity.visuals.currentOutfitId = outfit.id; entity.currentOutfit = ''; }
+    return outfit;
 }
 
 function worldCurrentOutfit(entity) {
@@ -23889,7 +23900,7 @@ function renderWorldEntities(mode = 'people') {
                                 <input class="ent-portrait-input" type="file" accept="image/*" hidden>
                                 <button class="tool-btn ent-portrait-upload" type="button">Upload</button>
                                 <button class="tool-btn ent-portrait-generate" type="button">✨ Generate</button>
-                                <button class="tool-btn ent-outfit-manager" type="button">Outfits</button>
+                                <button class="tool-btn ent-outfit-manager" type="button" hidden>Outfits</button>
                                 <button class="tool-btn ent-portrait-clear" type="button" ${ent.visuals?.portraitAssetId ? '' : 'disabled'}>Clear</button>
                             </div>
                             <div class="world-inline-outfits">
@@ -23897,8 +23908,8 @@ function renderWorldEntities(mode = 'people') {
                                 <div class="world-inline-outfit-list">${worldOutfits(ent).length ? worldOutfits(ent).map(outfit => {
                                     const imageId = [...(outfit.imageAssetIds || [])].reverse().find(id => worldMediaSource(world, id));
                                     const image = imageId ? worldMediaSource(world, imageId) : '';
-                                    return `<button type="button" class="world-inline-outfit ${outfit.id === ent.visuals?.currentOutfitId ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><span class="world-inline-outfit-thumb" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</span><span class="world-inline-outfit-name">${escapeHTML(outfit.name)}</span><span class="world-inline-outfit-count">${(outfit.imageAssetIds || []).length} image${(outfit.imageAssetIds || []).length === 1 ? '' : 's'}</span></button>`;
-                                }).join('') : '<span class="form-hint">No outfits yet. Add one to make clothing selectable for generation.</span>'}</div>
+                                    return `<div class="world-inline-outfit-editor ${outfit.id === ent.visuals?.currentOutfitId ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-select" title="Wear this outfit" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…"><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…">${escapeHTML(outfit.description)}</textarea><div class="world-inline-outfit-meta"><span>${(outfit.imageAssetIds || []).length} image${(outfit.imageAssetIds || []).length === 1 ? '' : 's'}</span><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-generate">Generate</button><button type="button" class="world-inline-outfit-delete">Delete</button></span></div></div>`;
+                                }).join('') : ''}<button type="button" class="world-inline-new-outfit ent-add-outfit">+ New outfit</button></div>
                             </div>
                         </div>
                     </div>
@@ -24116,11 +24127,21 @@ function renderWorldEntities(mode = 'people') {
                 } finally { event.target.value = ''; }
             };
             div.querySelector('.ent-portrait-generate').onclick = () => openWorldVisualEditor(world, ent, 'npc');
-            div.querySelector('.ent-outfit-manager').onclick = () => openWorldOutfitManager(ent, world);
-            div.querySelector('.ent-add-outfit').onclick = () => openWorldOutfitManager(ent, world);
-            div.querySelectorAll('.world-inline-outfit').forEach(button => button.onclick = () => {
-                selectWorldOutfit(world, ent, button.dataset.outfitId);
+            div.querySelector('.ent-outfit-manager').onclick = () => div.querySelector('.world-inline-outfits')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            div.querySelectorAll('.ent-add-outfit').forEach(button => button.onclick = () => {
+                const outfit = createBlankWorldOutfit(ent);
+                if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
                 renderWorldEntities();
+                showToast('Blank outfit added. Fill in its title and description inline.', 'success');
+            });
+            div.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
+                const outfit = worldOutfits(ent).find(entry => entry.id === card.dataset.outfitId);
+                if (!outfit) return;
+                card.querySelector('.world-inline-outfit-select').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); };
+                card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); renderWorldEntities(); };
+                card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); if (ent.visuals.currentOutfitId === outfit.id) ent.currentOutfit = outfit.description; updateWorldTokenCount(); };
+                card.querySelector('.world-inline-outfit-generate').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: false }); openWorldVisualEditor(world, ent, 'npc'); };
+                card.querySelector('.world-inline-outfit-delete').onclick = () => { ent.visuals.outfits = worldOutfits(ent).filter(entry => entry.id !== outfit.id); if (ent.visuals.currentOutfitId === outfit.id) { ent.visuals.currentOutfitId = ent.visuals.outfits[0]?.id || ''; ent.currentOutfit = ent.visuals.outfits[0]?.description || ''; } renderWorldEntities(); };
             });
             div.querySelector('.ent-portrait-clear').onclick = () => {
                 clearWorldVisualVariants(ent, 'npc');
@@ -49991,6 +50012,50 @@ function renderWorldVisualOutfitGallery() {
     });
 }
 
+function renderWorldVisualActiveOutfit() {
+    const editor = worldVisualEditorState;
+    const surface = document.getElementById('world-visual-active-outfit');
+    if (!surface) return;
+    const isNpc = !!editor && editor.kind === 'npc';
+    surface.hidden = !isNpc;
+    if (!isNpc) return;
+    const outfits = worldOutfits(editor.target);
+    const selectedId = String(editor.target.visuals?.currentOutfitId || '');
+    const selected = outfits.find(outfit => outfit.id === selectedId) || null;
+    const selects = [document.getElementById('world-visual-left-outfit-select'), document.getElementById('world-visual-outfit-select')].filter(Boolean);
+    selects.forEach(select => {
+        const previous = select.value;
+        select.innerHTML = '<option value="">No outfit selected</option>' + outfits.map(outfit => `<option value="${escapeHTML(outfit.id)}">${escapeHTML(outfit.name)}</option>`).join('');
+        select.value = outfits.some(outfit => outfit.id === previous) ? previous : selectedId;
+    });
+    const title = document.getElementById('world-visual-active-outfit-title');
+    const description = document.getElementById('world-visual-active-outfit-description');
+    if (title) title.textContent = selected?.name || 'No outfit selected';
+    if (description) description.textContent = selected?.description || 'No clothing description yet. Fill it in on the character screen or use New outfit.';
+    const apply = document.getElementById('world-visual-apply-outfit');
+    if (apply) apply.disabled = !selected;
+}
+
+async function applyWorldOutfitAndGenerate(event) {
+    const editor = worldVisualEditorState;
+    if (!editor || editor.kind !== 'npc') return;
+    const button = event.currentTarget;
+    const selectedId = document.getElementById('world-visual-left-outfit-select')?.value || document.getElementById('world-visual-outfit-select')?.value;
+    const outfit = selectWorldOutfit(editor.world, editor.target, selectedId, { preferImage: false });
+    if (!outfit) return showToast('Select an outfit before applying it.', 'error');
+    renderWorldVisualActiveOutfit();
+    const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
+    const instruction = `Replace the current outfit with the complete authored outfit “${outfit.name}”: ${outfit.description || '(the outfit has not been described yet; use the authored title only)'}. Preserve the person, identity, pose, framing, lighting, composition and every unrelated detail.`;
+    if (!source) return runWorldVisualGeneration(false, event);
+    button.disabled = true;
+    try {
+        document.getElementById('world-visual-correction').value = instruction;
+        const refined = await refineWorldVisualPromptWithAI({ currentTarget: button }, instruction);
+        if (!refined) return;
+        await runWorldVisualGeneration(true, event);
+    } finally { button.disabled = false; renderWorldVisualActiveOutfit(); }
+}
+
 function updateWorldVisualCropPreview() {
     const editor = worldVisualEditorState;
     const stage = document.getElementById('world-visual-crop-stage');
@@ -50017,6 +50082,7 @@ function updateWorldVisualCropPreview() {
     const selectedIndex = history.indexOf(worldVisualEditorAssetId(editor));
     const counter = document.getElementById('world-visual-variant-count');
     if (counter) counter.textContent = history.length ? `Image ${selectedIndex + 1} of ${history.length}` : 'No images';
+    renderWorldVisualActiveOutfit();
     renderWorldVisualOutfitGallery();
     document.getElementById('world-visual-previous').disabled = selectedIndex <= 0;
     document.getElementById('world-visual-next').disabled = selectedIndex < 0 || selectedIndex >= history.length - 1;
@@ -50300,12 +50366,12 @@ function exportCurrentWorldVisual() {
 // in the inputs for review, so confirming means pressing Generate new. Only
 // the fields the instruction actually concerns are rewritten; everything
 // else is returned untouched (by being omitted from the response).
-async function refineWorldVisualPromptWithAI(event) {
+async function refineWorldVisualPromptWithAI(event, instructionOverride = '') {
     const editor = worldVisualEditorState;
-    if (!editor) return;
+    if (!editor) return false;
     const button = event.currentTarget;
-    const instruction = document.getElementById('world-visual-correction').value.trim();
-    if (!instruction) return showToast('Write the revision you want applied before refining the prompt.', 'error');
+    const instruction = String(instructionOverride || document.getElementById('world-visual-correction').value || '').trim();
+    if (!instruction) { showToast('Write the revision you want applied before refining the prompt.', 'error'); return false; }
     const isNpc = editor.kind === 'npc';
     const identityLabels = {
         gender: 'Gender', skinToneAndTexture: 'Skin tone and texture', shapeAndColor: 'Shape and color',
@@ -50392,8 +50458,10 @@ async function refineWorldVisualPromptWithAI(event) {
         // (the confirm step) and a later editor open both see it.
         saveWorldVisualEditorFields();
         showToast(`Refined the prompt: ${applied.join(', ')}. Review the fields, then Generate new.`, 'success');
+        return true;
     } catch (error) {
         showToast(`Refine prompt failed — ${error.message}`, 'error');
+        return false;
     } finally {
         button.disabled = false;
         button.textContent = 'Refine prompt';
@@ -50408,19 +50476,21 @@ async function runWorldVisualGeneration(revisionOnly, event) {
     const referenceImage = revisionOnly
         ? worldMediaSource(editor.world, worldVisualEditorAssetId(editor)) : '';
     const inheritedOutfit = editor.kind === 'npc'
-        ? worldOutfitForAsset(editor.target, worldVisualEditorAssetId(editor)) : null;
+        ? (worldCurrentOutfit(editor.target) || worldOutfitForAsset(editor.target, worldVisualEditorAssetId(editor))) : null;
     if (revisionOnly && !referenceImage) return showToast('Select an existing image before revising it.', 'error');
     if (revisionOnly && !correction) return showToast('Write the adjustment you want before revising the image.', 'error');
     button.disabled = true;
     button.textContent = revisionOnly ? 'Revising...' : 'Generating...';
     try {
         saveWorldVisualEditorFields();
+        const activeGuide = editor.kind === 'npc'
+            ? worldImageGuideForTarget(editor.world, editor.target, 'npc', editor.activeBriefName || '') : null;
         const options = {
             revisionOnly,
             correction: revisionOnly ? correction : '',
             aspectRatio: document.getElementById('world-visual-aspect').value,
             maxDimension: Number(document.getElementById('world-visual-resolution').value),
-            referenceImage
+            referenceImage, imageGuide: activeGuide
         };
         const assetId = editor.kind === 'npc'
             ? await generateWorldNpcPortrait(editor.world, editor.target, options)
@@ -50464,7 +50534,7 @@ async function runWorldVisualCropFill(event) {
     button.textContent = 'Filling…';
     try {
         const inheritedOutfit = editor.kind === 'npc'
-            ? worldOutfitForAsset(editor.target, worldVisualEditorAssetId(editor)) : null;
+            ? (worldCurrentOutfit(editor.target) || worldOutfitForAsset(editor.target, worldVisualEditorAssetId(editor))) : null;
         saveWorldVisualEditorFields();
         // NPC crop-and-fill completes the fixed 1:1 profile frame; locations
         // fill toward their selected display aspect.
@@ -50484,7 +50554,7 @@ async function runWorldVisualCropFill(event) {
             label: editor.target.name,
             referenceImage: fillReference,
             requireReference: true,
-            imageGuide: editor.kind === 'npc' ? worldImageGuideForTarget(editor.world, editor.target, 'npc') : null
+            imageGuide: editor.kind === 'npc' ? worldImageGuideForTarget(editor.world, editor.target, 'npc', editor.activeBriefName || '') : null
         });
         registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
         if (editor.kind === 'npc') {
@@ -50537,7 +50607,9 @@ function ensureWorldVisualEditorBound() {
         .forEach(id => document.getElementById(id).oninput = updateWorldVisualCropPreview);
     document.getElementById('world-visual-save-brief').onclick = () => {
         saveWorldVisualEditorFields();
-        showToast('Visual brief and generation settings saved with the world.', 'success');
+        const input = document.getElementById('world-visual-brief-save-name');
+        if (input && !input.value.trim()) input.value = worldVisualEditorState?.activeBriefName ? `${worldVisualEditorState.activeBriefName} - modified` : 'New visual brief';
+        document.getElementById('world-visual-brief-save-as')?.click();
     };
     document.getElementById('world-visual-apply-crop').onclick = async event => {
         const editor = worldVisualEditorState;
@@ -50587,6 +50659,16 @@ function ensureWorldVisualEditorBound() {
     document.getElementById('world-visual-regenerate').onclick = event => runWorldVisualGeneration(false, event);
     document.getElementById('world-visual-revise').onclick = event => runWorldVisualGeneration(true, event);
     document.getElementById('world-visual-refine-prompt').onclick = event => refineWorldVisualPromptWithAI(event);
+    document.getElementById('world-visual-apply-outfit').onclick = event => applyWorldOutfitAndGenerate(event);
+    document.getElementById('world-visual-new-outfit').onclick = () => {
+        const editor = worldVisualEditorState;
+        if (!editor || editor.kind !== 'npc') return;
+        const outfit = createBlankWorldOutfit(editor.target);
+        if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
+        selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
+        renderWorldEntities(); renderWorldVisualActiveOutfit();
+        showToast('Blank outfit added and selected. Fill in its description on the character screen.', 'success');
+    };
     document.getElementById('world-visual-outfits').onclick = () => {
         const editor = worldVisualEditorState;
         if (editor?.kind === 'npc') openWorldOutfitManager(editor.target, editor.world);
@@ -50596,8 +50678,17 @@ function ensureWorldVisualEditorBound() {
         const editor = worldVisualEditorState;
         if (!editor || editor.kind !== 'npc' || !event.target.value) return;
         selectWorldOutfit(editor.world, editor.target, event.target.value, { preferImage: false });
+        renderWorldVisualActiveOutfit();
         saveWorldVisualEditorFields();
         renderWorldVisualOutfitGallery();
+    };
+    const leftOutfitSelect = document.getElementById('world-visual-left-outfit-select');
+    if (leftOutfitSelect) leftOutfitSelect.onchange = event => {
+        const editor = worldVisualEditorState;
+        if (!editor || editor.kind !== 'npc' || !event.target.value) return;
+        selectWorldOutfit(editor.world, editor.target, event.target.value, { preferImage: false });
+        if (outfitSelect) outfitSelect.value = event.target.value;
+        renderWorldVisualActiveOutfit(); saveWorldVisualEditorFields(); updateWorldVisualCropPreview();
     };
     const briefPicker = document.getElementById('world-visual-brief-preset');
     if (briefPicker) briefPicker.onchange = () => {
@@ -50605,16 +50696,31 @@ function ensureWorldVisualEditorBound() {
         const name = briefPicker.value;
         const preset = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)[name];
         if (!editor || !name || !preset) return;
-        if (editor.kind === 'npc') {
-            editor.target.visuals = isPlainObject(editor.target.visuals) ? editor.target.visuals : {};
-            editor.target.visuals.portraitBriefId = name;
-        }
+        editor.activeBriefName = name;
         if (preset.aspectRatio) document.getElementById('world-visual-aspect').value = preset.aspectRatio;
         if (preset.framing && editor.kind === 'npc') document.getElementById('world-visual-framing').value = preset.framing;
         saveWorldVisualEditorFields();
         updateWorldVisualCropPreview();
         briefPicker.value = name;
+        const activeLabel = document.getElementById('world-visual-brief-active');
+        if (activeLabel) activeLabel.textContent = `Active: ${name}`;
         showToast(`Applied visual brief “${name}” to ${editor.target.name || 'this visual'}.`, 'success');
+    };
+    document.getElementById('world-visual-brief-save-as').onclick = async event => {
+        const editor = worldVisualEditorState;
+        if (!editor) return;
+        const input = document.getElementById('world-visual-brief-save-name');
+        const picker = document.getElementById('world-visual-brief-preset');
+        const selected = String(picker?.value || editor.activeBriefName || '').trim();
+        const name = String(input?.value || '').trim().slice(0, 100) || `${selected || 'Visual brief'} - modified`;
+        const presets = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
+        const guide = normalizeWorldImageGuide({ ...(worldImageGuide(editor.world) || {}), ...(selected ? (presets[selected] || {}) : {}) });
+        presets[name] = normalizeImageBriefPreset({ ...guide, aspectRatio: document.getElementById('world-visual-aspect')?.value || '', framing: editor.kind === 'npc' ? document.getElementById('world-visual-framing')?.value || '' : '', description: `Saved from ${editor.target.name || 'visual editor'}.` });
+        state.globalSettings.imageGuidePresets = presets; editor.activeBriefName = name;
+        if (picker) { picker.innerHTML = '<option value="">Apply a visual brief…</option>' + Object.keys(presets).sort((a, b) => a.localeCompare(b)).map(key => `<option value="${escapeHTML(key)}">${escapeHTML(key)}</option>`).join(''); picker.value = name; }
+        if (input) input.value = '';
+        const label = document.getElementById('world-visual-brief-active'); if (label) label.textContent = `Active: ${name}`;
+        try { await persistGlobalSettingsOnly(); showToast(`Saved global visual brief “${name}”.`, 'success'); } catch (error) { showToast(`Could not save visual brief — ${error.message}`, 'error'); }
     };
 
     const stage = document.getElementById('world-visual-crop-stage');
@@ -50646,7 +50752,7 @@ function ensureWorldVisualEditorBound() {
 function openWorldVisualEditor(world, target, kind) {
     ensureWorldVisualEditorBound();
     target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
-    worldVisualEditorState = { world, target, kind, variantFilter: 'all' };
+    worldVisualEditorState = { world, target, kind, variantFilter: 'all', activeBriefName: kind === 'npc' ? String(target.visuals.portraitBriefId || '') : '' };
     const npc = kind === 'npc';
     document.getElementById('world-visual-editor-title').textContent = `${target.name || 'Untitled'} - ${npc ? 'portrait' : 'location visual'}`;
     // Write only the text node: the label also hosts the AI-fill buttons, and
@@ -50711,7 +50817,9 @@ function openWorldVisualEditor(world, target, kind) {
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
         briefPicker.innerHTML = `<option value="">Apply a visual brief…</option>`
             + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
-        briefPicker.value = npc ? String(target.visuals.portraitBriefId || '') : '';
+        briefPicker.value = npc ? String(worldVisualEditorState.activeBriefName || '') : '';
+        const activeLabel = document.getElementById('world-visual-brief-active');
+        if (activeLabel) activeLabel.textContent = briefPicker.value ? `Active: ${briefPicker.value}` : 'No preset selected';
     }
     document.getElementById('world-visual-aspect').value = npc
         ? normalizedWorldVisualAspect(target.visuals.portraitAspectRatio, '3:4')
@@ -50756,6 +50864,7 @@ function openWorldVisualEditor(world, target, kind) {
             () => document.getElementById('world-visual-ai-instruction')?.value || '');
     }
     document.getElementById('world-visual-editor-modal').classList.remove('hidden');
+    renderWorldVisualActiveOutfit();
     requestAnimationFrame(updateWorldVisualCropPreview);
 }
 
@@ -50922,6 +51031,7 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
         ...normalizeWorldVisualIdentityGuide(npc.visuals?.portraitIdentityGuide),
         ...normalizeWorldVisualSubjectGuide(npc.visuals?.portraitSubjectGuide)
     };
+    const selectedGuide = options.imageGuide || worldImageGuideForTarget(world, npc, 'npc');
     if (options.revisionOnly) {
         const instruction = String(options.correction || '').trim();
         if (!instruction) throw new Error('Write a revision instruction first.');
@@ -50930,12 +51040,12 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
             maxDimension: normalizedWorldVisualResolution(options.maxDimension || npc.visuals?.portraitResolution, 1200),
             quality: 0.84, kind: 'npc_portrait', label: npc.name,
             referenceImage: options.referenceImage || '', requireReference: true, imageSubject,
-            imageGuide: worldImageGuideForTarget(world, npc, 'npc')
+            imageGuide: selectedGuide
         });
     }
     const compiler = globalThis.HordePortraitPromptCompiler;
     const request = compiler?.worldNpcPortraitRequest
-        ? compiler.worldNpcPortraitRequest(world, npc, normalizeWorldPresentation(world), { ...options, correction: '' })
+        ? compiler.worldNpcPortraitRequest(world, npc, { ...normalizeWorldPresentation(world), imageGuide: selectedGuide || {} }, { ...options, correction: '' })
         : {
             prompt: `Create a reusable environmental identity portrait for ${npc.name || 'this character'}.\nAppearance & public impression: ${npc.appearance || npc.description || 'Use the authored character description.'}\nAuthored portrait brief: ${npc.imagePrompt || 'None.'}\nWorld rendering style: ${worldVisualStylePrompt(world)}\nPreserve identity, age, build, styling and characteristic expression. No text, frame, watermark or duplicate person.`,
             aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || npc.visuals?.portraitAspectRatio, '3:4'),
@@ -50945,7 +51055,7 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
     return generateWorldVisual(world, request.prompt, {
         aspectRatio: request.aspectRatio, maxDimension: request.maxDimension, quality: request.quality,
         kind: 'npc_portrait', label: npc.name, referenceImage: '', imageSubject,
-        imageGuide: worldImageGuideForTarget(world, npc, 'npc')
+        imageGuide: selectedGuide
     });
 }
 

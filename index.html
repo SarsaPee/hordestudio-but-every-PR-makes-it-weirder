@@ -732,6 +732,11 @@
                 </div>
                 <div class="modal-body world-visual-editor-body">
                     <div class="world-visual-editor-preview-column">
+                        <div id="world-visual-active-outfit" class="world-visual-active-outfit" hidden>
+                            <div class="world-visual-active-outfit-heading"><div><div class="form-label">Active outfit <span class="help-glyph" title="This is the authored clothing state used by the next portrait request. Changing it changes only the selected character's visual context.">?</span></div><strong id="world-visual-active-outfit-title">No outfit selected</strong></div><select id="world-visual-left-outfit-select" class="form-select" aria-label="Select outfit for this image"></select></div>
+                            <p id="world-visual-active-outfit-description" class="form-hint">Choose an outfit to include its clothing description in image generation.</p>
+                            <div class="world-visual-active-outfit-actions"><button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button><button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button></div>
+                        </div>
                         <div id="world-visual-crop-stage" class="world-visual-crop-stage">
                             <img id="world-visual-crop-image" alt="Current world visual">
                             <div id="world-visual-crop-guide" class="world-visual-crop-guide" aria-hidden="true"></div>
@@ -777,11 +782,12 @@
                                 <select id="world-visual-outfit-select" class="form-select"></select>
                             </div>
                             <div id="world-visual-brief-field">
-                                <label class="form-label">Visual brief</label>
+                                <label class="form-label">Visual brief <span id="world-visual-brief-active" class="form-hint"></span></label>
                                 <select id="world-visual-brief-preset" class="form-select">
                                     <option value="">Apply a visual brief…</option>
                                 </select>
                             </div>
+                            <div id="world-visual-brief-save-field" class="world-visual-brief-save-field"><label class="form-label">Save preset as <span class="help-glyph" title="Saved briefs are global presets. Enter a new title to create another preset from the current fields; this does not overwrite the selected preset unless you use the same title.">?</span></label><div class="world-visual-brief-save-row"><input id="world-visual-brief-save-name" class="form-input" type="text" maxlength="100" placeholder="Preset - modified…" autocomplete="off"><button class="tool-btn" id="world-visual-brief-save-as" type="button">Save as</button></div></div>
                             <div>
                                 <label class="form-label">Generation aspect ratio</label>
                                 <select id="world-visual-aspect" class="form-select">
@@ -846,7 +852,7 @@
                 </div>
                 <div class="modal-ft world-visual-editor-actions">
                     <button class="btn btn-ghost" id="world-visual-outfits" type="button" hidden>Outfits</button>
-                    <button class="btn btn-ghost" id="world-visual-save-brief" type="button">Save visual brief</button>
+                    <button class="btn btn-ghost" id="world-visual-save-brief" type="button">Save as preset</button>
                     <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
                     <button class="btn btn-ghost" id="world-visual-crop-fill" type="button" title="Use the revision image pipeline to outpaint missing areas into the selected final aspect ratio">Crop &amp; Fill</button>
                     <button class="btn btn-ghost" id="world-visual-refine-prompt" type="button" title="Have the AI apply the revision instruction to the prompt fields below — nothing is generated until you press Generate new">Refine prompt</button>
