@@ -50372,6 +50372,7 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
     const button = event.currentTarget;
     const instruction = String(instructionOverride || document.getElementById('world-visual-correction').value || '').trim();
     if (!instruction) { showToast('Write the revision you want applied before refining the prompt.', 'error'); return false; }
+    const originalButtonText = button.textContent;
     const isNpc = editor.kind === 'npc';
     const identityLabels = {
         gender: 'Gender', skinToneAndTexture: 'Skin tone and texture', shapeAndColor: 'Shape and color',
@@ -50464,7 +50465,7 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
         return false;
     } finally {
         button.disabled = false;
-        button.textContent = 'Refine prompt';
+        button.textContent = originalButtonText;
     }
 }
 
