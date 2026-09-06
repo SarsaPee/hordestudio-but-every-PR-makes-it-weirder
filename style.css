@@ -10176,3 +10176,21 @@ label[data-help] > span:first-child::after,
     .world-inline-outfit-editor { flex-basis:320px; min-width:320px; }
     .world-inline-outfit-thumb.world-inline-outfit-image-open { width:92px; }
 }
+
+/* Keep the person-view wardrobe card stable when its description changes.
+   The image column owns its 3:4 portrait and selector; the copy column uses
+   the remaining space and reserves the bottom row for right-aligned actions. */
+.world-inline-outfit-editor { height:194px; min-height:194px; grid-template-rows:minmax(0,1fr); box-sizing:border-box; }
+.world-inline-outfit-image-column { min-width:0; min-height:0; display:flex; flex-direction:column; align-items:flex-start; }
+.world-inline-outfit-image-column .world-inline-outfit-thumb.world-inline-outfit-image-open { flex:0 0 auto; width:104px; height:139px; min-height:139px; aspect-ratio:3 / 4; }
+.world-inline-outfit-image-column .world-inline-outfit-image-picker { margin-top:6px; justify-content:flex-start; }
+.world-inline-outfit-copy { min-width:0; min-height:0; height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:6px; }
+.world-inline-outfit-copy input, .world-inline-outfit-copy textarea { box-sizing:border-box; min-height:0; }
+.world-inline-outfit-copy textarea { height:100%; resize:none; overflow:auto; }
+.world-inline-outfit-copy .world-inline-outfit-meta { min-height:28px; justify-content:flex-end; }
+.world-inline-outfit-copy .world-inline-outfit-actions { margin-left:auto; justify-content:flex-end; }
+
+@media (max-width:760px) {
+    .world-inline-outfit-editor { height:194px; min-height:194px; grid-template-columns:92px minmax(0,1fr); }
+    .world-inline-outfit-image-column .world-inline-outfit-thumb.world-inline-outfit-image-open { width:92px; height:123px; min-height:123px; }
+}
