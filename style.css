@@ -6219,6 +6219,7 @@ input[type=number].form-input::-webkit-inner-spin-button {
   .preview-grid, .model-info-stats { grid-template-columns: minmax(0, 1fr); }
   .modal-bg, .modal-overlay { padding: 8px; }
   .modal-body { padding: 18px 14px; }
+  .modal-bd { padding: 18px 14px 20px; }
   .modal-hd, .modal-ft { padding-left: 14px; padding-right: 14px; }
   .session-zero-modal .session-zero-grid, .session-persona-panel { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .session-life-seed-option, #sz-life-seed-status { grid-column: auto; }
