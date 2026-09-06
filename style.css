@@ -10142,3 +10142,31 @@ label[data-help] > span:first-child::after,
 .world-outfit-copy { min-width:0; flex:1; }
 .world-outfit-copy strong { color:var(--text); font-size:.8rem; }
 .world-outfit-copy .form-hint { overflow-wrap:anywhere; }
+
+/* Person visuals: keep the portrait controls together, then give wardrobe
+   the full width below them. Outfit actions are deliberately button-like so
+   selecting an outfit is never confused with editing its text. */
+.world-media-editor { grid-template-columns:172px minmax(0,1fr); align-items:start; }
+.world-media-preview.is-portrait { width:172px; min-height:172px; }
+.world-inline-outfits { grid-column:1 / -1; width:100%; }
+.world-inline-outfit-list { align-items:stretch; min-height:106px; }
+.world-inline-outfit-editor { flex:0 0 300px; min-width:300px; }
+.world-inline-outfit-thumb.world-inline-outfit-image-open { border:1px solid var(--border2); cursor:pointer; }
+.world-inline-outfit-thumb.world-inline-outfit-image-open:hover { border-color:var(--accent); }
+.world-inline-outfit-editor .world-inline-outfit-meta { align-items:flex-start; flex-wrap:wrap; }
+.world-inline-outfit-image-picker { display:inline-flex; align-items:center; gap:3px; min-height:24px; color:var(--text-3); white-space:nowrap; }
+.world-inline-outfit-image-picker.is-empty { opacity:.82; }
+.world-inline-outfit-image-picker button,
+.world-inline-outfit-editor .world-inline-outfit-actions button { border:1px solid var(--border2); border-radius:6px; background:var(--surface3); color:var(--text-2); cursor:pointer; font-size:.62rem; line-height:1; padding:5px 7px; }
+.world-inline-outfit-image-picker button:hover,
+.world-inline-outfit-editor .world-inline-outfit-actions button:hover { border-color:var(--accent); color:var(--text); background:color-mix(in srgb,var(--accent) 10%,var(--surface3)); }
+.world-inline-outfit-image-picker button:disabled { cursor:default; opacity:.55; }
+.world-inline-outfit-image-count { min-width:64px; text-align:center; font-size:.62rem; }
+
+@media (max-width:760px) {
+    .world-media-editor { grid-template-columns:minmax(0,1fr); }
+    .world-media-preview.is-portrait { width:172px; max-width:100%; }
+    .world-media-editor > div:nth-child(2), .world-media-actions { min-width:0; width:100%; }
+    .world-media-actions { align-items:flex-start; }
+    .world-inline-outfit-editor { flex-basis:270px; min-width:270px; }
+}
