@@ -732,11 +732,6 @@
                 </div>
                 <div class="modal-body world-visual-editor-body">
                     <div class="world-visual-editor-preview-column">
-                        <div id="world-visual-active-outfit" class="world-visual-active-outfit" hidden>
-                            <div class="world-visual-active-outfit-heading"><div class="form-label">Active outfits <span class="help-glyph" title="Select a tile to make that outfit active. Edit its title and clothing description here; those fields are also used by Sidecar and image generation.">?</span></div><span class="form-hint">Select, edit, or author an outfit</span></div>
-                            <div id="world-visual-active-outfit-list" class="world-visual-active-outfit-list"></div>
-                            <div class="world-visual-active-outfit-actions"><button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button><button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button></div>
-                        </div>
                         <div id="world-visual-crop-stage" class="world-visual-crop-stage">
                             <img id="world-visual-crop-image" alt="Current world visual">
                             <div id="world-visual-crop-guide" class="world-visual-crop-guide" aria-hidden="true"></div>
@@ -751,11 +746,16 @@
                         </div>
                         <div id="world-visual-outfit-gallery" class="world-visual-outfit-gallery" hidden></div>
                         <div class="world-visual-crop-controls">
-                            <label>Horizontal focus <input id="world-visual-crop-x" type="range" min="0" max="100" value="50"></label>
-                            <label>Vertical focus <input id="world-visual-crop-y" type="range" min="0" max="100" value="50"></label>
-                            <label>Zoom <input id="world-visual-crop-zoom" type="range" min="100" max="300" value="100"></label>
+                            <input id="world-visual-crop-x" type="hidden" value="50">
+                            <input id="world-visual-crop-y" type="hidden" value="50">
+                            <label>Zoom <input id="world-visual-crop-zoom" type="range" min="50" max="300" value="100"></label>
                         </div>
                         <p class="form-hint">Generated images are stored whole at their provider aspect ratio. NPC profiles render as a 1:1 frame cropped from that source: drag and zoom to frame it, then Apply Crop saves the profile image while the full source stays editable. Crop &amp; Fill asks the revision model to outpaint missing frame areas instead of cutting the source.</p>
+                        <div id="world-visual-active-outfit" class="world-visual-active-outfit" hidden>
+                            <div class="world-visual-active-outfit-heading"><div class="form-label">Active outfits <span class="help-glyph" title="Select a tile to make that outfit active. Edit its title and clothing description here; those fields are also used by Sidecar and image generation.">?</span></div><span class="form-hint">Select, edit, or author an outfit</span></div>
+                            <div id="world-visual-active-outfit-list" class="world-visual-active-outfit-list"></div>
+                            <div class="world-visual-active-outfit-actions"><button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button><button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button></div>
+                        </div>
                     </div>
                     <div class="world-visual-editor-fields">
                         <div class="form-section">
@@ -5530,6 +5530,6 @@
      HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->
 <script src="melbourne-bunnyrx-registry.js?v=20260905-wm-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260906-v1700-visual-identity-v10"></script>
+<script src="app.js?v=20260906-v1700-visual-identity-v11"></script>
 </body>
 </html>

@@ -5305,6 +5305,17 @@ function scrollWorldOutfitListToEnd(list, behavior = 'smooth', axis = 'vertical'
     });
 }
 
+function focusWorldOutfitName(list, outfitId, axis = 'vertical') {
+    if (!list) return;
+    requestAnimationFrame(() => {
+        const card = [...list.querySelectorAll('.world-inline-outfit-editor')]
+            .find(node => node.dataset.outfitId === String(outfitId));
+        if (!card) return;
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: axis === 'horizontal' ? 'end' : 'nearest' });
+        card.querySelector('.world-inline-outfit-name-input')?.focus({ preventScroll: true });
+    });
+}
+
 function worldCurrentOutfit(entity) {
     const outfits = worldOutfits(entity);
     if (!outfits.length) return null;
@@ -24143,7 +24154,9 @@ function renderWorldEntities(mode = 'people') {
                 if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
                 renderWorldEntities();
                 const outfitRegion = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id);
-                scrollWorldOutfitListToEnd(outfitRegion?.querySelector('.world-inline-outfit-list'), 'smooth', 'horizontal');
+                const outfitList = outfitRegion?.querySelector('.world-inline-outfit-list');
+                scrollWorldOutfitListToEnd(outfitList, 'smooth', 'horizontal');
+                focusWorldOutfitName(outfitList, outfit.id, 'horizontal');
                 showToast('Blank outfit added. Fill in its title and description inline.', 'success');
             });
             div.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
@@ -24151,7 +24164,7 @@ function renderWorldEntities(mode = 'people') {
                 if (!outfit) return;
                 card.onclick = event => { if (outfit.id === ent.visuals.currentOutfitId || event.target.closest('.world-inline-outfit-delete')) return; selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); };
                 card.querySelector('.world-inline-outfit-select').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); };
-                card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); renderWorldEntities(); };
+                card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); if (ent.visuals.currentOutfitId === outfit.id) ent.currentOutfit = outfit.description; updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-generate').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: false }); openWorldVisualEditor(world, ent, 'npc'); };
                 card.querySelector('.world-inline-outfit-delete').onclick = () => { ent.visuals.outfits = worldOutfits(ent).filter(entry => entry.id !== outfit.id); if (ent.visuals.currentOutfitId === outfit.id) { ent.visuals.currentOutfitId = ent.visuals.outfits[0]?.id || ''; ent.currentOutfit = ent.visuals.outfits[0]?.description || ''; } renderWorldEntities(); };
@@ -49816,11 +49829,11 @@ async function cropWorldVisual(source, aspectRatio, maxDimension, focusX, focusY
     const image = await loadEmbeddedImage(source);
     const output = worldVisualDimensions(aspectRatio, maxDimension);
     const baseScale = Math.max(output.width / image.naturalWidth, output.height / image.naturalHeight);
-    const scale = baseScale * Math.max(1, Math.min(3, Number(zoom) || 1));
-    const sourceWidth = Math.min(image.naturalWidth, output.width / scale);
-    const sourceHeight = Math.min(image.naturalHeight, output.height / scale);
-    const x = (image.naturalWidth - sourceWidth) * Math.max(0, Math.min(1, Number(focusX) / 100));
-    const y = (image.naturalHeight - sourceHeight) * Math.max(0, Math.min(1, Number(focusY) / 100));
+    const scale = baseScale * Math.max(0.5, Math.min(3, Number(zoom) || 1));
+    const renderedWidth = image.naturalWidth * scale;
+    const renderedHeight = image.naturalHeight * scale;
+    const x = (output.width - renderedWidth) * Math.max(0, Math.min(1, Number(focusX) / 100));
+    const y = (output.height - renderedHeight) * Math.max(0, Math.min(1, Number(focusY) / 100));
     const canvas = document.createElement('canvas');
     canvas.width = output.width;
     canvas.height = output.height;
@@ -49828,17 +49841,18 @@ async function cropWorldVisual(source, aspectRatio, maxDimension, focusX, focusY
     if (!context) throw new Error('This browser could not create an image canvas.');
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
-    context.drawImage(image, x, y, sourceWidth, sourceHeight, 0, 0, output.width, output.height);
+    context.drawImage(image, x, y, renderedWidth, renderedHeight);
     return canvas.toDataURL('image/jpeg', quality);
 }
 
-async function frameWorldVisualForFill(source, aspectRatio, maxDimension, focusX = 50, focusY = 50) {
+async function frameWorldVisualForFill(source, aspectRatio, maxDimension, focusX = 50, focusY = 50, zoom = 1) {
     // Unlike cropWorldVisual(), this preserves every source pixel. The
     // transparent space is deliberate evidence for an image-to-image model:
     // it is the portion of the requested frame which needs outpainting.
     const image = await loadEmbeddedImage(source);
     const output = worldVisualDimensions(aspectRatio, maxDimension);
-    const scale = Math.min(output.width / image.naturalWidth, output.height / image.naturalHeight);
+    const scale = Math.min(output.width / image.naturalWidth, output.height / image.naturalHeight)
+        * Math.max(0.5, Math.min(3, Number(zoom) || 1));
     const renderedWidth = Math.max(1, Math.round(image.naturalWidth * scale));
     const renderedHeight = Math.max(1, Math.round(image.naturalHeight * scale));
     const x = Math.round((output.width - renderedWidth) * Math.max(0, Math.min(1, Number(focusX) / 100)));
@@ -50570,7 +50584,8 @@ async function runWorldVisualCropFill(event) {
         const maxDimension = Number(document.getElementById('world-visual-resolution').value);
         const fillReference = await frameWorldVisualForFill(source, aspectRatio, maxDimension,
             document.getElementById('world-visual-crop-x').value,
-            document.getElementById('world-visual-crop-y').value);
+            document.getElementById('world-visual-crop-y').value,
+            Number(document.getElementById('world-visual-crop-zoom').value) / 100);
         const correctionInput = document.getElementById('world-visual-correction');
         const prompt = worldVisualCropFillPrompt(editor, aspectRatio, correctionInput.value);
         const assetId = await generateWorldVisual(editor.world, prompt, {
@@ -50614,11 +50629,24 @@ function ensureWorldVisualEditorBound() {
     worldVisualEditorBound = true;
     const modal = document.getElementById('world-visual-editor-modal');
     document.getElementById('world-visual-editor-close').onclick = closeWorldVisualEditor;
-    document.getElementById('world-visual-save-close').onclick = () => {
-        saveWorldVisualEditorFields();
-        const label = worldVisualEditorState?.target?.name || 'Visual';
-        closeWorldVisualEditor();
-        showToast(`${label} visual settings saved.`, 'success');
+    document.getElementById('world-visual-save-close').onclick = async () => {
+        const editor = worldVisualEditorState;
+        try {
+            saveWorldVisualEditorFields();
+            if (editor?.kind === 'npc' && worldVisualEditorAssetId(editor)) {
+                const displayId = await deriveWorldNpcPortraitDisplay(editor.world, editor.target,
+                    document.getElementById('world-visual-crop-x').value,
+                    document.getElementById('world-visual-crop-y').value,
+                    Number(document.getElementById('world-visual-crop-zoom').value) / 100);
+                if (!displayId) throw new Error('The profile frame could not be derived from this image.');
+                pruneWorldMediaAssets(editor.world);
+            }
+            const label = editor?.target?.name || 'Visual';
+            closeWorldVisualEditor();
+            showToast(`${label} visual settings and profile frame saved.`, 'success');
+        } catch (error) {
+            showToast(`Could not save visual settings: ${error.message}`, 'error');
+        }
     };
     modal.addEventListener('click', event => { if (event.target === modal) closeWorldVisualEditor(); });
     document.getElementById('world-visual-previous').onclick = () => selectWorldVisualVariant(worldVisualEditorState, -1);
@@ -50693,7 +50721,9 @@ function ensureWorldVisualEditorBound() {
         if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
         selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
         renderWorldEntities(); renderWorldVisualActiveOutfit();
-        scrollWorldOutfitListToEnd(document.getElementById('world-visual-active-outfit-list'));
+        const outfitList = document.getElementById('world-visual-active-outfit-list');
+        scrollWorldOutfitListToEnd(outfitList);
+        focusWorldOutfitName(outfitList, outfit.id);
         showToast('Blank outfit added and selected. Fill in its description on the character screen.', 'success');
     };
     document.getElementById('world-visual-outfits').onclick = () => {
