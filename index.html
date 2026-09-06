@@ -733,8 +733,8 @@
                 <div class="modal-body world-visual-editor-body">
                     <div class="world-visual-editor-preview-column">
                         <div id="world-visual-active-outfit" class="world-visual-active-outfit" hidden>
-                            <div class="world-visual-active-outfit-heading"><div><div class="form-label">Active outfit <span class="help-glyph" title="This is the authored clothing state used by the next portrait request. Changing it changes only the selected character's visual context.">?</span></div><strong id="world-visual-active-outfit-title">No outfit selected</strong></div><select id="world-visual-left-outfit-select" class="form-select" aria-label="Select outfit for this image"></select></div>
-                            <p id="world-visual-active-outfit-description" class="form-hint">Choose an outfit to include its clothing description in image generation.</p>
+                            <div class="world-visual-active-outfit-heading"><div class="form-label">Active outfits <span class="help-glyph" title="Select a tile to make that outfit active. Edit its title and clothing description here; those fields are also used by Sidecar and image generation.">?</span></div><span class="form-hint">Select, edit, or author an outfit</span></div>
+                            <div id="world-visual-active-outfit-list" class="world-visual-active-outfit-list"></div>
                             <div class="world-visual-active-outfit-actions"><button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button><button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button></div>
                         </div>
                         <div id="world-visual-crop-stage" class="world-visual-crop-stage">
@@ -777,7 +777,7 @@
                                     <option value="full-body">Full-body</option>
                                 </select>
                             </div>
-                            <div id="world-visual-outfit-field" class="hidden">
+                            <div id="world-visual-outfit-field" class="hidden" style="display:none">
                                 <label class="form-label">Outfit <span class="help-glyph" title="Choose which authored outfit is worn for this generation. Gender and identity come from the dossier; clothing comes from this selection.">?</span></label>
                                 <select id="world-visual-outfit-select" class="form-select"></select>
                             </div>

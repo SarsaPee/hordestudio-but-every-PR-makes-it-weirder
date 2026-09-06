@@ -23904,7 +23904,7 @@ function renderWorldEntities(mode = 'people') {
                                 <button class="tool-btn ent-portrait-clear" type="button" ${ent.visuals?.portraitAssetId ? '' : 'disabled'}>Clear</button>
                             </div>
                             <div class="world-inline-outfits">
-                                <div class="world-inline-outfits-head"><span class="form-label">Active outfits <span class="help-glyph" title="Select the outfit used for this character's next image generation and current visible presentation. Images stay grouped with the outfit.">?</span></span><button class="tool-btn ent-add-outfit" type="button">+ Add outfit</button></div>
+                                <div class="world-inline-outfits-head"><span class="form-label">Active outfits <span class="help-glyph" title="Select the outfit used for this character's next image generation and current visible presentation. Images stay grouped with the outfit.">?</span></span></div>
                                 <div class="world-inline-outfit-list">${worldOutfits(ent).length ? worldOutfits(ent).map(outfit => {
                                     const imageId = [...(outfit.imageAssetIds || [])].reverse().find(id => worldMediaSource(world, id));
                                     const image = imageId ? worldMediaSource(world, imageId) : '';
@@ -50019,32 +50019,39 @@ function renderWorldVisualActiveOutfit() {
     const isNpc = !!editor && editor.kind === 'npc';
     surface.hidden = !isNpc;
     if (!isNpc) return;
+    const list = document.getElementById('world-visual-active-outfit-list');
+    if (!list) return;
     const outfits = worldOutfits(editor.target);
     const selectedId = String(editor.target.visuals?.currentOutfitId || '');
-    const selected = outfits.find(outfit => outfit.id === selectedId) || null;
-    const selects = [document.getElementById('world-visual-left-outfit-select'), document.getElementById('world-visual-outfit-select')].filter(Boolean);
-    selects.forEach(select => {
-        const previous = select.value;
-        select.innerHTML = '<option value="">No outfit selected</option>' + outfits.map(outfit => `<option value="${escapeHTML(outfit.id)}">${escapeHTML(outfit.name)}</option>`).join('');
-        select.value = outfits.some(outfit => outfit.id === previous) ? previous : selectedId;
+    list.innerHTML = outfits.length ? outfits.map(outfit => {
+        const imageId = [...(outfit.imageAssetIds || [])].reverse().find(id => worldMediaSource(editor.world, id));
+        const image = imageId ? worldMediaSource(editor.world, imageId) : '';
+        return `<div class="world-inline-outfit-editor ${outfit.id === selectedId ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><button type="button" class="world-inline-outfit-thumb world-visual-outfit-select" title="Select this outfit" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…"><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…">${escapeHTML(outfit.description)}</textarea><div class="world-inline-outfit-meta"><span>${(outfit.imageAssetIds || []).length} image${(outfit.imageAssetIds || []).length === 1 ? '' : 's'}</span><span class="world-inline-outfit-actions"><button type="button" class="world-visual-outfit-generate">Generate</button><button type="button" class="world-visual-outfit-delete">Delete</button></span></div></div>`;
+    }).join('') : '<span class="form-hint">No outfits yet. Use New outfit to author the first one.</span>';
+    list.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
+        const outfit = outfits.find(entry => entry.id === card.dataset.outfitId);
+        if (!outfit) return;
+        card.querySelector('.world-visual-outfit-select').onclick = () => { selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false }); renderWorldVisualActiveOutfit(); updateWorldVisualCropPreview(); };
+        card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; editor.target.visuals.outfits = worldOutfits(editor.target).map(entry => entry.id === outfit.id ? outfit : entry); renderWorldVisualActiveOutfit(); };
+        card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); editor.target.visuals.outfits = worldOutfits(editor.target).map(entry => entry.id === outfit.id ? outfit : entry); if (editor.target.visuals.currentOutfitId === outfit.id) editor.target.currentOutfit = outfit.description; updateWorldTokenCount(); };
+        card.querySelector('.world-visual-outfit-generate').onclick = () => { selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false }); updateWorldVisualCropPreview(); };
+        card.querySelector('.world-visual-outfit-delete').onclick = () => { editor.target.visuals.outfits = worldOutfits(editor.target).filter(entry => entry.id !== outfit.id); if (editor.target.visuals.currentOutfitId === outfit.id) { editor.target.visuals.currentOutfitId = editor.target.visuals.outfits[0]?.id || ''; editor.target.currentOutfit = editor.target.visuals.outfits[0]?.description || ''; } renderWorldVisualActiveOutfit(); };
     });
-    const title = document.getElementById('world-visual-active-outfit-title');
-    const description = document.getElementById('world-visual-active-outfit-description');
-    if (title) title.textContent = selected?.name || 'No outfit selected';
-    if (description) description.textContent = selected?.description || 'No clothing description yet. Fill it in on the character screen or use New outfit.';
     const apply = document.getElementById('world-visual-apply-outfit');
-    if (apply) apply.disabled = !selected;
+    if (apply) apply.disabled = !outfits.some(outfit => outfit.id === selectedId);
 }
 
 async function applyWorldOutfitAndGenerate(event) {
     const editor = worldVisualEditorState;
     if (!editor || editor.kind !== 'npc') return;
     const button = event.currentTarget;
-    const selectedId = document.getElementById('world-visual-left-outfit-select')?.value || document.getElementById('world-visual-outfit-select')?.value;
+    const selectedId = String(editor.target.visuals?.currentOutfitId || '');
     const outfit = selectWorldOutfit(editor.world, editor.target, selectedId, { preferImage: false });
     if (!outfit) return showToast('Select an outfit before applying it.', 'error');
     renderWorldVisualActiveOutfit();
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
+    const outfitSurface = document.getElementById('world-visual-active-outfit');
+    if (outfitSurface) outfitSurface.classList.toggle('is-empty-overlay', !source);
     const instruction = `Replace the current outfit with the complete authored outfit “${outfit.name}”: ${outfit.description || '(the outfit has not been described yet; use the authored title only)'}. Preserve the person, identity, pose, framing, lighting, composition and every unrelated detail.`;
     button.disabled = true;
     try {

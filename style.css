@@ -9782,10 +9782,12 @@ label[data-help] > span:first-child::after,
 .world-inline-new-outfit { min-width:118px; min-height:80px; border:1px dashed var(--border2); border-radius:9px; background:transparent; color:var(--text-2); cursor:pointer; font-weight:700; }
 .world-inline-new-outfit:hover { border-color:var(--accent); color:var(--text); }
 .world-visual-active-outfit { margin-bottom:10px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:color-mix(in srgb,var(--surface2) 85%,transparent); }
+.world-visual-editor-preview-column { position:relative; }
+.world-visual-active-outfit.is-empty-overlay { position:absolute; inset:0 auto auto 0; width:100%; height:calc(100% - 96px); z-index:3; margin:0; overflow:hidden; background:var(--surface); }
+.world-visual-active-outfit-list { display:grid; grid-template-columns:1fr; gap:7px; max-height:300px; overflow-y:auto; overflow-x:hidden; margin:8px 0; padding-right:4px; }
+.world-visual-active-outfit-list .world-inline-outfit-editor { min-width:0; width:100%; }
 .world-visual-active-outfit-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
 .world-visual-active-outfit-heading strong { display:block; font-size:.86rem; color:var(--text); }
-.world-visual-active-outfit-heading select { width:150px; max-width:45%; }
-.world-visual-active-outfit-description { margin:5px 0 8px; min-height:1.2em; }
 .world-visual-active-outfit-actions { display:flex; gap:7px; flex-wrap:wrap; }
 .world-visual-brief-save-field { grid-column:1 / -1; }
 .world-visual-brief-save-row { display:flex; gap:7px; align-items:center; }
