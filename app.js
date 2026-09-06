@@ -2798,7 +2798,7 @@ function validateWorldData(value, label = 'World') {
             requireString(entity[key], `${label} entity ${index + 1} ${key}`, { optional: true }));
         if (entity.visuals !== undefined) {
             requirePlainObject(entity.visuals, `${label} entity ${index + 1} visuals`);
-            ['portraitAssetId', 'portraitPosition', 'portraitDisplayAssetId', 'dialogueColor'].forEach(key =>
+            ['portraitAssetId', 'portraitPosition', 'portraitDisplayAssetId', 'dialogueColor', 'portraitBriefId'].forEach(key =>
                 requireString(entity.visuals[key], `${label} entity ${index + 1} visuals ${key}`, { optional: true, max: 200 }));
             if (entity.visuals.portraitSubjectGuide !== undefined) {
                 requirePlainObject(entity.visuals.portraitSubjectGuide, `${label} entity ${index + 1} visuals portraitSubjectGuide`);
@@ -5120,6 +5120,19 @@ function worldImageGuide(world) {
     return WORLD_IMAGE_GUIDE_FIELDS.some(field => guide[field.key]) ? guide : null;
 }
 
+// Saved briefs are reusable look presets. A character can select one for its
+// portrait without changing every other visual in the world.
+function worldImageGuideForTarget(world, target, kind = 'npc') {
+    const base = worldImageGuide(world) || {};
+    if (kind !== 'npc') return Object.keys(base).length ? base : null;
+    const briefId = String(target?.visuals?.portraitBriefId || '').trim();
+    const preset = briefId ? normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)[briefId] : null;
+    if (!preset) return Object.keys(base).length ? base : null;
+    const merged = { ...base };
+    WORLD_IMAGE_GUIDE_FIELDS.forEach(field => { if (preset[field.key]) merged[field.key] = preset[field.key]; });
+    return WORLD_IMAGE_GUIDE_FIELDS.some(field => merged[field.key]) ? merged : null;
+}
+
 function flattenWorldImageGuide(guide) {
     if (!guide) return '';
     const lines = WORLD_IMAGE_GUIDE_FIELDS
@@ -5141,8 +5154,8 @@ function isFiboImageEndpoint(model) {
 // structured instruction) from the authored guide plus optional subject
 // data. Only populated fields travel; the neutral relationship default
 // exists because Fibo's schema demands the field whenever an object is sent.
-function fiboStructuredImageGuide(world, subject = null, editInstruction = '') {
-    const guide = worldImageGuide(world);
+function fiboStructuredImageGuide(world, subject = null, editInstruction = '', guideOverride = null) {
+    const guide = guideOverride || worldImageGuide(world);
     const structured = {};
     if (guide) {
         if (guide.styleMedium) structured.style_medium = guide.styleMedium;
@@ -5336,8 +5349,9 @@ function normalizeImageBriefPreset(raw) {
     };
 }
 
-// Saved visual-brief presets live with global settings so one authored look
-// applies across every world. Old guide-only presets upgrade in place.
+// Saved visual-brief presets live with global settings so they can be imported
+// into any world or selected for an individual visual. Old guide-only presets
+// upgrade in place.
 function normalizeImageGuidePresets(raw) {
     const source = isPlainObject(raw) ? raw : {};
     const presets = {};
@@ -36045,6 +36059,7 @@ function normalizeAuthoredWorld(world) {
         entity.gender = String(entity.gender || '').trim().slice(0, 100);
         entity.visuals.portraitAssetId = String(entity.visuals.portraitAssetId || '').slice(0, 160);
         entity.visuals.portraitDisplayAssetId = String(entity.visuals.portraitDisplayAssetId || '').slice(0, 160);
+        entity.visuals.portraitBriefId = String(entity.visuals.portraitBriefId || '').trim().slice(0, 80);
         entity.visuals.portraitSubjectGuide = normalizeWorldVisualSubjectGuide(entity.visuals.portraitSubjectGuide);
         entity.visuals.portraitIdentityGuide = normalizeWorldVisualIdentityGuide(entity.visuals.portraitIdentityGuide);
         // Dossier gender is the stable source. A manually authored identity
@@ -50467,7 +50482,8 @@ async function runWorldVisualCropFill(event) {
             kind: editor.kind === 'npc' ? 'npc_portrait' : 'location_background',
             label: editor.target.name,
             referenceImage: fillReference,
-            requireReference: true
+            requireReference: true,
+            imageGuide: editor.kind === 'npc' ? worldImageGuideForTarget(editor.world, editor.target, 'npc') : null
         });
         registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
         if (editor.kind === 'npc') {
@@ -50588,12 +50604,15 @@ function ensureWorldVisualEditorBound() {
         const name = briefPicker.value;
         const preset = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)[name];
         if (!editor || !name || !preset) return;
-        editor.world.presentation.imageGuide = normalizeWorldImageGuide(preset);
+        if (editor.kind === 'npc') {
+            editor.target.visuals = isPlainObject(editor.target.visuals) ? editor.target.visuals : {};
+            editor.target.visuals.portraitBriefId = name;
+        }
         if (preset.aspectRatio) document.getElementById('world-visual-aspect').value = preset.aspectRatio;
         if (preset.framing && editor.kind === 'npc') document.getElementById('world-visual-framing').value = preset.framing;
         saveWorldVisualEditorFields();
         updateWorldVisualCropPreview();
-        briefPicker.value = '';
+        briefPicker.value = name;
         showToast(`Applied visual brief “${name}” to ${editor.target.name || 'this visual'}.`, 'success');
     };
 
@@ -50691,7 +50710,7 @@ function openWorldVisualEditor(world, target, kind) {
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
         briefPicker.innerHTML = `<option value="">Apply a visual brief…</option>`
             + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
-        briefPicker.value = '';
+        briefPicker.value = npc ? String(target.visuals.portraitBriefId || '') : '';
     }
     document.getElementById('world-visual-aspect').value = npc
         ? normalizedWorldVisualAspect(target.visuals.portraitAspectRatio, '3:4')
@@ -50758,7 +50777,7 @@ function attachWorldVisualReference(body, provider, model, referenceImage) {
 
 async function generateWorldVisual(world, prompt, {
     aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label,
-    referenceImage = '', requireReference = false, imageSubject = null
+    referenceImage = '', requireReference = false, imageSubject = null, imageGuide = null
 } = {}) {
     const presentation = normalizeWorldPresentation(world);
     const pipeline = requireReference || referenceImage ? 'revision' : 'new';
@@ -50802,10 +50821,10 @@ async function generateWorldVisual(world, prompt, {
     // the native structured prompt (or structured instruction with the edit
     // wording embedded); for every other provider it compiles into prompt
     // prose, which also anchors revisions to the world's look.
-    const imageGuide = worldImageGuide(world);
+    const selectedImageGuide = imageGuide || worldImageGuide(world);
     const fiboModel = provider === 'fal' && isFiboImageEndpoint(model);
-    const finalPrompt = imageGuide && !fiboModel
-        ? `${prompt}\n\n${imageGuideProseBlock(imageGuide)}` : prompt;
+    const finalPrompt = selectedImageGuide && !fiboModel
+        ? `${prompt}\n\n${imageGuideProseBlock(selectedImageGuide)}` : prompt;
     const requestConfig = {
         imageModel: model,
         imageParameters: { aspect_ratio: aspectRatio },
@@ -50821,7 +50840,7 @@ async function generateWorldVisual(world, prompt, {
             Object.assign(body, falAdvancedRequestBody(world));
             if (fiboModel) {
                 const structured = fiboStructuredImageGuide(world, imageSubject,
-                    requireReference ? prompt : '');
+                    requireReference ? prompt : '', selectedImageGuide);
                 if (structured) body.fiboStructuredPrompt = structured;
                 body.fiboResolution = maxDimension >= 1536 ? '4MP' : '1MP';
             }
@@ -50909,7 +50928,8 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
             aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || npc.visuals?.portraitAspectRatio, '3:4'),
             maxDimension: normalizedWorldVisualResolution(options.maxDimension || npc.visuals?.portraitResolution, 1200),
             quality: 0.84, kind: 'npc_portrait', label: npc.name,
-            referenceImage: options.referenceImage || '', requireReference: true, imageSubject
+            referenceImage: options.referenceImage || '', requireReference: true, imageSubject,
+            imageGuide: worldImageGuideForTarget(world, npc, 'npc')
         });
     }
     const compiler = globalThis.HordePortraitPromptCompiler;
@@ -50923,7 +50943,8 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
         };
     return generateWorldVisual(world, request.prompt, {
         aspectRatio: request.aspectRatio, maxDimension: request.maxDimension, quality: request.quality,
-        kind: 'npc_portrait', label: npc.name, referenceImage: '', imageSubject
+        kind: 'npc_portrait', label: npc.name, referenceImage: '', imageSubject,
+        imageGuide: worldImageGuideForTarget(world, npc, 'npc')
     });
 }
 
