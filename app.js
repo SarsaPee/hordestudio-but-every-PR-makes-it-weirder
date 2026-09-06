@@ -50046,13 +50046,13 @@ async function applyWorldOutfitAndGenerate(event) {
     renderWorldVisualActiveOutfit();
     const source = worldMediaSource(editor.world, worldVisualEditorAssetId(editor));
     const instruction = `Replace the current outfit with the complete authored outfit “${outfit.name}”: ${outfit.description || '(the outfit has not been described yet; use the authored title only)'}. Preserve the person, identity, pose, framing, lighting, composition and every unrelated detail.`;
-    if (!source) return runWorldVisualGeneration(false, event);
     button.disabled = true;
     try {
         document.getElementById('world-visual-correction').value = instruction;
         const refined = await refineWorldVisualPromptWithAI({ currentTarget: button }, instruction, { allowNoFieldChanges: true });
         if (!refined) return;
-        await runWorldVisualGeneration(true, event);
+        await runWorldVisualGeneration(!!source, event);
+        if (!source) document.getElementById('world-visual-correction').value = '';
     } finally { button.disabled = false; renderWorldVisualActiveOutfit(); }
 }
 
