@@ -3215,6 +3215,16 @@ input[type=number].form-input::-webkit-inner-spin-button {
 
 .modal-body { min-height: 0; padding: 24px 28px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
 
+/* The wardrobe manager uses the older modal-bd wrapper rather than
+   modal-body. Give it the same safe inset and scroll contract so headings,
+   fields and actions never sit against the dialog edge or overflow it. */
+.modal-bd { min-width: 0; min-height: 0; padding: 24px 28px 28px; overflow-y: auto; }
+#world-outfit-manager-modal .form-section,
+#world-outfit-manager-modal .form-col { min-width: 0; }
+#world-outfit-manager-modal .form-row { min-width: 0; }
+#world-outfit-manager-modal .form-row > * { min-width: 0; }
+#world-outfit-manager-modal input { min-width: 0; max-width: 100%; }
+
 .modal-title-sm {
   font-family: 'Outfit', sans-serif;
   font-size: 1.3rem;
