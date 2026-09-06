@@ -2807,6 +2807,23 @@ function validateWorldData(value, label = 'World') {
                         `${label} entity ${index + 1} visuals portraitSubjectGuide ${field.key}`,
                         { optional: true, max: field.max }));
             }
+            if (entity.visuals.portraitIdentityGuide !== undefined) {
+                requirePlainObject(entity.visuals.portraitIdentityGuide, `${label} entity ${index + 1} visuals portraitIdentityGuide`);
+                WORLD_VISUAL_IDENTITY_FIELDS.forEach(field =>
+                    requireString(entity.visuals.portraitIdentityGuide[field.key],
+                        `${label} entity ${index + 1} visuals portraitIdentityGuide ${field.key}`,
+                        { optional: true, max: field.max }));
+            }
+            if (entity.visuals.outfits !== undefined) {
+                requireArray(entity.visuals.outfits, `${label} entity ${index + 1} visuals outfits`, { optional: true, max: 30 });
+                (entity.visuals.outfits || []).forEach((outfit, outfitIndex) => {
+                    requirePlainObject(outfit, `${label} entity ${index + 1} outfit ${outfitIndex + 1}`);
+                    requireSafeId(outfit.id, `${label} entity ${index + 1} outfit ${outfitIndex + 1} id`, { optional: true });
+                    requireString(outfit.name, `${label} entity ${index + 1} outfit ${outfitIndex + 1} name`, { max: 80 });
+                    requireString(outfit.description, `${label} entity ${index + 1} outfit ${outfitIndex + 1} description`, { max: 1200 });
+                });
+                requireSafeId(entity.visuals.currentOutfitId, `${label} entity ${index + 1} visuals currentOutfitId`, { optional: true });
+            }
         }
         requireArray(entity.goalSteps, `${label} entity ${index + 1} goal steps`, { optional: true, max: 20 });
         (entity.goalSteps || []).forEach((step, stepIndex) =>
@@ -4998,7 +5015,8 @@ const WORLD_MEDIA_ASSET_BYTES_LIMIT = 8_000_000;
 // here plus its bridge pass-through — no provider-layer rewrite.
 const FAL_ADVANCED_REQUEST_FIELDS = Object.freeze([
     { key: 'safetyTolerance', requestKey: 'safetyTolerance', type: 'number' },
-    { key: 'enableSafetyChecker', requestKey: 'enableSafetyChecker', type: 'boolean' }
+    { key: 'enableSafetyChecker', requestKey: 'enableSafetyChecker', type: 'boolean' },
+    { key: 'seed', requestKey: 'seed', type: 'integer' }
 ]);
 
 function normalizeFalAdvancedSettings(raw) {
@@ -5016,6 +5034,14 @@ function normalizeFalAdvancedSettings(raw) {
             // model's own default remains authoritative.
             settings[field.key] = value === true || value === 'true' ? true
                 : value === false || value === 'false' ? false : '';
+            return;
+        }
+        if (field.type === 'integer') {
+            // A pinned seed opts out of the per-call random seed. Anything
+            // outside the provider range normalizes back to blank.
+            const whole = typeof value === 'number' ? value : Number(String(value).trim());
+            settings[field.key] = Number.isInteger(whole) && whole >= 0 && whole <= 2147483647
+                ? whole : '';
             return;
         }
         const numeric = typeof value === 'number' ? value : Number(String(value).trim());
@@ -5152,6 +5178,12 @@ function fiboStructuredImageGuide(world, subject = null, editInstruction = '') {
         if (subject.expression) object.expression = String(subject.expression).slice(0, 300);
         if (subject.action) object.action = String(subject.action).slice(0, 400);
         if (subject.orientation) object.orientation = String(subject.orientation).slice(0, 200);
+        if (subject.gender) object.gender = String(subject.gender).slice(0, 100);
+        if (subject.skinToneAndTexture) object.skin_tone_and_texture = String(subject.skinToneAndTexture).slice(0, 300);
+        if (subject.shapeAndColor) object.shape_and_color = String(subject.shapeAndColor).slice(0, 300);
+        if (subject.texture) object.texture = String(subject.texture).slice(0, 300);
+        if (subject.appearanceDetails) object.appearance_details = String(subject.appearanceDetails).slice(0, 600);
+        if (subject.relativeSize) object.relative_size = String(subject.relativeSize).slice(0, 200);
         if (Object.keys(object).length) {
             object.relationship = 'the sole primary subject of this image';
             structured.objects = [object];
@@ -5162,13 +5194,34 @@ function fiboStructuredImageGuide(world, subject = null, editInstruction = '') {
     return Object.keys(structured).length ? structured : null;
 }
 
-// Per-visual authored subject fields. Optional like the guide itself: blank
-// means the generator's existing identity sources already carry the subject.
+// Stable per-character identity fields (Fibo PromptObject vocabulary).
+// These belong to the person and never to a preset or an outfit: they change
+// what is IN the image, not how the photo looks. Blank fields are omitted.
+const WORLD_VISUAL_IDENTITY_FIELDS = Object.freeze([
+    { key: 'gender', max: 100 },
+    { key: 'skinToneAndTexture', max: 300 },
+    { key: 'shapeAndColor', max: 300 },
+    { key: 'texture', max: 300 },
+    { key: 'appearanceDetails', max: 600 },
+    { key: 'relativeSize', max: 200 }
+]);
+
+function normalizeWorldVisualIdentityGuide(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const identity = {};
+    WORLD_VISUAL_IDENTITY_FIELDS.forEach(field => {
+        identity[field.key] = String(source[field.key] || '').trim().slice(0, field.max);
+    });
+    return identity;
+}
+
+// Per-visual authored staging fields (pose/expression/action for THIS image).
+// Clothing intentionally lives on outfits instead: what a character wears is
+// wardrobe state, not framing.
 const WORLD_VISUAL_SUBJECT_FIELDS = Object.freeze([
     { key: 'pose', max: 400 },
     { key: 'expression', max: 300 },
     { key: 'action', max: 400 },
-    { key: 'clothing', max: 600 },
     { key: 'orientation', max: 200 },
     { key: 'location', max: 400 }
 ]);
@@ -5182,15 +5235,64 @@ function normalizeWorldVisualSubjectGuide(raw) {
     return subject;
 }
 
-// Saved guidebook presets live with global settings so one authored look
-// ("85mm full-frame, low-key lighting") applies across every world. They
-// never contain subject or character data.
+// Outfits: named, described wardrobe entries per character. An outfit is one
+// description containing everything worn; portrait generation reads the worn
+// outfit's description as Fibo's clothing string (and as the prose "current
+// visible look"). Outfits are text-only — no images belong to them.
+function normalizeWorldOutfits(raw) {
+    const list = Array.isArray(raw) ? raw.slice(0, 30) : [];
+    const outfits = [];
+    const seen = new Set();
+    list.forEach(entry => {
+        if (!isPlainObject(entry)) return;
+        const id = String(entry.id || '').trim().slice(0, 80);
+        const name = String(entry.name || '').trim().slice(0, 80);
+        const description = String(entry.description || '').trim().slice(0, 1200);
+        if (!name || !description) return;
+        const key = id || name;
+        if (seen.has(key)) return;
+        seen.add(key);
+        outfits.push({ id: id || `outfit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, name, description });
+    });
+    return outfits;
+}
+
+function worldOutfits(entity) {
+    return normalizeWorldOutfits(entity?.visuals?.outfits);
+}
+
+function worldCurrentOutfit(entity) {
+    const outfits = worldOutfits(entity);
+    if (!outfits.length) return null;
+    const id = String(entity?.visuals?.currentOutfitId || '');
+    return outfits.find(outfit => outfit.id === id) || null;
+}
+
+const WORLD_IMAGE_PRESET_ASPECTS = Object.freeze(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9']);
+const WORLD_IMAGE_PRESET_FRAMINGS = Object.freeze(['auto', 'close-up', 'waist-up', 'three-quarter', 'full-body']);
+
+// A saved preset is a complete visual brief: everything that changes HOW the
+// photo looks (lighting, aesthetics, camera, style, aspect, framing) plus a
+// title (its name) and a general description. Nothing that changes WHAT is
+// in the photo ever enters a preset — that stays with the character.
+function normalizeImageBriefPreset(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    return {
+        ...normalizeWorldImageGuide(source),
+        description: String(source.description || '').trim().slice(0, 800),
+        aspectRatio: WORLD_IMAGE_PRESET_ASPECTS.includes(String(source.aspectRatio || '')) ? String(source.aspectRatio) : '',
+        framing: WORLD_IMAGE_PRESET_FRAMINGS.includes(String(source.framing || '')) ? String(source.framing) : ''
+    };
+}
+
+// Saved visual-brief presets live with global settings so one authored look
+// applies across every world. Old guide-only presets upgrade in place.
 function normalizeImageGuidePresets(raw) {
     const source = isPlainObject(raw) ? raw : {};
     const presets = {};
     Object.entries(source).slice(0, 60).forEach(([name, value]) => {
         const label = String(name || '').trim().slice(0, 80);
-        if (label && isPlainObject(value)) presets[label] = normalizeWorldImageGuide(value);
+        if (label && isPlainObject(value)) presets[label] = normalizeImageBriefPreset(value);
     });
     return presets;
 }
@@ -20213,8 +20315,12 @@ const AI_FIELD_DESCRIPTORS = Object.freeze({
         guidance: 'A single image-generation prompt describing this character\'s appearance for a portrait: age, build, colouring, hair, face, characteristic clothing and expression. Obey the world art bible. No camera brand names, no negative prompts, no narrative.'
     },
     'world-visual-primary': {
-        label: 'Stable visual identity',
-        guidance: 'Two or three sentences of unchanging physical identity used to keep every generated image consistent: age, build, colouring, hair, face, default clothing register. No pose, no lighting, no scene.'
+        label: 'Appearance & public impression',
+        guidance: 'Two or three sentences of how this character looks and presents themselves: age, build, colouring, hair, face, how they habitually dress and carry themselves in public. A general impression, not one specific outfit or scene. No pose, no lighting.'
+    },
+    'world-outfit-description': {
+        label: 'Outfit description',
+        guidance: 'One to three sentences describing everything worn in this single outfit: garments and layers, footwear, accessories, jewellery, colours, materials and condition. Third person, present tense. No pose, no lighting, no scene, no camera language.'
     },
     // Dossier fields. These write authored claims, so the user always reviews
     // before Save — but identity fields (name, age, pronouns) are deliberately
@@ -20307,11 +20413,17 @@ function aiFieldTranscriptContext(entity, limit = 14) {
     return hits.length ? `Recent transcript mentioning them:\n${hits.join('\n\n')}` : '';
 }
 
-async function completeFieldWithAI(fieldKey, currentValue, entity, world, mode) {
+async function completeFieldWithAI(fieldKey, currentValue, entity, world, mode, instruction = '') {
     const descriptor = AI_FIELD_DESCRIPTORS[fieldKey];
     if (!descriptor) throw new Error(`No descriptor for field "${fieldKey}"`);
     if (isPlaceholderFieldValue(currentValue)) { currentValue = ''; mode = 'fill'; }
-    const intent = mode === 'rewrite'
+    // An author instruction is the highest-priority input: honor it exactly
+    // where it is specific and fill out the rest of the field consistently
+    // with it. Without one the fill works from world and transcript context.
+    const authored = String(instruction || '').trim().slice(0, 2000);
+    const intent = authored
+        ? 'The author gave an instruction for this field. Honor every specific request in it, and complete the remaining parts of the field consistently with those requests and the established context.'
+        : mode === 'rewrite'
         ? 'The subject has changed during play. Rewrite this field to match who they are NOW, preserving anything still true.'
         : mode === 'embellish'
             ? 'Enrich the existing text. Keep every fact already written and add specificity. Never contradict it.'
@@ -20329,6 +20441,7 @@ async function completeFieldWithAI(fieldKey, currentValue, entity, world, mode) 
             {
                 role: 'user',
                 content: [
+                    authored ? `AUTHOR INSTRUCTION (highest priority):\n${authored}` : '',
                     aiFieldWorldContext(world, entity),
                     aiFieldTranscriptContext(entity),
                     currentValue ? `Current value of this field:\n${currentValue}` : 'This field is currently empty.'
@@ -20366,7 +20479,7 @@ function aiFieldButtonMarkup(fieldKey, isEmpty, targetId = '') {
            <button type="button" class="ai-field-btn" data-ai-field="${fieldKey}"${t} data-ai-mode="rewrite" title="Rewrite to match who they have become in play">↻</button>`;
 }
 
-function bindAiFieldButtons(root, getEntity, world) {
+function bindAiFieldButtons(root, getEntity, world, getInstruction = null) {
     root.querySelectorAll('.ai-field-btn').forEach(btn => {
         if (btn.dataset.aiBound === '1') return;
         btn.dataset.aiBound = '1';
@@ -20387,7 +20500,8 @@ function bindAiFieldButtons(root, getEntity, world) {
             btn.textContent = '⏳';
             try {
                 const text = await completeFieldWithAI(
-                    btn.dataset.aiField, original, getEntity(), world, btn.dataset.aiMode);
+                    btn.dataset.aiField, original, getEntity(), world, btn.dataset.aiMode,
+                    getInstruction ? String(getInstruction() || '') : '');
                 input.value = text;
                 input.dispatchEvent(new Event('change', { bubbles: true }));
                 showToast('Field written. Review it, then Save World.', 'success');
@@ -20452,6 +20566,21 @@ function renderWorldVisuals() {
             falSafetyCheckerInput.value = next === '' ? '' : String(next);
         };
     }
+    const falSeedInput = byId('w-visual-fal-seed');
+    if (falSeedInput) {
+        falSeedInput.value = advancedSettings.seed === '' ? '' : String(advancedSettings.seed);
+        falSeedInput.onchange = event => {
+            // Blank keeps the per-call random seed the bridge always rolls.
+            // Out-of-range text normalizes back to blank rather than
+            // travelling to the provider.
+            presentation.falAdvancedSettings = normalizeFalAdvancedSettings({
+                ...presentation.falAdvancedSettings,
+                seed: event.target.value
+            });
+            const next = presentation.falAdvancedSettings.seed;
+            falSeedInput.value = next === '' ? '' : String(next);
+        };
+    }
     syncFalAdvancedVisibility();
     // Optional structured image guide: authored direction shared by every
     // generator. Blank fields are omitted everywhere; presets fill the guide
@@ -20479,15 +20608,24 @@ function renderWorldVisuals() {
     };
     if (presetSelect) {
         let presets = refreshGuidePresets();
+        // The preset authoring controls carry the brief's own aspect and
+        // framing so a saved preset is a complete generation setup.
+        const presetAspect = byId('w-visual-guide-preset-aspect');
+        const presetFraming = byId('w-visual-guide-preset-framing');
+        const presetDescription = byId('w-visual-guide-preset-description');
         presetSelect.onchange = () => {
             const name = presetSelect.value;
             if (!name || !presets[name]) return;
-            presentation.imageGuide = normalizeWorldImageGuide(presets[name]);
+            const preset = presets[name];
+            presentation.imageGuide = normalizeWorldImageGuide(preset);
             document.querySelectorAll('[data-image-guide-field]').forEach(input => {
                 const field = WORLD_IMAGE_GUIDE_FIELDS.find(item => item.key === input.dataset.imageGuideField);
                 if (field) input.value = presentation.imageGuide[field.key];
             });
-            showToast(`Applied image preset “${name}”. Review the fields, then Save World.`, 'success');
+            if (presetDescription) presetDescription.value = preset.description || '';
+            if (presetAspect) presetAspect.value = preset.aspectRatio || '';
+            if (presetFraming) presetFraming.value = preset.framing || '';
+            showToast(`Applied visual brief “${name}”. Aspect and framing apply per visual in the image editor.`, 'success');
         };
         const savePresetButton = byId('w-visual-guide-preset-save');
         if (savePresetButton) savePresetButton.onclick = () => {
@@ -20495,13 +20633,18 @@ function renderWorldVisuals() {
             if (!name) return showToast('Name the preset before saving it.', 'error');
             state.globalSettings.imageGuidePresets = {
                 ...normalizeImageGuidePresets(state.globalSettings.imageGuidePresets),
-                [name]: normalizeWorldImageGuide(presentation.imageGuide)
+                [name]: normalizeImageBriefPreset({
+                    ...normalizeWorldImageGuide(presentation.imageGuide),
+                    description: presetDescription?.value || '',
+                    aspectRatio: presetAspect?.value || '',
+                    framing: presetFraming?.value || ''
+                })
             };
             persistGlobalSettingsOnly().catch(() => {});
             presets = refreshGuidePresets();
             presetSelect.value = name;
             presetNameInput.value = '';
-            showToast(`Saved image preset “${name}” — guide fields only, subject data stays per character.`, 'success');
+            showToast(`Saved visual brief “${name}” — look only, character data stays with the character.`, 'success');
         };
         const deletePresetButton = byId('w-visual-guide-preset-delete');
         if (deletePresetButton) deletePresetButton.onclick = () => {
@@ -20512,7 +20655,7 @@ function renderWorldVisuals() {
             state.globalSettings.imageGuidePresets = next;
             persistGlobalSettingsOnly().catch(() => {});
             presets = refreshGuidePresets();
-            showToast(`Deleted image preset “${name}”.`, 'success');
+            showToast(`Deleted visual brief “${name}”.`, 'success');
         };
     }
     byId('w-visual-accent').value = presentation.accent;
@@ -23608,6 +23751,7 @@ function renderWorldEntities(mode = 'people') {
                                 <input class="ent-portrait-input" type="file" accept="image/*" hidden>
                                 <button class="tool-btn ent-portrait-upload" type="button">Upload</button>
                                 <button class="tool-btn ent-portrait-generate" type="button">✨ Generate</button>
+                                <button class="tool-btn ent-outfit-manager" type="button">Outfits</button>
                                 <button class="tool-btn ent-portrait-clear" type="button" ${ent.visuals?.portraitAssetId ? '' : 'disabled'}>Clear</button>
                             </div>
                         </div>
@@ -23818,6 +23962,7 @@ function renderWorldEntities(mode = 'people') {
                 } finally { event.target.value = ''; }
             };
             div.querySelector('.ent-portrait-generate').onclick = () => openWorldVisualEditor(world, ent, 'npc');
+            div.querySelector('.ent-outfit-manager').onclick = () => openWorldOutfitManager(ent, world);
             div.querySelector('.ent-portrait-clear').onclick = () => {
                 clearWorldVisualVariants(ent, 'npc');
                 pruneWorldMediaAssets(world);
@@ -35755,6 +35900,19 @@ function normalizeAuthoredWorld(world) {
         entity.visuals.portraitAssetId = String(entity.visuals.portraitAssetId || '').slice(0, 160);
         entity.visuals.portraitDisplayAssetId = String(entity.visuals.portraitDisplayAssetId || '').slice(0, 160);
         entity.visuals.portraitSubjectGuide = normalizeWorldVisualSubjectGuide(entity.visuals.portraitSubjectGuide);
+        entity.visuals.portraitIdentityGuide = normalizeWorldVisualIdentityGuide(entity.visuals.portraitIdentityGuide);
+        // Outfits are the wardrobe source of truth. The legacy currentOutfit
+        // string stays synced to the worn outfit so every prose consumer
+        // (portrait compiler, dossier) reads one coherent "what they are
+        // wearing right now"; when nothing is worn it is left untouched.
+        entity.visuals.outfits = normalizeWorldOutfits(entity.visuals.outfits);
+        const wornOutfit = worldCurrentOutfit(entity);
+        if (wornOutfit) {
+            entity.visuals.currentOutfitId = wornOutfit.id;
+            entity.currentOutfit = wornOutfit.description;
+        } else if (entity.visuals.currentOutfitId) {
+            entity.visuals.currentOutfitId = '';
+        }
         entity.visuals.portraitPosition = String(entity.visuals.portraitPosition || 'center').slice(0, 80);
         entity.visuals.dialogueColor = /^#[0-9a-f]{6}$/i.test(String(entity.visuals.dialogueColor || ''))
             ? String(entity.visuals.dialogueColor).toUpperCase() : '';
@@ -49663,6 +49821,12 @@ function saveWorldVisualEditorFields() {
                 subject[field.key] = document.getElementById(`world-visual-subject-${field.key}`)?.value || '';
                 return subject;
             }, target.visuals.portraitSubjectGuide || {}));
+        // Stable identity fields: the person, never the preset or outfit.
+        target.visuals.portraitIdentityGuide = normalizeWorldVisualIdentityGuide(
+            WORLD_VISUAL_IDENTITY_FIELDS.reduce((identity, field) => {
+                identity[field.key] = document.getElementById(`world-visual-identity-${field.key}`)?.value || '';
+                return identity;
+            }, target.visuals.portraitIdentityGuide || {}));
     } else {
         target.visualDescription = document.getElementById('world-visual-primary').value.trim().slice(0, 8000);
         target.imagePrompt = document.getElementById('world-visual-prompt').value.trim().slice(0, 8000);
@@ -49692,6 +49856,157 @@ function closeWorldVisualEditor() {
     else if (editor?.kind === 'location') renderWorldLocations();
 }
 
+// --- Outfit manager: named wardrobe entries per character ---
+// Outfits are text-only: one description containing everything worn. The
+// worn outfit feeds Fibo's clothing string, the prose "current visible look"
+// and the dossier's current-outfit line. Portraits read it; no image belongs
+// to an outfit.
+
+let worldOutfitManagerState = null;
+let worldOutfitManagerBound = false;
+
+function openWorldOutfitManager(entity, world) {
+    if (!entity || !world) return;
+    worldOutfitManagerState = { entity, world, editId: '' };
+    ensureWorldOutfitManagerBound();
+    document.getElementById('world-outfit-name').value = '';
+    document.getElementById('world-outfit-description').value = '';
+    document.getElementById('world-outfit-instruction').value = '';
+    const addBtn = document.getElementById('world-outfit-add');
+    if (addBtn) addBtn.textContent = 'Add outfit';
+    renderWorldOutfitManager();
+    document.getElementById('world-outfit-manager-modal')?.classList.remove('hidden');
+}
+
+function closeWorldOutfitManager() {
+    document.getElementById('world-outfit-manager-modal')?.classList.add('hidden');
+    worldOutfitManagerState = null;
+    renderWorldEntities();
+}
+
+function renderWorldOutfitManager() {
+    const manager = worldOutfitManagerState;
+    if (!manager) return;
+    const entity = manager.entity;
+    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    const outfits = worldOutfits(entity);
+    const currentId = String(entity.visuals.currentOutfitId || '');
+    const header = document.getElementById('world-outfit-manager-title');
+    if (header) header.textContent = `${entity.name || 'Character'} — outfits`;
+    const list = document.getElementById('world-outfit-list');
+    if (!list) return;
+    list.innerHTML = outfits.length ? outfits.map(outfit => `
+        <div class="world-outfit-row" data-outfit-id="${escapeHTML(outfit.id)}">
+            <div class="world-outfit-copy">
+                <strong>${escapeHTML(outfit.name)}${outfit.id === currentId ? ' <span class="form-hint">· worn now</span>' : ''}</strong>
+                <p class="form-hint" style="margin:0;">${escapeHTML(outfit.description)}</p>
+            </div>
+            <div class="world-media-actions">
+                ${outfit.id === currentId ? '' : '<button type="button" class="tool-btn world-outfit-wear">Wear</button>'}
+                <button type="button" class="tool-btn world-outfit-edit">Edit</button>
+                <button type="button" class="tool-btn world-outfit-delete">Delete</button>
+            </div>
+        </div>`).join('')
+        : '<p class="form-hint">No outfits yet. Add one below, or describe what you want and let the AI design it.</p>';
+    [...list.querySelectorAll('.world-outfit-row')].forEach(row => {
+        const outfit = outfits.find(entry => entry.id === row.dataset.outfitId);
+        if (!outfit) return;
+        row.querySelector('.world-outfit-wear')?.addEventListener('click', () => {
+            entity.visuals.currentOutfitId = outfit.id;
+            entity.currentOutfit = outfit.description;
+            renderWorldOutfitManager();
+            showToast(`${entity.name || 'This character'} now wears “${outfit.name}”. Generate a portrait to see it.`, 'success');
+        });
+        row.querySelector('.world-outfit-edit')?.addEventListener('click', () => {
+            manager.editId = outfit.id;
+            document.getElementById('world-outfit-name').value = outfit.name;
+            document.getElementById('world-outfit-description').value = outfit.description;
+            document.getElementById('world-outfit-instruction').value = '';
+            const addBtn = document.getElementById('world-outfit-add');
+            if (addBtn) addBtn.textContent = 'Save changes';
+        });
+        row.querySelector('.world-outfit-delete')?.addEventListener('click', () => {
+            entity.visuals.outfits = outfits.filter(entry => entry.id !== outfit.id);
+            if (entity.visuals.currentOutfitId === outfit.id) {
+                entity.visuals.currentOutfitId = '';
+                entity.currentOutfit = '';
+            }
+            renderWorldOutfitManager();
+            showToast(`Deleted “${outfit.name}”.`, 'success');
+        });
+    });
+}
+
+function ensureWorldOutfitManagerBound() {
+    if (worldOutfitManagerBound) return;
+    worldOutfitManagerBound = true;
+    const modal = document.getElementById('world-outfit-manager-modal');
+    document.getElementById('world-outfit-manager-close').onclick = closeWorldOutfitManager;
+    modal.addEventListener('click', event => { if (event.target === modal) closeWorldOutfitManager(); });
+    document.getElementById('world-outfit-add').onclick = () => {
+        const manager = worldOutfitManagerState;
+        if (!manager) return;
+        const entity = manager.entity;
+        const name = String(document.getElementById('world-outfit-name')?.value || '').trim().slice(0, 80);
+        const description = String(document.getElementById('world-outfit-description')?.value || '').trim().slice(0, 1200);
+        if (!name || !description) return showToast('An outfit needs a name and a description.', 'error');
+        entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+        const outfits = worldOutfits(entity);
+        if (manager.editId) {
+            const existing = outfits.find(outfit => outfit.id === manager.editId);
+            if (existing) {
+                existing.name = name;
+                existing.description = description;
+                if (entity.visuals.currentOutfitId === existing.id) entity.currentOutfit = description;
+            }
+            manager.editId = '';
+        } else {
+            const outfit = {
+                id: `outfit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+                name, description
+            };
+            outfits.push(outfit);
+            // A character's first outfit becomes the worn one automatically:
+            // portraits should never silently fall back to no wardrobe.
+            if (!entity.visuals.currentOutfitId) {
+                entity.visuals.currentOutfitId = outfit.id;
+                entity.currentOutfit = description;
+            }
+        }
+        entity.visuals.outfits = outfits;
+        document.getElementById('world-outfit-name').value = '';
+        document.getElementById('world-outfit-description').value = '';
+        document.getElementById('world-outfit-instruction').value = '';
+        const addBtn = document.getElementById('world-outfit-add');
+        if (addBtn) addBtn.textContent = 'Add outfit';
+        renderWorldOutfitManager();
+    };
+    document.getElementById('world-outfit-ai').onclick = async event => {
+        const manager = worldOutfitManagerState;
+        if (!manager) return;
+        const button = event.currentTarget;
+        const original = button.textContent;
+        const instruction = String(document.getElementById('world-outfit-instruction')?.value || '').trim();
+        const name = String(document.getElementById('world-outfit-name')?.value || '').trim();
+        if (!instruction && !name) return showToast('Name the outfit or write an instruction first.', 'error');
+        button.disabled = true;
+        button.textContent = 'Designing…';
+        try {
+            const text = await completeFieldWithAI('world-outfit-description',
+                String(document.getElementById('world-outfit-description')?.value || ''),
+                manager.entity, manager.world, 'fill',
+                [instruction, name ? `Outfit name: ${name}` : ''].filter(Boolean).join('\n'));
+            document.getElementById('world-outfit-description').value = text;
+            showToast('Outfit designed. Review it, then add it.', 'success');
+        } catch (error) {
+            showToast(`Outfit design failed — ${error.message}`, 'error');
+        } finally {
+            button.disabled = false;
+            button.textContent = original;
+        }
+    };
+}
+
 function exportCurrentWorldVisual() {
     const editor = worldVisualEditorState;
     if (!editor) return;
@@ -49708,6 +50023,111 @@ function exportCurrentWorldVisual() {
     anchor.download = `${stem}_${editor.kind === 'npc' ? 'portrait' : 'location'}_${number}.${extension}`;
     anchor.click();
     showToast(`Exported image ${number} for ${editor.target.name || 'this visual'}.`, 'success');
+}
+
+// Refine prompt: the AI applies the author's revision instruction to the
+// editor's own prompt fields. Nothing is generated — the reworked text lands
+// in the inputs for review, so confirming means pressing Generate new. Only
+// the fields the instruction actually concerns are rewritten; everything
+// else is returned untouched (by being omitted from the response).
+async function refineWorldVisualPromptWithAI(event) {
+    const editor = worldVisualEditorState;
+    if (!editor) return;
+    const button = event.currentTarget;
+    const instruction = document.getElementById('world-visual-correction').value.trim();
+    if (!instruction) return showToast('Write the revision you want applied before refining the prompt.', 'error');
+    const isNpc = editor.kind === 'npc';
+    const identityLabels = {
+        gender: 'Gender', skinToneAndTexture: 'Skin tone and texture', shapeAndColor: 'Shape and color',
+        texture: 'Texture', appearanceDetails: 'Appearance details', relativeSize: 'Relative size'
+    };
+    const stagingLabels = {
+        pose: 'Pose', expression: 'Expression', action: 'Action',
+        orientation: 'Orientation', location: 'Placement in frame'
+    };
+    const fields = isNpc ? [
+        { key: 'appearance', label: 'Appearance & public impression', max: 8000 },
+        { key: 'imagePrompt', label: 'Authored image prompt', max: 8000 },
+        ...WORLD_VISUAL_IDENTITY_FIELDS.map(field => ({
+            key: `identity_${field.key}`, label: identityLabels[field.key] || field.key, max: field.max })),
+        ...WORLD_VISUAL_SUBJECT_FIELDS.map(field => ({
+            key: `staging_${field.key}`, label: `${stagingLabels[field.key] || field.key} (staging)`, max: field.max }))
+    ] : [
+        { key: 'visualDescription', label: 'Visible physical description', max: 8000 },
+        { key: 'imagePrompt', label: 'Authored image prompt', max: 8000 }
+    ];
+    const inputFor = key => {
+        if (key === 'appearance' || key === 'visualDescription') return document.getElementById('world-visual-primary');
+        if (key === 'imagePrompt') return document.getElementById('world-visual-prompt');
+        const [prefix, fieldKey] = key.split('_', 2);
+        if (prefix === 'identity') return document.getElementById(`world-visual-identity-${fieldKey}`);
+        if (prefix === 'staging') return document.getElementById(`world-visual-subject-${fieldKey}`);
+        return null;
+    };
+    button.disabled = true;
+    button.textContent = 'Refining…';
+    try {
+        const model = String(state.globalSettings?.structuredModel || '').trim()
+            || editor.world?.model || state.globalSettings?.defaultModel;
+        const body = applyOpenRouterRouting({
+            model,
+            max_tokens: 2000,
+            messages: [
+                {
+                    role: 'system',
+                    content: `You revise the prompt fields of a roleplay world's visual editor.\n\nThe author supplies a revision instruction. Decide which fields it concerns and rewrite ONLY those fields so the instruction is fully applied. Preserve everything already true that the instruction does not change. Never invent identity facts that contradict established context. A blank field stays blank unless the instruction asks for it.\n\nReturn ONLY a JSON object mapping field keys to their complete new text, for example {"imagePrompt":"…"}. Omit every field you did not change. No prose, no markdown fences, no explanation.`
+                },
+                {
+                    role: 'user',
+                    content: [
+                        `AUTHOR REVISION INSTRUCTION:\n${instruction.slice(0, 2000)}`,
+                        aiFieldWorldContext(editor.world, editor.target),
+                        `FIELDS (key — label — current text):\n${fields.map(field => {
+                            const input = inputFor(field.key);
+                            const current = String(input?.value || '').trim();
+                            return `${field.key} — ${field.label} — ${current || '(blank)'}`;
+                        }).join('\n')}`
+                    ].filter(Boolean).join('\n\n---\n\n')
+                }
+            ]
+        }, editor.world, { scope: 'utility' });
+        const response = await fetch(apiBase() + '/chat/completions', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 160)}`);
+        const data = await response.json();
+        const text = String(data.choices?.[0]?.message?.content || '').trim();
+        const firstBrace = text.indexOf('{');
+        const lastBrace = text.lastIndexOf('}');
+        if (firstBrace < 0 || lastBrace <= firstBrace) throw new Error('the model returned no field changes');
+        let revised;
+        try { revised = JSON.parse(text.slice(firstBrace, lastBrace + 1)); }
+        catch { throw new Error('the model returned malformed field changes'); }
+        if (!isPlainObject(revised)) throw new Error('the model returned no field changes');
+        const applied = [];
+        fields.forEach(field => {
+            if (!(field.key in revised)) return;
+            const input = inputFor(field.key);
+            if (!input) return;
+            const next = String(revised[field.key] ?? '').trim().slice(0, field.max);
+            if (next === String(input.value || '').trim()) return;
+            input.value = next;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            applied.push(field.label);
+        });
+        if (!applied.length) throw new Error('no fields changed — try a more specific instruction');
+        // Persist the reworked text with the visual settings so Generate new
+        // (the confirm step) and a later editor open both see it.
+        saveWorldVisualEditorFields();
+        showToast(`Refined the prompt: ${applied.join(', ')}. Review the fields, then Generate new.`, 'success');
+    } catch (error) {
+        showToast(`Refine prompt failed — ${error.message}`, 'error');
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Refine prompt';
+    }
 }
 
 async function runWorldVisualGeneration(revisionOnly, event) {
@@ -49749,7 +50169,7 @@ async function runWorldVisualGeneration(revisionOnly, event) {
         showToast(`${revisionOnly ? 'Image revision' : 'Image generation'} failed: ${error.message}`, 'error');
     } finally {
         button.disabled = false;
-        button.textContent = revisionOnly ? 'Revise current' : 'Generate new';
+        button.textContent = revisionOnly ? 'Refine image' : 'Generate new';
         updateWorldVisualCropPreview();
     }
 }
@@ -49870,6 +50290,25 @@ function ensureWorldVisualEditorBound() {
     document.getElementById('world-visual-crop-fill').onclick = event => runWorldVisualCropFill(event);
     document.getElementById('world-visual-regenerate').onclick = event => runWorldVisualGeneration(false, event);
     document.getElementById('world-visual-revise').onclick = event => runWorldVisualGeneration(true, event);
+    document.getElementById('world-visual-refine-prompt').onclick = event => refineWorldVisualPromptWithAI(event);
+    document.getElementById('world-visual-outfits').onclick = () => {
+        const editor = worldVisualEditorState;
+        if (editor?.kind === 'npc') openWorldOutfitManager(editor.target, editor.world);
+    };
+    const briefPicker = document.getElementById('world-visual-brief-preset');
+    if (briefPicker) briefPicker.onchange = () => {
+        const editor = worldVisualEditorState;
+        const name = briefPicker.value;
+        const preset = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)[name];
+        if (!editor || !name || !preset) return;
+        editor.world.presentation.imageGuide = normalizeWorldImageGuide(preset);
+        if (preset.aspectRatio) document.getElementById('world-visual-aspect').value = preset.aspectRatio;
+        if (preset.framing && editor.kind === 'npc') document.getElementById('world-visual-framing').value = preset.framing;
+        saveWorldVisualEditorFields();
+        updateWorldVisualCropPreview();
+        briefPicker.value = '';
+        showToast(`Applied visual brief “${name}” to ${editor.target.name || 'this visual'}.`, 'success');
+    };
 
     const stage = document.getElementById('world-visual-crop-stage');
     let drag = null;
@@ -49907,7 +50346,7 @@ function openWorldVisualEditor(world, target, kind) {
     // assigning textContent to the whole label would delete them.
     (document.getElementById('world-visual-primary-label-text')
         || document.getElementById('world-visual-primary-label')).textContent =
-        npc ? 'Stable visual identity' : 'Visible physical description';
+        npc ? 'Appearance & public impression' : 'Visible physical description';
     document.getElementById('world-visual-primary').value = npc
         ? target.appearance || target.description || ''
         : target.visualDescription || target.description || '';
@@ -49928,6 +50367,33 @@ function openWorldVisualEditor(world, target, kind) {
                 if (input) input.value = subjectGuide[field.key];
             });
         }
+    }
+    // Stable identity fields belong to the person, not to presets or outfits.
+    const identityField = document.getElementById('world-visual-identity-field');
+    if (identityField) {
+        identityField.classList.toggle('hidden', !npc);
+        if (npc) {
+            const identityGuide = normalizeWorldVisualIdentityGuide(target.visuals.portraitIdentityGuide);
+            WORLD_VISUAL_IDENTITY_FIELDS.forEach(field => {
+                const input = document.getElementById(`world-visual-identity-${field.key}`);
+                if (input) input.value = identityGuide[field.key];
+            });
+        }
+    }
+    document.getElementById('world-visual-outfits')?.classList.toggle('hidden', !npc);
+    // The shared AI instruction is transient: one authoring session, cleared
+    // when the editor opens so stale instructions never leak into a fill.
+    const aiInstruction = document.getElementById('world-visual-ai-instruction');
+    if (aiInstruction) aiInstruction.value = '';
+    // Visual brief presets apply the world's look plus this visual's aspect
+    // and framing in one action.
+    const briefPicker = document.getElementById('world-visual-brief-preset');
+    if (briefPicker) {
+        const presets = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets);
+        const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
+        briefPicker.innerHTML = `<option value="">Apply a visual brief…</option>`
+            + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+        briefPicker.value = '';
     }
     document.getElementById('world-visual-aspect').value = npc
         ? normalizedWorldVisualAspect(target.visuals.portraitAspectRatio, '3:4')
@@ -49954,7 +50420,8 @@ function openWorldVisualEditor(world, target, kind) {
             'world-visual-primary', String(primaryEl?.value || ''), 'world-visual-primary');
         if (promptSlot) promptSlot.innerHTML = aiFieldButtonMarkup(
             'ent-image-prompt', String(promptEl?.value || ''), 'world-visual-prompt');
-        bindAiFieldButtons(document.getElementById('world-visual-editor-modal'), () => target, world);
+        bindAiFieldButtons(document.getElementById('world-visual-editor-modal'), () => target, world,
+            () => document.getElementById('world-visual-ai-instruction')?.value || '');
     }
     document.getElementById('world-visual-editor-modal').classList.remove('hidden');
     requestAnimationFrame(updateWorldVisualCropPreview);
@@ -50112,11 +50579,15 @@ async function generateWorldLocationBackground(world, location, options = {}) {
 
 async function generateWorldNpcPortrait(world, npc, options = {}) {
     // Subject data for structured consumers: stable identity from the same
-    // source the prose compiler uses, plus the optional authored subject
-    // fields. Blank subject fields simply do not travel.
+    // source the prose compiler uses, the currently worn outfit as the
+    // clothing string, optional identity fields and staging. Blank fields
+    // simply do not travel.
+    const wornOutfit = worldCurrentOutfit(npc);
     const imageSubject = {
         shortDescription: String(npc.imagePrompt || '').trim(),
         description: String(npc.appearance || npc.description || '').trim(),
+        clothing: wornOutfit ? wornOutfit.description : '',
+        ...normalizeWorldVisualIdentityGuide(npc.visuals?.portraitIdentityGuide),
         ...normalizeWorldVisualSubjectGuide(npc.visuals?.portraitSubjectGuide)
     };
     if (options.revisionOnly) {
@@ -50133,7 +50604,7 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
     const request = compiler?.worldNpcPortraitRequest
         ? compiler.worldNpcPortraitRequest(world, npc, normalizeWorldPresentation(world), { ...options, correction: '' })
         : {
-            prompt: `Create a reusable environmental identity portrait for ${npc.name || 'this character'}.\nStable visual identity: ${npc.appearance || npc.description || 'Use the authored character description.'}\nAuthored portrait brief: ${npc.imagePrompt || 'None.'}\nWorld rendering style: ${worldVisualStylePrompt(world)}\nPreserve identity, age, build, styling and characteristic expression. No text, frame, watermark or duplicate person.`,
+            prompt: `Create a reusable environmental identity portrait for ${npc.name || 'this character'}.\nAppearance & public impression: ${npc.appearance || npc.description || 'Use the authored character description.'}\nAuthored portrait brief: ${npc.imagePrompt || 'None.'}\nWorld rendering style: ${worldVisualStylePrompt(world)}\nPreserve identity, age, build, styling and characteristic expression. No text, frame, watermark or duplicate person.`,
             aspectRatio: normalizedWorldVisualAspect(options.aspectRatio || npc.visuals?.portraitAspectRatio, '3:4'),
             maxDimension: normalizedWorldVisualResolution(options.maxDimension || npc.visuals?.portraitResolution, 1200),
             quality: 0.84

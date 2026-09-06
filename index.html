@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260905-v1700-visual-pipelines-v2">
+    <link rel="stylesheet" href="style.css?v=20260906-v1700-outfits-v1">
 </head>
 <body>
 <div id="app">
@@ -752,7 +752,7 @@
                     </div>
                     <div class="world-visual-editor-fields">
                         <div class="form-section">
-                            <label id="world-visual-primary-label" class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span id="world-visual-primary-label-text">Stable visual identity</span><span class="ai-field-actions" id="ai-visual-primary-actions"></span></label>
+                            <label id="world-visual-primary-label" class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span id="world-visual-primary-label-text">Appearance &amp; public impression</span><span class="ai-field-actions" id="ai-visual-primary-actions"></span></label>
                             <textarea id="world-visual-primary" class="form-textarea" rows="6"></textarea>
                         </div>
                         <div class="form-section">
@@ -770,27 +770,22 @@
                                     <option value="full-body">Full-body</option>
                                 </select>
                             </div>
-                            <div id="world-visual-subject-field">
-                                <label class="form-label">Structured subject <span class="help-glyph" title="Optional per-character fields for structured image consumers. Blank fields are omitted and never travel to a generator.">?</span></label>
-                                <div class="form-row">
-                                    <div class="form-col"><label class="form-field"><span>Pose</span><input id="world-visual-subject-pose" class="form-input" type="text" placeholder="leaning on the reception desk…" autocomplete="off"></label></div>
-                                    <div class="form-col"><label class="form-field"><span>Expression</span><input id="world-visual-subject-expression" class="form-input" type="text" placeholder="dazzling welcome…" autocomplete="off"></label></div>
-                                    <div class="form-col"><label class="form-field"><span>Action</span><input id="world-visual-subject-action" class="form-input" type="text" placeholder="sliding a folder across…" autocomplete="off"></label></div>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-col"><label class="form-field"><span>Clothing</span><input id="world-visual-subject-clothing" class="form-input" type="text" placeholder="teal satin blouse…" autocomplete="off"></label></div>
-                                    <div class="form-col"><label class="form-field"><span>Orientation</span><input id="world-visual-subject-orientation" class="form-input" type="text" placeholder="facing the camera…" autocomplete="off"></label></div>
-                                    <div class="form-col"><label class="form-field"><span>Placement in frame</span><input id="world-visual-subject-location" class="form-input" type="text" placeholder="centered, desk in front…" autocomplete="off"></label></div>
-                                </div>
-                                <p class="form-hint">Optional structured subject fields for this character only — they are never part of presets. Fibo models receive them natively; other models receive them compiled into the prompt.</p>
+                            <div id="world-visual-brief-field">
+                                <label class="form-label">Visual brief</label>
+                                <select id="world-visual-brief-preset" class="form-select">
+                                    <option value="">Apply a visual brief…</option>
+                                </select>
                             </div>
                             <div>
-                                <label class="form-label">Aspect ratio</label>
+                                <label class="form-label">Generation aspect ratio</label>
                                 <select id="world-visual-aspect" class="form-select">
                                     <option value="1:1">1:1 Square</option>
                                     <option value="3:4">3:4 Portrait</option>
                                     <option value="2:3">2:3 Tall portrait</option>
+                                    <option value="3:2">3:2 Portrait</option>
                                     <option value="4:3">4:3 Landscape</option>
+                                    <option value="4:5">4:5 Tall</option>
+                                    <option value="5:4">5:4 Wide</option>
                                     <option value="16:9">16:9 Wide</option>
                                     <option value="9:16">9:16 Vertical</option>
                                 </select>
@@ -805,19 +800,79 @@
                                 </select>
                             </div>
                         </div>
+                        <div id="world-visual-identity-field" class="form-section hidden">
+                            <label class="form-label">Identity <span class="help-glyph" title="Stable per-character fields in the structured image vocabulary. They describe the person and never enter a visual brief or an outfit. Blank fields are omitted.">?</span></label>
+                            <div class="form-row">
+                                <div class="form-col"><label class="form-label">Gender</label><input id="world-visual-identity-gender" class="form-input" type="text" placeholder="woman…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Skin tone and texture</label><input id="world-visual-identity-skinToneAndTexture" class="form-input" type="text" placeholder="warm olive, freckled across the nose…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Shape and color</label><input id="world-visual-identity-shapeAndColor" class="form-input" type="text" placeholder="heart-shaped face, dark auburn bob…" autocomplete="off"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col"><label class="form-label">Texture</label><input id="world-visual-identity-texture" class="form-input" type="text" placeholder="flyaway hair, chipped manicure…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Appearance details</label><input id="world-visual-identity-appearanceDetails" class="form-input" type="text" placeholder="laughter lines, a small scar above the left brow…" autocomplete="off"></div>
+                                <div class="form-col"><label class="form-label">Relative size</label><input id="world-visual-identity-relativeSize" class="form-input" type="text" placeholder="tall and lean…" autocomplete="off"></div>
+                            </div>
+                            <p class="form-hint">The person, not the photo. These stay with the character and never enter a visual brief.</p>
+                        </div>
+                        <div id="world-visual-subject-field" class="form-section hidden">
+                            <label class="form-label">Staging <span class="help-glyph" title="Optional per-image staging for this character: how they stand, hold their face and act in THIS portrait. Clothing comes from the worn outfit instead. Blank fields are omitted.">?</span></label>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Pose</label><input id="world-visual-subject-pose" class="form-input" type="text" placeholder="leaning on the reception desk…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Expression</label><input id="world-visual-subject-expression" class="form-input" type="text" placeholder="dazzling welcome…" autocomplete="off"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Action</label><input id="world-visual-subject-action" class="form-input" type="text" placeholder="sliding a folder across…" autocomplete="off"></div>
+                                <div class="form-col"><label class="form-label">Orientation</label><input id="world-visual-subject-orientation" class="form-input" type="text" placeholder="facing the camera…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Placement in frame</label><input id="world-visual-subject-location" class="form-input" type="text" placeholder="centered, desk in front…" autocomplete="off"></div>
+                            </div>
+                            <p class="form-hint">How they appear in this image only. What they wear comes from the outfit manager.</p>
+                        </div>
+                        <div class="form-section">
+                            <label class="form-label">AI instruction <span class="help-glyph" title="Optional. When filled, every ✨ button in this editor honors it: write what you want and how, and the AI fills out the rest of the field from it. Empty means the buttons fill from world and transcript context.">?</span></label>
+                            <input id="world-visual-ai-instruction" class="form-input" type="text" maxlength="2000" placeholder="Wet trench coat, collar up, headlit from behind in the rain…" autocomplete="off">
+                        </div>
                         <div class="form-section">
                             <label class="form-label">Revision instruction</label>
                             <textarea id="world-visual-correction" class="form-textarea" rows="3" placeholder="Make the makeup darker and keep everything else unchanged..."></textarea>
-                            <p class="form-hint">Revision sends only this instruction and the currently selected image. It does not resend the character, location, world art brief or earlier corrections.</p>
+                            <p class="form-hint">Revision sends this instruction plus the character, outfit and visual brief, so the new image keeps the established look. It does not resend earlier revision instructions.</p>
                         </div>
                     </div>
                 </div>
                 <div class="modal-ft world-visual-editor-actions">
+                    <button class="btn btn-ghost" id="world-visual-outfits" type="button" hidden>Outfits</button>
                     <button class="btn btn-ghost" id="world-visual-save-brief" type="button">Save visual brief</button>
                     <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
                     <button class="btn btn-ghost" id="world-visual-crop-fill" type="button" title="Use the revision image pipeline to outpaint missing areas into the selected final aspect ratio">Crop &amp; Fill</button>
-                    <button class="btn btn-ghost" id="world-visual-revise" type="button">Revise current</button>
+                    <button class="btn btn-ghost" id="world-visual-refine-prompt" type="button" title="Have the AI apply the revision instruction to the prompt fields below — nothing is generated until you press Generate new">Refine prompt</button>
+                    <button class="btn btn-ghost" id="world-visual-revise" type="button" title="Send the current image plus the revision instruction to the edit model">Refine image</button>
                     <button class="btn btn-primary" id="world-visual-regenerate" type="button">Generate new</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="world-outfit-manager-modal" class="modal-bg hidden">
+            <div class="modal">
+                <div class="modal-hd">
+                    <h3 id="world-outfit-manager-title">Outfits</h3>
+                    <button class="modal-x" id="world-outfit-manager-close" type="button" aria-label="Close">×</button>
+                </div>
+                <div class="modal-bd">
+                    <div class="form-section">
+                        <label class="form-label">Wardrobe <span class="help-glyph" title="Each outfit is a text description. The worn outfit feeds the clothing field when a portrait is generated. Switch what a character wears without touching identity or briefs.">?</span></label>
+                        <div id="world-outfit-list"></div>
+                    </div>
+                    <div class="form-section">
+                        <label class="form-label">Add or edit an outfit</label>
+                        <div class="form-row">
+                            <div class="form-col"><label class="form-label">Name</label><input id="world-outfit-name" class="form-input" type="text" maxlength="60" placeholder="Reception blues…" autocomplete="off"></div>
+                            <div class="form-col form-col-grow"><label class="form-label">Description <span class="form-hint">(what the generator receives as clothing)</span></label><input id="world-outfit-description" class="form-input" type="text" maxlength="600" placeholder="Teal satin blouse, charcoal slacks, silver stud earrings…" autocomplete="off"></div>
+                        </div>
+                        <div class="form-row" style="gap:10px; align-items:end;">
+                            <div class="form-col form-col-grow"><label class="form-label">AI instruction <span class="form-hint">(optional, for the ✨ button)</span></label><input id="world-outfit-instruction" class="form-input" type="text" maxlength="2000" placeholder="Something she'd wear to a gallery opening in the rain…" autocomplete="off"></div>
+                            <button class="btn btn-ghost" id="world-outfit-ai" type="button">✨ Design with AI</button>
+                            <button class="btn btn-primary" id="world-outfit-add" type="button">Save outfit</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1013,7 +1068,7 @@
                             </div>
                             <div class="form-row">
                                 <div class="form-col">
-                                    <label class="form-label">Revision image provider <span class="help-glyph" title="Used only by Revise current. It receives the selected existing image plus your revision instruction, so choose a provider with image-reference support.">?</span></label>
+                                    <label class="form-label">Revision image provider <span class="help-glyph" title="Used only by Refine image. It receives the selected existing image plus your revision instruction, so choose a provider with image-reference support.">?</span></label>
                                     <select id="w-visual-revision-image-provider" class="form-select">
                                         <option value="same_as_new">Use New Image Pipeline</option>
                                         <option value="inherit">Use provider from Settings</option>
@@ -1037,53 +1092,86 @@
                                 </div>
                             </div>
                             <div id="w-visual-fal-advanced" class="form-row hidden">
-                                <div class="form-col">
+                                <div class="form-col form-col-grow">
                                     <label class="form-label">Fal · Advanced Request Settings <span class="help-glyph" title="These optional request settings apply whenever either the new-image or revision pipeline uses Fal. Unsupported settings are omitted rather than guessed.">?</span></label>
-                                    <label class="form-field"><span>safety_tolerance</span><input id="w-visual-fal-safety-tolerance" class="form-input" type="number" min="0" max="100" step="any" placeholder="5" autocomplete="off"></label>
-                                    <label class="form-field"><span>enable_safety_checker</span><select id="w-visual-fal-enable-safety-checker" class="form-select"><option value="">Blank — omit this field</option><option value="true">true — request safety checking</option><option value="false">false — request no safety checking</option></select></label>
-                                    <p class="form-hint">Optional Fal request parameters. Leave either blank when that model does not use it; blank fields are omitted, so the endpoint default applies. Some models use <code>safety_tolerance</code>; Seedream uses <code>enable_safety_checker</code>. Fal may still enforce safety checking when an account is not authorised to disable it.</p>
+                                    <div class="form-row">
+                                        <div class="form-col"><label class="form-label">safety_tolerance</label><input id="w-visual-fal-safety-tolerance" class="form-input" type="number" min="0" max="100" step="any" placeholder="5" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">enable_safety_checker</label><select id="w-visual-fal-enable-safety-checker" class="form-select"><option value="">Blank — omit this field</option><option value="true">true — request safety checking</option><option value="false">false — request no safety checking</option></select></div>
+                                        <div class="form-col"><label class="form-label">Pinned seed <span class="form-hint">(optional)</span></label><input id="w-visual-fal-seed" class="form-input" type="number" min="0" max="2147483647" step="1" placeholder="Blank — randomize every call" autocomplete="off"></div>
+                                    </div>
+                                    <p class="form-hint">Optional Fal request parameters; blank fields are omitted so the endpoint default applies. Some models use <code>safety_tolerance</code>; Seedream uses <code>enable_safety_checker</code>. Every image call otherwise rolls a fresh random seed so the same prompt never collapses into the same image — pin a seed only when you want repeatable results. Fal may still enforce safety checking when an account is not authorised to disable it.</p>
                                 </div>
                             </div>
                             <div id="w-visual-image-guide" class="form-row">
-                                <div class="form-col">
-                                    <label class="form-label">Structured Image Guide <span class="help-glyph" title="Optional authored image direction shared by every world visual. Blank fields are always omitted. Fibo models receive this as their native structured prompt; every other model receives the same fields compiled into prompt text.">?</span></label>
-                                    <div class="form-row" style="gap:8px; align-items:end;">
+                                <div class="form-col form-col-grow">
+                                    <label class="form-label">Visual Briefs <span class="help-glyph" title="Optional authored image direction shared by every world visual. Blank fields are always omitted. Fibo models receive this as their native structured prompt; every other model receives the same fields compiled into prompt text.">?</span></label>
+                                    <div class="form-row" style="gap:10px; align-items:end;">
                                         <div class="form-col">
-                                            <label class="form-label">Presets</label>
-                                            <select id="w-visual-guide-preset" class="form-select"><option value="">No saved presets yet</option></select>
+                                            <label class="form-label">Saved briefs</label>
+                                            <select id="w-visual-guide-preset" class="form-select"><option value="">No saved briefs yet</option></select>
                                         </div>
-                                        <div class="form-col form-col-grow">
-                                            <label class="form-label">Preset name</label>
+                                        <div class="form-col">
+                                            <label class="form-label">Brief name</label>
                                             <input id="w-visual-guide-preset-name" class="form-input" type="text" maxlength="80" placeholder="85mm low-key portrait…" autocomplete="off">
                                         </div>
-                                        <button class="btn btn-ghost" id="w-visual-guide-preset-save" type="button">Save preset</button>
+                                        <div class="form-col">
+                                            <label class="form-label">Aspect</label>
+                                            <select id="w-visual-guide-preset-aspect" class="form-select">
+                                                <option value="">—</option>
+                                                <option value="1:1">1:1 Square</option>
+                                                <option value="2:3">2:3 Tall portrait</option>
+                                                <option value="3:2">3:2 Portrait</option>
+                                                <option value="3:4">3:4 Portrait</option>
+                                                <option value="4:3">4:3 Landscape</option>
+                                                <option value="4:5">4:5 Tall</option>
+                                                <option value="5:4">5:4 Wide</option>
+                                                <option value="16:9">16:9 Wide</option>
+                                                <option value="9:16">9:16 Vertical</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-col">
+                                            <label class="form-label">Framing</label>
+                                            <select id="w-visual-guide-preset-framing" class="form-select">
+                                                <option value="">—</option>
+                                                <option value="auto">Automatic</option>
+                                                <option value="close-up">Close-up</option>
+                                                <option value="waist-up">Waist-up</option>
+                                                <option value="three-quarter">Three-quarter</option>
+                                                <option value="full-body">Full-body</option>
+                                            </select>
+                                        </div>
+                                        <button class="btn btn-ghost" id="w-visual-guide-preset-save" type="button">Save brief</button>
                                         <button class="btn btn-ghost" id="w-visual-guide-preset-delete" type="button">Delete</button>
                                     </div>
-                                    <div class="form-row">
-                                        <div class="form-col"><label class="form-field"><span>Style medium</span><input data-image-guide-field="styleMedium" class="form-input" type="text" placeholder="cinematic photograph, oil sketch…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Artistic style</span><input data-image-guide-field="artisticStyle" class="form-input" type="text" placeholder="grounded photorealism…" autocomplete="off"></label></div>
+                                    <div>
+                                        <label class="form-label">Brief description <span class="form-hint">(what this look is for)</span></label>
+                                        <input id="w-visual-guide-preset-description" class="form-input" type="text" maxlength="800" placeholder="Quiet office realism: straight-on, 85mm, low-key window light…" autocomplete="off">
                                     </div>
                                     <div class="form-row">
-                                        <div class="form-col"><label class="form-field"><span>Lighting conditions</span><input data-image-guide-field="lightingConditions" class="form-input" type="text" placeholder="low-key, overcast window light…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Lighting direction</span><input data-image-guide-field="lightingDirection" class="form-input" type="text" placeholder="side-lit from camera left…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Shadows</span><input data-image-guide-field="lightingShadows" class="form-input" type="text" placeholder="soft, filled…" autocomplete="off"></label></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Style medium</label><input data-image-guide-field="styleMedium" class="form-input" type="text" placeholder="cinematic photograph, oil sketch…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Artistic style</label><input data-image-guide-field="artisticStyle" class="form-input" type="text" placeholder="grounded photorealism…" autocomplete="off"></div>
                                     </div>
                                     <div class="form-row">
-                                        <div class="form-col"><label class="form-field"><span>Composition</span><input data-image-guide-field="composition" class="form-input" type="text" placeholder="full-frame head-and-shoulders…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Color scheme</span><input data-image-guide-field="colorScheme" class="form-input" type="text" placeholder="desaturated teal and amber…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Mood and atmosphere</span><input data-image-guide-field="moodAtmosphere" class="form-input" type="text" placeholder="quiet, clinical…" autocomplete="off"></label></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Lighting conditions</label><input data-image-guide-field="lightingConditions" class="form-input" type="text" placeholder="low-key, overcast window light…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Lighting direction</label><input data-image-guide-field="lightingDirection" class="form-input" type="text" placeholder="side-lit from camera left…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Shadows</label><input data-image-guide-field="lightingShadows" class="form-input" type="text" placeholder="soft, filled…" autocomplete="off"></div>
                                     </div>
                                     <div class="form-row">
-                                        <div class="form-col"><label class="form-field"><span>Depth of field</span><input data-image-guide-field="depthOfField" class="form-input" type="text" placeholder="shallow…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Focus</span><input data-image-guide-field="focus" class="form-input" type="text" placeholder="tack-sharp on the eyes…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Camera angle</span><input data-image-guide-field="cameraAngle" class="form-input" type="text" placeholder="straight-on, slightly low…" autocomplete="off"></label></div>
-                                        <div class="form-col"><label class="form-field"><span>Lens focal length</span><input data-image-guide-field="lensFocalLength" class="form-input" type="text" placeholder="85mm…" autocomplete="off"></label></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Composition</label><input data-image-guide-field="composition" class="form-input" type="text" placeholder="full-frame head-and-shoulders…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Color scheme</label><input data-image-guide-field="colorScheme" class="form-input" type="text" placeholder="desaturated teal and amber…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Mood and atmosphere</label><input data-image-guide-field="moodAtmosphere" class="form-input" type="text" placeholder="quiet, clinical…" autocomplete="off"></div>
                                     </div>
                                     <div class="form-row">
-                                        <div class="form-col form-col-grow"><label class="form-field"><span>Background setting</span><input data-image-guide-field="backgroundSetting" class="form-input" type="text" placeholder="blurred office interior, wet street at night…" autocomplete="off"></label></div>
-                                        <div class="form-col form-col-grow"><label class="form-field"><span>Context</span><input data-image-guide-field="context" class="form-input" type="text" placeholder="reusable identity portrait, not a scene still…" autocomplete="off"></label></div>
+                                        <div class="form-col"><label class="form-label">Depth of field</label><input data-image-guide-field="depthOfField" class="form-input" type="text" placeholder="shallow…" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">Focus</label><input data-image-guide-field="focus" class="form-input" type="text" placeholder="tack-sharp on the eyes…" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">Camera angle</label><input data-image-guide-field="cameraAngle" class="form-input" type="text" placeholder="straight-on, slightly low…" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">Lens focal length</label><input data-image-guide-field="lensFocalLength" class="form-input" type="text" placeholder="85mm…" autocomplete="off"></div>
                                     </div>
-                                    <p class="form-hint">Optional image direction for every portrait, background, revision and map skin in this world. Blank fields are omitted. Save the guide as a preset to reuse a look across worlds; presets never store character-specific fields. Fibo models receive this natively as a structured prompt; other models receive it as prompt text.</p>
+                                    <div class="form-row">
+                                        <div class="form-col form-col-grow"><label class="form-label">Background setting</label><input data-image-guide-field="backgroundSetting" class="form-input" type="text" placeholder="blurred office interior, wet street at night…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Context</label><input data-image-guide-field="context" class="form-input" type="text" placeholder="reusable identity portrait, not a scene still…" autocomplete="off"></div>
+                                    </div>
+                                    <p class="form-hint">A visual brief owns everything that changes HOW the photo looks — lighting, mood, camera, style, aspect, framing. Everything that changes WHAT is in the photo stays with the character. Blank fields are omitted. Fibo models receive a brief natively as a structured prompt; other models receive it as prompt text.</p>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -5430,6 +5518,6 @@
      HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->
 <script src="melbourne-bunnyrx-registry.js?v=20260905-wm-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-<script src="app.js?v=20260905-v1700-visual-source-v2"></script>
+<script src="app.js?v=20260906-v1700-visual-identity-v1"></script>
 </body>
 </html>

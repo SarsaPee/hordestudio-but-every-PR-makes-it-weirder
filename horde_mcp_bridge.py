@@ -1961,6 +1961,20 @@ def fal_advanced_image_fields(body: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(raw_checker, bool):
             raise ValueError("enable_safety_checker must be true, false or blank.")
         fields["enable_safety_checker"] = raw_checker
+
+    # A pinned seed is the one way to opt out of Horde's per-call random
+    # seed. Blank keeps the randomization the image pipeline always applies.
+    raw_seed = body.get("seed")
+    if raw_seed is not None and str(raw_seed).strip() != "":
+        if isinstance(raw_seed, bool):
+            raise ValueError("seed must be a whole number or blank.")
+        try:
+            seed = int(str(raw_seed).strip())
+        except (TypeError, ValueError):
+            raise ValueError("seed must be a whole number or blank.")
+        if not 0 <= seed <= 2_147_483_647:
+            raise ValueError("seed must be between 0 and 2147483647.")
+        fields["seed"] = seed
     return fields
 
 
@@ -1990,9 +2004,28 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     image_size = {
         "16:9": "landscape_16_9", "4:3": "landscape_4_3", "9:16": "portrait_16_9",
         "3:4": "portrait_4_3", "1:1": "square_hd",
-    }.get(aspect, "square_hd")
+    }.get(aspect, "")
+    if not image_size:
+        # Aspects outside the fixed enum (3:2, 4:5, 5:4) travel as an explicit
+        # width/height pair, which the curated Flux endpoints accept natively.
+        try:
+            ratio_w, ratio_h = (float(part) for part in aspect.split(":", 1))
+            if ratio_w > 0 and ratio_h > 0:
+                scale = 1024.0 / max(ratio_w, ratio_h)
+                image_size = {
+                    "width": max(64, int(round(ratio_w * scale))),
+                    "height": max(64, int(round(ratio_h * scale))),
+                }
+            else:
+                image_size = "square_hd"
+        except (ValueError, ZeroDivisionError):
+            image_size = "square_hd"
     payload: dict[str, Any] = {
         "prompt": prompt, "num_images": 1, "output_format": "jpeg",
+        # Every call rolls a fresh seed: identical prompts must not collapse
+        # into identical images. A seed pinned in Advanced Request Settings
+        # overrides this via the update below.
+        "seed": secrets.randbelow(2_000_000_000),
     }
     payload.update(fal_advanced_image_fields(body))
     # Bria Fibo endpoints speak their own structured JSON. Horde's authored
@@ -2018,10 +2051,13 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
             # Fibo Edit has no `prompt` field: the wording is `instruction`
             # prose, or a structured_instruction used verbatim when the app
             # authored one. A single reference keeps its own ratio, so no
-            # aspect_ratio is forced.
+            # aspect_ratio is forced. Resolution is 1MP or 4MP only.
             payload.pop("prompt", None)
             if image_url:
                 payload["image_urls"] = [image_url]
+            resolution = str(body.get("fiboResolution") or "").strip()
+            if resolution in {"1MP", "4MP"}:
+                payload["resolution"] = resolution
             if fibo_structured:
                 payload["structured_instruction"] = fibo_structured
             else:
@@ -2064,6 +2100,12 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
                 payload["image_urls"] = [image_url]
             else:
                 payload["image_url"] = image_url
+            result = submit()
+        elif error.status == 422 and "seed" in (error.fields or []):
+            # Horde always sends a fresh random seed, but a minority of
+            # endpoints do not document one. Their 422 is free and unbilled:
+            # drop the seed and let the endpoint's own default apply.
+            payload.pop("seed", None)
             result = submit()
         elif (not image_url and generic_model and error.status == 422
               and error.error_type == "missing"

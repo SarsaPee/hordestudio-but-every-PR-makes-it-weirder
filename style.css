@@ -10077,3 +10077,10 @@ label[data-help] > span:first-child::after,
 
 /* FF voice-color line: tagged dialogue whose speaker could not be resolved. */
 .world-voice-line { margin:14px 0; padding:11px 16px; border-left:4px solid var(--speaker-color,var(--accent)); border-radius:12px; background:color-mix(in srgb,var(--speaker-color,var(--accent)) 12%,rgba(8,8,13,.72)); color:var(--text); font-size:1.02rem; line-height:1.55; }
+
+/* Wardrobe rows in the outfit manager: description on the left, actions right. */
+.world-outfit-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 12px; border:1px solid var(--border); border-radius:10px; background:rgba(8,8,13,.5); }
+.world-outfit-row + .world-outfit-row { margin-top:8px; }
+.world-outfit-copy { min-width:0; flex:1; }
+.world-outfit-copy strong { color:var(--text); font-size:.8rem; }
+.world-outfit-copy .form-hint { overflow-wrap:anywhere; }
