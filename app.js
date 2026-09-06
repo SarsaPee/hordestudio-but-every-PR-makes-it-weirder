@@ -2794,7 +2794,7 @@ function validateWorldData(value, label = 'World') {
         requirePlainObject(entity, `${label} entity ${index + 1}`);
         requireString(entity.name, `${label} entity ${index + 1} name`, { max: 300 });
         requireSafeId(entity.id, `${label} entity ${index + 1} id`, { optional: true });
-        ['description', 'persona', 'type', 'startLocation', 'homeLocation', 'goal', 'agenda', 'goalAutonomy'].forEach(key =>
+        ['description', 'persona', 'gender', 'type', 'startLocation', 'homeLocation', 'goal', 'agenda', 'goalAutonomy'].forEach(key =>
             requireString(entity[key], `${label} entity ${index + 1} ${key}`, { optional: true }));
         if (entity.visuals !== undefined) {
             requirePlainObject(entity.visuals, `${label} entity ${index + 1} visuals`);
@@ -2821,6 +2821,8 @@ function validateWorldData(value, label = 'World') {
                     requireSafeId(outfit.id, `${label} entity ${index + 1} outfit ${outfitIndex + 1} id`, { optional: true });
                     requireString(outfit.name, `${label} entity ${index + 1} outfit ${outfitIndex + 1} name`, { max: 80 });
                     requireString(outfit.description, `${label} entity ${index + 1} outfit ${outfitIndex + 1} description`, { max: 1200 });
+                    requireArray(outfit.imageAssetIds, `${label} entity ${index + 1} outfit ${outfitIndex + 1} imageAssetIds`, { optional: true, max: 30 });
+                    (outfit.imageAssetIds || []).forEach(assetId => requireSafeId(assetId, `${label} entity ${index + 1} outfit ${outfitIndex + 1} image asset`));
                 });
                 requireSafeId(entity.visuals.currentOutfitId, `${label} entity ${index + 1} visuals currentOutfitId`, { optional: true });
             }
@@ -5244,7 +5246,8 @@ function normalizeWorldVisualSubjectGuide(raw) {
 // Outfits: named, described wardrobe entries per character. An outfit is one
 // description containing everything worn; portrait generation reads the worn
 // outfit's description as Fibo's clothing string (and as the prose "current
-// visible look"). Outfits are text-only — no images belong to them.
+// visible look"). Generated source images may belong to the outfit as well as
+// the character's general variant history.
 function normalizeWorldOutfits(raw) {
     const list = Array.isArray(raw) ? raw.slice(0, 30) : [];
     const outfits = [];
@@ -5258,7 +5261,9 @@ function normalizeWorldOutfits(raw) {
         const key = id || name;
         if (seen.has(key)) return;
         seen.add(key);
-        outfits.push({ id: id || `outfit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, name, description });
+        const imageAssetIds = [...new Set((Array.isArray(entry.imageAssetIds) ? entry.imageAssetIds : [])
+            .map(value => String(value || '').trim().slice(0, 160)).filter(Boolean))].slice(0, 30);
+        outfits.push({ id: id || `outfit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, name, description, imageAssetIds });
     });
     return outfits;
 }
@@ -5272,6 +5277,25 @@ function worldCurrentOutfit(entity) {
     if (!outfits.length) return null;
     const id = String(entity?.visuals?.currentOutfitId || '');
     return outfits.find(outfit => outfit.id === id) || null;
+}
+
+function worldOutfitForAsset(entity, assetId) {
+    const id = String(assetId || '');
+    if (!id) return null;
+    return worldOutfits(entity).find(outfit => (outfit.imageAssetIds || []).includes(id)) || null;
+}
+
+function attachWorldVisualToOutfit(entity, assetId, outfitId = '') {
+    if (!entity || entity.type !== 'npc' || !assetId) return null;
+    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    const outfits = worldOutfits(entity);
+    const selectedId = String(outfitId || '').trim()
+        || String(entity.visuals.currentOutfitId || '').trim();
+    const outfit = outfits.find(entry => entry.id === selectedId);
+    if (!outfit) return null;
+    outfit.imageAssetIds = [...new Set([...(outfit.imageAssetIds || []), String(assetId)])].slice(-30);
+    entity.visuals.outfits = outfits;
+    return outfit;
 }
 
 const WORLD_IMAGE_PRESET_ASPECTS = Object.freeze(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9']);
@@ -5403,7 +5427,10 @@ function addWorldMediaAsset(world, data, kind, label = '', metadata = {}) {
         createdAt: Date.now(),
         generated: metadata.generated === true,
         model: String(metadata.model || '').slice(0, 500),
-        prompt: String(metadata.prompt || '').slice(0, 8000)
+        prompt: String(metadata.prompt || '').slice(0, 8000),
+        entityId: String(metadata.entityId || '').slice(0, 160),
+        outfitId: String(metadata.outfitId || '').slice(0, 160),
+        sourceAssetId: String(metadata.sourceAssetId || '').slice(0, 160)
     });
     if ((state.worlds || []).includes(world)) worldMediaDirty = true;
     return id;
@@ -5417,6 +5444,8 @@ function worldMediaReferenceIds(world) {
     (world?.entities || []).forEach(entity => {
         add(entity?.visuals?.portraitAssetId);
         add(entity?.visuals?.portraitDisplayAssetId);
+        (entity?.visuals?.outfits || []).forEach(outfit =>
+            (outfit?.imageAssetIds || []).forEach(add));
     });
     return ids;
 }
@@ -23741,6 +23770,7 @@ function renderWorldEntities(mode = 'people') {
                 <div class="world-inspector-section" data-inspector-section="overview">
                     <label class="form-label" style="font-size:0.75rem;">${ent.type === 'item' ? 'Description & purpose' : 'Appearance & public impression'}</label>
                     <textarea class="form-textarea ent-desc" rows="2" placeholder="${ent.type === 'item' ? 'What the object looks like, what it does and why it matters…' : 'What another person notices: appearance, role, visible condition and reputation…'}">${escapeHTML(ent.description)}</textarea>
+                    ${ent.type === 'npc' ? `<label class="form-label" style="font-size:0.75rem; margin-top:10px;">Gender <span class="help-glyph" title="Stable dossier information used by visual generation and character context. Leave blank when the world has not established it; a name alone is not evidence.">?</span></label><input class="form-input ent-gender" value="${escapeHTML(ent.gender || ent.visuals?.portraitIdentityGuide?.gender || '')}" placeholder="woman, man, non-binary, or another authored description…" autocomplete="off">` : ''}
                     <label class="form-label" style="font-size:.72rem;margin-top:10px;">Search tags <span class="form-hint">(classification only—not relationships)</span></label>
                     <input class="form-input ent-tags" value="${escapeHTML((ent.tags || []).join(', '))}" placeholder="${ent.type === 'item' ? 'evidence, key, weapon, fragile…' : 'student, wealthy, guard, suspicious…'}">
                 </div>
@@ -23934,6 +23964,14 @@ function renderWorldEntities(mode = 'people') {
 
         div.querySelector('.ent-name').oninput = (e) => { ent.name = e.target.value; updateWorldTokenCount(); };
         div.querySelector('.ent-desc').oninput = (e) => { ent.description = e.target.value; updateWorldTokenCount(); };
+        div.querySelector('.ent-gender')?.addEventListener('input', event => {
+            ent.gender = String(event.target.value || '').trim().slice(0, 100);
+            ent.visuals = isPlainObject(ent.visuals) ? ent.visuals : {};
+            const identity = normalizeWorldVisualIdentityGuide(ent.visuals.portraitIdentityGuide);
+            if (!identity.gender || identity.gender === ent.gender || !ent.gender) identity.gender = ent.gender;
+            ent.visuals.portraitIdentityGuide = identity;
+            updateWorldTokenCount();
+        });
         div.querySelector('.ent-tags').onchange = e => {
             ent.tags = [...new Set(e.target.value.split(',').map(tag => tag.trim()).filter(Boolean))].slice(0, 30);
             updateWorldTokenCount();
@@ -35903,15 +35941,26 @@ function normalizeAuthoredWorld(world) {
     });
     world.entities.forEach(entity => {
         if (!isPlainObject(entity.visuals)) entity.visuals = {};
+        entity.gender = String(entity.gender || '').trim().slice(0, 100);
         entity.visuals.portraitAssetId = String(entity.visuals.portraitAssetId || '').slice(0, 160);
         entity.visuals.portraitDisplayAssetId = String(entity.visuals.portraitDisplayAssetId || '').slice(0, 160);
         entity.visuals.portraitSubjectGuide = normalizeWorldVisualSubjectGuide(entity.visuals.portraitSubjectGuide);
         entity.visuals.portraitIdentityGuide = normalizeWorldVisualIdentityGuide(entity.visuals.portraitIdentityGuide);
+        // Dossier gender is the stable source. A manually authored identity
+        // guide remains authoritative for that image, but blank guide fields
+        // inherit the dossier value so new characters are immediately usable.
+        if (entity.gender && !entity.visuals.portraitIdentityGuide.gender) {
+            entity.visuals.portraitIdentityGuide.gender = entity.gender;
+        }
         // Outfits are the wardrobe source of truth. The legacy currentOutfit
         // string stays synced to the worn outfit so every prose consumer
         // (portrait compiler, dossier) reads one coherent "what they are
         // wearing right now"; when nothing is worn it is left untouched.
         entity.visuals.outfits = normalizeWorldOutfits(entity.visuals.outfits);
+        const validOutfitAssetIds = new Set(world.mediaAssets.map(asset => asset.id));
+        entity.visuals.outfits.forEach(outfit => {
+            outfit.imageAssetIds = (outfit.imageAssetIds || []).filter(assetId => validOutfitAssetIds.has(assetId));
+        });
         const wornOutfit = worldCurrentOutfit(entity);
         if (wornOutfit) {
             entity.visuals.currentOutfitId = wornOutfit.id;
@@ -38840,6 +38889,17 @@ function applyCalibrationFinding(world, finding) {
             entity.persona = finding.patch.persona;
             return true;
         }
+        case 'set_entity_gender': {
+            const entity = (world.entities || []).find(e => e.id === finding.patch.entityId);
+            const gender = String(finding.patch.gender || '').trim().slice(0, 100);
+            if (!entity || entity.gender || !gender) return false;
+            entity.gender = gender;
+            entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+            const identity = normalizeWorldVisualIdentityGuide(entity.visuals.portraitIdentityGuide);
+            if (!identity.gender) identity.gender = gender;
+            entity.visuals.portraitIdentityGuide = identity;
+            return true;
+        }
         case 'set_entity_tags': {
             const entity = (world.entities || []).find(e => e.id === finding.patch.entityId);
             if (!entity || (entity.tags || []).length) return false;
@@ -39566,6 +39626,7 @@ For each character, supply ONLY what is missing — anything listed under "alrea
 - start: the location id where they are when play begins
 - home: the location id they belong to and return to (often the same)
 - persona: how they speak, behave and carry themselves. Give every person one: 2-3 sentences for core/recurring cast, one sharp sentence for background cast. Second person absent.
+- gender: the dossier-level gender description when the authored material establishes one. Keep blank when it is not established; never infer it from a name alone.
 - depth: background | recurring | core — how much simulation/context attention they deserve
 - tags: 2-6 short search terms that describe role, occupation, temperament or story function
 - group: where the fiction clearly implies a reusable household, family, organization or crew, give {name,type,description,tags}. Omit it for genuinely unaffiliated people.
@@ -39581,7 +39642,7 @@ Draw everything from the description you are given. Do not invent a different ch
 OUTPUT FORMAT — this is strict:
 Your entire reply is one JSON object and nothing else. The first character you write must be {. Do not restate the task or reason in the open; put justification in each item's "why" field.
 
-{"people":[{"id":"<id>","start":"<loc id>","home":"<loc id>","persona":"<text>","depth":"recurring","tags":["<tag>"],"group":{"name":"<text>","type":"household|family|organization|crew|other","description":"<short>","tags":["<tag>"]},"schedule":[{"time":"HH:MM","location":"<loc id>","activity":"<short>"}],"goal":"<text>","beats":["<text>"],"next_goals":["<text>"],"autonomy":"medium","difficulty":50,"why":"<short>"}]}
+{"people":[{"id":"<id>","start":"<loc id>","home":"<loc id>","gender":"<established gender or blank>","persona":"<text>","depth":"recurring","tags":["<tag>"],"group":{"name":"<text>","type":"household|family|organization|crew|other","description":"<short>","tags":["<tag>"]},"schedule":[{"time":"HH:MM","location":"<loc id>","activity":"<short>"}],"goal":"<text>","beats":["<text>"],"next_goals":["<text>"],"autonomy":"medium","difficulty":50,"why":"<short>"}]}
 
 Omit any field you have no opinion on.
 
@@ -39802,6 +39863,13 @@ function calibrationFindingsFromPeople(world, payload) {
                 `Give ${entity.name} a voice`,
                 persona.slice(0, 180) + (persona.length > 180 ? '…' : ''),
                 { entityId: entity.id, persona: persona.slice(0, 4000) });
+        }
+
+        const gender = String(entry?.gender || '').trim().slice(0, 100);
+        if (gender && !String(entity.gender || '').trim()) {
+            push('set_entity_gender', 'gender', 'suggestion',
+                `${entity.name}: dossier gender`, gender,
+                { entityId: entity.id, gender });
         }
 
         const depth = String(entry?.depth || '').trim().toLowerCase();
@@ -49682,7 +49750,7 @@ async function deriveWorldNpcPortraitDisplay(world, entity, focusX = 50, focusY 
         focusX, focusY, zoom, 0.84);
     const assetId = addWorldMediaAsset(world, cropped, 'npc_portrait',
         `${entity?.name || 'NPC'} (profile frame)`,
-        { prompt: `Derived ${WORLD_NPC_PORTRAIT_DISPLAY_ASPECT} profile frame of source asset ${sourceId}.` });
+        { prompt: `Derived ${WORLD_NPC_PORTRAIT_DISPLAY_ASPECT} profile frame of source asset ${sourceId}.`, entityId: entity?.id, sourceAssetId: sourceId });
     entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
     entity.visuals.portraitDisplayAssetId = assetId;
     return assetId;
@@ -49715,6 +49783,15 @@ function registerWorldVisualVariant(world, target, kind, assetId) {
     if (assetId && !history.includes(assetId)) history.push(assetId);
     target.visuals[keys.history] = history;
     target.visuals[keys.current] = assetId || '';
+    if (kind === 'npc' && assetId) {
+        const asset = worldMediaAsset(world, assetId);
+        const outfit = worldOutfitForAsset(target, assetId)
+            || attachWorldVisualToOutfit(target, assetId, asset?.outfitId || '');
+        if (asset && outfit) {
+            asset.entityId = target.id;
+            asset.outfitId = outfit.id;
+        }
+    }
     return assetId;
 }
 
@@ -49901,27 +49978,49 @@ function renderWorldOutfitManager() {
     if (header) header.textContent = `${entity.name || 'Character'} — outfits`;
     const list = document.getElementById('world-outfit-list');
     if (!list) return;
-    list.innerHTML = outfits.length ? outfits.map(outfit => `
+    list.innerHTML = outfits.length ? outfits.map(outfit => {
+        const thumbnails = (outfit.imageAssetIds || []).map(assetId => {
+            const source = worldMediaSource(manager.world, assetId);
+            return source ? `<button type="button" class="world-outfit-thumb" data-asset-id="${escapeHTML(assetId)}" title="Open this outfit image"><span style="background-image:url('${cssUrl(source)}')"></span></button>` : '';
+        }).join('');
+        return `
         <div class="world-outfit-row" data-outfit-id="${escapeHTML(outfit.id)}">
+            <div class="world-outfit-images">${thumbnails || '<span class="form-hint">No images yet</span>'}</div>
             <div class="world-outfit-copy">
                 <strong>${escapeHTML(outfit.name)}${outfit.id === currentId ? ' <span class="form-hint">· worn now</span>' : ''}</strong>
                 <p class="form-hint" style="margin:0;">${escapeHTML(outfit.description)}</p>
             </div>
             <div class="world-media-actions">
                 ${outfit.id === currentId ? '' : '<button type="button" class="tool-btn world-outfit-wear">Wear</button>'}
+                <button type="button" class="tool-btn world-outfit-generate">Generate image</button>
                 <button type="button" class="tool-btn world-outfit-edit">Edit</button>
                 <button type="button" class="tool-btn world-outfit-delete">Delete</button>
             </div>
-        </div>`).join('')
+        </div>`;
+    }).join('')
         : '<p class="form-hint">No outfits yet. Add one below, or describe what you want and let the AI design it.</p>';
     [...list.querySelectorAll('.world-outfit-row')].forEach(row => {
         const outfit = outfits.find(entry => entry.id === row.dataset.outfitId);
         if (!outfit) return;
+        row.querySelectorAll('.world-outfit-thumb').forEach(button => button.addEventListener('click', () => {
+            entity.visuals.currentOutfitId = outfit.id;
+            entity.currentOutfit = outfit.description;
+            entity.visuals.portraitAssetId = button.dataset.assetId;
+            closeWorldOutfitManager();
+            openWorldVisualEditor(manager.world, entity, 'npc');
+        }));
         row.querySelector('.world-outfit-wear')?.addEventListener('click', () => {
             entity.visuals.currentOutfitId = outfit.id;
             entity.currentOutfit = outfit.description;
             renderWorldOutfitManager();
             showToast(`${entity.name || 'This character'} now wears “${outfit.name}”. Generate a portrait to see it.`, 'success');
+        });
+        row.querySelector('.world-outfit-generate')?.addEventListener('click', () => {
+            entity.visuals.currentOutfitId = outfit.id;
+            entity.currentOutfit = outfit.description;
+            closeWorldOutfitManager();
+            openWorldVisualEditor(manager.world, entity, 'npc');
+            showToast(`“${outfit.name}” is worn for the next portrait. Review the brief, then Generate new.`, 'info');
         });
         row.querySelector('.world-outfit-edit')?.addEventListener('click', () => {
             manager.editId = outfit.id;
@@ -50143,6 +50242,8 @@ async function runWorldVisualGeneration(revisionOnly, event) {
     const correction = document.getElementById('world-visual-correction').value.trim();
     const referenceImage = revisionOnly
         ? worldMediaSource(editor.world, worldVisualEditorAssetId(editor)) : '';
+    const inheritedOutfit = editor.kind === 'npc'
+        ? worldOutfitForAsset(editor.target, worldVisualEditorAssetId(editor)) : null;
     if (revisionOnly && !referenceImage) return showToast('Select an existing image before revising it.', 'error');
     if (revisionOnly && !correction) return showToast('Write the adjustment you want before revising the image.', 'error');
     button.disabled = true;
@@ -50160,6 +50261,14 @@ async function runWorldVisualGeneration(revisionOnly, event) {
             ? await generateWorldNpcPortrait(editor.world, editor.target, options)
             : await generateWorldLocationBackground(editor.world, editor.target, options);
         registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+        if (editor.kind === 'npc') {
+            const outfit = attachWorldVisualToOutfit(editor.target, assetId, inheritedOutfit?.id);
+            const asset = worldMediaAsset(editor.world, assetId);
+            if (asset) {
+                asset.entityId = editor.target.id;
+                asset.outfitId = outfit?.id || '';
+            }
+        }
         // Fresh and revised sources both need their 1:1 profile frame derived
         // so the record immediately shows a deliberate crop of the new image.
         if (editor.kind === 'npc') await deriveWorldNpcPortraitDisplay(editor.world, editor.target);
@@ -50189,6 +50298,8 @@ async function runWorldVisualCropFill(event) {
     button.disabled = true;
     button.textContent = 'Filling…';
     try {
+        const inheritedOutfit = editor.kind === 'npc'
+            ? worldOutfitForAsset(editor.target, worldVisualEditorAssetId(editor)) : null;
         saveWorldVisualEditorFields();
         // NPC crop-and-fill completes the fixed 1:1 profile frame; locations
         // fill toward their selected display aspect.
@@ -50210,6 +50321,14 @@ async function runWorldVisualCropFill(event) {
             requireReference: true
         });
         registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+        if (editor.kind === 'npc') {
+            const outfit = attachWorldVisualToOutfit(editor.target, assetId, inheritedOutfit?.id);
+            const asset = worldMediaAsset(editor.world, assetId);
+            if (asset) {
+                asset.entityId = editor.target.id;
+                asset.outfitId = outfit?.id || '';
+            }
+        }
         // A filled NPC image is already a complete 1:1 profile frame, so it
         // serves as its own display asset instead of being cropped again.
         if (editor.kind === 'npc') editor.target.visuals.portraitDisplayAssetId = assetId;

@@ -9722,7 +9722,7 @@ label[data-help] > span:first-child::after,
 /* The v3 studio person/record drawer (world-record-overlay) shares the base
    modal stacking level and joins the DOM after this static modal, so it would
    otherwise paint over the editor. Keep the visual editor above the drawers. */
-#world-visual-editor-modal { z-index: 1100; }
+#world-visual-editor-modal, #world-outfit-manager-modal { z-index: 1100; }
 .world-visual-editor { max-width:1180px; }
 .world-visual-editor-body { display:grid; grid-template-columns:minmax(300px, .9fr) minmax(360px, 1.1fr); gap:22px; align-items:start; }
 .world-visual-editor-preview-column { min-width:0; }
@@ -9747,6 +9747,14 @@ label[data-help] > span:first-child::after,
 .world-visual-generation-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
 .world-visual-reference-row { margin-top:9px; align-items:flex-start; }
 .world-visual-editor-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.world-outfit-row { display:grid; grid-template-columns:170px minmax(0,1fr) auto; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); }
+.world-outfit-row:last-child { border-bottom:0; }
+.world-outfit-images { display:flex; gap:6px; min-height:58px; align-items:center; overflow:auto; }
+.world-outfit-thumb { width:52px; height:58px; padding:0; flex:0 0 52px; border:1px solid var(--border2); border-radius:7px; overflow:hidden; background:var(--surface3); cursor:pointer; }
+.world-outfit-thumb span { display:block; width:100%; height:100%; background-size:cover; background-position:center; }
+.world-outfit-copy { min-width:0; }
+.world-outfit-copy strong { display:block; margin-bottom:3px; }
+@media (max-width: 720px) { .world-outfit-row { grid-template-columns:1fr; } .world-outfit-images { order:0; } }
 
 .world-v3-boundary-open {
     border-color: #47d7bd !important;
