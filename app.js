@@ -50050,7 +50050,7 @@ async function applyWorldOutfitAndGenerate(event) {
     button.disabled = true;
     try {
         document.getElementById('world-visual-correction').value = instruction;
-        const refined = await refineWorldVisualPromptWithAI({ currentTarget: button }, instruction);
+        const refined = await refineWorldVisualPromptWithAI({ currentTarget: button }, instruction, { allowNoFieldChanges: true });
         if (!refined) return;
         await runWorldVisualGeneration(true, event);
     } finally { button.disabled = false; renderWorldVisualActiveOutfit(); }
@@ -50366,7 +50366,7 @@ function exportCurrentWorldVisual() {
 // in the inputs for review, so confirming means pressing Generate new. Only
 // the fields the instruction actually concerns are rewritten; everything
 // else is returned untouched (by being omitted from the response).
-async function refineWorldVisualPromptWithAI(event, instructionOverride = '') {
+async function refineWorldVisualPromptWithAI(event, instructionOverride = '', options = {}) {
     const editor = worldVisualEditorState;
     if (!editor) return false;
     const button = event.currentTarget;
@@ -50453,11 +50453,11 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '') {
             input.dispatchEvent(new Event('change', { bubbles: true }));
             applied.push(field.label);
         });
-        if (!applied.length) throw new Error('no fields changed — try a more specific instruction');
+        if (!applied.length && !options.allowNoFieldChanges) throw new Error('no fields changed — try a more specific instruction');
         // Persist the reworked text with the visual settings so Generate new
         // (the confirm step) and a later editor open both see it.
         saveWorldVisualEditorFields();
-        showToast(`Refined the prompt: ${applied.join(', ')}. Review the fields, then Generate new.`, 'success');
+        showToast(applied.length ? `Refined the prompt: ${applied.join(', ')}. Review the fields, then Generate new.` : 'Applied the outfit refinement instruction. Generate new will use it.', 'success');
         return true;
     } catch (error) {
         showToast(`Refine prompt failed — ${error.message}`, 'error');
