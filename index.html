@@ -758,10 +758,33 @@
                         </div>
                     </div>
                     <div class="world-visual-editor-fields">
+                        <section class="world-visual-editor-panel world-visual-character-panel" aria-labelledby="world-visual-character-heading">
+                            <div id="world-visual-character-heading" class="world-visual-editor-panel-heading">
+                                <div><span class="form-label">Character</span><span class="form-hint">Identity and presentation fields that stay attached to this person.</span></div>
+                            </div>
                         <div class="form-section">
                             <label id="world-visual-primary-label" class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span id="world-visual-primary-label-text">Appearance &amp; public impression</span><span class="ai-field-actions" id="ai-visual-primary-actions"></span></label>
                             <textarea id="world-visual-primary" class="form-textarea" rows="6"></textarea>
                         </div>
+                        <div id="world-visual-identity-field" class="form-section hidden">
+                            <label class="form-label">Identity <span class="help-glyph" title="Stable per-character fields in the structured image vocabulary. They describe the person and never enter a visual brief or an outfit. Blank fields are omitted.">?</span></label>
+                            <div class="form-row">
+                                <div class="form-col"><label class="form-label">Gender</label><input id="world-visual-identity-gender" class="form-input" type="text" placeholder="woman…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Skin tone and texture</label><input id="world-visual-identity-skinToneAndTexture" class="form-input" type="text" placeholder="warm olive, freckled across the nose…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Shape and color</label><input id="world-visual-identity-shapeAndColor" class="form-input" type="text" placeholder="heart-shaped face, dark auburn bob…" autocomplete="off"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col"><label class="form-label">Texture</label><input id="world-visual-identity-texture" class="form-input" type="text" placeholder="flyaway hair, chipped manicure…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Appearance details</label><input id="world-visual-identity-appearanceDetails" class="form-input" type="text" placeholder="laughter lines, a small scar above the left brow…" autocomplete="off"></div>
+                                <div class="form-col"><label class="form-label">Relative size</label><input id="world-visual-identity-relativeSize" class="form-input" type="text" placeholder="tall and lean…" autocomplete="off"></div>
+                            </div>
+                            <p class="form-hint">The person, not the photo. These stay with the character and never enter a visual brief.</p>
+                        </div>
+                        </section>
+                        <section class="world-visual-editor-panel world-visual-profile-panel" aria-labelledby="world-visual-profile-heading">
+                            <div id="world-visual-profile-heading" class="world-visual-editor-panel-heading">
+                                <div><span class="form-label">Profile &amp; preset</span><span class="form-hint">Controls for this generated image profile. Save reusable visual briefs here.</span></div>
+                            </div>
                         <div class="form-section">
                             <label class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span>Authored image prompt</span><span class="ai-field-actions" id="ai-visual-prompt-actions"></span></label>
                             <textarea id="world-visual-prompt" class="form-textarea" rows="6" placeholder="Specific visual direction, characteristic expression, environment and avoid instructions..."></textarea>
@@ -788,20 +811,7 @@
                                 </select>
                             </div>
                             <div id="world-visual-brief-save-field" class="world-visual-brief-save-field"><label class="form-label">Save preset as <span class="help-glyph" title="Saved briefs are global presets. Enter a new title to create another preset from the current fields; this does not overwrite the selected preset unless you use the same title.">?</span></label><div class="world-visual-brief-save-row"><input id="world-visual-brief-save-name" class="form-input" type="text" maxlength="100" placeholder="Preset - modified…" autocomplete="off"><button class="tool-btn" id="world-visual-brief-save-as" type="button">Save as</button></div></div>
-                            <div>
-                                <label class="form-label">Generation aspect ratio</label>
-                                <select id="world-visual-aspect" class="form-select">
-                                    <option value="1:1">1:1 Square</option>
-                                    <option value="3:4">3:4 Portrait</option>
-                                    <option value="2:3">2:3 Tall portrait</option>
-                                    <option value="3:2">3:2 Portrait</option>
-                                    <option value="4:3">4:3 Landscape</option>
-                                    <option value="4:5">4:5 Tall</option>
-                                    <option value="5:4">5:4 Wide</option>
-                                    <option value="16:9">16:9 Wide</option>
-                                    <option value="9:16">9:16 Vertical</option>
-                                </select>
-                            </div>
+                            <input id="world-visual-aspect" type="hidden" value="3:4">
                             <div>
                                 <label class="form-label">Stored resolution</label>
                                 <select id="world-visual-resolution" class="form-select">
@@ -812,20 +822,11 @@
                                 </select>
                             </div>
                         </div>
-                        <div id="world-visual-identity-field" class="form-section hidden">
-                            <label class="form-label">Identity <span class="help-glyph" title="Stable per-character fields in the structured image vocabulary. They describe the person and never enter a visual brief or an outfit. Blank fields are omitted.">?</span></label>
-                            <div class="form-row">
-                                <div class="form-col"><label class="form-label">Gender</label><input id="world-visual-identity-gender" class="form-input" type="text" placeholder="woman…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Skin tone and texture</label><input id="world-visual-identity-skinToneAndTexture" class="form-input" type="text" placeholder="warm olive, freckled across the nose…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Shape and color</label><input id="world-visual-identity-shapeAndColor" class="form-input" type="text" placeholder="heart-shaped face, dark auburn bob…" autocomplete="off"></div>
+                        </section>
+                        <section class="world-visual-editor-panel world-visual-staging-panel" aria-labelledby="world-visual-staging-heading">
+                            <div id="world-visual-staging-heading" class="world-visual-editor-panel-heading">
+                                <div><span class="form-label">Profile adjustments</span><span class="form-hint">Staging and instructions that change this profile only.</span></div>
                             </div>
-                            <div class="form-row">
-                                <div class="form-col"><label class="form-label">Texture</label><input id="world-visual-identity-texture" class="form-input" type="text" placeholder="flyaway hair, chipped manicure…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Appearance details</label><input id="world-visual-identity-appearanceDetails" class="form-input" type="text" placeholder="laughter lines, a small scar above the left brow…" autocomplete="off"></div>
-                                <div class="form-col"><label class="form-label">Relative size</label><input id="world-visual-identity-relativeSize" class="form-input" type="text" placeholder="tall and lean…" autocomplete="off"></div>
-                            </div>
-                            <p class="form-hint">The person, not the photo. These stay with the character and never enter a visual brief.</p>
-                        </div>
                         <div id="world-visual-subject-field" class="form-section hidden">
                             <label class="form-label">Staging <span class="help-glyph" title="Optional per-image staging for this character: how they stand, hold their face and act in THIS portrait. Clothing comes from the worn outfit instead. Blank fields are omitted.">?</span></label>
                             <div class="form-row">
@@ -848,11 +849,10 @@
                             <textarea id="world-visual-correction" class="form-textarea" rows="3" placeholder="Make the makeup darker and keep everything else unchanged..."></textarea>
                             <p class="form-hint">Revision sends this instruction plus the character, outfit and visual brief, so the new image keeps the established look. It does not resend earlier revision instructions.</p>
                         </div>
+                        </section>
                     </div>
                 </div>
                 <div class="modal-ft world-visual-editor-actions">
-                    <button class="btn btn-ghost" id="world-visual-outfits" type="button" hidden>Outfits</button>
-                    <button class="btn btn-ghost" id="world-visual-save-brief" type="button">Save as preset</button>
                     <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
                     <button class="btn btn-ghost" id="world-visual-crop-fill" type="button" title="Use the revision image pipeline to outpaint missing areas into the selected final aspect ratio">Crop &amp; Fill</button>
                     <button class="btn btn-ghost" id="world-visual-refine-prompt" type="button" title="Have the AI apply the revision instruction to the prompt fields below — nothing is generated until you press Generate new">Refine prompt</button>

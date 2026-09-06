@@ -50753,13 +50753,7 @@ function ensureWorldVisualEditorBound() {
     };
     document.getElementById('world-visual-export').onclick = exportCurrentWorldVisual;
     ['world-visual-aspect', 'world-visual-resolution', 'world-visual-crop-x', 'world-visual-crop-y', 'world-visual-crop-zoom']
-        .forEach(id => document.getElementById(id).oninput = updateWorldVisualCropPreview);
-    document.getElementById('world-visual-save-brief').onclick = () => {
-        saveWorldVisualEditorFields();
-        const input = document.getElementById('world-visual-brief-save-name');
-        if (input && !input.value.trim()) input.value = worldVisualEditorState?.activeBriefName ? `${worldVisualEditorState.activeBriefName} - modified` : 'New visual brief';
-        document.getElementById('world-visual-brief-save-as')?.click();
-    };
+        .forEach(id => { const field = document.getElementById(id); if (field) field.oninput = updateWorldVisualCropPreview; });
     document.getElementById('world-visual-apply-crop').onclick = async event => {
         const editor = worldVisualEditorState;
         if (!editor) return;
@@ -50821,10 +50815,6 @@ function ensureWorldVisualEditorBound() {
         focusWorldOutfitName(outfitList, outfit.id);
         showToast('Blank outfit added and selected. Fill in its description on the character screen.', 'success');
     };
-    document.getElementById('world-visual-outfits').onclick = () => {
-        const editor = worldVisualEditorState;
-        if (editor?.kind === 'npc') openWorldOutfitManager(editor.target, editor.world);
-    };
     const outfitSelect = document.getElementById('world-visual-outfit-select');
     if (outfitSelect) outfitSelect.onchange = event => {
         const editor = worldVisualEditorState;
@@ -50849,7 +50839,10 @@ function ensureWorldVisualEditorBound() {
         const preset = normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)[name];
         if (!editor || !name || !preset) return;
         editor.activeBriefName = name;
-        if (preset.aspectRatio) document.getElementById('world-visual-aspect').value = preset.aspectRatio;
+        // Visual editor generation is intentionally fixed to the portrait
+        // source aspect. Presets may still carry legacy aspect metadata, but
+        // it must not reintroduce a per-image aspect choice.
+        document.getElementById('world-visual-aspect').value = '3:4';
         if (preset.framing && editor.kind === 'npc') document.getElementById('world-visual-framing').value = preset.framing;
         saveWorldVisualEditorFields();
         updateWorldVisualCropPreview();
@@ -50945,7 +50938,6 @@ function openWorldVisualEditor(world, target, kind) {
             });
         }
     }
-    document.getElementById('world-visual-outfits')?.classList.toggle('hidden', !npc);
     const outfitField = document.getElementById('world-visual-outfit-field');
     const outfitSelect = document.getElementById('world-visual-outfit-select');
     if (outfitField && outfitSelect) {
@@ -50973,9 +50965,10 @@ function openWorldVisualEditor(world, target, kind) {
         const activeLabel = document.getElementById('world-visual-brief-active');
         if (activeLabel) activeLabel.textContent = briefPicker.value ? `Active: ${briefPicker.value}` : 'No preset selected';
     }
-    document.getElementById('world-visual-aspect').value = npc
-        ? normalizedWorldVisualAspect(target.visuals.portraitAspectRatio, '3:4')
-        : normalizedWorldVisualAspect(target.visuals.backgroundAspectRatio, '16:9');
+    // All editor generations use the same 3:4 vertical source. The profile
+    // portrait is derived separately as a square crop; the source remains
+    // whole and editable in the outfit/profile cards.
+    document.getElementById('world-visual-aspect').value = '3:4';
     document.getElementById('world-visual-resolution').value = String(npc
         ? normalizedWorldVisualResolution(target.visuals.portraitResolution, 1200)
         : normalizedWorldVisualResolution(target.visuals.backgroundResolution, 1600));
