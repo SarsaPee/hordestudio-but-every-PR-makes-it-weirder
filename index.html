@@ -755,7 +755,10 @@
                         <div id="world-visual-active-outfit" class="world-visual-active-outfit" hidden>
                             <div class="world-visual-active-outfit-heading"><div class="form-label">Active outfits <span class="help-glyph" title="Select a tile to make that outfit active. Edit its title and clothing description here; those fields are also used by Sidecar and image generation.">?</span></div><span class="form-hint">Select, edit, or author an outfit</span></div>
                             <div id="world-visual-active-outfit-list" class="world-visual-active-outfit-list"></div>
-                            <div class="world-visual-active-outfit-actions"><button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button><button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button></div>
+                            <div class="world-visual-active-outfit-actions">
+                                <button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button>
+                                <button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button>
+                            </div>
                         </div>
                     </div>
                     <div class="world-visual-editor-fields">
@@ -780,6 +783,7 @@
                                 <div class="form-col"><label class="form-label">Relative size</label><input id="world-visual-identity-relativeSize" class="form-input" type="text" placeholder="tall and lean…" autocomplete="off"></div>
                             </div>
                             <p class="form-hint">The person, not the photo. These stay with the character and never enter a visual brief.</p>
+                            <button class="tool-btn" id="world-visual-save-identity-reference" type="button" title="Save the selected generated image as a persistent identity reference for this character">Use selected image as identity reference</button>
                         </div>
                         </section>
                         <section class="world-visual-editor-panel world-visual-profile-panel" aria-labelledby="world-visual-profile-heading">
@@ -811,7 +815,13 @@
                                     <option value="">Apply a visual brief…</option>
                                 </select>
                             </div>
-                            <div id="world-visual-brief-save-field" class="world-visual-brief-save-field"><label class="form-label">Save preset as <span class="help-glyph" title="Saved briefs are global presets. Enter a new title to create another preset from the current fields; this does not overwrite the selected preset unless you use the same title.">?</span></label><div class="world-visual-brief-save-row"><input id="world-visual-brief-save-name" class="form-input" type="text" maxlength="100" placeholder="Preset - modified…" autocomplete="off"><button class="tool-btn" id="world-visual-brief-save-as" type="button">Save as</button></div></div>
+                            <div id="world-visual-brief-save-field" class="world-visual-brief-save-field">
+                                <label class="form-label">Save preset as <span class="help-glyph" title="Saved briefs are global presets. Enter a new title to create another preset from the current fields; this does not overwrite the selected preset unless you use the same title.">?</span></label>
+                                <div class="world-visual-brief-save-row">
+                                    <input id="world-visual-brief-save-name" class="form-input" type="text" maxlength="100" placeholder="Preset - modified…" autocomplete="off">
+                                    <button class="tool-btn" id="world-visual-brief-save-as" type="button">Save as</button>
+                                </div>
+                            </div>
                             <input id="world-visual-aspect" type="hidden" value="3:4">
                             <div>
                                 <label class="form-label">Stored resolution</label>
@@ -841,6 +851,20 @@
                             </div>
                             <p class="form-hint">How they appear in this image only. What they wear comes from the outfit manager.</p>
                         </div>
+                        <div id="world-visual-look-field" class="form-section hidden">
+                            <label class="form-label">Look / treatment <span class="help-glyph" title="How the image is rendered: lighting, colour, medium and photographic treatment. These are visual controls, not persistent Character facts.">?</span></label>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Style medium</label><input id="world-visual-look-styleMedium" class="form-input" type="text" placeholder="35mm colour-negative photography…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Lighting</label><input id="world-visual-look-lightingConditions" class="form-input" type="text" placeholder="soft winter daylight…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Colour / mood</label><input id="world-visual-look-colorScheme" class="form-input" type="text" placeholder="charcoal, bottle green, warm timber…"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Depth of field</label><input id="world-visual-look-depthOfField" class="form-input" type="text" placeholder="shallow, subject isolated…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Focus</label><input id="world-visual-look-focus" class="form-input" type="text" placeholder="eyes and face tack sharp…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Focal length</label><input id="world-visual-look-lensFocalLength" class="form-input" type="text" placeholder="85mm portrait lens…"></div>
+                            </div>
+                            <p class="form-hint">Advanced photographic fields remain Horde-authored and are compiled into broader provider language without being silently reconstructed.</p>
+                        </div>
                         <div class="form-section">
                             <label class="form-label">AI instruction <span class="help-glyph" title="Optional. When filled, every ✨ button in this editor honors it: write what you want and how, and the AI fills out the rest of the field from it. Empty means the buttons fill from world and transcript context.">?</span></label>
                             <input id="world-visual-ai-instruction" class="form-input" type="text" maxlength="2000" placeholder="Wet trench coat, collar up, headlit from behind in the rain…" autocomplete="off">
@@ -857,6 +881,7 @@
                     <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
                     <button class="btn btn-ghost" id="world-visual-crop-fill" type="button" title="Use the revision image pipeline to outpaint missing areas into the selected final aspect ratio">Crop &amp; Fill</button>
                     <button class="btn btn-ghost" id="world-visual-refine-prompt" type="button" title="Have the AI apply the revision instruction to the prompt fields below — nothing is generated until you press Generate new">Refine prompt</button>
+                    <button class="btn btn-ghost" id="world-visual-4d" type="button" title="Diagnose why the provider misunderstood the authored image and propose a field-level correction">Increase 4D 3D 3D 3D 3</button>
                     <button class="btn btn-ghost" id="world-visual-revise" type="button" title="Send the current image plus the revision instruction to the edit model">Refine image</button>
                     <button class="btn btn-primary" id="world-visual-regenerate" type="button">Generate new</button>
                 </div>
@@ -5108,7 +5133,7 @@
             <button id="close-regex-btn" class="modal-close" type="button" aria-label="Close regex tools">✕</button>
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto;">
-            <p class="form-hint" style="margin-bottom:12px;">Rules run top-to-bottom on each message. <b>Find</b> is a regex (plain, or <code>/pattern/flags</code>). <b>Replace</b> supports <code>$1</code>…<code>$9</code> capture groups and <code>{{match}}</code>. Target picks what the rule touches. Context rules affect only the messages sent back to the model.</p>
+            <p class="form-hint" style="margin-bottom:12px;">Rules run top-to-bottom on each message. <b>Find</b> is a regex (plain, or <code>/pattern/flags</code>). <b>Replace</b> supports <code>$1</code>…<code>$9</code> capture groups and <code>{{match}}</code>. Target picks what the rule touches.</p>
             <div style="display:flex; gap:8px; margin-bottom:14px;">
                 <select id="regex-suite-select" class="form-select" style="flex:1;"></select>
                 <button id="install-regex-suite-btn" class="btn btn-ghost" type="button" disabled>Install suite</button>
@@ -5526,10 +5551,6 @@
 <script src="dossier-claims.js?v=20260902-generic-claims-v1"></script>
 <script src="world-mechanics.js?v=20260905-wm-v1"></script>
 <script src="world-portrait-prompt.js?v=20260905-w7-v1"></script>
-<!-- Live instance only: curated BunnyRx reference registry for the imported
-     Melbourne world (published as MELBOURNE_BUNNYRX_REGISTRY with the
-     HORDE_MELBOURNE_BUNNYRX alias the world record declares). -->
-<script src="melbourne-bunnyrx-registry.js?v=20260905-wm-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
 <script src="app.js?v=20260906-v1700-visual-identity-v14"></script>
 </body>

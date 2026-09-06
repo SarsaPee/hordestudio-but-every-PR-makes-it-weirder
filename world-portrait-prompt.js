@@ -85,6 +85,25 @@
     }
 
     function worldNpcPortraitRequest(world, npc, presentation = world?.presentation || {}, options = {}) {
+        const canonical = typeof globalThis !== 'undefined' ? globalThis.HordeCanonicalImageComposer : null;
+        if (canonical?.composeWorldImageRequest) {
+            const request = canonical.composeWorldImageRequest(world, {
+                name: npc?.name,
+                description: npc?.appearance || npc?.description || '',
+                imagePrompt: npc?.imagePrompt || '',
+                imageIntent: npc?.visuals?.imageIntent,
+                framing: npc?.visuals?.framing,
+                look: npc?.visuals?.look,
+                outfitSnapshot: npc?.visuals?.outfits?.find(outfit => outfit.id === npc?.visuals?.currentOutfitId)?.description || npc?.currentOutfit || ''
+            }, presentation.imageGuide || {}, { operation: options.correction ? 'revise' : 'generate' });
+            return {
+                prompt: request.plainPrompt,
+                structuredPrompt: request.structuredPrompt,
+                aspectRatio: '3:4',
+                maxDimension: Number(options.maxDimension || 1200),
+                quality: 0.84
+            };
+        }
         const correction = cleanText(options.correction);
         const prompt = compileWorldNpcPortraitPrompt(world, npc, presentation)
             + (correction ? `\n\n[REQUESTED REVISION]\n${correction}\nApply this correction without losing any other canonical visual identity.` : '');

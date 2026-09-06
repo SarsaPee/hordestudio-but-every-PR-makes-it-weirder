@@ -136,7 +136,6 @@ STATIC_FILES = {
     "/dossier-claims.js": ("dossier-claims.js", "text/javascript"),
     "/world-mechanics.js": ("world-mechanics.js", "text/javascript"),
     "/world-portrait-prompt.js": ("world-portrait-prompt.js", "text/javascript"),
-    "/melbourne-bunnyrx-registry.js": ("melbourne-bunnyrx-registry.js", "text/javascript"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/worlds/policy-panic.horde_world": ("Policy Panic at Bramble and Pike.horde_world", "application/json"),
     "/Start%20Horde%20Studio.command": ("Start Horde Studio.command", "application/octet-stream"),
@@ -1843,11 +1842,12 @@ def list_fal_models(body: dict[str, Any]) -> dict[str, Any]:
 
 FIBO_STRUCTURED_TOP_STRINGS = {
     "short_description": 800, "background_setting": 800, "context": 1200,
-    "style_medium": 400, "artistic_style": 400, "edit_instruction": 2000,
+    "style_medium": 400, "artistic_style": 400,
 }
 FIBO_STRUCTURED_NESTED = {
     "lighting": {"conditions": 400, "direction": 300, "shadows": 300},
-    "aesthetics": {"composition": 400, "color_scheme": 400, "mood_atmosphere": 400},
+    "aesthetics": {"composition": 400, "color_scheme": 400, "mood_atmosphere": 400,
+                   "aesthetic_score": 100, "preference_score": 100},
     "photographic_characteristics": {"depth_of_field": 300, "focus": 300,
                                      "camera_angle": 300, "lens_focal_length": 200},
 }
@@ -2017,7 +2017,9 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     """Generate a portable image through a small curated Fal model surface."""
     key = fal_key(body.get("apiKey"))
     prompt = str(body.get("prompt") or "").strip()
-    if not prompt:
+    fibo_structured = fibo_structured_prompt(body)
+    revision_instruction = str(body.get("fiboRevisionInstruction") or "").strip()
+    if not prompt and not fibo_structured:
         raise ValueError("An image prompt is required.")
     if len(prompt) > 12000:
         raise ValueError("The image prompt exceeds the 12,000 character limit.")
@@ -2067,7 +2069,6 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     # image guide arrives as a validated structured prompt (generation) or a
     # structured instruction carrying the edit wording (editing). Other fal
     # fields Fibo does not document are omitted rather than guessed.
-    fibo_structured = fibo_structured_prompt(body)
     is_fibo_edit = model.startswith("bria/fibo-edit")
     is_fibo_gen = model.startswith("bria/fibo") and not is_fibo_edit
     if is_fibo_gen or is_fibo_edit:
@@ -2082,6 +2083,12 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
                 payload["resolution"] = resolution
             if fibo_structured:
                 payload["structured_prompt"] = complete_fibo_structured(fibo_structured)
+            if revision_instruction and body.get("fiboCombinedRevision") is True:
+                # FIBO 1.5 combined refinement is capability-tested by the
+                # app. Only the tested operation may send this extra field.
+                payload["prompt"] = revision_instruction
+            else:
+                payload.pop("prompt", None)
         else:
             # Fibo Edit has no `prompt` field: the wording is `instruction`
             # prose, or a structured_instruction used verbatim when the app
@@ -2095,6 +2102,8 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
                 payload["resolution"] = resolution
             if fibo_structured:
                 payload["structured_instruction"] = complete_fibo_structured(fibo_structured)
+                if revision_instruction:
+                    payload["instruction"] = revision_instruction
             else:
                 payload["instruction"] = prompt
     elif model == "fal-ai/wan-25-preview/image-to-image":
@@ -2170,7 +2179,16 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     if not output_url:
         raise RuntimeError("Fal completed the request without an image URL.")
     safe_fal_url(output_url, media=True)
-    return {"ok": True, "provider": "fal", "model": model, "image": download_image(output_url)}
+    resolved = result.get("structured_prompt") or result.get("structuredPrompt")
+    return {
+        "ok": True,
+        "provider": "fal",
+        "model": model,
+        "image": download_image(output_url),
+        "seed": payload.get("seed"),
+        "requested_payload": payload,
+        "resolved_structured_prompt": resolved if isinstance(resolved, dict) else None,
+    }
 
 
 def download_fal_video(url: str, media_id: str) -> tuple[Path, int]:
