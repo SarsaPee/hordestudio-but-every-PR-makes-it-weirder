@@ -12530,8 +12530,8 @@ function buildSidecarCanonicalReferenceManifest(world, sess, evidenceText = '') 
             id: window.HordeSidecarTimeline?.ensureHierarchy?.(
                 window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess), sess
             )?.sequence?.controlledEntityId || 'player',
-            personaId: String(sess.personaId || state.activePersonaId || ''),
-            personaName: String(state.personas?.find(persona => persona.id === (sess.personaId || state.activePersonaId))?.name || 'Player')
+            personaId: String(sess.personaId || ''),
+            personaName: String(getTimelinePersona(sess, view)?.name || worldControlledPlayerIdentity(view, sess).name || 'Player')
         },
         entities: entityRows.slice(0, entityLimit),
         locations: locationRows.slice(0, locationLimit),
@@ -17920,9 +17920,16 @@ function setupPersonasLogic() {
     document.getElementById('set-active-persona-btn').onclick = async () => {
         const id = document.getElementById('persona-edit-pane').dataset.id;
         state.activePersonaId = id;
+        const persona = state.personas.find(item => item.id === id) || null;
+        // When this editor was opened from a World, “active” means active for
+        // the current timeline as well. This is an explicit binding, unlike
+        // the old implicit global-persona fallback.
+        if (!document.getElementById('world-play-view')?.classList.contains('hidden')) {
+            await bindPersonaToCurrentWorldTimeline(persona, { source: 'persona_editor_set_active' });
+        }
         await saveState();
         renderPersonasList();
-        showToast('Persona activated', 'success');
+        showToast(persona ? 'Persona activated for this timeline.' : 'Persona activated', 'success');
     };
 
     const pUpload = document.getElementById('persona-upload-area');
@@ -26837,6 +26844,13 @@ function setupWorldPlayLogic() {
     };
 
     document.getElementById('world-session-zero-btn').onclick = () => openSessionZero(null);
+    document.getElementById('world-persona-btn').onclick = () => {
+        const overlay = document.getElementById('personas-modal-overlay');
+        if (!overlay) return;
+        renderPersonasList();
+        overlay.classList.remove('hidden');
+        showToast('Create or select a Persona, then choose “Set as Active” to bind it to this timeline.', 'info');
+    };
 
     document.getElementById('world-plan-sequence-btn').onclick = () => openWorldSidecarLine({
         kind: 'sequence_planning', title: 'New Sequence planning',
@@ -27066,7 +27080,7 @@ function resetWorldTimeline(world, sess) {
         toolCallMissStreak: 0,
         episodicMemories: [],
         playerIdentity: {},
-        personaId: state.activePersonaId || '',
+        personaId: '',
         lifeSeed: null,
         legalStanding: {},
         society: null,
@@ -28591,7 +28605,7 @@ async function createNewWorldSession() {
             markets: 0, scheduleMoves: 0, activeSchedules: 0
         },
         playerIdentity: {},
-        personaId: state.activePersonaId || '',
+        personaId: '',
         lifeSeed: null,
         legalStanding: {},
         society: null,
@@ -28936,7 +28950,9 @@ function openSessionZero(onDone) {
     closeButton.title = 'Close without saving';
     saveStatus.textContent = Object.values(prefs).some(Boolean) ? 'Saved preferences loaded' : '';
 
-    const storedPersonaId = sess.personaId !== undefined ? sess.personaId : (state.activePersonaId || '');
+    // A timeline only receives a Persona by an explicit timeline binding.
+    // Do not borrow whichever reusable Persona happens to be globally active.
+    const storedPersonaId = sess.personaId !== undefined ? sess.personaId : '';
     personaSelect.innerHTML = '<option value="">No Persona — use only the Starting Life</option>'
         + state.personas.map(persona => `<option value="${escapeHTML(persona.id)}">${escapeHTML(persona.name || 'Unnamed Persona')}</option>`).join('');
     personaSelect.value = state.personas.some(persona => persona.id === storedPersonaId) ? storedPersonaId : '';
@@ -28956,9 +28972,9 @@ function openSessionZero(onDone) {
     controlledEntitySelect.onchange = () => { saveStatus.textContent = 'Unsaved controlled-character change'; };
     renderPersonaPreview();
     const alreadyInitialized = !!sess.lifeSeed?.initialized;
-    personaSelect.disabled = alreadyInitialized;
+    personaSelect.disabled = false;
     personaSelect.title = alreadyInitialized
-        ? 'This Persona is locked to the initialized timeline. Create a new timeline to seed a different life.' : '';
+        ? 'You can refine this timeline’s portrayal without changing its established world history.' : '';
     lifeSeedEnabled.checked = !alreadyInitialized;
     lifeSeedEnabled.disabled = alreadyInitialized || !isFirstRun;
     lifeSeedOption.classList.toggle('hidden', alreadyInitialized || !isFirstRun);
@@ -29096,6 +29112,11 @@ function openSessionZero(onDone) {
             Object.entries(role.stats).forEach(([id, value]) => { s.playerStats[id] = value; });
         }
         s.personaSnapshot = selectedPersona ? normalizePersona(JSON.parse(JSON.stringify(selectedPersona))) : null;
+        s.personaBinding = {
+            personaId: selectedPersona?.id || '',
+            boundAt: new Date().toISOString(),
+            source: 'session_setup'
+        };
         s.setupSnapshot = {
             version: 1,
             createdAt: Date.now(),
@@ -29388,6 +29409,16 @@ function renderWorldPlayState() {
     }
     const modelName = (world.model || state.globalSettings.defaultModel || 'Default').split('/').pop();
     document.getElementById('world-model-name').textContent = 'Model: ' + modelName;
+    const personaButton = document.getElementById('world-persona-btn');
+    if (personaButton) {
+        const identity = worldControlledPlayerIdentity(world, sess);
+        const persona = getTimelinePersona(sess, world);
+        personaButton.textContent = persona ? `👤 ${persona.name}` : '👤 Persona';
+        personaButton.title = persona
+            ? `Timeline portrayal: ${persona.name}. Open to edit or replace it.`
+            : `No Persona is bound. The controlled character is ${identity.name}. Create or assign a portrayal for this timeline.`;
+        personaButton.classList.toggle('tool-btn-active', !!persona);
+    }
 
     // Apply the optional presentation layer. Canonical location/session state
     // chooses the visual; the visual can never choose or mutate game state.
@@ -30339,13 +30370,16 @@ function worldSpeechIsPlayerVoice(lead, after) {
     const lastSentence = leadText.trim().split(/(?<=[.!?])\s+/).pop() || '';
     const youSubject = /^\s*(?:And\s+|But\s+|So\s+|Then\s+)?[Yy]ou\b/.test(lastSentence)
         || /\b[Yy]ou\s+(?:'ll\s+|will\s+)?(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|tell|tells|told|call|calls|called|greet|greets|greeted|offer|offers|offered|mutter|mutters|muttered|snap|snaps|snapped|whisper|whispers|whispered|shout|shouts|shouted|quip|quips|quipped|add|adds|added)\b/.test(lastSentence);
+    const youActionLeadingToSpeech = /\b[Yy]ou\b[^.!?]{0,180}\b(?:greet(?:ing|s|ed)?|address(?:ing|es|ed)?|turn(?:ing|s|ed)?\s+(?:toward|to)|speak(?:ing)?\s+(?:to|with)|call(?:ing)?\s+(?:to|out))\b/.test(leadText);
     const afterTag = /^\s*[,—–-]?\s*[Yy]ou\s+(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|add|adds|added|offer|offers|offered)\b/.test(String(after || ''));
-    return youSubject || afterTag;
+    return youSubject || youActionLeadingToSpeech || afterTag;
 }
 
 function renderWorldPlayerVoiceCard(sess, dialogue) {
-    const persona = state.personas.find(item => item.id === (sess?.personaId || state.activePersonaId));
-    const name = persona?.name || 'You';
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const persona = getTimelinePersona(sess, world);
+    const identity = worldControlledPlayerIdentity(world, sess);
+    const name = persona?.name || identity.name || 'You';
     const avatar = persona?.avatar || '';
     const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
     const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
@@ -30424,7 +30458,9 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
             if (leadFocus) carriedSpeaker = leadFocus;
             // The player's own speech in 2nd-person narration belongs to the
             // persona, not to an NPC that happens to be mentioned nearby.
-            if (!item.tagged && sess && worldSpeechIsPlayerVoice(lead, paragraph.slice(item.end, item.end + 160))) {
+            const quoteTail = paragraph.slice(item.end, item.end + 220);
+            const explicitPlayerSpeech = /\b[Yy]ou\s+(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|tell|tells|told|call|calls|called|greet|greets|greeted|offer|offers|offered|mutter|mutters|muttered|snap|snaps|snapped|whisper|whispers|whispered|shout|shouts|shouted|quip|quips|quipped|add|adds|added)\b/.test(`${lead} ${quoteTail}`);
+            if (!item.tagged && sess && (worldSpeechIsPlayerVoice(lead, quoteTail) || explicitPlayerSpeech)) {
                 if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
                 paragraphHtml += renderWorldPlayerVoiceCard(sess, item.dialogue);
                 cursor = item.end;
@@ -30492,8 +30528,10 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
 }
 
 function renderWorldPlayerMessageHtml(sess, text) {
-    const persona = state.personas.find(item => item.id === (sess?.personaId || state.activePersonaId));
-    const name = persona?.name || 'You';
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const persona = getTimelinePersona(sess, world);
+    const identity = worldControlledPlayerIdentity(world, sess);
+    const name = persona?.name || identity.name || 'You';
     const avatar = persona?.avatar || '';
     const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
     const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
@@ -31954,10 +31992,12 @@ async function executeWorldTurn(commandOrReroll = null) {
         return `${s.name} [${s.id}]: ${val}${s.max > 0 ? `/${s.max}` : ''}`;
     }).join(' | ') || 'Disabled';
 
-    const persona = getTimelinePersona(sess);
-    let personaContext = persona ? `\n\n[PLAYER PERSONA — AUTHORITATIVE PLAYER IDENTITY]\n${personaPromptText(persona)}` : "";
-    const controlledEntity = sess.controlledEntityId && sess.controlledEntityId !== 'player'
-        ? (world.entities || []).find(entity => entity.id === sess.controlledEntityId && entity.type === 'npc') : null;
+    const persona = getTimelinePersona(sess, world);
+    const canonicalPlayer = worldControlledPlayerIdentity(world, sess);
+    let personaContext = `\n\n[CONTROLLED PLAYER CHARACTER — AUTHORITATIVE]\nID: ${canonicalPlayer.id}\nName: ${canonicalPlayer.name}\n${canonicalPlayer.description ? `Established identity: ${canonicalPlayer.description}\n` : ''}${canonicalPlayer.portrayal ? `Established portrayal: ${canonicalPlayer.portrayal}\n` : ''}The user writes this character's dialogue, thoughts, decisions and consent. Never identify the player as an NPC, a globally active profile, or an author from unrelated context.`;
+    if (persona) personaContext += `\n\n[PLAYER PERSONA — TIMELINE-BOUND PORTRAYAL]\n${personaPromptText(persona)}\nThis is a portrayal of ${canonicalPlayer.name}; it never overrides the controlled character ID or canonical name.`;
+    else personaContext += `\n\n[PLAYER PERSONA]\nNo timeline persona is bound. Do not infer one from any global Persona, nearby NPC, or narrative history.`;
+    const controlledEntity = worldControlledEntity(world, sess);
     if (controlledEntity) personaContext += `\n\n[CONTROLLED CHARACTER — PLAYABLE CANONICAL ENTITY]\nID: ${controlledEntity.id}\nName: ${controlledEntity.name}\nDossier: ${controlledEntity.description || ''}\nPortrayal: ${controlledEntity.persona || ''}\nThis is the entity the player controls for this sequence. Preserve their established knowledge and state; do not treat them as a generic player placeholder.`;
     const playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
     const worldCapabilities = normalizeWorldCapabilities(world);
@@ -36834,10 +36874,77 @@ function stableWorldRoll(seed) {
     return (hash >>> 0) / 4294967296;
 }
 
-function getTimelinePersona(sess) {
-    if (isPlainObject(sess?.personaSnapshot)) return sess.personaSnapshot;
-    const selectedId = sess?.personaId !== undefined ? sess.personaId : state.activePersonaId;
-    return state.personas.find(persona => persona.id === selectedId) || null;
+function worldControlledEntity(world, sess) {
+    const id = String(sess?.controlledEntityId || '').trim();
+    return id && id !== 'player'
+        ? (world?.entities || []).find(entity => entity?.id === id && entity.type === 'npc') || null
+        : null;
+}
+
+function worldControlledPlayerIdentity(world, sess) {
+    const controlledEntity = worldControlledEntity(world, sess);
+    if (controlledEntity) return {
+        id: controlledEntity.id,
+        name: String(controlledEntity.name || 'Controlled character'),
+        description: String(controlledEntity.description || controlledEntity.appearance || ''),
+        portrayal: String(controlledEntity.persona || ''),
+        locked: true,
+        source: 'controlled_entity'
+    };
+    const canonical = isPlainObject(world?.playerIdentity) ? world.playerIdentity : {};
+    const sessionIdentity = isPlainObject(sess?.playerIdentity) ? sess.playerIdentity : {};
+    return {
+        id: 'player',
+        // World-owned identity is canon. A reusable global Persona is a
+        // portrayal source, never permission to rename that player character.
+        name: String(canonical.displayName || canonical.name || sessionIdentity.canonicalName || sessionIdentity.personaName || 'the player'),
+        description: String(canonical.stableIdentity || canonical.appearance || sessionIdentity.appearance || ''),
+        portrayal: String(canonical.personality || ''),
+        locked: canonical.locked === true,
+        source: canonical.displayName || canonical.name ? 'world_player_identity' : 'session_player_identity'
+    };
+}
+
+function getTimelinePersona(sess, world = null) {
+    const persona = isPlainObject(sess?.personaSnapshot)
+        ? sess.personaSnapshot
+        : state.personas.find(item => item.id === String(sess?.personaId || '')) || null;
+    if (!persona) return null;
+    // Do not silently import a globally-active profile into a world whose
+    // canonical protagonist is locked to somebody else. Older timelines did
+    // exactly that, which is how Alex could be narrated as Georgia Frederick.
+    const identity = world ? worldControlledPlayerIdentity(world, sess) : null;
+    if (identity?.locked && identity.id === 'player' && identity.name
+        && String(persona.name || '').trim()
+        && String(persona.name || '').trim().toLowerCase() !== identity.name.trim().toLowerCase()) return null;
+    return persona;
+}
+
+async function bindPersonaToCurrentWorldTimeline(persona, options = {}) {
+    const world = state.worlds.find(item => item.id === state.activeWorldId);
+    const sess = getCurrentWorldSession();
+    if (!world || !sess) return false;
+    const selected = persona ? normalizePersona(persona) : null;
+    sess.personaId = selected?.id || '';
+    sess.personaSnapshot = selected ? safeJsonClone(selected) : null;
+    sess.personaBinding = {
+        personaId: selected?.id || '',
+        boundAt: new Date().toISOString(),
+        source: String(options.source || 'direct_world_persona_control')
+    };
+    // Keep the canonical player name authoritative. Persona fields describe
+    // presentation and voice; they never rename a locked world protagonist.
+    sess.playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
+    const identity = worldControlledPlayerIdentity(world, sess);
+    if (identity.id === 'player' && !identity.locked && selected) {
+        sess.playerIdentity.personaName = selected.name;
+        sess.playerIdentity.age = selected.age || '';
+        sess.playerIdentity.pronouns = selected.pronouns || '';
+        sess.playerIdentity.appearance = selected.appearance || '';
+    }
+    await saveState();
+    renderWorldPlayState();
+    return true;
 }
 
 function lifeSeedSlug(value) {

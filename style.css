@@ -2891,6 +2891,12 @@ input[type=number].form-input::-webkit-inner-spin-button {
   background: var(--surface);
   border-color: var(--border);
 }
+
+.world-toolbar .tool-btn-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+}
 .persona-list-item-name {
   font-weight: 600;
   color: var(--text);
