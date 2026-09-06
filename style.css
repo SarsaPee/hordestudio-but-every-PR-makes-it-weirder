@@ -10149,11 +10149,16 @@ label[data-help] > span:first-child::after,
 .world-media-editor { grid-template-columns:172px minmax(0,1fr); align-items:start; }
 .world-media-preview.is-portrait { width:172px; min-height:172px; }
 .world-inline-outfits { grid-column:1 / -1; width:100%; }
-.world-inline-outfit-list { align-items:stretch; min-height:106px; }
-.world-inline-outfit-editor { flex:0 0 300px; min-width:300px; }
-.world-inline-outfit-thumb.world-inline-outfit-image-open { border:1px solid var(--border2); cursor:pointer; }
+.world-inline-outfit-list { align-items:stretch; min-height:154px; scrollbar-width:thin; scrollbar-color:var(--border2) transparent; }
+.world-inline-outfit-list::-webkit-scrollbar,
+.world-visual-active-outfit-list::-webkit-scrollbar { width:5px; height:5px; }
+.world-inline-outfit-list::-webkit-scrollbar-thumb,
+.world-visual-active-outfit-list::-webkit-scrollbar-thumb { background:var(--border2); border-radius:999px; }
+.world-inline-outfit-editor { flex:0 0 360px; min-width:360px; min-height:154px; grid-template-columns:104px minmax(0,1fr); }
+.world-inline-outfit-thumb.world-inline-outfit-image-open { width:104px; height:100%; min-height:136px; aspect-ratio:3 / 4; align-self:stretch; border:1px solid var(--border2); cursor:pointer; }
 .world-inline-outfit-thumb.world-inline-outfit-image-open:hover { border-color:var(--accent); }
-.world-inline-outfit-editor .world-inline-outfit-meta { align-items:flex-start; flex-wrap:wrap; }
+.world-inline-outfit-editor .world-inline-outfit-meta { align-items:center; flex-wrap:wrap; }
+.world-inline-outfit-editor .world-inline-outfit-actions { margin-left:auto; justify-content:flex-end; align-items:center; flex-wrap:wrap; }
 .world-inline-outfit-image-picker { display:inline-flex; align-items:center; gap:3px; min-height:24px; color:var(--text-3); white-space:nowrap; }
 .world-inline-outfit-image-picker.is-empty { opacity:.82; }
 .world-inline-outfit-image-picker button,
@@ -10168,5 +10173,6 @@ label[data-help] > span:first-child::after,
     .world-media-preview.is-portrait { width:172px; max-width:100%; }
     .world-media-editor > div:nth-child(2), .world-media-actions { min-width:0; width:100%; }
     .world-media-actions { align-items:flex-start; }
-    .world-inline-outfit-editor { flex-basis:270px; min-width:270px; }
+    .world-inline-outfit-editor { flex-basis:320px; min-width:320px; }
+    .world-inline-outfit-thumb.world-inline-outfit-image-open { width:92px; }
 }
