@@ -5169,6 +5169,12 @@ function fiboStructuredImageGuide(world, subject = null, editInstruction = '') {
     }
     if (isPlainObject(subject)) {
         if (subject.shortDescription) structured.short_description = String(subject.shortDescription).slice(0, 800);
+        else if (subject.description) {
+            // Fibo's structured prompts require a short_description; when the
+            // author wrote no dedicated image prompt, lead with the subject's
+            // own description rather than a blank.
+            structured.short_description = String(subject.description).slice(0, 300);
+        }
         if (subject.backgroundSetting) structured.background_setting = String(subject.backgroundSetting).slice(0, 800);
         const object = {};
         if (subject.description) object.description = String(subject.description).slice(0, 800);

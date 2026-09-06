@@ -1933,6 +1933,41 @@ def fibo_structured_prompt(body: dict[str, Any]) -> dict[str, Any] | None:
     return structured or None
 
 
+# Bria's structured prompt endpoints validate a core of required fields whose
+# schema defaults are None: an omitted field fails validation with
+# "Input should be a valid string/dictionary". The app authors only what it
+# has (blank = omitted), so the transport completes the required core with
+# explicit blank values, which the endpoints accept as "no direction".
+FIBO_REQUIRED_TOP_STRINGS = ("short_description", "background_setting", "context")
+FIBO_REQUIRED_DETAILS = {
+    "lighting": ("conditions", "direction", "shadows"),
+    "aesthetics": ("composition", "color_scheme", "mood_atmosphere"),
+}
+
+
+def complete_fibo_structured(structured: dict[str, Any]) -> dict[str, Any]:
+    """Fill the required core of a validated Fibo structured payload."""
+    completed = dict(structured)
+    for key in FIBO_REQUIRED_TOP_STRINGS:
+        if completed.get(key) is None:
+            completed[key] = ""
+    for key, subfields in FIBO_REQUIRED_DETAILS.items():
+        detail = completed.get(key)
+        detail = dict(detail) if isinstance(detail, dict) else {}
+        for subfield in subfields:
+            if detail.get(subfield) is None:
+                detail[subfield] = ""
+        completed[key] = detail
+    objects = completed.get("objects")
+    if isinstance(objects, list):
+        completed["objects"] = [
+            {**obj, "location": obj.get("location") or ""}
+            if isinstance(obj, dict) else obj
+            for obj in objects
+        ]
+    return completed
+
+
 def fal_advanced_image_fields(body: dict[str, Any]) -> dict[str, Any]:
     """Optional fal request parameters from Horde's Advanced Request Settings.
     accept these fields and some do not, so a populated value passes through
@@ -2046,7 +2081,7 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
             if resolution in {"1MP", "4MP"}:
                 payload["resolution"] = resolution
             if fibo_structured:
-                payload["structured_prompt"] = fibo_structured
+                payload["structured_prompt"] = complete_fibo_structured(fibo_structured)
         else:
             # Fibo Edit has no `prompt` field: the wording is `instruction`
             # prose, or a structured_instruction used verbatim when the app
@@ -2059,7 +2094,7 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
             if resolution in {"1MP", "4MP"}:
                 payload["resolution"] = resolution
             if fibo_structured:
-                payload["structured_instruction"] = fibo_structured
+                payload["structured_instruction"] = complete_fibo_structured(fibo_structured)
             else:
                 payload["instruction"] = prompt
     elif model == "fal-ai/wan-25-preview/image-to-image":
