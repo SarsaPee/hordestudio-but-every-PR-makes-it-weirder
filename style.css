@@ -9735,6 +9735,9 @@ label[data-help] > span:first-child::after,
    otherwise paint over the editor. Keep the visual editor above the drawers. */
 #world-visual-editor-modal, #world-outfit-manager-modal { z-index: 1100; }
 .world-visual-editor { max-width:1180px; }
+.world-visual-editor textarea#world-visual-primary,
+.world-visual-editor textarea#world-visual-prompt,
+.world-visual-editor textarea#world-visual-correction { max-height:320px; overflow-y:auto; }
 .world-visual-editor-body { display:grid; grid-template-columns:minmax(300px, .9fr) minmax(360px, 1.1fr); gap:22px; align-items:start; }
 .world-visual-editor-preview-column { min-width:0; }
 .world-visual-crop-stage { position:relative; width:100%; max-height:62vh; aspect-ratio:3/4; overflow:hidden; border:1px solid var(--border2); border-radius:14px; background:linear-gradient(135deg,var(--surface2),var(--surface3)); touch-action:none; cursor:grab; user-select:none; }

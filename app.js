@@ -50252,6 +50252,26 @@ function renderWorldVisualActiveOutfit() {
     if (apply) apply.disabled = !outfits.some(outfit => outfit.id === selectedId);
 }
 
+// Keep revised visual prose readable without forcing a huge fixed textarea.
+// Revision/AI responses can be much longer than the initial `rows` value, so
+// grow the field to its content up to a bounded height, then let the field
+// scroll internally. The explicit height is reset before measuring so this is
+// safe to call after programmatic value changes.
+function autoSizeWorldVisualTextarea(input) {
+    if (!input || input.tagName !== 'TEXTAREA') return;
+    const minHeight = Math.max(48, parseFloat(getComputedStyle(input).minHeight) || 0);
+    const maxHeight = 320;
+    input.style.height = 'auto';
+    const contentHeight = Math.max(minHeight, input.scrollHeight);
+    input.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+    input.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden';
+}
+
+function autoSizeWorldVisualTextareas() {
+    ['world-visual-primary', 'world-visual-prompt', 'world-visual-correction']
+        .forEach(id => autoSizeWorldVisualTextarea(document.getElementById(id)));
+}
+
 async function applyWorldOutfitAndGenerate(event) {
     const editor = worldVisualEditorState;
     if (!editor || editor.kind !== 'npc') return;
@@ -50264,7 +50284,9 @@ async function applyWorldOutfitAndGenerate(event) {
     const instruction = `Replace the current outfit with the complete authored outfit “${outfit.name}”: ${outfit.description || '(the outfit has not been described yet; use the authored title only)'}. Preserve the person, identity, pose, framing, lighting, composition and every unrelated detail.`;
     button.disabled = true;
     try {
-        document.getElementById('world-visual-correction').value = instruction;
+        const correctionInput = document.getElementById('world-visual-correction');
+        correctionInput.value = instruction;
+        autoSizeWorldVisualTextarea(correctionInput);
         const refined = await refineWorldVisualPromptWithAI({ currentTarget: button }, instruction, { allowNoFieldChanges: true });
         if (!refined) return;
         await runWorldVisualGeneration(!!source, event);
@@ -50668,6 +50690,7 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
             if (next === String(input.value || '').trim()) return;
             input.value = next;
             input.dispatchEvent(new Event('change', { bubbles: true }));
+            autoSizeWorldVisualTextarea(input);
             applied.push(field.label);
         });
         if (!applied.length && !options.allowNoFieldChanges) throw new Error('no fields changed — try a more specific instruction');
@@ -50725,7 +50748,9 @@ async function runWorldVisualGeneration(revisionOnly, event) {
         // so the record immediately shows a deliberate crop of the new image.
         if (editor.kind === 'npc') await deriveWorldNpcPortraitDisplay(editor.world, editor.target);
         if (revisionOnly) {
-            document.getElementById('world-visual-correction').value = '';
+            const correctionInput = document.getElementById('world-visual-correction');
+            correctionInput.value = '';
+            autoSizeWorldVisualTextarea(correctionInput);
             if (editor.kind === 'npc') editor.target.visuals.portraitCorrection = '';
             else editor.target.visuals.backgroundCorrection = '';
         }
@@ -50834,6 +50859,8 @@ function ensureWorldVisualEditorBound() {
         applyWorldVisualVariantFilter();
     };
     document.getElementById('world-visual-export').onclick = exportCurrentWorldVisual;
+    ['world-visual-primary', 'world-visual-prompt', 'world-visual-correction']
+        .forEach(id => document.getElementById(id)?.addEventListener('input', event => autoSizeWorldVisualTextarea(event.currentTarget)));
     ['world-visual-aspect', 'world-visual-resolution', 'world-visual-crop-x', 'world-visual-crop-y', 'world-visual-crop-zoom']
         .forEach(id => { const field = document.getElementById(id); if (field) field.oninput = updateWorldVisualCropPreview; });
     document.getElementById('world-visual-apply-crop').onclick = async event => {
@@ -51092,7 +51119,10 @@ function openWorldVisualEditor(world, target, kind) {
     }
     document.getElementById('world-visual-editor-modal').classList.remove('hidden');
     renderWorldVisualActiveOutfit();
-    requestAnimationFrame(updateWorldVisualCropPreview);
+    requestAnimationFrame(() => {
+        autoSizeWorldVisualTextareas();
+        updateWorldVisualCropPreview();
+    });
 }
 
 function attachWorldVisualReference(body, provider, model, referenceImage) {
