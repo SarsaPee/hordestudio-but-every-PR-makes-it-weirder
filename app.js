@@ -32330,6 +32330,20 @@ ${modularMandate}
             messages.push({ role: 'user', content: `[SYSTEM: Reroll requested. Generate a completely different narrative response. Change the prose, actions, and structural approach from the previous attempt. Break determinism. Anti-Cache Seed: ${Math.random()}]` });
         }
 
+        // Gemini/Google AI Studio rejects OpenAI-compatible requests whose
+        // final content role is `assistant` (the FF Sidecar stack may place an
+        // assistant prefill after the player's turn). Preserve that prefill,
+        // but close the exchange with an explicit user continuation so the
+        // provider receives a valid conversational boundary.
+        if (messages.length && messages[messages.length - 1]?.role === 'assistant') {
+            messages.push({
+                role: 'user',
+                content: sidecarMode
+                    ? '[CONTINUE] Continue the requested roleplay response from the preceding narrator prefill. Do not mention this continuation instruction.'
+                    : '[CONTINUE] Continue the requested response from the preceding assistant context.'
+            });
+        }
+
         const controller = new AbortController();
         worldGenController = controller; // expose for the user Stop button
         const configuredIdleTimeout = isLocalProvider() ? localGenerationIdleTimeoutMs() : cloudGenerationIdleTimeoutMs();
