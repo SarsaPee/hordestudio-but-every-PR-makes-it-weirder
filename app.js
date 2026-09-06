@@ -5296,13 +5296,11 @@ function createBlankWorldOutfit(entity, name = 'New outfit') {
     return outfit;
 }
 
-function scrollWorldOutfitListToEnd(list, behavior = 'smooth', axis = 'vertical') {
+function scrollWorldOutfitListToEnd(list, axis = 'vertical') {
     if (!list) return;
-    requestAnimationFrame(() => {
-        list.scrollTo(axis === 'horizontal'
-            ? { left: list.scrollWidth, behavior }
-            : { top: list.scrollHeight, behavior });
-    });
+    list.scrollTo(axis === 'horizontal'
+        ? { left: list.scrollWidth, behavior: 'auto' }
+        : { top: list.scrollHeight, behavior: 'auto' });
 }
 
 function focusWorldOutfitName(list, outfitId, axis = 'vertical') {
@@ -5311,9 +5309,15 @@ function focusWorldOutfitName(list, outfitId, axis = 'vertical') {
         const card = [...list.querySelectorAll('.world-inline-outfit-editor')]
             .find(node => node.dataset.outfitId === String(outfitId));
         if (!card) return;
-        card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: axis === 'horizontal' ? 'end' : 'nearest' });
         card.querySelector('.world-inline-outfit-name-input')?.focus({ preventScroll: true });
     });
+}
+
+function scrollWorldOutfitCardIntoView(list, outfitId, axis = 'vertical') {
+    if (!list) return;
+    const card = [...list.querySelectorAll('.world-inline-outfit-editor')]
+        .find(node => node.dataset.outfitId === String(outfitId));
+    card?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
 }
 
 function worldCurrentOutfit(entity) {
@@ -24148,22 +24152,22 @@ function renderWorldEntities(mode = 'people') {
                 } finally { event.target.value = ''; }
             };
             div.querySelector('.ent-portrait-generate').onclick = () => openWorldVisualEditor(world, ent, 'npc');
-            div.querySelector('.ent-outfit-manager').onclick = () => div.querySelector('.world-inline-outfits')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            div.querySelector('.ent-outfit-manager').onclick = () => div.querySelector('.world-inline-outfits')?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
             div.querySelectorAll('.ent-add-outfit').forEach(button => button.onclick = () => {
                 const outfit = createBlankWorldOutfit(ent);
                 if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
                 renderWorldEntities();
                 const outfitRegion = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id);
                 const outfitList = outfitRegion?.querySelector('.world-inline-outfit-list');
-                scrollWorldOutfitListToEnd(outfitList, 'smooth', 'horizontal');
+                scrollWorldOutfitListToEnd(outfitList, 'horizontal');
                 focusWorldOutfitName(outfitList, outfit.id, 'horizontal');
                 showToast('Blank outfit added. Fill in its title and description inline.', 'success');
             });
             div.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
                 const outfit = worldOutfits(ent).find(entry => entry.id === card.dataset.outfitId);
                 if (!outfit) return;
-                card.onclick = event => { if (outfit.id === ent.visuals.currentOutfitId || event.target.closest('.world-inline-outfit-delete')) return; selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); };
-                card.querySelector('.world-inline-outfit-select').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); };
+                card.onclick = event => { if (outfit.id === ent.visuals.currentOutfitId || event.target.closest('.world-inline-outfit-delete')) return; selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); const region = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id); scrollWorldOutfitCardIntoView(region?.querySelector('.world-inline-outfit-list'), outfit.id, 'horizontal'); };
+                card.querySelector('.world-inline-outfit-select').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); const region = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id); scrollWorldOutfitCardIntoView(region?.querySelector('.world-inline-outfit-list'), outfit.id, 'horizontal'); };
                 card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); if (ent.visuals.currentOutfitId === outfit.id) ent.currentOutfit = outfit.description; updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-generate').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: false }); openWorldVisualEditor(world, ent, 'npc'); };
@@ -50064,8 +50068,9 @@ function renderWorldVisualActiveOutfit() {
             selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
             renderWorldVisualActiveOutfit();
             updateWorldVisualCropPreview();
+            scrollWorldOutfitCardIntoView(document.getElementById('world-visual-active-outfit-list'), outfit.id);
         };
-        card.querySelector('.world-visual-outfit-select').onclick = () => { selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false }); renderWorldVisualActiveOutfit(); updateWorldVisualCropPreview(); };
+        card.querySelector('.world-visual-outfit-select').onclick = () => { selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false }); renderWorldVisualActiveOutfit(); updateWorldVisualCropPreview(); scrollWorldOutfitCardIntoView(document.getElementById('world-visual-active-outfit-list'), outfit.id); };
         card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; editor.target.visuals.outfits = worldOutfits(editor.target).map(entry => entry.id === outfit.id ? outfit : entry); renderWorldVisualActiveOutfit(); };
         card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); editor.target.visuals.outfits = worldOutfits(editor.target).map(entry => entry.id === outfit.id ? outfit : entry); if (editor.target.visuals.currentOutfitId === outfit.id) editor.target.currentOutfit = outfit.description; updateWorldTokenCount(); };
         card.querySelector('.world-visual-outfit-generate').onclick = () => { selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false }); updateWorldVisualCropPreview(); };
