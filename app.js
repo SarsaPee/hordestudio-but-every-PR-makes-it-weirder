@@ -5320,6 +5320,17 @@ function scrollWorldOutfitCardIntoView(list, outfitId, axis = 'vertical') {
     card?.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
 }
 
+function refreshWorldInlineOutfitCards(container, entity) {
+    if (!container || !entity) return;
+    const activeId = String(entity.visuals?.currentOutfitId || '');
+    container.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
+        const active = card.dataset.outfitId === activeId;
+        card.classList.toggle('is-active', active);
+        card.querySelector('.world-inline-outfit-name-input')?.toggleAttribute('readonly', !active);
+        card.querySelector('.world-inline-outfit-description-input')?.toggleAttribute('readonly', !active);
+    });
+}
+
 function worldCurrentOutfit(entity) {
     const outfits = worldOutfits(entity);
     if (!outfits.length) return null;
@@ -23933,7 +23944,7 @@ function renderWorldEntities(mode = 'people') {
                                     const imageId = [...(outfit.imageAssetIds || [])].reverse().find(id => worldMediaSource(world, id));
                                     const image = imageId ? worldMediaSource(world, imageId) : '';
                                     const active = outfit.id === ent.visuals?.currentOutfitId;
-                                    return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-select" title="Wear this outfit" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…" ${active ? '' : 'readonly'}><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…" ${active ? '' : 'readonly'}>${escapeHTML(outfit.description)}</textarea><div class="world-inline-outfit-meta"><span>${(outfit.imageAssetIds || []).length} image${(outfit.imageAssetIds || []).length === 1 ? '' : 's'}</span><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-generate">Generate</button><button type="button" class="world-inline-outfit-delete">Delete</button></span></div></div>`;
+                                    return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><div class="world-inline-outfit-thumb" aria-hidden="true" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</div><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…" ${active ? '' : 'readonly'}><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…" ${active ? '' : 'readonly'}>${escapeHTML(outfit.description)}</textarea><div class="world-inline-outfit-meta"><span>${(outfit.imageAssetIds || []).length} image${(outfit.imageAssetIds || []).length === 1 ? '' : 's'}</span><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-select">Wear this outfit</button><button type="button" class="world-inline-outfit-generate">Generate</button><button type="button" class="world-inline-outfit-delete">Delete</button></span></div></div>`;
                                 }).join('') : ''}<button type="button" class="world-inline-new-outfit ent-add-outfit">+ New outfit</button></div>
                             </div>
                         </div>
@@ -24152,7 +24163,6 @@ function renderWorldEntities(mode = 'people') {
                 } finally { event.target.value = ''; }
             };
             div.querySelector('.ent-portrait-generate').onclick = () => openWorldVisualEditor(world, ent, 'npc');
-            div.querySelector('.ent-outfit-manager').onclick = () => div.querySelector('.world-inline-outfits')?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
             div.querySelectorAll('.ent-add-outfit').forEach(button => button.onclick = () => {
                 const outfit = createBlankWorldOutfit(ent);
                 if (!outfit) return showToast('This character already has the maximum number of outfits.', 'error');
@@ -24166,8 +24176,7 @@ function renderWorldEntities(mode = 'people') {
             div.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
                 const outfit = worldOutfits(ent).find(entry => entry.id === card.dataset.outfitId);
                 if (!outfit) return;
-                card.onclick = event => { if (outfit.id === ent.visuals.currentOutfitId || event.target.closest('.world-inline-outfit-delete')) return; selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); const region = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id); scrollWorldOutfitCardIntoView(region?.querySelector('.world-inline-outfit-list'), outfit.id, 'horizontal'); };
-                card.querySelector('.world-inline-outfit-select').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); renderWorldEntities(); const region = [...document.querySelectorAll('.world-inline-outfits')].find(node => node.dataset.entityId === ent.id); scrollWorldOutfitCardIntoView(region?.querySelector('.world-inline-outfit-list'), outfit.id, 'horizontal'); };
+                card.querySelector('.world-inline-outfit-select').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: true }); refreshWorldInlineOutfitCards(div.querySelector('.world-inline-outfits'), ent); updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); if (ent.visuals.currentOutfitId === outfit.id) ent.currentOutfit = outfit.description; updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-generate').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: false }); openWorldVisualEditor(world, ent, 'npc'); };
