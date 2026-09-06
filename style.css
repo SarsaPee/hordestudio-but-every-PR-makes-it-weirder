@@ -10194,3 +10194,8 @@ label[data-help] > span:first-child::after,
     .world-inline-outfit-editor { height:194px; min-height:194px; grid-template-columns:92px minmax(0,1fr); }
     .world-inline-outfit-image-column .world-inline-outfit-thumb.world-inline-outfit-image-open { width:92px; height:123px; min-height:123px; }
 }
+
+.world-inline-outfit-select.is-current { border-color:var(--red) !important; background:var(--red) !important; color:#fff !important; box-shadow:0 0 0 1px color-mix(in srgb,var(--red) 28%,transparent); }
+.world-inline-outfit-select.is-current:hover { border-color:var(--red) !important; background:color-mix(in srgb,var(--red) 82%,#000) !important; color:#fff !important; }
+.world-inline-outfit-delete, .world-visual-outfit-delete { color:var(--danger) !important; border-color:color-mix(in srgb,var(--danger) 42%,var(--border2)) !important; background:color-mix(in srgb,var(--danger) 8%,var(--surface3)) !important; }
+.world-inline-outfit-delete:hover, .world-visual-outfit-delete:hover, .world-inline-outfit-delete.is-confirm, .world-visual-outfit-delete.is-confirm { border-color:var(--danger) !important; background:var(--danger) !important; color:#fff !important; }

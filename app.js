@@ -5328,6 +5328,11 @@ function refreshWorldInlineOutfitCards(container, entity) {
         card.classList.toggle('is-active', active);
         card.querySelector('.world-inline-outfit-name-input')?.toggleAttribute('readonly', !active);
         card.querySelector('.world-inline-outfit-description-input')?.toggleAttribute('readonly', !active);
+        const selectButton = card.querySelector('.world-inline-outfit-select');
+        if (selectButton) {
+            selectButton.classList.toggle('is-current', active);
+            selectButton.textContent = active ? 'Current outfit' : 'Wear this outfit';
+        }
     });
 }
 
@@ -5337,6 +5342,30 @@ function refreshWorldEntityPortraitPreview(container, world, entity) {
     const source = worldNpcPortraitSource(world, entity);
     preview.style.backgroundImage = source ? `url('${cssUrl(source)}')` : '';
     preview.textContent = source ? '' : (entity.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function bindWorldOutfitDelete(button, onDelete) {
+    if (!button) return;
+    let armed = false;
+    let resetTimer = 0;
+    const reset = () => {
+        armed = false;
+        button.classList.remove('is-confirm');
+        button.textContent = 'Delete';
+    };
+    button.onclick = event => {
+        event.stopPropagation();
+        if (!armed) {
+            armed = true;
+            button.classList.add('is-confirm');
+            button.textContent = 'Confirm?';
+            clearTimeout(resetTimer);
+            resetTimer = setTimeout(reset, 2600);
+            return;
+        }
+        clearTimeout(resetTimer);
+        onDelete();
+    };
 }
 
 function worldCurrentOutfit(entity) {
@@ -23960,7 +23989,7 @@ function renderWorldEntities(mode = 'people') {
                                 const imagePicker = imageIds.length
                                     ? `<span class="world-inline-outfit-image-picker"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous ${escapeHTML(outfit.name)} image">‹</button><span class="world-inline-outfit-image-count">${selectedIndex + 1} / ${imageIds.length}</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next ${escapeHTML(outfit.name)} image">›</button></span>`
                                     : `<span class="world-inline-outfit-image-picker is-empty"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous image" disabled>‹</button><span class="world-inline-outfit-image-count">0 / 0</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next image" disabled>›</button></span>`;
-                                return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><div class="world-inline-outfit-image-column"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-image-open" title="Open ${escapeHTML(outfit.name)} images" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button>${imagePicker}</div><div class="world-inline-outfit-copy"><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…" ${active ? '' : 'readonly'}><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…" ${active ? '' : 'readonly'}>${escapeHTML(outfit.description)}</textarea><div class="world-inline-outfit-meta"><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-select">Wear this outfit</button><button type="button" class="world-inline-outfit-generate">Generate</button><button type="button" class="world-inline-outfit-delete">Delete</button></span></div></div></div>`;
+                                return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><div class="world-inline-outfit-image-column"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-image-open" title="Open ${escapeHTML(outfit.name)} images" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button>${imagePicker}</div><div class="world-inline-outfit-copy"><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…" ${active ? '' : 'readonly'}><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…" ${active ? '' : 'readonly'}>${escapeHTML(outfit.description)}</textarea><div class="world-inline-outfit-meta"><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-select ${active ? 'is-current' : ''}">${active ? 'Current outfit' : 'Wear this outfit'}</button><button type="button" class="world-inline-outfit-generate">Generate</button><button type="button" class="world-inline-outfit-delete">Delete</button></span></div></div></div>`;
                             }).join('') : ''}<button type="button" class="world-inline-new-outfit ent-add-outfit">+ New outfit</button></div>
                         </div>
                     </div>
@@ -24215,7 +24244,7 @@ function renderWorldEntities(mode = 'people') {
                 card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); ent.visuals.outfits = worldOutfits(ent).map(entry => entry.id === outfit.id ? outfit : entry); if (ent.visuals.currentOutfitId === outfit.id) ent.currentOutfit = outfit.description; updateWorldTokenCount(); };
                 card.querySelector('.world-inline-outfit-generate').onclick = () => { selectWorldOutfit(world, ent, outfit.id, { preferImage: false }); openWorldVisualEditor(world, ent, 'npc'); };
-                card.querySelector('.world-inline-outfit-delete').onclick = () => { ent.visuals.outfits = worldOutfits(ent).filter(entry => entry.id !== outfit.id); if (ent.visuals.currentOutfitId === outfit.id) { ent.visuals.currentOutfitId = ent.visuals.outfits[0]?.id || ''; ent.currentOutfit = ent.visuals.outfits[0]?.description || ''; } renderWorldEntities(); };
+                bindWorldOutfitDelete(card.querySelector('.world-inline-outfit-delete'), () => { ent.visuals.outfits = worldOutfits(ent).filter(entry => entry.id !== outfit.id); if (ent.visuals.currentOutfitId === outfit.id) { ent.visuals.currentOutfitId = ent.visuals.outfits[0]?.id || ''; ent.currentOutfit = ent.visuals.outfits[0]?.description || ''; } renderWorldEntities(); });
             });
             div.querySelector('.ent-portrait-clear').onclick = () => {
                 clearWorldVisualVariants(ent, 'npc');
@@ -50118,7 +50147,7 @@ function renderWorldVisualActiveOutfit() {
         card.querySelector('.world-inline-outfit-name-input').onchange = event => { outfit.name = String(event.target.value || '').trim().slice(0, 80) || 'Untitled outfit'; editor.target.visuals.outfits = worldOutfits(editor.target).map(entry => entry.id === outfit.id ? outfit : entry); renderWorldVisualActiveOutfit(); };
         card.querySelector('.world-inline-outfit-description-input').onchange = event => { outfit.description = String(event.target.value || '').trim().slice(0, 1200); editor.target.visuals.outfits = worldOutfits(editor.target).map(entry => entry.id === outfit.id ? outfit : entry); if (editor.target.visuals.currentOutfitId === outfit.id) editor.target.currentOutfit = outfit.description; updateWorldTokenCount(); };
         card.querySelector('.world-visual-outfit-generate').onclick = () => { selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false }); updateWorldVisualCropPreview(); };
-        card.querySelector('.world-visual-outfit-delete').onclick = () => { editor.target.visuals.outfits = worldOutfits(editor.target).filter(entry => entry.id !== outfit.id); if (editor.target.visuals.currentOutfitId === outfit.id) { editor.target.visuals.currentOutfitId = editor.target.visuals.outfits[0]?.id || ''; editor.target.currentOutfit = editor.target.visuals.outfits[0]?.description || ''; } renderWorldVisualActiveOutfit(); };
+        bindWorldOutfitDelete(card.querySelector('.world-visual-outfit-delete'), () => { editor.target.visuals.outfits = worldOutfits(editor.target).filter(entry => entry.id !== outfit.id); if (editor.target.visuals.currentOutfitId === outfit.id) { editor.target.visuals.currentOutfitId = editor.target.visuals.outfits[0]?.id || ''; editor.target.currentOutfit = editor.target.visuals.outfits[0]?.description || ''; } renderWorldVisualActiveOutfit(); });
     });
     const apply = document.getElementById('world-visual-apply-outfit');
     if (apply) apply.disabled = !outfits.some(outfit => outfit.id === selectedId);
