@@ -5285,6 +5285,27 @@ function worldOutfitForAsset(entity, assetId) {
     return worldOutfits(entity).find(outfit => (outfit.imageAssetIds || []).includes(id)) || null;
 }
 
+// Wearing an outfit is a canonical presentation change, not merely a text
+// field edit. If that outfit already has images, make its newest source the
+// character's active visual while preserving the full image history.
+function selectWorldOutfit(world, entity, outfitId, { preferImage = true } = {}) {
+    if (!entity || entity.type !== 'npc') return null;
+    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    const outfit = worldOutfits(entity).find(entry => entry.id === String(outfitId || ''));
+    if (!outfit) return null;
+    entity.visuals.outfits = worldOutfits(entity);
+    entity.visuals.currentOutfitId = outfit.id;
+    entity.currentOutfit = outfit.description;
+    if (preferImage) {
+        const imageId = [...(outfit.imageAssetIds || [])].reverse().find(id => worldMediaSource(world, id));
+        if (imageId) {
+            entity.visuals.portraitAssetId = imageId;
+            entity.visuals.portraitDisplayAssetId = '';
+        }
+    }
+    return outfit;
+}
+
 function attachWorldVisualToOutfit(entity, assetId, outfitId = '') {
     if (!entity || entity.type !== 'npc' || !assetId) return null;
     entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
@@ -11711,8 +11732,7 @@ function applyWorldNpcOutfitPatches(world, sess, patches, source = 'tool_call') 
         };
         if (!exact) outfits.push(outfit);
         entity.visuals.outfits = outfits.slice(-30);
-        entity.visuals.currentOutfitId = outfit.id;
-        entity.currentOutfit = outfit.description;
+        selectWorldOutfit(world, entity, outfit.id);
         applied.push({ entityId: entity.id, outfitId: outfit.id, created: !exact });
     });
     return applied;
@@ -14293,6 +14313,36 @@ function queueSidecarReconciliationQuestions(world, sess, audit) {
     });
 }
 
+// Preserve uncertainty when a newly foregrounded NPC has no authored outfit;
+// ask once for a useful visible first impression instead of inventing one.
+function queueSidecarSceneOutfitQuestions(world, sess, turnRecord = null) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol) return [];
+    const frame = buildWorldSceneFrame(world, sess);
+    const sceneId = String(turnRecord?.sceneId || protocol.activeSceneId || 'scene');
+    const priorTurns = (protocol.turns || []).filter(turn => turn !== turnRecord && String(turn.sceneId || '') === sceneId);
+    const newlyForegrounded = new Set();
+    frame.present_character_ids.forEach(id => {
+        const hadPriorPresence = priorTurns.some(turn => [...(turn.preFrame?.present_character_ids || []), ...(turn.postFrame?.present_character_ids || [])].includes(id));
+        if (!hadPriorPresence) newlyForegrounded.add(id);
+    });
+    const queued = [];
+    newlyForegrounded.forEach(id => {
+        const entity = (world.entities || []).find(item => item.id === id && item.type === 'npc');
+        if (!entity) return;
+        const runtimeOutfit = String(sess.entityStates?.[id]?.outfit || entity.currentOutfit || '').trim();
+        if (runtimeOutfit || worldCurrentOutfit(entity)) return;
+        const questionId = `outfit.scene.${sceneId}.${id}`.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 180);
+        if ((protocol.questions || []).some(question => question.id === questionId)) return;
+        const question = queueSidecarQuestion(world, sess,
+            `${entity.name || id} is foregrounded in this scene, but no concrete current outfit has been established. Should the Narrator establish what ${entity.name || 'this character'} is wearing now, or should the visible clothing remain unknown?`,
+            `Scene entry for ${entity.name || id}. Do not infer clothing from a portrait or dossier identity fields.`,
+            { id: questionId, origin: 'scene_outfit_entry', target: 'narrator', pressure: 'low', priority: 'low', scope: 'scene', sceneId, relevance: 'foreground_character' });
+        if (question) queued.push(question);
+    });
+    return queued;
+}
+
 async function runSidecarReconciliation(world, sess, options = {}) {
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
@@ -14505,6 +14555,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                 turnRecord.traversalChanges = traversalChanges;
                 window.HordeSidecarMemoryGraph?.recordTurn(protocol, turnRecord);
             }
+            queueSidecarSceneOutfitQuestions(world, sess, turnRecord);
             const diagnostic = protocol.diagnostics?.reconciliationAttempts?.find(item => item.turnId === turnRecord?.id);
             if (diagnostic) Object.assign(diagnostic, {
                 status: 'committed', committedAt: turnRecord?.committedAt,
@@ -49820,6 +49871,7 @@ function registerWorldVisualVariant(world, target, kind, assetId) {
     if (assetId && !history.includes(assetId)) history.push(assetId);
     target.visuals[keys.history] = history;
     target.visuals[keys.current] = assetId || '';
+    if (kind === 'npc' && assetId) target.visuals.portraitDisplayAssetId = '';
     if (kind === 'npc' && assetId) {
         const asset = worldMediaAsset(world, assetId);
         const outfit = worldOutfitForAsset(target, assetId)
@@ -50040,21 +50092,19 @@ function renderWorldOutfitManager() {
         const outfit = outfits.find(entry => entry.id === row.dataset.outfitId);
         if (!outfit) return;
         row.querySelectorAll('.world-outfit-thumb').forEach(button => button.addEventListener('click', () => {
-            entity.visuals.currentOutfitId = outfit.id;
-            entity.currentOutfit = outfit.description;
+            selectWorldOutfit(manager.world, entity, outfit.id);
             entity.visuals.portraitAssetId = button.dataset.assetId;
+            entity.visuals.portraitDisplayAssetId = '';
             closeWorldOutfitManager();
             openWorldVisualEditor(manager.world, entity, 'npc');
         }));
         row.querySelector('.world-outfit-wear')?.addEventListener('click', () => {
-            entity.visuals.currentOutfitId = outfit.id;
-            entity.currentOutfit = outfit.description;
+            selectWorldOutfit(manager.world, entity, outfit.id);
             renderWorldOutfitManager();
-            showToast(`${entity.name || 'This character'} now wears “${outfit.name}”. Generate a portrait to see it.`, 'success');
+            showToast(`${entity.name || 'This character'} now wears “${outfit.name}”.${(outfit.imageAssetIds || []).length ? ' Its latest outfit image is now active.' : ' Generate a portrait when you want one.'}`, 'success');
         });
         row.querySelector('.world-outfit-generate')?.addEventListener('click', () => {
-            entity.visuals.currentOutfitId = outfit.id;
-            entity.currentOutfit = outfit.description;
+            selectWorldOutfit(manager.world, entity, outfit.id);
             closeWorldOutfitManager();
             openWorldVisualEditor(manager.world, entity, 'npc');
             showToast(`“${outfit.name}” is worn for the next portrait. Review the brief, then Generate new.`, 'info');
