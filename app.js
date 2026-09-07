@@ -15472,6 +15472,17 @@ function sidecarReadOnlyTools() {
     ];
 }
 
+function sidecarReaderReadOnlyProtocol(world, sess) {
+    // The normal timeline normalizer heals missing containers in place.  That
+    // is useful for Horde's runtime, but a Reader lookup is an inspection
+    // operation and must not mutate canonical state merely by asking a
+    // question. Normalize isolated copies so default fields are available
+    // without creating a hidden write path.
+    const worldCopy = safeJsonClone(world || {});
+    const sessCopy = safeJsonClone(sess || {});
+    return window.HordeSidecarHooks?.normalizeWorldTimeline?.(worldCopy, sessCopy) || null;
+}
+
 function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
     const args = isPlainObject(rawArgs) ? rawArgs : safeParseJSONRepair(String(rawArgs || '{}')) || {};
     if (name === 'get_world_entity') {
@@ -15483,7 +15494,7 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
         return { found: !!location, location };
     }
     if (name === 'get_current_scene_state') {
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const protocol = sidecarReaderReadOnlyProtocol(world, sess);
         return {
             found: true, scene: buildWorldSceneFrame(world, sess), clock: buildSidecarClockEvidence(world, sess),
             reader: protocol?.sceneReader || null,
@@ -15491,7 +15502,7 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
         };
     }
     if (name === 'get_prior_scene_snapshots') {
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const protocol = sidecarReaderReadOnlyProtocol(world, sess);
         const sceneId = String(args.scene_id || '').trim();
         const limit = Math.max(1, Math.min(12, Number(args.limit) || 6));
         const snapshots = (protocol?.readerSnapshots || [])
@@ -15513,7 +15524,7 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
         return { found: snapshots.length > 0, sceneId, snapshots, provenance: { readOnly: true, source: 'sidecar_reader_snapshots' } };
     }
     if (name === 'get_world_records') {
-        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const protocol = sidecarReaderReadOnlyProtocol(world, sess);
         const requested = new Set(Array.isArray(args.kinds) ? args.kinds : []);
         const query = String(args.query || '').trim().toLowerCase();
         const limit = Math.max(1, Math.min(30, Number(args.limit) || 12));
