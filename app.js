@@ -12328,6 +12328,18 @@ function extractSidecarNarratorHandoff(value) {
     const raw = String(value || '');
     const match = raw.match(/<scene_handoff>\s*([\s\S]*?)\s*<\/scene_handoff>/i);
     if (!match) {
+        // Gemini and a few compatible providers occasionally omit the XML
+        // wrapper while still emitting the requested OOC handoff headings.
+        // Treat the first unambiguous SCENE READING heading as the hidden
+        // boundary instead of allowing backstage prose into the player turn.
+        const plain = raw.match(/(?:^|\n)\s*SCENE\s+READING\b/i);
+        if (plain && (plain.index || 0) > 0) {
+            return {
+                narration: raw.slice(0, plain.index).trim(),
+                handoff: raw.slice(plain.index).replace(/^\s*/,'').trim(),
+                complete: false
+            };
+        }
         // A provider can exhaust its budget after opening the hidden handoff.
         // Never expose those partial backstage notes as visible roleplay. The
         // Sidecar can still use the partial evidence and its canonical frame,
@@ -30073,6 +30085,24 @@ function renderWorldPlayState() {
     } else {
         presList.innerHTML = '<div style="color:var(--text-3); font-size:0.8rem; padding: 4px;">No one here</div>';
     }
+    const mentionedNPCs = findRecentlyMentionedWorldNpcs(world, activeSess, new Set(presentNPCs.map(npc => npc.id)));
+    if (mentionedNPCs.length) {
+        const heading = document.createElement('div');
+        heading.style.cssText = 'color:var(--text-3);font-size:0.68rem;text-transform:uppercase;font-weight:700;margin:8px 0 2px;';
+        heading.textContent = 'Mentioned / nearby · not physically present';
+        presList.appendChild(heading);
+        mentionedNPCs.forEach(npc => {
+            const div = document.createElement('div');
+            div.className = 'world-present-npc world-mentioned-npc';
+            div.style.cssText = 'padding:6px 8px;background:var(--surface1);border-radius:6px;border-left:3px solid var(--text-3);font-size:0.8rem;cursor:pointer;opacity:.82;';
+            const state = activeSess.entityStates?.[npc.id] || {};
+            const where = getLocationRef(world, state.location)?.name || 'elsewhere';
+            div.textContent = `${npc.name} · ${where}`;
+            div.title = 'Mentioned or involved in recent context; this does not assert physical presence.';
+            div.onclick = () => openNpcDossier(npc.id);
+            presList.appendChild(div);
+        });
+    }
 
     // Render World Time (Clock Engine)
     if (!sess.turnCount) sess.turnCount = 1;
@@ -30633,7 +30663,7 @@ function worldSpeechIsPlayerVoice(lead, after) {
     const lastSentence = leadText.trim().split(/(?<=[.!?])\s+/).pop() || '';
     const youSubject = /^\s*(?:And\s+|But\s+|So\s+|Then\s+)?[Yy]ou\b/.test(lastSentence)
         || /\b[Yy]ou\s+(?:'ll\s+|will\s+)?(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|tell|tells|told|call|calls|called|greet|greets|greeted|offer|offers|offered|mutter|mutters|muttered|snap|snaps|snapped|whisper|whispers|whispered|shout|shouts|shouted|quip|quips|quipped|add|adds|added)\b/.test(lastSentence);
-    const youActionLeadingToSpeech = /\b[Yy]ou\b[^.!?]{0,180}\b(?:greet(?:ing|s|ed)?|address(?:ing|es|ed)?|turn(?:ing|s|ed)?\s+(?:toward|to)|speak(?:ing)?\s+(?:to|with)|call(?:ing)?\s+(?:to|out))\b/.test(leadText);
+    const youActionLeadingToSpeech = /\b[Yy]ou\b[^.!?]{0,220}\b(?:greet(?:ing|s|ed)?|address(?:ing|es|ed)?|turn(?:ing|s|ed)?\s+(?:toward|to)|speak(?:ing)?\s+(?:to|with)|call(?:ing)?\s+(?:to|out)|say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered)\b/.test(leadText);
     const afterTag = /^\s*[,—–-]?\s*[Yy]ou\s+(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|add|adds|added|offer|offers|offered)\b/.test(String(after || ''));
     return youSubject || youActionLeadingToSpeech || afterTag;
 }
@@ -35035,6 +35065,19 @@ function findReferencedWorldNpcs(world, sess, text) {
     if (!haystack.trim()) return [];
     return sessionNpcs(world, sess).filter(npc =>
         npcReferenceVariants(npc).some(variant => haystack.includes(` ${variant} `)));
+}
+
+// A mention is useful context without being a presence assertion. Keep this
+// small derived list for the HUD so a character like Sarah can be visibly
+// involved/nearby while remaining correctly absent from the physical cast.
+function findRecentlyMentionedWorldNpcs(world, sess, presentIds = new Set()) {
+    const mentioned = new Map();
+    (sess?.history || []).slice(-8).forEach(message => {
+        findReferencedWorldNpcs(world, sess, canonicalMsgText(message)).forEach(npc => {
+            if (!presentIds.has(npc.id) && isNpcActive(sess.entityStates?.[npc.id])) mentioned.set(npc.id, npc);
+        });
+    });
+    return [...mentioned.values()].slice(0, 8);
 }
 
 // Death is permanent: dead/gone NPCs are excluded from schedules, population,
