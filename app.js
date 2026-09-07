@@ -13771,7 +13771,7 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
             status: String((opt.playerRulesState || {}).status || 'active'),
             conditions: Array.isArray((opt.playerRulesState || {}).conditions) ? opt.playerRulesState.conditions : []
         })
-    ].filter(Boolean).join('\n\n'), 1, 3600);
+    ].filter(Boolean).join('\n\n'), 1, 3600, { mandatory: !!String(opt.personaContext || '').trim() });
 
     // FF character tracker — active cast state + relationship posture.
     const relationships = (Array.isArray(world && world.relationships) ? world.relationships : [])
@@ -33620,8 +33620,13 @@ ${modularMandate}
         buffer += decoder.decode();
         if (buffer.trim()) processWorldStreamLine(buffer);
 
-        // Remove the streaming temp div
-        aiMsgDiv.remove();
+        // Legacy turns can remove the temporary stream immediately because
+        // their commit path is already complete. Sidecar must keep the
+        // finished visible prose mounted while its hidden handoff is being
+        // read/reconciled; otherwise the response appears to vanish at the
+        // exact moment the handoff starts. The saved DM node replaces it
+        // below once the reconciliation receipt has completed.
+        if (!sidecarMode) aiMsgDiv.remove();
 
         if (streamError) throw streamError;
 
@@ -34246,6 +34251,7 @@ ${modularMandate}
                 witnesses: endingWitnesses,
                 deferPersist: true
             });
+            if (sidecarMode && aiMsgDiv.isConnected) aiMsgDiv.remove();
             if (sidecarTurnId) {
                 const sidecarTurn = sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId);
                 if (sidecarTurn) {
