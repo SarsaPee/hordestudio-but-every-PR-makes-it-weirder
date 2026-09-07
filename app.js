@@ -16032,6 +16032,12 @@ function effectiveSidecarReaderProfile(world, sess = null) {
     return window.HordeSidecarReader?.normalizeProfile?.(profile) || profile;
 }
 
+function deriveSidecarReaderProfileRevision(profile) {
+    const normalized = window.HordeSidecarReader?.normalizeProfile?.(profile || {}) || profile || {};
+    const fingerprint = { ...normalized, revision: '' };
+    return { ...normalized, revision: `reader-${worldMediaHash(JSON.stringify(fingerprint))}` };
+}
+
 // Historical reader backfill is explicitly derived-only. It never invokes a
 // reducer, rewrites a Turn, or makes an old Take active; it only attaches a
 // versioned reader snapshot/evidence record so later memory jobs can consume
@@ -17785,7 +17791,7 @@ function setupGlobalSettings() {
         state.globalSettings.consolidationMaxTokens = Math.max(300, Math.min(12000, parseInt(document.getElementById('global-consolidation-max-tokens').value, 10) || 1400));
         state.globalSettings.consolidationTemperature = Math.max(0, Math.min(2, Number(document.getElementById('global-consolidation-temperature').value) || 0));
         state.globalSettings.consolidationReasoning = document.getElementById('global-consolidation-reasoning').checked;
-        state.globalSettings.sidecarReaderProfile = window.HordeSidecarReader?.normalizeProfile?.({
+        state.globalSettings.sidecarReaderProfile = deriveSidecarReaderProfileRevision(window.HordeSidecarReader?.normalizeProfile?.({
             ...(state.globalSettings.sidecarReaderProfile || {}),
             provider: document.getElementById('global-sidecar-reader-provider')?.value || '',
             model: document.getElementById('global-sidecar-reader-model')?.value || '',
@@ -17797,7 +17803,7 @@ function setupGlobalSettings() {
             contextBudget: document.getElementById('global-sidecar-reader-context-budget')?.value || 24000,
             reasoningMode: document.getElementById('global-sidecar-reader-reasoning')?.value || 'inherit',
             retryPolicy: document.getElementById('global-sidecar-reader-retry')?.value || 'bounded'
-        });
+        }));
         state.globalSettings.episodeChunkTurns = Math.max(1, Math.min(50, parseInt(document.getElementById('global-episode-chunk-turns').value, 10) || 5));
         state.globalSettings.episodeCadenceTurns = Math.max(1, Math.min(50, parseInt(document.getElementById('global-episode-cadence-turns').value, 10) || 5));
         state.globalSettings.verbatimTurnWindow = Math.max(0, Math.min(30, parseInt(document.getElementById('global-verbatim-turn-window').value, 10) || 0));
@@ -20956,12 +20962,12 @@ async function saveWorld() {
                 reasoningEffort: document.getElementById('w-sidecar-reasoning-effort').value,
                 readerEnabled: document.getElementById('w-sidecar-reader-enabled').checked,
                 readerProfileInherit: document.getElementById('w-sidecar-reader-profile-inherit').checked,
-                readerProfile: {
+                readerProfile: deriveSidecarReaderProfileRevision({
                     ...(priorSidecarConfig.tracker?.readerProfile || {}),
                     timeoutSeconds: document.getElementById('w-sidecar-reader-timeout').value,
                     fullRefreshCadence: document.getElementById('w-sidecar-reader-refresh').value,
                     maxToolCalls: document.getElementById('w-sidecar-reader-tools').value
-                },
+                }),
                 readerMaxTokens: document.getElementById('w-sidecar-reader-max-tokens').value,
                 maxTokens: document.getElementById('w-sidecar-max-tokens').value
             },
