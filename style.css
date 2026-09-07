@@ -9816,6 +9816,29 @@ label[data-help] > span:first-child::after,
 .world-visual-generation-grid > #world-visual-resolution + div { min-width:0; }
 .world-visual-reference-row { margin-top:9px; align-items:flex-start; }
 .world-visual-editor-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+
+/* Structured visual document authoring. Legacy flat panels remain in the DOM
+   only as migration/compatibility shims; this is the visible editor. */
+.world-visual-editor-fields > section:not(#world-visual-structured-panel) { display:none !important; }
+.world-visual-structured-panel { display:block !important; }
+.world-visual-document-tabs { display:flex; gap:8px; align-items:center; }
+.world-visual-document-tabs .is-active { border-color:var(--accent,#ef4054); color:var(--text-1,#f4f4f8); }
+.world-visual-request-row { border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:14px; }
+.world-visual-request-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+.world-visual-structured-group { border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin:10px 0; background:rgba(255,255,255,.015); }
+.world-visual-structured-group > summary { cursor:pointer; font-weight:700; color:var(--text-1); letter-spacing:.04em; margin:-2px 0 12px; }
+.world-visual-grid-2,.world-visual-grid-3 { display:grid; gap:10px; }
+.world-visual-grid-2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.world-visual-grid-3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.world-visual-object-card { border:1px solid var(--border); border-radius:12px; padding:12px; margin:10px 0; background:rgba(0,0,0,.08); }
+.world-visual-object-card.is-primary { border-color:rgba(239,64,84,.65); }
+.world-visual-object-card-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.world-visual-object-card-title { font-weight:700; color:var(--text-1); }
+.world-visual-object-actions { display:flex; gap:6px; flex-wrap:wrap; }
+.world-visual-document-json textarea { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; }
+@media (max-width:760px) {
+  .world-visual-grid-2,.world-visual-grid-3 { grid-template-columns:1fr; }
+}
 .world-outfit-row { display:grid; grid-template-columns:170px minmax(0,1fr) auto; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); }
 .world-outfit-row:last-child { border-bottom:0; }
 .world-outfit-images { display:flex; gap:6px; min-height:58px; align-items:center; overflow:auto; }

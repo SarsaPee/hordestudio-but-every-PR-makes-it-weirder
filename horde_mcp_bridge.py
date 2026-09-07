@@ -1858,6 +1858,8 @@ FIBO_OBJECT_FIELDS = {
     "gender": 100, "skin_tone_and_texture": 300, "orientation": 200,
 }
 
+FIBO_STRUCTURED_TOP_OPAQUE = {"text_render"}
+
 
 def _fibo_string(source: dict[str, Any], key: str, limit: int, label: str):
     value = source.get(key)
@@ -1905,8 +1907,8 @@ def fibo_structured_prompt(body: dict[str, Any]) -> dict[str, Any] | None:
             structured[parent] = nested
     objects_raw = raw.get("objects")
     if objects_raw is not None:
-        if not isinstance(objects_raw, list) or len(objects_raw) > 4:
-            raise ValueError("fibo structured objects must be a list of at most 4 entries.")
+        if not isinstance(objects_raw, list) or len(objects_raw) > 20:
+            raise ValueError("fibo structured objects must be a list of at most 20 entries.")
         objects: list[dict[str, Any]] = []
         for index, entry in enumerate(objects_raw):
             if not isinstance(entry, dict):
@@ -1918,7 +1920,7 @@ def fibo_structured_prompt(body: dict[str, Any]) -> dict[str, Any] | None:
                     obj[field] = text
             count = entry.get("number_of_objects")
             if count is not None:
-                if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 20:
+                if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 100:
                     raise ValueError(f"fibo structured object {index + 1} number_of_objects is invalid.")
                 obj["number_of_objects"] = count
             if obj:
@@ -1927,7 +1929,15 @@ def fibo_structured_prompt(body: dict[str, Any]) -> dict[str, Any] | None:
                 objects.append(obj)
         if objects:
             structured["objects"] = objects
-    unknown = set(raw) - set(FIBO_STRUCTURED_TOP_STRINGS) - set(FIBO_STRUCTURED_NESTED) - {"objects"}
+    if "text_render" in raw:
+        # The endpoint exposes this field but its element schema is not stable
+        # enough for Horde to manufacture. Preserve an explicitly supplied
+        # JSON value and let the endpoint validate its documented shape.
+        try:
+            structured["text_render"] = json.loads(json.dumps(raw["text_render"]))
+        except (TypeError, ValueError):
+            raise ValueError("fibo structured text_render must be JSON-serializable.")
+    unknown = set(raw) - set(FIBO_STRUCTURED_TOP_STRINGS) - set(FIBO_STRUCTURED_NESTED) - FIBO_STRUCTURED_TOP_OPAQUE - {"objects"}
     if unknown:
         raise ValueError(f"Unknown fibo structured fields: {', '.join(sorted(unknown))}.")
     return structured or None
@@ -2019,6 +2029,7 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     prompt = str(body.get("prompt") or "").strip()
     fibo_structured = fibo_structured_prompt(body)
     revision_instruction = str(body.get("fiboRevisionInstruction") or "").strip()
+    native_fibo_compile = body.get("fiboNativeCompile") is True
     if not prompt and not fibo_structured:
         raise ValueError("An image prompt is required.")
     if len(prompt) > 12000:
@@ -2064,13 +2075,16 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
         # overrides this via the update below.
         "seed": secrets.randbelow(2_000_000_000),
     }
+    sync_mode = body.get("syncMode")
+    if isinstance(sync_mode, bool):
+        payload["sync_mode"] = sync_mode
     payload.update(fal_advanced_image_fields(body))
     # Bria Fibo endpoints speak their own structured JSON. Horde's authored
     # image guide arrives as a validated structured prompt (generation) or a
     # structured instruction carrying the edit wording (editing). Other fal
     # fields Fibo does not document are omitted rather than guessed.
     is_fibo_edit = model.startswith("bria/fibo-edit")
-    is_fibo_gen = model.startswith("bria/fibo") and not is_fibo_edit
+    is_fibo_gen = model == "bria/fibo-gen-1.5/text-to-image"
     if is_fibo_gen or is_fibo_edit:
         payload.pop("num_images", None)
         payload.pop("output_format", None)
@@ -2081,13 +2095,16 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
             resolution = str(body.get("fiboResolution") or "").strip()
             if resolution in {"1MP", "4MP"}:
                 payload["resolution"] = resolution
-            if fibo_structured:
+            if fibo_structured and not native_fibo_compile:
                 payload["structured_prompt"] = complete_fibo_structured(fibo_structured)
-            if revision_instruction and body.get("fiboCombinedRevision") is True:
+            if native_fibo_compile:
+                if not prompt:
+                    raise ValueError("FIBO native compile requires a natural-language prompt.")
+            elif revision_instruction and body.get("fiboCombinedRevision") is True:
                 # FIBO 1.5 combined refinement is capability-tested by the
                 # app. Only the tested operation may send this extra field.
                 payload["prompt"] = revision_instruction
-            else:
+            elif not native_fibo_compile:
                 payload.pop("prompt", None)
         else:
             # Fibo Edit has no `prompt` field: the wording is `instruction`

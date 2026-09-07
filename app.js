@@ -3258,6 +3258,7 @@ function repairLoadedState() {
             entity.schedule = entity.schedule || [];
         });
         normalizeAuthoredWorld(world);
+        migrateWorldVisualProjects(world);
     });
     state.systemPresets = Array.isArray(state.systemPresets) ? state.systemPresets.filter(p => {
         try { requirePlainObject(p, 'Preset'); requireSafeId(p.id, 'Preset id'); requireString(p.name, 'Preset name'); validatePresetData(p.data); return true; }
@@ -5230,6 +5231,270 @@ function compileWorldImageAdvancedLook(look) {
         .join('; ');
 }
 
+// --- Structured visual documents -----------------------------------------
+// The provider-shaped document is the only mutable visual truth.  Horde
+// metadata (stable object ids, bindings, salience and kind) lives beside it so
+// the exact FIBO JSON can be submitted without a cleanup pass.
+const STRUCTURED_VISUAL_DOCUMENT_SCHEMA_VERSION = 3;
+const STRUCTURED_VISUAL_TARGET_KINDS = new Set(['character', 'location', 'scene', 'ad_hoc']);
+const STRUCTURED_VISUAL_OBJECT_SALIENCE = new Set(['primary', 'secondary', 'tertiary']);
+const STRUCTURED_VISUAL_OBJECT_KINDS = new Set(['subject', 'scene_object', 'integrated_component', 'background_detail']);
+const STRUCTURED_VISUAL_MAX_OBJECTS = 20;
+
+function normalizeStructuredVisualTargetKind(value, fallback = 'ad_hoc') {
+    const kind = String(value || '').trim().toLowerCase();
+    return STRUCTURED_VISUAL_TARGET_KINDS.has(kind) ? kind : fallback;
+}
+
+function visualProjectTarget(world, target, kind = '') {
+    const inferred = String(kind || (target?.type === 'npc' ? 'character' : target?.type === 'location' ? 'location' : 'ad_hoc'));
+    return { kind: normalizeStructuredVisualTargetKind(inferred), id: target?.id ? String(target.id) : null };
+}
+
+function blankStructuredVisualDocument() {
+    return {
+        short_description: '',
+        objects: [],
+        background_setting: '',
+        lighting: { conditions: '', direction: '', shadows: '' },
+        aesthetics: {
+            composition: '', color_scheme: '', mood_atmosphere: '',
+            aesthetic_score: 'very high', preference_score: 'very high'
+        },
+        photographic_characteristics: {
+            depth_of_field: '', focus: '', camera_angle: '', lens_focal_length: ''
+        },
+        style_medium: '',
+        context: '',
+        artistic_style: ''
+    };
+}
+
+function normalizeStructuredVisualDocument(raw) {
+    const source = isPlainObject(raw) ? raw : {};
+    const blank = blankStructuredVisualDocument();
+    const doc = {
+        ...blank,
+        short_description: String(source.short_description || '').trim().slice(0, 1200),
+        background_setting: String(source.background_setting || '').trim().slice(0, 1200),
+        style_medium: String(source.style_medium || '').trim().slice(0, 600),
+        context: String(source.context || '').trim().slice(0, 1600),
+        artistic_style: String(source.artistic_style || '').trim().slice(0, 900)
+    };
+    ['lighting', 'aesthetics', 'photographic_characteristics'].forEach(section => {
+        const values = isPlainObject(source[section]) ? source[section] : {};
+        Object.keys(blank[section]).forEach(key => {
+            if (values[key] === undefined || values[key] === null) return;
+            if (section === 'aesthetics' && (key === 'aesthetic_score' || key === 'preference_score')) {
+                doc[section][key] = String(values[key] || '').trim().slice(0, 120) || 'very high';
+            } else doc[section][key] = String(values[key] || '').trim().slice(0, 1200);
+        });
+    });
+    // text_render is deliberately opaque until the provider schema is verified.
+    if (source.text_render !== undefined && source.text_render !== null) {
+        doc.text_render = safeJsonClone(source.text_render);
+    } else delete doc.text_render;
+    const objects = Array.isArray(source.objects) ? source.objects.slice(0, STRUCTURED_VISUAL_MAX_OBJECTS) : [];
+    doc.objects = objects.map(rawObject => {
+        const object = isPlainObject(rawObject) ? rawObject : {};
+        const normalized = {};
+        const fields = ['description', 'location', 'relationship', 'relative_size', 'shape_and_color',
+            'texture', 'appearance_details', 'pose', 'expression', 'clothing', 'action', 'gender',
+            'skin_tone_and_texture', 'orientation'];
+        fields.forEach(field => {
+            if (object[field] !== undefined && object[field] !== null && String(object[field]).trim()) {
+                normalized[field] = String(object[field]).trim().slice(0, 1600);
+            }
+        });
+        if (Number.isInteger(object.number_of_objects) && object.number_of_objects >= 1) {
+            normalized.number_of_objects = Math.min(100, object.number_of_objects);
+        }
+        if (!normalized.relationship) normalized.relationship = 'Primary subject and focal point of the image.';
+        return normalized;
+    });
+    return doc;
+}
+
+function newStructuredVisualObjectId(prefix = 'obj') {
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeStructuredVisualObjectMetadata(raw, objectOrder = []) {
+    const source = isPlainObject(raw) ? raw : {};
+    const metadata = {};
+    objectOrder.forEach((id, index) => {
+        const item = isPlainObject(source[id]) ? source[id] : {};
+        const salience = STRUCTURED_VISUAL_OBJECT_SALIENCE.has(item.salience) ? item.salience : (index === 0 ? 'primary' : 'secondary');
+        const kind = STRUCTURED_VISUAL_OBJECT_KINDS.has(item.kind) ? item.kind : (index === 0 ? 'subject' : 'scene_object');
+        metadata[id] = {
+            salience, kind,
+            binding: {
+                characterId: String(item.binding?.characterId || '').slice(0, 160),
+                outfitId: String(item.binding?.outfitId || '').slice(0, 160),
+                source: String(item.binding?.source || '').slice(0, 160)
+            }
+        };
+    });
+    return metadata;
+}
+
+function legacyStructuredVisualDocument(world, target, kind = '') {
+    const targetKind = normalizeStructuredVisualTargetKind(kind, target?.type === 'npc' ? 'character' : 'location');
+    const guide = normalizeWorldImageGuide(worldImageGuideForTarget(world, target, targetKind === 'character' ? 'npc' : 'location'));
+    const intent = normalizeWorldImageIntent(target?.visuals?.imageIntent, target?.imagePrompt || '', guide.context || '');
+    const framing = normalizeWorldImageFraming(target?.visuals?.framing, guide, target || {});
+    const look = normalizeWorldImageLook(target?.visuals?.look, guide);
+    const document = blankStructuredVisualDocument();
+    document.short_description = String(intent.authoredPrompt || target?.imagePrompt || target?.name || '').trim().slice(0, 1200);
+    document.context = String(intent.context || '').trim().slice(0, 1600);
+    document.background_setting = String(framing.backgroundSetting || target?.visualDescription || target?.description || '').trim().slice(0, 1200);
+    document.lighting = {
+        conditions: String(look.lightingConditions || '').trim().slice(0, 1200),
+        direction: String(look.lightingDirection || '').trim().slice(0, 1200),
+        shadows: String(look.lightingShadows || '').trim().slice(0, 1200)
+    };
+    document.aesthetics = {
+        composition: String(framing.shotComposition || '').trim().slice(0, 1200),
+        color_scheme: String(look.colorScheme || '').trim().slice(0, 1200),
+        mood_atmosphere: String(look.moodAtmosphere || '').trim().slice(0, 1200),
+        aesthetic_score: 'very high', preference_score: 'very high'
+    };
+    document.photographic_characteristics = {
+        depth_of_field: String(look.depthOfField || '').trim().slice(0, 1200),
+        focus: String(look.focus || '').trim().slice(0, 1200),
+        camera_angle: String(framing.cameraAngle || '').trim().slice(0, 1200),
+        lens_focal_length: String(look.lensFocalLength || '').trim().slice(0, 1200)
+    };
+    document.style_medium = String(look.styleMedium || '').trim().slice(0, 600);
+    document.artistic_style = [String(look.artisticStyle || '').trim(), compileWorldImageAdvancedLook(look)].filter(Boolean).join('; ').slice(0, 900);
+    const objectOrder = [];
+    const metadata = {};
+    if (targetKind === 'character' || target?.type === 'npc') {
+        const outfit = worldCurrentOutfit(target);
+        const objectId = newStructuredVisualObjectId('obj_subject');
+        objectOrder.push(objectId);
+        metadata[objectId] = {
+            salience: 'primary', kind: 'subject',
+            binding: { characterId: String(target?.id || ''), outfitId: String(outfit?.id || ''), source: 'legacy_character' }
+        };
+        document.objects.push(normalizeStructuredVisualDocument({ objects: [{
+            description: target?.appearance || target?.description || '',
+            relationship: framing.relationships || 'Primary subject and focal point of the image.',
+            location: framing.placementInFrame,
+            relative_size: framing.relativeSizeInFrame,
+            pose: framing.pose, expression: framing.expression, action: framing.action,
+            orientation: framing.orientation,
+            clothing: outfit?.description || '',
+            gender: target?.visuals?.portraitIdentityGuide?.gender || target?.gender || '',
+            skin_tone_and_texture: target?.visuals?.portraitIdentityGuide?.skinToneAndTexture || '',
+            shape_and_color: target?.visuals?.portraitIdentityGuide?.shapeAndColor || '',
+            texture: target?.visuals?.portraitIdentityGuide?.texture || '',
+            appearance_details: target?.visuals?.portraitIdentityGuide?.appearanceDetails || ''
+        }]}).objects[0]);
+    }
+    return { document, objectOrder, metadata };
+}
+
+function ensureWorldVisualProject(world, target, kind = '') {
+    if (!target) return null;
+    if (target.visuals && isPlainObject(target.visuals.visualProject)) {
+        const project = target.visuals.visualProject;
+        project.schemaVersion = STRUCTURED_VISUAL_DOCUMENT_SCHEMA_VERSION;
+        project.target = visualProjectTarget(world, target, kind);
+        project.structuredDocument = normalizeStructuredVisualDocument(project.structuredDocument);
+        project.objectOrder = Array.isArray(project.objectOrder) ? project.objectOrder.map(String) : [];
+        while (project.objectOrder.length < project.structuredDocument.objects.length) project.objectOrder.push(newStructuredVisualObjectId('obj'));
+        if (project.objectOrder.length > project.structuredDocument.objects.length) project.objectOrder.length = project.structuredDocument.objects.length;
+        project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(project.hordeObjectMetadata, project.objectOrder);
+        project.imageIntent = normalizeWorldImageIntent(project.imageIntent, '', '');
+        project.providerControls = isPlainObject(project.providerControls) ? project.providerControls : {};
+        project.revisions = Array.isArray(project.revisions) ? project.revisions : [];
+        return project;
+    }
+    const legacy = legacyStructuredVisualDocument(world, target, kind);
+    const project = {
+        schemaVersion: STRUCTURED_VISUAL_DOCUMENT_SCHEMA_VERSION,
+        target: visualProjectTarget(world, target, kind),
+        imageIntent: normalizeWorldImageIntent(target.visuals?.imageIntent, target.imagePrompt || '', ''),
+        structuredDocument: normalizeStructuredVisualDocument(legacy.document),
+        objectOrder: legacy.objectOrder,
+        hordeObjectMetadata: legacy.metadata,
+        providerControls: {
+            provider: '', model: '', aspectRatio: '', resolution: '', seed: null,
+            syncMode: false, providerSettings: {}
+        },
+        authoredRevisionId: '', activeRevisionId: '', revisions: []
+    };
+    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    target.visuals.visualProject = project;
+    return project;
+}
+
+function migrateWorldVisualProjects(world) {
+    if (!world) return { changed: false, migrated: 0 };
+    let migrated = 0;
+    (Array.isArray(world.entities) ? world.entities : []).forEach(entity => {
+        if (entity?.type !== 'npc') return;
+        if (!entity.visuals?.visualProject) { ensureWorldVisualProject(world, entity, 'character'); migrated += 1; }
+    });
+    (Array.isArray(world.locations) ? world.locations : []).forEach(location => {
+        if (!location.visuals?.visualProject) { ensureWorldVisualProject(world, location, 'location'); migrated += 1; }
+    });
+    return { changed: migrated > 0, migrated };
+}
+
+function structuredVisualDocumentWithBindings(project) {
+    if (!project) return { document: blankStructuredVisualDocument(), objectOrder: [], metadata: {} };
+    const document = normalizeStructuredVisualDocument(project.structuredDocument);
+    const objectOrder = Array.isArray(project.objectOrder) ? project.objectOrder.slice(0, document.objects.length) : [];
+    while (objectOrder.length < document.objects.length) objectOrder.push(newStructuredVisualObjectId('obj'));
+    project.objectOrder = objectOrder;
+    project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(project.hordeObjectMetadata, objectOrder);
+    return { document, objectOrder, metadata: project.hordeObjectMetadata };
+}
+
+function deterministicGenericVisualPrompt(document, objectOrder = [], metadata = {}) {
+    const doc = normalizeStructuredVisualDocument(document);
+    const ids = Array.isArray(objectOrder) ? objectOrder : [];
+    const objectEntries = doc.objects.map((object, index) => ({
+        object,
+        id: ids[index] || `obj_${index + 1}`,
+        metadata: metadata[ids[index]] || { salience: index ? 'secondary' : 'primary', kind: index ? 'scene_object' : 'subject' }
+    }));
+    const ordered = [...objectEntries].sort((a, b) => {
+        const rank = { primary: 0, secondary: 1, tertiary: 2 };
+        return (rank[a.metadata.salience] ?? 2) - (rank[b.metadata.salience] ?? 2);
+    });
+    const integrated = new Map();
+    const standalone = [];
+    ordered.forEach(entry => {
+        const kind = entry.metadata.kind;
+        if (kind === 'integrated_component' && standalone.length) {
+            const parent = standalone.find(candidate => candidate.metadata.salience === 'primary') || standalone[0];
+            integrated.set(parent.id, [...(integrated.get(parent.id) || []), entry.object]);
+        } else standalone.push(entry);
+    });
+    const objectText = standalone.map(entry => {
+        const object = entry.object;
+        const parts = [object.description, object.clothing ? `wearing ${object.clothing}` : '', object.location ? `located ${object.location}` : '', object.relationship, object.relative_size ? `relative size: ${object.relative_size}` : '', object.shape_and_color, object.texture, object.appearance_details, object.pose ? `pose: ${object.pose}` : '', object.expression ? `expression: ${object.expression}` : '', object.action ? `action: ${object.action}` : '', object.orientation ? `orientation: ${object.orientation}` : ''].filter(Boolean);
+        const additions = integrated.get(entry.id) || [];
+        additions.forEach(component => parts.push([component.description, component.relationship, component.shape_and_color, component.texture].filter(Boolean).join(', ')));
+        return parts.join(', ');
+    });
+    const photo = doc.photographic_characteristics;
+    return [
+        doc.short_description,
+        objectText.length ? `Subjects and scene objects: ${objectText.join('. ')}` : '',
+        doc.background_setting ? `Background setting: ${doc.background_setting}` : '',
+        doc.aesthetics.composition ? `Composition: ${doc.aesthetics.composition}` : '',
+        Object.values(doc.lighting).filter(Boolean).length ? `Lighting: ${Object.values(doc.lighting).filter(Boolean).join('; ')}` : '',
+        [doc.aesthetics.color_scheme, doc.aesthetics.mood_atmosphere].filter(Boolean).length ? `Colour and mood: ${[doc.aesthetics.color_scheme, doc.aesthetics.mood_atmosphere].filter(Boolean).join('; ')}` : '',
+        Object.values(photo).filter(Boolean).length ? `Photographic characteristics: ${Object.values(photo).filter(Boolean).join('; ')}` : '',
+        [doc.style_medium, doc.artistic_style].filter(Boolean).length ? `Style: ${[doc.style_medium, doc.artistic_style].filter(Boolean).join('; ')}` : '',
+        doc.context ? `Context: ${doc.context}` : ''
+    ].filter(Boolean).join('\n\n');
+}
+
 function composeWorldImageSpecification(world, subject = null, guideOverride = null, options = {}) {
     const guide = normalizeWorldImageGuide(guideOverride || worldImageGuide(world) || {});
     const source = isPlainObject(subject) ? subject : {};
@@ -5251,75 +5516,112 @@ function composeWorldImageSpecification(world, subject = null, guideOverride = n
         texture: String(source.texture || '').trim().slice(0, 400),
         appearanceDetails: String(source.appearanceDetails || '').trim().slice(0, 700)
     };
-    return { character, imageIntent, framing, look, outfit, revision: Number(options.revision || 0) || 0 };
+    let structuredDocument = isPlainObject(options.visualProject?.structuredDocument)
+        ? normalizeStructuredVisualDocument(options.visualProject.structuredDocument)
+        : isPlainObject(source.structuredDocument)
+            ? normalizeStructuredVisualDocument(source.structuredDocument)
+            : null;
+    let objectOrder = Array.isArray(options.visualProject?.objectOrder)
+        ? options.visualProject.objectOrder.slice(0, STRUCTURED_VISUAL_MAX_OBJECTS).map(String) : [];
+    let hordeObjectMetadata = isPlainObject(options.visualProject?.hordeObjectMetadata)
+        ? safeJsonClone(options.visualProject.hordeObjectMetadata) : {};
+    if (!structuredDocument) {
+        const legacy = blankStructuredVisualDocument();
+        legacy.short_description = String(imageIntent.authoredPrompt || character.visualDescription || '').trim().slice(0, 1200);
+        legacy.context = String(imageIntent.context || '').trim().slice(0, 1600);
+        legacy.background_setting = String(framing.backgroundSetting || '').trim().slice(0, 1200);
+        legacy.lighting = {
+            conditions: String(look.lightingConditions || '').trim(),
+            direction: String(look.lightingDirection || '').trim(),
+            shadows: String(look.lightingShadows || '').trim()
+        };
+        legacy.aesthetics = {
+            composition: String(framing.shotComposition || '').trim(),
+            color_scheme: String(look.colorScheme || '').trim(),
+            mood_atmosphere: String(look.moodAtmosphere || '').trim(),
+            aesthetic_score: 'very high', preference_score: 'very high'
+        };
+        legacy.photographic_characteristics = {
+            depth_of_field: String(look.depthOfField || '').trim(),
+            focus: String(look.focus || '').trim(),
+            camera_angle: String(framing.cameraAngle || '').trim(),
+            lens_focal_length: String(look.lensFocalLength || '').trim()
+        };
+        legacy.style_medium = String(look.styleMedium || '').trim();
+        legacy.artistic_style = [String(look.artisticStyle || '').trim(), compileWorldImageAdvancedLook(look)].filter(Boolean).join('; ');
+        if (character.visualDescription || outfit || Object.values(framing).some(Boolean)) {
+            legacy.objects = [{
+                description: character.visualDescription,
+                relationship: framing.relationships || 'Primary subject and focal point of the image.',
+                location: framing.placementInFrame,
+                relative_size: framing.relativeSizeInFrame,
+                shape_and_color: character.shapeAndColor,
+                texture: character.texture,
+                appearance_details: character.appearanceDetails,
+                pose: framing.pose,
+                expression: framing.expression,
+                clothing: outfit?.description || '',
+                action: framing.action,
+                gender: character.gender,
+                skin_tone_and_texture: character.skinToneAndTexture,
+                orientation: framing.orientation
+            }];
+            objectOrder = [newStructuredVisualObjectId('obj_subject')];
+            hordeObjectMetadata = {
+                [objectOrder[0]]: { salience: 'primary', kind: 'subject', binding: { characterId: String(source.characterId || ''), outfitId: String(outfit?.id || ''), source: 'composition_subject' } }
+            };
+        }
+        structuredDocument = normalizeStructuredVisualDocument(legacy);
+    }
+    if (outfit && structuredDocument.objects.length) {
+        structuredDocument.objects[0].clothing = String(outfit.description || '').trim().slice(0, 1600);
+        if (objectOrder[0]) {
+            hordeObjectMetadata[objectOrder[0]] = {
+                ...(hordeObjectMetadata[objectOrder[0]] || {}),
+                salience: hordeObjectMetadata[objectOrder[0]]?.salience || 'primary',
+                kind: hordeObjectMetadata[objectOrder[0]]?.kind || 'subject',
+                binding: {
+                    ...(hordeObjectMetadata[objectOrder[0]]?.binding || {}),
+                    characterId: String(source.characterId || hordeObjectMetadata[objectOrder[0]]?.binding?.characterId || ''),
+                    outfitId: String(outfit.id || '')
+                }
+            };
+        }
+    }
+    while (objectOrder.length < structuredDocument.objects.length) objectOrder.push(newStructuredVisualObjectId('obj'));
+    objectOrder.length = structuredDocument.objects.length;
+    hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(hordeObjectMetadata, objectOrder);
+    return {
+        character, imageIntent, framing, look, outfit,
+        structuredDocument, objectOrder, hordeObjectMetadata,
+        revision: Number(options.revision || 0) || 0
+    };
 }
 
 function fiboStructuredPromptFromSpecification(specification, { includeObjects = true } = {}) {
     const spec = specification || {};
-    const { character = {}, imageIntent = {}, framing = {}, look = {}, outfit = null } = spec;
-    const advancedLook = compileWorldImageAdvancedLook(look);
-    const structured = {};
-    const shortDescription = [
-        character.visualDescription,
-        framing.shotComposition,
-        framing.backgroundSetting,
-        advancedLook
-    ].filter(Boolean).join('. ').slice(0, 800);
-    if (shortDescription) structured.short_description = shortDescription;
-    if (framing.backgroundSetting) structured.background_setting = framing.backgroundSetting;
-    if (imageIntent.context) structured.context = imageIntent.context;
-    if (look.styleMedium) structured.style_medium = look.styleMedium;
-    if (look.artisticStyle || advancedLook) structured.artistic_style = [look.artisticStyle, advancedLook].filter(Boolean).join('; ').slice(0, 400);
-    const lighting = {};
-    if (look.lightingConditions) lighting.conditions = look.lightingConditions;
-    if (look.lightingDirection) lighting.direction = look.lightingDirection;
-    if (look.lightingShadows) lighting.shadows = look.lightingShadows;
-    if (Object.keys(lighting).length) structured.lighting = lighting;
-    const aesthetics = {};
-    if (framing.shotComposition) aesthetics.composition = framing.shotComposition;
-    if (look.colorScheme) aesthetics.color_scheme = look.colorScheme;
-    if (look.moodAtmosphere) aesthetics.mood_atmosphere = look.moodAtmosphere;
-    if (Object.keys(aesthetics).length) structured.aesthetics = aesthetics;
-    const photo = {};
-    if (look.depthOfField) photo.depth_of_field = look.depthOfField;
-    if (look.focus) photo.focus = look.focus;
-    if (framing.cameraAngle) photo.camera_angle = framing.cameraAngle;
-    if (look.lensFocalLength) photo.lens_focal_length = look.lensFocalLength;
-    if (Object.keys(photo).length) structured.photographic_characteristics = photo;
-    if (includeObjects && (character.visualDescription || outfit || Object.values(framing).some(Boolean))) {
-        const object = {
-            description: character.visualDescription || undefined,
-            relationship: framing.relationships || 'sole primary subject; no other prominent subjects',
-            location: framing.placementInFrame || undefined,
-            relative_size: framing.relativeSizeInFrame || undefined,
-            shape_and_color: character.shapeAndColor || undefined,
-            texture: character.texture || undefined,
-            appearance_details: character.appearanceDetails || undefined,
-            pose: framing.pose || undefined,
-            expression: framing.expression || undefined,
-            clothing: outfit?.description || undefined,
-            action: framing.action || undefined,
-            gender: character.gender || undefined,
-            skin_tone_and_texture: character.skinToneAndTexture || undefined,
-            orientation: framing.orientation || undefined
-        };
-        structured.objects = [Object.fromEntries(Object.entries(object).filter(([, value]) => value))];
-    }
-    return Object.keys(structured).length ? structured : null;
+    const document = normalizeStructuredVisualDocument(spec.structuredDocument || {});
+    if (!includeObjects) delete document.objects;
+    // Provider metadata is deliberately not part of this object.  The bridge
+    // receives a clean FIBO-shaped document with no Horde ids or bindings.
+    return Object.keys(document).some(key => key === 'text_render' || document[key]) ? document : null;
 }
 
 function composeWorldImageRequest(world, subject = null, guideOverride = null, options = {}) {
     const specification = composeWorldImageSpecification(world, subject, guideOverride, options);
     const structuredPrompt = fiboStructuredPromptFromSpecification(specification);
-    const prose = [
-        specification.imageIntent.authoredPrompt,
-        specification.character.visualDescription,
-        specification.outfit ? `Selected outfit: ${specification.outfit.description}` : '',
-        flattenWorldImageGuide(guideOverride || worldImageGuide(world)),
-        Object.entries(specification.framing).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`).join('. '),
-        Object.entries(specification.look).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`).join('. ')
-    ].filter(Boolean).join('\n\n');
-    return { specification, plainPrompt: prose, structuredPrompt, requestMetadata: { operation: options.operation || 'generate' } };
+    const prose = deterministicGenericVisualPrompt(specification.structuredDocument, specification.objectOrder, specification.hordeObjectMetadata);
+    return {
+        specification,
+        plainPrompt: prose,
+        structuredPrompt,
+        requestMetadata: {
+            operation: options.operation || 'generate',
+            target: options.visualProject?.target || null,
+            objectOrder: specification.objectOrder.slice(),
+            compiledDeterministically: true
+        }
+    };
 }
 
 // Compatibility bridge for the historical helper script.  The helper may
@@ -5372,7 +5674,8 @@ function projectFiboResolvedFraming(resolved, current = {}) {
 }
 
 function isFiboImageEndpoint(model) {
-    return /^bria\/fibo[a-z0-9._-]*\//i.test(String(model || ''));
+    const id = String(model || '').trim().toLowerCase();
+    return id === 'bria/fibo-gen-1.5/text-to-image' || id.startsWith('bria/fibo-edit');
 }
 
 // Builds the Fibo-native structured prompt (or, with an edit instruction,
@@ -5625,7 +5928,8 @@ function normalizeImageBriefPreset(raw) {
         look: normalizeWorldImageLook(source.look, legacyGuide),
         description: String(source.description || '').trim().slice(0, 800),
         aspectRatio: WORLD_IMAGE_PRESET_ASPECTS.includes(String(source.aspectRatio || '')) ? String(source.aspectRatio) : '',
-        framing: WORLD_IMAGE_PRESET_FRAMINGS.includes(String(source.framing || '')) ? String(source.framing) : ''
+        framing: WORLD_IMAGE_PRESET_FRAMINGS.includes(String(source.framing || '')) ? String(source.framing) : '',
+        structuredPatch: isPlainObject(source.structuredPatch) ? safeJsonClone(source.structuredPatch) : null
     };
 }
 
@@ -5752,6 +6056,13 @@ function addWorldMediaAsset(world, data, kind, label = '', metadata = {}) {
             ? safeJsonClone(metadata.resolvedStructuredPrompt) : null,
         exactResolvedStructuredPrompt: isPlainObject(metadata.resolvedStructuredPrompt)
             ? safeJsonClone(metadata.resolvedStructuredPrompt) : null,
+        providerResponseMetadata: isPlainObject(metadata.providerResponseMetadata)
+            ? safeJsonClone(metadata.providerResponseMetadata) : null,
+        authoredDocument: isPlainObject(metadata.authoredDocument)
+            ? safeJsonClone(metadata.authoredDocument) : null,
+        resolvedOutputPolicy: String(metadata.resolvedOutputPolicy || '').slice(0, 80),
+        visualProjectId: String(metadata.visualProjectId || '').slice(0, 160),
+        visualRevisionId: String(metadata.visualRevisionId || '').slice(0, 160),
         resolvedContext: String(metadata.resolvedContext || '').slice(0, 3000),
         outfitSnapshot: isPlainObject(metadata.outfitSnapshot) ? safeJsonClone(metadata.outfitSnapshot) : null,
         seed: Number.isInteger(metadata.seed) ? metadata.seed : null,
@@ -13750,12 +14061,16 @@ Time discipline: use only the time evidence supplied in <context>. Never manufac
 Epistemic discipline: hidden/off-screen facts in <context> are authorial awareness only. Characters know only what they witnessed, were told, or hold as committed cognition.`;
     // Sidecar has one narrator turn with one authoritative system contract.
     // Upstream FF presets often put reasoning/guardrail sections at an
-    // in-chat depth with role=user. That is useful for legacy prompting, but
-    // it is the wrong authority boundary here: after the player's message
-    // those blocks look like fresh user instructions. Fold them into the
-    // Sidecar system prompt while leaving Inline Legacy unchanged.
+    // in-chat depth with role=user.  That is useful for SillyTavern-style
+    // legacy prompting, but it is the wrong authority boundary here: after
+    // the player's message those blocks look like fresh user instructions
+    // and can override or compete with the scoped Horde context.  Keep the
+    // source preset unchanged for Inline Legacy, but fold all non-assistant
+    // depth injections into the Sidecar system prompt.
     const sidecar = options.sidecar === true;
-    const promptSections = enabled.filter(section => (section.placement || 'system') === 'system');
+    const promptSections = enabled.filter(section =>
+        (section.placement || 'system') === 'system'
+    );
     const injectedHistory = enabled
         .filter(section => section.placement === 'history')
         .map(section => ({
@@ -13763,9 +14078,13 @@ Epistemic discipline: hidden/off-screen facts in <context> are authorial awarene
             content: section.content,
             depth: Number(section.depth) || 0
         }))
+        // See the comment above: only an intentional assistant prefill is
+        // allowed to remain in the conversational history for Sidecar.
         .filter(section => !sidecar || section.role === 'assistant');
     const foldedSidecarSections = sidecar
-        ? enabled.filter(section => section.placement === 'history' && section.role !== 'assistant')
+        ? enabled
+            .filter(section => section.placement === 'history' && section.role !== 'assistant')
+            .sort((a, b) => (a.order - b.order) || 0)
         : [];
     const prefill = enabled
         .filter(section => section.placement === 'prefill')
@@ -50265,6 +50584,8 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
                 fiboResolution: String(body.fiboResolution || ''),
                 fiboRevisionInstruction: String(body.fiboRevisionInstruction || ''),
                 fiboCombinedRevision: body.fiboCombinedRevision === true,
+                fiboNativeCompile: body.fiboNativeCompile === true,
+                syncMode: typeof body.syncMode === 'boolean' ? body.syncMode : undefined,
                 ...falAdvancedRequestFieldsFromBody(body)
             }
         });
@@ -50987,9 +51308,39 @@ function renderWorldVisualActiveOutfit() {
             if (editor.target.visuals.currentOutfitId === outfit.id) editor.target.currentOutfit = outfit.description;
             updateWorldTokenCount();
         };
-        card.querySelector('.world-visual-outfit-generate').onclick = () => {
+        card.querySelector('.world-visual-outfit-generate').onclick = async event => {
+            event.stopPropagation();
             selectWorldOutfit(editor.world, editor.target, outfit.id, { preferImage: false });
-            updateWorldVisualCropPreview();
+            const button = event.currentTarget;
+            const original = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Generating…';
+            try {
+                saveWorldVisualEditorFields();
+                const assetId = await generateWorldNpcPortrait(editor.world, editor.target, {
+                    outfitId: outfit.id,
+                    maxDimension: normalizedWorldVisualResolution(editor.target.visuals?.portraitResolution, 1200),
+                    operation: 'generate'
+                });
+                registerWorldVisualVariant(editor.world, editor.target, 'npc', assetId);
+                attachWorldVisualToOutfit(editor.target, assetId, outfit.id);
+                const asset = worldMediaAsset(editor.world, assetId);
+                if (asset) {
+                    asset.entityId = editor.target.id;
+                    asset.outfitId = outfit.id;
+                    asset.outfitSnapshot = safeJsonClone(outfit);
+                }
+                await deriveWorldNpcPortraitDisplay(editor.world, editor.target);
+                pruneWorldMediaAssets(editor.world);
+                refreshWorldVisualEditorAfterAsset();
+                showToast(`Generated ${outfit.name}.`, 'success');
+            } catch (error) {
+                showToast(`Outfit generation failed: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = original;
+                renderWorldVisualActiveOutfit();
+            }
         };
         bindWorldOutfitDelete(card.querySelector('.world-visual-outfit-delete'), () => {
             editor.target.visuals.outfits = worldOutfits(editor.target).filter(entry => entry.id !== outfit.id);
@@ -51110,11 +51461,274 @@ function updateWorldVisualCropPreview() {
     draw();
 }
 
+function structuredVisualEditorText(id) {
+    return String(document.getElementById(id)?.value || '').trim();
+}
+
+function renderStructuredVisualDocumentEditor(project) {
+    const form = document.getElementById('world-visual-document-form');
+    if (!form || !project) return;
+    project.structuredDocument = normalizeStructuredVisualDocument(project.structuredDocument);
+    const doc = project.structuredDocument;
+    const set = (id, value) => { const input = document.getElementById(id); if (input) input.value = value == null ? '' : value; };
+    const requestInput = document.getElementById('world-visual-structured-request');
+    if (requestInput && !String(requestInput.value || '').trim()) requestInput.value = project.imageIntent?.authoredPrompt || doc.short_description || '';
+    set('world-visual-structured-intent', project.imageIntent?.authoredPrompt || '');
+    set('world-visual-structured-context', project.imageIntent?.context || doc.context || '');
+    set('world-visual-structured-background', doc.background_setting);
+    set('world-visual-structured-lighting-conditions', doc.lighting.conditions);
+    set('world-visual-structured-lighting-direction', doc.lighting.direction);
+    set('world-visual-structured-lighting-shadows', doc.lighting.shadows);
+    set('world-visual-structured-composition', doc.aesthetics.composition);
+    set('world-visual-structured-color', doc.aesthetics.color_scheme);
+    set('world-visual-structured-mood', doc.aesthetics.mood_atmosphere);
+    set('world-visual-structured-depth', doc.photographic_characteristics.depth_of_field);
+    set('world-visual-structured-focus', doc.photographic_characteristics.focus);
+    set('world-visual-structured-camera', doc.photographic_characteristics.camera_angle);
+    set('world-visual-structured-lens', doc.photographic_characteristics.lens_focal_length);
+    set('world-visual-structured-style-medium', doc.style_medium);
+    set('world-visual-structured-artistic-style', doc.artistic_style);
+    set('world-visual-structured-aspect', project.providerControls?.aspectRatio || '3:4');
+    set('world-visual-structured-resolution', project.providerControls?.resolution || '1200');
+    set('world-visual-structured-seed', project.providerControls?.seed == null ? '' : project.providerControls.seed);
+    set('world-visual-structured-sync', project.providerControls?.syncMode === true ? 'true' : project.providerControls?.syncMode === false ? 'false' : '');
+    const rawJson = document.getElementById('world-visual-raw-json');
+    if (rawJson && !document.getElementById('world-visual-document-json')?.hidden) {
+        rawJson.value = JSON.stringify(doc, null, 2);
+    } else if (rawJson) {
+        rawJson.value = JSON.stringify(doc, null, 2);
+    }
+    const list = document.getElementById('world-visual-structured-objects');
+    if (!list) return;
+    const ids = Array.isArray(project.objectOrder) ? project.objectOrder : [];
+    list.innerHTML = doc.objects.map((object, index) => {
+        const objectId = ids[index] || newStructuredVisualObjectId('obj');
+        const meta = project.hordeObjectMetadata?.[objectId] || {};
+        const field = (key, label, multiline = false) => `<label class="form-label">${label}${multiline ? `<textarea class="form-textarea world-visual-object-field" data-field="${key}" rows="2">${escapeHTML(object[key] || '')}</textarea>` : `<input class="form-input world-visual-object-field" data-field="${key}" value="${escapeHTML(object[key] || '')}">`}</label>`;
+        return `<article class="world-visual-object-card ${meta.salience === 'primary' ? 'is-primary' : ''}" data-object-id="${escapeHTML(objectId)}"><div class="world-visual-object-card-header"><span class="world-visual-object-card-title">Object ${index + 1}</span><div class="world-visual-object-actions"><select class="form-select world-visual-object-meta" data-meta="salience" title="How important this object is to the composition"><option value="primary" ${meta.salience === 'primary' ? 'selected' : ''}>Primary</option><option value="secondary" ${meta.salience === 'secondary' ? 'selected' : ''}>Secondary</option><option value="tertiary" ${meta.salience === 'tertiary' ? 'selected' : ''}>Tertiary</option></select><select class="form-select world-visual-object-meta" data-meta="kind" title="What sort of visual object this is"><option value="subject" ${meta.kind === 'subject' ? 'selected' : ''}>Subject</option><option value="scene_object" ${meta.kind === 'scene_object' ? 'selected' : ''}>Scene object</option><option value="integrated_component" ${meta.kind === 'integrated_component' ? 'selected' : ''}>Integrated component</option><option value="background_detail" ${meta.kind === 'background_detail' ? 'selected' : ''}>Background detail</option></select><button type="button" class="tool-btn world-visual-object-up" title="Move object up">↑</button><button type="button" class="tool-btn world-visual-object-down" title="Move object down">↓</button><button type="button" class="tool-btn world-visual-object-remove" title="Remove object">Remove</button></div></div><div class="world-visual-grid-2">${field('description','Description',true)}${field('relationship','Relationship',true)}${field('location','Location')}${field('relative_size','Relative size')}${field('shape_and_color','Shape and colour')}${field('texture','Texture')}${field('appearance_details','Appearance details',true)}${field('number_of_objects','Number of objects')}${field('pose','Pose')}${field('expression','Expression')}${field('clothing','Clothing')}${field('action','Action')}${field('gender','Gender')}${field('skin_tone_and_texture','Skin tone and texture')}${field('orientation','Orientation')}</div></article>`;
+    }).join('');
+    const count = document.getElementById('world-visual-object-count');
+    if (count) count.textContent = `${doc.objects.length}/${STRUCTURED_VISUAL_MAX_OBJECTS}`;
+    list.querySelectorAll('.world-visual-object-remove').forEach(button => button.onclick = () => {
+        const card = button.closest('[data-object-id]');
+        const index = [...list.children].indexOf(card);
+        if (index >= 0) { saveStructuredVisualEditorDraft(); project.structuredDocument.objects.splice(index, 1); project.objectOrder.splice(index, 1); renderStructuredVisualDocumentEditor(project); }
+    });
+    list.querySelectorAll('.world-visual-object-up').forEach(button => button.onclick = () => moveStructuredVisualObject(project, button.closest('[data-object-id]'), -1));
+    list.querySelectorAll('.world-visual-object-down').forEach(button => button.onclick = () => moveStructuredVisualObject(project, button.closest('[data-object-id]'), 1));
+}
+
+function readStructuredVisualEditorIntoProject(project) {
+    if (!project) return null;
+    const doc = normalizeStructuredVisualDocument(project.structuredDocument);
+    const value = id => structuredVisualEditorText(id);
+    project.imageIntent = normalizeWorldImageIntent({
+        ...(project.imageIntent || {}), authoredPrompt: value('world-visual-structured-intent'), context: value('world-visual-structured-context')
+    }, '', '');
+    doc.short_description = value('world-visual-structured-intent').slice(0, 1200) || doc.short_description;
+    doc.context = value('world-visual-structured-context').slice(0, 1600);
+    doc.background_setting = value('world-visual-structured-background').slice(0, 1200);
+    doc.lighting = { conditions: value('world-visual-structured-lighting-conditions').slice(0, 1200), direction: value('world-visual-structured-lighting-direction').slice(0, 1200), shadows: value('world-visual-structured-lighting-shadows').slice(0, 1200) };
+    doc.aesthetics = { composition: value('world-visual-structured-composition').slice(0, 1200), color_scheme: value('world-visual-structured-color').slice(0, 1200), mood_atmosphere: value('world-visual-structured-mood').slice(0, 1200), aesthetic_score: 'very high', preference_score: 'very high' };
+    doc.photographic_characteristics = { depth_of_field: value('world-visual-structured-depth').slice(0, 1200), focus: value('world-visual-structured-focus').slice(0, 1200), camera_angle: value('world-visual-structured-camera').slice(0, 1200), lens_focal_length: value('world-visual-structured-lens').slice(0, 1200) };
+    doc.style_medium = value('world-visual-structured-style-medium').slice(0, 600);
+    doc.artistic_style = value('world-visual-structured-artistic-style').slice(0, 900);
+    const list = document.getElementById('world-visual-structured-objects');
+    const nextOrder = [];
+    const nextMeta = {};
+    const nextObjects = [];
+    [...(list?.querySelectorAll('[data-object-id]') || [])].forEach((card, index) => {
+        const id = String(card.dataset.objectId || newStructuredVisualObjectId('obj'));
+        const object = {};
+        card.querySelectorAll('.world-visual-object-field').forEach(input => {
+            const key = input.dataset.field;
+            const text = String(input.value || '').trim();
+            if (!text) return;
+            if (key === 'number_of_objects') { const count = Number.parseInt(text, 10); if (Number.isInteger(count) && count > 0) object[key] = Math.min(100, count); }
+            else object[key] = text.slice(0, 1600);
+        });
+        if (!object.relationship) object.relationship = index === 0 ? 'Primary subject and focal point of the image.' : 'Related to the primary subject in the scene.';
+        const salience = card.querySelector('[data-meta="salience"]')?.value || (index ? 'secondary' : 'primary');
+        const kind = card.querySelector('[data-meta="kind"]')?.value || (index ? 'scene_object' : 'subject');
+        nextOrder.push(id); nextObjects.push(object); nextMeta[id] = { salience, kind, binding: project.hordeObjectMetadata?.[id]?.binding || { characterId: '', outfitId: '', source: 'structured_editor' } };
+    });
+    project.structuredDocument = normalizeStructuredVisualDocument({ ...doc, objects: nextObjects });
+    project.objectOrder = nextOrder;
+    project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(nextMeta, nextOrder);
+    const seedValue = value('world-visual-structured-seed');
+    project.providerControls = { ...(project.providerControls || {}), aspectRatio: value('world-visual-structured-aspect') || '3:4', resolution: value('world-visual-structured-resolution') || '1200', seed: seedValue === '' ? null : Number.parseInt(seedValue, 10), syncMode: document.getElementById('world-visual-structured-sync')?.value === 'true' };
+    return project;
+}
+
+function saveStructuredVisualEditorDraft() {
+    const editor = worldVisualEditorState;
+    if (!editor) return null;
+    const project = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
+    return readStructuredVisualEditorIntoProject(project);
+}
+
+function recordStructuredVisualRevision(project, {
+    operation = 'manual', authoredDocument = null, submittedStructuredPrompt = null,
+    resolvedStructuredPrompt = null, providerRequest = null, provenance = 'visual_editor',
+    resolvedOutputPolicy = 'submitted_as_current', diff = null
+} = {}) {
+    if (!project) return null;
+    project.revisions = Array.isArray(project.revisions) ? project.revisions : [];
+    const document = normalizeStructuredVisualDocument(authoredDocument || project.structuredDocument);
+    const revisionId = `visual_rev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const revision = {
+        revisionId,
+        parentRevisionId: String(project.activeRevisionId || ''),
+        operation,
+        authoredDocument: safeJsonClone(document),
+        submittedStructuredPrompt: submittedStructuredPrompt ? safeJsonClone(submittedStructuredPrompt) : null,
+        resolvedStructuredPrompt: resolvedStructuredPrompt ? safeJsonClone(resolvedStructuredPrompt) : null,
+        providerRequest: providerRequest ? safeJsonClone(providerRequest) : null,
+        diff: diff ? safeJsonClone(diff) : null,
+        provenance,
+        resolvedOutputPolicy,
+        objectOrder: Array.isArray(project.objectOrder) ? project.objectOrder.slice() : [],
+        hordeObjectMetadata: safeJsonClone(project.hordeObjectMetadata || {}),
+        createdAt: new Date().toISOString()
+    };
+    project.revisions.push(revision);
+    project.activeRevisionId = revisionId;
+    if (resolvedOutputPolicy === 'promote' || operation === 'manual' || operation === 'refine' || operation === 'rebuild') {
+        project.authoredRevisionId = revisionId;
+    }
+    return revision;
+}
+
+function parseStructuredVisualJson(text) {
+    const raw = String(text || '').trim();
+    if (!raw) throw new Error('The structured document is empty.');
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new Error('Expected a JSON object containing the structured visual document.');
+    let parsed;
+    try { parsed = JSON.parse(raw.slice(start, end + 1)); }
+    catch (error) { throw new Error(`Invalid structured JSON: ${error.message}`); }
+    // Accept either the FIBO-shaped document itself or a wrapper used by
+    // model authoring calls, but never let Horde metadata enter the document.
+    const candidate = isPlainObject(parsed.structuredDocument) ? parsed.structuredDocument
+        : isPlainObject(parsed.structured_prompt) ? parsed.structured_prompt : parsed;
+    return normalizeStructuredVisualDocument(candidate);
+}
+
+function structuredVisualAuthoringSchemaDescription() {
+    return `Return one complete JSON object with this exact FIBO-shaped visual document schema. Omit blank optional fields; keep objects as an array of PromptObject fields only (no Horde ids or metadata): {short_description:string, objects:[{description,location,relationship,relative_size,shape_and_color,texture,appearance_details,number_of_objects,pose,expression,clothing,action,gender,skin_tone_and_texture,orientation}], background_setting:string, lighting:{conditions,direction,shadows}, aesthetics:{composition,color_scheme,mood_atmosphere,aesthetic_score:"very high",preference_score:"very high"}, photographic_characteristics:{depth_of_field,focus,camera_angle,lens_focal_length}, style_medium:string, text_render?:opaque provider value, context:string, artistic_style:string}. Every object must have relationship. Preserve unaffected fields and return the complete document, not a patch.`;
+}
+
+async function runStructuredVisualAuthoring(operation, event) {
+    const editor = worldVisualEditorState;
+    if (!editor) return false;
+    const project = saveStructuredVisualEditorDraft();
+    const request = String(document.getElementById('world-visual-structured-request')?.value || '').trim();
+    if (!request) return showToast('Describe the image or the change you want first.', 'error');
+    const button = event?.currentTarget;
+    const original = button?.textContent || '';
+    if (button) { button.disabled = true; button.textContent = operation === 'compile' ? 'Compiling…' : operation === 'rebuild' ? 'Rebuilding…' : 'Refining…'; }
+    try {
+        const provider = worldVisualProvider(editor.world, 'new');
+        const model = worldVisualModel(editor.world, provider, 'new');
+        const fibo = provider === 'fal' && isFiboImageEndpoint(model);
+        if (operation === 'compile' && fibo) {
+            // FIBO owns natural-language compilation. The returned resolved
+            // structured prompt is adopted as the initial authored document.
+            const subject = editor.kind === 'npc' ? {
+                name: editor.target.name, authoredPrompt: request,
+                description: editor.target.appearance || editor.target.description || '',
+                characterId: editor.target.id, outfit: worldCurrentOutfit(editor.target)
+            } : { authoredPrompt: request, visualDescription: editor.target.visualDescription || editor.target.description || '' };
+            const assetId = editor.kind === 'npc'
+                ? await generateWorldNpcPortrait(editor.world, editor.target, { operation: 'compile', authoredPrompt: request, outfitId: worldCurrentOutfit(editor.target)?.id || '' })
+                : await generateWorldLocationBackground(editor.world, editor.target, { operation: 'compile', authoredPrompt: request });
+            registerWorldVisualVariant(editor.world, editor.target, editor.kind, assetId);
+            if (editor.kind === 'npc') attachWorldVisualToOutfit(editor.target, assetId, worldCurrentOutfit(editor.target)?.id || '');
+            const asset = worldMediaAsset(editor.world, assetId);
+            const resolved = asset?.resolvedStructuredPrompt;
+            if (!resolved) throw new Error('FIBO returned no structured prompt to compile.');
+            project.structuredDocument = normalizeStructuredVisualDocument(resolved);
+            if (!project.structuredDocument.objects.length && editor.kind === 'npc') {
+                const fallbackId = newStructuredVisualObjectId('obj_subject');
+                project.structuredDocument.objects = [{ description: editor.target.appearance || editor.target.name, relationship: 'Primary subject and focal point of the image.', clothing: worldCurrentOutfit(editor.target)?.description || '' }];
+                project.objectOrder = [fallbackId];
+                project.hordeObjectMetadata = { [fallbackId]: { salience: 'primary', kind: 'subject', binding: { characterId: editor.target.id, outfitId: worldCurrentOutfit(editor.target)?.id || '', source: 'fibo_compile' } } };
+            }
+            project.imageIntent = normalizeWorldImageIntent(project.imageIntent, request, project.imageIntent?.context || '');
+            project.imageIntent.authoredPrompt = request;
+            recordStructuredVisualRevision(project, { operation: 'compile', authoredDocument: project.structuredDocument, resolvedStructuredPrompt: resolved, resolvedOutputPolicy: 'promote', provenance: 'fibo_native_compile' });
+        } else {
+            const current = JSON.stringify(project.structuredDocument, null, 2);
+            const history = operation === 'rebuild' ? JSON.stringify(project.revisions.slice(-8), null, 2) : '';
+            const body = applyOpenRouterRouting({
+                model: String(state.globalSettings?.structuredModel || '').trim() || editor.world?.model || state.globalSettings?.defaultModel,
+                max_tokens: 4200, temperature: 0.15,
+                messages: [
+                    { role: 'system', content: `${operation === 'rebuild' ? 'You semantically rebuild a structured visual document from authored intent and accepted revision history.' : operation === 'refine' ? 'You revise an existing structured visual document with the author’s instruction.' : 'You compile an authored image request into a structured visual document.'}\n\n${structuredVisualAuthoringSchemaDescription()}\nDo not invent visible character facts from persona or mood. Persona is only soft context when explicitly relevant. Do not return markdown.` },
+                    { role: 'user', content: [`AUTHOR REQUEST:\n${request}`, `CURRENT DOCUMENT:\n${current}`, history ? `ACCEPTED REVISION HISTORY:\n${history}` : ''].filter(Boolean).join('\n\n---\n\n') }
+                ]
+            }, editor.world, { scope: 'utility' });
+            const response = await fetch(apiBase() + '/chat/completions', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!response.ok) throw new Error(`${response.status}: ${(await response.text()).slice(0, 240)}`);
+            const data = await response.json();
+            const next = parseStructuredVisualJson(data.choices?.[0]?.message?.content || '');
+            project.imageIntent = normalizeWorldImageIntent(project.imageIntent, operation === 'compile' ? request : project.imageIntent?.authoredPrompt || '', project.imageIntent?.context || '');
+            if (operation === 'compile') project.imageIntent.authoredPrompt = request;
+            project.structuredDocument = next;
+            while (project.objectOrder.length < next.objects.length) project.objectOrder.push(newStructuredVisualObjectId('obj'));
+            project.objectOrder.length = next.objects.length;
+            project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(project.hordeObjectMetadata, project.objectOrder);
+            recordStructuredVisualRevision(project, { operation, authoredDocument: next, resolvedOutputPolicy: 'promote', provenance: `horde_model_${operation}` });
+        }
+        renderStructuredVisualDocumentEditor(project);
+        await saveState();
+        showToast(`Structured visual ${operation} complete. Review the document, then generate when ready.`, 'success');
+        return true;
+    } catch (error) {
+        showToast(`Structured visual ${operation} failed — ${error.message}`, 'error');
+        return false;
+    } finally {
+        if (button) { button.disabled = false; button.textContent = original; }
+    }
+}
+
+function moveStructuredVisualObject(project, card, direction) {
+    if (!project || !card) return;
+    saveStructuredVisualEditorDraft();
+    const index = [...document.querySelectorAll('#world-visual-structured-objects > [data-object-id]')].indexOf(card);
+    const next = index + direction;
+    if (index < 0 || next < 0 || next >= project.structuredDocument.objects.length) return;
+    [project.structuredDocument.objects[index], project.structuredDocument.objects[next]] = [project.structuredDocument.objects[next], project.structuredDocument.objects[index]];
+    [project.objectOrder[index], project.objectOrder[next]] = [project.objectOrder[next], project.objectOrder[index]];
+    renderStructuredVisualDocumentEditor(project);
+}
+
 function saveWorldVisualEditorFields() {
     const editor = worldVisualEditorState;
     if (!editor) return;
+    const project = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
+    readStructuredVisualEditorIntoProject(project);
     const target = editor.target;
     target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    // Keep legacy export aliases synchronized for older worlds/importers, but
+    // never read them back as active authoring truth.
+    const structured = project.structuredDocument;
+    const setCompat = (id, value) => { const input = document.getElementById(id); if (input) input.value = value == null ? '' : value; };
+    setCompat('world-visual-primary', structured.short_description || target.appearance || target.visualDescription || '');
+    setCompat('world-visual-prompt', project.imageIntent?.authoredPrompt || structured.short_description || '');
+    setCompat('world-visual-subject-pose', structured.objects[0]?.pose || '');
+    setCompat('world-visual-subject-expression', structured.objects[0]?.expression || '');
+    setCompat('world-visual-subject-action', structured.objects[0]?.action || '');
+    setCompat('world-visual-subject-orientation', structured.objects[0]?.orientation || '');
+    setCompat('world-visual-subject-location', structured.objects[0]?.location || '');
+    setCompat('world-visual-framing', 'auto');
+    setCompat('world-visual-look-styleMedium', structured.style_medium);
+    setCompat('world-visual-look-lightingConditions', structured.lighting.conditions);
+    setCompat('world-visual-look-colorScheme', structured.aesthetics.color_scheme);
+    setCompat('world-visual-look-depthOfField', structured.photographic_characteristics.depth_of_field);
+    setCompat('world-visual-look-focus', structured.photographic_characteristics.focus);
+    setCompat('world-visual-look-lensFocalLength', structured.photographic_characteristics.lens_focal_length);
     const aspect = normalizedWorldVisualAspect(document.getElementById('world-visual-aspect').value,
         editor.kind === 'npc' ? '3:4' : '16:9');
     const resolution = normalizedWorldVisualResolution(document.getElementById('world-visual-resolution').value,
@@ -51567,6 +52181,7 @@ async function runWorldVisualGeneration(revisionOnly, event) {
     button.textContent = revisionOnly ? 'Revising...' : 'Generating...';
     try {
         saveWorldVisualEditorFields();
+        const visualProject = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
         const activeGuide = editor.kind === 'npc'
             ? worldImageGuideForTarget(editor.world, editor.target, 'npc', editor.activeBriefName || '')
             : null;
@@ -51577,6 +52192,9 @@ async function runWorldVisualGeneration(revisionOnly, event) {
             maxDimension: Number(document.getElementById('world-visual-resolution').value),
             referenceImage,
             imageGuide: activeGuide,
+            visualProject,
+            operation: revisionOnly ? 'revise' : 'generate',
+            resolvedOutputPolicy: revisionOnly ? 'review' : 'submitted_as_current',
             resolvedStructuredPrompt: sourceAsset?.exactResolvedStructuredPrompt
                 || sourceAsset?.resolvedStructuredPrompt || null
         };
@@ -51591,13 +52209,21 @@ async function runWorldVisualGeneration(revisionOnly, event) {
                 asset.entityId = editor.target.id;
                 asset.outfitId = outfit?.id || '';
                 if (asset.resolvedStructuredPrompt) {
-                    editor.target.visuals.look = projectFiboResolvedState(
-                        asset.resolvedStructuredPrompt, editor.target.visuals.look || {});
-                    editor.target.visuals.framing = projectFiboResolvedFraming(
-                        asset.resolvedStructuredPrompt, editor.target.visuals.framing || {});
-                    // Provider context is an audit projection only. Human
-                    // Image Intent remains untouched.
+                    // Ordinary renders preserve authored state. The provider
+                    // interpretation remains attached to the asset for
+                    // inspection/review and is never silently projected back
+                    // into Character, Framing, Look, or Image Intent.
                     asset.resolvedContext = String(asset.resolvedStructuredPrompt.context || '').slice(0, 3000);
+                    const project = ensureWorldVisualProject(editor.world, editor.target, 'character');
+                    recordStructuredVisualRevision(project, {
+                        operation: revisionOnly ? 'rerender' : 'render',
+                        authoredDocument: project.structuredDocument,
+                        submittedStructuredPrompt: asset.requestMetadata?.structuredPrompt || null,
+                        resolvedStructuredPrompt: asset.resolvedStructuredPrompt,
+                        providerRequest: asset.exactRequest || asset.requestMetadata || null,
+                        resolvedOutputPolicy: revisionOnly ? 'review' : 'submitted_as_current',
+                        provenance: 'provider_render'
+                    });
                 }
             }
         }
@@ -51612,6 +52238,7 @@ async function runWorldVisualGeneration(revisionOnly, event) {
             else editor.target.visuals.backgroundCorrection = '';
         }
         pruneWorldMediaAssets(editor.world);
+        await saveState();
         refreshWorldVisualEditorAfterAsset();
         showToast(`${revisionOnly ? 'Revised' : 'Generated'} ${editor.target.name} as image ${worldVisualHistory(editor.world, editor.target, editor.kind).length}.`, 'success');
     } catch (error) {
@@ -51647,6 +52274,7 @@ async function runWorldVisualCropFill(event) {
             Number(document.getElementById('world-visual-crop-zoom').value) / 100);
         const correctionInput = document.getElementById('world-visual-correction');
         const prompt = worldVisualCropFillPrompt(editor, aspectRatio, correctionInput.value);
+        const visualProject = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
         const assetId = await generateWorldVisual(editor.world, prompt, {
             aspectRatio, maxDimension,
             quality: editor.kind === 'npc' ? 0.84 : 0.82,
@@ -51654,6 +52282,9 @@ async function runWorldVisualCropFill(event) {
             label: editor.target.name,
             referenceImage: fillReference,
             requireReference: true,
+            operation: 'crop_fill',
+            visualProject,
+            resolvedOutputPolicy: 'review',
             imageGuide: editor.kind === 'npc'
                 ? worldImageGuideForTarget(editor.world, editor.target, 'npc', editor.activeBriefName || '') : null
         });
@@ -51717,6 +52348,62 @@ function ensureWorldVisualEditorBound() {
         applyWorldVisualVariantFilter();
     };
     document.getElementById('world-visual-export').onclick = exportCurrentWorldVisual;
+    const structuredFormTab = document.getElementById('world-visual-document-form-tab');
+    const structuredJsonTab = document.getElementById('world-visual-document-json-tab');
+    const structuredForm = document.getElementById('world-visual-document-form');
+    const structuredJson = document.getElementById('world-visual-document-json');
+    const setStructuredEditorTab = tab => {
+        const json = tab === 'json';
+        if (structuredForm) structuredForm.hidden = json;
+        if (structuredJson) structuredJson.hidden = !json;
+        structuredFormTab?.classList.toggle('is-active', !json);
+        structuredJsonTab?.classList.toggle('is-active', json);
+        if (json && worldVisualEditorState) {
+            const project = saveStructuredVisualEditorDraft();
+            const raw = document.getElementById('world-visual-raw-json');
+            if (raw && project) raw.value = JSON.stringify(project.structuredDocument, null, 2);
+        }
+    };
+    if (structuredFormTab) structuredFormTab.onclick = () => setStructuredEditorTab('form');
+    if (structuredJsonTab) structuredJsonTab.onclick = () => setStructuredEditorTab('json');
+    document.getElementById('world-visual-structured-compile')?.addEventListener('click', event => runStructuredVisualAuthoring('compile', event));
+    document.getElementById('world-visual-structured-refine')?.addEventListener('click', event => runStructuredVisualAuthoring('refine', event));
+    document.getElementById('world-visual-structured-rebuild')?.addEventListener('click', event => runStructuredVisualAuthoring('rebuild', event));
+    document.getElementById('world-visual-add-object')?.addEventListener('click', () => {
+        const editor = worldVisualEditorState;
+        if (!editor) return;
+        const project = saveStructuredVisualEditorDraft();
+        if (project.structuredDocument.objects.length >= STRUCTURED_VISUAL_MAX_OBJECTS) return showToast(`A visual document can contain at most ${STRUCTURED_VISUAL_MAX_OBJECTS} authored objects.`, 'error');
+        const id = newStructuredVisualObjectId('obj');
+        project.structuredDocument.objects.push({ description: '', relationship: 'Related to the primary subject in the scene.' });
+        project.objectOrder.push(id);
+        project.hordeObjectMetadata[id] = { salience: 'secondary', kind: 'scene_object', binding: { characterId: '', outfitId: '', source: 'structured_editor' } };
+        renderStructuredVisualDocumentEditor(project);
+        const cards = document.querySelectorAll('#world-visual-structured-objects > [data-object-id]');
+        cards[cards.length - 1]?.scrollIntoView({ block: 'nearest' });
+        cards[cards.length - 1]?.querySelector('[data-field="description"]')?.focus({ preventScroll: true });
+    });
+    document.getElementById('world-visual-apply-json')?.addEventListener('click', async event => {
+        const editor = worldVisualEditorState;
+        if (!editor) return;
+        const status = document.getElementById('world-visual-json-status');
+        try {
+            const project = saveStructuredVisualEditorDraft();
+            const next = parseStructuredVisualJson(document.getElementById('world-visual-raw-json')?.value || '');
+            const previous = project.structuredDocument;
+            project.structuredDocument = next;
+            while (project.objectOrder.length < next.objects.length) project.objectOrder.push(newStructuredVisualObjectId('obj'));
+            project.objectOrder.length = next.objects.length;
+            project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(project.hordeObjectMetadata, project.objectOrder);
+            recordStructuredVisualRevision(project, { operation: 'manual', authoredDocument: next, provenance: 'raw_json_editor', resolvedOutputPolicy: 'promote' });
+            renderStructuredVisualDocumentEditor(project);
+            await saveState();
+            if (status) { status.textContent = 'Applied a valid structured-document revision.'; status.className = 'form-hint is-success'; }
+        } catch (error) {
+            if (status) { status.textContent = error.message; status.className = 'form-hint is-error'; }
+            showToast(`Structured JSON was not applied — ${error.message}`, 'error');
+        }
+    });
     ['world-visual-primary', 'world-visual-prompt', 'world-visual-correction']
         .forEach(id => document.getElementById(id)?.addEventListener('input', event => autoSizeWorldVisualTextarea(event.currentTarget)));
     ['world-visual-aspect', 'world-visual-resolution', 'world-visual-crop-x', 'world-visual-crop-y', 'world-visual-crop-zoom']
@@ -51828,6 +52515,31 @@ function ensureWorldVisualEditorBound() {
         document.getElementById('world-visual-aspect').value = '3:4';
         if (preset.framing && editor.kind === 'npc') document.getElementById('world-visual-framing').value = preset.framing;
         saveWorldVisualEditorFields();
+        const project = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
+        const doc = project.structuredDocument;
+        const guide = normalizeWorldImageGuide(preset);
+        const savedPatch = isPlainObject(preset.structuredPatch) ? preset.structuredPatch : null;
+        const sourcePatch = savedPatch || {};
+        if (sourcePatch.background_setting || guide.backgroundSetting) doc.background_setting = sourcePatch.background_setting || guide.backgroundSetting;
+        if (sourcePatch.aesthetics?.composition || guide.composition) doc.aesthetics.composition = sourcePatch.aesthetics?.composition || guide.composition;
+        if (sourcePatch.aesthetics?.color_scheme || guide.colorScheme) doc.aesthetics.color_scheme = sourcePatch.aesthetics?.color_scheme || guide.colorScheme;
+        if (sourcePatch.aesthetics?.mood_atmosphere || guide.moodAtmosphere) doc.aesthetics.mood_atmosphere = sourcePatch.aesthetics?.mood_atmosphere || guide.moodAtmosphere;
+        if (sourcePatch.lighting || guide.lightingConditions || guide.lightingDirection || guide.lightingShadows) doc.lighting = {
+            conditions: sourcePatch.lighting?.conditions || guide.lightingConditions || doc.lighting.conditions,
+            direction: sourcePatch.lighting?.direction || guide.lightingDirection || doc.lighting.direction,
+            shadows: sourcePatch.lighting?.shadows || guide.lightingShadows || doc.lighting.shadows
+        };
+        if (sourcePatch.photographic_characteristics || guide.depthOfField || guide.focus || guide.lensFocalLength || guide.cameraAngle) doc.photographic_characteristics = {
+            depth_of_field: sourcePatch.photographic_characteristics?.depth_of_field || guide.depthOfField || doc.photographic_characteristics.depth_of_field,
+            focus: sourcePatch.photographic_characteristics?.focus || guide.focus || doc.photographic_characteristics.focus,
+            camera_angle: sourcePatch.photographic_characteristics?.camera_angle || guide.cameraAngle || doc.photographic_characteristics.camera_angle,
+            lens_focal_length: sourcePatch.photographic_characteristics?.lens_focal_length || guide.lensFocalLength || doc.photographic_characteristics.lens_focal_length
+        };
+        if (sourcePatch.style_medium || guide.styleMedium) doc.style_medium = sourcePatch.style_medium || guide.styleMedium;
+        if (sourcePatch.artistic_style || guide.artisticStyle) doc.artistic_style = sourcePatch.artistic_style || guide.artisticStyle;
+        if (sourcePatch.primaryObject && doc.objects[0]) Object.assign(doc.objects[0], sourcePatch.primaryObject);
+        recordStructuredVisualRevision(project, { operation: 'manual', authoredDocument: doc, provenance: `preset:${name}`, resolvedOutputPolicy: 'promote' });
+        renderStructuredVisualDocumentEditor(project);
         updateWorldVisualCropPreview();
         briefPicker.value = name;
         const activeLabel = document.getElementById('world-visual-brief-active');
@@ -51849,7 +52561,21 @@ function ensureWorldVisualEditorBound() {
         });
         const aspect = document.getElementById('world-visual-aspect')?.value || '';
         const framing = editor.kind === 'npc' ? document.getElementById('world-visual-framing')?.value || '' : '';
-        presets[name] = normalizeImageBriefPreset({ ...guide, aspectRatio: aspect, framing, description: `Saved from ${editor.target.name || 'visual editor'}.` });
+        const project = saveStructuredVisualEditorDraft();
+        const structured = project ? safeJsonClone(project.structuredDocument) : null;
+        presets[name] = {
+            ...normalizeImageBriefPreset({ ...guide, aspectRatio: aspect, framing, description: `Saved from ${editor.target.name || 'visual editor'}.` }),
+            schemaVersion: 2,
+            structuredPatch: structured ? {
+                background_setting: structured.background_setting,
+                lighting: structured.lighting,
+                aesthetics: { composition: structured.aesthetics.composition, color_scheme: structured.aesthetics.color_scheme, mood_atmosphere: structured.aesthetics.mood_atmosphere },
+                photographic_characteristics: structured.photographic_characteristics,
+                style_medium: structured.style_medium,
+                artistic_style: structured.artistic_style,
+                primaryObject: structured.objects[0] ? { location: structured.objects[0].location, relative_size: structured.objects[0].relative_size, pose: structured.objects[0].pose, expression: structured.objects[0].expression, action: structured.objects[0].action, orientation: structured.objects[0].orientation, relationship: structured.objects[0].relationship } : {}
+            } : null
+        };
         state.globalSettings.imageGuidePresets = presets;
         editor.activeBriefName = name;
         if (picker) {
@@ -51895,8 +52621,9 @@ function ensureWorldVisualEditorBound() {
 function openWorldVisualEditor(world, target, kind) {
     ensureWorldVisualEditorBound();
     target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    const visualProject = ensureWorldVisualProject(world, target, kind === 'npc' ? 'character' : 'location');
     worldVisualEditorState = {
-        world, target, kind, variantFilter: 'all',
+        world, target, kind, variantFilter: 'all', visualProject,
         // The selected saved brief is an editor-scoped application of the
         // global preset library. It does not rewrite every other character.
         activeBriefName: kind === 'npc' ? String(target.visuals.portraitBriefId || '') : ''
@@ -51989,6 +52716,7 @@ function openWorldVisualEditor(world, target, kind) {
     document.getElementById('world-visual-resolution').value = String(npc
         ? normalizedWorldVisualResolution(target.visuals.portraitResolution, 1200)
         : normalizedWorldVisualResolution(target.visuals.backgroundResolution, 1600));
+    renderStructuredVisualDocumentEditor(visualProject);
     document.getElementById('world-visual-correction').value = npc
         ? target.visuals.portraitCorrection || '' : target.visuals.backgroundCorrection || '';
     worldVisualHistory(world, target, kind);
@@ -52054,7 +52782,11 @@ async function generateWorldVisual(world, prompt, {
     aspectRatio = '16:9', maxDimension = 1600, quality = 0.78, kind, label,
     referenceImage = '', requireReference = false, imageSubject = null, imageGuide = null,
     imageSpecification = null, resolvedStructuredPrompt = null, seed = null,
-    fiboCombinedRevision = false
+    fiboCombinedRevision = false,
+    operation = '' ,
+    visualProject = null,
+    resolvedOutputPolicy = '',
+    syncMode = undefined
 } = {}) {
     const presentation = normalizeWorldPresentation(world);
     const pipeline = requireReference || referenceImage ? 'revision' : 'new';
@@ -52099,17 +52831,23 @@ async function generateWorldVisual(world, prompt, {
     // wording embedded); for every other provider it compiles into prompt
     // prose, which also anchors revisions to the world's look.
     const selectedImageGuide = imageGuide || worldImageGuide(world);
+    const visualOperation = operation || (requireReference ? 'revise' : 'generate');
     const composedRequest = imageSpecification || composeWorldImageRequest(world, imageSubject, selectedImageGuide, {
-        operation: requireReference ? 'revise' : 'generate'
+        operation: visualOperation,
+        visualProject
     });
     const fiboModel = provider === 'fal' && isFiboImageEndpoint(model);
     if (fiboModel && requireReference && !fiboCombinedRevision && !/^bria\/fibo-edit/i.test(model)) {
         throw new Error('This FIBO generation endpoint has not passed the combined refinement acceptance test. Choose a FIBO Edit revision model or complete the provider capability test first.');
     }
     const explicitPrompt = String(prompt || '').trim();
-    const finalPrompt = !fiboModel
-        ? [String(composedRequest.plainPrompt || '').trim(), explicitPrompt === String(composedRequest.plainPrompt || '').trim() ? '' : explicitPrompt, imageGuideProseBlock(selectedImageGuide)]
-            .filter(Boolean).join('\n\n') : String(prompt || '').trim();
+    const nativeFiboCompile = fiboModel && visualOperation === 'compile' && !resolvedStructuredPrompt;
+    // Generic prompt compilation is deterministic.  The caller's explicit
+    // prose is used only for a native FIBO compile or a revision instruction;
+    // it is never silently appended to an ordinary rerender.
+    const finalPrompt = fiboModel
+        ? (nativeFiboCompile || requireReference ? explicitPrompt : '')
+        : String(composedRequest.plainPrompt || '').trim();
     const requestConfig = {
         imageModel: model,
         imageParameters: { aspect_ratio: aspectRatio },
@@ -52126,11 +52864,13 @@ async function generateWorldVisual(world, prompt, {
             if (fiboModel) {
                 const structured = resolvedStructuredPrompt || composedRequest.structuredPrompt
                     || fiboStructuredImageGuide(world, imageSubject, '', selectedImageGuide);
-                if (structured) body.fiboStructuredPrompt = structured;
+                if (!nativeFiboCompile && structured) body.fiboStructuredPrompt = structured;
+                body.fiboNativeCompile = nativeFiboCompile;
                 body.fiboResolution = maxDimension >= 1536 ? '4MP' : '1MP';
                 if (requireReference && prompt) body.fiboRevisionInstruction = String(prompt).slice(0, 4000);
                 body.fiboCombinedRevision = fiboCombinedRevision === true;
                 if (Number.isInteger(seed)) body.seed = seed;
+                if (typeof syncMode === 'boolean') body.syncMode = syncMode;
             }
         }
         return body;
@@ -52150,14 +52890,18 @@ async function generateWorldVisual(world, prompt, {
     // reversible derived-asset action and Crop & Fill is the API-backed way
     // to outpaint a new target frame without sacrificing source pixels.
     const providerResult = requestCompanionPhoto.lastResult || {};
+    const providerResponseMetadata = isPlainObject(providerResult)
+        ? Object.fromEntries(Object.entries(providerResult).filter(([key]) => key !== 'image')) : null;
     const resolved = isPlainObject(providerResult.resolved_structured_prompt)
         ? providerResult.resolved_structured_prompt : (resolvedStructuredPrompt || composedRequest.structuredPrompt || null);
     const generatedSeed = Number.isInteger(providerResult.seed) ? providerResult.seed : (Number.isInteger(seed) ? seed : null);
     const exactRequest = {
-        provider, model, aspectRatio, resolution: maxDimension >= 1536 ? '4MP' : '1MP',
-        structuredPrompt: composedRequest.structuredPrompt || null,
+        provider, model, operation: visualOperation, prompt: finalPrompt, aspectRatio, resolution: maxDimension >= 1536 ? '4MP' : '1MP',
+        structuredPrompt: nativeFiboCompile ? null : (composedRequest.structuredPrompt || null),
+        compiledPlainPrompt: !fiboModel ? String(composedRequest.plainPrompt || '') : '',
         revisionInstruction: requireReference ? String(prompt || '').slice(0, 4000) : '',
-        seed: generatedSeed
+        seed: generatedSeed,
+        resolvedOutputPolicy: resolvedOutputPolicy || (visualOperation === 'compile' ? 'promote' : 'review')
     };
     return addWorldMediaAsset(world, portable, kind, label, {
         generated: true, model, prompt,
@@ -52166,13 +52910,20 @@ async function generateWorldVisual(world, prompt, {
         resolvedContext: String(resolved?.context || '').slice(0, 3000),
         outfitSnapshot: composedRequest.specification?.outfit || null,
         requestMetadata: {
-            provider, model, endpoint, operation: requireReference ? 'revise' : 'generate',
+            provider, model, endpoint, operation: visualOperation,
             aspectRatio, resolution: maxDimension >= 1536 ? '4MP' : '1MP',
             seed: generatedSeed,
-            structuredPrompt: composedRequest.structuredPrompt || null,
-            combinedRevision: fiboCombinedRevision === true
+            structuredPrompt: nativeFiboCompile ? null : (composedRequest.structuredPrompt || null),
+            compiledPlainPrompt: !fiboModel ? String(composedRequest.plainPrompt || '') : '',
+            combinedRevision: fiboCombinedRevision === true,
+            resolvedOutputPolicy: resolvedOutputPolicy || (visualOperation === 'compile' ? 'promote' : 'review')
         },
-        exactRequest
+        exactRequest,
+        providerResponseMetadata,
+        visualProjectId: visualProject?.target?.id || '',
+        visualRevisionId: visualProject?.activeRevisionId || '',
+        authoredDocument: composedRequest.specification?.structuredDocument || null,
+        resolvedOutputPolicy: resolvedOutputPolicy || (visualOperation === 'compile' ? 'promote' : 'review')
     });
 }
 
@@ -52210,6 +52961,14 @@ async function generateWorldLocationBackground(world, location, options = {}) {
             referenceImage: options.referenceImage || '', requireReference: true, imageSubject
         });
     }
+    if (options.operation === 'compile' && options.authoredPrompt) {
+        return generateWorldVisual(world, String(options.authoredPrompt), {
+            aspectRatio: '16:9', maxDimension: normalizedWorldVisualResolution(options.maxDimension || location.visuals?.backgroundResolution, 1600),
+            quality: 0.82, kind: 'location_background', label: location.name,
+            imageSubject, operation: 'compile', visualProject: ensureWorldVisualProject(world, location, 'location'),
+            resolvedOutputPolicy: 'promote'
+        });
+    }
     const visibleDescription = location.visualDescription || location.description || 'Use the location name and world premise.';
     const authoredPrompt = location.imagePrompt ? `\nAuthored location brief: ${location.imagePrompt}` : '';
     const prompt = `Create an establishing visual for an interactive text RPG location.\nWorld: ${world.name}.\nWorld premise: ${world.description || 'Not specified.'}\nLocation: ${location.name}.\nVisible physical description: ${visibleDescription}\nRegion: ${location.region || 'Not specified.'}${authoredPrompt}\nArt direction: ${worldVisualStylePrompt(world)}\nShow the physical space clearly from a useful eye-level viewpoint in the requested frame. No text, labels, interface, frame, watermark, map markers or prominent posed characters. Do not reveal secrets or invent a story event. This is a reusable location background, not a one-time action scene.`;
@@ -52226,10 +52985,16 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
     // source the prose compiler uses, the currently worn outfit as the
     // clothing string, optional identity fields and staging. Blank fields
     // simply do not travel.
-    const wornOutfit = worldCurrentOutfit(npc);
+    const project = ensureWorldVisualProject(world, npc, 'character');
+    const selectedOutfit = options.outfitId
+        ? worldOutfits(npc).find(entry => entry.id === String(options.outfitId))
+        : null;
+    const wornOutfit = selectedOutfit || worldCurrentOutfit(npc);
+    const visualDocument = options.visualDocument
+        || (project?.structuredDocument ? project.structuredDocument : null);
     const imageSubject = {
         name: npc.name,
-        shortDescription: String(npc.imagePrompt || '').trim(),
+        shortDescription: String(options.authoredPrompt || npc.imagePrompt || '').trim(),
         description: String(npc.appearance || npc.description || '').trim(),
         visualDescription: String(npc.appearance || npc.description || '').trim(),
         imageIntent: npc.visuals?.imageIntent,
@@ -52242,13 +53007,16 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
         outfit: wornOutfit,
         outfitSnapshot: wornOutfit ? wornOutfit.description : '',
         outfitId: wornOutfit?.id || '',
+        characterId: npc.id,
+        structuredDocument: visualDocument,
         ...normalizeWorldVisualIdentityGuide(npc.visuals?.portraitIdentityGuide),
         ...normalizeWorldVisualSubjectGuide(npc.visuals?.portraitSubjectGuide)
     };
     const selectedGuide = options.imageGuide || worldImageGuideForTarget(world, npc, 'npc');
     const imageSpecification = composeWorldImageRequest(world, imageSubject, selectedGuide, {
         operation: options.revisionOnly ? 'revise' : 'generate',
-        revision: Number(npc.visuals?.imageProfileRevision || 0) || 0
+        revision: Number(npc.visuals?.imageProfileRevision || 0) || 0,
+        visualProject: project
     });
     if (options.revisionOnly) {
         const instruction = String(options.correction || '').trim();
@@ -52261,13 +53029,21 @@ async function generateWorldNpcPortrait(world, npc, options = {}) {
             imageGuide: selectedGuide,
             imageSpecification,
             resolvedStructuredPrompt: options.resolvedStructuredPrompt || null,
-            fiboCombinedRevision: options.fiboCombinedRevision === true
+            fiboCombinedRevision: options.fiboCombinedRevision === true,
+            operation: 'revise',
+            visualProject: project,
+            resolvedOutputPolicy: 'review',
+            syncMode: project.providerControls?.syncMode
         });
     }
-    return generateWorldVisual(world, imageSpecification.plainPrompt || imageSubject.shortDescription, {
+    return generateWorldVisual(world, options.authoredPrompt || imageSpecification.plainPrompt || imageSubject.shortDescription, {
         aspectRatio: '3:4', maxDimension: normalizedWorldVisualResolution(options.maxDimension || npc.visuals?.portraitResolution, 1200), quality: 0.84,
         kind: 'npc_portrait', label: npc.name, referenceImage: '', imageSubject,
-        imageGuide: selectedGuide, imageSpecification
+        imageGuide: selectedGuide, imageSpecification,
+        operation: options.operation || 'generate',
+        visualProject: project,
+        resolvedOutputPolicy: options.operation === 'compile' ? 'promote' : 'submitted_as_current',
+        syncMode: project.providerControls?.syncMode
     });
 }
 
