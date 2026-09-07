@@ -14694,7 +14694,8 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
     if (!protocol) return { protocol: null, turnRecord: null };
     const existing = options.existingTurnRecord || null;
     const attemptId = `sidecar_attempt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-    const logicalIdentity = String(options.idempotencyKey || `sidecar:${sess.id || 'timeline'}:${options.sourceTurnId || existing?.id || 'turn'}:${options.takeId || existing?.takeId || 'take'}:${options.revisionId || existing?.revisionId || 'revision'}`).slice(0, 240);
+    const explicitIdentity = String(options.idempotencyKey || '').trim();
+    let logicalIdentity = explicitIdentity;
     const turnRecord = existing || {
         id: `sidecar_turn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
         status: 'reconciliation_pending',
@@ -14727,6 +14728,10 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
             handoffComplete: options.handoffComplete !== false
         }
     };
+    if (!logicalIdentity) {
+        const identitySource = options.sourceTurnId || existing?.id || turnRecord.id;
+        logicalIdentity = `sidecar:${sess.id || 'timeline'}:${identitySource}:${options.takeId || existing?.takeId || 'take'}:${options.revisionId || existing?.revisionId || 'revision'}`.slice(0, 240);
+    }
     if (existing) {
         turnRecord.status = 'reconciliation_pending';
         turnRecord.reconciliationStatus = 'pending';
