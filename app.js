@@ -17276,10 +17276,11 @@ function buildSidecarWorkspaceModel(world, sess) {
     const workspaceUi = protocol.workspaceUi && typeof protocol.workspaceUi === 'object' ? protocol.workspaceUi : (protocol.workspaceUi = { view: 'scene', open: {} });
     workspaceUi.view = ['scene', 'relationships', 'characters', 'history'].includes(workspaceUi.view) ? workspaceUi.view : 'scene';
     workspaceUi.open = workspaceUi.open && typeof workspaceUi.open === 'object' ? workspaceUi.open : {};
+    const readerEnabled = world?.sidecarConfig?.tracker?.readerEnabled !== false;
     return {
         protocol, hierarchy, frame, clock, location, reader, activeSnapshot, latestTurn, failedTurn, incompleteCommit,
-        cast, candidates, relationships, activeCharacters, snapshots, openQuestions, memory, workspaceUi,
-        status: incompleteCommit ? 'blocked' : failedTurn ? 'warning' : (reader ? 'ready' : 'muted'),
+        cast, candidates, relationships, activeCharacters, snapshots, openQuestions, memory, workspaceUi, readerEnabled,
+        status: incompleteCommit ? 'blocked' : failedTurn ? 'warning' : !readerEnabled ? 'muted' : (reader ? 'ready' : 'pending'),
         worldTime: `${clock.hours24 % 12 || 12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`
     };
 }
@@ -17308,11 +17309,15 @@ function renderSidecarWorkspace(world, sess) {
     const { protocol, workspaceUi } = model;
     const scrollTop = host.querySelector('.si-body')?.scrollTop || 0;
     const currentFocus = document.activeElement?.id || '';
-    const statusLabel = model.status === 'blocked' ? 'Commit blocked' : model.status === 'warning' ? 'Update incomplete' : model.status === 'muted' ? 'Reader disabled' : 'Reader current';
+    const statusLabel = model.status === 'blocked' ? 'Commit blocked' : model.status === 'warning' ? 'Update incomplete' : model.status === 'muted' ? 'Reader disabled' : model.status === 'pending' ? 'Reader not processed' : 'Reader current';
     const statusClass = model.status === 'ready' ? '' : model.status === 'muted' ? 'is-muted' : 'is-warning';
     const section = (key, title, body, badge = '') => `<details class="si-section" data-si-section="${escapeHTML(key)}" ${workspaceUi.open[key] !== false ? 'open' : ''}><summary><strong>${escapeHTML(title)}</strong>${badge ? `<span>${escapeHTML(badge)}</span>` : ''}</summary><div class="si-section-body">${body}</div></details>`;
     const button = (label, action, cls = 'btn btn-ghost') => `<button type="button" class="${cls}" data-si-action="${escapeHTML(action)}">${escapeHTML(label)}</button>`;
-    const failure = model.incompleteCommit
+    const failure = !model.readerEnabled
+        ? `<div class="si-failure is-muted"><strong>Reader disabled</strong><span>New Sidecar turns use the Narrator handoff only until the semantic Reader is enabled for this world.</span><div class="si-retry-row">${button('Enable Reader', 'enable-reader', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
+        : model.readerEnabled && !model.reader && model.latestTurn
+            ? `<div class="si-failure is-muted"><strong>Reader not processed</strong><span>This authored turn is preserved. Process its existing narration and handoff without generating a new Narrator response.</span><div class="si-retry-row">${button('Process Current Scene', 'process', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
+        : model.incompleteCommit
         ? `<div class="si-failure"><strong>Canonical commit incomplete</strong><span>Progression is blocked. The journaled receipt must be recovered through World GM.</span><div class="si-retry-row">${button('Open World GM', 'gm', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
         : model.failedTurn
             ? `<div class="si-failure"><strong>${escapeHTML(model.failedTurn.failure?.stage === 'reader' ? 'Reader update incomplete' : 'Scene update incomplete')}</strong><span>Narration is preserved; downstream interpretation has not settled.</span><div class="si-retry-row">${button('Retry Scene Update', 'retry', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
@@ -17335,6 +17340,23 @@ function renderSidecarWorkspace(world, sess) {
         const action = buttonEl.dataset.siAction || '';
         if (action === 'backstage') return openWorldSidecarInspector('backstage');
         if (action === 'gm') return openWorldSidecarLine({ kind: 'world_gm', title: 'World GM · Scene Intelligence', guidance: 'Resolve the current Sidecar failure or authorial ambiguity without regenerating the visible Narrator turn.' });
+        if (action === 'enable-reader') {
+            world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerEnabled: true } } }) || world.sidecarConfig;
+            if (world.sidecarConfig?.tracker) world.sidecarConfig.tracker.readerEnabled = true;
+            await saveState();
+            showToast('Sidecar Reader enabled for this world.', 'success');
+            rerender(); return;
+        }
+        if (action === 'process') {
+            buttonEl.disabled = true; buttonEl.textContent = 'Processing…';
+            try {
+                if (model.failedTurn) await retrySidecarSceneUpdate(world, sess, model.failedTurn.id);
+                else if (model.latestTurn?.id) await refreshSidecarSceneIntelligence(world, sess, model.latestTurn.id);
+                else throw new Error('There is no authored turn to process yet.');
+                showToast('Scene Intelligence processed.', 'success');
+            } catch (error) { showToast(`Scene processing failed: ${error?.message || error}`, 'error'); }
+            rerender(); return;
+        }
         if (action === 'retry') {
             buttonEl.disabled = true; buttonEl.textContent = 'Retrying…';
             try { await retrySidecarSceneUpdate(world, sess, model.failedTurn?.id); } catch (error) { showToast(`Scene update retry failed: ${error?.message || error}`, 'error'); }

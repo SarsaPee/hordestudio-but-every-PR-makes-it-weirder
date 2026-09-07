@@ -10330,6 +10330,8 @@ label[data-help] > span:first-child::after,
 .si-meter i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#4db8a4,#7c7cff); }
 .si-empty { padding:12px 5px; color:var(--text-3); font-size:.64rem; line-height:1.45; text-align:center; }
 .si-failure { display:grid; gap:5px; padding:8px; border:1px solid rgba(243,189,89,.4); border-radius:8px; background:rgba(243,189,89,.08); }
+.si-failure.is-muted { border-color:var(--border); background:rgba(255,255,255,.025); }
+.si-failure.is-muted strong { color:var(--text-2); }
 .si-failure strong { color:#ffd388; font-size:.68rem; }
 .si-failure span { color:var(--text-3); font-size:.61rem; line-height:1.35; }
 .si-failure .btn { justify-self:start; padding:5px 8px; font-size:.6rem; }
