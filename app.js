@@ -107,24 +107,53 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     const identifier = kind => `${kind}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
     const mode = value => value === 'sidecar' || value === 'inline_legacy' ? value : 'inline_legacy';
     const numeric = (value, fallback, max) => { const parsed = Math.trunc(Number(value)); return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, max) : fallback; };
+    const READER_PROFILE_SCHEMA_VERSION = 1;
+    function normalizeReaderProfile(raw = {}, fallback = {}) {
+        const source = { ...(object(fallback) ? fallback : {}), ...(object(raw) ? raw : {}) };
+        const choose = (value, fallbackValue, min, max) => {
+            const parsed = Math.trunc(Number(value));
+            return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallbackValue;
+        };
+        const effort = ['auto', 'low', 'medium', 'high'].includes(clean(source.reasoningEffort, 20))
+            ? clean(source.reasoningEffort, 20) : 'auto';
+        const retryPolicy = ['none', 'bounded'].includes(clean(source.retryPolicy, 20))
+            ? clean(source.retryPolicy, 20) : 'bounded';
+        return {
+            schemaVersion: READER_PROFILE_SCHEMA_VERSION,
+            revision: clean(source.revision || 'reader-v1', 80) || 'reader-v1',
+            promptRevision: clean(source.promptRevision || 'semantic-reader-v1', 100) || 'semantic-reader-v1',
+            provider: clean(source.provider, 40),
+            model: clean(source.model, 200),
+            reasoningMode: ['inherit', 'enabled', 'disabled'].includes(clean(source.reasoningMode, 20)) ? clean(source.reasoningMode, 20) : 'inherit',
+            reasoningEffort: effort,
+            maxTokens: choose(source.maxTokens, 0, 0, 100000),
+            timeoutSeconds: choose(source.timeoutSeconds, 120, 10, 900),
+            fullRefreshCadence: choose(source.fullRefreshCadence, 5, 1, 50),
+            maxToolCalls: choose(source.maxToolCalls, 3, 0, 12),
+            maxLookupPayload: choose(source.maxLookupPayload, 12000, 1000, 100000),
+            contextBudget: choose(source.contextBudget, 24000, 4000, 120000),
+            retryPolicy,
+            enabled: source.enabled !== false
+        };
+    }
     function worldConfig(world, options = {}) {
         if (!object(world)) return null;
         const current = object(world.sidecarConfig) ? world.sidecarConfig : {}, tracker = object(current.tracker) ? current.tracker : {}, debug = object(current.debug) ? current.debug : {}, memory = object(current.memory) ? current.memory : {};
         const reasoningMode = ['inherit', 'enabled', 'disabled'].includes(tracker.reasoningMode)
             ? tracker.reasoningMode : (tracker.reasoning === true ? 'enabled' : 'inherit');
         const roleplayOS = normalizeRoleplayOSConfig(current.roleplayOS);
-        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), roleplayOS, tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerEnabled: tracker.readerEnabled !== false, readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
+        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), roleplayOS, tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerEnabled: tracker.readerEnabled !== false, readerProfileInherit: tracker.readerProfileInherit !== false, readerProfile: normalizeReaderProfile(tracker.readerProfile), readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
         return world.sidecarConfig;
     }
-    function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], traversalState: {}, packet: null, memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
+    function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], traversalState: {}, packet: null, readerSnapshots: [], readerProfile: normalizeReaderProfile({}), memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
     function timelineProtocol(world, timeline, options = {}) {
         if (!object(timeline)) return null;
         const config = worldConfig(world, options) || { mode: 'inline_legacy', debug: {} }, current = object(timeline.sidecar) ? timeline.sidecar : {};
         const protocol = { ...emptyProtocol(mode(config.mode)), ...current };
         protocol.schemaVersion = 1; protocol.mode = mode(current.mode || (object(timeline.sidecar) ? config.mode : (options.newWorld ? 'sidecar' : 'inline_legacy')));
-        ['sequences','scenes','turns','takes','questions','requests','proposals','backgroundProposals','refinements','conversations','provisionalLocations','provisionalEntities','jobs'].forEach(field => { if (!Array.isArray(protocol[field])) protocol[field] = []; });
+        ['sequences','scenes','turns','takes','questions','requests','proposals','backgroundProposals','refinements','conversations','provisionalLocations','provisionalEntities','readerSnapshots','jobs'].forEach(field => { if (!Array.isArray(protocol[field])) protocol[field] = []; });
         ['takeIndex','temporalState','traversalState','memoryGraph','diagnostics','migration','coreAnswers'].forEach(field => { if (!object(protocol[field])) protocol[field] = {}; });
-        protocol.inputMode = protocol.inputMode === 'sidecar' ? 'sidecar' : 'narrator'; protocol.activeSequenceId = clean(protocol.activeSequenceId, 120); protocol.activeSceneId = clean(protocol.activeSceneId, 120); protocol.packet = object(protocol.packet) ? protocol.packet : null;
+        protocol.inputMode = protocol.inputMode === 'sidecar' ? 'sidecar' : 'narrator'; protocol.activeSequenceId = clean(protocol.activeSequenceId, 120); protocol.activeSceneId = clean(protocol.activeSceneId, 120); protocol.packet = object(protocol.packet) ? protocol.packet : null; protocol.readerProfile = normalizeReaderProfile(protocol.readerProfile);
         const debug = object(protocol.debug) ? protocol.debug : {}; protocol.debug = { enabled: debug.enabled === true || config.debug?.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, config.debug?.retainTraceCount || 20, 200), traces: Array.isArray(debug.traces) ? debug.traces.slice(-200) : [] };
         timeline.sidecar = protocol; return protocol;
     }
@@ -181,7 +210,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     function reconcileVehicleEvents(protocol,world,receipt,options={}){const state=traversalState(protocol);if(!state)return[];const changes=[];(receipt?.events||[]).forEach(event=>{if(event?.type!=='movement'||event?.movement_mode!=='vehicle')return;const actorId=clean(event.actor_id,160),vehicleId=clean(event.vehicle_id||event.vehicleId,160),status=clean(event.status,40)||'completed';if(['intended','attempted','in_progress'].includes(status)){let journey=state.journeys.find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey){journey=createJourney(protocol,world,{vehicleId,originId:event.from_location_id||options.playerLocationId,destinationId:event.to_location_id||'',occupants:[actorId],source:'narrator_handoff',evidence:event.evidence||event.cause||'',runtimeKind:vehicleId?'':'rideshare'});if(journey?.id)changes.push({type:'journey_prepared',journeyId:journey.id});}return;}if(status!=='completed')return;const journey=[...state.journeys].reverse().find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey)return;journey.status='completed';journey.completedAt=stamp();journey.destinationAnchorId=clean(event.to_location_id||journey.destinationAnchorId,160);if(journey.vehicleEntityId){const vehicle=(world.entities||[]).find(entity=>entity.id===journey.vehicleEntityId),data=normalizeVehicle(vehicle);if(data)data.parkedAnchorId=journey.destinationAnchorId||data.parkedAnchorId;}else if(journey.runtimeContainer){state.recentRuntimeContainers.push({...journey.runtimeContainer,departedAt:stamp(),journeyId:journey.id});state.recentRuntimeContainers=state.recentRuntimeContainers.slice(-20);}changes.push({type:'journey_completed',journeyId:journey.id});});return changes;}
     function graph(protocol){if(!protocol)return null;const prior=object(protocol.memoryGraph)?protocol.memoryGraph:{};protocol.memoryGraph={schemaVersion:1,worldHistory:Array.isArray(prior.worldHistory)?prior.worldHistory:[],episodes:Array.isArray(prior.episodes)?prior.episodes:[],scenes:Array.isArray(prior.scenes)?prior.scenes:[],sequences:Array.isArray(prior.sequences)?prior.sequences:[],cognition:Array.isArray(prior.cognition)?prior.cognition:[],locationReferences:Array.isArray(prior.locationReferences)?prior.locationReferences:[],lastEpisodeTurnCount:Math.max(0,Number(prior.lastEpisodeTurnCount)||0),...prior};return protocol.memoryGraph;}
     function jobs(protocol){if(!protocol)return[];if(!Array.isArray(protocol.jobs))protocol.jobs=[];return protocol.jobs;}
-    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record)return record;record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
+    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record){if(turn.readerEnvelope&&!record.readerEnvelope)record.readerEnvelope=safeJsonClone(turn.readerEnvelope);return record;}record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],readerSnapshotId:clean(turn.readerSnapshotId,160),readerEnvelope:turn.readerEnvelope?safeJsonClone(turn.readerEnvelope):null,provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id,readerSnapshotId:clean(turn.readerSnapshotId,160)}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
     /* Bring pre-Sidecar visible narration into the same source-pinned graph.
        This is deliberately an evidence import, not a retroactive receipt: it
        never invents a handoff, state update, cognition, or scene boundary.
@@ -218,6 +247,19 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         const records=memory.worldHistory.filter(record=>(job.sourceTurnIds||[]).includes(record.turnId));
         const sceneIds=[...new Set(records.map(record=>record.sceneId).filter(Boolean))];
         const sequenceIds=[...new Set(records.map(record=>record.sequenceId).filter(Boolean))];
+        const readerCoverage = [];
+        records.forEach(record => {
+            const presence = record.readerEnvelope?.presence || {};
+            ['active', 'nearby', 'audible'].forEach(access => {
+                (Array.isArray(presence[access]) ? presence[access] : []).forEach(entry => {
+                    const characterId = typeof entry === 'string' ? entry : (entry?.characterId || entry?.id || entry?.entityId || '');
+                    if (!characterId || characterId === 'player') return;
+                    if (!readerCoverage.some(item => item.characterId === characterId)) readerCoverage.push({ characterId, access: access === 'active' ? 'visual' : 'auditory', detail: `Reader classified this character as ${access} in turn ${record.turnId}.`, sourceTurnIds: [record.turnId] });
+                });
+            });
+        });
+        const mergedCoverage = [...(Array.isArray(output.perceptionCoverage) ? output.perceptionCoverage : [])];
+        readerCoverage.forEach(item => { if (!mergedCoverage.some(existing => String(existing?.characterId || '') === item.characterId)) mergedCoverage.push(item); });
         const episode={
             id:identifier('episode'),kind:'episode',status:'active',createdAt:stamp(),jobId,
             sourceTurnIds:Array.isArray(job.sourceTurnIds)?job.sourceTurnIds:[],
@@ -225,7 +267,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             sceneIds:sceneIds.length?sceneIds:(Array.isArray(output.sceneIds)?output.sceneIds:[]),
             summary:clean(output.summary,8000),objectiveHistory:clean(output.objectiveHistory,8000),
             text:clean([output.summary,output.objectiveHistory].filter(Boolean).join('\n'),12000),
-            perceptionCoverage:Array.isArray(output.perceptionCoverage)?output.perceptionCoverage:[],
+            perceptionCoverage:mergedCoverage,
             locationReferences:Array.isArray(output.locationReferences)?output.locationReferences:[],
             provenance:{source:'episode_consolidation',rawSourcePinned:true,sourceJobId:job.id}
         };
@@ -268,6 +310,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     }
     function failJob(protocol,jobId,error){const job=jobs(protocol).find(entry=>entry.id===jobId);if(!job)return null;job.attempts=(Number(job.attempts)||0)+1;job.diagnostics=[...(job.diagnostics||[]),{at:stamp(),error:clean(error,1200)}].slice(-12);if(job.attempts>=3)job.status='blocked';else{job.status='queued';job.retryAt=new Date(Date.now()+Math.min(300000,1000*(2**job.attempts))).toISOString();}return job;}
     global.HordeSidecarMode=Object.freeze({SCHEMA_VERSION:1,MODES:Object.freeze({INLINE_LEGACY:'inline_legacy',SIDECAR:'sidecar'}),normalizeMode:mode,normalizeWorldConfig:worldConfig,normalizeTimelineProtocol:timelineProtocol,isSidecarTimeline:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar'});
+    global.HordeSidecarReader=Object.freeze({SCHEMA_VERSION:READER_PROFILE_SCHEMA_VERSION,normalizeProfile:normalizeReaderProfile});
     global.HordeSidecarTimeline=Object.freeze({ensureHierarchy:hierarchy,beginPlanning,approvePlanning,closeActiveSequence:closeSequence,recordTurn:recordTimelineTurn,contextPressure:pressure});
     global.HordeSidecarPromotion=Object.freeze({ensure:protocol=>protocol,stage,stageReceiptIntroductions:stageIntroductions,markPromotionRequested:promotionFlag,markPromoted:promoted});
     global.HordeSidecarTraversal=Object.freeze({normalizeWorldTraversal:normalizeTraversal,normalizeVehicle,accessibleVehicles:(world,id)=>(world?.entities||[]).filter(entity=>String(entity?.type||'').toLowerCase()==='vehicle'&&(normalizeVehicle(entity)?.ownerEntityId===clean(id,160)||normalizeVehicle(entity)?.access.some(entry=>entry.entityId===clean(id,160)))),resolveEligibleAnchor:anchor,evaluateCoverage:coverage,ensureState:traversalState,createJourney,reconcileVehicleEvents});
@@ -2297,6 +2340,23 @@ let state = {
         consolidationMaxTokens: 1400,
         consolidationTemperature: 0,
         consolidationReasoning: false,
+        sidecarReaderProfile: {
+            schemaVersion: 1,
+            revision: 'reader-v1',
+            promptRevision: 'semantic-reader-v1',
+            provider: '',
+            model: '',
+            reasoningMode: 'inherit',
+            reasoningEffort: 'auto',
+            maxTokens: 0,
+            timeoutSeconds: 120,
+            fullRefreshCadence: 5,
+            maxToolCalls: 3,
+            maxLookupPayload: 12000,
+            contextBudget: 24000,
+            retryPolicy: 'bounded',
+            enabled: true
+        },
         episodeChunkTurns: 5,
         episodeCadenceTurns: 5,
         verbatimTurnWindow: 5,
@@ -3127,6 +3187,7 @@ function repairLoadedState() {
     state.globalSettings.consolidationMaxTokens = Math.max(300, Math.min(12000, Math.round(Number(state.globalSettings.consolidationMaxTokens) || 1400)));
     state.globalSettings.consolidationTemperature = Math.max(0, Math.min(2, Number(state.globalSettings.consolidationTemperature) || 0));
     state.globalSettings.consolidationReasoning = state.globalSettings.consolidationReasoning === true;
+    state.globalSettings.sidecarReaderProfile = window.HordeSidecarReader?.normalizeProfile?.(state.globalSettings.sidecarReaderProfile || {}) || state.globalSettings.sidecarReaderProfile;
     state.globalSettings.episodeChunkTurns = Math.max(1, Math.min(50, Math.round(Number(state.globalSettings.episodeChunkTurns) || 5)));
     state.globalSettings.episodeCadenceTurns = Math.max(1, Math.min(50, Math.round(Number(state.globalSettings.episodeCadenceTurns) || 5)));
     state.globalSettings.verbatimTurnWindow = Math.max(0, Math.min(30, Math.round(Number(state.globalSettings.verbatimTurnWindow) || 5)));
@@ -3595,6 +3656,7 @@ async function loadState() {
         if (state.globalSettings.consolidationMaxTokens === undefined) state.globalSettings.consolidationMaxTokens = 1400;
         if (state.globalSettings.consolidationTemperature === undefined) state.globalSettings.consolidationTemperature = 0;
         if (state.globalSettings.consolidationReasoning === undefined) state.globalSettings.consolidationReasoning = false;
+        state.globalSettings.sidecarReaderProfile = window.HordeSidecarReader?.normalizeProfile?.(state.globalSettings.sidecarReaderProfile || {}) || state.globalSettings.sidecarReaderProfile;
         if (state.globalSettings.episodeChunkTurns === undefined) state.globalSettings.episodeChunkTurns = 5;
         if (state.globalSettings.episodeCadenceTurns === undefined) state.globalSettings.episodeCadenceTurns = 5;
         if (state.globalSettings.verbatimTurnWindow === undefined) state.globalSettings.verbatimTurnWindow = 5;
@@ -14456,6 +14518,14 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
         turnRecord.reconciliationStatus = 'failed';
         turnRecord.failure = failure;
         turnRecord.postFrame = buildWorldSceneFrame(world, sess);
+        (protocol?.readerSnapshots || []).filter(snapshot => snapshot.turnId === turnRecord.id && snapshot.status === 'pending_reconciliation').forEach(snapshot => {
+            snapshot.status = 'pending_reconciliation';
+            snapshot.provenance = { ...(snapshot.provenance || {}), reconciliationFailure: failure.code };
+        });
+        (protocol?.proposals || []).filter(proposal => proposal.sourceTurnId === turnRecord.id && proposal.status === 'pending_sidecar_review').forEach(proposal => {
+            proposal.status = 'pending_reconciliation';
+            proposal.provenance = { ...(proposal.provenance || {}), reconciliationFailure: failure.code };
+        });
     }
     const diagnostic = protocol?.diagnostics?.reconciliationAttempts?.find(item => item.turnId === turnRecord?.id);
     if (diagnostic) Object.assign(diagnostic, { status: 'failed', failure });
@@ -14585,6 +14655,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         }));
     const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
     const memoryGraph = window.HordeSidecarMemoryGraph?.graph(protocol);
+    const readerSnapshot = protocol?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1) || null;
     const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
     const accessibleVehicles = window.HordeSidecarTraversal?.accessibleVehicles(world, hierarchy?.sequence?.controlledEntityId || 'player') || [];
     const activeSceneTurns = protocol?.turns?.filter(turn => turn.sceneId === hierarchy?.scene?.id).length || 0;
@@ -14653,6 +14724,18 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         activities: frame.activities,
         temporalContinuity: handoff ? sidecarTemporalStatement(handoff).slice(0, 600) : String(protocol?.temporalState?.authoredMeaning || '').slice(0, 600),
         temporalEvidence: protocol?.temporalState || null,
+        reader: readerSnapshot ? {
+            snapshotId: readerSnapshot.id,
+            profileRevision: readerSnapshot.envelope?.profileRevision || '',
+            mode: readerSnapshot.envelope?.snapshotMode || 'delta',
+            summary: readerSnapshot.envelope?.summary || '',
+            scene: readerSnapshot.envelope?.scene || {},
+            presence: readerSnapshot.envelope?.presence || {},
+            temporal: readerSnapshot.envelope?.temporal || {},
+            provisionalCognition: (readerSnapshot.envelope?.provisionalCognition || []).slice(0, 12),
+            validationWarnings: (readerSnapshot.envelope?.validationWarnings || []).slice(0, 12),
+            provenance: readerSnapshot.provenance || {}
+        } : null,
         sceneReading: sidecarHandoffSection(handoff, 'SCENE READING').slice(0, 2400),
         acceptedPlayerDetails: sidecarHandoffSection(handoff, 'ACCEPTED PLAYER DETAILS').slice(0, 2400),
         coreReview: protocol?.coreAnswers || {},
@@ -14945,6 +15028,16 @@ function sidecarReadOnlyTools() {
                 name: 'get_current_scene_state', description: 'Read the current canonical scene frame, clock evidence and open continuity questions. Read-only.',
                 parameters: { type: 'object', properties: {}, additionalProperties: false }
             }
+        },
+        {
+            type: 'function', function: {
+                name: 'get_world_records',
+                description: 'Read bounded canonical relationship, ledger, thread, quest, obligation, or proposal records relevant to the authored beat. Read-only; never commits or answers a question.',
+                parameters: { type: 'object', properties: {
+                    kinds: { type: 'array', items: { type: 'string', enum: ['relationship', 'ledger', 'thread', 'quest', 'obligation', 'proposal'] } },
+                    query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 30 }
+                }, required: ['kinds'], additionalProperties: false }
+            }
         }
     ];
 }
@@ -14963,6 +15056,24 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
         found: true, scene: buildWorldSceneFrame(world, sess), clock: buildSidecarClockEvidence(world, sess),
         questions: (window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-12)
     };
+    if (name === 'get_world_records') {
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const requested = new Set(Array.isArray(args.kinds) ? args.kinds : []);
+        const query = String(args.query || '').trim().toLowerCase();
+        const limit = Math.max(1, Math.min(30, Number(args.limit) || 12));
+        const matches = value => {
+            if (!query) return true;
+            try { return JSON.stringify(value).toLowerCase().includes(query); } catch (_) { return false; }
+        };
+        const result = {};
+        if (requested.has('relationship')) result.relationships = Object.entries(sess.npcRelationships || {}).slice(-limit).map(([id, value]) => ({ id, value })).filter(matches);
+        if (requested.has('ledger')) result.ledger = String(sess.ledger || '').slice(-Math.min(6000, Number(effectiveSidecarReaderProfile(world, sess).maxLookupPayload) || 6000));
+        if (requested.has('thread')) result.threads = (protocol?.threads || world.storyThreads || world.threads || []).slice(-limit).filter(matches);
+        if (requested.has('quest')) result.quests = (protocol?.quests || world.quests || []).slice(-limit).filter(matches);
+        if (requested.has('obligation')) result.obligations = (protocol?.obligations || sess.obligations || []).slice(-limit).filter(matches);
+        if (requested.has('proposal')) result.proposals = (protocol?.proposals || []).filter(item => ['open', 'pending', 'pending_sidecar_review', 'author_approved'].includes(item.status || 'open')).slice(-limit).filter(matches);
+        return { found: Object.values(result).some(value => Array.isArray(value) ? value.length : String(value || '').length > 0), query: String(args.query || ''), records: result, provenance: { readOnly: true, source: 'canonical_world_and_timeline_records' } };
+    }
     if (name === 'search_world_state') {
         const needle = String(args.query || '').toLowerCase().trim();
         const kinds = new Set(Array.isArray(args.kinds) && args.kinds.length ? args.kinds : ['entity', 'location']);
@@ -14991,9 +15102,15 @@ function parseSidecarReaderOutput(content, fallback = {}) {
     };
     return {
         valid: true,
+        mode: parsed.mode === 'full' ? 'full' : 'delta',
+        changedFields: Array.isArray(parsed.changed_fields) ? parsed.changed_fields.map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
         summary: String(parsed.summary || parsed.scene_reading || '').slice(0, 6000),
         canonicalReferences: isPlainObject(parsed.canonical_references) ? parsed.canonical_references : fallback,
         semanticInterpretation: isPlainObject(parsed.semantic_interpretation) ? parsed.semantic_interpretation : {},
+        durableProposals: Array.isArray(parsed.semantic_interpretation?.durableProposals || parsed.semantic_interpretation?.durable_proposals)
+            ? (parsed.semantic_interpretation.durableProposals || parsed.semantic_interpretation.durable_proposals).slice(0, 40) : [],
+        relationshipProposals: Array.isArray(parsed.semantic_interpretation?.relationshipProposals || parsed.semantic_interpretation?.relationship_proposals)
+            ? (parsed.semantic_interpretation.relationshipProposals || parsed.semantic_interpretation.relationship_proposals).slice(0, 40) : [],
         reconciliationFocus: Array.isArray(parsed.reconciliation_focus) ? parsed.reconciliation_focus.slice(0, 30) : [],
         unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved.slice(0, 20) : [],
         proposedQuestions: Array.isArray(parsed.proposed_questions) ? parsed.proposed_questions.slice(0, 12) : [],
@@ -15005,6 +15122,107 @@ function parseSidecarReaderOutput(content, fallback = {}) {
             })),
         raw: raw.slice(0, 12000)
     };
+}
+
+function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
+    const source = isPlainObject(raw) ? raw : {};
+    const cleanList = (value, limit = 40) => Array.isArray(value) ? value.slice(0, limit).map(item => isPlainObject(item) ? safeJsonClone(item) : String(item || '').slice(0, 800)) : [];
+    return {
+        schemaVersion: 1,
+        profileRevision: String(source.profileRevision || defaults.profileRevision || 'reader-v1').slice(0, 100),
+        promptRevision: String(source.promptRevision || defaults.promptRevision || 'semantic-reader-v1').slice(0, 120),
+        sourceTurnId: String(source.sourceTurnId || defaults.sourceTurnId || '').slice(0, 160),
+        sourceTakeId: String(source.sourceTakeId || defaults.sourceTakeId || '').slice(0, 160),
+        sourceRevisionId: String(source.sourceRevisionId || defaults.sourceRevisionId || '').slice(0, 160),
+        visibleNarrationHash: String(source.visibleNarrationHash || defaults.visibleNarrationHash || '').slice(0, 120),
+        handoffHash: String(source.handoffHash || defaults.handoffHash || '').slice(0, 120),
+        snapshotMode: source.snapshotMode === 'full' ? 'full' : 'delta',
+        refreshIndex: Math.max(0, Number(source.refreshIndex || defaults.refreshIndex) || 0),
+        temporal: isPlainObject(source.temporal) ? safeJsonClone(source.temporal) : { meaning: '', precision: 'unknown', source: '' },
+        location: isPlainObject(source.location) ? safeJsonClone(source.location) : { activeLocationId: '', movement: [], evidence: '' },
+        presence: isPlainObject(source.presence) ? safeJsonClone(source.presence) : { active: [], nearby: [], audible: [], remote: [], mentioned: [], absent: [] },
+        scene: isPlainObject(source.scene) ? safeJsonClone(source.scene) : { topic: '', mood: '', tension: '', interactionStyle: '', sound: '', environment: '' },
+        eventClaims: cleanList(source.eventClaims, 80),
+        durableProposals: cleanList(source.durableProposals, 40),
+        relationshipProposals: cleanList(source.relationshipProposals, 40),
+        unresolvedEvidence: cleanList(source.unresolvedEvidence || source.unresolved, 40),
+        validationWarnings: cleanList(source.validationWarnings || source.warnings, 40),
+        provisionalCognition: cleanList(source.provisionalCognition, 40),
+        lookupProvenance: cleanList(source.lookupProvenance, 60),
+        semanticInterpretation: isPlainObject(source.semanticInterpretation) ? safeJsonClone(source.semanticInterpretation) : {},
+        controlledCharacterEvidence: cleanList(source.controlledCharacterEvidence, 20),
+        summary: String(source.summary || '').slice(0, 6000),
+        reconciliationFocus: cleanList(source.reconciliationFocus, 30),
+        metadata: isPlainObject(source.metadata) ? safeJsonClone(source.metadata) : {}
+    };
+}
+
+function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
+    const prior = normalizeSidecarReaderEnvelope(previous || {}, options);
+    const incoming = normalizeSidecarReaderEnvelope(delta || {}, options);
+    if (incoming.snapshotMode === 'full' || !previous) return incoming;
+    const merged = { ...prior, ...incoming };
+    const arrayFields = ['eventClaims', 'durableProposals', 'relationshipProposals', 'unresolvedEvidence', 'validationWarnings', 'provisionalCognition', 'lookupProvenance', 'controlledCharacterEvidence', 'reconciliationFocus'];
+    arrayFields.forEach(field => {
+        if (!Object.prototype.hasOwnProperty.call(delta || {}, field)
+            && !Object.prototype.hasOwnProperty.call(delta || {}, field.replace(/[A-Z]/g, match => `_${match.toLowerCase()}`))) merged[field] = prior[field];
+    });
+    ['temporal', 'location', 'presence', 'scene', 'semanticInterpretation', 'metadata'].forEach(field => {
+        if (!Object.prototype.hasOwnProperty.call(delta || {}, field)) merged[field] = prior[field];
+    });
+    return normalizeSidecarReaderEnvelope(merged, options);
+}
+
+function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol || !turnRecord || !packet) return null;
+    const profile = options.profile || effectiveSidecarReaderProfile(world, sess);
+    const source = {
+        ...packet,
+        profileRevision: profile.revision,
+        promptRevision: profile.promptRevision,
+        sourceTurnId: turnRecord.id,
+        sourceTakeId: turnRecord.takeId || options.takeId || '',
+        sourceRevisionId: turnRecord.revisionId || options.revisionId || '',
+        visibleNarrationHash: worldMediaHash(String(turnRecord.narration || '')),
+        handoffHash: worldMediaHash(String(turnRecord.handoff || '')),
+        refreshIndex: (Number(options.refreshIndex) || 0),
+        snapshotMode: options.fullRefresh ? 'full' : (packet.mode === 'full' ? 'full' : 'delta'),
+        temporal: packet.timeEvidence || packet.temporal || {},
+        scene: packet.semanticInterpretation?.scene || packet.scene || {},
+        location: packet.semanticInterpretation?.location || packet.location || {},
+        presence: packet.semanticInterpretation?.presence || packet.presence || {},
+        eventClaims: packet.semanticInterpretation?.events || packet.eventClaims || [],
+        durableProposals: packet.semanticInterpretation?.durableProposals || packet.durableProposals || [],
+        relationshipProposals: packet.semanticInterpretation?.relationshipProposals || packet.relationshipProposals || [],
+        provisionalCognition: packet.semanticInterpretation?.provisionalCognition || packet.provisionalCognition || [],
+        lookupProvenance: packet.canonicalReferences || packet.lookupProvenance || [],
+        unresolvedEvidence: packet.unresolved || [],
+        validationWarnings: packet.validationWarnings || [],
+        controlledCharacterEvidence: packet.controlledCharacterEvidence || [],
+        summary: packet.summary || '',
+        reconciliationFocus: packet.reconciliationFocus || [],
+        metadata: { model: packet.model || '', provider: packet.provider || '', finishReason: packet.finishReason || '', rounds: packet.rounds || 1, capturedAt: new Date().toISOString() }
+    };
+    const previous = protocol.readerSnapshots.filter(snapshot => snapshot.status === 'active').at(-1)?.envelope || null;
+    const envelope = mergeSidecarReaderEnvelope(previous, source, { profileRevision: profile.revision, promptRevision: profile.promptRevision, sourceTurnId: turnRecord.id, fullRefresh: options.fullRefresh });
+    const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: protocol.readerSnapshots.filter(item => item.status === 'active').at(-1)?.id || '' } };
+    protocol.readerSnapshots.push(snapshot);
+    protocol.readerSnapshots = protocol.readerSnapshots.slice(-200);
+    turnRecord.readerEnvelope = safeJsonClone(envelope);
+    turnRecord.readerSnapshotId = snapshot.id;
+    protocol.packet = { ...(protocol.packet || {}), readerEnvelope: safeJsonClone(envelope), readerSnapshotId: snapshot.id };
+    return snapshot;
+}
+
+function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const snapshot = protocol?.readerSnapshots?.find(item => item.id === snapshotId);
+    if (!snapshot) return null;
+    protocol.readerSnapshots.forEach(item => { if (item.id !== snapshot.id && item.status === 'active') item.status = 'superseded'; });
+    snapshot.status = 'active'; snapshot.activatedAt = new Date().toISOString();
+    snapshot.provenance = { ...(snapshot.provenance || {}), committedTurnId: turnId || snapshot.turnId };
+    return snapshot;
 }
 
 function queueSidecarReaderQuestions(world, sess, readerPacket, turnRecord) {
@@ -15023,29 +15241,88 @@ function queueSidecarReaderQuestions(world, sess, readerPacket, turnRecord) {
     });
 }
 
+// Reader proposals are durable evidence for the Reconciler/Backstage, never a
+// second mutation path.  Keeping them on the shared proposal ledger means
+// World GM, reroll cleanup, and later memory jobs can inspect the exact
+// candidate without confusing it for a committed ledger/relationship fact.
+function recordSidecarReaderProposals(world, sess, readerPacket, turnRecord, snapshotId = '') {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol || !turnRecord || !readerPacket) return [];
+    const entries = [];
+    const groups = [
+        ['durableProposals', 'durable_fact'],
+        ['relationshipProposals', 'relationship'],
+        ['unresolved', 'unresolved_evidence']
+    ];
+    groups.forEach(([field, kind]) => {
+        const values = Array.isArray(readerPacket?.[field]) ? readerPacket[field] : [];
+        values.forEach((value, index) => {
+            const proposal = isPlainObject(value) ? safeJsonClone(value) : { summary: String(value || '') };
+            const summary = String(proposal.summary || proposal.fact || proposal.reason || proposal.prompt || proposal.question || '').trim().slice(0, 1600);
+            if (!summary) return;
+            const stable = `reader.${turnRecord.id}.${kind}.${index + 1}`.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 180);
+            const existing = (protocol.proposals || []).find(item => item.id === stable);
+            const record = existing || {
+                id: stable, type: kind, status: 'pending_sidecar_review', createdAt: new Date().toISOString(),
+                sourceTurnId: turnRecord.id, sourceTakeId: turnRecord.takeId || '', sourceRevisionId: turnRecord.revisionId || '',
+                readerSnapshotId: snapshotId, evidence: [], provenance: { source: 'sidecar_semantic_reader', turnId: turnRecord.id, readerSnapshotId: snapshotId }
+            };
+            record.summary = summary;
+            record.candidate = proposal;
+            record.evidence = [...(record.evidence || []), {
+                at: new Date().toISOString(), visibleNarrationHash: worldMediaHash(String(turnRecord.narration || '')),
+                handoffHash: worldMediaHash(String(turnRecord.handoff || '')), reader: proposal
+            }].slice(-8);
+            record.updatedAt = new Date().toISOString();
+            if (!existing) protocol.proposals.push(record);
+            entries.push(record);
+        });
+    });
+    protocol.proposals = (protocol.proposals || []).slice(-400);
+    return entries;
+}
+
 async function runSidecarSemanticReading(world, sess, options = {}) {
     const tracker = options.tracker || {};
+    const profile = options.readerProfile || effectiveSidecarReaderProfile(world, sess);
     const provider = options.provider;
     const model = options.model;
     const sidecarWorld = options.sidecarWorld || world;
     const references = options.references || buildSidecarCanonicalReferenceManifest(world, sess, `${options.playerInput || ''}\n${options.narration || ''}\n${options.handoff || ''}`);
     const defaultTokens = tracker.reasoning === true ? 5000 : 3000;
-    const configuredTokens = Number(tracker.readerMaxTokens) || 0;
+    const configuredTokens = Number(profile.maxTokens) || Number(tracker.readerMaxTokens) || 0;
     const maxTokens = configuredTokens > 0 ? Math.max(1200, Math.min(100000, Math.trunc(configuredTokens))) : defaultTokens;
     const readerMechanicsFrame = window.HordeWorldMechanics?.isEnabled?.(world)
         ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
         : '';
-    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, or canonical identity is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence.\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock.\n\nCANONICAL REFERENCE MANIFEST:\n${JSON.stringify(references)}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
-    const messages = [{ role: 'system', content: prompt }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
+    const lookupBudget = Math.max(1000, Number(profile.maxLookupPayload) || 12000);
+    const boundedReferences = JSON.stringify(references).slice(0, lookupBudget);
+    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, canonical identity, relationship, ledger, thread, quest, or obligation is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: mode, changed_fields, summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence.\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock. Presence must classify every relevant named character as active, nearby, audible, remote, mentioned, or absent; only active belongs in the direct cast.\n\nCANONICAL REFERENCE MANIFEST (bounded):\n${boundedReferences}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
+    const priorEnvelope = options.priorReaderEnvelope || null;
+    const forceFull = options.forceFull === true;
+    const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
+    const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
+    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${forceFull ? 'Return every envelope field, including unchanged fields.' : 'Return only changed fields; omitted fields remain unchanged from the previous envelope.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with these optional objects when established: scene {topic,mood,tension,interactionStyle,sound,environment}, location {activeLocationId,movement,evidence}, presence {active,nearby,audible,remote,mentioned,absent}, events, durableProposals, relationshipProposals, provisionalCognition. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.`;
+    const messages = [{ role: 'system', content: prompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
+    const readerTracker = {
+        ...tracker,
+        reasoningMode: profile.reasoningMode === 'inherit' ? tracker.reasoningMode : profile.reasoningMode,
+        reasoning: profile.reasoningMode === 'inherit' ? tracker.reasoning === true : profile.reasoningMode === 'enabled',
+        reasoningEffort: profile.reasoningEffort === 'auto' ? tracker.reasoningEffort : profile.reasoningEffort
+    };
     let finalPayload = null;
-    for (let round = 0; round < 3; round++) {
+    const timeoutController = new AbortController();
+    const timeoutId = options.signal ? null : setTimeout(() => timeoutController.abort(), Math.max(10000, Number(profile.timeoutSeconds) * 1000 || 120000));
+    const readerSignal = options.signal || timeoutController.signal;
+    const maxRounds = Math.max(0, Math.min(12, Number(profile.maxToolCalls) || 3));
+    for (let round = 0; round <= maxRounds; round++) {
         const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: safeJsonClone(messages), tools, tool_choice: 'auto', parallel_tool_calls: false };
-        applySidecarReasoning(body, provider, tracker, world);
+        applySidecarReasoning(body, provider, readerTracker, world);
         logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt, request: safeJsonClone(body) });
         const response = await fetchSidecarCompletion(body, {
-            provider, tracker, world, owner: sidecarWorld, scope: 'sidecar_reader', signal: options.signal
+            provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal
         });
         if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar Reader failed (${response.status})`);
         finalPayload = await response.json();
@@ -15057,6 +15334,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         if (!calls.length) {
             const packet = parseSidecarReaderOutput(message.content, references);
             packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
+            if (timeoutId) clearTimeout(timeoutId);
             return packet;
         }
         messages.push({ role: 'assistant', content: message.content || '', tool_calls: safeJsonClone(message.tool_calls || []) });
@@ -15064,8 +15342,9 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
             const result = runSidecarReadOnlyTool(world, sess, call.function?.name, call.function?.arguments || '{}');
             messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         });
-        if (round === 2) messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided.' });
+        if (round === maxRounds) messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided.' });
     }
+    if (timeoutId) clearTimeout(timeoutId);
     return parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references);
 }
 
@@ -15136,6 +15415,9 @@ async function runSidecarQuestionRepair(world, sess, questionId) {
     const narratorProvider = normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
     const provider = tracker.inheritNarrator !== false || !tracker.provider
         ? narratorProvider : normalizedProviderId(tracker.provider);
+    const readerProfile = effectiveSidecarReaderProfile(world, sess);
+    const readerModel = readerProfile.model || model;
+    const readerProvider = readerProfile.provider ? normalizedProviderId(readerProfile.provider) : provider;
     const prompt = `[SIDECAR QUESTION REPAIR]\nAnswer only this one unresolved authorial question from the supplied evidence. Do not mutate canon and do not infer adjacent facts. Return JSON only: {"answer":"YES|NO|UNKNOWN|CLARIFICATION","explanation":"brief"}.\nQUESTION: ${JSON.stringify({ id: question.id, prompt: question.prompt, evidence: question.evidence, dependencies: question.dependencies })}\nPACKET: ${JSON.stringify(buildSidecarScenePacket(world, sess))}`;
     const body = { model, max_tokens: 800, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] };
     // A narrow repair should inherit the world's Sidecar reasoning policy;
@@ -15248,6 +15530,13 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         }));
     const references = buildSidecarCanonicalReferenceManifest(world, sess,
         `${options.playerInput || ''}\n${narration}\n${handoff}`);
+    const protocolBeforeReader = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const priorReaderEnvelope = protocolBeforeReader?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1)?.envelope || null;
+    const readerProfile = effectiveSidecarReaderProfile(world, sess);
+    const readerModel = readerProfile.model || model;
+    const readerProvider = readerProfile.provider ? normalizedProviderId(readerProfile.provider) : provider;
+    const readerIndex = (Number(protocolBeforeReader?.readerSnapshots?.length) || 0) + 1;
+    const forceReaderFull = readerIndex === 1 || readerIndex % Math.max(1, Number(readerProfile.fullRefreshCadence) || 5) === 0;
     const attempt = beginSidecarTurnAttempt(world, sess, {
         handoff, narration, playerInput: options.playerInput,
         sceneHeader: safeJsonClone(temporalBreakdown),
@@ -15271,8 +15560,8 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     } else try {
         options.onStage?.('reading');
         readerPacket = await runSidecarSemanticReading(world, sess, {
-            tracker, provider, model, sidecarWorld, references, preFrame, clockEvidence,
-            playerInput: options.playerInput, narration, handoff, signal: options.signal
+            tracker, provider: readerProvider, model: readerModel, readerProfile, sidecarWorld, references, preFrame, clockEvidence,
+            priorReaderEnvelope, forceFull: forceReaderFull, playerInput: options.playerInput, narration, handoff, signal: options.signal
         });
     } catch (readerError) {
         // Reading failure is diagnostic rather than state authority. The
@@ -15288,6 +15577,9 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     }
     if (attempt.turnRecord) {
         attempt.turnRecord.reader = safeJsonClone(readerPacket);
+        const readerSnapshot = attachSidecarReaderSnapshot(world, sess, attempt.turnRecord, readerPacket, { profile: readerProfile, fullRefresh: forceReaderFull, refreshIndex: readerIndex, takeId: options.takeId, revisionId: options.revisionId });
+        attempt.turnRecord.readerSnapshotId = readerSnapshot?.id || attempt.turnRecord.readerSnapshotId || '';
+        recordSidecarReaderProposals(world, sess, readerPacket, attempt.turnRecord, readerSnapshot?.id || '');
         attempt.turnRecord.controlledCharacterEvidence = safeJsonClone(readerPacket.controlledCharacterEvidence || []);
         queueSidecarReaderQuestions(world, sess, readerPacket, attempt.turnRecord);
     }
@@ -15434,6 +15726,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                 turnRecord.explicitEndpointEvidence = safeJsonClone(explicitEndpointEvidence);
                 turnRecord.provisionalIntroductions = stagedIntroductions.map(entry => entry.id);
                 turnRecord.traversalChanges = traversalChanges;
+                if (turnRecord.readerSnapshotId) activateSidecarReaderSnapshot(world, sess, turnRecord.readerSnapshotId, turnRecord.id);
                 window.HordeSidecarMemoryGraph?.recordTurn(protocol, turnRecord);
             }
             queueSidecarSceneOutfitQuestions(world, sess, turnRecord);
@@ -15560,10 +15853,18 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8, options = {}
     if (!Array.isArray(queryEmbedding)) return [];
     const historyCandidates = (graph.worldHistory || []).filter(record => record.status === 'active').map(record => ({ kind: 'world_history', text: record.text || record.narration, record }));
     const episodeCandidates = (graph.episodes || []).filter(record => record.status === 'active').map(record => ({ kind: 'episode', text: record.text || `${record.summary}\n${record.objectiveHistory || ''}`, record }));
-    const baseCandidates = [...historyCandidates, ...episodeCandidates].filter(candidate => candidate.text);
+    const readerCandidates = (protocol.readerSnapshots || []).filter(snapshot => snapshot.status === 'active' && snapshot.envelope?.summary).map(snapshot => ({
+        kind: 'reader_scene', text: [snapshot.envelope.summary, snapshot.envelope.scene?.topic, snapshot.envelope.scene?.mood, snapshot.envelope.scene?.environment].filter(Boolean).join('\n'),
+        record: { ...snapshot.envelope, id: snapshot.id, vectorText: [snapshot.envelope.summary, snapshot.envelope.scene?.topic, snapshot.envelope.scene?.mood].filter(Boolean).join('\n'), embedding: snapshot.embedding, sourceTurnId: snapshot.turnId, status: 'active' }
+    }));
+    const baseCandidates = [...historyCandidates, ...episodeCandidates, ...readerCandidates].filter(candidate => candidate.text);
     const missingBase = baseCandidates.filter(candidate => !Array.isArray(candidate.record.embedding)).slice(0, 48);
     missingBase.forEach(candidate => { candidate.record.vectorText = String(candidate.record.vectorText || candidate.text).slice(0, 8000); });
     if (missingBase.length) await vectorizeSidecarMemoryRecords(missingBase.map(candidate => candidate.record));
+    readerCandidates.forEach(candidate => {
+        const snapshot = protocol.readerSnapshots.find(item => item.id === candidate.record.id);
+        if (snapshot && Array.isArray(candidate.record.embedding)) { snapshot.embedding = candidate.record.embedding; snapshot.vectorizedAt = new Date().toISOString(); }
+    });
     const prerequisitesMet = historyCandidates.some(candidate => Array.isArray(candidate.record.embedding))
         && episodeCandidates.some(candidate => Array.isArray(candidate.record.embedding));
     const allowedCharacters = new Set(Array.isArray(options.characterIds) ? options.characterIds.filter(Boolean) : []);
@@ -15610,6 +15911,71 @@ function effectiveSidecarMemoryConfig(world) {
         consolidationReasoning: inherited('consolidationReasoning') === true
     };
 }
+
+function effectiveSidecarReaderProfile(world, sess = null) {
+    const globalProfile = window.HordeSidecarReader?.normalizeProfile?.(state.globalSettings?.sidecarReaderProfile || {}) || {};
+    const tracker = window.HordeSidecarMode?.normalizeWorldConfig?.(world)?.tracker || {};
+    const localProfile = window.HordeSidecarReader?.normalizeProfile?.(tracker.readerProfile || {}) || {};
+    const profile = tracker.readerProfileInherit === false ? localProfile : globalProfile;
+    // `timeline.sidecar.readerProfile` is a derived snapshot of the profile
+    // used by a turn, not an override.  Treating the empty/default timeline
+    // object as authoritative silently masked global and world settings.
+    // World/timeline provenance is written when a reader turn starts; routing
+    // always resolves from the explicit world inheritance choice here.
+    return window.HordeSidecarReader?.normalizeProfile?.(profile) || profile;
+}
+
+// Historical reader backfill is explicitly derived-only. It never invokes a
+// reducer, rewrites a Turn, or makes an old Take active; it only attaches a
+// versioned reader snapshot/evidence record so later memory jobs can consume
+// it. Progress is persisted after every item, allowing a failed run to resume
+// without repeating completed turns.
+async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
+    if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) throw new Error('Reader backfill requires a Sidecar timeline.');
+    const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
+    const turnIds = Array.isArray(options.turnIds) && options.turnIds.length
+        ? new Set(options.turnIds.map(String)) : null;
+    const eligible = (protocol.turns || []).filter(turn => turn.status !== 'superseded' && (!turnIds || turnIds.has(String(turn.id)))
+        && !protocol.readerSnapshots.some(snapshot => snapshot.status === 'active' && snapshot.turnId === turn.id));
+    const profile = effectiveSidecarReaderProfile(world, sess);
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const tracker = config.tracker || {};
+    const model = profile.model || (tracker.inheritNarrator !== false && tracker.model ? tracker.model : (world.model || state.globalSettings.defaultModel));
+    const provider = profile.provider || (tracker.inheritNarrator !== false ? normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter') : normalizedProviderId(tracker.provider || state.globalSettings?.apiProvider || 'openrouter'));
+    protocol.readerBackfill = { ...(protocol.readerBackfill || {}), status: 'running', startedAt: protocol.readerBackfill?.startedAt || new Date().toISOString(), total: (protocol.readerBackfill?.total || 0) + eligible.length, completed: Number(protocol.readerBackfill?.completed) || 0, failed: Number(protocol.readerBackfill?.failed) || 0, lastError: '' };
+    await saveState();
+    for (const turn of eligible) {
+        const previous = protocol.readerSnapshots.filter(snapshot => snapshot.status === 'active').at(-1)?.envelope || null;
+        const refreshIndex = (Number(protocol.readerSnapshots.length) || 0) + 1;
+        const forceFull = refreshIndex === 1 || refreshIndex % Math.max(1, Number(profile.fullRefreshCadence) || 5) === 0;
+        try {
+            const packet = await runSidecarSemanticReading(world, sess, {
+                tracker, provider, model, readerProfile: profile, preFrame: turn.preFrame || buildWorldSceneFrame(world, sess),
+                clockEvidence: turn.preClock || buildSidecarClockEvidence(world, sess), priorReaderEnvelope: previous, forceFull,
+                playerInput: turn.playerInput || '', narration: turn.narration || '', handoff: turn.handoff || '',
+                references: buildSidecarCanonicalReferenceManifest(world, sess, `${turn.playerInput || ''}\n${turn.narration || ''}\n${turn.handoff || ''}`)
+            });
+            turn.reader = safeJsonClone(packet);
+            const snapshot = attachSidecarReaderSnapshot(world, sess, turn, packet, { profile, fullRefresh: forceFull, refreshIndex, takeId: turn.takeId, revisionId: turn.revisionId });
+            recordSidecarReaderProposals(world, sess, packet, turn, snapshot?.id || '');
+            queueSidecarReaderQuestions(world, sess, packet, turn);
+            protocol.readerBackfill.completed = Number(protocol.readerBackfill.completed) + 1;
+        } catch (error) {
+            protocol.readerBackfill.failed = Number(protocol.readerBackfill.failed) + 1;
+            protocol.readerBackfill.lastError = String(error?.message || error).slice(0, 1000);
+            turn.readerBackfillError = protocol.readerBackfill.lastError;
+        }
+        protocol.readerBackfill.updatedAt = new Date().toISOString();
+        await saveState();
+        options.onProgress?.(safeJsonClone(protocol.readerBackfill));
+    }
+    protocol.readerBackfill.status = protocol.readerBackfill.failed && !protocol.readerBackfill.completed ? 'failed' : 'completed';
+    protocol.readerBackfill.completedAt = new Date().toISOString();
+    protocol.packet = buildSidecarScenePacket(world, sess);
+    await saveState();
+    return safeJsonClone(protocol.readerBackfill);
+}
+window.HordeSidecarReaderBackfill = { run: backfillSidecarReaderSnapshots };
 
 async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
     if (!hasApiCredentials() || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) return;
@@ -15674,7 +16040,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             const prior = (graph.cognition || []).filter(record => record.characterId === character.id && record.status === 'active').slice(-memoryDefaults.cognitionRecentLimit)
                 .map(record => ({ text: record.text, epistemicStatus: record.epistemicStatus }));
             const sourceTurns = graph.worldHistory.filter(record => (episode.sourceTurnIds || []).includes(record.turnId) && record.status === 'active')
-                .map(record => ({ turnId: record.turnId, narration: record.narration, sceneReading: record.sceneReading }));
+                .map(record => ({ turnId: record.turnId, narration: record.narration, sceneReading: record.sceneReading, readerEnvelope: record.readerEnvelope || null }));
             const characterState = sess.entityStates?.[character.id] || {};
             const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(character.id)).slice(-12);
             const authorial = { ledger: String(sess.ledger || '').slice(-3000), scenePacket: protocol.packet || null };
@@ -15712,7 +16078,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             const episodes = (graph.episodes || []).filter(episode => (job.episodeIds || []).includes(episode.id) && episode.status === 'active');
             if (!episodes.length) { window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'No active episode evidence remains.'); return; }
             const label = job.type === 'scene_consolidation' ? 'scene' : 'sequence';
-            const prompt = `[SIDECAR ${label.toUpperCase()} CONSOLIDATION]\nCompress the supplied episode summaries into one durable ${label}-level memory. Preserve only supported facts and unresolved uncertainty; do not invent events, locations, character knowledge, or outcomes. Return JSON only: {"summary":"compact event-based summary","keyFacts":"durable facts and open threads"}.\n\nEPISODES:\n${JSON.stringify(episodes.map(episode => ({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, sourceTurnIds: episode.sourceTurnIds })))}\n\nTARGET ${label.toUpperCase()} ID: ${targetId}`;
+            const prompt = `[SIDECAR ${label.toUpperCase()} CONSOLIDATION]\nCompress the supplied episode summaries into one durable ${label}-level memory. Preserve only supported facts and unresolved uncertainty; do not invent events, locations, character knowledge, or outcomes. Reader fields are derived evidence only: use them to understand scene topic/presence/temporal continuity, never as permission to grant a character knowledge or rewrite objective canon. Return JSON only: {"summary":"compact event-based summary","keyFacts":"durable facts and open threads"}.\n\nEPISODES:\n${JSON.stringify(episodes.map(episode => ({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory, sourceTurnIds: episode.sourceTurnIds, readerEvidence: (episode.sourceTurnIds || []).map(turnId => graph.worldHistory.find(record => record.turnId === turnId)?.readerEnvelope || null).filter(Boolean).map(envelope => ({ summary: envelope.summary, scene: envelope.scene, presence: envelope.presence, temporal: envelope.temporal })) })))}\n\nTARGET ${label.toUpperCase()} ID: ${targetId}`;
             try {
                 const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
                     method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
@@ -15743,7 +16109,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'All source turns were superseded before consolidation.');
             return;
         }
-        const prompt = `[SIDECAR EPISODE CONSOLIDATION]\nYou consolidate a committed group of roleplay turns. Do not invent facts, promote implied places, or grant character knowledge from authorial context. Return JSON only:\n{\n  "summary":"objective episode summary",\n  "objectiveHistory":"durable factual history only",\n  "perceptionCoverage":[{"characterId":"canonical ID when known","access":"visual|auditory|informational|absent","detail":"what this participant had access to"}],\n  "locationReferences":[{"name":"particular referenced place","locationId":"canonical ID or empty","status":"assigned|unresolved","evidence":"short contextual clue"}]\n}\nAn ordinary generic desire such as “somewhere quiet” is not a location reference. Only record a particular place if the full episode context identifies one or establishes that it is unresolved.\n\nCOMMITTED SOURCE TURNS:\n${JSON.stringify(source.map(record => ({ turnId: record.turnId, sequenceId: record.sequenceId, sceneId: record.sceneId, narration: record.narration, handoff: record.sceneReading })))} `;
+        const prompt = `[SIDECAR EPISODE CONSOLIDATION]\nYou consolidate a committed group of roleplay turns. Do not invent facts, promote implied places, or grant character knowledge from authorial context. Return JSON only:\n{\n  "summary":"objective episode summary",\n  "objectiveHistory":"durable factual history only",\n  "perceptionCoverage":[{"characterId":"canonical ID when known","access":"visual|auditory|informational|absent","detail":"what this participant had access to"}],\n  "locationReferences":[{"name":"particular referenced place","locationId":"canonical ID or empty","status":"assigned|unresolved","evidence":"short contextual clue"}]\n}\nAn ordinary generic desire such as “somewhere quiet” is not a location reference. Only record a particular place if the full episode context identifies one or establishes that it is unresolved.\n\nCOMMITTED SOURCE TURNS (reader envelopes are derived evidence, not canon):\n${JSON.stringify(source.map(record => ({ turnId: record.turnId, sequenceId: record.sequenceId, sceneId: record.sceneId, narration: record.narration, handoff: record.sceneReading, readerEnvelope: record.readerEnvelope || null })))} `;
         try {
             const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
                 method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
@@ -16064,8 +16430,11 @@ function openWorldSidecarInspector(view = 'scene') {
         if (view === 'line') { openWorldSidecarLine(); return; }
         else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, roleplayOS: latestTurn?.ff54 || null, temporalBreakdown: latestTurn?.sceneHeader || null, controlledCharacterEvidence: latestTurn?.controlledCharacterEvidence || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
-        else if (view === 'memory') body = `${tabs}${sidecarInspectorJson({
+        else if (view === 'memory') body = `${tabs}<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;"><button class="btn btn-primary" id="world-sidecar-reader-backfill">Backfill semantic reader</button><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${escapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${escapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
             configuration: effectiveSidecarMemoryConfig(world),
+            readerProfile: effectiveSidecarReaderProfile(world, sess),
+            readerBackfill: protocol.readerBackfill || null,
+            readerSnapshots: (protocol.readerSnapshots || []).slice(-40).map(snapshot => ({ id: snapshot.id, status: snapshot.status, turnId: snapshot.turnId, sceneId: snapshot.sceneId, sequenceId: snapshot.sequenceId, mode: snapshot.envelope?.snapshotMode, profileRevision: snapshot.envelope?.profileRevision, createdAt: snapshot.createdAt })),
             jobs: (protocol.jobs || []).slice(-120),
             graph: {
                 worldHistory: (protocol.memoryGraph?.worldHistory || []).map(record => ({ id: record.id, turnId: record.turnId, status: record.status, sceneId: record.sceneId, sequenceId: record.sequenceId, vectorizedAt: record.vectorizedAt || '' })),
@@ -16083,6 +16452,14 @@ function openWorldSidecarInspector(view = 'scene') {
     document.getElementById('world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });
     document.querySelectorAll('.sidecar-inspector-tab').forEach(button => button.addEventListener('click', () => openWorldSidecarInspector(button.dataset.view)));
     document.getElementById('world-sidecar-inspector-timelines')?.addEventListener('click', () => { closeWorldSidecarInspector(); openWorldTimelineBrowser(); });
+    document.getElementById('world-sidecar-reader-backfill')?.addEventListener('click', async event => {
+        const button = event.currentTarget; button.disabled = true; button.textContent = 'Backfilling…';
+        try {
+            const result = await window.HordeSidecarReaderBackfill?.run(world, sess, { onProgress: progress => { button.textContent = `Backfilling… ${progress.completed || 0}/${progress.total || 0}`; } });
+            showToast(`Reader backfill ${result?.status || 'completed'}: ${result?.completed || 0} completed, ${result?.failed || 0} failed.`, result?.failed ? 'warning' : 'success');
+            closeWorldSidecarInspector(); openWorldSidecarInspector('memory');
+        } catch (error) { showToast(`Reader backfill failed: ${error.message || error}`, 'error'); button.disabled = false; button.textContent = 'Backfill semantic reader'; }
+    });
 }
 
 async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
@@ -17291,6 +17668,19 @@ function setupGlobalSettings() {
         state.globalSettings.consolidationMaxTokens = Math.max(300, Math.min(12000, parseInt(document.getElementById('global-consolidation-max-tokens').value, 10) || 1400));
         state.globalSettings.consolidationTemperature = Math.max(0, Math.min(2, Number(document.getElementById('global-consolidation-temperature').value) || 0));
         state.globalSettings.consolidationReasoning = document.getElementById('global-consolidation-reasoning').checked;
+        state.globalSettings.sidecarReaderProfile = window.HordeSidecarReader?.normalizeProfile?.({
+            ...(state.globalSettings.sidecarReaderProfile || {}),
+            provider: document.getElementById('global-sidecar-reader-provider')?.value || '',
+            model: document.getElementById('global-sidecar-reader-model')?.value || '',
+            maxTokens: document.getElementById('global-sidecar-reader-max-tokens')?.value || 0,
+            timeoutSeconds: document.getElementById('global-sidecar-reader-timeout')?.value || 120,
+            fullRefreshCadence: document.getElementById('global-sidecar-reader-refresh')?.value || 5,
+            maxToolCalls: document.getElementById('global-sidecar-reader-tools')?.value || 3,
+            maxLookupPayload: document.getElementById('global-sidecar-reader-lookup-budget')?.value || 12000,
+            contextBudget: document.getElementById('global-sidecar-reader-context-budget')?.value || 24000,
+            reasoningMode: document.getElementById('global-sidecar-reader-reasoning')?.value || 'inherit',
+            retryPolicy: document.getElementById('global-sidecar-reader-retry')?.value || 'bounded'
+        });
         state.globalSettings.episodeChunkTurns = Math.max(1, Math.min(50, parseInt(document.getElementById('global-episode-chunk-turns').value, 10) || 5));
         state.globalSettings.episodeCadenceTurns = Math.max(1, Math.min(50, parseInt(document.getElementById('global-episode-cadence-turns').value, 10) || 5));
         state.globalSettings.verbatimTurnWindow = Math.max(0, Math.min(30, parseInt(document.getElementById('global-verbatim-turn-window').value, 10) || 0));
@@ -18094,6 +18484,17 @@ function showGlobalSettings() {
         document.getElementById('global-consolidation-max-tokens').value = state.globalSettings.consolidationMaxTokens || 1400;
         document.getElementById('global-consolidation-temperature').value = state.globalSettings.consolidationTemperature ?? 0;
         document.getElementById('global-consolidation-reasoning').checked = state.globalSettings.consolidationReasoning === true;
+        const readerProfile = window.HordeSidecarReader?.normalizeProfile?.(state.globalSettings.sidecarReaderProfile || {}) || {};
+        if (document.getElementById('global-sidecar-reader-provider')) document.getElementById('global-sidecar-reader-provider').value = readerProfile.provider || '';
+        if (document.getElementById('global-sidecar-reader-model')) document.getElementById('global-sidecar-reader-model').value = readerProfile.model || '';
+        if (document.getElementById('global-sidecar-reader-max-tokens')) document.getElementById('global-sidecar-reader-max-tokens').value = readerProfile.maxTokens || '';
+        if (document.getElementById('global-sidecar-reader-timeout')) document.getElementById('global-sidecar-reader-timeout').value = readerProfile.timeoutSeconds || 120;
+        if (document.getElementById('global-sidecar-reader-refresh')) document.getElementById('global-sidecar-reader-refresh').value = readerProfile.fullRefreshCadence || 5;
+        if (document.getElementById('global-sidecar-reader-tools')) document.getElementById('global-sidecar-reader-tools').value = readerProfile.maxToolCalls ?? 3;
+        if (document.getElementById('global-sidecar-reader-lookup-budget')) document.getElementById('global-sidecar-reader-lookup-budget').value = readerProfile.maxLookupPayload || 12000;
+        if (document.getElementById('global-sidecar-reader-context-budget')) document.getElementById('global-sidecar-reader-context-budget').value = readerProfile.contextBudget || 24000;
+        if (document.getElementById('global-sidecar-reader-reasoning')) document.getElementById('global-sidecar-reader-reasoning').value = readerProfile.reasoningMode || 'inherit';
+        if (document.getElementById('global-sidecar-reader-retry')) document.getElementById('global-sidecar-reader-retry').value = readerProfile.retryPolicy || 'bounded';
         document.getElementById('global-episode-chunk-turns').value = state.globalSettings.episodeChunkTurns || 5;
         document.getElementById('global-episode-cadence-turns').value = state.globalSettings.episodeCadenceTurns || 5;
         document.getElementById('global-verbatim-turn-window').value = state.globalSettings.verbatimTurnWindow ?? 5;
@@ -19313,6 +19714,13 @@ function setupWorldStudioLogic() {
         config.tracker.readerEnabled = event.target.checked;
         renderWorldSidecarConfigEditor(state.editingWorld);
     };
+    document.getElementById('w-sidecar-reader-profile-inherit').onchange = event => {
+        if (!state.editingWorld) return;
+        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!config) return;
+        config.tracker.readerProfileInherit = event.target.checked;
+        renderWorldSidecarConfigEditor(state.editingWorld);
+    };
     document.getElementById('w-sidecar-reasoning-mode').onchange = event => {
         document.getElementById('w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', event.target.value === 'disabled');
     };
@@ -20076,6 +20484,12 @@ function renderWorldSidecarConfigEditor(world) {
     document.getElementById('w-sidecar-mode').value = config.mode;
     document.getElementById('w-sidecar-inherit-narrator').checked = tracker.inheritNarrator !== false;
     document.getElementById('w-sidecar-reader-enabled').checked = tracker.readerEnabled !== false;
+    document.getElementById('w-sidecar-reader-profile-inherit').checked = tracker.readerProfileInherit !== false;
+    const readerProfile = effectiveSidecarReaderProfile(world);
+    document.getElementById('w-sidecar-reader-timeout').value = readerProfile.timeoutSeconds;
+    document.getElementById('w-sidecar-reader-refresh').value = readerProfile.fullRefreshCadence;
+    document.getElementById('w-sidecar-reader-tools').value = readerProfile.maxToolCalls;
+    document.querySelectorAll('#w-sidecar-reader-timeout, #w-sidecar-reader-refresh, #w-sidecar-reader-tools').forEach(input => input.disabled = tracker.readerProfileInherit !== false);
     document.getElementById('w-sidecar-provider').value = tracker.provider || '';
     renderSidecarModelOptions(normalizedProviderId(tracker.provider), tracker.model || '');
     document.getElementById('w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
@@ -20424,6 +20838,13 @@ async function saveWorld() {
                 reasoning: document.getElementById('w-sidecar-reasoning-mode').value === 'enabled',
                 reasoningEffort: document.getElementById('w-sidecar-reasoning-effort').value,
                 readerEnabled: document.getElementById('w-sidecar-reader-enabled').checked,
+                readerProfileInherit: document.getElementById('w-sidecar-reader-profile-inherit').checked,
+                readerProfile: {
+                    ...(priorSidecarConfig.tracker?.readerProfile || {}),
+                    timeoutSeconds: document.getElementById('w-sidecar-reader-timeout').value,
+                    fullRefreshCadence: document.getElementById('w-sidecar-reader-refresh').value,
+                    maxToolCalls: document.getElementById('w-sidecar-reader-tools').value
+                },
                 readerMaxTokens: document.getElementById('w-sidecar-reader-max-tokens').value,
                 maxTokens: document.getElementById('w-sidecar-max-tokens').value
             },
@@ -31381,7 +31802,7 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
         <summary><span class="sidecar-backstage-mark">${failed ? '⚠' : '🎭'}</span><span><b>Backstage handoff</b><small>Narrator → Sidecar → next beat${turnNumber ? ` · Turn ${turnNumber}` : ''}</small></span><i>${failed ? 'Narration saved · state pending' : 'Committed continuity'}</i></summary>
         <div class="sidecar-backstage-body">
             ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Narrator’s handoff notes</b><small>What the narrated beat means for continuity.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
-            ${reader ? `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Sidecar’s semantic reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'Reader fell back to the canonical manifest.' : 'Read-only canonical evidence before reconciliation.'))}</small></div></header>${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${reader.failure ? `<div class="form-hint">Reader diagnostic: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>` : ''}
+            ${reader ? (() => { const envelope = reader.readerEnvelope || {}; const presence = envelope.presence || {}; const changed = Array.isArray(reader.changedFields) ? reader.changedFields : []; const proposals = [...(envelope.durableProposals || []), ...(envelope.relationshipProposals || [])]; return `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Sidecar’s semantic reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'Reader fell back to the canonical manifest.' : 'Read-only canonical evidence before reconciliation.'))}</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(reader.mode || envelope.snapshotMode || 'delta'))} snapshot</span>${reader.readerSnapshotId ? `<span>${escapeHTML(reader.readerSnapshotId)}</span>` : ''}${reader.model ? `<span>${escapeHTML(reader.model)}</span>` : ''}${reader.provider ? `<span>${escapeHTML(reader.provider)}</span>` : ''}${changed.length ? `<span>${escapeHTML(changed.length)} changed field${changed.length === 1 ? '' : 's'}</span>` : ''}</div>${presence.active?.length || presence.nearby?.length || presence.audible?.length ? `<div class="sidecar-packet-grid">${presence.active?.length ? `<span><small>Active</small>${escapeHTML(JSON.stringify(presence.active))}</span>` : ''}${presence.nearby?.length ? `<span><small>Nearby</small>${escapeHTML(JSON.stringify(presence.nearby))}</span>` : ''}${presence.audible?.length ? `<span><small>Audible</small>${escapeHTML(JSON.stringify(presence.audible))}</span>` : ''}</div>` : ''}${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${proposals.length ? `<div class="form-hint">${escapeHTML(String(proposals.length))} evidence-backed proposal${proposals.length === 1 ? '' : 's'} queued for Sidecar review; none are canonical until the reducer accepts them.</div>` : ''}${envelope.validationWarnings?.length ? `<div class="form-hint" style="color:var(--warning);">${escapeHTML(String(envelope.validationWarnings.length))} validation warning${envelope.validationWarnings.length === 1 ? '' : 's'}</div>` : ''}${reader.failure ? `<div class="form-hint">Reader diagnostic: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>`; })() : ''}
             ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Narrator handoff was incomplete</b><small>Sidecar still ran from the visible scene and canonical frame; missing interpretation was not invented.</small></div></header></section>` : ''}
             ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Canonical commit did not land</b><small>${escapeHTML(backstage.failure?.message || 'Sidecar did not produce a valid native state receipt.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Failure</b><span>${escapeHTML(backstage.failure?.code || 'sidecar_reconciliation_failed')}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>Safety result</b><span>Visible narration and handoff evidence were preserved. Disputed world state was not mutated.</span></div><div><b>Recovery</b><span>This beat remains in the next Sidecar packet until a later reconciliation or explicit World GM refinement resolves it.</span></div></div></section>` : ''}
             ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Sidecar’s canonical reading</b><small>${escapeHTML(receipt.summary || 'Reconciled from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
@@ -31728,6 +32149,26 @@ function invalidateSidecarDerivedAfterRestore(sess, activeTurnIds) {
     (protocol.turns || []).forEach(turn => {
         if (!active.has(turn.id)) { turn.status = 'superseded'; turn.supersededAt = turn.supersededAt || new Date().toISOString(); }
     });
+    (protocol.readerSnapshots || []).forEach(snapshot => {
+        if (!active.has(snapshot.turnId)) {
+            snapshot.status = 'superseded';
+            snapshot.supersededAt = snapshot.supersededAt || new Date().toISOString();
+            snapshot.provenance = { ...(snapshot.provenance || {}), supersededByRestore: true };
+        }
+    });
+    (protocol.proposals || []).forEach(proposal => {
+        if (proposal.sourceTurnId && !isActiveSource(proposal.sourceTurnId)) {
+            proposal.status = 'superseded';
+            proposal.supersededAt = proposal.supersededAt || new Date().toISOString();
+        }
+    });
+    (protocol.questions || []).forEach(question => {
+        const sourceTurnId = question.provenance?.sourceTurnId || question.sourceTurnId;
+        if (sourceTurnId && !isActiveSource(sourceTurnId) && ['semantic_reader', 'reader', 'reconciliation'].includes(question.origin)) {
+            question.status = 'superseded';
+            question.supersededAt = question.supersededAt || new Date().toISOString();
+        }
+    });
     const graph = window.HordeSidecarMemoryGraph?.graph?.(protocol);
     if (graph) {
         graph.worldHistory = (graph.worldHistory || []).filter(record => isActiveSource(record.turnId));
@@ -31748,6 +32189,10 @@ function invalidateSidecarDerivedAfterRestore(sess, activeTurnIds) {
     }
     protocol.jobs = (protocol.jobs || []).filter(job => !(job.sourceTurnIds || []).some(turnId => !isActiveSource(turnId))
         && !((job.episodeId || '') && graph && !(graph.episodes || []).some(episode => episode.id === job.episodeId)));
+    if (protocol.readerBackfill) {
+        protocol.readerBackfill.status = 'stale_after_restore';
+        protocol.readerBackfill.updatedAt = new Date().toISOString();
+    }
     protocol.packet = null;
 }
 
@@ -32446,7 +32891,7 @@ async function executeWorldTurn(commandOrReroll = null) {
                     sidecarTurnId: openingSidecar?.turnId || null,
                     handoffComplete: true,
                     handoff: openingSidecar?.handoff || '',
-                    reader: openingSidecar?.turnId ? sess.sidecar?.turns?.find(turn => turn.id === openingSidecar.turnId)?.reader : null,
+                    reader: openingSidecar?.turnId ? (() => { const turn = sess.sidecar?.turns?.find(item => item.id === openingSidecar.turnId); return turn ? { ...(turn.reader || {}), readerEnvelope: turn.readerEnvelope || null, readerSnapshotId: turn.readerSnapshotId || '' } : null; })() : null,
                     receipt: openingSidecar?.receipt || null,
                     packet: openingSidecar?.packet || sess.sidecar?.packet || null,
                     failure: openingSidecar?.failure || null,
@@ -34746,7 +35191,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                         ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.handoffComplete !== false
                         : !!sidecarHandoff,
                     handoff: sidecarHandoff,
-                    reader: sidecarTurnId ? sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId)?.reader : null,
+                    reader: sidecarTurnId ? (() => { const turn = sess.sidecar?.turns?.find(item => item.id === sidecarTurnId); return turn ? { ...(turn.reader || {}), readerEnvelope: turn.readerEnvelope || null, readerSnapshotId: turn.readerSnapshotId || '' } : null; })() : null,
                     receipt: sidecarReceipt,
                     packet: sidecarPacket || sess.sidecar?.packet || null,
                     failure: sidecarFailure,
