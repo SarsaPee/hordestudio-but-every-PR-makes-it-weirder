@@ -16405,6 +16405,42 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
     }
 }
 
+// Refresh a settled Scene Intelligence projection without rewriting canon.
+// This is deliberately Reader-only: a changed interpretation becomes a
+// reviewable derived snapshot, while the accepted Narrator Take and native
+// receipt remain immutable.
+async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '') {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const turn = (protocol?.turns || []).filter(item => item.status !== 'superseded' && (!sidecarTurnId || item.id === sidecarTurnId)).at(-1);
+    if (!protocol || !turn) throw new Error('No settled authored Sidecar turn is available to refresh.');
+    if (turn.reconciliationStatus !== 'committed' && turn.status !== 'active') {
+        return retrySidecarSceneUpdate(world, sess, turn.id);
+    }
+    const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
+    const tracker = config.tracker || {};
+    const profile = effectiveSidecarReaderProfile(world, sess);
+    const provider = profile.provider ? normalizedProviderId(profile.provider) : normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
+    const model = profile.model || world.model || state.globalSettings.defaultModel;
+    const references = buildSidecarCanonicalReferenceManifest(world, sess, `${turn.playerInput || ''}\n${turn.narration || ''}\n${turn.handoff || ''}`);
+    const packet = await runSidecarSemanticReading(world, sess, {
+        tracker, provider, model, readerProfile: profile, sidecarWorld: { ...world, model, provider }, references,
+        preFrame: turn.preFrame || buildWorldSceneFrame(world, sess), clockEvidence: turn.preClock || buildSidecarClockEvidence(world, sess),
+        priorReaderEnvelope: turn.readerEnvelope || turn.reader || null, forceFull: true,
+        playerInput: turn.playerInput || '', narration: turn.narration || '', handoff: turn.handoff || ''
+    });
+    protocol.readerRefreshes = Array.isArray(protocol.readerRefreshes) ? protocol.readerRefreshes : [];
+    protocol.readerRefreshes.push({
+        id: `reader_refresh_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+        status: 'review', sourceTurnId: turn.id, createdAt: new Date().toISOString(),
+        envelope: normalizeSidecarReaderEnvelope(packet, { sourceTurnId: turn.id, profileRevision: profile.revision, promptRevision: profile.promptRevision, snapshotMode: 'full' }),
+        provenance: { source: 'scene_intelligence_refresh', provider, model, profileRevision: profile.revision }
+    });
+    protocol.readerRefreshes = protocol.readerRefreshes.slice(-40);
+    await saveState();
+    renderWorldPlayState();
+    return protocol.readerRefreshes.at(-1);
+}
+
 function parseSidecarConversationResponse(content) {
     const raw = String(content || '').trim();
     const parsed = safeParseJSONRepair(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
@@ -17091,13 +17127,20 @@ function sidecarSceneProjectionMarkup(world, sess) {
     const recoveryMarkup = failedTurn || incompleteCommit ? `<section class="sidecar-scene-recovery"><div><strong>${incompleteCommit ? 'Canonical commit incomplete' : 'Scene update incomplete'}</strong><span>${incompleteCommit ? 'Progression is blocked until the journaled commit is reviewed through World GM/native recovery.' : 'Narration is preserved while downstream interpretation is pending.'}</span></div><div class="sidecar-recovery-actions">${failedTurn && !incompleteCommit ? `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${escapeHTML(failedTurn.id)}">Retry Scene Update</button>` : ''}<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button></div></section>` : '';
     const candidates = activeReaderCandidates(protocol, { sceneId: packet?.activeScene?.id || protocol?.activeSceneId || '' }).slice(-120);
     const presence = reader.presence || {};
+    const relationships = Array.isArray(reader.relationshipProposals) ? reader.relationshipProposals.slice(-20) : [];
     const list = (values, empty = 'None recorded.') => Array.isArray(values) && values.length ? values.map(value => {
         const entry = isPlainObject(value) ? value : { id: value };
         const label = entry.name || entry.label || entry.id || 'Unnamed';
         return `<li><strong>${escapeHTML(String(label))}</strong>${entry.reason ? ` <span class="form-hint">${escapeHTML(String(entry.reason))}</span>` : ''}</li>`;
     }).join('') : `<li class="form-hint">${escapeHTML(empty)}</li>`;
-    const candidateMarkup = candidates.length ? candidates.map(candidate => `<details class="sidecar-scene-candidate" data-candidate-id="${escapeHTML(candidate.candidateId)}"><summary><span class="sidecar-candidate-type">${escapeHTML(candidate.candidateType)}</span> ${escapeHTML(candidate.label || candidate.role || 'Unnamed candidate')} <span class="form-hint">${escapeHTML(candidate.status)}</span></summary><div class="sidecar-candidate-body"><div class="form-hint">${escapeHTML(candidate.description || candidate.clothingDescription || 'Derived scene structure; not canonical.')}</div>${candidate.role ? `<div><strong>Role:</strong> ${escapeHTML(candidate.role)}</div>` : ''}${candidate.presence ? `<div><strong>Presence:</strong> ${escapeHTML(candidate.presence)}</div>` : ''}${candidate.canonicalMatchId ? `<div><strong>Matched ID:</strong> <code>${escapeHTML(candidate.canonicalMatchId)}</code></div>` : ''}<div class="sidecar-candidate-actions"><button class="tool-btn sidecar-candidate-promote" data-candidate-id="${escapeHTML(candidate.candidateId)}">Promote</button><button class="tool-btn sidecar-candidate-match" data-candidate-id="${escapeHTML(candidate.candidateId)}">Match existing</button><button class="tool-btn sidecar-candidate-leave" data-candidate-id="${escapeHTML(candidate.candidateId)}">Leave ephemeral</button></div></div></details>`).join('') : `<div class="form-hint">No pre-canonical scene candidates have been derived yet.</div>`;
-    return `<div class="sidecar-scene-inspector">${recoveryMarkup}<div class="sidecar-scene-grid"><section><h3>Current scene</h3><div><strong>Location</strong><div>${escapeHTML(packet?.activeLocation?.name || 'Unknown')}</div></div><div><strong>World time</strong><div>${escapeHTML(packet?.worldTime || 'Unknown')}</div></div><div><strong>Scene state</strong><div>${escapeHTML(packet?.sceneState || 'No scene projection yet.')}</div></div></section><section><h3>Scene reading</h3><div class="sidecar-scene-reading">${escapeHTML(reader.summary || packet?.sceneReading || 'No reader summary yet.')}</div>${reader.scene ? `<div class="form-hint">${escapeHTML([reader.scene.topic, reader.scene.mood, reader.scene.tension, reader.scene.interactionStyle].filter(Boolean).join(' · ') || 'No additional scene signals.')}</div>` : ''}</section></div><div class="sidecar-scene-columns"><section><h3>Cast</h3><h4>Active</h4><ul>${list(presence.active || packet?.activeCast)}</ul><h4>Nearby</h4><ul>${list(presence.nearby || packet?.nearbyCast)}</ul><h4>Audible</h4><ul>${list(presence.audible)}</ul><h4>Mentioned</h4><ul>${list(presence.mentioned)}</ul></section><section><h3>Scene entities</h3>${candidateMarkup}</section></div><section><h3>Current pressures</h3><ul>${list(packet?.pendingQuestions, 'No open scene questions.')}</ul></section></div>`;
+    const relationshipMarkup = relationships.length ? relationships.map(item => {
+        const entry = isPlainObject(item) ? item : { summary: item };
+        const label = entry.label || entry.subject || entry.target || entry.relationship || 'Relationship proposal';
+        const evidence = entry.evidence || entry.reason || entry.summary || '';
+        const posture = entry.posture || entry.axis || entry.change || entry.delta || '';
+        return `<div class="sp-relationship-card sidecar-relationship-card"><div class="sp-relationship-header"><strong>${escapeHTML(String(label))}</strong>${posture ? `<span class="sp-relationship-meter">${escapeHTML(String(posture))}</span>` : ''}</div><div class="sp-relationship-evidence">${escapeHTML(String(evidence))}</div><small>Reader proposal · Sidecar review required</small></div>`;
+    }).join('') : `<div class="form-hint">No relationship changes proposed for this beat.</div>`;
+    return `<div class="sidecar-scene-inspector"><div class="sp-toolbar sidecar-scene-toolbar"><span class="sp-brand-title"><span class="sp-brand-accent">SCENE</span> intelligence</span><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${failedTurn || incompleteCommit ? 'is-warning' : 'is-ready'}">${incompleteCommit ? 'Commit blocked' : failedTurn ? 'Update incomplete' : 'Reader current'}</span><button type="button" class="sp-toolbar-btn sidecar-scene-refresh" title="Refresh the current Scene Intelligence projection">↻</button></div>${recoveryMarkup}<div class="sidecar-scene-grid"><section class="sp-section sidecar-scene-card"><h3>Current scene</h3><div><strong>Location</strong><div>${escapeHTML(packet?.activeLocation?.name || 'Unknown')}</div></div><div><strong>World time</strong><div>${escapeHTML(packet?.worldTime || 'Unknown')}</div></div><div><strong>Scene state</strong><div>${escapeHTML(packet?.sceneState || 'No scene projection yet.')}</div></div></section><section class="sp-section sidecar-scene-card"><h3>Scene reading</h3><div class="sidecar-scene-reading">${escapeHTML(reader.summary || packet?.sceneReading || 'No reader summary yet.')}</div>${reader.scene ? `<div class="form-hint">${escapeHTML([reader.scene.topic, reader.scene.mood, reader.scene.tension, reader.scene.interactionStyle].filter(Boolean).join(' · ') || 'No additional scene signals.')}</div>` : ''}</section></div><div class="sidecar-scene-columns"><section class="sp-section sidecar-scene-card"><h3>Cast</h3><h4>Active</h4><ul>${list(presence.active || packet?.activeCast)}</ul><h4>Nearby</h4><ul>${list(presence.nearby || packet?.nearbyCast)}</ul><h4>Audible</h4><ul>${list(presence.audible)}</ul><h4>Mentioned</h4><ul>${list(presence.mentioned)}</ul></section><section class="sp-section sidecar-scene-card"><h3>Scene entities</h3>${candidateMarkup}</section></div><section class="sp-section sidecar-scene-card"><h3>Relationships</h3><div class="sidecar-relationship-list">${relationshipMarkup}</div></section><section class="sp-section sidecar-scene-card"><h3>Current pressures</h3><ul>${list(packet?.pendingQuestions, 'No open scene questions.')}</ul></section></div>`;
 }
 
 function openWorldSidecarInspector(view = 'scene') {
@@ -17209,6 +17252,21 @@ function openWorldSidecarInspector(view = 'scene') {
             guidance: 'Review the incomplete or failed downstream transaction. Resolve it through the native canonical commit/World GM path; do not replay narration or invent a replacement event.',
             draft: detail ? `A Sidecar transaction requires recovery:\n${detail}\n\nPlease inspect the journaled receipt and explain how it should be resolved.` : ''
         });
+    });
+    overlay.querySelector('.sidecar-scene-refresh')?.addEventListener('click', async event => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = '…';
+        try {
+            const refreshed = await refreshSidecarSceneIntelligence(world, sess, latestTurn?.id || '');
+            showToast(refreshed?.status === 'review' ? 'Scene Intelligence refreshed for review; canon was unchanged.' : 'Scene update retry started.', 'success');
+            closeWorldSidecarInspector();
+            openWorldSidecarInspector('scene');
+        } catch (error) {
+            showToast(`Scene Intelligence refresh failed: ${error?.message || error}`, 'error');
+            button.disabled = false;
+            button.textContent = '↻';
+        }
     });
     document.getElementById('world-sidecar-inspector-timelines')?.addEventListener('click', () => { closeWorldSidecarInspector(); openWorldTimelineBrowser(); });
     document.getElementById('world-sidecar-reader-backfill')?.addEventListener('click', async event => {

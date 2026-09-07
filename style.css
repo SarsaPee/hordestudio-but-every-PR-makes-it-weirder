@@ -10266,3 +10266,23 @@ label[data-help] > span:first-child::after,
 .sidecar-recovery-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 @media (max-width:700px) { .sidecar-scene-grid,.sidecar-scene-columns { grid-template-columns:1fr; } }
 @media (max-width:700px) { .sidecar-scene-recovery { flex-direction:column; align-items:stretch; } }
+
+/* Scene Intelligence Workspace adapts the ScenePulse panel language and
+   card rhythm (ScenePulse, GPL-3.0; source: SillyTavern-ScenePulse-main).
+   Only presentation rules are reused here; Horde retains runtime, state and
+   authority ownership. */
+.sidecar-scene-toolbar { padding:7px 10px; border:1px solid rgba(77,184,164,.22); border-radius:10px; background:linear-gradient(135deg,rgba(77,184,164,.08),rgba(126,124,255,.04)); }
+.sidecar-scene-toolbar .sp-brand-title { font-size:.74rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--text-2); }
+.sp-toolbar-spacer { flex:1; }
+.sp-toolbar-btn { background:rgba(255,255,255,.035); border:1px solid var(--border); color:var(--text-3); border-radius:6px; padding:4px 7px; font-size:.75rem; cursor:pointer; transition:all .15s ease; line-height:1; }
+.sp-toolbar-btn:hover { background:rgba(77,184,164,.12); border-color:#4db8a4; color:#b8f2e7; }
+.sidecar-status-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:9px; border:1px solid rgba(77,184,164,.3); color:#72ead4; background:rgba(77,184,164,.08); font-size:.62rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+.sidecar-status-pill.is-warning { border-color:rgba(243,189,89,.45); color:#ffd388; background:rgba(243,189,89,.1); }
+.sidecar-scene-card { border-radius:10px; background:rgba(255,255,255,.018); }
+.sidecar-relationship-list { display:grid; gap:7px; }
+.sp-relationship-card { padding:8px 9px; border:1px solid var(--border); border-left:3px solid #4db8a4; border-radius:8px; background:rgba(255,255,255,.025); }
+.sp-relationship-header { display:flex; align-items:center; gap:8px; justify-content:space-between; }
+.sp-relationship-header strong { color:var(--text); font-size:.72rem; }
+.sp-relationship-meter { padding:2px 6px; border-radius:8px; background:rgba(77,184,164,.1); color:#8cebd6; font-size:.6rem; font-weight:700; }
+.sp-relationship-evidence { margin-top:4px; color:var(--text-2); font-size:.68rem; line-height:1.35; }
+.sp-relationship-card small { display:block; margin-top:5px; color:var(--text-3); font-size:.58rem; }
