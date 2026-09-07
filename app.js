@@ -12779,15 +12779,29 @@ function sidecarCommitJournal(sess) {
 
 function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 'tool_call') {
     const sidecarSource = source === 'sidecar' || source === 'sidecar_conversation';
-    const receiptFingerprint = sidecarReceiptFingerprint(rawReceipt);
+    // Fingerprint the normalized receipt rather than a provider-specific
+    // wrapper.  A compact transport may return {receipt_json:"..."}, while an
+    // OpenAI-compatible provider may return the native object; those are the
+    // same logical operation and must be idempotent across retries.
+    let receiptFingerprint = '';
     const commitIdentity = sidecarSource ? sidecarCommitIdentity(sess, context, rawReceipt) : '';
     if (sidecarSource) {
-        if (sess.sidecarIncompleteCommit) {
+        const recoveryOf = String(context.recoveryOf || rawReceipt?.recovery_of || '').trim();
+        const incomplete = sess.sidecarIncompleteCommit;
+        const recoveryAuthorized = !!(context.allowIncompleteRecovery === true
+            && incomplete
+            && recoveryOf
+            && recoveryOf === String(incomplete.identity || '').trim());
+        if (incomplete && !recoveryAuthorized) {
             const blocked = new Error('A previous Sidecar commit is incomplete and must be recovered before progression can continue.');
             blocked.code = 'sidecar_incomplete_commit_blocked';
-            blocked.incompleteCommit = safeJsonClone(sess.sidecarIncompleteCommit);
+            blocked.incompleteCommit = safeJsonClone(incomplete);
             throw blocked;
         }
+    }
+    const validation = validateWorldTurnReceipt(world, sess, rawReceipt, context);
+    receiptFingerprint = sidecarSource ? sidecarReceiptFingerprint(validation.receipt) : '';
+    if (sidecarSource) {
         const journal = sidecarCommitJournal(sess);
         const prior = journal.find(entry => entry.identity === commitIdentity && entry.status === 'committed');
         if (prior) {
@@ -12802,7 +12816,6 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
             return prior.result;
         }
     }
-    const validation = validateWorldTurnReceipt(world, sess, rawReceipt, context);
     const hasConditionalCheck = Array.isArray(validation.legacyArgs?.checks) && validation.legacyArgs.checks.length > 0;
     if (hasConditionalCheck) {
         // An unresolved check cannot coexist with already-completed event or
@@ -12954,6 +12967,18 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     }
     const result = { validation, actionResult, audit };
     if (sidecarSource) {
+        const recoveryOf = String(context.recoveryOf || rawReceipt?.recovery_of || '').trim();
+        if (recoveryOf && sess.sidecarIncompleteCommit?.identity === recoveryOf) {
+            audit.incompleteCommitRecoveryOf = recoveryOf;
+            const recoveredAt = new Date().toISOString();
+            sidecarCommitJournal(sess).forEach(entry => {
+                if (entry.identity === recoveryOf && entry.status === 'incomplete') {
+                    entry.status = 'recovered';
+                    entry.recoveredAt = recoveredAt;
+                    entry.recoveredByIdentity = commitIdentity;
+                }
+            });
+        }
         sidecarCommitJournal(sess).push({
             identity: commitIdentity,
             fingerprint: receiptFingerprint,
@@ -14753,7 +14778,7 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
     turnRecord.preCanonicalFingerprint = options.preCanonicalFingerprint || turnRecord.preCanonicalFingerprint || sidecarCanonicalCheckpointFingerprint(world, sess);
     turnRecord.preWorldStateVersion = Number(options.preWorldStateVersion ?? turnRecord.preWorldStateVersion ?? sess.worldStateVersion) || 0;
     turnRecord.currentAttemptId = attemptId;
-    turnRecord.attempts.push({ id: attemptId, status: 'pending', createdAt: new Date().toISOString(), logicalCommitIdentity: logicalIdentity, readerReused: options.readerPacketOverride === true });
+    turnRecord.attempts.push({ id: attemptId, status: 'pending', createdAt: new Date().toISOString(), logicalCommitIdentity: logicalIdentity, readerReused: !!options.readerPacketOverride });
     turnRecord.attempts = turnRecord.attempts.slice(-24);
     if (!existing) {
         window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
@@ -14789,6 +14814,7 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
     const turnRecord = attempt?.turnRecord;
     const failure = {
         code: String(detail.code || error?.code || 'sidecar_reconciliation_failed'),
+        stage: String(detail.stage || error?.sidecarDetail?.stage || 'reconciliation').slice(0, 40),
         message: String(error?.message || error || 'Sidecar reconciliation failed.').slice(0, 1600),
         finishReason: String(detail.finishReason || ''),
         provider: String(detail.provider || turnRecord?.provider || ''),
@@ -15820,17 +15846,27 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         const message = choice.message || {};
         logSidecarConsoleTrace(`Reader response · round ${round + 1}`, { model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message) });
         recordSidecarTrace(world, sess, { kind: 'semantic_reader', round: round + 1, prompt, reply: message, model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '' });
-        const calls = (message.tool_calls || []).filter(call => sidecarReadOnlyTools().some(tool => tool.function.name === call?.function?.name));
-        if (!calls.length) {
+        const availableTools = sidecarReadOnlyTools();
+        const rawCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+        const calls = rawCalls.filter(call => availableTools.some(tool => tool.function.name === call?.function?.name));
+        if (!rawCalls.length) {
             const packet = parseSidecarReaderOutput(message.content, references);
             packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
             packet.lookupProvenance = lookupProvenance.slice(-20);
             if (timeoutId) clearTimeout(timeoutId);
             return packet;
         }
-        messages.push({ role: 'assistant', content: message.content || '', tool_calls: safeJsonClone(message.tool_calls || []) });
-        calls.forEach(call => {
-            const result = runSidecarReadOnlyTool(world, sess, call.function?.name, call.function?.arguments || '{}');
+        // Preserve the provider's tool-call envelope so the next request is
+        // protocol-valid, but answer every call ourselves.  Unknown tools are
+        // never executed: the Reader surface is strictly read-only and an
+        // unexpected write-capable name becomes an explicit unavailable-tool
+        // result rather than a hidden mutation or a malformed tool transcript.
+        messages.push({ role: 'assistant', content: message.content || '', tool_calls: safeJsonClone(rawCalls) });
+        rawCalls.forEach(call => {
+            const known = availableTools.some(tool => tool.function.name === call?.function?.name);
+            const result = known
+                ? runSidecarReadOnlyTool(world, sess, call.function?.name, call.function?.arguments || '{}')
+                : { found: false, error: `Tool ${String(call?.function?.name || 'unknown')} is unavailable to the read-only Sidecar Reader.` };
             lookupProvenance.push({ tool: call.function?.name || '', arguments: safeParseJSONRepair(String(call.function?.arguments || '{}')) || {}, found: result?.found === true, at: new Date().toISOString(), resultSummary: JSON.stringify(result).slice(0, 1400) });
             messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         });
@@ -16043,7 +16079,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         idempotencyKey: existingTurnRecord?.logicalCommitIdentity || options.idempotencyKey || '',
         preCanonicalFingerprint: existingTurnRecord?.preCanonicalFingerprint || sidecarCanonicalCheckpointFingerprint(world, sess),
         preWorldStateVersion: existingTurnRecord?.preWorldStateVersion ?? sess.worldStateVersion,
-        readerPacketOverride: options.readerPacketOverride === true
+        readerPacketOverride: options.readerPacketOverride
     });
     let readerPacket;
     if (tracker.readerEnabled === false) {
@@ -16878,8 +16914,12 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
         ? narratorProvider : normalizedProviderId(tracker.provider);
     const packet = protocol.packet || buildSidecarScenePacket(world, sess);
     const openQuestions = (protocol.questions || []).filter(question => question.status === 'open').slice(-20);
+    const incompleteCommit = sess?.sidecarIncompleteCommit || null;
+    const recoveryInstruction = incompleteCommit
+        ? `\n\nINCOMPLETE COMMIT RECOVERY: A prior canonical Sidecar transaction is journaled as incomplete. Its stable identity is ${JSON.stringify(String(incompleteCommit.identity || ''))}. Do not replay its authored prose. If, and only if, the author explicitly asks to recover, repair, complete, or reconcile that journaled transaction, your proposed_receipt must include recovery_of with exactly that identity and must be a new compensating/native receipt grounded in the journal evidence. Otherwise keep proposed_receipt null and explain that progression is blocked pending explicit recovery.`
+        : '';
     const workspaceContract = `\n\nWORKSPACE:\n${JSON.stringify(protocol.workspace || { kind: 'world_gm' })}\nIf and only if the author explicitly approves an available workspace action, include an additional JSON field "workspace_action" with one of: "close_scene", "begin_sequence_plan", "approve_sequence_plan", "context_refresh". Otherwise set it to "none". Never infer approval from merely opening a workspace.`;
-    const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay, and a conversation must not itself advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts. Implied people and places are evidence-backed provisional records, not canonical entities: explain their status, but only propose promotion when the author explicitly asks.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers, including a clearly requested clock correction. It must be a complete native commit_world_turn receipt, and must never turn a conversation into an automatic tick, arrival, traversal progression, presence change, or speculative fact. If no state change is requested, use null. Use only IDs from CANONICAL REFERENCES.\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nCANONICAL REFERENCES:\n${JSON.stringify(buildSidecarCanonicalReferenceManifest(world, sess, userText))}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nIMPLIED RECORDS AWAITING REVIEW:\n${JSON.stringify([...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])].filter(record => record.status !== 'promoted').slice(-20))}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
+    const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay, and a conversation must not itself advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts. Implied people and places are evidence-backed provisional records, not canonical entities: explain their status, but only propose promotion when the author explicitly asks.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers, including a clearly requested clock correction. It must be a complete native commit_world_turn receipt, and must never turn a conversation into an automatic tick, arrival, traversal progression, presence change, or speculative fact. If no state change is requested, use null. Use only IDs from CANONICAL REFERENCES.${recoveryInstruction}\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nINCOMPLETE COMMIT JOURNAL (only for explicit recovery; do not replay it):\n${incompleteCommit ? JSON.stringify(incompleteCommit).slice(0, 18000) : '(none)'}\n\nCANONICAL REFERENCES:\n${JSON.stringify(buildSidecarCanonicalReferenceManifest(world, sess, userText))}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nIMPLIED RECORDS AWAITING REVIEW:\n${JSON.stringify([...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])].filter(record => record.status !== 'promoted').slice(-20))}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
     const body = {
         model, stream: false,
         max_tokens: Math.max(1200, Number(tracker.maxTokens) || 3000),
@@ -16905,12 +16945,16 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     let commit = null;
     if (result.proposedReceipt) {
         try {
+            const recoveryOf = String(result.proposedReceipt.recovery_of || result.proposedReceipt.recoveryOf || '').trim();
+            const explicitRecoveryIntent = /\b(recover|repair|complete|resolve|reconcile|finish)\b/i.test(String(userText || ''));
             commit = commitWorldTurnReceipt(world, sess, result.proposedReceipt, {
                 playerStartLocationId: sess.playerLocation,
                 playerMovementAuthorized: false,
                 narrativeText: '',
                 sourceTurnId: authorEntry.id,
-                idempotencyKey: `sidecar-conversation:${sess.id || 'timeline'}:${authorEntry.id}`
+                idempotencyKey: `sidecar-conversation:${sess.id || 'timeline'}:${authorEntry.id}`,
+                allowIncompleteRecovery: explicitRecoveryIntent && !!recoveryOf,
+                recoveryOf
             }, 'sidecar_conversation');
             sidecarEntry.commitAudit = safeJsonClone(commit.audit);
         } catch (error) {
@@ -17157,6 +17201,12 @@ function sidecarSceneProjectionMarkup(world, sess) {
         const posture = entry.posture || entry.axis || entry.change || entry.delta || '';
         return `<div class="sp-relationship-card sidecar-relationship-card"><div class="sp-relationship-header"><strong>${escapeHTML(String(label))}</strong>${posture ? `<span class="sp-relationship-meter">${escapeHTML(String(posture))}</span>` : ''}</div><div class="sp-relationship-evidence">${escapeHTML(String(evidence))}</div><small>Reader proposal · Sidecar review required</small></div>`;
     }).join('') : `<div class="form-hint">No relationship changes proposed for this beat.</div>`;
+    const candidateMarkup = candidates.length ? candidates.map(candidate => {
+        const label = candidate.label || candidate.role || candidate.candidateType || 'Scene candidate';
+        const detail = candidate.description || candidate.clothingDescription || candidate.visibleCondition || candidate.evidence || '';
+        const status = candidate.status && !['active', 'proposed'].includes(candidate.status) ? ` · ${candidate.status}` : '';
+        return `<article class="sp-candidate-card sidecar-candidate-card"><header><strong>${escapeHTML(String(label))}</strong><span>${escapeHTML(String(candidate.candidateType || 'candidate'))}${escapeHTML(status)}</span></header><p>${escapeHTML(String(detail).slice(0, 700) || 'No additional evidence recorded.')}</p><small>${candidate.canonicalMatchId ? `Matched canonical ID: ${escapeHTML(candidate.canonicalMatchId)}` : 'Pre-canonical evidence · review required'}</small><div class="sidecar-candidate-actions"><button type="button" class="btn btn-ghost sidecar-candidate-match" data-candidate-id="${escapeHTML(String(candidate.candidateId || ''))}">Review match</button><button type="button" class="btn btn-ghost sidecar-candidate-promote" data-candidate-id="${escapeHTML(String(candidate.candidateId || ''))}">Review promotion</button><button type="button" class="btn btn-ghost sidecar-candidate-leave" data-candidate-id="${escapeHTML(String(candidate.candidateId || ''))}">Leave ephemeral</button></div></article>`;
+    }).join('') : `<div class="form-hint">No pre-canonical scene candidates recorded.</div>`;
     return `<div class="sidecar-scene-inspector"><div class="sp-toolbar sidecar-scene-toolbar"><span class="sp-brand-title"><span class="sp-brand-accent">SCENE</span> intelligence</span><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${failedTurn || incompleteCommit ? 'is-warning' : 'is-ready'}">${incompleteCommit ? 'Commit blocked' : failedTurn ? 'Update incomplete' : 'Reader current'}</span><button type="button" class="sp-toolbar-btn sidecar-scene-refresh" title="Refresh the current Scene Intelligence projection">↻</button></div>${recoveryMarkup}<div class="sidecar-scene-grid"><section class="sp-section sidecar-scene-card"><h3>Current scene</h3><div><strong>Location</strong><div>${escapeHTML(packet?.activeLocation?.name || 'Unknown')}</div></div><div><strong>World time</strong><div>${escapeHTML(packet?.worldTime || 'Unknown')}</div></div><div><strong>Scene state</strong><div>${escapeHTML(packet?.sceneState || 'No scene projection yet.')}</div></div></section><section class="sp-section sidecar-scene-card"><h3>Scene reading</h3><div class="sidecar-scene-reading">${escapeHTML(reader.summary || packet?.sceneReading || 'No reader summary yet.')}</div>${reader.scene ? `<div class="form-hint">${escapeHTML([reader.scene.topic, reader.scene.mood, reader.scene.tension, reader.scene.interactionStyle].filter(Boolean).join(' · ') || 'No additional scene signals.')}</div>` : ''}</section></div><div class="sidecar-scene-columns"><section class="sp-section sidecar-scene-card"><h3>Cast</h3><h4>Active</h4><ul>${list(presence.active || packet?.activeCast)}</ul><h4>Nearby</h4><ul>${list(presence.nearby || packet?.nearbyCast)}</ul><h4>Audible</h4><ul>${list(presence.audible)}</ul><h4>Mentioned</h4><ul>${list(presence.mentioned)}</ul></section><section class="sp-section sidecar-scene-card"><h3>Scene entities</h3>${candidateMarkup}</section></div><section class="sp-section sidecar-scene-card"><h3>Relationships</h3><div class="sidecar-relationship-list">${relationshipMarkup}</div></section><section class="sp-section sidecar-scene-card"><h3>Current pressures</h3><ul>${list(packet?.pendingQuestions, 'No open scene questions.')}</ul></section></div>`;
 }
 
@@ -17183,6 +17233,10 @@ function openWorldSidecarInspector(view = 'scene') {
     const protocol = isSidecar ? window.HordeSidecarHooks.normalizeWorldTimeline(world, sess) : null;
     const packet = isSidecar ? (protocol.packet || buildSidecarScenePacket(world, sess)) : null;
     const latestTurn = isSidecar ? (protocol.turns || []).at(-1) : null;
+    const failedTurn = isSidecar
+        ? (protocol.turns || []).filter(turn => ['reconciliation_failed', 'reconciliation_pending'].includes(turn.status)).at(-1)
+        : null;
+    const incompleteCommit = sess?.sidecarIncompleteCommit || null;
     const readerBackfillTurns = isSidecar ? (protocol.turns || []).filter(turn => turn.status !== 'superseded').slice(-120) : [];
     const readerBackfillTurnOptions = readerBackfillTurns.map((turn, index) => `<option value="${escapeHTML(String(turn.id || ''))}">Turn ${index + 1} · ${escapeHTML(String(turn.id || '').slice(-28))}</option>`).join('');
     const title = view === 'line' ? 'World GM · private Sidecar line'
@@ -17209,7 +17263,7 @@ function openWorldSidecarInspector(view = 'scene') {
             <button class="tool-btn sidecar-inspector-tab" data-view="timelines">Timelines</button>
         </div>`;
         if (view === 'line') { openWorldSidecarLine(); return; }
-        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, roleplayOS: latestTurn?.ff54 || null, temporalBreakdown: latestTurn?.sceneHeader || null, controlledCharacterEvidence: latestTurn?.controlledCharacterEvidence || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
+        else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, roleplayOS: latestTurn?.ff54 || null, temporalBreakdown: latestTurn?.sceneHeader || null, controlledCharacterEvidence: latestTurn?.controlledCharacterEvidence || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12), readerRefreshes: (protocol.readerRefreshes || []).slice(-20), commitJournal: (sess.sidecarCommitJournal || []).slice(-40), incompleteCommit: sess.sidecarIncompleteCommit || null }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
         else if (view === 'memory') body = `${tabs}<div style="display:grid; gap:8px; margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:8px;"><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><strong>Reader backfill</strong><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><label class="form-label" style="min-width:210px;">From turn<select id="world-sidecar-reader-backfill-start" class="form-select"><option value="">First eligible turn</option>${readerBackfillTurnOptions}</select></label><label class="form-label" style="min-width:210px;">Through turn<select id="world-sidecar-reader-backfill-end" class="form-select"><option value="">Last eligible turn</option>${readerBackfillTurnOptions}</select></label><button class="btn btn-primary" id="world-sidecar-reader-backfill">Backfill selected range</button></div></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${escapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${escapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
             configuration: effectiveSidecarMemoryConfig(world),
@@ -32631,6 +32685,8 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
         ? escapeHTML(handoff).replace(/^(SCENE READING|ANSWER [^\n:]+|REQUEST|ACCEPTED PLAYER DETAILS)\s*:?[ \t]*(.*)$/gim, '<strong class="sidecar-backstage-label">$1</strong><span>$2</span>')
         : '';
     const failed = backstage.status === 'reconciliation_failed' || backstage.unresolved === true;
+    const failureStage = String(backstage.failure?.stage || '').toLowerCase();
+    const failureLabel = failureStage === 'reader' ? 'Reader update incomplete' : failureStage === 'reconciliation' ? 'Sidecar reconciliation incomplete' : 'Scene update incomplete';
     const incompleteHandoff = backstage.handoffComplete === false;
     const roleplayOSChain = renderSidecarRoleplayOSChain(turnRecord);
     const activeLocationLabel = isPlainObject(packet.activeLocation)
@@ -32642,7 +32698,7 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
             ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Narrator’s handoff notes</b><small>What the narrated beat means for continuity.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
             ${reader ? (() => { const envelope = reader.readerEnvelope || {}; const presence = envelope.presence || {}; const changed = Array.isArray(reader.changedFields) ? reader.changedFields : []; const proposals = [...(envelope.durableProposals || []), ...(envelope.relationshipProposals || [])]; return `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Sidecar’s semantic reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'Reader fell back to the canonical manifest.' : 'Read-only canonical evidence before reconciliation.'))}</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(reader.mode || envelope.snapshotMode || 'delta'))} snapshot</span>${reader.readerSnapshotId ? `<span>${escapeHTML(reader.readerSnapshotId)}</span>` : ''}${reader.model ? `<span>${escapeHTML(reader.model)}</span>` : ''}${reader.provider ? `<span>${escapeHTML(reader.provider)}</span>` : ''}${changed.length ? `<span>${escapeHTML(changed.length)} changed field${changed.length === 1 ? '' : 's'}</span>` : ''}</div>${presence.active?.length || presence.nearby?.length || presence.audible?.length ? `<div class="sidecar-packet-grid">${presence.active?.length ? `<span><small>Active</small>${escapeHTML(JSON.stringify(presence.active))}</span>` : ''}${presence.nearby?.length ? `<span><small>Nearby</small>${escapeHTML(JSON.stringify(presence.nearby))}</span>` : ''}${presence.audible?.length ? `<span><small>Audible</small>${escapeHTML(JSON.stringify(presence.audible))}</span>` : ''}</div>` : ''}${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${proposals.length ? `<div class="form-hint">${escapeHTML(String(proposals.length))} evidence-backed proposal${proposals.length === 1 ? '' : 's'} queued for Sidecar review; none are canonical until the reducer accepts them.</div>` : ''}${envelope.validationWarnings?.length ? `<div class="form-hint" style="color:var(--warning);">${escapeHTML(String(envelope.validationWarnings.length))} validation warning${envelope.validationWarnings.length === 1 ? '' : 's'}</div>` : ''}${reader.failure ? `<div class="form-hint">Reader diagnostic: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>`; })() : ''}
             ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Narrator handoff was incomplete</b><small>Sidecar still ran from the visible scene and canonical frame; missing interpretation was not invented.</small></div></header></section>` : ''}
-            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${escapeHTML(backstage.failure?.code === 'sidecar_incomplete_commit_blocked' || backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Canonical commit incomplete' : 'Scene update incomplete')}</b><small>${escapeHTML(backstage.failure?.message || 'Downstream scene processing did not settle.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Failure</b><span>${escapeHTML(backstage.failure?.code || 'sidecar_reconciliation_failed')}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>Safety result</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'A partial mutation was journaled and progression is blocked. Native commit/World GM recovery is required.' : 'Narration preserved. Failed downstream evidence is excluded from active continuity.')}</span></div><div><b>Recovery</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Inspect the journaled receipt and recover through World GM; do not replay the authored prose.' : `Retry reuses this exact authored beat${reader ? ' and the successful Reader envelope where available' : ''}; it never regenerates Narration.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${backstage.failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${escapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
+            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${escapeHTML(backstage.failure?.code === 'sidecar_incomplete_commit_blocked' || backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Canonical commit incomplete' : failureLabel)}</b><small>${escapeHTML(backstage.failure?.message || 'Downstream scene processing did not settle.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Failure</b><span>${escapeHTML(backstage.failure?.code || 'sidecar_reconciliation_failed')}${backstage.failure?.stage ? ` · ${escapeHTML(backstage.failure.stage)}` : ''}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>Safety result</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'A partial mutation was journaled and progression is blocked. Native commit/World GM recovery is required.' : 'Narration preserved. Failed downstream evidence is excluded from active continuity.')}</span></div><div><b>Recovery</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Inspect the journaled receipt and recover through World GM; do not replay the authored prose.' : `Retry reuses this exact authored beat${reader ? ' and the successful Reader envelope where available' : ''}; it never regenerates Narration.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${backstage.failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${escapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
             ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Sidecar’s canonical reading</b><small>${escapeHTML(receipt.summary || 'Reconciled from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
             ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next-beat pacing</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next narrator turn receives this reconciled scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending reconciliation</small>${escapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
             ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(jobSummary.queued || 0))} queued</span><span>${escapeHTML(String(jobSummary.running || 0))} running</span><span>${escapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${escapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
@@ -36225,8 +36281,16 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         // failed reroll restores the previously selected take; a normal turn
         // returns to its pre-action snapshot.
         const rollbackSnapshot = isReroll ? failureRestoreSnapshot : turnSnapshot;
-        if (world && sess && rollbackSnapshot) restoreWorldTurnState(world, sess, rollbackSnapshot);
-        if (sess && !isReroll && historyStartLength !== null) sess.history.splice(historyStartLength);
+        // A completed Narrator artifact is authoritative evidence even when a
+        // later Sidecar stage aborts unexpectedly.  Never restore the whole
+        // world from a frozen pre-state in that case: preserve the authored
+        // beat and let the normal downstream retry/World GM recovery path
+        // settle it.  Pre-state restoration remains valid only for failures
+        // before a Sidecar turn artifact exists (or for a true Narrator Take
+        // failure/reroll).
+        const preserveAuthoredSidecar = sidecarMode && !!sidecarTurnId && !!String(fullText || '').trim();
+        if (world && sess && rollbackSnapshot && !preserveAuthoredSidecar) restoreWorldTurnState(world, sess, rollbackSnapshot);
+        if (sess && !isReroll && historyStartLength !== null && !preserveAuthoredSidecar) sess.history.splice(historyStartLength);
 
         // Player-directed movement is deterministic and was validated against
         // the exit graph before generation began. Preserve it even when the DM
