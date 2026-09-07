@@ -113,7 +113,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         const reasoningMode = ['inherit', 'enabled', 'disabled'].includes(tracker.reasoningMode)
             ? tracker.reasoningMode : (tracker.reasoning === true ? 'enabled' : 'inherit');
         const roleplayOS = normalizeRoleplayOSConfig(current.roleplayOS);
-        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), roleplayOS, tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
+        world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), roleplayOS, tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerEnabled: tracker.readerEnabled !== false, readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
         return world.sidecarConfig;
     }
     function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], traversalState: {}, packet: null, memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
@@ -15256,7 +15256,19 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         handoffComplete: options.handoffComplete !== false
     });
     let readerPacket;
-    try {
+    if (tracker.readerEnabled === false) {
+        readerPacket = {
+            valid: false,
+            disabled: true,
+            summary: 'Sidecar semantic reader disabled for this world; reconciliation used the Narrator handoff directly.',
+            canonicalReferences: references,
+            unresolved: [],
+            proposedQuestions: [],
+            controlledCharacterEvidence: [],
+            raw: ''
+        };
+        recordSidecarTrace(world, sess, { kind: 'semantic_reader_disabled', model, provider });
+    } else try {
         options.onStage?.('reading');
         readerPacket = await runSidecarSemanticReading(world, sess, {
             tracker, provider, model, sidecarWorld, references, preFrame, clockEvidence,
@@ -19294,6 +19306,13 @@ function setupWorldStudioLogic() {
         config.tracker.inheritNarrator = event.target.checked;
         renderWorldSidecarConfigEditor(state.editingWorld);
     };
+    document.getElementById('w-sidecar-reader-enabled').onchange = event => {
+        if (!state.editingWorld) return;
+        const config = window.HordeSidecarMode?.normalizeWorldConfig?.(state.editingWorld);
+        if (!config) return;
+        config.tracker.readerEnabled = event.target.checked;
+        renderWorldSidecarConfigEditor(state.editingWorld);
+    };
     document.getElementById('w-sidecar-reasoning-mode').onchange = event => {
         document.getElementById('w-sidecar-reasoning-effort-row')?.classList.toggle('hidden', event.target.value === 'disabled');
     };
@@ -20056,6 +20075,7 @@ function renderWorldSidecarConfigEditor(world) {
     const debug = config.debug || {};
     document.getElementById('w-sidecar-mode').value = config.mode;
     document.getElementById('w-sidecar-inherit-narrator').checked = tracker.inheritNarrator !== false;
+    document.getElementById('w-sidecar-reader-enabled').checked = tracker.readerEnabled !== false;
     document.getElementById('w-sidecar-provider').value = tracker.provider || '';
     renderSidecarModelOptions(normalizedProviderId(tracker.provider), tracker.model || '');
     document.getElementById('w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
@@ -20403,6 +20423,7 @@ async function saveWorld() {
                 reasoningMode: document.getElementById('w-sidecar-reasoning-mode').value,
                 reasoning: document.getElementById('w-sidecar-reasoning-mode').value === 'enabled',
                 reasoningEffort: document.getElementById('w-sidecar-reasoning-effort').value,
+                readerEnabled: document.getElementById('w-sidecar-reader-enabled').checked,
                 readerMaxTokens: document.getElementById('w-sidecar-reader-max-tokens').value,
                 maxTokens: document.getElementById('w-sidecar-max-tokens').value
             },
