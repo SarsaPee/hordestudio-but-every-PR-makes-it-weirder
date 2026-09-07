@@ -32871,13 +32871,6 @@ ${modularMandate}
 14. If the player supplies a die result while checks are enabled, adjudicate that existing roll rather than rolling again.${directorNotesRequired ? `
 15. DIRECTOR MODE (ACTIVE PRESET — REQUIRED): Follow the active plot-tracking module and append exactly one <details><summary>Plot Momentum</summary>...</details> block after the narrative and any [MEMORY] line. It must be the final element of every response. Do not omit it when tools are used.` : ''}`;
         
-        // Splice in-chat preset injections at their configured depth + role
-        // (depth = messages from the end) rather than dumping them all up front.
-        injectedHistory.forEach(inj => {
-            const idx = Math.max(0, historyToSend.length - (inj.depth || 0));
-            historyToSend.splice(idx, 0, { role: inj.role || 'system', content: inj.content });
-        });
-
         // Imported presets may still contain depth injections with role=user.
         // In Sidecar those are engine policy, not a second player turn. Fold
         // them into the authoritative system message so they cannot compete
@@ -32889,6 +32882,14 @@ ${modularMandate}
             systemPrompt += `\n\n[SIDECAR-FOLDED LEGACY INSTRUCTIONS]\n${sidecarInjectedInstructions.join('\n\n')}`;
             injectedHistory = injectedHistory.filter(entry => entry.role === 'assistant');
         }
+        // Splice only the remaining intentional history entries. In Sidecar,
+        // non-assistant preset instructions were folded above before this
+        // loop, so none can land after the player's message.
+        injectedHistory.forEach(inj => {
+            const idx = Math.max(0, historyToSend.length - (inj.depth || 0));
+            historyToSend.splice(idx, 0, { role: inj.role || 'system', content: inj.content });
+        });
+
         const sidecarSafety = sidecarMode
             ? `
 
