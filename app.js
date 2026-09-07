@@ -17408,6 +17408,7 @@ function renderSidecarWorkspace(world, sess) {
         event.stopPropagation();
         const nextView = buttonEl.dataset.siView;
         if (!['scene', 'relationships', 'characters', 'history'].includes(nextView)) return;
+        host.dataset.siLastView = nextView;
         workspaceUi.view = nextView;
         rerender();
         saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
