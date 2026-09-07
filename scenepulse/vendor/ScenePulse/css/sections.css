@@ -1,0 +1,135 @@
+/* ═══ SECTIONS — Flexbox Column Architecture ═══ */
+/* Each section is a flex item in #sp-panel-body's column layout.
+   Collapsed sections show only their header (flex:0 0 auto).
+   Open sections grow to share available space (flex:1 1 0).
+   Content scrolls independently within each section — no panel scroll,
+   no sticky headers, no bleed by construction. */
+.sp-section {
+    border-top: 1px solid var(--sp-border);
+    border-bottom: 1px solid var(--sp-border);
+    display: flex; flex-direction: column;
+    min-height: 0; flex: 0 0 auto;
+}
+/* Open sections size to their content (flex:0 0 auto) but cap at
+   70vh so very long sections scroll instead of extending forever.
+   Short sections (like Story Ideas with 5 collapsed cards) stop
+   right after their last element with no wasted space. */
+.sp-section.sp-open { flex: 0 0 auto; max-height: 70vh; }
+.sp-section-header {
+    display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+    cursor: pointer; user-select: none; transition: background var(--sp-transition);
+    pointer-events: auto; flex-shrink: 0;
+    background: var(--sp-bg-solid);
+    border-bottom: 1px solid transparent;
+}
+.sp-section-header:hover { background: linear-gradient(var(--sp-surface), var(--sp-surface)), var(--sp-bg-solid); }
+.sp-section.sp-open .sp-section-header { border-bottom-color: var(--sp-border); }
+.sp-section-spacer { flex: 1; }
+/* Collapse/Expand all cards button */
+.sp-char-toggle-all {
+    background: none; border: 1px solid transparent; color: var(--sp-text-dim);
+    cursor: pointer; padding: 2px; border-radius: 4px; opacity: 0.4;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0;
+}
+.sp-char-toggle-all:hover { opacity: 1; color: var(--sp-accent); border-color: var(--sp-border); background: var(--sp-accent-dim); }
+.sp-section-refresh {
+    background: none; border: none; color: var(--sp-text-dim); cursor: pointer;
+    width: 24px; height: 24px; padding: 0; border-radius: 50%; opacity: 0.5;
+    transition: all var(--sp-transition); display: inline-flex; align-items: center; justify-content: center;
+}
+.sp-section-header:hover .sp-section-refresh { opacity: 0.6; }
+.sp-section-refresh:hover { opacity: 1 !important; color: var(--sp-accent); background: var(--sp-accent-dim); }
+.sp-section-refresh.sp-spinning { opacity: 1; }
+.sp-section-refresh.sp-spinning svg { animation: sp-spin 0.8s linear infinite; }
+.sp-section-chevron { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); transition: transform 0.25s ease-out; width: 10px; text-align: center; flex-shrink: 0; }
+.sp-section.sp-open .sp-section-chevron { transform: rotate(90deg); }
+.sp-section-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--sp-text-dim); }
+.sp-section-icon svg { display: block; }
+.sp-section-title { font-size: var(--sp-fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--sp-text-dim); }
+.sp-section-badge { font-size: var(--sp-fs-xs); font-weight: 600; padding: 1px 6px; border-radius: 8px; background: var(--sp-accent-dim); color: var(--sp-accent); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.sp-section-body {
+    display: none;
+    background: var(--sp-bg-solid);
+    flex: 1; min-height: 0;
+    flex-direction: column;
+}
+.sp-section.sp-open .sp-section-body { display: flex; }
+/* The ONLY scroll region — sized by flex, scrolls independently */
+.sp-section-content {
+    padding: 8px 12px 12px 12px;
+    overflow-y: auto; overflow-x: hidden;
+    flex: 1; min-height: 0;
+    scrollbar-color: rgba(100,110,130,0.3) transparent;
+    /* Skip rendering for off-screen content within each section */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 500px;
+}
+.sp-section-content::-webkit-scrollbar { width: 4px; }
+.sp-section-content::-webkit-scrollbar-thumb { background: rgba(100,110,130,0.3); border-radius: 2px; }
+
+/* ═══ EMPTY STATE ═══ */
+.sp-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; padding: 40px 20px; text-align: center; }
+.sp-empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
+.sp-empty-title { font-size: var(--sp-fs-md); font-weight: 600; color: var(--sp-text); margin-bottom: 6px; }
+.sp-empty-sub { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); line-height: 1.5; }
+
+/* ═══ DATA ROWS ═══ */
+.sp-row { display: flex; gap: 8px; padding: 3px 0; align-items: baseline; }
+.sp-row-label { font-size: var(--sp-fs-xs); font-weight: 600; color: var(--sp-text-dim); min-width: 70px; flex-shrink: 0; text-align: right; }
+.sp-row-value { font-size: var(--sp-fs-base); color: var(--sp-text); min-width: 0; word-break: break-word; }
+
+/* ═══ SCENE PANEL ═══ */
+.sp-scene-summary { font-style: italic; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); line-height: 1.5; }
+.sp-scene-summary-row { padding-bottom: 6px; margin-bottom: 2px; border-bottom: 1px dashed var(--sp-border); }
+
+/* Tension row: visual meter. Background gradient fills proportionally
+   to the tension level. The label stays right-aligned, the value sits
+   in a colored strip. */
+.sp-scene-tension-row .sp-row-value {
+    font-weight: 700; letter-spacing: 0.06em; font-size: var(--sp-fs-xs);
+    padding: 2px 8px; border-radius: 3px;
+}
+/* v6.9.6: tension colors use CSS variables for theme overriding */
+.sp-tension-calm .sp-row-value { color: var(--sp-tension-calm); background: color-mix(in srgb, var(--sp-tension-calm) 12%, transparent); }
+.sp-tension-low .sp-row-value { color: var(--sp-tension-low); background: color-mix(in srgb, var(--sp-tension-low) 12%, transparent); }
+.sp-tension-moderate .sp-row-value { color: var(--sp-tension-moderate); background: color-mix(in srgb, var(--sp-tension-moderate) 12%, transparent); }
+.sp-tension-high .sp-row-value { color: var(--sp-tension-high); background: color-mix(in srgb, var(--sp-tension-high) 15%, transparent); }
+.sp-tension-critical .sp-row-value { color: var(--sp-tension-critical); background: color-mix(in srgb, var(--sp-tension-critical) 18%, transparent); }
+
+/* Sound environment: italic + muted */
+.sp-scene-sounds-row .sp-row-value { font-style: italic; opacity: 0.75; }
+
+/* Changed-this-turn indicator: small dot before the label */
+.sp-scene-changed .sp-row-label::before {
+    content: '\25CF'; font-size: var(--sp-fs-xs); color: var(--sp-accent);
+    margin-right: 4px; vertical-align: middle;
+}
+
+/* charactersPresent: colored name chips */
+.sp-scene-present { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.sp-scene-chip {
+    font-size: var(--sp-fs-xs); font-weight: 600; padding: 1px 7px; border-radius: 9px;
+    border: 1px solid var(--chip-color, var(--sp-border));
+    color: var(--chip-color, var(--sp-text));
+    background: var(--sp-surface, rgba(255,255,255,0.04));
+    white-space: nowrap; line-height: 1.4;
+}
+/* Witness chips: dimmed + dashed border */
+.sp-scene-chip-witness {
+    opacity: 0.6; border-style: dashed;
+}
+
+/* Solo scene indicator */
+.sp-scene-solo {
+    font-size: var(--sp-fs-xs); font-style: italic; color: var(--sp-text-dim);
+    opacity: 0.6;
+}
+
+/* Collapsed badge: tension dot */
+/* Tension-colored dot inline with badge text — small filled circle */
+.sp-scene-badge-dot {
+    display: inline-block;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor; flex-shrink: 0;
+}

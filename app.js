@@ -107,7 +107,9 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     const identifier = kind => `${kind}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
     const mode = value => value === 'sidecar' || value === 'inline_legacy' ? value : 'inline_legacy';
     const numeric = (value, fallback, max) => { const parsed = Math.trunc(Number(value)); return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, max) : fallback; };
-    const READER_PROFILE_SCHEMA_VERSION = 1;
+    // v2 adds evidence-scoped character intelligence and explicitly separates
+    // accepted historical projections from abandoned Reader attempts.
+    const READER_PROFILE_SCHEMA_VERSION = 2;
     function normalizeReaderProfile(raw = {}, fallback = {}) {
         const source = { ...(object(fallback) ? fallback : {}), ...(object(raw) ? raw : {}) };
         const choose = (value, fallbackValue, min, max) => {
@@ -118,10 +120,19 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             ? clean(source.reasoningEffort, 20) : 'auto';
         const retryPolicy = ['none', 'bounded'].includes(clean(source.retryPolicy, 20))
             ? clean(source.retryPolicy, 20) : 'bounded';
+        const preset = object(source.scenePulsePreset) ? source.scenePulsePreset : {};
+        const presetOverrides = object(preset.promptOverrides) ? Object.fromEntries(Object.entries(preset.promptOverrides)
+            .filter(([key, value]) => /^[a-z][a-z0-9_]{0,60}$/i.test(String(key)) && typeof value === 'string' && value.trim())
+            .map(([key, value]) => [key, clean(value, 12000)])) : {};
+        const scenePulsePreset = clean(preset.id, 100) ? {
+            id: clean(preset.id, 100), displayName: clean(preset.displayName || preset.id, 180), family: clean(preset.family, 60), provider: clean(preset.provider, 60),
+            systemPromptRole: ['system', 'user', 'assistant'].includes(clean(preset.systemPromptRole, 20)) ? clean(preset.systemPromptRole, 20) : null,
+            promptOverrides: presetOverrides
+        } : null;
         return {
             schemaVersion: READER_PROFILE_SCHEMA_VERSION,
-            revision: clean(source.revision || 'reader-v1', 80) || 'reader-v1',
-            promptRevision: clean(source.promptRevision || 'semantic-reader-v1', 100) || 'semantic-reader-v1',
+            revision: clean(source.revision || 'reader-v2', 80) || 'reader-v2',
+            promptRevision: clean(source.promptRevision || 'scene-intelligence-v2', 100) || 'scene-intelligence-v2',
             provider: clean(source.provider, 40),
             model: clean(source.model, 200),
             reasoningMode: ['inherit', 'enabled', 'disabled'].includes(clean(source.reasoningMode, 20)) ? clean(source.reasoningMode, 20) : 'inherit',
@@ -133,6 +144,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             maxLookupPayload: choose(source.maxLookupPayload, 12000, 1000, 100000),
             contextBudget: choose(source.contextBudget, 24000, 4000, 120000),
             retryPolicy,
+            scenePulsePreset,
             enabled: source.enabled !== false
         };
     }
@@ -145,16 +157,34 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         world.sidecarConfig = { schemaVersion: 1, mode: mode(current.mode || (options.newWorld ? 'sidecar' : 'inline_legacy')), roleplayOS, tracker: { inheritNarrator: tracker.inheritNarrator !== false, provider: clean(tracker.provider, 40), model: clean(tracker.model, 160), openRouterRouting: object(tracker.openRouterRouting) ? tracker.openRouterRouting : null, supportedParams: Array.isArray(tracker.supportedParams) ? tracker.supportedParams.map(value => clean(value, 60)).filter(Boolean).slice(0, 80) : [], reasoningMode, reasoning: reasoningMode === 'enabled', reasoningEffort: ['auto', 'low', 'medium', 'high'].includes(clean(tracker.reasoningEffort, 20)) ? clean(tracker.reasoningEffort, 20) : 'auto', readerEnabled: tracker.readerEnabled !== false, readerProfileInherit: tracker.readerProfileInherit !== false, readerProfile: normalizeReaderProfile(tracker.readerProfile), readerMaxTokens: numeric(tracker.readerMaxTokens, 0, 100000), maxTokens: numeric(tracker.maxTokens, 0, 100000) }, debug: { enabled: debug.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, 20, 200) }, memory: { inheritGlobal: memory.inheritGlobal !== false, episodeChunkTurns: numeric(memory.episodeChunkTurns, 5, 20), episodeCadenceTurns: numeric(memory.episodeCadenceTurns, 5, 50), verbatimTurnWindow: numeric(memory.verbatimTurnWindow, 5, 30), consolidationConcurrency: numeric(memory.consolidationConcurrency, 6, 12), backgroundProviderConcurrency: numeric(memory.backgroundProviderConcurrency, 2, 12), retrievalLimit: numeric(memory.retrievalLimit, 8, 24), cognitionRecentLimit: numeric(memory.cognitionRecentLimit, 8, 30), cognitionSemanticTopK: numeric(memory.cognitionSemanticTopK, 6, 20) } };
         return world.sidecarConfig;
     }
-    function emptyProtocol(activeMode) { return { schemaVersion: 1, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], readerCandidates: [], sceneProjection: null, traversalState: {}, packet: null, readerSnapshots: [], readerProfile: normalizeReaderProfile({}), memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
+    function emptyProtocol(activeMode) { return { schemaVersion: 2, mode: activeMode, activeSequenceId: '', sequences: [], activeSceneId: '', scenes: [], turns: [], takes: [], takeIndex: {}, questions: [], requests: [], proposals: [], backgroundProposals: [], refinements: [], conversations: [], inputMode: 'narrator', coreAnswers: {}, temporalState: {}, provisionalLocations: [], provisionalEntities: [], readerCandidates: [], sceneProjection: null, sceneProjections: [], traversalState: {}, packet: null, readerSnapshots: [], readerProfile: normalizeReaderProfile({}), memoryGraph: {}, jobs: [], diagnostics: { reconciliationAttempts: [] }, debug: { enabled: false, retainTraceCount: 20, traces: [] }, migration: {} }; }
     function timelineProtocol(world, timeline, options = {}) {
         if (!object(timeline)) return null;
         const config = worldConfig(world, options) || { mode: 'inline_legacy', debug: {} }, current = object(timeline.sidecar) ? timeline.sidecar : {};
         const protocol = { ...emptyProtocol(mode(config.mode)), ...current };
-        protocol.schemaVersion = 1; protocol.mode = mode(current.mode || (object(timeline.sidecar) ? config.mode : (options.newWorld ? 'sidecar' : 'inline_legacy')));
-        ['sequences','scenes','turns','takes','questions','requests','proposals','backgroundProposals','refinements','conversations','provisionalLocations','provisionalEntities','readerCandidates','readerSnapshots','jobs'].forEach(field => { if (!Array.isArray(protocol[field])) protocol[field] = []; });
+        protocol.schemaVersion = Math.max(2, Number(current.schemaVersion) || 0); protocol.mode = mode(current.mode || (object(timeline.sidecar) ? config.mode : (options.newWorld ? 'sidecar' : 'inline_legacy')));
+        ['sequences','scenes','turns','takes','questions','requests','proposals','backgroundProposals','refinements','conversations','provisionalLocations','provisionalEntities','readerCandidates','readerSnapshots','sceneProjections','jobs'].forEach(field => { if (!Array.isArray(protocol[field])) protocol[field] = []; });
         ['takeIndex','temporalState','traversalState','memoryGraph','diagnostics','migration','coreAnswers'].forEach(field => { if (!object(protocol[field])) protocol[field] = {}; });
         protocol.inputMode = protocol.inputMode === 'sidecar' ? 'sidecar' : 'narrator'; protocol.activeSequenceId = clean(protocol.activeSequenceId, 120); protocol.activeSceneId = clean(protocol.activeSceneId, 120); protocol.packet = object(protocol.packet) ? protocol.packet : null; protocol.readerProfile = normalizeReaderProfile(protocol.readerProfile);
         const debug = object(protocol.debug) ? protocol.debug : {}; protocol.debug = { enabled: debug.enabled === true || config.debug?.enabled === true, retainTraceCount: numeric(debug.retainTraceCount, config.debug?.retainTraceCount || 20, 200), traces: Array.isArray(debug.traces) ? debug.traces.slice(-200) : [] };
+        // v2 migration is deliberately conservative: old active snapshots are
+        // accepted only when their source Turn still proves a committed Take;
+        // ambiguous pending/legacy records remain inspectable but quarantined
+        // from current projection, candidates and memory eligibility.
+        const committedTurn = id => protocol.turns.some(turn => turn?.id === id && ['active', 'reconciled_late'].includes(turn.status) && ['committed', 'committed_late'].includes(turn.reconciliationStatus));
+        protocol.readerSnapshots.forEach(snapshot => {
+            if (snapshot.status === 'active' && committedTurn(snapshot.turnId)) { snapshot.settlementStatus = 'settled'; return; }
+            if (snapshot.status === 'accepted_historical' && committedTurn(snapshot.turnId)) { snapshot.settlementStatus = 'settled'; return; }
+            if (!['active', 'accepted_historical'].includes(snapshot.status)) snapshot.settlementStatus = snapshot.settlementStatus || 'audit_only';
+            else { snapshot.status = 'legacy_quarantined'; snapshot.settlementStatus = 'quarantined'; snapshot.migrationWarning = 'Legacy Reader snapshot has no provable settled Turn ancestry.'; }
+        });
+        protocol.readerCandidates.forEach(candidate => {
+            if (candidate.settlementStatus) return;
+            const sources = Array.isArray(candidate.sourceTurnIds) ? candidate.sourceTurnIds : [];
+            candidate.settlementStatus = sources.length && sources.every(committedTurn) ? 'settled' : 'quarantined';
+            if (candidate.settlementStatus !== 'settled') candidate.migrationWarning = 'Candidate preserved for audit until accepted source ancestry can be repaired.';
+        });
+        protocol.migration.readerSceneIntelligenceV2 = protocol.migration.readerSceneIntelligenceV2 || { status: 'applied', appliedAt: stamp(), notes: 'Legacy Reader records were classified by committed Turn ancestry; ambiguous data was quarantined.' };
         timeline.sidecar = protocol; return protocol;
     }
     function current(protocol, field, id) { return (protocol[field] || []).find(item => item?.id === id) || null; }
@@ -207,12 +237,15 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         const label = String(source.label || source.name || source.title || source.role || '').trim().slice(0, 240);
         const candidateId = String(source.candidateId || source.candidate_id || '').trim().slice(0, 180);
         return {
-            candidateId: candidateId || `${candidateType}_${key(label || 'unnamed').replace(/[^a-z0-9]+/g, '_').slice(0, 70) || 'unnamed'}`,
+            // A label alone is not identity: two unnamed bartenders or two
+            // "red coats" may coexist. Horde scopes an omitted model ID to
+            // source continuity and parent rather than merging by prose.
+            candidateId: candidateId || `${candidateType}_${key(defaults.sourceTurnId || defaults.readerSnapshotId || 'unscoped').replace(/[^a-z0-9]+/g, '_').slice(-48)}_${key(label || 'unnamed').replace(/[^a-z0-9]+/g, '_').slice(0, 48) || 'unnamed'}`,
             candidateType,
             label,
             name: label,
             role: String(source.role || '').slice(0, 180),
-            description: String(source.description || source.details || '').slice(0, 2400),
+            description: String(source.description || (typeof source.details === 'string' ? source.details : '') || '').slice(0, 2400),
             status: statusValues.includes(rawStatus) ? rawStatus : 'derived',
             canonicalMatchId: String(source.canonicalMatchId || source.canonical_match_id || source.canonicalEntityId || source.canonical_entity_id || '').slice(0, 180),
             parentCandidateId: String(source.parentCandidateId || source.parent_candidate_id || '').slice(0, 180),
@@ -228,6 +261,8 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             sourceTakeIds: [...new Set([...(Array.isArray(source.sourceTakeIds) ? source.sourceTakeIds : source.source_take_ids || []), defaults.sourceTakeId].map(value => String(value || '').slice(0, 180)).filter(Boolean))].slice(-30),
             sourceRevisionIds: [...new Set([...(Array.isArray(source.sourceRevisionIds) ? source.sourceRevisionIds : source.source_revision_ids || []), defaults.sourceRevisionId].map(value => String(value || '').slice(0, 180)).filter(Boolean))].slice(-30),
             readerSnapshotId: String(source.readerSnapshotId || defaults.readerSnapshotId || '').slice(0, 180),
+            settlementId: String(source.settlementId || defaults.settlementId || '').slice(0, 180),
+            attemptId: String(source.attemptId || defaults.attemptId || '').slice(0, 180),
             evidence,
             lastSeenAt: String(source.lastSeenAt || source.last_seen_at || new Date().toISOString()).slice(0, 40),
             promotionProvenance: isPlainObject(source.promotionProvenance || source.promotion_provenance) ? safeJsonClone(source.promotionProvenance || source.promotion_provenance) : null
@@ -242,16 +277,26 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         incoming.forEach(candidate => {
             // Stable model-supplied IDs win. If a provider omits them, use a
             // type/label/parent key so “the bartender” persists across deltas.
-            const identityKey = `${candidate.candidateType}|${key(candidate.candidateId)}|${key(candidate.label)}|${key(candidate.parentCanonicalId || candidate.parentCandidateId)}`;
-            let existing = protocol.readerCandidates.find(item => item.status !== 'superseded' && item.status !== 'retired' && `${item.candidateType}|${key(item.candidateId)}|${key(item.label)}|${key(item.parentCanonicalId || item.parentCandidateId)}` === identityKey);
-            if (!existing && candidate.candidateId) existing = protocol.readerCandidates.find(item => item.status !== 'superseded' && item.status !== 'retired' && item.candidateId === candidate.candidateId);
+            let existing = candidate.candidateId && protocol.readerCandidates.find(item => item.status !== 'superseded' && item.status !== 'retired' && item.candidateId === candidate.candidateId);
             if (!existing) {
                 existing = { ...candidate, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
                 protocol.readerCandidates.push(existing);
             } else {
                 const priorEvidence = Array.isArray(existing.evidence) ? existing.evidence : [];
                 const nextEvidence = [...priorEvidence, ...candidate.evidence].slice(-24);
-                Object.assign(existing, candidate, { evidence: nextEvidence, createdAt: existing.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
+                const union = field => [...new Set([...(existing[field] || []), ...(candidate[field] || [])])].slice(-30);
+                Object.assign(existing, candidate, {
+                    // Deltas are sparse. Never erase accepted evidence simply
+                    // because the next Reader pass omitted a field.
+                    label: candidate.label || existing.label,
+                    role: candidate.role || existing.role,
+                    description: candidate.description || existing.description,
+                    clothingDescription: candidate.clothingDescription || existing.clothingDescription,
+                    visibleCondition: candidate.visibleCondition || existing.visibleCondition,
+                    canonicalMatchId: candidate.canonicalMatchId || existing.canonicalMatchId,
+                    sourceTurnIds: union('sourceTurnIds'), sourceTakeIds: union('sourceTakeIds'), sourceRevisionIds: union('sourceRevisionIds'),
+                    evidence: nextEvidence, createdAt: existing.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString()
+                });
             }
             touched.push(existing);
         });
@@ -262,7 +307,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     function activeReaderCandidates(protocol, options = {}) {
         const records = Array.isArray(protocol?.readerCandidates) ? protocol.readerCandidates : [];
         return records.filter(candidate => !['superseded', 'retired', 'stale', 'rejected'].includes(candidate.status)
-            && candidate.attemptStatus !== 'pending'
+            && candidate.attemptStatus !== 'pending' && candidate.settlementStatus === 'settled'
             && (!options.sceneId || (candidate.sourceSceneId || options.sceneId) === options.sceneId)
             && (!options.takeId || !candidate.sourceTakeIds?.length || candidate.sourceTakeIds.includes(options.takeId)));
     }
@@ -377,6 +422,13 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
         episode.perceptionCoverage.forEach(coverage=>{
             const characterId=clean(coverage?.characterId,160),access=clean(coverage?.access,80).toLowerCase();
             if(!characterId||access==='absent')return;
+            // A settled turn-scoped cognition assessment already supplied the
+            // live ScenePulse impression for this subject/source. Episode work
+            // consolidates that evidence later; it must not mint a parallel
+            // second cognition pass for the same beat merely because the
+            // Episode cadence was reached.
+            const alreadyHasTurnCognition = pending.some(candidate=>candidate.type==='turn_cognition'&&candidate.characterId===characterId&&candidate.status==='completed'&&(candidate.sourceTurnIds||[]).some(turnId=>(episode.sourceTurnIds||[]).includes(turnId)));
+            if(alreadyHasTurnCognition)return;
             if(pending.some(candidate=>candidate.type==='cognition_consolidation'&&candidate.episodeId===episode.id&&candidate.characterId===characterId))return;
             pending.push({id:identifier('memory_job'),type:'cognition_consolidation',status:'queued',createdAt:stamp(),attempts:0,episodeId:episode.id,characterId,access,perceptionEvidence:clean(coverage?.detail,2400),dependencies:[job.id],priority:'background',retryAt:'',diagnostics:[],provenance:{source:'episode_perception_coverage',sourceEpisodeId:episode.id}});
         });
@@ -389,7 +441,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     global.HordeSidecarPromotion=Object.freeze({ensure:protocol=>protocol,stage,stageReceiptIntroductions:stageIntroductions,markPromotionRequested:promotionFlag,markPromoted:promoted});
     global.HordeSidecarTraversal=Object.freeze({normalizeWorldTraversal:normalizeTraversal,normalizeVehicle,accessibleVehicles:(world,id)=>(world?.entities||[]).filter(entity=>String(entity?.type||'').toLowerCase()==='vehicle'&&(normalizeVehicle(entity)?.ownerEntityId===clean(id,160)||normalizeVehicle(entity)?.access.some(entry=>entry.entityId===clean(id,160)))),resolveEligibleAnchor:anchor,evaluateCoverage:coverage,ensureState:traversalState,createJourney,reconcileVehicleEvents});
     global.HordeSidecarMemoryGraph=Object.freeze({graph,ensureJobs:jobs,recordTurn:recordMemoryTurn,backfillWorldHistory,queueEpisode,queueScope,completeEpisode,failJob});
-    global.HordeSidecarHooks=Object.freeze({normalizeWorldTimeline:(world,timeline,options={})=>{const protocol=timelineProtocol(world,timeline,options);normalizeTraversal(world);(world?.entities||[]).forEach(normalizeVehicle);return protocol;},isSidecarWorld:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar',ensureNarrativeHierarchy:(world,timeline)=>{const protocol=timelineProtocol(world,timeline);return protocol?.mode==='sidecar'?hierarchy(protocol,timeline):null;},activeReaderCandidates:(protocol,options={})=>activeReaderCandidates(protocol,options)});
+    global.HordeSidecarHooks=Object.freeze({normalizeWorldTimeline:(world,timeline,options={})=>{const protocol=timelineProtocol(world,timeline,options);normalizeTraversal(world);(world?.entities||[]).forEach(normalizeVehicle);return protocol;},isSidecarWorld:(world,timeline)=>timelineProtocol(world,timeline)?.mode==='sidecar',ensureNarrativeHierarchy:(world,timeline)=>{const protocol=timelineProtocol(world,timeline);return protocol?.mode==='sidecar'?hierarchy(protocol,timeline):null;},activeReaderCandidates:(protocol,options={})=>activeReaderCandidates(protocol,options),normalizeReaderCandidate:(raw,defaults={})=>normalizeReaderCandidate(raw,defaults),mergeReaderCandidates:(protocol,raw,defaults={})=>mergeReaderCandidates(protocol,raw,defaults)});
 })(window);
 
 // The Sidecar core is scoped for its public API; these narrow adapters keep
@@ -5363,18 +5415,21 @@ function resolvedWorldImageOutfit(subject = null) {
 
 function sidecarReaderVisualProjection(world, sess, entityId = '') {
     const protocol = protocolForSidecarTimeline(world, sess);
-    const snapshot = protocol?.readerSnapshots?.filter(item => item.status === 'active').at(-1);
-    const envelope = snapshot?.envelope || protocol?.sceneProjection || null;
+    const snapshot = protocol?.readerSnapshots?.filter(item => item.status === 'active' && item.settlementStatus === 'settled').at(-1);
+    const envelope = snapshot?.envelope || null;
     if (!envelope) return null;
     const candidates = activeReaderCandidates(protocol, { sceneId: snapshot?.sceneId || protocol.activeSceneId || '' });
-    const character = candidates.find(candidate => candidate.candidateType === 'character' && (!entityId || candidate.canonicalMatchId === entityId));
-    const outfit = candidates.find(candidate => candidate.candidateType === 'outfit' && (!entityId || candidate.details?.characterEntityId === entityId || candidate.canonicalMatchId === entityId));
+    const selectedId = String(entityId || '');
+    const character = candidates.find(candidate => candidate.candidateType === 'character' && (!selectedId || String(candidate.canonicalMatchId || '') === selectedId));
+    const outfit = candidates.find(candidate => candidate.candidateType === 'outfit' && (!selectedId || [candidate.wearerEntityId, candidate.details?.wearerEntityId, candidate.details?.characterEntityId, candidate.subjectEntityId].some(value => String(value || '') === selectedId)));
     const scene = envelope.scene || {};
-    const active = envelope.presence?.active || [];
-    const castEntry = Array.isArray(active) ? active.find(item => String(item?.id || item) === String(entityId)) : null;
+    const presence = Object.values(envelope.presence || {}).flat().filter(item => isPlainObject(item));
+    const castEntry = presence.find(item => String(item?.entityId || item?.canonicalEntityId || item?.id || '') === selectedId) || null;
+    const characterEvidence = candidates.filter(candidate => candidate.candidateType === 'character' && (!selectedId || String(candidate.canonicalMatchId || '') === selectedId));
+    const outfitEvidence = candidates.filter(candidate => candidate.candidateType === 'outfit' && (!selectedId || [candidate.wearerEntityId, candidate.details?.wearerEntityId, candidate.details?.characterEntityId, candidate.subjectEntityId].some(value => String(value || '') === selectedId)));
     return {
         nonCanonical: true,
-        snapshotId: snapshot?.id || protocol.sceneProjection?.snapshotId || '',
+        snapshotId: snapshot.id,
         appearance: character?.description || character?.details?.appearance || castEntry?.appearance || '',
         outfit: outfit ? { id: outfit.canonicalMatchId || outfit.candidateId, name: outfit.label, description: outfit.clothingDescription || outfit.description } : null,
         pose: character?.details?.pose || castEntry?.pose || '',
@@ -5383,22 +5438,8 @@ function sidecarReaderVisualProjection(world, sess, entityId = '') {
         orientation: character?.details?.orientation || castEntry?.orientation || '',
         environment: scene.environment || '',
         backgroundSetting: scene.environment || '',
-        evidence: candidates.filter(item => item.candidateType === 'character' || item.candidateType === 'outfit').slice(-12)
+        evidence: [...characterEvidence, ...outfitEvidence].slice(-12)
     };
-}
-
-function sidecarReaderVisualProjection(world, sess, entityId = '') {
-    const protocol = protocolForSidecarTimeline(world, sess);
-    const snapshot = protocol?.readerSnapshots?.filter(item => item.status === 'active').at(-1);
-    const envelope = snapshot?.envelope || protocol?.sceneProjection || null;
-    if (!envelope) return null;
-    const candidates = activeReaderCandidates(protocol, { sceneId: snapshot?.sceneId || protocol.activeSceneId || '' });
-    const character = candidates.find(candidate => candidate.candidateType === 'character' && (!entityId || candidate.canonicalMatchId === entityId));
-    const outfit = candidates.find(candidate => candidate.candidateType === 'outfit' && (!entityId || candidate.details?.characterEntityId === entityId || candidate.canonicalMatchId === entityId));
-    const scene = envelope.scene || {};
-    const active = envelope.presence?.active || [];
-    const castEntry = Array.isArray(active) ? active.find(item => String(item?.id || item) === String(entityId)) : null;
-    return { nonCanonical: true, snapshotId: snapshot?.id || protocol.sceneProjection?.snapshotId || '', appearance: character?.description || character?.details?.appearance || castEntry?.appearance || '', outfit: outfit ? { id: outfit.canonicalMatchId || outfit.candidateId, name: outfit.label, description: outfit.clothingDescription || outfit.description } : null, pose: character?.details?.pose || castEntry?.pose || '', expression: character?.details?.expression || castEntry?.expression || '', action: character?.details?.action || castEntry?.action || '', orientation: character?.details?.orientation || castEntry?.orientation || '', environment: scene.environment || '', backgroundSetting: scene.environment || '', evidence: candidates.filter(item => item.candidateType === 'character' || item.candidateType === 'outfit').slice(-12) };
 }
 
 function compileWorldImageAdvancedLook(look) {
@@ -8384,6 +8425,15 @@ function setupNavigation() {
 }
 
 function switchView(viewName) {
+    // ScenePulse source weather/tint lives at body level so it can match the
+    // original behind-the-panel paint order.  Leaving World Play therefore
+    // needs an explicit lifecycle cleanup; merely hiding the column would
+    // leave the previous fixture's ambient layer over another Horde view.
+    if (state.view === 'worldPlay' && viewName !== 'worldPlay') {
+        const scenePulseHost = document.getElementById('world-sidecar-workspace');
+        unbindScenePulseWorldsHostActions(scenePulseHost);
+        window.HordeScenePulseWorlds?.unmount?.(scenePulseHost);
+    }
     state.view = viewName;
     persistWorkspaceSoon();
     
@@ -12816,6 +12866,25 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
             return prior.result;
         }
     }
+    // Write a durable intent before the first mutating reducer call.  This is
+    // deliberately not a world snapshot: should a native reducer partially
+    // fail, the journal is evidence for the native recovery/World GM path and
+    // progression is blocked rather than silently restoring broad state.
+    let preparedJournalEntry = null;
+    if (sidecarSource) {
+        const journal = sidecarCommitJournal(sess);
+        preparedJournalEntry = {
+            identity: commitIdentity,
+            fingerprint: receiptFingerprint,
+            status: 'prepared',
+            source: 'sidecar',
+            receiptTurnId: String(validation.receipt?.turn_id || ''),
+            preparedAt: new Date().toISOString(),
+            receipt: safeJsonClone(rawReceipt)
+        };
+        journal.push(preparedJournalEntry);
+        sess.sidecarCommitJournal = journal.slice(-240);
+    }
     const hasConditionalCheck = Array.isArray(validation.legacyArgs?.checks) && validation.legacyArgs.checks.length > 0;
     if (hasConditionalCheck) {
         // An unresolved check cannot coexist with already-completed event or
@@ -12961,7 +13030,8 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
                 validation: safeJsonClone(validation)
             };
             sess.sidecarIncompleteCommit = incomplete;
-            sidecarCommitJournal(sess).push({ ...incomplete, journaledAt: new Date().toISOString() });
+            if (preparedJournalEntry) Object.assign(preparedJournalEntry, incomplete, { journaledAt: new Date().toISOString() });
+            else sidecarCommitJournal(sess).push({ ...incomplete, journaledAt: new Date().toISOString() });
         }
         throw error;
     }
@@ -12979,7 +13049,11 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
                 }
             });
         }
-        sidecarCommitJournal(sess).push({
+        if (preparedJournalEntry) Object.assign(preparedJournalEntry, {
+            status: 'committed', receiptTurnId: String(validation.receipt?.turn_id || ''),
+            committedAt: new Date().toISOString(), result: safeJsonClone(result)
+        });
+        else sidecarCommitJournal(sess).push({
             identity: commitIdentity,
             fingerprint: receiptFingerprint,
             status: 'committed',
@@ -14779,14 +14853,17 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
         status: 'reconciliation_pending',
         reconciliationStatus: 'pending',
         createdAt: new Date().toISOString(),
-        narration: String(options.narration || '').slice(0, 24000),
-        handoff: String(options.handoff || '').slice(0, 12000),
+        // This Take is an authored artifact. Display/context budgets may be
+        // bounded later, but a downstream retry must never retry a truncated
+        // surrogate of the narration or hidden handoff.
+        narration: String(options.narration || ''),
+        handoff: String(options.handoff || ''),
         handoffComplete: options.handoffComplete !== false,
         sceneReading: sidecarHandoffSection(options.handoff, 'SCENE READING'),
         acceptedPlayerDetails: sidecarHandoffSection(options.handoff, 'ACCEPTED PLAYER DETAILS'),
         temporalStatement: sidecarTemporalStatement(options.handoff),
         sceneHeader: safeJsonClone(options.sceneHeader || null),
-        playerInput: String(options.playerInput || '').slice(0, 6000),
+        playerInput: String(options.playerInput || ''),
         preFrame: safeJsonClone(options.preFrame || buildWorldSceneFrame(world, sess)),
         preClock: safeJsonClone(options.preClock || buildSidecarClockEvidence(world, sess)),
         model: String(options.model || ''),
@@ -14806,6 +14883,15 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
             handoffComplete: options.handoffComplete !== false
         }
     };
+    turnRecord.authorialArtifact = turnRecord.authorialArtifact || {
+        narration: turnRecord.narration,
+        handoff: turnRecord.handoff,
+        playerInput: turnRecord.playerInput,
+        narrationHash: worldMediaHash(String(turnRecord.narration || '')),
+        handoffHash: worldMediaHash(String(turnRecord.handoff || '')),
+        playerInputHash: worldMediaHash(String(turnRecord.playerInput || '')),
+        capturedAt: turnRecord.createdAt
+    };
     if (!logicalIdentity) {
         const identitySource = options.sourceTurnId || existing?.id || turnRecord.id;
         logicalIdentity = `sidecar:${sess.id || 'timeline'}:${identitySource}:${options.takeId || existing?.takeId || 'take'}:${options.revisionId || existing?.revisionId || 'revision'}`.slice(0, 240);
@@ -14816,6 +14902,9 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
         turnRecord.failure = null;
         turnRecord.receipt = null;
         turnRecord.audit = null;
+        // Preserve preceding attempts for Backstage/retry. Only the current
+        // attempt's outcome is reset; a successful Reader result remains a
+        // reusable artifact if Sidecar subsequently failed.
         turnRecord.reader = options.readerPacketOverride ? safeJsonClone(options.readerPacketOverride) : (turnRecord.reader || null);
         turnRecord.readerEnvelope = turnRecord.readerEnvelope || null;
         turnRecord.retryCount = (Number(turnRecord.retryCount) || 0) + 1;
@@ -14825,7 +14914,7 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
     turnRecord.preCanonicalFingerprint = options.preCanonicalFingerprint || turnRecord.preCanonicalFingerprint || sidecarCanonicalCheckpointFingerprint(world, sess);
     turnRecord.preWorldStateVersion = Number(options.preWorldStateVersion ?? turnRecord.preWorldStateVersion ?? sess.worldStateVersion) || 0;
     turnRecord.currentAttemptId = attemptId;
-    turnRecord.attempts.push({ id: attemptId, status: 'pending', createdAt: new Date().toISOString(), logicalCommitIdentity: logicalIdentity, readerReused: !!options.readerPacketOverride });
+    turnRecord.attempts.push({ id: attemptId, status: 'pending', createdAt: new Date().toISOString(), logicalCommitIdentity: logicalIdentity, readerReused: !!options.readerPacketOverride, source: safeJsonClone({ narrationHash: turnRecord.authorialArtifact.narrationHash, handoffHash: turnRecord.authorialArtifact.handoffHash, playerInputHash: turnRecord.authorialArtifact.playerInputHash, preCanonicalFingerprint: turnRecord.preCanonicalFingerprint }) });
     turnRecord.attempts = turnRecord.attempts.slice(-24);
     if (!existing) {
         window.HordeSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
@@ -14852,7 +14941,26 @@ function sidecarCanonicalCheckpointFingerprint(world, sess) {
         worldTime: getWorldTimeData(world, sess),
         entityStates: sess?.entityStates || {},
         nearby: sess?.sceneNearbyCharacters || {},
-        receiptCount: Array.isArray(sess?.worldTurnReceipts) ? sess.worldTurnReceipts.length : 0
+        receiptCount: Array.isArray(sess?.worldTurnReceipts) ? sess.worldTurnReceipts.length : 0,
+        // A Sidecar receipt reads relationships, locations, entities, ledger
+        // and world rules as well as the player's frame. A partial frame hash
+        // can therefore accept a stale reconciliation after World GM changed
+        // one of its inputs. Exclude Sidecar audit/cache fields themselves.
+        registry: {
+            entities: (world?.entities || []).map(entity => ({ id: entity?.id, type: entity?.type, name: entity?.name, value: entity })).filter(entity => entity.id),
+            locations: world?.locations || [],
+            relationships: world?.relationships || world?.relationshipRecords || [],
+            ledger: world?.ledger || world?.worldLedger || {},
+            quests: world?.quests || [],
+            obligations: world?.obligations || []
+        },
+        sessionCanonical: {
+            npcRelationships: sess?.npcRelationships || {},
+            inventory: sess?.inventory || {},
+            ledger: sess?.ledger || '',
+            quests: sess?.quests || [],
+            obligations: sess?.obligations || []
+        }
     })));
 }
 
@@ -14876,7 +14984,7 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
         turnRecord.postFrame = buildWorldSceneFrame(world, sess);
         const currentAttempt = (turnRecord.attempts || []).find(item => item.id === turnRecord.currentAttemptId);
         if (currentAttempt) Object.assign(currentAttempt, { status: 'failed', failedAt: failure.failedAt, failure: safeJsonClone(failure) });
-        (protocol?.readerSnapshots || []).filter(snapshot => snapshot.turnId === turnRecord.id && snapshot.status === 'pending_reconciliation').forEach(snapshot => {
+        (protocol?.readerSnapshots || []).filter(snapshot => snapshot.turnId === turnRecord.id && snapshot.attemptId === turnRecord.currentAttemptId && snapshot.status === 'pending_reconciliation').forEach(snapshot => {
             snapshot.status = 'failed';
             snapshot.provenance = { ...(snapshot.provenance || {}), reconciliationFailure: failure.code };
         });
@@ -15110,8 +15218,19 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             mode: readerSnapshot.envelope?.snapshotMode || 'delta',
             summary: readerSnapshot.envelope?.summary || '',
             scene: readerSnapshot.envelope?.scene || {},
+            environment: readerSnapshot.envelope?.environment || {},
             presence: readerSnapshot.envelope?.presence || {},
             temporal: readerSnapshot.envelope?.temporal || {},
+            // This is author-facing Narrator context, not a character-memory
+            // payload. Each claim remains subject-scoped and provisional so
+            // later compiler lanes can enforce audience boundaries.
+            characterIntelligence: (readerSnapshot.envelope?.characterIntelligence || []).slice(0, 16).map(item => ({
+                subjectRef: item.subjectRef || item.candidateId || '', name: item.name || '', presence: item.presence || {},
+                activity: item.activity || null, emotionalPosture: item.emotionalPosture || [], attentionFocus: item.attentionFocus || [],
+                apparentUnderstanding: item.apparentUnderstanding || [], noticed: item.noticed || [], likelyUnnoticed: item.likelyUnnoticed || [],
+                suspicionOrUncertainty: item.suspicionOrUncertainty || [], immediateObjectiveOrConcern: item.immediateObjectiveOrConcern || [],
+                sceneLocalImpression: item.sceneLocalImpression || null, epistemicStatus: 'reader_derived_provisional'
+            })),
             candidateStructures: (readerSnapshot.envelope?.candidateStructures || []).slice(0, 40),
             eventClaims: (readerSnapshot.envelope?.eventClaims || []).slice(0, 20),
             durableProposals: (readerSnapshot.envelope?.durableProposals || []).slice(0, 12),
@@ -15126,6 +15245,15 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         sceneProjection: protocol?.sceneProjection ? {
             snapshotId: protocol.sceneProjection.snapshotId || '',
             sceneId: protocol.sceneProjection.sceneId || '',
+            summary: protocol.sceneProjection.summary || '',
+            temporal: protocol.sceneProjection.temporal || {}, location: protocol.sceneProjection.location || {},
+            environment: protocol.sceneProjection.environment || {}, scene: protocol.sceneProjection.scene || {},
+            people: (protocol.sceneProjection.people || []).slice(0, 16).map(person => ({
+                id: person.entityId || person.id || '', name: person.name || '', presence: person.mode || '', location: person.location || '',
+                activity: person.activity || '', attention: person.attentionFocus || [], posture: person.emotionalPosture || [],
+                provisional: true
+            })),
+            changes: (protocol.sceneProjection.changes || []).slice(0, 20),
             candidates: activeReaderCandidates(protocol, { sceneId: protocol.sceneProjection.sceneId || hierarchy?.scene?.id || '' }).slice(-80),
             updatedAt: protocol.sceneProjection.updatedAt || '',
             nonCanonical: true
@@ -15713,7 +15841,9 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
     protocol.readerSnapshots = protocol.readerSnapshots.slice(-200);
     turnRecord.readerEnvelope = safeJsonClone(envelope);
     turnRecord.readerSnapshotId = snapshot.id;
-    protocol.packet = { ...(protocol.packet || {}), readerEnvelope: safeJsonClone(envelope), readerSnapshotId: snapshot.id };
+    // Pending Reader evidence remains attempt-local. Publishing it into the
+    // next-turn packet here would let an invalid/failed reconciliation leak
+    // subjective inference into live continuity.
     return snapshot;
 }
 
@@ -15721,8 +15851,12 @@ function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const snapshot = protocol?.readerSnapshots?.find(item => item.id === snapshotId);
     if (!snapshot) return null;
-    protocol.readerSnapshots.forEach(item => { if (item.id !== snapshot.id && item.status === 'active') item.status = 'superseded'; });
-    snapshot.status = 'active'; snapshot.activatedAt = new Date().toISOString();
+    protocol.readerSnapshots.forEach(item => {
+        if (item.id !== snapshot.id && item.status === 'active') {
+            item.status = 'accepted_historical'; item.historicalAt = new Date().toISOString();
+        }
+    });
+    snapshot.status = 'active'; snapshot.settlementStatus = 'settled'; snapshot.activatedAt = new Date().toISOString();
     snapshot.provenance = { ...(snapshot.provenance || {}), committedTurnId: turnId || snapshot.turnId };
     protocol.sceneReader = safeJsonClone(snapshot.envelope);
     const scene = (protocol.scenes || []).find(item => item.id === snapshot.sceneId);
@@ -15731,6 +15865,312 @@ function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
         scene.readerState = safeJsonClone({ summary: snapshot.envelope.summary, scene: snapshot.envelope.scene, presence: snapshot.envelope.presence, temporal: snapshot.envelope.temporal, candidateStructures: snapshot.envelope.candidateStructures || [], nonCanonical: true });
     }
     return snapshot;
+}
+
+// Scene Projection is a read-only, human-facing join of one accepted Reader
+// interpretation and its canonical checkpoint. It deliberately carries more
+// information than the token-budgeted narrator packet; no render path should
+// need to rediscover relevance from the complete Character Registry.
+function sidecarProjectionDisplayName(world, sess, hierarchy, ref = '') {
+    const id = String(ref || '');
+    if (id === 'player' || id === hierarchy?.sequence?.controlledEntityId || id === sess?.controlledEntityId) {
+        return String(sess?.playerIdentity?.name || sess?.persona?.name || 'You');
+    }
+    return String((world?.entities || []).find(entity => String(entity?.id) === id)?.name || id || 'Unknown');
+}
+
+function sidecarProjectionClaimText(value) {
+    if (Array.isArray(value)) return value.map(sidecarProjectionClaimText).filter(Boolean).join(' · ');
+    if (isPlainObject(value)) return String(value.text || value.summary || value.description || value.value || '').trim();
+    return String(value || '').trim();
+}
+
+function sidecarProjectionPresenceEntries(values, mode, displayName) {
+    return (Array.isArray(values) ? values : []).map(value => {
+        const raw = isPlainObject(value) ? value : { id: value };
+        const id = String(raw.characterId || raw.character_id || raw.entityId || raw.entity_id || raw.id || raw.subjectRef || raw.subject_ref || '').trim();
+        return {
+            id, mode: String(raw.mode || mode || '').trim().toLowerCase(), name: String(raw.name || (id ? displayName(id) : raw.label || '')).trim(),
+            location: String(raw.location || raw.locationId || raw.location_id || raw.localSpace || raw.local_space || '').trim(),
+            channel: String(raw.channel || '').trim(), reason: String(raw.reason || raw.evidence || raw.relevanceReason || '').trim(),
+            source: safeJsonClone(raw)
+        };
+    }).filter(entry => entry.id || entry.name);
+}
+
+function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
+    const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy?.(protocol, sess, { createWhenMissing: false }) || {};
+    const snapshotId = String(options.snapshotId || '').trim();
+    const snapshot = snapshotId
+        ? (protocol?.readerSnapshots || []).find(item => item.id === snapshotId && ['active', 'accepted_historical'].includes(item.status))
+        : (protocol?.readerSnapshots || []).filter(item => item.status === 'active').at(-1);
+    const envelope = snapshot?.envelope || options.envelope || null;
+    const turn = options.turn || (protocol?.turns || []).find(item => item.id === snapshot?.turnId) || null;
+    const frame = options.frame || turn?.postFrame || buildWorldSceneFrame(world, sess);
+    const displayName = ref => sidecarProjectionDisplayName(world, sess, hierarchy, ref);
+    const canonicalLocation = getLocationRef(world, envelope?.location?.activeLocationId || envelope?.location?.active_location_id || frame?.player_location_id || sess?.playerLocation);
+    const parents = [];
+    let parentId = canonicalLocation?.parentLocationId;
+    const seenParents = new Set();
+    while (parentId && !seenParents.has(parentId) && parents.length < 8) {
+        seenParents.add(parentId);
+        const parent = getLocationRef(world, parentId);
+        if (!parent) break;
+        parents.unshift({ id: parent.id, name: parent.name || parent.id });
+        parentId = parent.parentLocationId;
+    }
+    const presence = envelope?.presence || {};
+    const bySubject = new Map();
+    ['active', 'nearby', 'audible', 'remote', 'mentioned', 'absent'].forEach(mode => {
+        sidecarProjectionPresenceEntries(presence[mode], mode, displayName).forEach(entry => {
+            const key = entry.id || `name:${entry.name.toLowerCase()}`;
+            const prior = bySubject.get(key);
+            bySubject.set(key, { ...(prior || {}), ...entry, mode: entry.mode || prior?.mode || mode });
+        });
+    });
+    (envelope?.characterIntelligence || []).forEach(intelligence => {
+        const subjectRef = String(intelligence.subjectRef || intelligence.candidateId || intelligence.name || '').trim();
+        if (!subjectRef) return;
+        const key = subjectRef;
+        const prior = bySubject.get(key) || {};
+        const mode = String(intelligence.presence?.mode || prior.mode || '').toLowerCase();
+        bySubject.set(key, {
+            ...prior, id: intelligence.subjectRef || prior.id || '', name: intelligence.name || prior.name || displayName(intelligence.subjectRef),
+            mode, location: intelligence.presence?.location || prior.location || '', channel: intelligence.presence?.channel || prior.channel || '',
+            reason: intelligence.relevance?.reason || prior.reason || '', intelligence: safeJsonClone(intelligence),
+            candidateId: intelligence.candidateId || prior.candidateId || ''
+        });
+    });
+    const controlledId = String(hierarchy?.sequence?.controlledEntityId || sess?.controlledEntityId || 'player');
+    if (!bySubject.has(controlledId)) bySubject.set(controlledId, {
+        id: controlledId, name: displayName(controlledId), mode: 'active', location: canonicalLocation?.id || '', channel: 'in_scene', reason: 'controlled character'
+    });
+    const relevantModes = new Set(['active', 'nearby', 'audible']);
+    const relevantPeople = [...bySubject.values()].filter(person => {
+        if (relevantModes.has(person.mode)) return true;
+        if (person.mode === 'remote') return !!(person.channel || person.reason || person.intelligence?.relevance?.reason);
+        // A name alone belongs in detail/diff, not the default scene roster.
+        return !!(person.intelligence?.relevance?.reason || person.reason) && person.mode !== 'absent';
+    }).map(person => {
+        const entity = (world?.entities || []).find(item => String(item?.id) === String(person.id)) || null;
+        const state = sess?.entityStates?.[person.id] || {};
+        const intelligence = person.intelligence || null;
+        return {
+            ...person, entityId: entity?.id || person.id || '', entity, candidate: null, state: safeJsonClone(state),
+            canonical: !!entity, activity: sidecarProjectionClaimText(intelligence?.activity) || String(state.currentActivity || state.activity || ''),
+            emotionalPosture: intelligence?.emotionalPosture || [], attentionFocus: intelligence?.attentionFocus || [],
+            apparentUnderstanding: intelligence?.apparentUnderstanding || [], noticed: intelligence?.noticed || [], likelyUnnoticed: intelligence?.likelyUnnoticed || [],
+            suspicionOrUncertainty: intelligence?.suspicionOrUncertainty || [], interpersonalPostures: intelligence?.interpersonalPostures || [],
+            immediateObjectiveOrConcern: intelligence?.immediateObjectiveOrConcern || [], sceneLocalImpression: intelligence?.sceneLocalImpression || null,
+            goals: intelligence?.goals || {}, visibleState: intelligence?.visibleState || {}, changedDimensions: intelligence?.changedDimensions || [],
+            appearance: String(entity?.appearance || entity?.description || ''), relevance: intelligence?.relevance || { reason: person.reason || '' }
+        };
+    }).sort((left, right) => {
+        const rank = value => ({ active: 0, nearby: 1, audible: 2, remote: 3 })[value.mode] ?? 4;
+        return rank(left) - rank(right) || String(left.name).localeCompare(String(right.name));
+    });
+    const candidates = activeReaderCandidates(protocol, { sceneId: turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id || '' })
+        .filter(candidate => !snapshot || !candidate.readerSnapshotId || candidate.readerSnapshotId === snapshot.id || candidate.sourceTurnIds?.includes(snapshot.turnId))
+        .map(candidate => safeJsonClone(candidate));
+    const candidateById = new Map(candidates.map(candidate => [String(candidate.candidateId || ''), candidate]));
+    relevantPeople.forEach(person => { if (person.candidateId && candidateById.has(person.candidateId)) person.candidate = candidateById.get(person.candidateId); });
+    const openQuestions = (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)
+        && (!question.sceneId || question.sceneId === (turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id))).map(question => safeJsonClone(question));
+    const environment = safeJsonClone(envelope?.environment || {});
+    const scene = safeJsonClone(envelope?.scene || {});
+    const temporal = safeJsonClone(envelope?.temporal || {});
+    const projection = {
+        schemaVersion: 2, status: snapshot ? 'settled' : 'no_reader_data', id: `scene_projection:${snapshot?.id || turn?.id || 'none'}`,
+        snapshotId: snapshot?.id || '', turnId: turn?.id || snapshot?.turnId || '', sceneId: turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id || '',
+        sequenceId: turn?.sequenceId || snapshot?.sequenceId || hierarchy?.sequence?.id || '', createdAt: snapshot?.activatedAt || snapshot?.createdAt || '',
+        temporal, location: {
+            canonicalId: canonicalLocation?.id || '', name: canonicalLocation?.name || envelope?.location?.name || 'Unknown location',
+            parentLocations: parents, localSpace: String(envelope?.location?.localSpace || envelope?.location?.local_space || '').trim(),
+            authoredDescription: String(envelope?.location?.description || envelope?.location?.evidence || '').trim()
+        }, environment, scene, scenePulse: safeJsonClone(envelope?.scenePulse || {}), people: relevantPeople, candidateStructures: candidates,
+        relationships: safeJsonClone([...(envelope?.relationshipPostures || []), ...(envelope?.relationshipShifts || [])]),
+        canonicalRelationships: safeJsonClone(sess?.npcRelationships || {}), salientObjects: safeJsonClone(envelope?.salientObjects || []),
+        salientLocations: safeJsonClone(envelope?.salientLocations || []), pressures: safeJsonClone([...(envelope?.pressures || []), ...(envelope?.currentThreads || [])]),
+        questions: openQuestions, changes: safeJsonClone(envelope?.changes || []), unresolved: safeJsonClone(envelope?.unresolvedEvidence || []),
+        summary: String(envelope?.summary || '').trim(), coverage: safeJsonClone(envelope?.coverage || {}),
+        provenance: { readerSnapshotId: snapshot?.id || '', sourceTurnId: turn?.id || snapshot?.turnId || '', sourceTakeId: snapshot?.takeId || turn?.takeId || '', sourceRevisionId: snapshot?.envelope?.sourceRevisionId || turn?.revisionId || '' }
+    };
+    return projection;
+}
+
+function sidecarSettlementIdentity(turnRecord, receipt = {}) {
+    const turnId = String(turnRecord?.id || receipt?.turn_id || 'turn');
+    const takeId = String(turnRecord?.takeId || receipt?.take_id || 'take');
+    const revisionId = String(turnRecord?.revisionId || receipt?.revision_id || 'revision');
+    return `scene_settlement:${turnId}:${takeId}:${revisionId}`.slice(0, 280);
+}
+
+function sidecarTurnNeedsDownstreamRecovery(turn = {}) {
+    const status = String(turn?.status || '').toLowerCase();
+    const reconciliation = String(turn?.reconciliationStatus || turn?.reconciliation_status || '').toLowerCase();
+    return ['reconciliation_failed', 'reconciliation_pending', 'settlement_incomplete'].includes(status)
+        || ['failed', 'pending', 'reconciliation_failed', 'reconciliation_pending', 'canonical_committed_publication_incomplete'].includes(reconciliation);
+}
+
+// Array position is not continuity. Opening bootstrap, retries, refreshes and
+// historical repairs can append bookkeeping records out of authored-message
+// order. The current workspace/retry surface must instead follow the latest
+// visible narrator artifact in this timeline.
+function currentSidecarAuthoredTurn(protocol, sess) {
+    if (!protocol || !sess) return null;
+    const turns = (protocol.turns || []).filter(turn => turn && turn.status !== 'superseded');
+    const byId = new Map(turns.map(turn => [String(turn.id || ''), turn]));
+    for (const message of [...(sess.history || [])].reverse()) {
+        if (message?.role !== 'dm') continue;
+        const id = String(message.sidecarTurnId || message.sidecarBackstage?.sidecarTurnId || '').trim();
+        if (id && byId.has(id)) return byId.get(id);
+    }
+    return turns.slice().sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || ''))).at(-1) || null;
+}
+
+function sidecarCognitionAccessForPresence(mode = '') {
+    const normalized = String(mode || '').toLowerCase();
+    if (normalized === 'active') return 'visual';
+    if (normalized === 'nearby' || normalized === 'audible') return 'auditory';
+    if (normalized === 'remote') return 'informational';
+    return 'unknown';
+}
+
+function sidecarTurnCognitionEvidence(intelligence = {}) {
+    const fields = [
+        ['activity', intelligence.activity], ['emotional posture', intelligence.emotionalPosture], ['attention', intelligence.attentionFocus],
+        ['apparent understanding', intelligence.apparentUnderstanding], ['noticed', intelligence.noticed], ['likely missed', intelligence.likelyUnnoticed],
+        ['uncertainty', intelligence.suspicionOrUncertainty], ['concern', intelligence.immediateObjectiveOrConcern], ['impression', intelligence.sceneLocalImpression]
+    ];
+    return fields.map(([label, value]) => {
+        const text = sidecarProjectionClaimText(value);
+        return text ? `${label}: ${text}` : '';
+    }).filter(Boolean).join('\n').slice(0, 8000);
+}
+
+// Live ScenePulse-style thought assessments are durable source-pinned inputs
+// to the existing cognition graph. They are not durable memories themselves,
+// and their jobs use the same provider concurrency/throttling as Episode work.
+function queueSidecarTurnCognitionJobs(world, sess, protocol, turnRecord, projection = null) {
+    if (!protocol || !turnRecord?.readerSnapshotId || !turnRecord?.readerEnvelope) return [];
+    const jobs = window.HordeSidecarMemoryGraph?.ensureJobs?.(protocol) || [];
+    const reader = turnRecord.readerEnvelope;
+    const people = projection?.people || (reader.characterIntelligence || []).map(intelligence => ({
+        id: intelligence.subjectRef || intelligence.candidateId || '', candidateId: intelligence.candidateId || '', mode: intelligence.presence?.mode || '', intelligence
+    }));
+    const queued = [];
+    people.forEach(person => {
+        const intelligence = person.intelligence || (reader.characterIntelligence || []).find(item => item.subjectRef === person.id || item.candidateId === person.candidateId);
+        if (!intelligence) return;
+        const subjectRef = String(intelligence.subjectRef || intelligence.candidateId || person.id || person.candidateId || '').trim();
+        const mode = String(intelligence.presence?.mode || person.mode || '').toLowerCase();
+        if (!subjectRef || !['active', 'nearby', 'audible', 'remote'].includes(mode)) return;
+        if (String(intelligence.status || '').toLowerCase() === 'unconscious') return;
+        const evidence = sidecarTurnCognitionEvidence(intelligence);
+        // A genuinely unsupported subject stays recorded in the Reader
+        // coverage but does not waste a character-model call pretending it has
+        // usable perception evidence.
+        if (!evidence) return;
+        const id = `turn_cognition:${turnRecord.id}:${subjectRef}`.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 220);
+        if (jobs.some(job => job.id === id)) return;
+        const canonicalEntity = (world.entities || []).find(entity => String(entity?.id) === subjectRef);
+        const candidate = !canonicalEntity ? (protocol.readerCandidates || []).find(item => item.candidateId === subjectRef || item.candidateId === intelligence.candidateId) : null;
+        jobs.push({
+            id, type: 'turn_cognition', status: 'queued', createdAt: new Date().toISOString(), attempts: 0,
+            turnId: turnRecord.id, sourceTurnIds: [turnRecord.id], sceneId: turnRecord.sceneId || protocol.activeSceneId || '',
+            sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', readerSnapshotId: turnRecord.readerSnapshotId,
+            characterId: canonicalEntity?.id || '', candidateId: candidate?.candidateId || intelligence.candidateId || '', subjectRef,
+            access: sidecarCognitionAccessForPresence(mode), perceptionEvidence: evidence, provisionalIntelligence: safeJsonClone(intelligence),
+            dependencies: [], priority: 'background', retryAt: '', diagnostics: [],
+            provenance: { source: 'settled_reader_character_intelligence', sourceTurnId: turnRecord.id, readerSnapshotId: turnRecord.readerSnapshotId, subjectKind: canonicalEntity ? 'canonical_entity' : 'scene_candidate' }
+        });
+        queued.push(id);
+    });
+    return queued;
+}
+
+// Publish derived Reader state in an isolated protocol draft. Canonical state
+// has already been changed by the native receipt at this point; this function
+// must therefore either publish a complete derived bundle or leave the former
+// settled bundle visible and report a recoverable publication failure. It
+// never reruns the receipt or restores a whole world snapshot.
+function publishSidecarSettlement(world, sess, protocol, options = {}) {
+    if (!protocol || !options.turnRecord) throw new Error('A Sidecar settlement needs a timeline protocol and authored turn.');
+    const turnRecord = options.turnRecord;
+    const settlementId = sidecarSettlementIdentity(turnRecord, options.receipt);
+    const existing = (protocol.settlements || []).find(entry => entry.id === settlementId);
+    if (existing?.status === 'settled') return { status: 'already_settled', settlement: existing, projection: safeJsonClone(protocol.sceneProjection || null), packet: protocol.packet || null };
+    const originalProtocol = sess.sidecar;
+    const draftSeed = safeJsonClone(protocol);
+    // All of the existing staging helpers resolve the protocol from the
+    // session. Point them at an isolated draft for the publication window.
+    sess.sidecar = draftSeed;
+    try {
+        const draft = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        if (!draft) throw new Error('Could not open an isolated Sidecar settlement draft.');
+        if (!Array.isArray(draft.settlements)) draft.settlements = [];
+        const draftTurn = draft.turns.find(item => item.id === turnRecord.id);
+        if (!draftTurn) throw new Error('The authored Sidecar turn disappeared before derived settlement.');
+        const now = new Date().toISOString();
+        const stagedPacket = draftTurn.reader || options.readerPacket || {};
+        draftTurn.settlementId = settlementId;
+        const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(draft, safeJsonClone(options.introductionDraft || {}), {
+            source: 'narrator_handoff', narration: options.narration || '', handoff: options.handoff || '', turnId: draftTurn.id
+        }) || [];
+        recordSidecarCoreAnswers(world, sess, options.handoff || '');
+        recordSidecarRequests(world, sess, options.handoff || '');
+        recordSidecarReaderProposals(world, sess, stagedPacket, draftTurn, draftTurn.readerSnapshotId || '');
+        recordSidecarReaderCandidates(world, sess, stagedPacket, draftTurn, draftTurn.readerSnapshotId || '');
+        queueSidecarReaderQuestions(world, sess, stagedPacket, draftTurn);
+        recordSidecarTemporalEvidence(world, sess, options.handoff || '', options.preClock, options.explicitEndpointEvidence || null);
+        (draft.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status)).forEach(proposal => {
+            proposal.status = 'sidecar_reviewed'; proposal.reviewedAt = now; proposal.reviewReceiptId = options.receipt?.turn_id || '';
+            proposal.reviewOutcome = options.committed?.audit?.rejected?.length ? 'reviewed_with_rejections' : 'reviewed_no_automatic_commit';
+        });
+        queueSidecarReconciliationQuestions(world, sess, options.committed?.audit);
+        const reconciledPriorIds = Array.isArray(options.receipt?.state_updates?.reconciled_prior_turn_ids)
+            ? options.receipt.state_updates.reconciled_prior_turn_ids.map(String) : [];
+        reconciledPriorIds.forEach(id => {
+            const prior = draft.turns.find(item => item.id === id && item.reconciliationStatus === 'failed');
+            if (!prior) return;
+            prior.status = 'reconciled_late'; prior.reconciliationStatus = 'committed_late'; prior.reconciledByTurnId = draftTurn.id; prior.reconciledAt = now;
+            updateSidecarQuestion(world, sess, `reconcile.transport.${id}`, { status: 'resolved', resolutionType: 'later_sidecar_reconciliation', answer: `Reconciled by ${draftTurn.id}.`, provenance: { source: 'sidecar_receipt', turnId: draftTurn.id } });
+        });
+        draftTurn.status = 'active'; draftTurn.reconciliationStatus = 'committed'; draftTurn.committedAt = now;
+        draftTurn.receiptTurnId = String(options.receipt?.turn_id || ''); draftTurn.postFrame = safeJsonClone(options.postFrame || buildWorldSceneFrame(world, sess));
+        draftTurn.postClock = safeJsonClone(options.postClock || buildSidecarClockEvidence(world, sess)); draftTurn.receipt = safeJsonClone(options.receipt || {});
+        draftTurn.audit = safeJsonClone(options.committed?.audit || {}); draftTurn.explicitEndpointEvidence = safeJsonClone(options.explicitEndpointEvidence || null);
+        draftTurn.provisionalIntroductions = stagedIntroductions.map(entry => entry.id); draftTurn.settledAttemptId = options.attemptId || draftTurn.currentAttemptId || '';
+        draftTurn.readerProposalDrafts = null; draftTurn.readerCandidateDrafts = null; draftTurn.readerQuestionDrafts = null; draftTurn.settlementWarning = null;
+        if (draftTurn.readerSnapshotId) activateSidecarReaderSnapshot(world, sess, draftTurn.readerSnapshotId, draftTurn.id);
+        const projection = buildSidecarSceneProjection(world, sess, draft, { turn: draftTurn, snapshotId: draftTurn.readerSnapshotId, frame: draftTurn.postFrame });
+        projection.settlementId = settlementId;
+        (draft.sceneProjections || []).forEach(item => { if (item.status === 'active') { item.status = 'accepted_historical'; item.historicalAt = now; } });
+        draft.sceneProjections = (draft.sceneProjections || []).filter(item => item.id !== projection.id);
+        draft.sceneProjections.push({ ...safeJsonClone(projection), status: 'active', settledAt: now });
+        draft.sceneProjections = draft.sceneProjections.slice(-400);
+        draft.sceneProjection = safeJsonClone(projection);
+        const settlement = { id: settlementId, status: 'settled', turnId: draftTurn.id, takeId: draftTurn.takeId || '', revisionId: draftTurn.revisionId || '', attemptId: draftTurn.settledAttemptId, readerSnapshotId: draftTurn.readerSnapshotId || '', receiptFingerprint: options.committed?.audit?.receiptFingerprint || '', receiptTurnId: draftTurn.receiptTurnId, publishedAt: now, projectionId: projection.id };
+        draft.settlements = [...draft.settlements.filter(item => item.id !== settlementId), settlement].slice(-500);
+        const currentAttempt = draftTurn.attempts?.find(item => item.id === (options.attemptId || draftTurn.currentAttemptId));
+        if (currentAttempt) Object.assign(currentAttempt, { status: 'committed', committedAt: now, receiptFingerprint: settlement.receiptFingerprint, settlementId });
+        const diagnostic = draft.diagnostics?.reconciliationAttempts?.find(item => item.turnId === draftTurn.id && (!options.attemptId || item.attemptId === options.attemptId));
+        if (diagnostic) Object.assign(diagnostic, { status: 'committed', committedAt: now, receiptTurnId: draftTurn.receiptTurnId, audit: safeJsonClone(options.committed?.audit), explicitEndpointEvidence: safeJsonClone(options.explicitEndpointEvidence || null), settlementId });
+        window.HordeSidecarMemoryGraph?.recordTurn(draft, draftTurn);
+        draftTurn.turnCognitionJobIds = queueSidecarTurnCognitionJobs(world, sess, draft, draftTurn, projection);
+        queueSidecarSceneOutfitQuestions(world, sess, draftTurn);
+        const memoryConfig = effectiveSidecarMemoryConfig(world);
+        window.HordeSidecarMemoryGraph?.queueEpisode(draft, { batchSize: memoryConfig.episodeChunkTurns, cadenceTurns: memoryConfig.episodeCadenceTurns });
+        draft.packet = buildSidecarScenePacket(world, sess, options.handoff || '');
+        sess.sidecarDerivedSettlementIncomplete = null;
+        return { status: 'settled', settlement, projection, packet: draft.packet, protocol: draft };
+    } catch (error) {
+        // Discard the unpublished derived draft. Canonical mutation is never
+        // rolled back here; the caller records canonical/settlement-incomplete
+        // evidence and exposes the safe recovery action.
+        sess.sidecar = originalProtocol;
+        throw error;
+    }
 }
 
 function queueSidecarReaderQuestions(world, sess, readerPacket, turnRecord) {
@@ -15797,12 +16237,14 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turnRecord || !readerPacket) return [];
     const raw = readerPacket.candidateStructures || readerPacket.candidates || readerPacket.semanticInterpretation?.candidateStructures || [];
-    const candidates = mergeReaderCandidates(protocol, raw, {
+    const candidates = window.HordeSidecarHooks?.mergeReaderCandidates?.(protocol, raw, {
         sourceTurnId: turnRecord.id,
         sourceTakeId: turnRecord.takeId || '',
         sourceRevisionId: turnRecord.revisionId || '',
-        readerSnapshotId: snapshotId
-    });
+        readerSnapshotId: snapshotId,
+        attemptId: turnRecord.settledAttemptId || turnRecord.currentAttemptId || '',
+        settlementId: turnRecord.settlementId || '',
+    }) || [];
     candidates.forEach(candidate => {
         candidate.sourceSceneId = turnRecord.sceneId || protocol.activeSceneId || '';
         candidate.sourceSequenceId = turnRecord.sequenceId || protocol.activeSequenceId || '';
@@ -15814,21 +16256,147 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
             revisionId: turnRecord.revisionId || '',
             readerSnapshotId: snapshotId || ''
         };
+        candidate.attemptStatus = 'settled';
+        candidate.settlementStatus = 'settled';
     });
-    const scene = (protocol.scenes || []).find(item => item.id === (turnRecord.sceneId || protocol.activeSceneId));
-    if (scene) {
-        scene.readerCandidates = activeReaderCandidates(protocol, { sceneId: scene.id }).slice(-120).map(candidate => safeJsonClone(candidate));
-        scene.readerProjectionUpdatedAt = new Date().toISOString();
-    }
-    protocol.sceneProjection = {
-        snapshotId,
-        sceneId: turnRecord.sceneId || protocol.activeSceneId || '',
-        sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '',
-        candidates: activeReaderCandidates(protocol, { sceneId: turnRecord.sceneId || protocol.activeSceneId || '' }).slice(-120).map(candidate => safeJsonClone(candidate)),
-        updatedAt: new Date().toISOString(),
-        provenance: { source: 'sidecar_semantic_reader', turnId: turnRecord.id, readerSnapshotId: snapshotId || '' }
-    };
+    // Candidate records are one input to the projection, not the projection
+    // itself.  Publication assembles the complete dimensional scene view only
+    // once this attempt has settled.
     return candidates;
+}
+
+/*
+ * A syntactically repairable but provider-truncated envelope is not a healthy
+ * scene reading.  Keep the required set deliberately source-grounded so a
+ * dormant registry never consumes output budget, then validate it below.
+ */
+function sidecarReaderRequiredSubjects(references = {}, options = {}) {
+    const sourceText = [options.playerInput, options.narration, options.handoff]
+        .map(value => String(value || '')).join('\n');
+    const controlledId = String(options.controlledEntityId || '').trim();
+    const countName = name => {
+        const escaped = String(name || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return escaped ? (sourceText.match(new RegExp(`\\b${escaped}\\b`, 'gi')) || []).length : 0;
+    };
+    const result = (Array.isArray(references?.entities) ? references.entities : [])
+        .filter(entity => {
+            const id = String(entity?.id || '').trim();
+            const name = String(entity?.name || '').trim();
+            return id && name && (id === controlledId || countName(name) >= 2);
+        })
+        .map(entity => ({
+            id: String(entity.id), name: String(entity.name || entity.id), role: String(entity.role || ''),
+            reason: String(entity.id) === controlledId ? 'controlled entity' : 'repeatedly named in the authored beat'
+        }));
+    if (controlledId && !result.some(entry => entry.id === controlledId)) {
+        result.unshift({ id: controlledId, name: 'Controlled character', role: 'controlled_entity', reason: 'controlled entity' });
+    }
+    return result.slice(0, 16);
+}
+
+function validateSidecarReaderCoverage(packet, requiredSubjects = [], finishReason = '') {
+    if (/length|truncat/i.test(String(finishReason || ''))) {
+        return { valid: false, error: 'reader_output_truncated', missing: requiredSubjects.map(entry => entry.id) };
+    }
+    const readings = Array.isArray(packet?.characterIntelligence) ? packet.characterIntelligence : [];
+    const covered = new Set(readings.flatMap(item => [item?.subjectRef, item?.candidateId, item?.name])
+        .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+    const missing = requiredSubjects.filter(subject => !covered.has(String(subject.id).toLowerCase()) && !covered.has(String(subject.name).toLowerCase()));
+    return missing.length
+        ? { valid: false, error: 'reader_incomplete_character_coverage', missing: missing.map(subject => subject.id) }
+        : { valid: true, error: '', missing: [] };
+}
+
+// ScenePulse's source macros resolve from its latest tracker snapshot.  In
+// Worlds, that means the prior *accepted Reader* projection only.  Never
+// resolve a prompt macro from the presentation fixture or Horde's registry:
+// those are useful visible fallbacks, not model evidence.
+function scenePulseSourceMacroValues(scenePulse = {}, profile = {}) {
+    const source = isPlainObject(scenePulse) ? scenePulse : {};
+    const text = key => {
+        const value = source[key];
+        if (value === undefined || value === null) return '';
+        return Array.isArray(value) ? value.map(item => String(item || '').trim()).filter(Boolean).join(', ') : String(value).trim();
+    };
+    const characters = Array.isArray(source.characters) ? source.characters : [];
+    const characterName = value => {
+        if (isPlainObject(value)) return String(value.name || value.displayName || value.id || '').trim();
+        const raw = String(value || '').trim();
+        const match = characters.find(item => String(item?.id || item?.characterId || item?.candidateId || '').trim() === raw);
+        return String(match?.name || raw).trim();
+    };
+    const presentRaw = Array.isArray(source.charactersPresent) ? source.charactersPresent : [];
+    const present = presentRaw.map(characterName).filter(Boolean);
+    const characterNames = present.length ? present : characters.map(item => String(item?.name || '').trim()).filter(Boolean);
+    const relationships = (Array.isArray(source.relationships) ? source.relationships : []).map(relationship => {
+        const name = String(relationship?.name || '').trim();
+        if (!name) return '';
+        const parts = [];
+        if (relationship.relType) parts.push(String(relationship.relType).trim());
+        if (Number.isFinite(Number(relationship.affection))) parts.push(`aff:${Number(relationship.affection)}`);
+        return `${name}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+    }).filter(Boolean);
+    const active = rows => (Array.isArray(rows) ? rows : [])
+        .filter(item => String(item?.urgency || item?.status || '').toLowerCase() !== 'resolved')
+        .map(item => String(item?.name || item?.title || '').trim()).filter(Boolean);
+    const mainQuests = active(source.mainQuests), sideQuests = active(source.sideQuests);
+    const preset = profile?.scenePulsePreset || {};
+    return Object.freeze({
+        sp_location: text('location'), sp_time: text('time'), sp_date: text('date'), sp_mood: text('sceneMood'), sp_tension: text('sceneTension'),
+        sp_weather: text('weather'), sp_topic: text('sceneTopic'), sp_summary: text('sceneSummary'), sp_temperature: text('temperature'), sp_northstar: text('northStar'),
+        sp_characters: characterNames.join(', '), sp_char_count: String(characterNames.length), sp_relationships: relationships.join(', '),
+        sp_quests: [...mainQuests, ...sideQuests].join(', '), sp_main_quests: mainQuests.join(', '), sp_side_quests: sideQuests.join(', '),
+        sp_quest_count: String(mainQuests.length + sideQuests.length), sp_active_profile: String(preset.displayName || preset.id || '').trim()
+    });
+}
+
+function expandScenePulseSourceMacros(template, scenePulse = {}, profile = {}) {
+    const values = scenePulseSourceMacroValues(scenePulse, profile);
+    return String(template || '').replace(/\{\{(sp_[a-z_]+)\}\}/gi, (_, name) => Object.prototype.hasOwnProperty.call(values, name.toLowerCase()) ? values[name.toLowerCase()] : '');
+}
+
+// This is the exact temporary panel created by ScenePulse's guided tour.
+// It is a source-panel *schema*, not evidence and not a source of values.
+// Keeping it here means a first Reader call can understand the visible
+// guided-tour controls without ever receiving TOUR_EXAMPLE_DATA as context.
+const SCENEPULSE_TOUR_CUSTOM_PANELS = Object.freeze([Object.freeze({
+    name: 'RPG Stats (Tour Example)', fields: Object.freeze([
+        Object.freeze({ key: 'health', label: 'Health', type: 'meter', desc: "{{user}}'s health 0-100" }),
+        Object.freeze({ key: 'mana', label: 'Mana', type: 'meter', desc: 'Mana remaining after spellcasting' }),
+        Object.freeze({ key: 'reputation', label: 'Reputation', type: 'text', desc: 'Standing with the local guild' })
+    ])
+})]);
+
+// Custom panels are ScenePulse's flat tracker fields. The schema travels to
+// the Reader; values travel back only as ordinary, compact scenePulse deltas
+// keyed by `field.key`. A bounded copy prevents a large local configuration
+// from becoming an accidental prompt payload, and an unsupported field is
+// never permission for the model to invent a value.
+function scenePulseReaderCustomPanelSchema(world, sess, protocol = null) {
+    const workspace = protocol || protocolForSidecarTimeline(world, sess);
+    const preferences = normalizeScenePulseWorldsPreferences(workspace?.workspaceUi?.scenePulseWorlds || {});
+    const sourcePanels = preferences.customPanels.length ? preferences.customPanels : SCENEPULSE_TOUR_CUSTOM_PANELS;
+    return sourcePanels.slice(0, 12).map(panel => ({
+        name: String(panel?.name || 'Custom Panel').slice(0, 120),
+        enabled: panel?.enabled !== false,
+        fields: (Array.isArray(panel?.fields) ? panel.fields : []).filter(field => field?.enabled !== false).slice(0, 24).map(field => ({
+            key: String(field?.key || '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 80),
+            label: String(field?.label || field?.key || 'Field').slice(0, 120),
+            type: ['text', 'number', 'meter', 'list', 'enum'].includes(String(field?.type || '')) ? field.type : 'text',
+            description: String(field?.desc || '').slice(0, 300),
+            options: Array.isArray(field?.options) ? field.options.slice(0, 32).map(option => String(option || '').slice(0, 80)).filter(Boolean) : [],
+            invert: field?.invert === true
+        })).filter(field => field.key)
+    })).filter(panel => panel.enabled && panel.fields.length);
+}
+
+function scenePulseCustomPanelSchemaFingerprint(schema = []) {
+    // Schema compatibility is about semantic field definition, not cosmetic
+    // field labels. This lets a label-only adjustment remain delta-compatible
+    // while a key/type/hint/options change requests one honest full read.
+    return JSON.stringify((Array.isArray(schema) ? schema : []).map(panel => ({
+        fields: (panel.fields || []).map(field => ({ key: field.key, type: field.type, description: field.description, options: field.options, invert: field.invert === true }))
+    })));
 }
 
 async function runSidecarSemanticReading(world, sess, options = {}) {
@@ -15838,7 +16406,9 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const model = options.model;
     const sidecarWorld = options.sidecarWorld || world;
     const references = options.references || buildSidecarCanonicalReferenceManifest(world, sess, `${options.playerInput || ''}\n${options.narration || ''}\n${options.handoff || ''}`);
-    const defaultTokens = tracker.reasoning === true ? 5000 : 3000;
+    // Automatic capacity must accommodate a complete structured reading of a
+    // populated scene. Explicit user caps remain authoritative.
+    const defaultTokens = tracker.reasoning === true ? 7000 : 6000;
     const configuredTokens = Number(profile.maxTokens) || Number(tracker.readerMaxTokens) || 0;
     const maxTokens = configuredTokens > 0 ? Math.max(1200, Math.min(100000, Math.trunc(configuredTokens))) : defaultTokens;
     const readerMechanicsFrame = window.HordeWorldMechanics?.isEnabled?.(world)
@@ -15846,6 +16416,16 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
             worldMechanicsRegistryFor(world)) || '')
         : '';
     const readerProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const customPanelSchema = scenePulseReaderCustomPanelSchema(world, sess, readerProtocol);
+    const customPanelSchemaFingerprint = scenePulseCustomPanelSchemaFingerprint(customPanelSchema);
+    const priorCustomPanelSchemaFingerprint = String(options.priorReaderEnvelope?.metadata?.scenePulseCustomPanelSchemaFingerprint || '');
+    // A changed custom schema needs a new whole projection exactly once.
+    // Merging a meter into an earlier text/list field would create a plausible
+    // but invalid tracker value, so prefer the larger packet at this explicit
+    // compatibility boundary and go back to compact deltas on the next turn.
+    const hasPriorReaderProjection = isPlainObject(options.priorReaderEnvelope) && Object.keys(options.priorReaderEnvelope).length > 0;
+    const customPanelSchemaChanged = hasPriorReaderProjection && priorCustomPanelSchemaFingerprint !== customPanelSchemaFingerprint;
+    const forceFull = options.forceFull === true || customPanelSchemaChanged;
     const readerHierarchy = readerProtocol && window.HordeSidecarTimeline?.ensureHierarchy?.(readerProtocol, sess, { createWhenMissing: false });
     const controlledEntityId = String(options.preFrame?.controlled_entity_id
         || readerHierarchy?.sequence?.controlledEntityId
@@ -15856,19 +16436,91 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const controlledPersona = sess?.playerIdentity?.persona || sess?.persona || controlledEntity?.persona || '';
     const lookupBudget = Math.max(1000, Number(profile.maxLookupPayload) || 12000);
     const boundedReferences = JSON.stringify(references).slice(0, lookupBudget);
-    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, canonical identity, relationship, ledger, thread, quest, or obligation is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: mode, changed_fields, summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence. semantic_interpretation.candidateStructures is a list of stable pre-canonical scene candidates for unnamed or partially described characters, local spaces, outfits, props, vehicles, relationship posture, or threads. A candidate is derived evidence, never canon; do not invent missing fields merely to complete a schema.\n\nCONTROLLED ENTITY / PERSONA: ${JSON.stringify({ id: controlledEntityId, name: controlledEntity?.name || sess?.playerIdentity?.name || 'Player', persona: String(controlledPersona || '').slice(0, 2400) })}\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock. Presence must classify every relevant named character as active, nearby, audible, remote, mentioned, or absent; only active belongs in the direct cast.\n\nCANONICAL REFERENCE MANIFEST (bounded):\n${boundedReferences}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
+    const requiredSubjects = sidecarReaderRequiredSubjects(references, {
+        playerInput: options.playerInput, narration: options.narration, handoff: options.handoff, controlledEntityId
+    });
+    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, canonical identity, relationship, ledger, thread, quest, or obligation is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: mode, changed_fields, summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence. semantic_interpretation is a Scene Intelligence envelope, not generic summary prose. Preserve distinct dimensions for scene {topic,mood,tension,interactionStyle,sound,environment,description}, time/date/day, location/local_space, weather/environment, active objects/places, authored events, changed_this_turn, relationship shifts, current threads, and unresolved evidence. semantic_interpretation.candidateStructures is a list of stable pre-canonical scene candidates for unnamed or partially described characters, local spaces, outfits, props, vehicles, relationship posture, or threads. A candidate is derived evidence, never canon; do not invent missing fields merely to complete a schema.\n\nFor EVERY character who is active, nearby, audible, remote-but-interacting, or specifically relevant off-scene, return semantic_interpretation.characterIntelligence[] item. This is a provisional, character-scoped, epistemically labelled scene reading — never an objective world fact or durable memory. Each item has subjectRef/canonical ID when resolvable, name, relevance, presence {mode,location,channel}, activity, and only evidence-supported entries for emotionalPosture, attentionFocus, apparentUnderstanding, noticed, likelyUnnoticed, suspicionOrUncertainty, interpersonalPostures, immediateObjectiveOrConcern, goals {immediateNeed,shortTerm,longTerm}, and sceneLocalImpression/innerThought. Each claim must carry text, epistemicKind (authored_disclosure|observable_behaviour|perception_evidence|reader_inference|established_memory|unknown), confidence, uncertainty, and short source evidence. Use UNKNOWN or omit a field where the beat does not support it. Do not manufacture a private thought simply because a field exists. For the controlled player, never assert unexpressed inner thought: only player-authored action/dialogue, explicit narration, or clearly labelled inference may be reported.\n\nCONTROLLED ENTITY / PERSONA: ${JSON.stringify({ id: controlledEntityId, name: controlledEntity?.name || sess?.playerIdentity?.name || 'Player', persona: String(controlledPersona || '').slice(0, 2400) })}\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock. Presence must classify every relevant named character as active, nearby, audible, remote, mentioned, or absent; only active belongs in the direct cast. Mentioned-only and unrelated absent registry characters do not receive a characterIntelligence item.\n\nCANONICAL REFERENCE MANIFEST (bounded):\n${boundedReferences}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
+    // ScenePulse's useful inner-thought behaviour is retained here, but its
+    // tendency to fabricate autobiography is explicitly disallowed.  Keep
+    // this as a separate prompt block so the stored core contract remains
+    // inspectable and profile revisions can identify the cognition rule.
+    const sceneIntelligenceThoughtInstruction = `
+
+[PER-TURN CHARACTER THOUGHTS]
+For every conscious active NPC, produce a fresh concise present-tense sceneLocalImpression/innerThought and immediate need/concern for this beat. It may be a plausible new, voice-specific Reader inference when grounded in the authored beat plus established character grounding; label it reader_inference and include the grounding/evidence. Do not carry last turn's thought forward and call it new. Do not invent biography, prior events, secrets, or a private thought merely to fill a field. Nearby, audible, remote-interacting and specifically relevant off-scene subjects receive a thought only through the information they could actually receive. The controlled player's unexpressed inner life is never authored. Record coverage/status even when a subject is unconscious, unsupported, or unknown.
+
+[DELTA BASE]
+In delta mode include baseSnapshotId exactly equal to the supplied previous accepted snapshot ID; do not name a failed, historical, cross-Timeline, or guessed base. In full mode leave baseSnapshotId blank.`;
+    const scenePulseInstruction = `
+
+[SCENEPULSE RICH SCENE DATA]
+Also return semantic_interpretation.scenePulse for this same beat. Its full shape is {time,date,elapsed,temporalIntent,location,weather,temperature,sceneTopic,sceneMood,sceneInteraction,sceneTension,sceneSummary,soundEnvironment,witnesses,charactersPresent,northStar,mainQuests,sideQuests,relationships,characters,plotBranches}. Keep it rich enough to drive the source ScenePulse interface, not a generic status card. characters[] items may include name, aliases, archetype, role, innerThought, immediateNeed, shortTermGoal, longTermGoal, hair, face, outfit, posture, proximity, notableDetails, inventory, fertStatus, fertNotes. For each conscious scene-relevant NPC, innerThought is one to three first-person, present-tense sentences in that character's own voice. It must be grounded in this beat and established character grounding; it must not contain provenance labels, confidence scores, technical caveats, fabricated biography, unseen events, or a claim of the controlled player's unexpressed thoughts. Omit rather than pad an unsupported thought. relationships[] use ScenePulse's name, relType, relPhase, timeTogether, milestone, affection/trust/desire/stress/compatibility and labels. mainQuests and sideQuests describe only established durable objectives; an empty list is valid. plotBranches are suggestions, not events: when the visible beat supports creative continuation, return exactly one grounded direction for each of dramatic, intense, comedic, twist, and exploratory; otherwise return []. scenePulse is a presentation projection of this response, not persistent canon or a second state store.
+
+[SCENEPULSE CUSTOM PANEL SCHEMA]
+The following is user-visible ScenePulse configuration, not story evidence. Its fields are flat keys directly inside scenePulse; use the exact keys and types if (and only if) this beat or established accepted Reader evidence supports a current value. Do not initialise a health, mana, reputation, enum, list, or number merely because a configured field exists. In delta mode, emit only a changed configured key; omit it when unchanged and use scenePulse.clearFields only for an explicit supported clearing. For a list value, send the full new list when it changes. In full mode, include supported configured values and omit unsupported ones. ${JSON.stringify(customPanelSchema)}
+
+[SCENEPULSE DELTA CONTRACT]
+When READER SNAPSHOT MODE is delta, scenePulse is also a compact delta: emit only changed ScenePulse fields. ALWAYS include time, date, elapsed, and the complete current charactersPresent membership; omitted fields mean unchanged. For characters, relationships, mainQuests and sideQuests, emit record patches keyed by stable characterId, relationshipId or questId and include only changed subfields. On a name reveal, retain the same stable ID, set the best established display name, and put every previous display label in aliases; emit one patch, never an old-name and new-name duplicate. A relationship patch for that person retains its relationshipId/characterId and adopts the same display name. Use {_delete:true} or {operation:"remove"} to remove one record, and scenePulse.clearFields for an explicit cleared scalar or collection. Never send an empty object or array to mean "unchanged". If a whole ephemeral collection must be replaced (for example a freshly regenerated plotBranches set), name it in scenePulse.replaceCollections and provide its full replacement array. Do not return previous relationship values or model-calculated visual deltas: the runtime derives the UI delta from current and prior accepted projections. A full refresh returns the complete shape.`;
+    const scenePulseFocusInstruction = options.scenePulseFocus === 'thoughts' ? `
+
+[SCENEPULSE FOCUSED THOUGHT REFRESH]
+The user explicitly requested fresh Inner Thoughts for this already-authored beat. Re-read the existing narration and grounding; do not call or simulate Narrator, do not alter the authored event, and do not create a new turn. Re-evaluate every conscious scene-relevant NPC's first-person innerThought, immediate need, and short/long goals. Return the complete Reader envelope as requested, but make the new thought text genuinely fresh rather than copying a prior phrase.` : '';
+    const readerCoverageInstruction = `
+
+[REQUIRED SUBJECT COVERAGE]
+${JSON.stringify(requiredSubjects)}
+Return one concise characterIntelligence record for every listed subject BEFORE candidates, relationship details, or threads. A merely mentioned person may receive a terse coverage record, but a speaker, caller, active, nearby, audible, or remote interlocutor must receive the appropriate character-scoped reading. Put characterIntelligence near the start of semantic_interpretation. Do not enumerate unrelated absent registry characters. Keep every claim compact (normally one sentence, under 240 characters): a response that runs out of space before a relevant person is invalid.`;
+    const sourcePreset = profile.scenePulsePreset || null;
+    const presetOverrides = sourcePreset?.promptOverrides && typeof sourcePreset.promptOverrides === 'object' ? sourcePreset.promptOverrides : {};
+    const priorScenePulseForMacros = isPlainObject(options.priorReaderEnvelope?.scenePulse) ? options.priorReaderEnvelope.scenePulse : {};
+    const resolvedPresetOverrides = Object.fromEntries(Object.entries(presetOverrides)
+        .map(([slot, text]) => [slot, expandScenePulseSourceMacros(text, priorScenePulseForMacros, profile)]));
+    const presetInstruction = sourcePreset?.id ? `
+
+[APPLIED SCENEPULSE SOURCE PRESET]
+Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}). This is a Reader-only source preset; it does not change Narrator or canonical authority. ScenePulse {{sp_*}} macros in these source slots resolve only from the prior accepted Reader ScenePulse projection; no fixture fallback or Horde registry value is eligible. Apply the following source prompt-slot overrides where compatible with the evidence, read-only, and compact-delta contracts below:\n${Object.entries(resolvedPresetOverrides).map(([slot, text]) => `[${slot}]\n${String(text)}`).join('\n\n') || '(no source prompt-slot override; use the built-in ScenePulse contract)'}` : '';
+    const readerPrompt = prompt + presetInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + readerCoverageInstruction;
     const priorEnvelope = options.priorReaderEnvelope || null;
-    const forceFull = options.forceFull === true;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
-    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${forceFull ? 'Return every envelope field, including unchanged fields.' : 'Return only changed fields; omitted fields remain unchanged from the previous envelope.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with these optional objects when established: scene {topic,mood,tension,interactionStyle,sound,environment}, location {activeLocationId,movement,evidence}, presence {active,nearby,audible,remote,mentioned,absent}, events, candidateStructures, durableProposals, relationshipProposals, provisionalCognition. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.`;
-    const messages = [{ role: 'system', content: prompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
+    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.`;
+    const sourcePresetRole = ['system', 'user', 'assistant'].includes(sourcePreset?.systemPromptRole) ? sourcePreset.systemPromptRole : 'system';
+    const messages = [{ role: sourcePresetRole, content: readerPrompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
     const readerTracker = {
         ...tracker,
         reasoningMode: profile.reasoningMode === 'inherit' ? tracker.reasoningMode : profile.reasoningMode,
         reasoning: profile.reasoningMode === 'inherit' ? tracker.reasoning === true : profile.reasoningMode === 'enabled',
         reasoningEffort: profile.reasoningEffort === 'auto' ? tracker.reasoningEffort : profile.reasoningEffort
+    };
+    const readerStartedAt = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+    const readerUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, reported: false };
+    const recordReaderUsage = payload => {
+        const usage = payload?.usage || payload?.usage_metadata || {};
+        const promptTokens = Number(usage.prompt_tokens ?? usage.promptTokens ?? usage.input_tokens ?? usage.inputTokens);
+        const completionTokens = Number(usage.completion_tokens ?? usage.completionTokens ?? usage.output_tokens ?? usage.outputTokens);
+        const totalTokens = Number(usage.total_tokens ?? usage.totalTokens);
+        if (Number.isFinite(promptTokens) && promptTokens >= 0) { readerUsage.promptTokens += promptTokens; readerUsage.reported = true; }
+        if (Number.isFinite(completionTokens) && completionTokens >= 0) { readerUsage.completionTokens += completionTokens; readerUsage.reported = true; }
+        if (Number.isFinite(totalTokens) && totalTokens >= 0) { readerUsage.totalTokens += totalTokens; readerUsage.reported = true; }
+    };
+    const finishReaderMetrics = packet => {
+        const endedAt = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+        const derivedTotal = readerUsage.totalTokens || (readerUsage.promptTokens + readerUsage.completionTokens);
+        packet.readerMetrics = {
+            source: 'reader_call',
+            elapsedMs: Math.max(0, Math.round(endedAt - readerStartedAt)),
+            promptTokens: readerUsage.reported ? readerUsage.promptTokens : null,
+            completionTokens: readerUsage.reported ? readerUsage.completionTokens : null,
+            totalTokens: readerUsage.reported ? derivedTotal : null,
+            providerReportedUsage: readerUsage.reported
+        };
+        packet.metadata = {
+            ...(isPlainObject(packet.metadata) ? packet.metadata : {}),
+            scenePulseCustomPanelSchemaFingerprint: customPanelSchemaFingerprint,
+            scenePulseCustomPanelCount: customPanelSchema.length
+        };
+        return packet;
     };
     let finalPayload = null;
     const lookupProvenance = [];
@@ -15881,7 +16533,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         const useNativeJson = sidecarSupportsStructuredJson(provider, model, readerTracker, profile);
         if (useNativeJson) body.response_format = { type: 'json_object' };
         applySidecarReasoning(body, provider, readerTracker, world);
-        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt, request: safeJsonClone(body) });
+        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt: readerPrompt, request: safeJsonClone(body) });
         let response = await fetchSidecarCompletion(body, {
             provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal, retryPolicy: profile.retryPolicy
         });
@@ -15900,19 +16552,30 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         }
         if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar Reader failed (${response.status})`);
         finalPayload = await response.json();
+        recordReaderUsage(finalPayload);
         const choice = finalPayload?.choices?.[0] || {};
         const message = choice.message || {};
         logSidecarConsoleTrace(`Reader response · round ${round + 1}`, { model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message) });
-        recordSidecarTrace(world, sess, { kind: 'semantic_reader', round: round + 1, prompt, reply: message, model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '' });
+        recordSidecarTrace(world, sess, { kind: 'semantic_reader', round: round + 1, prompt: readerPrompt, reply: message, model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '' });
         const availableTools = sidecarReadOnlyTools();
         const rawCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
         const calls = rawCalls.filter(call => availableTools.some(tool => tool.function.name === call?.function?.name));
         if (!rawCalls.length) {
             const packet = parseSidecarReaderOutput(message.content, references);
             packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
+            const coverage = validateSidecarReaderCoverage(packet, requiredSubjects, packet.finishReason);
+            packet.requiredCharacterSubjects = safeJsonClone(requiredSubjects);
+            packet.characterCoverage = coverage;
+            if (!coverage.valid) {
+                packet.valid = false;
+                packet.error = coverage.error;
+                packet.validationWarnings = [...(packet.validationWarnings || []), coverage.error === 'reader_output_truncated'
+                    ? 'The provider stopped before the Reader completed its semantic envelope.'
+                    : `Reader did not account for required subject(s): ${coverage.missing.join(', ') || 'unknown'}.`];
+            }
             packet.lookupProvenance = lookupProvenance.slice(-20);
             if (timeoutId) clearTimeout(timeoutId);
-            return packet;
+            return finishReaderMetrics(packet);
         }
         // Preserve the provider's tool-call envelope so the next request is
         // protocol-valid, but answer every call ourselves.  Unknown tools are
@@ -15933,7 +16596,397 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     if (timeoutId) clearTimeout(timeoutId);
     const fallbackPacket = parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references);
     fallbackPacket.lookupProvenance = lookupProvenance.slice(-20);
-    return fallbackPacket;
+    return finishReaderMetrics(fallbackPacket);
+}
+
+/*
+ * Scene Intelligence Reader v2.
+ *
+ * Keep this normalization in the integrated runtime rather than bolting a
+ * ScenePulse-shaped cache onto the side. The functions intentionally replace
+ * the first v1 declarations above: every consumer now gets one evidence
+ * model, including older Reader payloads adapted at this boundary.
+ */
+function sidecarReaderValue(source, ...names) {
+    for (const name of names) if (source && Object.prototype.hasOwnProperty.call(source, name)) return source[name];
+    return undefined;
+}
+
+function sidecarReaderClaim(raw, subjectRef = '') {
+    if (typeof raw === 'string') raw = { text: raw };
+    if (!isPlainObject(raw)) return null;
+    const text = String(raw.text || raw.value || raw.summary || raw.impression || raw.thought || raw.description || '').trim().slice(0, 1800);
+    if (!text) return null;
+    const epistemicKind = ['authored_disclosure', 'observable_behaviour', 'perception_evidence', 'reader_inference', 'established_memory', 'unknown']
+        .includes(String(raw.epistemicKind || raw.epistemic_kind || '').toLowerCase())
+        ? String(raw.epistemicKind || raw.epistemic_kind).toLowerCase() : 'reader_inference';
+    const evidence = Array.isArray(raw.evidence || raw.evidenceRefs || raw.evidence_refs)
+        ? (raw.evidence || raw.evidenceRefs || raw.evidence_refs).map(item => isPlainObject(item) ? safeJsonClone(item) : { excerpt: String(item || '').slice(0, 900) }).slice(0, 12)
+        : (raw.evidence ? [{ excerpt: String(raw.evidence).slice(0, 900) }] : []);
+    return {
+        text, subjectRef: String(raw.subjectRef || raw.subject_ref || subjectRef || '').slice(0, 180),
+        targetRef: String(raw.targetRef || raw.target_ref || raw.target || '').slice(0, 180),
+        epistemicKind, uncertainty: String(raw.uncertainty || raw.confidence_note || '').slice(0, 500),
+        confidence: Number.isFinite(Number(raw.confidence)) ? Math.max(0, Math.min(1, Number(raw.confidence))) : null,
+        evidence, source: String(raw.source || '').slice(0, 120)
+    };
+}
+
+function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
+    const source = isPlainObject(raw) ? raw : {};
+    const subjectRef = String(source.subjectRef || source.subject_ref || source.characterId || source.character_id || source.id || source.candidateId || source.candidate_id || '').slice(0, 180);
+    const claimList = value => (Array.isArray(value) ? value : (value == null ? [] : [value]))
+        .map(item => sidecarReaderClaim(item, subjectRef)).filter(Boolean).slice(0, 12);
+    const scalar = value => sidecarReaderClaim(value, subjectRef);
+    const relationships = (Array.isArray(source.interpersonalPostures || source.interpersonal_postures) ? (source.interpersonalPostures || source.interpersonal_postures) : [])
+        .map(item => {
+            const claim = sidecarReaderClaim(item, subjectRef);
+            if (!claim) return null;
+            return { ...claim, targetRef: String(item.targetRef || item.target_ref || item.target || claim.targetRef || '').slice(0, 180) };
+        }).filter(Boolean).slice(0, 20);
+    const coverage = isPlainObject(source.coverage) ? safeJsonClone(source.coverage) : {};
+    return {
+        subjectRef,
+        candidateId: String(source.candidateId || source.candidate_id || '').slice(0, 180),
+        name: String(source.name || source.label || '').slice(0, 240),
+        role: String(source.role || '').slice(0, 240),
+        relevance: isPlainObject(source.relevance) ? safeJsonClone(source.relevance) : { category: String(source.relevance || '').slice(0, 80), reason: String(source.relevanceReason || source.relevance_reason || '').slice(0, 800) },
+        presence: isPlainObject(source.presence) ? safeJsonClone(source.presence) : { mode: String(source.presence || source.presenceMode || source.presence_mode || '').slice(0, 40), location: String(source.location || source.position || '').slice(0, 300), channel: String(source.channel || '').slice(0, 80) },
+        activity: scalar(source.activity), visibleState: isPlainObject(source.visibleState || source.visible_state) ? safeJsonClone(source.visibleState || source.visible_state) : {},
+        emotionalPosture: claimList(source.emotionalPosture || source.emotional_posture),
+        attentionFocus: claimList(source.attentionFocus || source.attention_focus),
+        apparentUnderstanding: claimList(source.apparentUnderstanding || source.apparent_understanding || source.beliefs),
+        noticed: claimList(source.noticed),
+        likelyUnnoticed: claimList(source.likelyUnnoticed || source.likely_unnoticed),
+        suspicionOrUncertainty: claimList(source.suspicionOrUncertainty || source.suspicion_or_uncertainty),
+        interpersonalPostures: relationships,
+        immediateObjectiveOrConcern: claimList(source.immediateObjectiveOrConcern || source.immediate_objective_or_concern || source.immediateNeed || source.immediate_need),
+        goals: isPlainObject(source.goals) ? safeJsonClone(source.goals) : {
+            immediateNeed: String(source.immediateNeed || source.immediate_need || '').slice(0, 800),
+            shortTerm: String(source.shortTermGoal || source.short_term_goal || '').slice(0, 800),
+            longTerm: String(source.longTermGoal || source.long_term_goal || '').slice(0, 800)
+        },
+        sceneLocalImpression: scalar(source.sceneLocalImpression || source.scene_local_impression || source.innerThought || source.inner_thought),
+        changedDimensions: Array.isArray(source.changedDimensions || source.changed_dimensions) ? (source.changedDimensions || source.changed_dimensions).map(String).slice(0, 30) : [],
+        coverage,
+        evidence: claimList(source.evidence),
+        status: ['evaluated', 'unknown', 'unchanged', 'not_evaluated', 'unconscious'].includes(String(source.status || '').toLowerCase()) ? String(source.status).toLowerCase() : 'evaluated'
+    };
+}
+
+function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
+    const source = isPlainObject(raw) ? raw : {};
+    const semantic = isPlainObject(source.semanticInterpretation || source.semantic_interpretation) ? (source.semanticInterpretation || source.semantic_interpretation) : {};
+    const supplied = Array.isArray(source.suppliedFields) ? source.suppliedFields : Object.keys(source);
+    // Keep the nested source shape as provenance.  A delta can legitimately
+    // contain a semantic_interpretation object whose individual dimensions
+    // differ from the top-level fields.  Losing this set makes the merger
+    // preserve stale opening-scene data even when the Reader supplied a full
+    // current scene, cast and character reading inside that object.
+    const semanticSupplied = Array.isArray(source.semanticSuppliedFields)
+        ? source.semanticSuppliedFields
+        : Object.keys(semantic);
+    const value = (...names) => {
+        const direct = sidecarReaderValue(source, ...names);
+        return direct === undefined ? sidecarReaderValue(semantic, ...names) : direct;
+    };
+    const cleanList = (input, limit = 40) => Array.isArray(input) ? input.slice(0, limit).map(item => isPlainObject(item) ? safeJsonClone(item) : String(item || '').slice(0, 800)) : [];
+    const characterInput = value('characterIntelligence', 'character_intelligence', 'characters') || [];
+    const characterIntelligence = (Array.isArray(characterInput) ? characterInput : Object.values(characterInput || {}))
+        .map(item => normalizeSidecarCharacterIntelligence(item, defaults)).filter(item => item.subjectRef || item.name || item.candidateId).slice(0, 48);
+    const coverage = isPlainObject(value('coverage')) ? safeJsonClone(value('coverage')) : {};
+    return {
+        schemaVersion: 2,
+        profileRevision: String(source.profileRevision || defaults.profileRevision || 'reader-v2').slice(0, 100),
+        promptRevision: String(source.promptRevision || defaults.promptRevision || 'scene-intelligence-v2').slice(0, 120),
+        sourceTurnId: String(source.sourceTurnId || defaults.sourceTurnId || '').slice(0, 160),
+        sourceTakeId: String(source.sourceTakeId || defaults.sourceTakeId || '').slice(0, 160),
+        sourceRevisionId: String(source.sourceRevisionId || defaults.sourceRevisionId || '').slice(0, 160),
+        sourceAttemptId: String(source.sourceAttemptId || defaults.sourceAttemptId || '').slice(0, 180),
+        visibleNarrationHash: String(source.visibleNarrationHash || defaults.visibleNarrationHash || '').slice(0, 120),
+        handoffHash: String(source.handoffHash || defaults.handoffHash || '').slice(0, 120),
+        snapshotMode: source.snapshotMode === 'full' || source.mode === 'full' ? 'full' : 'delta',
+        baseSnapshotId: String(source.baseSnapshotId || source.base_snapshot_id || defaults.baseSnapshotId || '').slice(0, 180),
+        changedFields: Array.isArray(source.changedFields || source.changed_fields) ? (source.changedFields || source.changed_fields).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 100) : [],
+        clearFields: Array.isArray(source.clearFields || source.clear_fields) ? (source.clearFields || source.clear_fields).map(String).slice(0, 80) : [],
+        suppliedFields: supplied.map(String).slice(0, 140),
+        semanticSuppliedFields: semanticSupplied.map(String).slice(0, 140),
+        requiredCharacterSubjects: cleanList(value('requiredCharacterSubjects', 'required_character_subjects'), 24),
+        refreshIndex: Math.max(0, Number(source.refreshIndex || defaults.refreshIndex) || 0),
+        temporal: isPlainObject(value('temporal', 'timeEvidence', 'time_evidence')) ? safeJsonClone(value('temporal', 'timeEvidence', 'time_evidence')) : {},
+        canonicalReferences: isPlainObject(value('canonicalReferences', 'canonical_references')) ? safeJsonClone(value('canonicalReferences', 'canonical_references')) : {},
+        location: isPlainObject(value('location')) ? safeJsonClone(value('location')) : {},
+        presence: isPlainObject(value('presence')) ? safeJsonClone(value('presence')) : {},
+        environment: isPlainObject(value('environment')) ? safeJsonClone(value('environment')) : {},
+        scene: isPlainObject(value('scene')) ? safeJsonClone(value('scene')) : {},
+        // ScenePulse is a rich presentation contract.  Keep its source
+        // fields beside (not in place of) Horde's settled scene envelope so
+        // a later delta never has to flatten thoughts, quest detail, meters,
+        // or branch hooks back into a generic status summary.
+        scenePulse: isPlainObject(value('scenePulse', 'scene_pulse', 'scenepulse')) ? safeJsonClone(value('scenePulse', 'scene_pulse', 'scenepulse')) : {},
+        characterIntelligence,
+        relationshipPostures: cleanList(value('relationshipPostures', 'relationship_postures', 'relationshipProposals', 'relationship_proposals'), 60),
+        relationshipShifts: cleanList(value('relationshipShifts', 'relationship_shifts'), 60),
+        eventClaims: cleanList(value('eventClaims', 'event_claims', 'events'), 80),
+        candidateStructures: cleanList(value('candidateStructures', 'candidate_structures', 'candidates'), 100),
+        durableProposals: cleanList(value('durableProposals', 'durable_proposals'), 60),
+        relationshipProposals: cleanList(value('relationshipProposals', 'relationship_proposals'), 60),
+        pressures: cleanList(value('pressures', 'threads', 'obligations', 'currentThreads', 'current_threads'), 60),
+        currentThreads: cleanList(value('currentThreads', 'current_threads', 'threads'), 60),
+        salientObjects: cleanList(value('salientObjects', 'salient_objects'), 60),
+        salientLocations: cleanList(value('salientLocations', 'salient_locations'), 60),
+        changes: cleanList(value('changes', 'sceneChanges', 'scene_changes', 'changedThisTurn', 'changed_this_turn'), 100),
+        unresolvedEvidence: cleanList(value('unresolvedEvidence', 'unresolved'), 60),
+        validationWarnings: cleanList(value('validationWarnings', 'warnings'), 60),
+        provisionalCognition: cleanList(value('provisionalCognition', 'provisional_cognition'), 60),
+        lookupProvenance: cleanList(value('lookupProvenance', 'lookup_provenance'), 60),
+        controlledCharacterEvidence: cleanList(value('controlledCharacterEvidence', 'controlled_character_evidence'), 24),
+        summary: String(value('summary', 'sceneReading', 'scene_reading') || '').slice(0, 6000),
+        reconciliationFocus: cleanList(value('reconciliationFocus', 'reconciliation_focus'), 40),
+        coverage,
+        metadata: isPlainObject(value('metadata')) ? safeJsonClone(value('metadata')) : {}
+    };
+}
+
+function parseSidecarReaderOutput(content, fallback = {}) {
+    const normalizedContent = Array.isArray(content) ? content.map(part => typeof part === 'string' ? part : String(part?.text || part?.content || '')).filter(Boolean).join('\n') : (isPlainObject(content) ? (content.text || content.content || '') : content);
+    const raw = String(normalizedContent || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const parsed = safeParseJSONRepair(raw);
+    if (!isPlainObject(parsed)) return { valid: false, error: 'reader_invalid_json', summary: 'The Sidecar Reader returned no usable structured reading.', canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000) };
+    const envelope = normalizeSidecarReaderEnvelope({ ...parsed, canonicalReferences: parsed.canonicalReferences || parsed.canonical_references || fallback });
+    const hasScene = Object.keys(envelope.scene || {}).length > 0 || Object.keys(envelope.location || {}).length > 0 || Object.keys(envelope.presence || {}).length > 0;
+    const declaredDelta = envelope.snapshotMode === 'delta'
+        && (Object.prototype.hasOwnProperty.call(parsed, 'changed_fields') || Object.prototype.hasOwnProperty.call(parsed, 'changedFields')
+            || Object.prototype.hasOwnProperty.call(parsed, 'coverage') || Object.prototype.hasOwnProperty.call(parsed, 'clear_fields') || Object.prototype.hasOwnProperty.call(parsed, 'clearFields'));
+    const hasMeaning = !!envelope.summary || hasScene || envelope.eventClaims.length || envelope.characterIntelligence.length || envelope.changes.length || Object.keys(envelope.coverage || {}).length > 0 || declaredDelta;
+    const valid = hasMeaning && (envelope.snapshotMode !== 'full' || hasScene || !!envelope.summary || envelope.characterIntelligence.length > 0);
+    return {
+        ...envelope, valid, error: valid ? '' : 'reader_empty_envelope',
+        mode: envelope.snapshotMode, raw: raw.slice(0, 12000),
+        proposedQuestions: Array.isArray(parsed.proposedQuestions || parsed.proposed_questions) ? (parsed.proposedQuestions || parsed.proposed_questions).slice(0, 20) : [],
+        unresolved: envelope.unresolvedEvidence,
+        timeEvidence: envelope.temporal,
+        semanticInterpretation: { scene: envelope.scene, location: envelope.location, presence: envelope.presence, environment: envelope.environment, scenePulse: envelope.scenePulse, characterIntelligence: envelope.characterIntelligence, events: envelope.eventClaims, candidateStructures: envelope.candidateStructures, durableProposals: envelope.durableProposals, relationshipProposals: envelope.relationshipProposals, provisionalCognition: envelope.provisionalCognition }
+    };
+}
+
+function sidecarMergeReaderObject(previous = {}, incoming = {}, clear = []) {
+    const result = safeJsonClone(previous || {});
+    Object.entries(incoming || {}).forEach(([key, value]) => {
+        if (value === undefined) return;
+        if (value === null || clear.includes(key)) delete result[key];
+        else if (isPlainObject(value) && isPlainObject(result[key])) result[key] = sidecarMergeReaderObject(result[key], value, []);
+        else result[key] = safeJsonClone(value);
+    });
+    clear.forEach(key => delete result[key]);
+    return result;
+}
+
+function sidecarMergeReaderRecords(previous = [], incoming = [], fields = {}) {
+    const keyOf = fields.keyOf || (value => String(value?.id || value?.subjectRef || value?.candidateId || value?.label || ''));
+    const result = (previous || []).map(value => safeJsonClone(value));
+    (incoming || []).forEach(raw => {
+        const record = safeJsonClone(raw);
+        const clearFields = Array.isArray(record?.clearFields) ? record.clearFields : [];
+        if (record && typeof record === 'object') delete record.clearFields;
+        const id = keyOf(record);
+        const keyedIndex = id ? result.findIndex(value => keyOf(value) === id) : -1;
+        // Some source projections predate stable Horde IDs. A caller may
+        // supply a deliberately narrow identity-reveal matcher, but only
+        // after the ordinary record key has failed. This keeps the generic
+        // Reader reducer deterministic and prevents fuzzy display-name
+        // matching from silently merging two different people.
+        const fallbackIndex = keyedIndex < 0 && typeof fields.findExistingIndex === 'function'
+            ? Number(fields.findExistingIndex(result, record)) : -1;
+        const index = keyedIndex >= 0 ? keyedIndex : (Number.isInteger(fallbackIndex) ? fallbackIndex : -1);
+        if (record?._delete || record?.operation === 'remove') { if (index >= 0) result.splice(index, 1); return; }
+        if (index >= 0) result[index] = sidecarMergeReaderObject(result[index], record, clearFields);
+        else result.push(record);
+    });
+    return result.slice(0, fields.limit || 100);
+}
+
+function sidecarScenePulseRecordKey(record, collection) {
+    const source = isPlainObject(record) ? record : {};
+    const keys = collection === 'relationships'
+        ? ['relationshipId', 'relationship_id', 'characterId', 'character_id', 'id', 'name']
+        : collection === 'characters'
+            ? ['characterId', 'character_id', 'id', 'name']
+            : collection === 'plotBranches'
+                ? ['branchId', 'branch_id', 'id', 'category', 'name']
+                : ['questId', 'quest_id', 'id', 'name'];
+    return keys.map(key => String(source[key] || '').trim()).find(Boolean)?.toLowerCase() || '';
+}
+
+function sidecarScenePulseStableIdentity(record, collection) {
+    const source = isPlainObject(record) ? record : {};
+    const keys = collection === 'relationships'
+        ? ['relationshipId', 'relationship_id', 'characterId', 'character_id', 'id']
+        : collection === 'characters'
+            ? ['characterId', 'character_id', 'id']
+            : collection === 'plotBranches'
+                ? ['branchId', 'branch_id', 'id']
+                : ['questId', 'quest_id', 'id'];
+    return keys.map(key => String(source[key] || '').trim()).find(Boolean)?.toLowerCase() || '';
+}
+
+function sidecarScenePulseIdentityAliases(record) {
+    const source = isPlainObject(record) ? record : {};
+    const raw = [source.name, ...(Array.isArray(source.aliases) ? source.aliases : []), ...(Array.isArray(source.previousNames) ? source.previousNames : [])];
+    return [...new Set(raw.map(value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase()).filter(Boolean))];
+}
+
+// A reveal must not produce "Officer Buzzcut" and "Jack Browning" as two
+// separate people. Stable IDs are authoritative; where older compact input
+// has no ID, an exact declared alias is the only permitted fallback. Two
+// candidates means ambiguity, so the patch remains a separate record for
+// review rather than guessing from a first name, title, or substring.
+function sidecarScenePulseRevealMatchIndex(records = [], record = {}, collection = '') {
+    if (collection !== 'characters' && collection !== 'relationships') return -1;
+    const stable = sidecarScenePulseStableIdentity(record, collection);
+    if (stable) {
+        const stableMatches = records.map((value, index) => sidecarScenePulseStableIdentity(value, collection) === stable ? index : -1).filter(index => index >= 0);
+        if (stableMatches.length === 1) return stableMatches[0];
+    }
+    const aliases = new Set(sidecarScenePulseIdentityAliases(record));
+    if (!aliases.size) return -1;
+    const aliasMatches = records.map((value, index) => sidecarScenePulseIdentityAliases(value).some(alias => aliases.has(alias)) ? index : -1).filter(index => index >= 0);
+    return aliasMatches.length === 1 ? aliasMatches[0] : -1;
+}
+
+// The compact ScenePulse contract permits a collection patch to be expressed
+// as an object keyed by its stable record id.  Normalise that wire-efficient
+// form at the reducer boundary, preserving the map key as the source record
+// identity.  The rendered source product still receives its native arrays.
+function sidecarScenePulseRecords(value, collection) {
+    if (Array.isArray(value)) return safeJsonClone(value);
+    if (!isPlainObject(value)) return [];
+    const identityField = collection === 'relationships'
+        ? 'relationshipId'
+        : collection === 'characters'
+            ? 'characterId'
+            : collection === 'plotBranches'
+                ? 'branchId'
+                : 'questId';
+    return Object.entries(value).map(([stableId, raw]) => {
+        if (!isPlainObject(raw)) return raw;
+        const record = safeJsonClone(raw);
+        const explicitIdentity = record[identityField]
+            || record[identityField.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)]
+            || record.id;
+        // A display name is intentionally not enough here: it is mutable and
+        // must not discard the stable identity that was supplied as the key.
+        if (!explicitIdentity && String(stableId).trim()) record[identityField] = String(stableId).trim();
+        return record;
+    });
+}
+
+// ScenePulse data is a presentation projection, but sparse Reader packets
+// still need deterministic record-level merging. A relationship delta such
+// as {relationshipId, trust} must preserve milestone, stress, labels, etc.
+function sidecarMergeScenePulse(previous = {}, incoming = {}) {
+    const prior = isPlainObject(previous) ? previous : {};
+    const patch = isPlainObject(incoming) ? incoming : {};
+    const clearFields = Array.isArray(patch.clearFields) ? patch.clearFields.map(String) : [];
+    const replaceCollections = new Set(Array.isArray(patch.replaceCollections) ? patch.replaceCollections.map(String) : []);
+    const values = safeJsonClone(patch);
+    delete values.clearFields;
+    delete values.replaceCollections;
+    const result = sidecarMergeReaderObject(prior, values, clearFields);
+    const keyedCollections = ['characters', 'relationships', 'mainQuests', 'sideQuests', 'plotBranches'];
+    keyedCollections.forEach(collection => {
+        if (!Object.prototype.hasOwnProperty.call(patch, collection) && !clearFields.includes(collection)) return;
+        const records = sidecarScenePulseRecords(patch[collection], collection);
+        const base = clearFields.includes(collection) || replaceCollections.has(collection) ? [] : (prior[collection] || []);
+        result[collection] = replaceCollections.has(collection)
+            ? safeJsonClone(records).slice(0, 100)
+            : sidecarMergeReaderRecords(base, records, {
+                keyOf: record => sidecarScenePulseRecordKey(record, collection),
+                findExistingIndex: (existing, record) => sidecarScenePulseRevealMatchIndex(existing, record, collection),
+                limit: 100
+            });
+    });
+    // Presence is a per-turn coverage assertion, not a patchable history.
+    if (Object.prototype.hasOwnProperty.call(patch, 'charactersPresent')) result.charactersPresent = safeJsonClone(patch.charactersPresent);
+    return result;
+}
+
+function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
+    const prior = normalizeSidecarReaderEnvelope(previous || {}, options);
+    const incoming = normalizeSidecarReaderEnvelope(delta || {}, options);
+    if (!previous || incoming.snapshotMode === 'full') return incoming;
+    const raw = isPlainObject(delta) ? delta : {};
+    const provided = new Set(incoming.suppliedFields || Object.keys(raw));
+    const semanticProvided = new Set(incoming.semanticSuppliedFields || []);
+    const merged = safeJsonClone(prior);
+    const fieldAliases = field => [field, field.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)];
+    const providedField = field => fieldAliases(field).some(name => provided.has(name) || semanticProvided.has(name)
+        || Object.prototype.hasOwnProperty.call(raw.semanticInterpretation || raw.semantic_interpretation || {}, name));
+    const objectFields = ['temporal', 'canonicalReferences', 'location', 'presence', 'environment', 'scene', 'coverage', 'metadata'];
+    objectFields.forEach(field => { if (providedField(field)) merged[field] = sidecarMergeReaderObject(prior[field], incoming[field], incoming.clearFields || []); });
+    if (providedField('scenePulse')) merged.scenePulse = sidecarMergeScenePulse(prior.scenePulse, incoming.scenePulse);
+    const arrayFields = ['characterIntelligence', 'requiredCharacterSubjects', 'relationshipPostures', 'relationshipShifts', 'eventClaims', 'candidateStructures', 'durableProposals', 'relationshipProposals', 'pressures', 'currentThreads', 'salientObjects', 'salientLocations', 'changes', 'unresolvedEvidence', 'validationWarnings', 'provisionalCognition', 'lookupProvenance', 'controlledCharacterEvidence', 'reconciliationFocus'];
+    arrayFields.forEach(field => { if (providedField(field)) merged[field] = sidecarMergeReaderRecords(prior[field], incoming[field], { limit: field === 'characterIntelligence' ? 48 : 100 }); });
+    const perSnapshotFields = new Set(['changedFields', 'clearFields', 'refreshIndex', 'baseSnapshotId', 'snapshotMode', 'sourceTurnId', 'sourceTakeId', 'sourceRevisionId', 'sourceAttemptId', 'visibleNarrationHash', 'handoffHash', 'profileRevision', 'promptRevision']);
+    ['summary', ...perSnapshotFields].forEach(field => {
+        if (providedField(field) || perSnapshotFields.has(field)) merged[field] = safeJsonClone(incoming[field]);
+    });
+    // These describe this source packet, not cumulative state.  Carrying a
+    // prior packet's field list forward makes a later sparse delta look as if
+    // it cleared/replaced dimensions it never addressed.
+    merged.suppliedFields = [...new Set(incoming.suppliedFields || [])];
+    merged.semanticSuppliedFields = [...new Set(incoming.semanticSuppliedFields || [])];
+    return normalizeSidecarReaderEnvelope(merged, options);
+}
+
+function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = {}) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol || !turnRecord || !packet) return null;
+    const profile = options.profile || effectiveSidecarReaderProfile(world, sess);
+    const previousSnapshot = protocol.readerSnapshots.filter(snapshot => snapshot.status === 'active').at(-1) || null;
+    const suppliedBase = String(packet?.baseSnapshotId || packet?.base_snapshot_id || '').trim();
+    const isDelta = !options.fullRefresh && packet?.mode !== 'full' && packet?.snapshotMode !== 'full';
+    if (isDelta && previousSnapshot && suppliedBase && suppliedBase !== previousSnapshot.id) {
+        const mismatch = new Error('Reader delta named a base snapshot outside the accepted current continuity.');
+        mismatch.code = 'reader_delta_base_mismatch';
+        mismatch.expectedBaseSnapshotId = previousSnapshot.id;
+        mismatch.suppliedBaseSnapshotId = suppliedBase;
+        throw mismatch;
+    }
+    if (isDelta && !previousSnapshot) {
+        const missingBase = new Error('The first Reader snapshot for a continuity must be a full envelope.');
+        missingBase.code = 'reader_delta_without_base';
+        throw missingBase;
+    }
+    const source = normalizeSidecarReaderEnvelope({
+        ...packet, profileRevision: profile.revision, promptRevision: profile.promptRevision,
+        sourceTurnId: turnRecord.id, sourceTakeId: turnRecord.takeId || options.takeId || '', sourceRevisionId: turnRecord.revisionId || options.revisionId || '',
+        sourceAttemptId: options.attemptId || turnRecord.currentAttemptId || '',
+        visibleNarrationHash: worldMediaHash(String(turnRecord.authorialArtifact?.narration ?? turnRecord.narration ?? '')),
+        handoffHash: worldMediaHash(String(turnRecord.authorialArtifact?.handoff ?? turnRecord.handoff ?? '')),
+        refreshIndex: Number(options.refreshIndex) || 0, snapshotMode: options.fullRefresh ? 'full' : (packet.mode === 'full' ? 'full' : 'delta'),
+        baseSnapshotId: previousSnapshot?.id || '', metadata: { ...(packet.metadata || {}), model: packet.model || '', provider: packet.provider || '', finishReason: packet.finishReason || '', rounds: packet.rounds || 1, scenePulsePreset: safeJsonClone(profile.scenePulsePreset || null), usage: safeJsonClone(packet.readerMetrics || {}), capturedAt: new Date().toISOString() }
+    });
+    const envelope = mergeSidecarReaderEnvelope(previousSnapshot?.envelope || null, source, { profileRevision: profile.revision, promptRevision: profile.promptRevision, sourceTurnId: turnRecord.id, baseSnapshotId: previousSnapshot?.id || '' });
+    const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), attemptId: source.sourceAttemptId, turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: previousSnapshot?.id || '' } };
+    protocol.readerSnapshots.push(snapshot); protocol.readerSnapshots = protocol.readerSnapshots.slice(-400);
+    turnRecord.readerEnvelope = safeJsonClone(envelope); turnRecord.readerSnapshotId = snapshot.id;
+    // Pending interpretation is audit/retry evidence only. Never publish it
+    // through the active next-turn packet before Sidecar settles it.
+    return snapshot;
+}
+
+function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const snapshot = protocol?.readerSnapshots?.find(item => item.id === snapshotId);
+    if (!snapshot) return null;
+    protocol.readerSnapshots.forEach(item => { if (item.id !== snapshot.id && item.status === 'active') { item.status = 'accepted_historical'; item.historicalAt = new Date().toISOString(); } });
+    snapshot.status = 'active'; snapshot.activatedAt = new Date().toISOString(); snapshot.settlementStatus = 'settled';
+    snapshot.provenance = { ...(snapshot.provenance || {}), committedTurnId: turnId || snapshot.turnId };
+    protocol.sceneReader = safeJsonClone(snapshot.envelope);
+    const scene = (protocol.scenes || []).find(item => item.id === snapshot.sceneId);
+    if (scene) scene.readerState = safeJsonClone({ summary: snapshot.envelope.summary, scene: snapshot.envelope.scene, environment: snapshot.envelope.environment, presence: snapshot.envelope.presence, temporal: snapshot.envelope.temporal, characterIntelligence: snapshot.envelope.characterIntelligence, candidateStructures: snapshot.envelope.candidateStructures || [], nonCanonical: true, snapshotId: snapshot.id });
+    return snapshot;
 }
 
 function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) {
@@ -16088,16 +17141,25 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         provider,
         openRouterRouting: tracker.openRouterRouting || world.openRouterRouting
     };
+    // A retry belongs to the accepted Narrator artifact, never to the caller
+    // which happened to ask for the retry.  In particular, do not let a
+    // trimmed UI preview or a stale editor value become the source of a new
+    // Reader/Sidecar pass.
+    const acceptedArtifact = options.existingTurnRecord?.authorialArtifact || null;
+    const authoredNarration = acceptedArtifact?.narration ?? options.narration;
+    const authoredHandoff = acceptedArtifact?.handoff ?? options.handoff;
+    const authoredPlayerInput = acceptedArtifact?.playerInput ?? options.playerInput;
     const preFrame = buildWorldSceneFrame(world, sess);
     const preClock = getWorldTimeData(world, sess);
     const clockEvidence = buildSidecarClockEvidence(world, sess);
     // FF 5.4 scene header: parse the visible start-anchor as structured
     // temporal evidence and split the beat into inter-turn jump + in-turn
     // elapsed before the Reader/Reconciler see it.
-    const sceneHeader = extractFF54SceneHeader(String(options.narration || ''));
-    const temporalBreakdown = deriveSidecarTwoPhaseTemporal(clockEvidence, sceneHeader, String(options.handoff || ''));
-    const handoff = String(options.handoff || '').trim();
-    const narration = String(options.narration || '').trim();
+    const sceneHeader = extractFF54SceneHeader(String(authoredNarration || ''));
+    const temporalBreakdown = deriveSidecarTwoPhaseTemporal(clockEvidence, sceneHeader, String(authoredHandoff || ''));
+    const handoff = String(authoredHandoff || '').trim();
+    const narration = String(authoredNarration || '').trim();
+    const playerInput = String(authoredPlayerInput || '');
     const commitTool = safeJsonClone(options.commitTool);
     const priorPacket = buildSidecarScenePacket(world, sess);
     const priorReconciliationEvidence = (window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.turns || [])
@@ -16117,7 +17179,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             provenance: turn.provenance || null
         }));
     const references = buildSidecarCanonicalReferenceManifest(world, sess,
-        `${options.playerInput || ''}\n${narration}\n${handoff}`);
+        `${playerInput}\n${narration}\n${handoff}`);
     const protocolBeforeReader = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const priorReaderEnvelope = protocolBeforeReader?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1)?.envelope || null;
     const readerProfile = effectiveSidecarReaderProfile(world, sess);
@@ -16127,7 +17189,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const forceReaderFull = readerIndex === 1 || readerIndex % Math.max(1, Number(readerProfile.fullRefreshCadence) || 5) === 0;
     const existingTurnRecord = options.existingTurnRecord || null;
     const attempt = beginSidecarTurnAttempt(world, sess, {
-        handoff, narration, playerInput: options.playerInput,
+        handoff, narration, playerInput,
         sceneHeader: safeJsonClone(temporalBreakdown),
         preFrame, preClock: clockEvidence, model, provider,
         takeIndex: options.takeIndex, takeId: options.takeId, revisionId: options.revisionId,
@@ -16159,7 +17221,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         options.onStage?.('reading');
         readerPacket = await runSidecarSemanticReading(world, sess, {
             tracker, provider: readerProvider, model: readerModel, readerProfile, sidecarWorld, references, preFrame, clockEvidence,
-            priorReaderEnvelope, forceFull: forceReaderFull, playerInput: options.playerInput, narration, handoff, signal: options.signal
+            priorReaderEnvelope, forceFull: forceReaderFull, playerInput, narration, handoff, signal: options.signal
         });
     } catch (readerError) {
         // A Reader failure is a terminal downstream failure.  Do not pass a
@@ -16181,27 +17243,41 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         }
         logSidecarConsoleTrace('Reader failure', { model: readerModel, provider: readerProvider, error: failure.message });
         recordSidecarTrace(world, sess, { kind: 'semantic_reader_failure', model: readerModel, provider: readerProvider, error: failure.message });
+        // This throw occurs before the reconciliation request's try/catch.
+        // Persist the failed attempt here so Retry Scene Update can safely
+        // resume the same authored Take instead of accidentally rerolling it.
+        failure.sidecarAttempt = failSidecarTurnAttempt(world, sess, attempt, failure, failure.sidecarDetail);
+        throw failure;
+    }
+    if (!readerPacket?.disabled && readerPacket?.valid === false) {
+        const failure = new Error('Sidecar Reader returned no valid scene envelope.');
+        failure.code = 'sidecar_reader_invalid_output';
+        failure.sidecarDetail = { code: failure.code, stage: 'reader', model: readerModel, provider: readerProvider };
+        failure.sidecarAttempt = failSidecarTurnAttempt(world, sess, attempt, failure, failure.sidecarDetail);
         throw failure;
     }
     if (attempt.turnRecord) {
         attempt.turnRecord.reader = safeJsonClone(readerPacket);
-        const existingSnapshot = options.readerPacketOverride
-            ? (protocolBeforeReader?.readerSnapshots || []).find(snapshot => snapshot.id === attempt.turnRecord.readerSnapshotId)
+        const readerIsProcessable = !readerPacket?.disabled && readerPacket?.valid !== false;
+        // A Reader result reused after Sidecar failure remains audit evidence
+        // for its old attempt. Attach a fresh pending snapshot for this new
+        // attempt instead of reactivating the failed attempt's snapshot.
+        const existingSnapshot = null;
+        const readerSnapshot = readerIsProcessable
+            ? (existingSnapshot || attachSidecarReaderSnapshot(world, sess, attempt.turnRecord, readerPacket, { profile: readerProfile, fullRefresh: forceReaderFull, refreshIndex: readerIndex, takeId: options.takeId, revisionId: options.revisionId, attemptId: attempt.attemptId }))
             : null;
-        const readerSnapshot = existingSnapshot || attachSidecarReaderSnapshot(world, sess, attempt.turnRecord, readerPacket, { profile: readerProfile, fullRefresh: forceReaderFull, refreshIndex: readerIndex, takeId: options.takeId, revisionId: options.revisionId });
-        attempt.turnRecord.readerSnapshotId = readerSnapshot?.id || attempt.turnRecord.readerSnapshotId || '';
         attempt.turnRecord.readerSnapshotId = readerSnapshot?.id || attempt.turnRecord.readerSnapshotId || '';
         // Keep all Reader-derived records attempt-local until Sidecar commits.
         // The envelope is inspectable through Backstage, but no candidate,
         // question, proposal, or scene projection becomes active here.
-        attempt.turnRecord.readerProposalDrafts = safeJsonClone({
+        attempt.turnRecord.readerProposalDrafts = readerIsProcessable ? safeJsonClone({
             durableProposals: readerPacket.durableProposals || [],
             relationshipProposals: readerPacket.relationshipProposals || [],
             unresolved: readerPacket.unresolved || []
-        });
-        attempt.turnRecord.readerCandidateDrafts = safeJsonClone(readerPacket.candidateStructures || readerPacket.candidates || []);
-        attempt.turnRecord.readerQuestionDrafts = safeJsonClone(readerPacket.proposedQuestions || []);
-        attempt.turnRecord.controlledCharacterEvidence = safeJsonClone(readerPacket.controlledCharacterEvidence || []);
+        }) : null;
+        attempt.turnRecord.readerCandidateDrafts = readerIsProcessable ? safeJsonClone(readerPacket.candidateStructures || readerPacket.candidates || []) : null;
+        attempt.turnRecord.readerQuestionDrafts = readerIsProcessable ? safeJsonClone(readerPacket.proposedQuestions || []) : null;
+        attempt.turnRecord.controlledCharacterEvidence = readerIsProcessable ? safeJsonClone(readerPacket.controlledCharacterEvidence || []) : [];
         const currentAttempt = attempt.turnRecord.attempts?.find(item => item.id === attempt.attemptId);
         if (currentAttempt) currentAttempt.readerStatus = 'succeeded';
     }
@@ -16306,9 +17382,17 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             timelineId: sess.id
         };
         const protocol = attempt.protocol || window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-        const stagedIntroductions = window.HordeSidecarPromotion?.stageReceiptIntroductions(protocol, receipt, {
-            source: 'narrator_handoff', narration, handoff, turnId: attempt.turnRecord?.id || receipt.turn_id || ''
-        }) || [];
+        // Provisional promotion used to mutate the protocol before the native
+        // receipt was accepted (and deleted fields from the receipt in-place).
+        // Keep a post-commit-only draft instead: a failed/stale receipt must
+        // leave no provisional entity or location behind.
+        const introductionDraft = {
+            location_introduced: safeJsonClone(Array.isArray(receipt.location_introduced) ? receipt.location_introduced : []),
+            npc_introduced: safeJsonClone(Array.isArray(receipt.npc_introduced) ? receipt.npc_introduced : [])
+        };
+        const receiptForCommit = safeJsonClone(receipt);
+        delete receiptForCommit.location_introduced;
+        delete receiptForCommit.npc_introduced;
         // Verify that the canonical checkpoint has not changed under this
         // authored beat. This is a guard, not a snapshot restore mechanism.
         const currentCheckpoint = sidecarCanonicalCheckpointFingerprint(world, sess);
@@ -16318,115 +17402,55 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             stale.sidecarDetail = { code: stale.code, stage: 'reconciliation', expected: attempt.turnRecord.preCanonicalFingerprint, actual: currentCheckpoint };
             throw stale;
         }
-        const committed = commitWorldTurnReceipt(world, sess, receipt, receiptContext, 'sidecar');
+        const committed = commitWorldTurnReceipt(world, sess, receiptForCommit, receiptContext, 'sidecar');
         if (protocol) {
-            let settlementWarning = null;
+            // A successful native receipt and derived publication are distinct
+            // transaction phases. Publish the latter through an isolated
+            // protocol draft so a bad candidate/question/projection cannot be
+            // reported as a settled Reader turn or cause the receipt to run a
+            // second time on recovery.
             const turnRecord = attempt.turnRecord;
             try {
-            // Publish Reader proposals/questions/candidates only after the
-            // native commit has returned successfully.
-            recordSidecarCoreAnswers(world, sess, handoff);
-            recordSidecarRequests(world, sess, handoff);
-            const stagedPacket = turnRecord?.reader || readerPacket;
-            recordSidecarReaderProposals(world, sess, stagedPacket, turnRecord, turnRecord?.readerSnapshotId || '');
-            recordSidecarReaderCandidates(world, sess, stagedPacket, turnRecord, turnRecord?.readerSnapshotId || '');
-            queueSidecarReaderQuestions(world, sess, stagedPacket, turnRecord);
-            recordSidecarTemporalEvidence(world, sess, handoff, preClock, explicitEndpointEvidence);
-            const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(protocol, world, receipt, {
-                playerLocationId: preFrame.player_location_id
-            }) || [];
-        // World Agent output is never independently applied. A normal Sidecar
-        // reconciliation is its review pass: the resulting native receipt is
-        // the only evidence that any proposed fact was accepted into canon.
-        (protocol.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved'].includes(proposal.status))
-            .forEach(proposal => {
-                proposal.status = 'sidecar_reviewed';
-                proposal.reviewedAt = new Date().toISOString();
-                proposal.reviewReceiptId = receipt.turn_id || '';
-                proposal.reviewOutcome = committed.audit?.rejected?.length ? 'reviewed_with_rejections' : 'reviewed_no_automatic_commit';
-            });
-            queueSidecarReconciliationQuestions(world, sess, committed.audit);
-            const reconciledPriorIds = Array.isArray(receipt.state_updates?.reconciled_prior_turn_ids)
-                ? receipt.state_updates.reconciled_prior_turn_ids.map(String) : [];
-            reconciledPriorIds.forEach(id => {
-                const prior = protocol.turns.find(turn => turn.id === id && turn.reconciliationStatus === 'failed');
-                if (!prior) return;
-                prior.status = 'reconciled_late';
-                prior.reconciliationStatus = 'committed_late';
-                prior.reconciledByTurnId = attempt.turnRecord?.id || '';
-                prior.reconciledAt = new Date().toISOString();
-                updateSidecarQuestion(world, sess, `reconcile.transport.${id}`, {
-                    status: 'resolved', resolutionType: 'later_sidecar_reconciliation',
-                    answer: `Reconciled by ${attempt.turnRecord?.id || receipt.turn_id || 'a later Sidecar turn'}.`,
-                    provenance: { source: 'sidecar_receipt', turnId: attempt.turnRecord?.id || '' }
+                const settled = publishSidecarSettlement(world, sess, protocol, {
+                    turnRecord, receipt, committed, introductionDraft, narration, handoff, preClock,
+                    explicitEndpointEvidence, attemptId: attempt.attemptId,
+                    postFrame: buildWorldSceneFrame(world, sess), postClock: buildSidecarClockEvidence(world, sess)
                 });
-            });
-            if (turnRecord) {
-                turnRecord.status = 'active';
-                turnRecord.reconciliationStatus = 'committed';
-                turnRecord.committedAt = new Date().toISOString();
-                turnRecord.receiptTurnId = String(receipt.turn_id || '');
-                turnRecord.postFrame = buildWorldSceneFrame(world, sess);
-                turnRecord.postClock = buildSidecarClockEvidence(world, sess);
-                turnRecord.receipt = safeJsonClone(receipt);
-                turnRecord.audit = safeJsonClone(committed.audit);
-                turnRecord.explicitEndpointEvidence = safeJsonClone(explicitEndpointEvidence);
-                turnRecord.provisionalIntroductions = stagedIntroductions.map(entry => entry.id);
-                turnRecord.traversalChanges = traversalChanges;
-                turnRecord.settledAttemptId = attempt.attemptId;
-                turnRecord.readerProposalDrafts = null;
-                turnRecord.readerCandidateDrafts = null;
-                turnRecord.readerQuestionDrafts = null;
-                if (turnRecord.readerSnapshotId) activateSidecarReaderSnapshot(world, sess, turnRecord.readerSnapshotId, turnRecord.id);
-                window.HordeSidecarMemoryGraph?.recordTurn(protocol, turnRecord);
-            }
-            const currentAttempt = turnRecord?.attempts?.find(item => item.id === attempt.attemptId);
-            if (currentAttempt) Object.assign(currentAttempt, { status: 'committed', committedAt: new Date().toISOString(), receiptFingerprint: committed.audit?.receiptFingerprint || '' });
-            queueSidecarSceneOutfitQuestions(world, sess, turnRecord);
-            const diagnostic = protocol.diagnostics?.reconciliationAttempts?.find(item => item.turnId === turnRecord?.id);
-            if (diagnostic) Object.assign(diagnostic, {
-                status: 'committed', committedAt: turnRecord?.committedAt,
-                finishReason: choice.finish_reason || choice.native_finish_reason || '',
-                provider: payload?.provider || provider,
-                receiptTurnId: receipt.turn_id || '', audit: safeJsonClone(committed.audit),
-                explicitEndpointEvidence: safeJsonClone(explicitEndpointEvidence)
-            });
-            const packet = buildSidecarScenePacket(world, sess, handoff);
-            protocol.packet = packet;
-            const memoryConfig = effectiveSidecarMemoryConfig(world);
-            window.HordeSidecarMemoryGraph?.queueEpisode(protocol, {
-                batchSize: memoryConfig.episodeChunkTurns,
-                cadenceTurns: memoryConfig.episodeCadenceTurns
-            });
+                // Vehicle runtime interpretation follows the accepted receipt,
+                // but is non-blocking derived state. Its own errors are
+                // preserved as diagnostics rather than invalidating the
+                // already atomic scene publication.
+                try {
+                    const activeProtocol = sess.sidecar;
+                    const traversalChanges = window.HordeSidecarTraversal?.reconcileVehicleEvents(activeProtocol, world, receipt, { playerLocationId: preFrame.player_location_id }) || [];
+                    const activeTurn = activeProtocol?.turns?.find(item => item.id === turnRecord?.id);
+                    if (activeTurn) activeTurn.traversalChanges = traversalChanges;
+                } catch (traversalError) {
+                    const activeTurn = sess.sidecar?.turns?.find(item => item.id === turnRecord?.id);
+                    if (activeTurn) activeTurn.traversalWarning = String(traversalError?.message || traversalError).slice(0, 800);
+                }
+                return { committed, receipt, packet: settled.packet || null, turnId: turnRecord?.id || null, settlement: settled };
             } catch (settlementError) {
-                // Native canonical commit has already succeeded. Do not turn a
-                // projection/diagnostic failure into a false rollback or a
-                // second authored Take. Preserve the committed receipt and
-                // surface the downstream warning for an explicit rebuild.
-                settlementWarning = {
+                const settlementWarning = {
                     code: settlementError?.code || 'sidecar_settlement_warning',
                     message: String(settlementError?.message || settlementError || 'Derived Sidecar settlement failed.').slice(0, 1200)
                 };
-                const warningTurn = attempt.turnRecord;
-                if (warningTurn) {
-                    warningTurn.status = 'active';
-                    warningTurn.reconciliationStatus = 'committed';
-                    warningTurn.committedAt = warningTurn.committedAt || new Date().toISOString();
-                    warningTurn.receiptTurnId = String(receipt.turn_id || '');
-                    warningTurn.receipt = safeJsonClone(receipt);
-                    warningTurn.audit = safeJsonClone(committed.audit);
-                    warningTurn.settledAttemptId = attempt.attemptId;
-                    warningTurn.readerProposalDrafts = null;
-                    warningTurn.readerCandidateDrafts = null;
-                    warningTurn.readerQuestionDrafts = null;
-                    if (warningTurn.readerSnapshotId) activateSidecarReaderSnapshot(world, sess, warningTurn.readerSnapshotId, warningTurn.id);
-                    window.HordeSidecarMemoryGraph?.recordTurn(protocol, warningTurn);
-                    warningTurn.settlementWarning = settlementWarning;
-                }
-                const warningDiagnostic = protocol.diagnostics?.reconciliationAttempts?.find(item => item.turnId === warningTurn?.id);
-                if (warningDiagnostic) warningDiagnostic.settlementWarning = settlementWarning;
+                turnRecord.status = 'settlement_incomplete';
+                turnRecord.reconciliationStatus = 'canonical_committed_publication_incomplete';
+                turnRecord.committedAt = turnRecord.committedAt || new Date().toISOString();
+                turnRecord.receiptTurnId = String(receipt.turn_id || '');
+                turnRecord.receipt = safeJsonClone(receipt);
+                turnRecord.audit = safeJsonClone(committed.audit);
+                turnRecord.incompleteSettlementAttemptId = attempt.attemptId;
+                turnRecord.settlementWarning = settlementWarning;
+                const diagnostic = protocol.diagnostics?.reconciliationAttempts?.find(item => item.turnId === turnRecord.id && item.attemptId === attempt.attemptId);
+                if (diagnostic) Object.assign(diagnostic, { status: 'canonical_committed_publication_incomplete', settlementWarning });
+                sess.sidecarDerivedSettlementIncomplete = {
+                    turnId: turnRecord.id, attemptId: attempt.attemptId || '', receiptTurnId: String(receipt.turn_id || ''),
+                    receiptFingerprint: committed.audit?.receiptFingerprint || '', createdAt: new Date().toISOString(), error: safeJsonClone(settlementWarning)
+                };
+                return { committed, receipt, packet: protocol.packet || null, turnId: turnRecord.id, settlement: { status: 'incomplete', error: settlementWarning } };
             }
-            return { committed, receipt, packet: protocol.packet || null, turnId: turnRecord?.id || null };
         }
         return { committed, receipt, packet: protocol?.packet || null, turnId: attempt.turnRecord?.id || null };
     } catch (error) {
@@ -16440,6 +17464,32 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     }
 }
 
+// Finish an interrupted *derived* publication after the native receipt has
+// already committed. This is deliberately not a reconciliation retry: it
+// reuses the journaled receipt/audit and never calls the Narrator, Reader, or
+// canonical reducer a second time.
+function recoverSidecarDerivedSettlement(world, sess, turn) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    if (!protocol || !turn?.receipt || !turn?.audit) throw new Error('The committed receipt required for derived settlement recovery is unavailable.');
+    const incomplete = sess.sidecarDerivedSettlementIncomplete;
+    if (!incomplete || incomplete.turnId !== turn.id) throw new Error('No matching derived-settlement recovery record exists.');
+    const identity = String(turn.logicalCommitIdentity || '');
+    const committedJournal = (sess.sidecarCommitJournal || []).find(entry => entry.identity === identity && entry.status === 'committed');
+    if (!committedJournal || committedJournal.fingerprint !== incomplete.receiptFingerprint) {
+        const error = new Error('The committed receipt journal no longer proves a safe derived-settlement recovery.');
+        error.code = 'sidecar_settlement_recovery_unproven';
+        throw error;
+    }
+    const result = publishSidecarSettlement(world, sess, protocol, {
+        turnRecord: turn, receipt: safeJsonClone(turn.receipt), committed: { audit: safeJsonClone(turn.audit) },
+        introductionDraft: { location_introduced: safeJsonClone(turn.receipt.location_introduced || []), npc_introduced: safeJsonClone(turn.receipt.npc_introduced || []) },
+        narration: turn.authorialArtifact?.narration ?? turn.narration ?? '', handoff: turn.authorialArtifact?.handoff ?? turn.handoff ?? '',
+        preClock: turn.preClock, explicitEndpointEvidence: turn.explicitEndpointEvidence || null, attemptId: turn.incompleteSettlementAttemptId || turn.currentAttemptId || '',
+        postFrame: buildWorldSceneFrame(world, sess), postClock: buildSidecarClockEvidence(world, sess)
+    });
+    return { ...result, recovered: true };
+}
+
 // Reprocess the accepted Narrator artifact without creating a new roleplay
 // turn. The failed Sidecar turn remains the durable source record; retries are
 // attempt records on that same turn and reuse a successful Reader envelope.
@@ -16448,7 +17498,17 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const turn = protocol?.turns?.find(item => item.id === sidecarTurnId);
     if (!protocol || !turn) throw new Error('The authored Sidecar turn is no longer available.');
-    if (!['reconciliation_failed', 'reconciliation_pending'].includes(turn.status)) {
+    if (turn.status === 'settlement_incomplete') {
+        sidecarRetryInProgress = true;
+        try {
+            const result = recoverSidecarDerivedSettlement(world, sess, turn);
+            await saveState(); renderWorldPlayState();
+            runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'sidecar_settlement_recovery' }).catch(error => console.warn('Sidecar settlement memory dispatch skipped —', error.message));
+            showToast('Scene Intelligence caught up without replaying the canonical receipt.', 'success');
+            return result;
+        } finally { sidecarRetryInProgress = false; }
+    }
+    if (!sidecarTurnNeedsDownstreamRecovery(turn)) {
         showToast('This authored beat is already settled.', 'info');
         return;
     }
@@ -16518,11 +17578,14 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
 // This is deliberately Reader-only: a changed interpretation becomes a
 // reviewable derived snapshot, while the accepted Narrator Take and native
 // receipt remain immutable.
-async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '') {
+async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const turn = (protocol?.turns || []).filter(item => item.status !== 'superseded' && (!sidecarTurnId || item.id === sidecarTurnId)).at(-1);
+    const currentTurn = currentSidecarAuthoredTurn(protocol, sess);
+    const turn = sidecarTurnId
+        ? (protocol?.turns || []).find(item => item.id === sidecarTurnId)
+        : currentTurn;
     if (!protocol || !turn) throw new Error('No settled authored Sidecar turn is available to refresh.');
-    if (turn.reconciliationStatus !== 'committed' && turn.status !== 'active') {
+    if (sidecarTurnNeedsDownstreamRecovery(turn)) {
         return retrySidecarSceneUpdate(world, sess, turn.id);
     }
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
@@ -16535,19 +17598,97 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '') 
         tracker, provider, model, readerProfile: profile, sidecarWorld: { ...world, model, provider }, references,
         preFrame: turn.preFrame || buildWorldSceneFrame(world, sess), clockEvidence: turn.preClock || buildSidecarClockEvidence(world, sess),
         priorReaderEnvelope: turn.readerEnvelope || turn.reader || null, forceFull: true,
-        playerInput: turn.playerInput || '', narration: turn.narration || '', handoff: turn.handoff || ''
+        playerInput: turn.playerInput || '', narration: turn.narration || '', handoff: turn.handoff || '',
+        scenePulseFocus: options.scenePulseFocus || ''
     });
     protocol.readerRefreshes = Array.isArray(protocol.readerRefreshes) ? protocol.readerRefreshes : [];
     protocol.readerRefreshes.push({
         id: `reader_refresh_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
         status: 'review', sourceTurnId: turn.id, createdAt: new Date().toISOString(),
         envelope: normalizeSidecarReaderEnvelope(packet, { sourceTurnId: turn.id, profileRevision: profile.revision, promptRevision: profile.promptRevision, snapshotMode: 'full' }),
-        provenance: { source: 'scene_intelligence_refresh', provider, model, profileRevision: profile.revision }
+        provenance: { source: 'scene_intelligence_refresh', provider, model, profileRevision: profile.revision, scenePulseFocus: options.scenePulseFocus || '' }
     });
     protocol.readerRefreshes = protocol.readerRefreshes.slice(-40);
     await saveState();
     renderWorldPlayState();
     return protocol.readerRefreshes.at(-1);
+}
+
+// The source Thoughts affordance is an actual focused Reader operation.  It
+// never calls Narrator and the only promoted record is the derived, reviewed
+// scene snapshot for this exact already-settled authored turn.
+async function refreshScenePulseThoughts(world, sess, sidecarTurnId = '') {
+    const refresh = await refreshSidecarSceneIntelligence(world, sess, sidecarTurnId, { scenePulseFocus: 'thoughts' });
+    if (refresh?.status !== 'review') return refresh;
+    const accepted = acceptSidecarReaderRefresh(world, sess, refresh.id);
+    await saveState();
+    renderWorldPlayState();
+    return accepted;
+}
+
+// A Reader refresh is a reviewable interpretation of an already authored and
+// canonically settled beat. Accepting it promotes only the derived scene
+// snapshot/projection; it never calls Narrator, invokes Sidecar's receipt, or
+// repeats canonical operations such as movement or time advancement.
+function acceptSidecarReaderRefresh(world, sess, refreshId) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const refresh = protocol?.readerRefreshes?.find(item => item.id === refreshId && item.status === 'review');
+    if (!protocol || !refresh) throw new Error('That Reader refresh is no longer available for review.');
+    const turn = (protocol.turns || []).find(item => item.id === refresh.sourceTurnId);
+    const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
+    if (!turn || !latestTurn || latestTurn.id !== turn.id) {
+        const error = new Error('This Reader refresh belongs to historical narration and cannot replace the current scene view.');
+        error.code = 'reader_refresh_not_current';
+        throw error;
+    }
+    if (!['active', 'committed'].includes(String(turn.status || '')) && turn.reconciliationStatus !== 'committed') {
+        const error = new Error('The authored beat is not safely settled for a Reader-only refresh.');
+        error.code = 'reader_refresh_unsettled_turn';
+        throw error;
+    }
+    const currentNarrationHash = worldMediaHash(String(turn.authorialArtifact?.narration ?? turn.narration ?? ''));
+    const currentHandoffHash = worldMediaHash(String(turn.authorialArtifact?.handoff ?? turn.handoff ?? ''));
+    if (refresh.envelope?.visibleNarrationHash && refresh.envelope.visibleNarrationHash !== currentNarrationHash
+        || refresh.envelope?.handoffHash && refresh.envelope.handoffHash !== currentHandoffHash) {
+        const error = new Error('The stored Reader refresh no longer matches this authored artifact. Re-read the current scene instead.');
+        error.code = 'reader_refresh_artifact_mismatch';
+        throw error;
+    }
+    const profile = effectiveSidecarReaderProfile(world, sess);
+    const packet = {
+        ...safeJsonClone(refresh.envelope || {}), valid: true, mode: 'full', snapshotMode: 'full',
+        model: refresh.provenance?.model || '', provider: refresh.provenance?.provider || '', finishReason: 'review_accepted'
+    };
+    const snapshot = attachSidecarReaderSnapshot(world, sess, turn, packet, {
+        profile, fullRefresh: true, refreshIndex: Number(refresh.envelope?.refreshIndex || 0) + 1,
+        takeId: turn.takeId || '', revisionId: turn.revisionId || '', attemptId: `reader_refresh_review:${refresh.id}`
+    });
+    if (!snapshot) throw new Error('Could not stage the accepted Reader refresh.');
+    activateSidecarReaderSnapshot(world, sess, snapshot.id, turn.id);
+    const projection = buildSidecarSceneProjection(world, sess, protocol, {
+        snapshotId: snapshot.id, turn, frame: turn.postFrame || buildWorldSceneFrame(world, sess)
+    });
+    const now = new Date().toISOString();
+    (protocol.sceneProjections || []).forEach(item => {
+        if (item.status === 'active') { item.status = 'accepted_historical'; item.historicalAt = now; }
+    });
+    protocol.sceneProjections = (protocol.sceneProjections || []).filter(item => item.snapshotId !== snapshot.id);
+    protocol.sceneProjections.push({ ...safeJsonClone(projection), status: 'active', settledAt: now, refreshOf: refresh.id });
+    protocol.sceneProjections = protocol.sceneProjections.slice(-400);
+    protocol.sceneProjection = safeJsonClone(projection);
+    turn.readerEnvelope = safeJsonClone(snapshot.envelope);
+    turn.readerSnapshotId = snapshot.id;
+    refresh.status = 'accepted'; refresh.acceptedAt = now; refresh.acceptedSnapshotId = snapshot.id;
+    protocol.packet = buildSidecarScenePacket(world, sess, turn.handoff || '');
+    return { status: 'accepted', refresh, snapshot, projection };
+}
+
+function discardSidecarReaderRefresh(world, sess, refreshId) {
+    const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const refresh = protocol?.readerRefreshes?.find(item => item.id === refreshId && item.status === 'review');
+    if (!protocol || !refresh) return false;
+    refresh.status = 'rejected'; refresh.rejectedAt = new Date().toISOString();
+    return true;
 }
 
 function parseSidecarConversationResponse(content) {
@@ -16741,7 +17882,7 @@ async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
     const endIndex = endFound < 0 ? activeTurns.length - 1 : endFound;
     const selectedTurns = activeTurns.slice(startIndex, endIndex + 1);
     const eligible = selectedTurns.filter(turn => (!turnIds || turnIds.has(String(turn.id)))
-        && !protocol.readerSnapshots.some(snapshot => snapshot.status === 'active' && snapshot.turnId === turn.id));
+        && !protocol.readerSnapshots.some(snapshot => snapshot.turnId === turn.id && snapshot.settlementStatus === 'audit_only'));
     const profile = effectiveSidecarReaderProfile(world, sess);
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
@@ -16750,21 +17891,35 @@ async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
     protocol.readerBackfill = { ...(protocol.readerBackfill || {}), status: 'running', startedAt: protocol.readerBackfill?.startedAt || new Date().toISOString(), total: (protocol.readerBackfill?.total || 0) + eligible.length, completed: Number(protocol.readerBackfill?.completed) || 0, failed: Number(protocol.readerBackfill?.failed) || 0, lastError: '' };
     await saveState();
     for (const turn of eligible) {
-        const previous = protocol.readerSnapshots.filter(snapshot => snapshot.status === 'active').at(-1)?.envelope || null;
         const refreshIndex = (Number(protocol.readerSnapshots.length) || 0) + 1;
-        const forceFull = refreshIndex === 1 || refreshIndex % Math.max(1, Number(profile.fullRefreshCadence) || 5) === 0;
+        // Historical processing is evidence-only. A full envelope avoids
+        // borrowing a current snapshot as a delta base and it never enters
+        // active Reader continuity, candidate state, questions or packets.
+        const forceFull = true;
         try {
             const packet = await runSidecarSemanticReading(world, sess, {
                 tracker, provider, model, readerProfile: profile, preFrame: turn.preFrame || buildWorldSceneFrame(world, sess),
-                clockEvidence: turn.preClock || buildSidecarClockEvidence(world, sess), priorReaderEnvelope: previous, forceFull,
+                clockEvidence: turn.preClock || buildSidecarClockEvidence(world, sess), priorReaderEnvelope: null, forceFull,
                 playerInput: turn.playerInput || '', narration: turn.narration || '', handoff: turn.handoff || '',
                 references: buildSidecarCanonicalReferenceManifest(world, sess, `${turn.playerInput || ''}\n${turn.narration || ''}\n${turn.handoff || ''}`)
             });
-            turn.reader = safeJsonClone(packet);
-            const snapshot = attachSidecarReaderSnapshot(world, sess, turn, packet, { profile, fullRefresh: forceFull, refreshIndex, takeId: turn.takeId, revisionId: turn.revisionId });
-            recordSidecarReaderProposals(world, sess, packet, turn, snapshot?.id || '');
-            recordSidecarReaderCandidates(world, sess, packet, turn, snapshot?.id || '');
-            queueSidecarReaderQuestions(world, sess, packet, turn);
+            if (!packet?.valid) throw new Error(packet?.error || 'Reader returned invalid historical scene evidence.');
+            const envelope = normalizeSidecarReaderEnvelope({
+                ...packet, profileRevision: profile.revision, promptRevision: profile.promptRevision,
+                sourceTurnId: turn.id, sourceTakeId: turn.takeId || '', sourceRevisionId: turn.revisionId || '',
+                refreshIndex, snapshotMode: 'full', baseSnapshotId: '',
+                visibleNarrationHash: worldMediaHash(String(turn.authorialArtifact?.narration ?? turn.narration ?? '')),
+                handoffHash: worldMediaHash(String(turn.authorialArtifact?.handoff ?? turn.handoff ?? '')),
+                metadata: { ...(packet.metadata || {}), auditOnly: true, capturedAt: new Date().toISOString() }
+            });
+            const snapshot = {
+                id: `reader_backfill_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+                status: 'backfill_review', settlementStatus: 'audit_only', createdAt: new Date().toISOString(),
+                turnId: turn.id, takeId: turn.takeId || '', sceneId: turn.sceneId || '', sequenceId: turn.sequenceId || '',
+                envelope, provenance: { source: 'sidecar_reader_backfill', profileRevision: profile.revision, auditOnly: true }
+            };
+            protocol.readerSnapshots.push(snapshot);
+            turn.readerBackfillEvidence = { snapshotId: snapshot.id, status: 'audit_only', createdAt: snapshot.createdAt };
             protocol.readerBackfill.completed = Number(protocol.readerBackfill.completed) + 1;
         } catch (error) {
             protocol.readerBackfill.failed = Number(protocol.readerBackfill.failed) + 1;
@@ -16777,7 +17932,6 @@ async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
     }
     protocol.readerBackfill.status = protocol.readerBackfill.failed && !protocol.readerBackfill.completed ? 'failed' : 'completed';
     protocol.readerBackfill.completedAt = new Date().toISOString();
-    protocol.packet = buildSidecarScenePacket(world, sess);
     await saveState();
     return safeJsonClone(protocol.readerBackfill);
 }
@@ -16808,7 +17962,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
     });
     const providerLimit = Math.max(1, Math.min(12, Number(memoryDefaults.backgroundProviderConcurrency) || 2));
     const overallLimit = Math.max(1, Math.min(12, Number(memoryDefaults.consolidationConcurrency) || 6));
-    const queuedJobs = (protocol.jobs || []).filter(job => ['episode_consolidation', 'scene_consolidation', 'sequence_consolidation', 'cognition_consolidation'].includes(job.type) && ['queued', 'dependency_waiting'].includes(job.status)
+    const queuedJobs = (protocol.jobs || []).filter(job => ['episode_consolidation', 'scene_consolidation', 'sequence_consolidation', 'cognition_consolidation', 'turn_cognition'].includes(job.type) && ['queued', 'dependency_waiting'].includes(job.status)
         && (!job.retryAt || new Date(job.retryAt).getTime() <= Date.now()));
     const completedIds = new Set((protocol.jobs || []).filter(job => job.status === 'completed').map(job => job.id));
     queuedJobs.forEach(job => {
@@ -16840,23 +17994,36 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
         job.status = 'running'; job.startedAt = new Date().toISOString();
         const jobProvider = normalizedProviderId(job.provider || state.globalSettings?.apiProvider || 'openrouter');
         const jobWorld = { ...world, model: job.model || model, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
-        if (job.type === 'cognition_consolidation') {
-            const episode = (graph.episodes || []).find(record => record.id === job.episodeId && record.status === 'active');
+        if (job.type === 'cognition_consolidation' || job.type === 'turn_cognition') {
+            const turnScoped = job.type === 'turn_cognition';
+            const episode = turnScoped ? null : (graph.episodes || []).find(record => record.id === job.episodeId && record.status === 'active');
             const character = job.characterId === 'player'
                 ? { id: 'player', name: sess.playerIdentity?.name || 'the player', persona: sess.playerIdentity?.persona || '' }
-                : (world.entities || []).find(entity => entity.id === job.characterId && entity.type === 'npc');
-            if (!episode || !character) {
-                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, !episode ? 'Episode no longer exists.' : 'Character is not a tracked participant.');
+                : ((world.entities || []).find(entity => entity.id === job.characterId && (entity.type === 'npc' || entity.type === 'character'))
+                    || (turnScoped && (job.candidateId || job.subjectRef) ? (() => {
+                        const candidate = (protocol.readerCandidates || []).find(item => item.candidateId === job.candidateId && item.settlementStatus === 'settled');
+                        return candidate
+                            ? { id: candidate.candidateId, name: candidate.label || candidate.role || 'Scene character', persona: candidate.persona || '', description: candidate.description || '', sceneCandidate: true }
+                            : { id: job.subjectRef, name: job.provisionalIntelligence?.name || 'Scene character', persona: '', description: '', sceneCandidate: true };
+                    })() : null));
+            if ((!turnScoped && !episode) || !character) {
+                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, !turnScoped && !episode ? 'Episode no longer exists.' : 'Character/candidate is no longer eligible for cognition.');
+                return;
+            }
+            const activeSources = (job.sourceTurnIds || []).every(turnId => (protocol.turns || []).some(turn => turn.id === turnId && ['active', 'reconciled_late'].includes(turn.status) && ['committed', 'committed_late'].includes(turn.reconciliationStatus)));
+            if (!activeSources) {
+                window.HordeSidecarMemoryGraph.failJob(protocol, job.id, 'The source Turn is no longer in accepted settled continuity.');
                 return;
             }
             const prior = (graph.cognition || []).filter(record => record.characterId === character.id && record.status === 'active').slice(-memoryDefaults.cognitionRecentLimit)
                 .map(record => ({ text: record.text, epistemicStatus: record.epistemicStatus }));
-            const sourceTurns = graph.worldHistory.filter(record => (episode.sourceTurnIds || []).includes(record.turnId) && record.status === 'active')
+            const sourceIds = turnScoped ? (job.sourceTurnIds || []) : (episode.sourceTurnIds || []);
+            const sourceTurns = graph.worldHistory.filter(record => sourceIds.includes(record.turnId) && record.status === 'active')
                 .map(record => ({ turnId: record.turnId, narration: record.narration, sceneReading: record.sceneReading, readerEnvelope: record.readerEnvelope || null }));
             const characterState = sess.entityStates?.[character.id] || {};
             const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(character.id)).slice(-12);
             const authorial = { ledger: String(sess.ledger || '').slice(-3000), scenePacket: protocol.packet || null };
-            const prompt = `[SIDECAR CHARACTER COGNITION]\nWrite only experiential memories for ${character.name} [${character.id}]. This is private character cognition, never objective canon. Return JSON only: {"memories":[{"text":"first-person memory","epistemicStatus":"self_action|direct_observation|disclosure|interpretation|belief|influence","importance":0.0,"confidence":0.0,"sourceTurnIds":["turn id"]}]}.\nKeep witnessed actions distinct from self-actions; disclosures must identify who told them; interpretations and suspicions must remain uncertain. Do not create a memory merely because the character was present, and do not infer interiority beyond the available character grounding. Ordinary absence belongs in episode coverage, not as a durable memory.\n\nCHARACTER-SCOPED PERCEPTION EVIDENCE:\n${JSON.stringify({ characterId: character.id, access: job.access, evidence: job.perceptionEvidence || '', episodeCoverage: (episode.perceptionCoverage || []).filter(item => item.characterId === character.id) })}\n\nEXACT SOURCE RANGE (only what was authored):\n${JSON.stringify(sourceTurns)}\n\nCHARACTER GROUNDING:\n${JSON.stringify({ id: character.id, name: character.name, persona: character.persona || '', description: character.description || '', currentState: characterState, relationships })}\n\nOBJECTIVE EPISODE (context, not character knowledge by itself):\n${JSON.stringify({ id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory })}\n\nAUTHORIAL CONTEXT (explains stakes only; never grants knowledge):\n${JSON.stringify(authorial)}\n\nRELEVANT PRIOR COGNITION:\n${JSON.stringify(prior)}`;
+            const prompt = `[SIDECAR CHARACTER COGNITION]\nWrite only experiential memories for ${character.name} [${character.id}]. This is private character cognition, never objective canon. Return JSON only: {"memories":[{"text":"first-person memory","epistemicStatus":"self_action|direct_observation|disclosure|interpretation|belief|influence","importance":0.0,"confidence":0.0,"sourceTurnIds":["turn id"]}]}.\nKeep witnessed actions distinct from self-actions; disclosures must identify who told them; interpretations and suspicions must remain uncertain. Do not create a memory merely because the character was present, and do not infer interiority beyond the available character grounding. Ordinary absence belongs in episode coverage, not as a durable memory. A Reader provisional impression is a character-scoped lead, not an objective fact: retain, revise, or reject it only according to this subject's perception.\n\nCHARACTER-SCOPED PERCEPTION EVIDENCE:\n${JSON.stringify({ characterId: character.id, access: job.access, evidence: job.perceptionEvidence || '', provisionalIntelligence: turnScoped ? job.provisionalIntelligence || null : null, episodeCoverage: (episode?.perceptionCoverage || []).filter(item => item.characterId === character.id) })}\n\nEXACT SOURCE RANGE (only what was authored):\n${JSON.stringify(sourceTurns)}\n\nCHARACTER GROUNDING:\n${JSON.stringify({ id: character.id, name: character.name, persona: character.persona || '', description: character.description || '', currentState: characterState, relationships, sceneCandidate: character.sceneCandidate === true })}\n\nOBJECTIVE EPISODE (context, not character knowledge by itself):\n${JSON.stringify(episode ? { id: episode.id, summary: episode.summary, objectiveHistory: episode.objectiveHistory } : { status: 'not yet consolidated', sourceTurnIds: sourceIds })}\n\nAUTHORIAL CONTEXT (explains stakes only; never grants knowledge):\n${JSON.stringify(authorial)}\n\nRELEVANT PRIOR COGNITION:\n${JSON.stringify(prior)}`;
             try {
                 const response = await fetch(providerApiBase(jobProvider) + '/chat/completions', {
                     method: 'POST', headers: { ...providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...providerAttributionHeaders(jobProvider) },
@@ -16871,13 +18038,13 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
                 if ((Number(sess._memEpoch) || 0) !== startMemoryEpoch) return;
                 output.memories.forEach(memory => graph.cognition.push({
                     id: `cognition_${Date.now().toString(36)}_${graph.cognition.length + 1}`, status: 'active', createdAt: new Date().toISOString(),
-                    characterId: character.id, characterName: character.name, episodeId: episode.id, text: memory.text,
+                    characterId: character.id, characterName: character.name, episodeId: episode?.id || '', turnCognitionJobId: turnScoped ? job.id : '', readerSnapshotId: job.readerSnapshotId || '', text: memory.text,
                     epistemicStatus: memory.epistemicStatus, importance: memory.importance, confidence: memory.confidence,
                     sourceTurnIds: memory.sourceTurnIds.length ? memory.sourceTurnIds : episode.sourceTurnIds,
-                    provenance: { source: 'character_cognition_consolidation', access: job.access, perceptionEvidence: job.perceptionEvidence || '', sourceEpisodeId: episode.id }
+                    provenance: { source: turnScoped ? 'character_turn_cognition' : 'character_cognition_consolidation', access: job.access, perceptionEvidence: job.perceptionEvidence || '', sourceEpisodeId: episode?.id || '', sourceTurnIds: sourceIds, readerSnapshotId: job.readerSnapshotId || '', provisionalReaderInput: turnScoped ? safeJsonClone(job.provisionalIntelligence || null) : null }
                 }));
                 graph.cognition = graph.cognition.slice(-4000);
-                await vectorizeSidecarMemoryRecords(graph.cognition.filter(record => record.episodeId === episode.id && record.characterId === character.id));
+                await vectorizeSidecarMemoryRecords(graph.cognition.filter(record => record.turnCognitionJobId === job.id || (!turnScoped && record.episodeId === episode?.id && record.characterId === character.id)));
                 job.status = 'completed'; job.completedAt = new Date().toISOString();
                 protocol.packet = buildSidecarScenePacket(world, sess);
             } catch (error) {
@@ -17207,33 +18374,18 @@ function updateSidecarReaderCandidate(world, sess, candidateId, action, canonica
     const protocol = protocolForSidecarTimeline(world, sess);
     const candidate = protocol?.readerCandidates?.find(item => item.candidateId === candidateId);
     if (!protocol || !candidate) return null;
-    const now = new Date().toISOString();
-    if (action === 'leave') {
-        candidate.status = 'retired';
-        candidate.updatedAt = now;
-        candidate.lifecycleProvenance = { source: 'scene_inspector', action: 'leave_ephemeral', at: now };
-    } else if (action === 'promote') {
-        candidate.status = 'proposed';
-        candidate.updatedAt = now;
-        candidate.promotionRequested = true;
-        candidate.promotionProvenance = { source: 'scene_inspector', action: 'promote', at: now };
-        protocol.proposals = Array.isArray(protocol.proposals) ? protocol.proposals : [];
-        const id = `reader_candidate.${candidate.candidateId}.promotion`;
-        const existing = protocol.proposals.find(item => item.id === id);
-        const record = existing || { id, type: `candidate_${candidate.candidateType}_promotion`, status: 'pending_sidecar_review', createdAt: now, sourceTurnId: candidate.sourceTurnIds?.at(-1) || '', readerSnapshotId: candidate.readerSnapshotId || '', evidence: [], provenance: { source: 'scene_inspector', candidateId: candidate.candidateId } };
-        record.summary = `Review promotion of ${candidate.label || candidate.candidateType} into a canonical ${candidate.candidateType}.`;
-        record.candidate = safeJsonClone(candidate);
-        record.updatedAt = now;
-        if (!existing) protocol.proposals.push(record);
-    } else if (action === 'match' && canonicalId) {
-        candidate.status = 'matched';
-        candidate.canonicalMatchId = String(canonicalId).slice(0, 180);
-        candidate.updatedAt = now;
-        candidate.matchProvenance = { source: 'scene_inspector', action: 'match_existing', at: now, canonicalId: candidate.canonicalMatchId };
-    }
-    protocol.sceneProjection = { ...(protocol.sceneProjection || {}), candidates: activeReaderCandidates(protocol, { sceneId: protocol.sceneProjection?.sceneId || protocol.activeSceneId }).map(item => safeJsonClone(item)), updatedAt: now };
-    saveState().catch(() => {});
-    return candidate;
+    // The ScenePulse surface may ask for review, but it is not a mutation
+    // authority.  A candidate stays scene-only until an explicit World GM /
+    // native reconciliation decision carries this source-pinned intent.
+    return {
+        kind: 'scene_candidate_review_intent', action: ['promote', 'match', 'leave', 'ignore'].includes(action) ? action : 'review',
+        candidateId: String(candidate.candidateId), candidateType: String(candidate.candidateType || ''),
+        canonicalId: String(canonicalId || '').slice(0, 180),
+        sourceTurnIds: safeJsonClone(candidate.sourceTurnIds || []), readerSnapshotId: String(candidate.readerSnapshotId || ''),
+        expectedSceneId: String(candidate.sceneId || protocol.activeSceneId || ''),
+        expectedCanonicalRevision: sidecarCanonicalCheckpointFingerprint(world, sess),
+        evidence: safeJsonClone(candidate.evidence || candidate.description || '')
+    };
 }
 
 function sidecarSceneProjectionMarkup(world, sess) {
@@ -17272,74 +18424,127 @@ function sidecarSceneProjectionMarkup(world, sess) {
 // use buildSidecarScenePacket as its completeness boundary: the packet is a
 // relevance-filtered narrator viewport, while this workspace is an inspection
 // surface over the committed timeline, Reader projection and canonical world.
-function buildSidecarWorkspaceModel(world, sess) {
+function buildSidecarWorkspaceModel(world, sess, options = {}) {
     const protocol = protocolForSidecarTimeline(world, sess);
     if (!protocol) return null;
     const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false }) || {};
-    const frame = buildWorldSceneFrame(world, sess) || {};
+    const rawUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    const workspaceUi = {
+        view: ['scene', 'relationships', 'characters', 'history', 'thoughts', 'all-known'].includes(options.view || rawUi.view) ? (options.view || rawUi.view) : 'scene',
+        open: isPlainObject(rawUi.open) ? safeJsonClone(rawUi.open) : {},
+        selectedSnapshotId: String(options.snapshotId || rawUi.selectedSnapshotId || ''),
+        historyMode: options.snapshotId ? true : rawUi.historyMode === true
+    };
+    const snapshots = (protocol.readerSnapshots || []).filter(snapshot => ['active', 'accepted_historical'].includes(snapshot.status) && snapshot.settlementStatus === 'settled')
+        .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || ''))).slice(-80);
+    const activeSnapshot = snapshots.filter(snapshot => snapshot.status === 'active').at(-1) || null;
+    const selectedSnapshot = workspaceUi.historyMode && workspaceUi.selectedSnapshotId
+        ? snapshots.find(snapshot => snapshot.id === workspaceUi.selectedSnapshotId) || activeSnapshot
+        : activeSnapshot;
+    const selectedTurn = (protocol.turns || []).find(turn => turn.id === selectedSnapshot?.turnId) || null;
+    const projectionRecord = (protocol.sceneProjections || []).find(item => item.snapshotId === selectedSnapshot?.id)
+        || (selectedSnapshot ? buildSidecarSceneProjection(world, sess, protocol, { snapshotId: selectedSnapshot.id, turn: selectedTurn }) : null);
+    const projection = projectionRecord ? safeJsonClone(projectionRecord) : null;
+    const frame = selectedTurn?.postFrame || buildWorldSceneFrame(world, sess) || {};
     const clock = getWorldTimeData(world, sess);
-    const location = getLocationRef(world, frame.player_location_id);
-    const activeSnapshot = (protocol.readerSnapshots || []).filter(snapshot => snapshot.status === 'active').at(-1) || null;
-    const reader = activeSnapshot?.envelope || null;
-    const turns = (protocol.turns || []).filter(turn => turn.status !== 'superseded');
-    const latestTurn = turns.at(-1) || null;
-    const failedTurn = [...turns].reverse().find(turn => ['reconciliation_failed', 'reconciliation_pending'].includes(turn.status)) || null;
-    const incompleteCommit = sess?.sidecarIncompleteCommit || null;
-    const displayName = id => {
-        if (id === 'player' || id === hierarchy.sequence?.controlledEntityId) {
-            return sess?.playerIdentity?.name || sess?.persona?.name || 'You';
-        }
-        return (world.entities || []).find(entity => String(entity.id) === String(id))?.name || String(id || 'Unknown');
-    };
-    const normalizePresence = (values, mode) => (Array.isArray(values) ? values : []).map(value => {
-        if (typeof value === 'string') return { id: value, name: displayName(value), mode };
-        const id = String(value?.id || value?.entityId || value?.characterId || '');
-        return { id, name: String(value?.name || (id ? displayName(id) : 'Unknown')), mode: value?.mode || mode, reason: String(value?.reason || value?.evidence || '') };
-    }).filter(value => value.name);
-    const presence = reader?.presence || {};
-    const cast = {
-        active: normalizePresence(presence.active || frame.present_character_ids || packetCastFallback(protocol, sess, 'active'), 'active'),
-        nearby: normalizePresence(presence.nearby || frame.nearby_characters || packetCastFallback(protocol, sess, 'nearby'), 'nearby'),
-        audible: normalizePresence(presence.audible, 'audible'),
-        remote: normalizePresence(presence.remote, 'remote'),
-        mentioned: normalizePresence(presence.mentioned, 'mentioned'),
-        absent: normalizePresence(presence.absent, 'absent')
-    };
-    const candidates = activeReaderCandidates(protocol, { sceneId: protocol.sceneProjection?.sceneId || hierarchy.scene?.id || '' }).slice(-120);
-    const worldRelationships = [];
-    Object.entries(sess.npcRelationships || {}).forEach(([id, value]) => {
-        if (!value) return;
-        const posture = typeof value === 'string' ? value : (value.posture || value.axis || value.affinity || value.trust || '');
-        const evidence = typeof value === 'string' ? '' : (value.evidence || value.reason || value.summary || '');
-        worldRelationships.push({ id, label: displayName(id), posture: String(posture), evidence: String(evidence), source: 'canonical relationship state' });
+    const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
+    // Recovery is a property of the newest authored beat, not an old
+    // historical failure.  Surfacing an earlier failure as current blocks a
+    // healthy scene and makes Retry look like a reroll of the wrong Take.
+    const failedTurn = latestTurn && sidecarTurnNeedsDownstreamRecovery(latestTurn) ? latestTurn : null;
+    const incompleteCommit = sess?.sidecarIncompleteCommit || sess?.sidecarDerivedSettlementIncomplete || null;
+    const people = projection?.people || [];
+    const cast = ['active', 'nearby', 'audible', 'remote', 'mentioned', 'absent'].reduce((result, mode) => {
+        result[mode] = people.filter(person => person.mode === mode); return result;
+    }, {});
+    // Keep canonical records, current scene posture, and Reader proposals
+    // visibly distinct.  The workspace may visualise all three together, but
+    // a provisional relationship reading must never masquerade as a durable
+    // reciprocal relationship record.
+    const relevantSubjectIds = new Set(people.map(person => String(person.entityId || person.id || '')).filter(Boolean));
+    const canonicalRelationships = Object.entries(projection?.canonicalRelationships || {}).filter(([id, value]) => {
+        const record = isPlainObject(value) ? value : {};
+        const endpoints = [
+            ...String(id || '').split('|').map(String),
+            record.sourceNpcId, record.source_npc_id, record.sourceEntityId, record.source_entity_id,
+            record.targetNpcId, record.target_npc_id, record.targetEntityId, record.target_entity_id
+        ].map(value => String(value || '').trim()).filter(Boolean);
+        // ScenePulse's relationship view is about the people in this beat.
+        // A player-only partial snapshot must not pull the entire world
+        // relationship registry into the panel just because every relation
+        // happens to contain the player endpoint.
+        const uniqueEndpoints = [...new Set(endpoints)];
+        return uniqueEndpoints.length >= 2 && uniqueEndpoints.every(endpoint => relevantSubjectIds.has(endpoint));
+    }).map(([id, value]) => {
+        const record = isPlainObject(value) ? value : {};
+        const participants = String(id || '').split('|').map(part => sidecarProjectionDisplayName(world, sess, hierarchy, part)).filter(Boolean);
+        return {
+            id: `canonical:${id}`, source: 'canonical', proposal: false,
+            label: record.label || record.name || record.otherName || participants.join(' ↔ ') || id,
+            posture: record.posture || record.status || record.affinity || record.trust || '',
+            evidence: record.evidence || record.summary || record.notes || 'Canonical relationship record.',
+            raw: safeJsonClone(value)
+        };
     });
-    const relationshipProposals = Array.isArray(reader?.relationshipProposals) ? reader.relationshipProposals.map(entry => ({
-        id: String(entry.id || entry.characterId || entry.subject || ''),
-        label: String(entry.label || entry.characterName || entry.subject || displayName(entry.characterId || entry.subject)),
-        posture: String(entry.posture || entry.axis || entry.change || entry.delta || ''),
-        evidence: String(entry.evidence || entry.reason || entry.summary || ''),
-        source: 'Reader proposal · Sidecar review required', proposal: true
-    })) : [];
-    const relationships = [...worldRelationships, ...relationshipProposals].filter((entry, index, all) => all.findIndex(other => `${other.id}|${other.source}` === `${entry.id}|${entry.source}`) === index).slice(-40);
-    const activeCharacters = [...cast.active, ...cast.nearby, ...cast.audible, ...cast.mentioned]
-        .filter((entry, index, all) => all.findIndex(other => other.id === entry.id) === index)
-        .map(entry => {
-            const entity = (world.entities || []).find(item => String(item.id) === String(entry.id));
-            const state = sess.entityStates?.[entry.id] || {};
-            return { ...entry, entity, state, appearance: String(entity?.appearance || entity?.description || ''), activity: String(state.activity || state.currentActivity || '') };
-        });
-    const snapshots = (protocol.readerSnapshots || []).filter(snapshot => snapshot.status !== 'superseded').slice(-40).reverse();
+    const sceneRelationships = (projection?.relationships || []).map((record, index) => ({
+        id: String(record?.id || record?.relationshipId || `scene:${selectedSnapshot?.id || 'current'}:${index}`),
+        source: 'scene_reader', proposal: false,
+        label: record?.label || [record?.subjectName || record?.subject, record?.targetName || record?.target].filter(Boolean).join(' → ') || 'Scene relationship posture',
+        posture: record?.posture || record?.change || record?.axis || '',
+        evidence: record?.evidence || record?.reason || record?.summary || 'Reader-derived scene posture; not a durable relationship mutation.',
+        raw: safeJsonClone(record)
+    }));
+    const relationshipProposals = (selectedSnapshot?.envelope?.relationshipProposals || []).map((record, index) => ({
+        id: String(record?.id || record?.proposalId || `proposal:${selectedSnapshot?.id || 'current'}:${index}`),
+        source: 'reader_proposal', proposal: true,
+        label: record?.label || [record?.subjectName || record?.subject, record?.targetName || record?.target].filter(Boolean).join(' → ') || 'Relationship proposal',
+        posture: record?.posture || record?.change || '',
+        evidence: record?.evidence || record?.reason || record?.summary || 'Reader proposal awaiting Sidecar review.',
+        raw: safeJsonClone(record)
+    }));
+    const relationships = [...canonicalRelationships, ...sceneRelationships, ...relationshipProposals];
+    const candidates = safeJsonClone(projection?.candidateStructures || []);
     const memory = protocol.memoryGraph || {};
-    const openQuestions = (protocol.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-24).reverse();
-    const workspaceUi = protocol.workspaceUi && typeof protocol.workspaceUi === 'object' ? protocol.workspaceUi : (protocol.workspaceUi = { view: 'scene', open: {} });
-    workspaceUi.view = ['scene', 'relationships', 'characters', 'history'].includes(workspaceUi.view) ? workspaceUi.view : 'scene';
-    workspaceUi.open = workspaceUi.open && typeof workspaceUi.open === 'object' ? workspaceUi.open : {};
+    const openQuestions = safeJsonClone(projection?.questions || (protocol.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-24));
+    const knownCharacters = [
+        ...(world.entities || []).filter(entity => ['npc', 'character', 'person'].includes(String(entity?.type || '').toLowerCase())).map(entity => ({ id: entity.id, name: entity.name || entity.id, canonical: true, entity })),
+        ...candidates.filter(candidate => String(candidate.candidateType || '').toLowerCase() === 'character').map(candidate => ({ id: candidate.candidateId, name: candidate.label || candidate.role || 'Scene character', canonical: false, candidate }))
+    ].filter((entry, index, all) => all.findIndex(other => String(other.id) === String(entry.id)) === index);
     const readerEnabled = world?.sidecarConfig?.tracker?.readerEnabled !== false;
+    const reader = selectedSnapshot?.envelope || null;
+    const historical = workspaceUi.historyMode && !!selectedSnapshot && selectedSnapshot.status !== 'active';
+    const snapshotMatchesLatestTurn = !!activeSnapshot && !!latestTurn
+        && String(activeSnapshot.turnId || '') === String(latestTurn.id || '')
+        && (!latestTurn.takeId || !activeSnapshot.takeId || String(activeSnapshot.takeId) === String(latestTurn.takeId));
+    const legacyReader = !!reader && Number(reader.schemaVersion || 0) < 2;
+    const coverageReferences = reader?.canonicalReferences || buildSidecarCanonicalReferenceManifest(world, sess, `${latestTurn?.playerInput || ''}\n${latestTurn?.narration || ''}\n${latestTurn?.handoff || ''}`);
+    const requiredCharacterSubjects = Array.isArray(reader?.requiredCharacterSubjects) && reader.requiredCharacterSubjects.length
+        ? reader.requiredCharacterSubjects
+        : sidecarReaderRequiredSubjects(coverageReferences, {
+            playerInput: latestTurn?.playerInput || '', narration: latestTurn?.narration || '', handoff: latestTurn?.handoff || '',
+            controlledEntityId: hierarchy?.sequence?.controlledEntityId || sess?.controlledEntityId || 'player'
+        });
+    const readerCoverage = reader
+        ? validateSidecarReaderCoverage(reader, requiredCharacterSubjects, reader?.metadata?.finishReason || '')
+        : { valid: false, error: 'reader_not_available', missing: requiredCharacterSubjects.map(subject => subject.id) };
+    // A snapshot may be perfectly valid as historical evidence yet be unsafe
+    // to present as the latest scene: this happens after an old sparse Reader
+    // run, an interrupted upgrade, or a committed beat that never received a
+    // matching Reader result. Keep it visible as *last settled* evidence, but
+    // never blend it with the new narration and call it current.
+    const readerStale = !historical && readerEnabled && !!reader && (!snapshotMatchesLatestTurn || legacyReader || !readerCoverage.valid);
+    const readerFresh = !!reader && (historical || (!readerStale && snapshotMatchesLatestTurn));
+    const pendingReaderRefresh = !historical
+        ? (protocol.readerRefreshes || []).filter(refresh => refresh.status === 'review'
+            && String(refresh.sourceTurnId || '') === String(latestTurn?.id || '')).at(-1) || null
+        : null;
+    const worldTime = projection?.temporal?.end_clock || projection?.temporal?.time || `${clock.hours24 % 12 || 12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`;
     return {
-        protocol, hierarchy, frame, clock, location, reader, activeSnapshot, latestTurn, failedTurn, incompleteCommit,
-        cast, candidates, relationships, activeCharacters, snapshots, openQuestions, memory, workspaceUi, readerEnabled,
-        status: incompleteCommit ? 'blocked' : failedTurn ? 'warning' : !readerEnabled ? 'muted' : (reader ? 'ready' : 'pending'),
-        worldTime: `${clock.hours24 % 12 || 12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`
+        protocol, hierarchy, frame, clock, reader, activeSnapshot, selectedSnapshot, selectedTurn, projection, latestTurn, failedTurn, incompleteCommit,
+        cast, candidates, relationships, activeCharacters: people, knownCharacters, snapshots, openQuestions, memory, workspaceUi, readerEnabled, historical,
+        location: safeJsonClone(projection?.location || { name: frame?.location_name || frame?.locationName || 'Unknown location', localSpace: '' }),
+        readerFresh, readerStale, legacyReader, readerCoverage, requiredCharacterSubjects, snapshotMatchesLatestTurn, pendingReaderRefresh,
+        status: incompleteCommit ? 'blocked' : failedTurn ? 'warning' : !readerEnabled ? 'muted' : readerStale ? 'stale' : (reader ? 'ready' : 'pending'), worldTime
     };
 }
 
@@ -17354,7 +18559,956 @@ function sidecarWorkspaceAvatar(name) {
     return escapeHTML(String(name || '?').trim().split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?');
 }
 
+// ScenePulse uses a tiny inline graph rather than a numeric wall of text for
+// relationship history.  Keep the renderer dependency-free and feed it only
+// committed Reader snapshots/canonical relationship evidence.
+function sidecarWorkspaceSparkline(model, entry) {
+    const id = String(entry?.id || '').toLowerCase();
+    const values = (model.snapshots || []).slice().reverse().map(snapshot => {
+        const proposals = snapshot?.envelope?.relationshipProposals || snapshot?.envelope?.relationships || [];
+        const hit = (Array.isArray(proposals) ? proposals : []).find(item => String(item?.id || item?.characterId || item?.subject || '').toLowerCase() === id);
+        // A ScenePulse sparkline is evidence history, never a decoration.
+        // Do not turn the latest posture into synthetic prior samples.
+        const raw = hit?.affinity ?? hit?.trust ?? hit?.value ?? hit?.delta ?? hit?.change;
+        const numeric = Number(raw);
+        return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric < 0 ? 50 + numeric / 2 : numeric)) : null;
+    }).filter(value => value != null);
+    if (values.length < 2) return '<svg class="sp-sparkline si-sparkline" viewBox="0 0 90 24" aria-label="No relationship history yet"><path d="M2 20 H88" class="si-sparkline-empty"/></svg>';
+    const points = values.map((value, index) => `${2 + index * (86 / Math.max(values.length - 1, 1))},${22 - (value / 100) * 18}`).join(' ');
+    return `<svg class="sp-sparkline si-sparkline" viewBox="0 0 90 24" aria-label="Relationship trend"><path d="M2 22 H88" class="si-sparkline-axis"/><polyline points="${points}" class="si-sparkline-line"/><circle cx="${2 + (values.length - 1) * (86 / Math.max(values.length - 1, 1))}" cy="${22 - (values.at(-1) / 100) * 18}" r="2.2" class="si-sparkline-dot"/></svg>`;
+}
+
+function sidecarWorkspaceSceneSignals(model) {
+    const scene = model.reader?.scene || {};
+    const entries = [
+        ['Topic', scene.topic], ['Mood', scene.mood || scene.moodAtmosphere],
+        ['Tension', scene.tension], ['Interaction', scene.interactionStyle],
+        ['Sound', scene.sound || scene.environment || scene.soundEnvironment]
+    ].filter(([, value]) => value);
+    return entries;
+}
+
+function sidecarWorkspaceDimensions(model) {
+    const temporal = model.projection?.temporal || model.reader?.temporal || {};
+    const environment = model.projection?.environment || model.reader?.environment || {};
+    const location = model.location || {};
+    const parent = Array.isArray(location.parentLocations) && location.parentLocations.length
+        ? location.parentLocations.map(item => item.name || item.id).filter(Boolean).join(' › ') : '';
+    return [
+        ['Time', model.worldTime || temporal.time || temporal.end_clock],
+        ['Date', temporal.date || temporal.calendarDate],
+        ['Day', temporal.day || temporal.dayOfWeek],
+        ['Location', location.name],
+        ['Local space', location.localSpace || location.authoredDescription],
+        ['Wider place', parent],
+        ['Weather', environment.weather || temporal.weather],
+        ['Environment', environment.description || environment.setting || model.reader?.scene?.environment],
+        ['Lighting', environment.lighting],
+        ['Sound', environment.sound || model.reader?.scene?.sound]
+    ].filter(([, value]) => String(value || '').trim());
+}
+
+function sidecarWorkspaceList(items, empty, fields = ['text', 'summary', 'description', 'label', 'name', 'evidence']) {
+    const values = Array.isArray(items) ? items : [];
+    if (!values.length) return `<div class="si-empty-inline">${escapeHTML(empty)}</div>`;
+    const textOf = item => {
+        if (!isPlainObject(item)) return String(item || '');
+        for (const field of fields) if (item[field]) return String(item[field]);
+        return Object.values(item).find(value => typeof value === 'string') || '';
+    };
+    return `<ul class="si-evidence-list">${values.slice(0, 12).map(item => `<li>${escapeHTML(textOf(item).slice(0, 520))}</li>`).join('')}</ul>`;
+}
+
+function sidecarWorkspaceCharacterCard(entry, model) {
+    const mode = String(entry.mode || 'mentioned');
+    const accent = mode === 'active' ? '#4db8a4' : mode === 'nearby' ? '#7c7cff' : mode === 'audible' ? '#d4a855' : '#738095';
+    const claim = value => sidecarProjectionClaimText(value);
+    const nowRows = [
+        ['Presence', mode],
+        entry.position?.localSpace || entry.localSpace ? ['Position', entry.position?.localSpace || entry.localSpace] : null,
+        entry.activity ? ['Doing', entry.activity] : null,
+        claim(entry.attentionFocus) ? ['Focus', claim(entry.attentionFocus)] : null,
+        claim(entry.emotionalPosture) ? ['Posture', claim(entry.emotionalPosture)] : null
+    ].filter(Boolean);
+    const interpretationRows = [
+        claim(entry.apparentUnderstanding) ? ['Understands', claim(entry.apparentUnderstanding)] : null,
+        claim(entry.noticed) ? ['Noticed', claim(entry.noticed)] : null,
+        claim(entry.likelyUnnoticed) ? ['Did not notice', claim(entry.likelyUnnoticed)] : null,
+        claim(entry.suspicionOrUncertainty) ? ['Uncertain about', claim(entry.suspicionOrUncertainty)] : null,
+        claim(entry.immediateObjectiveOrConcern) ? ['Immediate concern', claim(entry.immediateObjectiveOrConcern)] : null,
+        claim(entry.interpersonalPostures) ? ['Towards others', claim(entry.interpersonalPostures)] : null
+    ].filter(Boolean);
+    const appearanceRows = [
+        entry.appearance ? ['Visible state', entry.appearance] : null,
+        entry.clothing || entry.outfit ? ['Wearing', entry.clothing || entry.outfit] : null,
+        entry.carrying?.length ? ['Carrying', Array.isArray(entry.carrying) ? entry.carrying.join(', ') : entry.carrying] : null
+    ].filter(Boolean);
+    const thought = claim(entry.sceneLocalImpression);
+    const goalRows = [
+        entry.immediateNeed || entry.goal ? ['Need', entry.immediateNeed || entry.goal] : null,
+        entry.shortTermGoal ? ['Short term', entry.shortTermGoal] : null,
+        entry.longTermGoal ? ['Long term', entry.longTermGoal] : null
+    ].filter(Boolean);
+    const epistemic = entry.intelligence?.epistemicLabel || entry.intelligence?.epistemicKind || 'Reader-derived, provisional';
+    const meta = [mode, entry.channel, entry.reason].filter(Boolean).join(' · ') || 'Scene-relevant character';
+    return `<article class="sp-char-card si-character-card ${mode === 'active' || mode === 'remote' ? 'sp-card-open' : ''}" style="--char-accent:${accent};--char-border:${accent};" data-si-character="${escapeHTML(entry.id)}">
+        <header class="sp-char-header" data-si-toggle="character">
+            <span class="sp-char-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.name)}</span></span>
+            <span class="sp-char-name-col"><span class="sp-char-name-row"><strong class="sp-char-name">${escapeHTML(entry.name)}</strong><span class="sp-char-archetype sp-char-archetype-${mode === 'active' ? 'ally' : 'background'}">${escapeHTML(mode)}</span></span><span class="sp-char-meta">${escapeHTML(meta.slice(0, 160))}</span></span>
+            <span class="sp-char-header-spacer"></span>
+        </header>
+        <div class="sp-char-body"><div class="sp-char-subsection-label"><span class="sp-char-subsection-text">Right now</span></div><div class="sp-char-grid">${nowRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div>${appearanceRows.length ? `<div class="sp-char-subsection-label"><span class="sp-char-subsection-text">Visible state</span></div><div class="sp-char-grid">${appearanceRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div>` : ''}${interpretationRows.length || thought ? `<div class="sp-char-subsection-label si-provisional-label"><span class="sp-char-subsection-text">Private scene reading</span><small>${escapeHTML(epistemic)}</small></div>${thought ? `<blockquote class="sp-char-thought-block">“${escapeHTML(thought)}”</blockquote>` : ''}<div class="sp-char-grid">${interpretationRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div>` : `<div class="sp-char-empty">No private-state inference was warranted for this character in this beat.</div>`}${goalRows.length ? `<div class="sp-char-goals">${goalRows.map(([label, value]) => `<div class="sp-char-goal-item"><strong>${escapeHTML(label)}:</strong> ${escapeHTML(String(value))}</div>`).join('')}</div>` : ''}</div>
+    </article>`;
+}
+
+function sidecarWorkspaceHistoryTimeline(model) {
+    const snapshots = model.snapshots || [];
+    if (!snapshots.length) return '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◌</div><strong class="sp-empty-title">No settled Reader history</strong><span class="sp-empty-sub">Accepted Narrator turns appear here after downstream interpretation settles.</span></div>';
+    const timeline = snapshots.slice().reverse().map((snapshot, index) => {
+        const envelope = snapshot.envelope || {};
+        const current = index === 0;
+        const scene = envelope.scene || {};
+        const title = scene.topic || envelope.summary || 'Scene update';
+        const time = envelope.temporal?.meaning || envelope.timeSemantics?.meaning || snapshot.createdAt || '';
+        const status = snapshot.status || 'active';
+        return `<button type="button" class="sp-history-item si-history-item ${current ? 'is-current' : ''}" data-si-snapshot="${escapeHTML(String(snapshot.id || ''))}"><span class="sp-history-marker ${current ? 'is-current' : ''}">${current ? '●' : '○'}</span><span class="sp-history-content"><span class="sp-history-heading"><strong>${escapeHTML(String(title).slice(0, 180))}</strong><span class="sp-history-badge ${status === 'active' ? 'is-current' : ''}">${escapeHTML(status)}</span></span><span class="sp-history-meta">${escapeHTML(String(snapshot.turnId || 'turn'))} · ${escapeHTML(String(envelope.snapshotMode || 'delta'))} · ${escapeHTML(String(time).slice(0, 180))}</span><span class="si-history-summary">${escapeHTML(String(envelope.summary || 'Reader snapshot attached to the accepted turn.').slice(0, 320))}</span></span></button>`;
+    }).join('');
+    const nodes = snapshots.slice().reverse().map((snapshot, index) => `<span class="sp-tl-node" style="left:${snapshots.length === 1 ? 50 : (index / (snapshots.length - 1)) * 100}%" title="${escapeHTML(String(snapshot.turnId || 'turn'))}"><span class="sp-tl-dot ${index === 0 ? 'sp-tl-dot-latest' : ''}"></span><span class="sp-tl-label ${index === 0 ? 'sp-tl-label-active' : ''}">${escapeHTML(String(snapshot.turnId || '').slice(-8))}</span></span>`).join('');
+    return `<div class="sp-tl-bar si-timeline-bar">${nodes}</div><div class="sp-history-list">${timeline}</div>`;
+}
+
+function sidecarWorkspaceThoughts(model) {
+    const people = (model.activeCharacters || []).filter(entry => entry.intelligence && [
+        entry.emotionalPosture, entry.attentionFocus, entry.apparentUnderstanding, entry.noticed,
+        entry.suspicionOrUncertainty, entry.immediateObjectiveOrConcern, entry.sceneLocalImpression
+    ].some(value => sidecarProjectionClaimText(value)));
+    if (!people.length) return '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◌</div><strong class="sp-empty-title">No character readings yet</strong><span class="sp-empty-sub">Reader-derived thoughts appear only when the authored beat gives a character-specific evidence basis.</span></div>';
+    return `<div class="si-thoughts-notice">These are provisional, character-scoped readings. They are not objective world facts or durable memories; settled items become evidence for the separate cognition pipeline.</div><div class="sp-thought-list">${people.map(entry => {
+        const thought = sidecarProjectionClaimText(entry.sceneLocalImpression) || sidecarProjectionClaimText(entry.apparentUnderstanding) || sidecarProjectionClaimText(entry.immediateObjectiveOrConcern);
+        const posture = sidecarProjectionClaimText(entry.emotionalPosture);
+        const attention = sidecarProjectionClaimText(entry.attentionFocus);
+        const noticed = sidecarProjectionClaimText(entry.noticed);
+        return `<article class="sp-thought-card si-thought-card"><header><span class="sp-thought-avatar">${sidecarWorkspaceAvatar(entry.name)}</span><span><strong>${escapeHTML(entry.name)}</strong><small>${escapeHTML(entry.mode || 'relevant')} · provisional reading</small></span></header>${thought ? `<blockquote>“${escapeHTML(thought)}”</blockquote>` : ''}${[posture && ['Emotional posture', posture], attention && ['Attention', attention], noticed && ['Noticed', noticed]].filter(Boolean).map(([label, value]) => `<div class="sp-row si-intelligence-row"><span class="sp-row-label">${escapeHTML(label)}</span><span class="sp-row-value">${escapeHTML(value)}</span></div>`).join('')}</article>`;
+    }).join('')}</div>`;
+}
+
+function sidecarWorkspaceKnownCharacters(model) {
+    const relevantIds = new Set((model.activeCharacters || []).map(entry => String(entry.entityId || entry.id || '')));
+    const known = (model.knownCharacters || []).filter(entry => !relevantIds.has(String(entry.id || '')));
+    if (!known.length) return '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">♙</div><strong class="sp-empty-title">No other known characters</strong><span class="sp-empty-sub">Characters with current scene relevance are already shown in the scene roster.</span></div>';
+    return `<div class="si-known-explainer">This is the canonical registry browser. These characters are not inserted into the current scene merely because they exist in the world.</div><div class="si-known-list">${known.map(entry => `<article class="si-known-character"><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.name)}</span></span><span><strong>${escapeHTML(entry.name)}</strong><small>${entry.canonical ? 'Canonical character · no current scene relevance' : 'Scene candidate'}</small></span></article>`).join('')}</div>`;
+}
+
+// ScenePulse's relationship blocks are deliberately a separate renderer: the
+// home scene, Relationships browser and future graph all consume the same
+// accepted Horde relationship records.  This is presentation only; it never
+// supplies a fallback value or invents a history sample.
+function sidecarWorkspaceRelationshipMarkup(model) {
+    if (!model.relationships.length) return '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◎</div><strong class="sp-empty-title">No relationship records</strong><span class="sp-empty-sub">Relationship posture becomes visible as evidence is committed.</span></div>';
+    return `<div class="si-relationship-intro">Committed relationship posture and Reader proposals are shown separately. A proposal remains amber until Sidecar evidence is accepted.</div>${model.relationships.map(entry => {
+        const numeric = Number(entry.posture);
+        const width = Number.isFinite(numeric) ? Math.min(100, Math.max(8, numeric < 0 ? 50 + numeric / 2 : numeric)) : null;
+        const display = entry.posture ?? 'unresolved';
+        const meter = width === null
+            ? '<div class="sp-meter-row"><span class="sp-meter-label">Posture</span><span class="sp-meter-bar-na"></span><span class="sp-meter-value-na">qualitative</span></div>'
+            : `<div class="sp-meter-row"><span class="sp-meter-label">Posture</span><span class="sp-meter-bar-wrap"><span class="sp-meter-bar-track"><span class="sp-meter-bar-fill" style="width:${width}%"></span></span></span><span class="sp-meter-value">${escapeHTML(String(display))}</span>${sidecarWorkspaceSparkline(model, entry)}</div>`;
+        return `<article class="sp-rel-block si-rel-block ${entry.proposal ? 'is-proposal' : ''}" style="--char-accent:${entry.proposal ? '#d4a855' : '#4db8a4'};--char-border:${entry.proposal ? '#d4a855' : '#4db8a4'}"><header class="sp-rel-header"><span class="sp-rel-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.label)}</span></span><span class="sp-rel-name">${escapeHTML(entry.label)}</span><span class="sp-rel-type-badge">${escapeHTML(entry.proposal ? 'proposal' : 'canonical')}</span><span class="sp-rel-phase-badge">${escapeHTML(String(display))}</span></header><div class="sp-rel-body si-rel-body"><div class="sp-rel-meta"><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Evidence</span><span>${escapeHTML(entry.evidence || (entry.proposal ? 'Reader proposal awaiting Sidecar review.' : 'Canonical relationship state.'))}</span></div></div>${meter}${entry.proposal ? '<div class="si-card-actions"><button type="button" class="btn btn-ghost" data-si-action="relationship:' + escapeHTML(entry.id) + '">Review evidence</button></div>' : ''}</div></article>`;
+    }).join('')}`;
+}
+
+// Pinned verbatim from ScenePulse v6.27.20's TOUR_EXAMPLE_DATA.  This is a
+// deliberate development fixture: it is only ever presented after the user
+// selects the clearly labelled Demo view, and is never merged into a Horde
+// world, timeline, receipt, or Reader snapshot.
+const SCENEPULSE_TOUR_EXAMPLE_DATA = Object.freeze({
+    time: '14:32:00', date: '03/17/2025 (Monday)', location: 'Main Floor > Cafe Lune', weather: 'Overcast, light rain', temperature: '14°C / 57°F — cool, damp',
+    sceneTopic: 'Tense customer interaction during afternoon rush', sceneMood: 'Anxious, simmering conflict', sceneInteraction: 'Strained professionalism breaking down', sceneTension: 'high',
+    sceneSummary: 'Three customers entered during the afternoon lull. The lead customer is agitated about a previous order mistake, and the barista is struggling to maintain composure after an exhausting morning shift.',
+    soundEnvironment: 'Espresso machine hissing, rain against windows, distant traffic, phone buzzing on counter', charactersPresent: ['Elena Vasquez', 'Marcus Chen', 'Yuki Tanaka'], northStar: 'Build a life worth staying in',
+    mainQuests: [
+        { name: 'Keep the cafe from going under', urgency: 'high', detail: 'Monthly revenue is 15% below break-even. Need to boost foot traffic or cut costs within 60 days or the lease is gone.' },
+        { name: 'Repair the relationship with Mom', urgency: 'moderate', detail: 'Haven’t spoken in three weeks after the argument about the inheritance. She left a voicemail yesterday but it hasn’t been played yet.' }
+    ],
+    sideQuests: [{ name: 'Learn to cook something other than instant ramen', urgency: 'low', detail: 'Elena offered to teach a few recipes. Haven’t taken her up on it yet.' }],
+    relationships: [
+        { name: 'Elena Vasquez', relType: 'Co-worker', relPhase: 'Friendly', timeTogether: '3 months', milestone: 'Covered my shift when no one else would.', affection: 62, affectionLabel: 'Warm', trust: 55, trustLabel: 'Building', desire: 20, desireLabel: '', stress: 30, stressLabel: 'Manageable', compatibility: 68, compatibilityLabel: 'Natural fit' },
+        { name: 'Marcus Chen', relType: 'Customer', relPhase: 'Hostile', timeTogether: '2 months', milestone: 'Filed a formal complaint about a wrong order.', affection: 8, affectionLabel: 'Cold', trust: 12, trustLabel: 'Distrustful', desire: 0, desireLabel: 'N/A', stress: 72, stressLabel: 'High friction', compatibility: 15, compatibilityLabel: 'Oil and water' },
+        { name: 'Yuki Tanaka', relType: 'Customer', relPhase: 'Strangers', timeTogether: 'Less than a minute', milestone: 'Walked in during the confrontation.', affection: 0, affectionLabel: '', trust: 0, trustLabel: '', desire: 0, desireLabel: '', stress: 10, stressLabel: '', compatibility: 0, compatibilityLabel: '' }
+    ],
+    characters: [
+        { name: 'Elena Vasquez', role: 'Co-worker, afternoon shift barista', innerThought: 'If Marcus starts yelling again I’m stepping in. Last time was too much.', immediateNeed: 'Keep the peace while orders get filled', shortTermGoal: 'Finish the shift without drama', longTermGoal: 'Save enough to go back to school', hair: 'Dark brown, pulled back in a messy bun', face: 'Olive skin, warm brown eyes, slight worry crease between brows', outfit: 'Cafe Lune apron over a grey henley, black jeans, worn Converse; slightly disheveled after the lunch rush', posture: 'Shoulders forward behind the bar, weight shifted to left foot; alert and slightly tense', proximity: 'Behind the counter, 3 feet from the register', notableDetails: 'Small coffee-bean tattoo on inner left wrist', inventory: ['Phone in back pocket', 'Car keys on hook', 'Notebook with drink recipes'], fertStatus: 'N/A', fertNotes: '' },
+        { name: 'Marcus Chen', role: 'Regular customer, office worker', innerThought: 'I specifically said no foam. Every single time. Do they even listen?', immediateNeed: 'Get the correct order this time', shortTermGoal: 'Make it back to the office before his 3pm meeting', longTermGoal: 'Make partner at the consulting firm by next year', hair: 'Black, neatly parted, product-styled', face: 'East Asian, clean-shaven, jaw clenched, reading glasses pushed up on forehead', outfit: 'Navy suit jacket over white dress shirt (no tie), charcoal slacks, leather oxfords; neat', posture: 'Upright, arms crossed, leaning slightly forward; impatient and alert', proximity: 'At the register, face-to-face with Elena', notableDetails: 'Wedding ring on left hand; small nick on right jaw from a rushed morning shave', inventory: ['Leather briefcase', 'Phone in hand', 'Wallet'], fertStatus: 'N/A', fertNotes: '' },
+        { name: 'Yuki Tanaka', role: 'New customer, freelance photographer', innerThought: 'This place has good light. But what’s happening at the counter looks intense.', immediateNeed: 'Order a coffee without getting caught in the crossfire', shortTermGoal: 'Scout this neighborhood for her photo series', longTermGoal: 'Get her work into a gallery showing', hair: 'Bleached tips over natural black, shoulder-length, slightly damp from rain', face: 'Round face, curious dark eyes scanning the room, small nose ring', outfit: 'Oversized denim jacket over a band tee, cargo pants, platform boots; casual', posture: 'Standing just inside the doorway, weight back on heels; alert but not tense', proximity: 'Near the entrance, about 8 feet from the counter', notableDetails: 'Camera strap wear on right shoulder', inventory: ['Camera bag (Canon R5)', 'Phone', 'Wallet', 'Folding umbrella'], fertStatus: 'N/A', fertNotes: '' }
+    ],
+    plotBranches: [
+        { type: 'dramatic', name: 'Marcus threatens a review bomb', hook: 'He pulls out his phone and starts typing a one-star review right there at the counter. Elena sees it and her expression hardens.' },
+        { type: 'comedic', name: 'The espresso machine finally gives out', hook: 'Mid-confrontation, the overheating machine lets out a dramatic hiss and sprays steam. Everyone freezes. The tension breaks — or doubles.' },
+        { type: 'twist', name: 'Yuki recognizes Marcus', hook: 'She realizes Marcus is the same person who rejected her photography proposal at his firm last month. She hasn’t decided if she should say anything.' },
+        { type: 'exploratory', name: 'Elena’s notebook secret', hook: 'While reaching for a cup, Elena’s notebook falls open. The pages aren’t drink recipes — they’re detailed sketches of the cafe’s customers.' },
+        { type: 'intense', name: 'The voicemail plays on speaker', hook: 'Phone buzzes on the counter — Mom’s voicemail starts playing through the speakers. Everyone in the cafe hears the first few words.' }
+    ]
+});
+
+// ScenePulse's own guided tour uses one populated tracker record and a
+// twelve-node illustrative timeline.  Keep it completely separate from a
+// Horde world: nothing in this object reads, writes, or borrows a Turn,
+// character, relationship, quest, or snapshot from the current timeline.
+const SCENEPULSE_TOUR_TIMELINE = Object.freeze(Array.from({ length: 12 }, (_, index) => ({
+    id: `tour-${15 + index}`, label: `#${15 + index}`, current: index === 11
+})));
+
+function sealScenePulseTourFixture(value) {
+    if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+    Object.values(value).forEach(sealScenePulseTourFixture);
+    return Object.freeze(value);
+}
+
+function scenePulseTourState() {
+    if (!window.HordeScenePulseTour) {
+        window.HordeScenePulseTour = {
+            // Gate A's only input.  The integrated ScenePulse module accepts
+            // this handoff alone; it cannot see a Horde world, model result,
+            // canonical registry, quest store, or timeline until Gate B.
+            acceptedHandoff: Object.freeze({
+                id: 'scenepulse-tour-example-data-accepted',
+                status: 'accepted_fixture',
+                source: 'ScenePulse TOUR_EXAMPLE_DATA (v6.27.20)',
+                scenePulse: sealScenePulseTourFixture(safeJsonClone(SCENEPULSE_TOUR_EXAMPLE_DATA))
+            })
+        };
+    }
+    return window.HordeScenePulseTour;
+}
+
+// Gate B is intentionally a very small host boundary.  ScenePulse receives
+// only the sealed source fixture plus an exact, settled Reader projection for
+// the newest authored beat.  In particular, do not "help" a sparse Reader
+// result with World entities, quests, locations, canonical relationships, or
+// a stale Sidecar workspace model: a missing source field must remain visibly
+// fixture-backed until the Reader's own sync path supplies it.
+function scenePulseAcceptedHandoff(world, sess) {
+    const fixture = scenePulseTourState().acceptedHandoff;
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const storedUiPreferences = protocol?.workspaceUi?.scenePulseWorlds;
+    const uiPreferences = storedUiPreferences ? scenePulseWorldsHandoffPreferences(world, storedUiPreferences) : null;
+    // UI preferences are deliberately outside the ScenePulse data projection:
+    // they can survive a fixture/live switch, but never supply a source field.
+    const fixtureWithPreferences = uiPreferences ? Object.freeze({ ...fixture, uiPreferences }) : fixture;
+    const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
+    if (!protocol || !latestTurn || sidecarTurnNeedsDownstreamRecovery(latestTurn)) return fixtureWithPreferences;
+    if (!['active', 'committed'].includes(String(latestTurn.status || '').toLowerCase())
+        && String(latestTurn.reconciliationStatus || '').toLowerCase() !== 'committed') return fixtureWithPreferences;
+
+    const settled = (protocol.readerSnapshots || [])
+        .filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
+            && snapshot?.settlementStatus === 'settled'
+            && String(snapshot?.turnId || '') === String(latestTurn.id || ''))
+        .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')))
+        .at(-1);
+    const envelope = settled?.envelope || null;
+    const sourceTurnMatches = String(envelope?.sourceTurnId || settled?.turnId || '') === String(latestTurn.id || '');
+    // Reader stores the unmerged packet on the authored Turn.  Keep it for
+    // the source Diff Inspector. Reapply the exact current compact patch to
+    // the settled projection at this presentation boundary: it is idempotent
+    // for a valid envelope and repairs already-stored keyed record maps from
+    // before the reducer learned that compact wire form.
+    const deltaScenePulse = isPlainObject(latestTurn.reader?.scenePulse) ? latestTurn.reader.scenePulse : {};
+    const settledScenePulse = isPlainObject(envelope?.scenePulse) ? envelope.scenePulse : null;
+    const acceptedScenePulse = settledScenePulse && Object.keys(deltaScenePulse).length
+        ? sidecarMergeScenePulse(settledScenePulse, deltaScenePulse)
+        : settledScenePulse;
+    if (!settled || !sourceTurnMatches || !acceptedScenePulse || !Object.keys(acceptedScenePulse).length) return fixtureWithPreferences;
+
+    const readerPreset = effectiveSidecarReaderProfile(world, sess)?.scenePulsePreset || null;
+    const historySnapshots = (protocol.readerSnapshots || [])
+        .filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status) && snapshot?.settlementStatus === 'settled')
+        .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')));
+    const currentIndex = historySnapshots.findIndex(snapshot => snapshot.id === settled.id);
+    const predecessor = currentIndex > 0 ? historySnapshots[currentIndex - 1] : null;
+    const history = historySnapshots.slice(0, currentIndex + 1).map((snapshot, index, snapshots) => {
+        const sourceTurn = (protocol.turns || []).find(turn => String(turn?.id || '') === String(snapshot.turnId || '')) || null;
+        const rawDelta = isPlainObject(sourceTurn?.reader?.scenePulse) ? sourceTurn.reader.scenePulse : {};
+        const storedProjection = isPlainObject(snapshot.envelope?.scenePulse) ? snapshot.envelope.scenePulse : {};
+        // Preserve the source's compact wire packet for that particular
+        // accepted moment, while repairing historical keyed maps with the
+        // same idempotent reducer used for the current projection.
+        const projection = Object.keys(rawDelta).length ? sidecarMergeScenePulse(storedProjection, rawDelta) : storedProjection;
+        const priorSnapshot = index > 0 ? snapshots[index - 1] : null;
+        const priorTurn = priorSnapshot && (protocol.turns || []).find(turn => String(turn?.id || '') === String(priorSnapshot.turnId || ''));
+        const priorDelta = isPlainObject(priorTurn?.reader?.scenePulse) ? priorTurn.reader.scenePulse : {};
+        const priorStored = isPlainObject(priorSnapshot?.envelope?.scenePulse) ? priorSnapshot.envelope.scenePulse : null;
+        const usage = snapshot.envelope?.metadata?.usage;
+        // Historic snapshots may have placeholder zeroes from before calls
+        // measured their own lifetime. Only the explicit reader-call marker is
+        // measurement evidence; absence is never rendered as a fast call.
+        const recordedMetric = field => usage?.source === 'reader_call' && typeof usage?.[field] === 'number' && Number.isFinite(usage[field]) && usage[field] > 0 ? usage[field] : null;
+        return {
+            id: String(snapshot.id || ''),
+            label: `Turn ${index + 1}`,
+            current: snapshot.id === settled.id,
+            createdAt: snapshot.createdAt || '',
+            summary: String(snapshot.envelope?.summary || projection.sceneSummary || snapshot.envelope?.scene?.topic || 'Accepted ScenePulse reading').slice(0, 600),
+            turnId: String(snapshot.turnId || ''),
+            analytics: {
+                model: String(snapshot.envelope?.metadata?.model || snapshot.model || ''),
+                provider: String(snapshot.envelope?.metadata?.provider || snapshot.provider || ''),
+                mode: String(snapshot.envelope?.snapshotMode || snapshot.provenance?.readerMode || 'delta'),
+                elapsedMs: recordedMetric('elapsedMs'),
+                promptTokens: recordedMetric('promptTokens'),
+                completionTokens: recordedMetric('completionTokens'),
+                totalTokens: recordedMetric('totalTokens'),
+                providerReportedUsage: usage?.source === 'reader_call' && usage?.providerReportedUsage === true,
+                deltaBytes: JSON.stringify(rawDelta).length,
+                changedFields: Object.keys(rawDelta).filter(key => !['clearFields', 'clear_fields', 'replaceCollections', 'replace_collections'].includes(key)).length
+            },
+            scenePulse: safeJsonClone(projection),
+            previousScenePulse: priorStored ? safeJsonClone(Object.keys(priorDelta).length ? sidecarMergeScenePulse(priorStored, priorDelta) : priorStored) : null,
+            deltaScenePulse: safeJsonClone(rawDelta),
+            clearFields: Array.isArray(rawDelta.clearFields || rawDelta.clear_fields) ? safeJsonClone(rawDelta.clearFields || rawDelta.clear_fields) : [],
+            replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? safeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : []
+        };
+    });
+    return Object.freeze({
+        id: `scenepulse-live-${settled.id}`,
+        status: 'accepted_live',
+        source: `Accepted Horde Reader handoff · ${settled.id}`,
+        fixtureScenePulse: fixture.scenePulse,
+        scenePulse: safeJsonClone(acceptedScenePulse),
+        previousScenePulse: predecessor?.envelope?.scenePulse ? safeJsonClone(predecessor.envelope.scenePulse) : null,
+        deltaScenePulse: safeJsonClone(deltaScenePulse),
+        clearFields: Array.isArray(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) ? safeJsonClone(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) : [],
+        replaceCollections: Array.isArray(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) ? safeJsonClone(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) : [],
+        history: safeJsonClone(history),
+        readerPreset: safeJsonClone(readerPreset),
+        uiPreferences,
+        provenance: Object.freeze({ turnId: String(latestTurn.id || ''), snapshotId: String(settled.id || ''), readerMode: String(envelope.snapshotMode || 'delta') })
+    });
+}
+
+// Source Refresh regenerates a derived Reader projection for the current
+// accepted authored beat. It never reruns Narrator, advances canonical time,
+// or substitutes registry data for a missing ScenePulse field.
+async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
+    if (!latestTurn) throw new Error('No accepted authored turn is available to refresh.');
+    const section = String(options?.section || '');
+    if (section === 'thoughts') {
+        await refreshScenePulseThoughts(world, sess, latestTurn.id);
+        showToast('ScenePulse thoughts refreshed from the accepted authored beat.', 'success');
+        return;
+    }
+    const refresh = await refreshSidecarSceneIntelligence(world, sess, latestTurn.id);
+    if (refresh?.status === 'review') {
+        acceptSidecarReaderRefresh(world, sess, refresh.id);
+        await saveState();
+        renderWorldPlayState();
+        showToast(section ? `ScenePulse ${section} refresh accepted from the authored beat.` : 'ScenePulse refresh accepted from the authored beat.', 'success');
+        return;
+    }
+    // Recovery can return a settled retry rather than a review packet. The
+    // caller still receives a truthful completion without issuing Narrator.
+    showToast('ScenePulse refresh settled against the accepted authored beat.', 'success');
+}
+
+// Keep the source Story-Idea controls source-faithful without placing Horde
+// composer knowledge in the imported module. Paste stages the exact OOC
+// direction for review; Inject deliberately follows the source's immediate
+// send semantics only after the user clicks that explicit control.
+function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
+    const text = String(direction || '').trim();
+    if (!text) throw new Error('The selected Story Idea has no direction text.');
+    const input = document.getElementById('world-user-input');
+    if (!input) throw new Error('The World composer is unavailable.');
+    if (inject && worldTurnInProgress) throw new Error('The current World turn is still generating.');
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    resizeWorldMessageInput(input);
+    input.focus();
+    if (!inject) {
+        showToast('Story direction pasted into the World draft — edit and send when ready.', 'success');
+        return;
+    }
+    const send = document.getElementById('world-send-btn');
+    if (!send) throw new Error('The World send control is unavailable.');
+    send.click();
+    showToast('Story direction injected as a new World turn.', 'success');
+}
+
+// A source preset is a Reader-prompt selection, not a provider/sampler
+// takeover. It is persisted in the World-scoped Reader profile and only takes
+// effect on a later Reader call; accepted turns retain their original prompt
+// provenance and no Narrator or canonical state is replayed.
+async function applyScenePulseReaderPreset(world, sess, rawPreset = {}) {
+    const profile = window.HordeSidecarReader?.normalizeProfile?.({ scenePulsePreset: rawPreset }) || {};
+    if (!profile.scenePulsePreset?.id) throw new Error('The ScenePulse preset is incomplete.');
+    const existing = world?.sidecarConfig?.tracker?.readerProfile || {};
+    world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({
+        ...world,
+        sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerProfileInherit: false, readerProfile: { ...existing, scenePulsePreset: profile.scenePulsePreset } } }
+    }) || world.sidecarConfig;
+    if (!world?.sidecarConfig?.tracker?.readerProfile?.scenePulsePreset?.id) throw new Error('Horde could not persist the ScenePulse preset selection.');
+    await saveState();
+    renderWorldPlayState();
+    return world.sidecarConfig.tracker.readerProfile.scenePulsePreset;
+}
+
+// Source /sp export is intentionally scoped to the ScenePulse tracker.  A
+// Worlds export follows the same boundary: accepted Reader ScenePulse
+// projections and their Reader-profile provenance, never World entities,
+// narration, canonical receipts, or provider request bodies.
+function exportScenePulseReaderHistory(world, sess) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const snapshots = (protocol?.readerSnapshots || []).filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
+        && snapshot?.settlementStatus === 'settled');
+    if (!snapshots.length) return { count: 0, message: 'No accepted ScenePulse Reader snapshots to export.' };
+    const profile = effectiveSidecarReaderProfile(world, sess);
+    const exportData = {
+        extension: 'ScenePulse', version: '6.27.20', exportedAt: new Date().toISOString(),
+        scope: 'accepted_reader_scenepulse_projections_only', readerPreset: safeJsonClone(profile.scenePulsePreset || null), snapshotCount: snapshots.length,
+        snapshots: snapshots.map(snapshot => {
+            const sourceTurn = (protocol.turns || []).find(turn => String(turn?.id || '') === String(snapshot.turnId || '')) || null;
+            const rawDelta = isPlainObject(sourceTurn?.reader?.scenePulse) ? sourceTurn.reader.scenePulse : {};
+            return {
+                id: snapshot.id, createdAt: snapshot.createdAt, turnId: snapshot.turnId, mode: snapshot.envelope?.snapshotMode || 'delta',
+                changedFields: safeJsonClone(snapshot.envelope?.changedFields || []), compactScenePulseDelta: safeJsonClone(rawDelta),
+                scenePulse: safeJsonClone(snapshot.envelope?.scenePulse || {}), preset: safeJsonClone(snapshot.envelope?.metadata?.scenePulsePreset || null),
+                usage: safeJsonClone(snapshot.envelope?.metadata?.usage || {})
+            };
+        })
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `scenepulse-reader-history-${Date.now()}.json`; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    return { count: snapshots.length, message: `Exported ${snapshots.length} accepted ScenePulse Reader snapshot${snapshots.length === 1 ? '' : 's'}.` };
+}
+
+// Source /sp clear clears tracker data, not the chat.  Keep that destructive
+// boundary narrow in Worlds: only derived Reader snapshots/projections are
+// removed after the source console's explicit confirmation.  Narration,
+// canonical state, entities, receipts and the composer are all left intact.
+async function clearScenePulseReaderHistory(world, sess) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    if (!protocol) throw new Error('No World ScenePulse tracker is available.');
+    const count = (protocol.readerSnapshots || []).filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
+        && snapshot?.settlementStatus === 'settled').length;
+    if (!count) return { count: 0, message: 'No accepted ScenePulse Reader snapshots to clear.' };
+    protocol.readerSnapshots = [];
+    protocol.readerRefreshes = [];
+    protocol.sceneProjections = [];
+    protocol.sceneProjection = null;
+    (protocol.turns || []).forEach(turn => {
+        turn.readerSnapshotId = '';
+        turn.readerEnvelope = null;
+        turn.reader = null;
+    });
+    protocol.packet = buildSidecarScenePacket(world, sess, '');
+    await saveState();
+    renderWorldPlayState();
+    return { count, message: `Cleared ${count} ScenePulse Reader snapshot${count === 1 ? '' : 's'}; narration and canonical World state were preserved.` };
+}
+
+// These are presentation preferences, not ScenePulse evidence.  Persist only
+// a compact, whitelisted source-panel shape per World timeline so a source
+// control never smuggles registry/canonical state into the adapter boundary.
+function normalizeScenePulseWorldsPreferences(raw = {}) {
+    const source = isPlainObject(raw) ? raw : {};
+    const bools = (value, keys) => Object.fromEntries(keys.map(key => [key, value?.[key] !== false]));
+    const panels = bools(source.panels, ['dashboard', 'scene', 'quests', 'relationships', 'characters', 'branches']);
+    const features = bools(source.features, ['thoughts', 'weather', 'timeTint', 'transitions']);
+    const theme = ['default', 'midnight', 'fantasy', 'cyberpunk', 'minimal'].includes(String(source.theme || '')) ? source.theme : 'default';
+    const number = (value, fallback, min, max) => Number.isFinite(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback;
+    const customPanels = Array.isArray(source.customPanels) ? source.customPanels.slice(0, 20).map(panel => ({
+        name: String(panel?.name || 'Custom Panel').slice(0, 120), enabled: panel?.enabled !== false,
+        fields: (Array.isArray(panel?.fields) ? panel.fields : []).slice(0, 80).map(field => ({
+            key: String(field?.key || 'field').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 80) || 'field',
+            label: String(field?.label || 'Field').slice(0, 120),
+            type: ['text', 'number', 'meter', 'list', 'enum'].includes(String(field?.type || '')) ? field.type : 'text',
+            desc: String(field?.desc || '').slice(0, 600), enabled: field?.enabled !== false,
+            options: Array.isArray(field?.options) ? field.options.slice(0, 48).map(option => String(option || '').trim().slice(0, 120)).filter(Boolean) : [],
+            invert: field?.invert === true
+        }))
+    })) : [];
+    const identityMap = (value, valueLimit) => Object.fromEntries(Object.entries(isPlainObject(value) ? value : {})
+        .filter(([identity, item]) => /^(?:reader|fixture):[A-Za-z0-9_.:-]{1,180}$/.test(String(identity || '')) && String(item || '').trim())
+        .slice(0, 120)
+        .map(([identity, item]) => [String(identity), String(item).trim().slice(0, valueLimit)]));
+    const portraitAssetIds = identityMap(source.portraitAssetIds, 160);
+    const wikiNotes = identityMap(source.wikiNotes, 4_000);
+    return {
+        panels, features, compact: source.compact === true, showEmpty: source.showEmpty === true, thoughtsOpen: source.thoughtsOpen !== false,
+        thoughtGhost: source.thoughtGhost === true, thoughtSnap: source.thoughtSnap !== false, thoughtFit: source.thoughtFit === true,
+        thoughtWidth: number(source.thoughtWidth, 340, 220, 1400), thoughtHeight: number(source.thoughtHeight, 400, 160, 1200),
+        thoughtX: number(source.thoughtX, 8, 0, 12000), thoughtY: number(source.thoughtY, 68, 0, 12000),
+        theme, fontScale: number(source.fontScale, 1, .7, 1.5), customPanels, portraitAssetIds, wikiNotes
+    };
+}
+
+// Portrait data stays in portable Horde media storage. The ScenePulse
+// preference record contains only an asset ID under a stable Reader identity;
+// this handoff adds its renderable data URL without promoting it into the
+// Reader projection, canonical entity, or prompt context.
+function scenePulseWorldsHandoffPreferences(world, rawPreferences = {}) {
+    const preferences = normalizeScenePulseWorldsPreferences(rawPreferences);
+    const portraitSources = {};
+    Object.entries(preferences.portraitAssetIds || {}).forEach(([identity, assetId]) => {
+        const source = worldMediaSource(world, assetId);
+        if (source) portraitSources[identity] = source;
+    });
+    return { ...preferences, portraitSources };
+}
+
+async function persistScenePulseWorldsPreferences(world, sess, rawPreferences = {}) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    if (!protocol) throw new Error('No World timeline is available for ScenePulse preferences.');
+    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(rawPreferences);
+    await saveState();
+    return protocol.workspaceUi.scenePulseWorlds;
+}
+
+async function saveScenePulsePortraitOverride(world, sess, payload = {}) {
+    const identity = String(payload?.identity || '').trim();
+    if (!/^(?:reader|fixture):[A-Za-z0-9_.:-]{1,180}$/.test(identity)) throw new Error('ScenePulse portrait identity is invalid.');
+    const data = String(payload?.data || '');
+    if (!/^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(data)) throw new Error('Choose an embedded image file for the ScenePulse portrait.');
+    const protocol = protocolForSidecarTimeline(world, sess);
+    if (!protocol) throw new Error('No World timeline is available for this ScenePulse portrait.');
+    const assetId = addWorldMediaAsset(world, data, 'scenepulse_portrait', String(payload?.label || 'ScenePulse portrait').slice(0, 240), {
+        prompt: `Manual ScenePulse portrait override for ${identity}. This is presentation media, not Reader evidence.`
+    });
+    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    const preferences = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
+    preferences.portraitAssetIds[identity] = assetId;
+    protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(preferences);
+    await saveState();
+    return { assetId, source: worldMediaSource(world, assetId) };
+}
+
+async function clearScenePulsePortraitOverride(world, sess, payload = {}) {
+    const identity = String(payload?.identity || '').trim();
+    if (!/^(?:reader|fixture):[A-Za-z0-9_.:-]{1,180}$/.test(identity)) throw new Error('ScenePulse portrait identity is invalid.');
+    const protocol = protocolForSidecarTimeline(world, sess);
+    if (!protocol) throw new Error('No World timeline is available for this ScenePulse portrait.');
+    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    const preferences = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
+    delete preferences.portraitAssetIds[identity];
+    // Retain the shared/reusable media asset. Clearing an override changes
+    // only this ScenePulse association and cannot unexpectedly delete media.
+    protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(preferences);
+    await saveState();
+    return { identity };
+}
+
+// The imported ScenePulse surface emits this small, named boundary event for
+// actions that belong to Horde.  It has no direct composer/session knowledge:
+// Horde claims only recognized actions and returns the promise that represents
+// the real result.  Replacing the handler per render keeps its World/session
+// closure exact without accumulating duplicate listeners.
+function bindScenePulseWorldsHostActions(host, world, sess) {
+    const prior = host.__scenePulseHostActionHandler;
+    if (prior) host.removeEventListener('horde-scenepulse-action', prior);
+    const handler = event => {
+        const detail = event?.detail;
+        if (!detail || typeof detail !== 'object') return;
+        if (detail.action === 'stage-story-idea') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => stageScenePulseStoryIdea({ direction: detail.direction, inject: detail.inject === true }));
+            return;
+        }
+        if (detail.action === 'refresh-scene-pulse') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => refreshAcceptedScenePulseProjection(world, sess, { section: detail.section || '' }));
+            return;
+        }
+        if (detail.action === 'apply-scenepulse-preset') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => applyScenePulseReaderPreset(world, sess, detail.preset || {}));
+            return;
+        }
+        if (detail.action === 'export-scenepulse-history') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => exportScenePulseReaderHistory(world, sess));
+            return;
+        }
+        if (detail.action === 'clear-scenepulse-history') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => clearScenePulseReaderHistory(world, sess));
+            return;
+        }
+        if (detail.action === 'persist-scenepulse-view-preferences') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => persistScenePulseWorldsPreferences(world, sess, detail.preferences || {}));
+            return;
+        }
+        if (detail.action === 'save-scenepulse-portrait') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => saveScenePulsePortraitOverride(world, sess, detail));
+            return;
+        }
+        if (detail.action === 'clear-scenepulse-portrait') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => clearScenePulsePortraitOverride(world, sess, detail));
+            return;
+        }
+    };
+    host.__scenePulseHostActionHandler = handler;
+    host.addEventListener('horde-scenepulse-action', handler);
+}
+
+function unbindScenePulseWorldsHostActions(host) {
+    if (!host?.__scenePulseHostActionHandler) return;
+    host.removeEventListener('horde-scenepulse-action', host.__scenePulseHostActionHandler);
+    delete host.__scenePulseHostActionHandler;
+}
+
+function scenePulseTourDossiers(data) {
+    return (data.characters || []).map((character, index) => ({
+        ...safeJsonClone(character), id: `tour-character-${index}`, canonical: false, current: safeJsonClone(character),
+        observations: [{ at: 'Tour fixture', snapshotId: 'tour-26', thought: String(character.innerThought || ''), summary: String(data.sceneSummary || ''), location: String(data.location || '') }]
+    }));
+}
+
+function scenePulseClaimText(value) {
+    if (Array.isArray(value)) return value.map(scenePulseClaimText).filter(Boolean).join(' · ');
+    if (isPlainObject(value)) return String(value.text || value.thought || value.value || value.summary || value.description || '').trim();
+    return String(value || '').trim();
+}
+
+// ScenePulse uses colour as a recognition aid.  The host's stable entity or
+// candidate identifier, never a mutable display name alone, determines it.
+function scenePulseIdentityColor(identity = '') {
+    let hash = 0;
+    for (const char of String(identity || 'scene-pulse')) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+    return `hsl(${Math.abs(hash) % 360} 54% 61%)`;
+}
+
+function scenePulseTimePhase(time = '') {
+    const match = String(time || '').match(/\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\b/i);
+    if (!match) return '';
+    let hour = Number(match[1]);
+    if (/pm/i.test(match[3]) && hour !== 12) hour += 12;
+    if (/am/i.test(match[3]) && hour === 12) hour = 0;
+    if (!match[3] && hour > 23) return '';
+    return hour < 6 ? 'night' : hour < 10 ? 'dawn' : hour < 17 ? 'day' : hour < 21 ? 'dusk' : 'night';
+}
+
+// The dossier is an encounter browser, not a second entity registry.  It
+// joins Horde's stable identity/candidate records with accepted ScenePulse
+// readings so someone can leave the scene without being erased from view.
+function scenePulseDossiers(world, model, data) {
+    const records = new Map();
+    const keyFor = (id, name) => String(id || `name:${String(name || '').trim().toLowerCase()}`);
+    const upsert = (entry = {}) => {
+        const id = String(entry.id || entry.entityId || entry.candidateId || '').trim();
+        const name = String(entry.name || entry.label || '').trim();
+        if (!name) return null;
+        let key = keyFor(id, name);
+        // Older accepted ScenePulse samples may predate host identity binding
+        // and therefore have only a name.  Join that history to the newly
+        // resolved identity rather than rendering two dossiers.
+        if (!records.has(key)) {
+            const named = [...records.entries()].find(([, record]) => String(record.name || '').toLowerCase() === name.toLowerCase());
+            if (named) key = named[0];
+        }
+        const prior = records.get(key) || { id: id || key, name, aliases: [], role: '', archetype: '', canonical: false, entity: null, candidate: null, current: null, observations: [] };
+        prior.name = name || prior.name;
+        prior.aliases = [...new Set([...(prior.aliases || []), ...(Array.isArray(entry.aliases) ? entry.aliases : [])].map(value => String(value || '').trim()).filter(Boolean))].slice(0, 24);
+        prior.role = entry.role || prior.role;
+        prior.archetype = entry.archetype || prior.archetype;
+        prior.canonical = prior.canonical || !!entry.canonical;
+        prior.entity = entry.entity || prior.entity;
+        prior.candidate = entry.candidate || prior.candidate;
+        if (entry.current) prior.current = { ...(prior.current || {}), ...entry.current };
+        records.set(key, prior);
+        return prior;
+    };
+    (data.characters || []).forEach(character => upsert({ ...character, current: character, canonical: !!(world.entities || []).find(entity => String(entity?.id) === String(character.id)) }));
+    (model.snapshots || []).forEach(snapshot => {
+        const envelope = snapshot.envelope || {};
+        const characters = Array.isArray(envelope.scenePulse?.characters) ? envelope.scenePulse.characters : [];
+        const intelligence = Array.isArray(envelope.characterIntelligence) ? envelope.characterIntelligence : [];
+        const findIntelligence = character => intelligence.find(item => String(item?.subjectRef || item?.candidateId || '') === String(character?.id || character?.candidateId || '') || String(item?.name || '').toLowerCase() === String(character?.name || '').toLowerCase());
+        characters.forEach(character => {
+            const reading = findIntelligence(character) || {};
+            const record = upsert({ ...character, id: character.id || character.candidateId || reading.subjectRef || reading.candidateId || '', aliases: character.aliases || [] });
+            if (!record) return;
+            record.observations.push({ at: snapshot.createdAt || '', snapshotId: snapshot.id || '', thought: scenePulseClaimText(character.innerThought || reading.sceneLocalImpression), summary: String(envelope.summary || envelope.scene?.topic || '').slice(0, 420), location: String(envelope.scenePulse?.location || envelope.location?.localSpace || '').slice(0, 240) });
+        });
+        intelligence.forEach(reading => {
+            const name = String(reading?.name || '').trim();
+            if (!name) return;
+            const record = upsert({ id: reading.subjectRef || reading.candidateId || '', name, role: reading.role || '' });
+            if (!record || record.observations.some(item => item.snapshotId === snapshot.id)) return;
+            record.observations.push({ at: snapshot.createdAt || '', snapshotId: snapshot.id || '', thought: scenePulseClaimText(reading.sceneLocalImpression), summary: String(envelope.summary || envelope.scene?.topic || '').slice(0, 420), location: String(envelope.location?.localSpace || '').slice(0, 240) });
+        });
+    });
+    // Horde's entity registry enriches an already-encountered dossier; it
+    // never becomes an implicit "everyone in the world" character list.
+    (model.knownCharacters || []).forEach(entry => {
+        const existing = [...records.values()].find(record => String(record.id) === String(entry.id) || String(record.name || '').toLowerCase() === String(entry.name || '').toLowerCase());
+        if (existing) upsert({ ...entry, name: existing.name, aliases: entry.entity?.aliases || entry.candidate?.aliases || [], role: entry.entity?.role || entry.candidate?.role || '' });
+    });
+    return [...records.values()].map(record => {
+        record.observations.sort((left, right) => String(left.at).localeCompare(String(right.at)));
+        return record;
+    }).sort((left, right) => Number(!!right.current) - Number(!!left.current) || left.name.localeCompare(right.name));
+}
+
+function scenePulseWorldsAdapter(world, sess, model, useDemo = false) {
+    if (useDemo) return safeJsonClone(SCENEPULSE_TOUR_EXAMPLE_DATA);
+    // The selected history snapshot is intentionally independent of the
+    // latest turn.  ScenePulse's normal Live view must instead begin at that
+    // latest accepted authored beat; otherwise an old active snapshot can
+    // produce a convincing but stale opening-scene panel.
+    // `turn.reader` is the exact Reader packet attached to the selected
+    // authored attempt.  `readerEnvelope` is the accepted projection cache
+    // and can lag while history reconciliation is being repaired; prefer the
+    // turn packet in Live view so opening-scene cache state cannot win over
+    // the narration currently on screen.
+    const currentEnvelope = model.latestTurn?.reader?.readerEnvelope || model.latestTurn?.reader || model.latestTurn?.readerEnvelope || model.reader || model.projection || {};
+    const raw = currentEnvelope.scenePulse || currentEnvelope.scene_pulse || model.projection?.scenePulse || {};
+    const scene = currentEnvelope.scene || model.projection?.scene || {};
+    const temporal = currentEnvelope.temporal || model.projection?.temporal || {};
+    const environment = currentEnvelope.environment || model.projection?.environment || {};
+    const rawCharacters = Array.isArray(raw.characters) ? raw.characters : [];
+    const playerId = String(model.hierarchy?.sequence?.controlledEntityId || sess?.controlledEntityId || 'player');
+    const liveCharacters = Array.isArray(currentEnvelope.characterIntelligence) && currentEnvelope.characterIntelligence.length
+        ? currentEnvelope.characterIntelligence.map(intelligence => {
+            const id = String(intelligence?.subjectRef || intelligence?.candidateId || '');
+            const entity = (world.entities || []).find(item => String(item?.id || '') === id) || null;
+            const state = sess?.entityStates?.[id] || {};
+            return { id, entityId: id, name: intelligence?.name || entity?.name || id, intelligence, entity, state, mode: intelligence?.presence?.mode || '' };
+        }) : (model.activeCharacters || []);
+    const characters = liveCharacters.filter(person => String(person.entityId || person.id || '') !== playerId).map(person => {
+        const intelligence = person.intelligence || {};
+        const source = rawCharacters.find(item => String(item?.name || '').toLowerCase() === String(person.name || '').toLowerCase()) || {};
+        const visible = intelligence.visibleState || {};
+        return {
+            id: String(person.entityId || person.id || source.id || source.name || ''), name: source.name || person.name || 'Unknown', aliases: Array.isArray(source.aliases) ? source.aliases : [],
+            archetype: source.archetype || intelligence.archetype || '', role: source.role || intelligence.role || person.entity?.role || '',
+            innerThought: source.innerThought || source.inner_thought || scenePulseClaimText(intelligence.sceneLocalImpression),
+            immediateNeed: source.immediateNeed || scenePulseClaimText(intelligence.immediateObjectiveOrConcern) || intelligence.goals?.immediateNeed || '',
+            shortTermGoal: source.shortTermGoal || intelligence.goals?.shortTerm || '', longTermGoal: source.longTermGoal || intelligence.goals?.longTerm || '',
+            hair: source.hair || visible.hair || '', face: source.face || visible.face || '', outfit: source.outfit || visible.outfit || visible.clothing || '',
+            posture: source.posture || visible.posture || '', proximity: source.proximity || person.location || '', notableDetails: source.notableDetails || visible.notableDetails || '',
+            inventory: Array.isArray(source.inventory) ? source.inventory : (Array.isArray(visible.inventory) ? visible.inventory : (Array.isArray(person.state?.inventory) ? person.state.inventory : [])), fertStatus: source.fertStatus || '',
+            fertNotes: source.fertNotes || source.fert_notes || '', presence: person.mode || ''
+        };
+    });
+    // A source-shaped packet can contain an encounter before its candidate is
+    // promoted into Horde's entity registry.  Keep it in the current scene
+    // rather than silently discarding the rich local profile.
+    rawCharacters.forEach((source, index) => {
+        const name = String(source?.name || '').trim();
+        if (!name || characters.some(person => person.name.toLowerCase() === name.toLowerCase())) return;
+        characters.push({
+            id: String(source.id || source.candidateId || `scene-pulse:${name}:${index}`), name,
+            aliases: Array.isArray(source.aliases) ? source.aliases : [], archetype: source.archetype || '', role: source.role || '',
+            innerThought: source.innerThought || source.inner_thought || '', immediateNeed: source.immediateNeed || '',
+            shortTermGoal: source.shortTermGoal || '', longTermGoal: source.longTermGoal || '', hair: source.hair || '', face: source.face || '',
+            outfit: source.outfit || '', posture: source.posture || '', proximity: source.proximity || '', notableDetails: source.notableDetails || '',
+            inventory: Array.isArray(source.inventory) ? source.inventory : [], fertStatus: source.fertStatus || '', fertNotes: source.fertNotes || source.fert_notes || '', presence: source.presence || 'scene-relevant'
+        });
+    });
+    const knownQuests = [...(Array.isArray(raw.mainQuests) ? raw.mainQuests : []), ...(Array.isArray(raw.sideQuests) ? raw.sideQuests : [])];
+    const worldQuests = [...(Array.isArray(world?.quests) ? world.quests : []), ...(Array.isArray(sess?.quests) ? sess.quests : [])]
+        .map(item => ({ id: String(item?.id || ''), name: item?.name || item?.title || item?.label || '', detail: item?.detail || item?.description || item?.objective || '', urgency: item?.urgency || item?.priority || 'moderate', tier: item?.tier || item?.kind || 'main', status: item?.status || 'active', objectives: Array.isArray(item?.objectives) ? item.objectives : [], hostManaged: Array.isArray(sess?.quests) && sess.quests.includes(item) }))
+        .filter(item => item.name || item.detail);
+    const relationshipFallback = (model.relationships || []).filter(item => !item.proposal).map(item => ({
+        name: item.label, relType: item.raw?.relType || item.raw?.type || 'Relationship', relPhase: item.raw?.relPhase || item.posture || '',
+        timeTogether: item.raw?.timeTogether || '', milestone: item.raw?.milestone || item.evidence || '',
+        affection: item.raw?.affection, affectionLabel: item.raw?.affectionLabel || '', trust: item.raw?.trust, trustLabel: item.raw?.trustLabel || '',
+        desire: item.raw?.desire, desireLabel: item.raw?.desireLabel || '', stress: item.raw?.stress, stressLabel: item.raw?.stressLabel || '',
+        compatibility: item.raw?.compatibility, compatibilityLabel: item.raw?.compatibilityLabel || ''
+    }));
+    return {
+        time: raw.time || temporal.end_clock || temporal.time || model.worldTime || '', date: raw.date || [temporal.date, temporal.day || temporal.dayOfWeek].filter(Boolean).join(' ') || '', elapsed: raw.elapsed || temporal.elapsed || temporal.duration || '', temporalIntent: raw.temporalIntent || raw.temporal_intent || temporal.intent || temporal.meaning || '',
+        location: raw.location || [getLocationRef(world, currentEnvelope.location?.activeLocationId || currentEnvelope.location?.active_location_id)?.name || model.location?.name, currentEnvelope.location?.localSpace || currentEnvelope.location?.local_space || model.location?.localSpace].filter(Boolean).join(' > ') || '', weather: raw.weather || environment.weather || temporal.weather || '',
+        temperature: raw.temperature || environment.temperature || '', sceneTopic: raw.sceneTopic || scene.topic || '', sceneMood: raw.sceneMood || scene.mood || scene.moodAtmosphere || '',
+        sceneInteraction: raw.sceneInteraction || scene.interactionStyle || '', sceneTension: raw.sceneTension || scene.tension || '', sceneSummary: raw.sceneSummary || currentEnvelope.summary || model.projection?.summary || '',
+        soundEnvironment: raw.soundEnvironment || environment.sound || scene.sound || '', witnesses: Array.isArray(raw.witnesses) ? raw.witnesses : [], charactersPresent: raw.charactersPresent || characters.map(item => item.name), northStar: raw.northStar || '',
+        mainQuests: (() => { const host = worldQuests.filter(item => !/side/i.test(item.tier)); const names = new Set(host.map(item => item.name.toLowerCase())); return [...host, ...(Array.isArray(raw.mainQuests) ? raw.mainQuests : []).filter(item => !names.has(String(item?.name || '').toLowerCase()))]; })(),
+        sideQuests: (() => { const host = worldQuests.filter(item => /side/i.test(item.tier)); const names = new Set(host.map(item => item.name.toLowerCase())); return [...host, ...(Array.isArray(raw.sideQuests) ? raw.sideQuests : []).filter(item => !names.has(String(item?.name || '').toLowerCase()))]; })(),
+        relationships: Array.isArray(raw.relationships) && raw.relationships.length ? raw.relationships : relationshipFallback,
+        characters, plotBranches: Array.isArray(raw.plotBranches) ? raw.plotBranches : []
+    };
+}
+
+function scenePulseMeter(label, value, text) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '';
+    const width = Math.max(0, Math.min(100, number));
+    return `<div class="sp-meter-row"><span class="sp-meter-label">${escapeHTML(label)}</span><span class="sp-meter-bar-wrap"><span class="sp-meter-bar-track"><span class="sp-meter-bar-fill" style="width:${width}%"></span></span></span><span class="sp-meter-value">${escapeHTML(text || String(number))}</span></div>`;
+}
+
+function scenePulseThoughtPanel(data, ui, persist, onRegenerate = null) {
+    let panel = document.getElementById('sp-thought-panel');
+    if (panel) panel.remove();
+    panel = document.createElement('aside');
+    panel.id = 'sp-thought-panel';
+    panel.className = `sp-tp-visible ${ui.thoughtGhost ? 'sp-tp-ghost-mode' : ''}`;
+    panel.style.left = `${Math.max(8, Number(ui.thoughtLeft) || 12)}px`;
+    panel.style.top = `${Math.max(48, Number(ui.thoughtTop) || 88)}px`;
+    if (ui.thoughtWidth) panel.style.width = `${Math.max(240, Number(ui.thoughtWidth))}px`;
+    const cards = data.characters.filter(character => character.innerThought).map(character => `<article class="sp-tp-card"><header class="sp-tp-name"><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(character.name))}</span></span><span class="sp-tp-name-text">${escapeHTML(character.name)}</span><span class="sp-tp-name-icon">◌</span></header><blockquote class="sp-tp-monologue">${escapeHTML(character.innerThought)}</blockquote><div class="sp-tp-goals">${character.immediateNeed ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">◆</span>${escapeHTML(character.immediateNeed)}</div>` : ''}${character.shortTermGoal ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">→</span>${escapeHTML(character.shortTermGoal)}</div>` : ''}</div></article>`).join('') || '<div class="sp-empty-state"><strong class="sp-empty-title">No inner thoughts yet</strong></div>';
+    panel.innerHTML = `<header class="sp-tp-header" id="sp-tp-drag"><span class="sp-tp-drag-grip">━━</span><span class="sp-tp-title">Inner Thoughts</span><span class="sp-tp-header-spacer"></span>${onRegenerate ? '<button type="button" class="sp-tp-refresh" title="Regenerate inner thoughts">↻</button>' : ''}<button type="button" class="sp-tp-snapleft" title="Snap left">⇤</button><button type="button" class="sp-tp-ghost" title="Ghost mode">◌</button><button type="button" class="sp-tp-close" title="Hide thoughts">×</button></header><div id="sp-tp-body">${cards}</div><div class="sp-tp-resize" title="Resize">◢</div>`;
+    document.body.appendChild(panel);
+    const save = () => { persist(); };
+    panel.querySelector('.sp-tp-close').addEventListener('click', () => panel.remove());
+    panel.querySelector('.sp-tp-refresh')?.addEventListener('click', async event => {
+        event.currentTarget.disabled = true;
+        try {
+            const nextData = await onRegenerate();
+            if (nextData) scenePulseThoughtPanel(nextData, ui, persist, onRegenerate);
+        } catch (error) {
+            showToast(`Could not regenerate thoughts: ${error?.message || error}`, 'error');
+            event.currentTarget.disabled = false;
+        }
+    });
+    panel.querySelector('.sp-tp-ghost').addEventListener('click', () => { ui.thoughtGhost = !ui.thoughtGhost; panel.classList.toggle('sp-tp-ghost-mode', ui.thoughtGhost); save(); });
+    panel.querySelector('.sp-tp-snapleft').addEventListener('click', () => { ui.thoughtLeft = 12; ui.thoughtTop = 88; panel.style.left = '12px'; panel.style.top = '88px'; save(); });
+    const drag = panel.querySelector('#sp-tp-drag'); let dragging = false; let dx = 0; let dy = 0;
+    drag.addEventListener('pointerdown', event => { if (event.target.closest('button')) return; dragging = true; dx = event.clientX - panel.offsetLeft; dy = event.clientY - panel.offsetTop; drag.setPointerCapture(event.pointerId); });
+    drag.addEventListener('pointermove', event => { if (!dragging) return; panel.style.left = `${Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, event.clientX - dx))}px`; panel.style.top = `${Math.max(0, Math.min(window.innerHeight - 44, event.clientY - dy))}px`; });
+    drag.addEventListener('pointerup', () => { if (!dragging) return; dragging = false; ui.thoughtLeft = panel.offsetLeft; ui.thoughtTop = panel.offsetTop; save(); });
+    const handle = panel.querySelector('.sp-tp-resize'); let resizing = false; let startX = 0; let startWidth = 0;
+    handle.addEventListener('pointerdown', event => { resizing = true; startX = event.clientX; startWidth = panel.offsetWidth; handle.setPointerCapture(event.pointerId); });
+    handle.addEventListener('pointermove', event => { if (!resizing) return; panel.style.width = `${Math.max(240, Math.min(window.innerWidth - panel.offsetLeft - 8, startWidth + event.clientX - startX))}px`; });
+    handle.addEventListener('pointerup', () => { if (!resizing) return; resizing = false; ui.thoughtWidth = panel.offsetWidth; save(); });
+}
+
+function renderScenePulseWorldsWorkspace(world, sess) {
+    const host = document.getElementById('world-sidecar-workspace');
+    const column = document.querySelector('#world-play-view .world-status-col');
+    if (!host || !column) return;
+    const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    column.classList.toggle('is-sidecar', sidecar); host.classList.toggle('hidden', !sidecar);
+    if (!sidecar) { unbindScenePulseWorldsHostActions(host); window.HordeScenePulseWorlds?.unmount?.(host); host.replaceChildren(); return; }
+    // Gate A remains the sealed source tutorial handoff. Once a new authored
+    // beat has an exact settled Reader snapshot, Gate B overlays only that
+    // source-shaped delta projection; it never substitutes Melbourne/world
+    // registry data for incomplete ScenePulse fields.
+    const handoff = scenePulseAcceptedHandoff(world, sess);
+    if (!window.HordeScenePulseWorlds?.mount) {
+        host.innerHTML = '<div class="sp-empty-state"><div class="sp-empty-title">ScenePulse module did not load</div></div>';
+        return;
+    }
+    bindScenePulseWorldsHostActions(host, world, sess);
+    window.HordeScenePulseWorlds.mount(host, handoff);
+    return;
+
+    // Gate B adapter below is intentionally unreachable until the fixture
+    // acceptance checklist is complete.  It is retained as a future host
+    // boundary, not an alternate sidebar or a demo data fallback.
+    const model = buildSidecarWorkspaceModel(world, sess);
+    if (!model) return;
+    const protocol = model.protocol;
+    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    const ui = protocol.workspaceUi.scenePulse = { demo: protocol.workspaceUi.scenePulse?.demo !== false, view: protocol.workspaceUi.scenePulse?.view || 'scene', open: protocol.workspaceUi.scenePulse?.open || {}, panels: protocol.workspaceUi.scenePulse?.panels || {}, features: { thoughts: protocol.workspaceUi.scenePulse?.features?.thoughts !== false, weather: protocol.workspaceUi.scenePulse?.features?.weather !== false, timeTint: protocol.workspaceUi.scenePulse?.features?.timeTint !== false, transitions: protocol.workspaceUi.scenePulse?.features?.transitions !== false }, panelsOpen: protocol.workspaceUi.scenePulse?.panelsOpen === true, compact: protocol.workspaceUi.scenePulse?.compact === true, edit: protocol.workspaceUi.scenePulse?.edit === true, showEmpty: protocol.workspaceUi.scenePulse?.showEmpty === true, fontScale: Math.max(0.7, Math.min(1.5, Number(protocol.workspaceUi.scenePulse?.fontScale) || 1)), theme: protocol.workspaceUi.scenePulse?.theme || 'default', reduceEffects: protocol.workspaceUi.scenePulse?.reduceEffects === true, thoughtGhost: protocol.workspaceUi.scenePulse?.thoughtGhost === true, thoughtLeft: protocol.workspaceUi.scenePulse?.thoughtLeft || 12, thoughtTop: protocol.workspaceUi.scenePulse?.thoughtTop || 88, thoughtWidth: protocol.workspaceUi.scenePulse?.thoughtWidth || 360, liveLocation: protocol.workspaceUi.scenePulse?.liveLocation || '', dossierId: protocol.workspaceUi.scenePulse?.dossierId || '' };
+    const persist = () => { sess.sidecar = protocol; saveState().catch(error => console.warn('ScenePulse UI setting save failed:', error)); };
+    const tour = ui.demo ? scenePulseTourState() : null;
+    const data = tour ? tour.data : scenePulseWorldsAdapter(world, sess, model, false);
+    const dossiers = tour ? scenePulseTourDossiers(data) : scenePulseDossiers(world, model, data);
+    const view = ['scene', 'characters', 'dossiers', 'relationships', 'journal', 'ideas', 'history', 'settings'].includes(ui.view) ? ui.view : 'scene';
+    const section = (key, title, icon, body, badge = '') => `<section class="sp-section ${ui.open[key] !== false ? 'sp-open' : ''}" data-sp-section="${escapeHTML(key)}"><header class="sp-section-header" data-sp-section-toggle="${escapeHTML(key)}"><span class="sp-section-chevron">›</span><span class="sp-section-icon">${icon}</span><span class="sp-section-title">${escapeHTML(title)}</span>${badge ? `<span class="sp-section-badge">${escapeHTML(badge)}</span>` : ''}<span class="sp-section-spacer"></span><button type="button" class="sp-section-refresh" data-sp-action="refresh" title="Refresh">↻</button></header><div class="sp-section-body"><div class="sp-section-content">${body}</div></div></section>`;
+    const tension = String(data.sceneTension || 'calm').toLowerCase();
+    const tensionClass = /critical/.test(tension) ? 'sp-tension-critical' : /high/.test(tension) ? 'sp-tension-high' : /moderate/.test(tension) ? 'sp-tension-moderate' : /low/.test(tension) ? 'sp-tension-low' : 'sp-tension-calm';
+    const dashboard = `<div class="sp-dashboard spw-dashboard"><article class="sp-dash-card sp-dash-card-date"><span class="sp-dash-sub">${escapeHTML(data.date)}</span><strong class="sp-dash-day">${escapeHTML(data.date.match(/\(([^)]+)\)/)?.[1] || '')}</strong></article><article class="sp-dash-card sp-dash-card-time"><span class="sp-dash-clock">◷</span><strong class="sp-time-value">${escapeHTML(data.time)}</strong></article><article class="sp-dash-card sp-dash-card-temp ${tensionClass}"><div class="sp-temp-bar-wrap"><i style="width:${tension === 'critical' ? 100 : tension === 'high' ? 78 : tension === 'moderate' ? 56 : tension === 'low' ? 32 : 12}%"></i></div><strong class="sp-temp-bar-label">${escapeHTML(data.sceneTension || 'calm')} · ${escapeHTML(data.sceneMood || '')}</strong></article><article class="sp-dash-card sp-dash-card-weather"><span class="sp-dash-icon">${/rain|storm/i.test(data.weather) ? '≋' : '☁'}</span><strong class="sp-dash-value">${escapeHTML(data.weather || 'Unknown')}</strong><small>${escapeHTML(data.temperature || '')}</small></article></div><div class="sp-dash-location"><span class="sp-dash-loc-icon">⌖</span><span class="sp-dash-loc-text">${escapeHTML(data.location || 'Unknown')}</span></div>`;
+    const sceneDetails = `<div class="sp-scene-summary-row"><div class="sp-scene-summary">${escapeHTML(data.sceneSummary || 'No scene details yet.')}</div></div>${[['Topic', data.sceneTopic], ['Mood', data.sceneMood], ['Interaction', data.sceneInteraction], ['Tension', data.sceneTension], ['Elapsed', data.elapsed], ['Temporal intent', data.temporalIntent], ['Sounds', data.soundEnvironment], ['Witnesses', Array.isArray(data.witnesses) ? data.witnesses.map(scenePulseClaimText).filter(Boolean).join(' · ') : scenePulseClaimText(data.witnesses)]].filter(([, value]) => value).map(([label, value]) => `<div class="sp-row ${label === 'Tension' ? `sp-scene-tension-row ${tensionClass}` : label === 'Sounds' ? 'sp-scene-sounds-row' : ''}"><span class="sp-row-label">${escapeHTML(label)}</span><span class="sp-row-value">${escapeHTML(value)}</span></div>`).join('')}`;
+    const characterCards = data.characters.length ? data.characters.map((character, index) => {
+        const accent = scenePulseIdentityColor(character.id || character.name);
+        return `<article class="sp-char-card ${index === 0 ? 'sp-card-open' : ''}" style="--char-accent:${accent};--char-border:${accent};--char-bg:color-mix(in srgb,${accent} 10%,transparent);" data-sp-character data-sp-character-id="${escapeHTML(character.id || character.name)}"><header class="sp-char-header"><span class="sp-char-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(character.name))}</span></span><span class="sp-char-name-col"><span class="sp-char-name-row"><strong class="sp-char-name">${escapeHTML(character.name)}</strong><span class="sp-char-archetype">${escapeHTML(character.archetype || character.presence || 'present')}</span></span><small class="sp-char-meta">${escapeHTML(character.role || '')}</small></span></header><div class="sp-char-body">${character.innerThought ? `<blockquote class="sp-char-thought-block">${escapeHTML(character.innerThought)}</blockquote>` : ''}<div class="sp-char-grid">${[['Aliases', character.aliases?.join(' · ')], ['Hair', character.hair], ['Face', character.face], ['Outfit', character.outfit], ['Posture', character.posture], ['Proximity', character.proximity], ['Details', character.notableDetails], ['Fertility', [character.fertStatus, character.fertNotes].filter(Boolean).join(' — ')]].filter(([, value]) => value).map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(value)}</span>`).join('')}</div><div class="sp-char-goals">${[['Now', character.immediateNeed], ['Soon', character.shortTermGoal], ['Long term', character.longTermGoal]].filter(([, value]) => value).map(([label, value]) => `<div class="sp-char-goal-item"><strong>${escapeHTML(label)}:</strong> ${escapeHTML(value)}</div>`).join('')}</div>${character.inventory?.length ? `<div class="sp-char-goals"><div class="sp-char-goal-item"><strong>Inventory:</strong> ${escapeHTML(character.inventory.join(' · '))}</div></div>` : ''}<div class="sp-card-actions"><button type="button" class="btn btn-ghost" data-sp-dossier="${escapeHTML(character.id || character.name)}">Open dossier</button></div></div></article>`;
+    }).join('') : '<div class="sp-empty-state"><strong class="sp-empty-title">No characters in this scene</strong></div>';
+    const relationshipCards = data.relationships.length ? data.relationships.map((relationship, index) => `<article class="sp-rel-block ${index === 0 ? 'sp-card-open' : ''}" data-sp-relationship><header class="sp-rel-header"><span class="sp-rel-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(relationship.name))}</span></span><strong class="sp-rel-name">${escapeHTML(relationship.name)}</strong><span class="sp-rel-type-badge">${escapeHTML(relationship.relType || '')}</span><span class="sp-rel-phase-badge">${escapeHTML(relationship.relPhase || '')}</span></header><div class="sp-rel-body"><div class="sp-rel-meta"><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Known</span><span>${escapeHTML(relationship.timeTogether || '')}</span></div><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Milestone</span><span>${escapeHTML(relationship.milestone || '')}</span></div></div>${scenePulseMeter('Affection', relationship.affection, relationship.affectionLabel)}${scenePulseMeter('Trust', relationship.trust, relationship.trustLabel)}${scenePulseMeter('Desire', relationship.desire, relationship.desireLabel)}${scenePulseMeter('Stress', relationship.stress, relationship.stressLabel)}${scenePulseMeter('Compatibility', relationship.compatibility, relationship.compatibilityLabel)}</div></article>`).join('') : '<div class="sp-empty-state"><strong class="sp-empty-title">No relationships for this scene</strong></div>';
+    const questTier = (title, quests, cls) => quests.length ? `<div class="sp-plot-tier ${cls}"><div class="sp-plot-tier-title"><span class="sp-tier-chevron">›</span><span>${escapeHTML(title)}</span><span class="sp-section-badge">${quests.length}</span></div><div class="sp-tier-body">${quests.map(quest => {
+        const status = String(quest.status || 'active').toLowerCase();
+        const objectiveSummary = Array.isArray(quest.objectives) && quest.objectives.length
+            ? `${quest.objectives.filter(item => item?.status === 'completed').length}/${quest.objectives.length} objectives` : '';
+        const controls = quest.hostManaged && quest.id ? `<div class="sp-quest-actions"><button type="button" class="btn btn-ghost" data-sp-quest-action="edit" data-sp-quest-id="${escapeHTML(quest.id)}">Edit</button><button type="button" class="btn btn-ghost" data-sp-quest-action="${status === 'active' ? 'complete' : 'restore'}" data-sp-quest-id="${escapeHTML(quest.id)}">${status === 'active' ? 'Complete' : 'Restore'}</button><button type="button" class="btn btn-ghost sp-quest-remove" data-sp-quest-action="remove" data-sp-quest-id="${escapeHTML(quest.id)}">Remove</button></div>` : '';
+        return `<article class="sp-plot-entry sp-card-open ${status === 'active' ? '' : 'sp-quest-resolved'}"><header class="sp-quest-header"><span class="sp-plot-status sp-urgency-${escapeHTML(status === 'active' ? String(quest.urgency || 'moderate').toLowerCase() : status)}">${escapeHTML(status === 'active' ? quest.urgency || 'open' : status)}</span><strong class="sp-plot-name">${escapeHTML(quest.name || 'Untitled')}</strong></header><div class="sp-quest-detail">${escapeHTML(quest.detail || '')}${objectiveSummary ? `<small>${escapeHTML(objectiveSummary)}</small>` : ''}</div>${controls}</article>`;
+    }).join('')}</div></div>` : '';
+    const journal = `${data.northStar ? `<div class="sp-north-star"><span>North Star</span><strong>${escapeHTML(data.northStar)}</strong></div>` : ''}${questTier('Main quests', data.mainQuests || [], 'sp-tier-main')}${questTier('Side quests', data.sideQuests || [], 'sp-tier-side')}${!data.northStar && !(data.mainQuests || []).length && !(data.sideQuests || []).length ? '<div class="sp-empty-state"><strong class="sp-empty-title">No quests yet</strong></div>' : ''}<div class="sp-journal-actions"><button type="button" class="btn btn-ghost" data-sp-quest-action="add">Add quest</button></div>`;
+    const ideas = data.plotBranches.length ? `<div class="sp-ideas-list">${data.plotBranches.map((idea, index) => `<article class="sp-idea-card"><span class="sp-idea-type">${escapeHTML(idea.type || 'idea')}</span><strong>${escapeHTML(idea.name || '')}</strong><p>${escapeHTML(idea.hook || '')}</p><button type="button" class="btn btn-ghost" data-sp-idea="${index}">Use this direction</button></article>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No story ideas yet</strong></div>';
+    const history = tour
+        ? `<div class="sp-tl-bar sp-tour-timeline">${SCENEPULSE_TOUR_TIMELINE.map(item => `<button type="button" class="sp-tl-node" style="left:${SCENEPULSE_TOUR_TIMELINE.length === 1 ? 50 : 8 + (SCENEPULSE_TOUR_TIMELINE.indexOf(item) / (SCENEPULSE_TOUR_TIMELINE.length - 1)) * 84}%" data-sp-tour-history="${item.id}" title="ScenePulse guided-tour snapshot ${item.label}"><span class="sp-tl-dot ${item.current ? 'sp-tl-dot-latest' : ''} ${tour.selectedTimelineId === item.id ? 'sp-tl-dot-selected' : ''}"></span><span class="sp-tl-label ${tour.selectedTimelineId === item.id ? 'sp-tl-label-active' : ''}">${item.label}</span></button>`).join('')}</div><div class="sp-tour-history-note">Source guided-tour timeline · ${escapeHTML((SCENEPULSE_TOUR_TIMELINE.find(item => item.id === tour.selectedTimelineId) || SCENEPULSE_TOUR_TIMELINE.at(-1)).label)} · tour-only fixture</div><button type="button" class="sp-tl-browse-btn" data-sp-tour-browse>Browse All (${SCENEPULSE_TOUR_TIMELINE.length})</button>`
+        : model.snapshots.length ? `<div class="sp-timeline">${model.snapshots.slice().reverse().map(snapshot => `<button type="button" class="sp-timeline-entry" data-sp-history="${escapeHTML(snapshot.id)}"><span>${escapeHTML(new Date(snapshot.createdAt).toLocaleString())}</span><strong>${escapeHTML(snapshot.envelope?.summary || snapshot.envelope?.scene?.topic || 'Scene update')}</strong></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No scene history yet</strong></div>';
+    const selectedDossier = dossiers.find(item => String(item.id) === String(ui.dossierId)) || null;
+    const dossierList = dossiers.length ? `<div class="sp-dossier-search"><input type="search" data-sp-dossier-search placeholder="Search encountered characters" aria-label="Search encountered characters"></div><div class="sp-dossier-list">${dossiers.map(record => `<button type="button" class="sp-dossier-row ${selectedDossier?.id === record.id ? 'is-selected' : ''}" data-sp-dossier="${escapeHTML(record.id)}" data-sp-dossier-name="${escapeHTML(`${record.name} ${record.aliases.join(' ')} ${record.role}`.toLowerCase())}"><span class="sp-char-portrait" style="--char-accent:${scenePulseIdentityColor(record.id || record.name)}"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(record.name))}</span></span><span><strong>${escapeHTML(record.name)}</strong><small>${escapeHTML([record.current ? 'in this scene' : '', record.role, record.observations.length ? `${record.observations.length} accepted reading${record.observations.length === 1 ? '' : 's'}` : record.canonical ? 'encountered record' : 'scene candidate'].filter(Boolean).join(' · '))}</small></span></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No encountered characters yet</strong></div>';
+    const dossierDetail = selectedDossier ? (() => {
+        const current = selectedDossier.current || {};
+        const entity = selectedDossier.entity || {};
+        const observations = selectedDossier.observations || [];
+        const first = observations[0]; const last = observations.at(-1);
+        const currentRows = [['Role', current.role || selectedDossier.role || entity.role], ['Archetype', current.archetype || selectedDossier.archetype], ['Aliases', selectedDossier.aliases.join(' · ')], ['Appearance', current.face || entity.appearance || entity.description], ['Outfit', current.outfit], ['Posture', current.posture], ['Proximity', current.proximity], ['Last-known location', last?.location]].filter(([, value]) => value);
+        const historyAttribute = tour ? 'data-sp-tour-history' : 'data-sp-history';
+        return `<article class="sp-dossier-detail"><header><button type="button" class="btn btn-ghost" data-sp-dossier-back>‹ All dossiers</button><span class="sp-char-portrait" style="--char-accent:${scenePulseIdentityColor(selectedDossier.id || selectedDossier.name)}"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(selectedDossier.name))}</span></span><span><h3>${escapeHTML(selectedDossier.name)}</h3><small>${escapeHTML(tour ? 'ScenePulse tour character' : selectedDossier.canonical ? 'Horde identity linked' : 'Scene candidate')}</small></span></header><div class="sp-char-grid">${currentRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div><div class="sp-dossier-stats"><span>First seen: ${escapeHTML(tour ? 'Tour fixture' : first?.at ? new Date(first.at).toLocaleString() : 'current scene')}</span><span>Last seen: ${escapeHTML(tour ? 'Tour fixture' : last?.at ? new Date(last.at).toLocaleString() : 'current scene')}</span><span>Appearances: ${observations.length || (current.name ? 1 : 0)}</span></div>${current.innerThought ? `<blockquote class="sp-char-thought-block">${escapeHTML(current.innerThought)}</blockquote>` : ''}<h4>Scene history</h4>${observations.length ? `<div class="sp-dossier-observations">${observations.slice().reverse().map(observation => `<button type="button" class="sp-dossier-observation" ${historyAttribute}="${escapeHTML(observation.snapshotId)}"><small>${escapeHTML(tour ? 'Tour fixture' : observation.at ? new Date(observation.at).toLocaleString() : 'Current scene')}</small>${observation.thought ? `<blockquote>${escapeHTML(observation.thought)}</blockquote>` : ''}<span>${escapeHTML(observation.summary || observation.location || 'Scene reading')}</span></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No accepted scene observations yet</strong></div>'}</article>`;
+    })() : dossierList;
+    const dossierView = selectedDossier ? dossierDetail : dossierList;
+    const settings = `<div class="sp-settings"><label>Theme<select data-sp-theme><option value="default" ${ui.theme === 'default' ? 'selected' : ''}>Default</option><option value="midnight" ${ui.theme === 'midnight' ? 'selected' : ''}>Midnight</option><option value="fantasy" ${ui.theme === 'fantasy' ? 'selected' : ''}>Fantasy</option><option value="cyberpunk" ${ui.theme === 'cyberpunk' ? 'selected' : ''}>Cyberpunk</option><option value="minimal" ${ui.theme === 'minimal' ? 'selected' : ''}>Minimal</option></select></label><label class="sp-setting-toggle"><input type="checkbox" data-sp-effects ${ui.reduceEffects ? '' : 'checked'}> Scene effects</label></div>`;
+    const panelEnabled = key => ui.panels[key] !== false;
+    const historyCount = tour ? SCENEPULSE_TOUR_TIMELINE.length : model.snapshots.length;
+    const sceneContent = `${panelEnabled('dashboard') ? dashboard : ''}${panelEnabled('scene') ? section('scene', 'Scene Details', '◈', sceneDetails) : ''}${panelEnabled('characters') ? section('characters', 'Characters', '♙', characterCards, String(data.characters.length)) : ''}${panelEnabled('relationships') ? section('relationships', 'Relationships', '↔', relationshipCards, String(data.relationships.length)) : ''}${panelEnabled('journal') ? section('journal', 'Quest Journal', '▣', journal) : ''}${panelEnabled('ideas') ? section('ideas', 'Story Ideas', '✦', ideas, String(data.plotBranches.length)) : ''}${panelEnabled('history') ? section('history', 'History', '◷', history, String(historyCount)) : ''}`;
+    const content = view === 'dossiers' ? section('dossiers', selectedDossier ? selectedDossier.name : 'Character Dossiers', '▤', dossierView, String(dossiers.length)) : sceneContent;
+    const status = ui.demo ? '<span class="spw-demo-ribbon">Demo fixture · TOUR_EXAMPLE_DATA</span>' : '<span class="spw-live-ribbon">Live scene</span>';
+    const nav = (label, nextView, title) => `<button type="button" class="sp-toolbar-btn ${view === nextView ? 'sp-tb-active' : ''}" data-sp-view="${nextView}" title="${escapeHTML(title)}">${label}</button>`;
+    const locationChanged = !ui.demo && !!ui.liveLocation && !!data.location && ui.liveLocation !== data.location;
+    if (!ui.demo && data.location && ui.liveLocation !== data.location) { ui.liveLocation = data.location; persist(); }
+    host.dataset.spTheme = ui.theme;
+    host.dataset.spWeather = String(data.weather || '').toLowerCase();
+    host.dataset.spTimePhase = scenePulseTimePhase(data.time);
+    host.classList.toggle('spw-reduce-effects', ui.reduceEffects);
+    host.classList.toggle('spw-scene-transition', locationChanged);
+    host.innerHTML = `<div class="sp-toolbar"><div class="sp-brand"><span class="sp-brand-mark">◉</span><span class="sp-brand-word">Scene<span>Pulse</span></span><small>${escapeHTML(data.sceneTopic || 'Scene')}</small></div><span class="sp-toolbar-spacer"></span>${status}<button type="button" class="sp-toolbar-btn ${ui.demo ? 'sp-tb-active' : ''}" data-sp-action="demo" title="Toggle tour demo">▣</button><button type="button" class="sp-toolbar-btn" data-sp-action="thoughts" title="Inner Thoughts">◌</button><button type="button" class="sp-toolbar-btn" data-sp-action="refresh" title="Refresh">↻</button>${nav('⌂', 'scene', 'Scene Details')}${nav('♙', 'characters', 'Characters')}${nav('▤', 'dossiers', 'Character dossiers')}${nav('↔', 'relationships', 'Relationships')}${nav('▣', 'journal', 'Quest Journal')}${nav('✦', 'ideas', 'Story Ideas')}${nav('◷', 'history', 'History')}${nav('⚙', 'settings', 'Settings')}</div><div class="sp-panel-body spw-panel-body">${content}</div>`;
+    if (locationChanged) setTimeout(() => host.classList.remove('spw-scene-transition'), 520);
+    host.querySelectorAll('[data-sp-view]').forEach(button => button.addEventListener('click', () => { ui.view = button.dataset.spView; persist(); renderScenePulseWorldsWorkspace(world, sess); }));
+    host.querySelectorAll('[data-sp-section-toggle]').forEach(header => header.addEventListener('click', event => { if (event.target.closest('button')) return; const sectionEl = header.closest('[data-sp-section]'); const key = header.dataset.spSectionToggle; ui.open[key] = !sectionEl.classList.contains('sp-open'); persist(); sectionEl.classList.toggle('sp-open', ui.open[key]); }));
+    host.querySelectorAll('[data-sp-character]').forEach(card => card.querySelector('.sp-char-header').addEventListener('click', () => card.classList.toggle('sp-card-open')));
+    host.querySelectorAll('[data-sp-relationship]').forEach(card => card.querySelector('.sp-rel-header').addEventListener('click', () => card.classList.toggle('sp-card-open')));
+    host.querySelectorAll('[data-sp-dossier]').forEach(button => button.addEventListener('click', () => { ui.dossierId = button.dataset.spDossier; ui.view = 'dossiers'; persist(); renderScenePulseWorldsWorkspace(world, sess); }));
+    host.querySelector('[data-sp-dossier-back]')?.addEventListener('click', () => { ui.dossierId = ''; persist(); renderScenePulseWorldsWorkspace(world, sess); });
+    host.querySelector('[data-sp-dossier-search]')?.addEventListener('input', event => {
+        const query = String(event.target.value || '').trim().toLowerCase();
+        host.querySelectorAll('[data-sp-dossier-name]').forEach(row => { row.hidden = !!query && !String(row.dataset.spDossierName || '').includes(query); });
+    });
+    host.querySelectorAll('[data-sp-action]').forEach(button => button.addEventListener('click', async () => { const action = button.dataset.spAction; if (action === 'demo') { ui.demo = !ui.demo; ui.view = 'scene'; persist(); renderScenePulseWorldsWorkspace(world, sess); return; } if (action === 'thoughts') { scenePulseThoughtPanel(data, ui, persist, async () => { if (ui.demo) { showToast('The tour fixture has no live Reader to regenerate.', 'info'); return null; } await refreshScenePulseThoughts(world, sess, model.latestTurn?.id || ''); const nextModel = buildSidecarWorkspaceModel(world, sess); const nextData = nextModel ? scenePulseWorldsAdapter(world, sess, nextModel, false) : null; renderScenePulseWorldsWorkspace(world, sess); showToast('Inner Thoughts regenerated from the settled turn.', 'success'); return nextData; }); return; } if (action === 'refresh') { if (ui.demo) { showToast('Switch to Live scene before refreshing.', 'info'); return; } button.disabled = true; try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); showToast('ScenePulse refreshed for review.', 'success'); } catch (error) { showToast(`Could not refresh ScenePulse: ${error?.message || error}`, 'error'); } renderScenePulseWorldsWorkspace(world, sess); } }));
+    host.querySelector('[data-sp-theme]')?.addEventListener('change', event => { ui.theme = event.target.value; persist(); renderScenePulseWorldsWorkspace(world, sess); });
+    host.querySelector('[data-sp-effects]')?.addEventListener('change', event => { ui.reduceEffects = !event.target.checked; persist(); host.classList.toggle('spw-reduce-effects', ui.reduceEffects); });
+    host.querySelectorAll('[data-sp-idea]').forEach(button => button.addEventListener('click', () => { const idea = data.plotBranches[Number(button.dataset.spIdea)]; const input = document.getElementById('world-user-input'); if (!idea || !input) return; input.value = idea.hook || idea.name || ''; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); showToast('Story direction added to the draft.', 'success'); }));
+    host.querySelectorAll('[data-sp-quest-action]').forEach(button => button.addEventListener('click', () => {
+        if (ui.demo) { showToast('The tour fixture is read-only. Switch to Live scene to change this timeline.', 'info'); return; }
+        const action = button.dataset.spQuestAction;
+        const questId = String(button.dataset.spQuestId || '');
+        const quest = questId ? findSessionQuest(sess, questId) : null;
+        if (action === 'add') { openWorldQuestManager(); return; }
+        if (!quest) { showToast('That quest is no longer available in this timeline.', 'warning'); return; }
+        if (action === 'edit') { openWorldQuestManager(quest.id); return; }
+        if (action === 'complete' || action === 'restore') {
+            const nextStatus = action === 'complete' ? 'completed' : 'active';
+            const verb = action === 'complete' ? 'Complete' : 'Restore';
+            showConfirmModal(`${verb} quest`, `${verb} “${quest.title}” in this timeline?`, async () => {
+                applyQuestUpdates(world, sess, [{ id: quest.id, status: nextStatus }]);
+                await saveState();
+                renderWorldPlayState();
+                showToast(action === 'complete' ? 'Quest completed.' : 'Quest restored.', 'success');
+            });
+            return;
+        }
+        if (action === 'remove') {
+            showConfirmModal('Delete Quest', `Delete “${quest.title}” from this timeline?`, async () => {
+                const index = (sess.quests || []).findIndex(item => item.id === quest.id);
+                if (index !== -1) sess.quests.splice(index, 1);
+                await saveState();
+                renderWorldPlayState();
+                showToast('Quest deleted.', 'info');
+            });
+        }
+    }));
+    host.querySelectorAll('[data-sp-history]').forEach(button => button.addEventListener('click', () => { model.workspaceUi.selectedSnapshotId = button.dataset.spHistory; model.workspaceUi.historyMode = true; protocol.workspaceUi = model.workspaceUi; persist(); renderSidecarWorkspace(world, sess); }));
+}
+
 function renderSidecarWorkspace(world, sess) {
+    return renderScenePulseWorldsWorkspace(world, sess);
     const host = document.getElementById('world-sidecar-workspace');
     const column = document.querySelector('#world-play-view .world-status-col');
     if (!host || !column) return;
@@ -17367,26 +19521,81 @@ function renderSidecarWorkspace(world, sess) {
     const { protocol, workspaceUi } = model;
     const scrollTop = host.querySelector('.si-body')?.scrollTop || 0;
     const currentFocus = document.activeElement?.id || '';
-    const statusLabel = model.status === 'blocked' ? 'Commit blocked' : model.status === 'warning' ? 'Update incomplete' : model.status === 'muted' ? 'Reader disabled' : model.status === 'pending' ? 'Reader not processed' : 'Reader current';
+    const statusLabel = model.status === 'blocked' ? 'Commit blocked'
+        : model.status === 'warning' ? 'Update incomplete'
+            : model.status === 'muted' ? 'Reader disabled'
+                : model.status === 'pending' ? 'Reader not processed'
+                    : model.status === 'stale' ? 'Reader needs refresh'
+                        : 'Reader current';
     const statusClass = model.status === 'ready' ? '' : model.status === 'muted' ? 'is-muted' : 'is-warning';
-    const section = (key, title, body, badge = '') => `<details class="si-section" data-si-section="${escapeHTML(key)}" ${workspaceUi.open[key] !== false ? 'open' : ''}><summary><strong>${escapeHTML(title)}</strong>${badge ? `<span>${escapeHTML(badge)}</span>` : ''}</summary><div class="si-section-body">${body}</div></details>`;
+    // Preserve ScenePulse's real full-width section rhythm. Refresh is a
+    // pipeline action in the toolbar, not a decorative per-section spinner.
+    const section = (key, title, body, badge = '', icon = '◈') => `<section class="sp-section si-section ${workspaceUi.open[key] !== false ? 'sp-open' : ''}" data-si-section="${escapeHTML(key)}"><header class="sp-section-header si-section-header" data-si-section-toggle="${escapeHTML(key)}"><span class="sp-section-chevron">›</span><span class="sp-section-icon">${icon}</span><span class="sp-section-title">${escapeHTML(title)}</span>${badge ? `<span class="sp-section-badge">${escapeHTML(badge)}</span>` : ''}<span class="sp-section-spacer"></span></header><div class="sp-section-body si-section-body"><div class="sp-section-content">${body}</div></div></section>`;
     const button = (label, action, cls = 'btn btn-ghost') => `<button type="button" class="${cls}" data-si-action="${escapeHTML(action)}">${escapeHTML(label)}</button>`;
     const failure = !model.readerEnabled
         ? `<div class="si-failure is-muted"><strong>Reader disabled</strong><span>New Sidecar turns use the Narrator handoff only until the semantic Reader is enabled for this world.</span><div class="si-retry-row">${button('Enable Reader', 'enable-reader', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
         : model.readerEnabled && !model.reader && model.latestTurn
             ? `<div class="si-failure is-muted"><strong>Reader not processed</strong><span>This authored turn is preserved. Process its existing narration and handoff without generating a new Narrator response.</span><div class="si-retry-row">${button('Process Current Scene', 'process', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
+        : model.readerStale && !model.failedTurn
+            ? `<div class="si-failure is-muted"><strong>Scene Intelligence needs a current reading</strong><span>${model.legacyReader ? 'This timeline still has a legacy sparse Reader snapshot.' : model.readerCoverage?.error === 'reader_output_truncated' ? 'The active Reader response was truncated before it could cover the scene.' : model.readerCoverage?.error === 'reader_incomplete_character_coverage' ? `The active Reader missed ${model.readerCoverage.missing.length} relevant character${model.readerCoverage.missing.length === 1 ? '' : 's'}.` : 'The last settled Reader snapshot belongs to an earlier authored beat.'} The preserved narration has not been changed; refresh its scene reading before treating this panel as current.</span><div class="si-retry-row">${button('Refresh Scene Intelligence', 'refresh', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
         : model.incompleteCommit
         ? `<div class="si-failure"><strong>Canonical commit incomplete</strong><span>Progression is blocked. The journaled receipt must be recovered through World GM.</span><div class="si-retry-row">${button('Open World GM', 'gm', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
         : model.failedTurn
             ? `<div class="si-failure"><strong>${escapeHTML(model.failedTurn.failure?.stage === 'reader' ? 'Reader update incomplete' : 'Scene update incomplete')}</strong><span>Narration is preserved; downstream interpretation has not settled.</span><div class="si-retry-row">${button('Retry Scene Update', 'retry', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
             : '';
-    const sceneBody = `${failure}${section('scene', 'Current scene', `<div class="si-scene-head"><div><div class="si-location-name">${escapeHTML(model.location?.name || 'Unknown location')}</div><div class="si-scene-summary">${escapeHTML(model.reader?.summary || model.protocol.packet?.sceneReading || 'No settled Reader scene description yet.')}</div></div><div class="si-time">${escapeHTML(model.worldTime)}</div></div><div class="si-chip-row">${model.cast.active.map(entry => `<span class="si-chip active">${escapeHTML(entry.name)}</span>`).join('') || '<span class="si-chip">No active cast</span>'}</div>`, model.hierarchy.scene?.title || 'Current')}${section('cast', 'Cast and presence', `<div class="si-chip-row">${Object.entries(model.cast).flatMap(([mode, entries]) => entries.map(entry => `<span class="si-chip ${escapeHTML(mode)}" title="${escapeHTML(entry.reason || mode)}">${escapeHTML(entry.name)} <small>${escapeHTML(mode)}</small></span>`)).join('') || '<span class="si-empty">No classified cast evidence yet.</span>'}</div>`, `${model.activeCharacters.length}`)}${section('entities', 'Entities and candidates', model.candidates.length ? model.candidates.slice(-12).reverse().map(candidate => `<article class="si-card"><div class="si-card-header"><span class="si-avatar">${sidecarWorkspaceAvatar(candidate.label || candidate.role)}</span><strong>${escapeHTML(candidate.label || candidate.role || candidate.candidateType || 'Scene candidate')}</strong><small>${escapeHTML(candidate.candidateType || 'candidate')}</small></div><p>${escapeHTML(String(candidate.description || candidate.evidence || candidate.clothingDescription || 'Pre-canonical evidence; review required.').slice(0, 420))}</p><div class="si-card-actions">${button('Review', `candidate:${escapeHTML(candidate.candidateId || '')}`)}${button('World GM', `candidate-gm:${escapeHTML(candidate.candidateId || '')}`)}</div></article>`).join('') : '<div class="si-empty">No pre-canonical candidates are active for this scene.</div>', `${model.candidates.length}`)}${section('pressures', 'Open questions and pressures', model.openQuestions.length ? model.openQuestions.slice(0, 10).map(question => `<article class="si-card" style="--si-accent:#d4a855"><div class="si-card-header"><strong>${escapeHTML(question.prompt || question.id)}</strong><small>${escapeHTML(question.priority || question.pressure || 'open')}</small></div><p>${escapeHTML(String(question.evidence || 'The answer remains unresolved and will be carried only while relevant.').slice(0, 360))}</p></article>`).join('') : '<div class="si-empty">No open scene questions.</div>', `${model.openQuestions.length}`)}${section('memory', 'Continuity health', `<div class="si-chip-row"><span class="si-chip">${Number(model.memory.worldHistory?.filter?.(record => record.status === 'active').length) || 0} turns</span><span class="si-chip">${Number(model.memory.episodes?.filter?.(record => record.status === 'active').length) || 0} episodes</span><span class="si-chip">${Number(model.memory.cognition?.filter?.(record => record.status !== 'superseded').length) || 0} cognition</span></div><p class="si-scene-summary">Only settled Reader/Sidecar attempts feed active continuity and background memory work.</p>`, '')}`;
-    const relationshipBody = model.relationships.length ? model.relationships.map(entry => `<article class="si-card" style="--si-accent:${entry.proposal ? '#d4a855' : '#4db8a4'}"><div class="si-card-header"><span class="si-avatar">${sidecarWorkspaceAvatar(entry.label)}</span><strong>${escapeHTML(entry.label)}</strong><small>${escapeHTML(entry.posture || 'unresolved')}</small></div>${entry.posture ? `<div class="si-meter"><i style="width:${Math.min(100, Math.max(5, Math.abs(Number(entry.posture)) || 35))}%"></i></div>` : ''}<p>${escapeHTML(entry.evidence || (entry.proposal ? 'Reader proposal awaiting Sidecar review.' : 'Canonical relationship state.'))}</p>${entry.proposal ? `<div class="si-card-actions">${button('Review evidence', `relationship:${escapeHTML(entry.id)}`)}</div>` : ''}</article>`).join('') : '<div class="si-empty">No relationship records are available for this scene.</div>';
-    const characterBody = model.activeCharacters.length ? model.activeCharacters.map(entry => `<article class="si-card"><div class="si-card-header"><span class="si-avatar">${sidecarWorkspaceAvatar(entry.name)}</span><strong>${escapeHTML(entry.name)}</strong><small>${escapeHTML(entry.mode)}</small></div><p>${escapeHTML(entry.appearance || entry.activity || 'No additional current-state detail.')}</p>${entry.activity ? `<small class="form-hint">${escapeHTML(entry.activity)}</small>` : ''}</article>`).join('') : '<div class="si-empty">No character evidence has settled yet.</div>';
-    const historyBody = model.snapshots.length ? model.snapshots.map((snapshot, index) => `<div class="si-history-row" data-si-history="${escapeHTML(snapshot.id)}"><span class="si-history-marker">${model.snapshots.length - index}</span><div><strong>${escapeHTML(snapshot.envelope?.scene?.topic || snapshot.envelope?.summary || 'Reader snapshot')}</strong><small>${escapeHTML(snapshot.envelope?.summary || '')}</small><small>${escapeHTML(snapshot.status || 'active')} · ${escapeHTML(snapshot.envelope?.snapshotMode || 'delta')} · ${escapeHTML(snapshot.turnId || '')}</small></div></div>`).join('') : '<div class="si-empty">No Reader snapshots have settled yet.</div>';
-    const viewBody = workspaceUi.view === 'relationships' ? section('relationships', 'Relationships', relationshipBody, `${model.relationships.length}`)
-        : workspaceUi.view === 'characters' ? section('characters', 'Characters', characterBody, `${model.activeCharacters.length}`)
-            : workspaceUi.view === 'history' ? section('history', 'Reader history', historyBody, `${model.snapshots.length}`)
+    const refreshReview = model.pendingReaderRefresh
+        ? `<div class="si-refresh-review"><strong>Fresh Reader interpretation ready for review</strong><span>It was derived from the preserved current narration. Accepting it updates Scene Intelligence only; it does not rerun Narrator or replay the canonical receipt.</span><div class="si-retry-row">${button('Use this reading', `accept-refresh:${model.pendingReaderRefresh.id}`, 'btn btn-primary')}${button('Discard', `discard-refresh:${model.pendingReaderRefresh.id}`)}</div></div>`
+        : '';
+    // Never splice packet prose into a stale Reader projection. The packet is
+    // a narrator-context subset and may describe a newer beat than the
+    // accepted Reader snapshot; doing so produced the exact "12:00 + Sarah
+    // phone call" chimera the workspace is meant to prevent.
+    const renderedReader = model.readerFresh || model.historical ? model.reader : null;
+    const sceneSummary = renderedReader?.summary || (model.readerStale ? 'The last accepted scene reading is stale. Refresh it to inspect the current authored beat.' : 'No settled Reader scene description yet.');
+    const temporal = renderedReader?.temporal || model.projection?.temporal || {};
+    const scene = renderedReader?.scene || model.projection?.scene || {};
+    const environment = renderedReader?.environment || model.projection?.environment || {};
+    const day = temporal.day || temporal.dayOfWeek || 'Unknown day';
+    const date = temporal.date || temporal.calendarDate || '';
+    const weather = environment.weather || temporal.weather || 'No weather evidence';
+    const environmentalText = environment.description || environment.setting || scene.environment || weather;
+    const tension = scene.tension || 'unknown';
+    const tensionClass = /critical/i.test(tension) ? 'sp-tension-critical' : /high/i.test(tension) ? 'sp-tension-high' : /moderate/i.test(tension) ? 'sp-tension-moderate' : /low/i.test(tension) ? 'sp-tension-low' : 'sp-tension-calm';
+    const characterBody = model.activeCharacters.length
+        ? model.activeCharacters.map(entry => sidecarWorkspaceCharacterCard(entry, model)).join('')
+        : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◌</div><strong class="sp-empty-title">No relevant people</strong><span class="sp-empty-sub">The Reader has not established anyone beyond the controlled character for this beat.</span></div>';
+    const sceneDetailRows = [
+        ['Topic', scene.topic], ['Mood', scene.mood || scene.moodAtmosphere], ['Tension', tension],
+        ['Interaction', scene.interactionStyle], ['Sound', environment.sound || scene.sound],
+        ['Local space', model.location?.localSpace || model.location?.authoredDescription]
+    ].filter(([, value]) => String(value || '').trim());
+    const sceneDetails = `<div class="sp-scene-summary-row"><div class="sp-scene-summary">${escapeHTML(sceneSummary)}</div></div>${sceneDetailRows.map(([label, value]) => `<div class="sp-row ${label === 'Tension' ? `sp-scene-tension-row ${tensionClass}` : label === 'Sound' ? 'sp-scene-sounds-row' : ''}"><span class="sp-row-label">${escapeHTML(label)}</span><span class="sp-row-value">${escapeHTML(String(value))}</span></div>`).join('')}`;
+    const questEntries = (model.projection?.currentThreads || model.projection?.pressures || []).slice(0, 12);
+    const questJournal = questEntries.length ? `<div class="sp-plot-tier sp-tier-open sp-tier-main"><div class="sp-plot-tier-title"><span class="sp-tier-chevron">›</span><span class="sp-tier-icon">▣</span><span>Active tasks</span><span class="sp-section-badge">${questEntries.length}</span></div><div class="sp-tier-body">${questEntries.map(item => `<article class="sp-plot-entry sp-card-open"><header class="sp-quest-header"><span class="sp-quest-chevron">›</span><span class="sp-plot-status sp-urgency-moderate">active</span><strong class="sp-plot-name">${escapeHTML(String(item.label || item.name || item.threadId || 'Current thread'))}</strong></header><div class="sp-quest-detail">${escapeHTML(String(item.details || item.description || item.evidence || 'Current scene pressure.'))}</div></article>`).join('')}</div></div>` : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">▣</div><strong class="sp-empty-title">No active scene tasks</strong><span class="sp-empty-sub">Threads and obligations appear here when the authored beat makes them relevant.</span></div>';
+    const dashboard = `<div class="sp-dashboard si-source-dashboard">
+        <article class="sp-dash-card sp-dash-card-date"><span class="sp-dash-sub">${escapeHTML(date)}</span><strong class="sp-dash-day">${escapeHTML(day)}</strong></article>
+        <article class="sp-dash-card sp-dash-card-time"><span class="sp-dash-clock">◷</span><strong class="sp-time-value">${escapeHTML(model.worldTime)}</strong></article>
+        <article class="sp-dash-card sp-dash-card-temp ${tensionClass}"><div class="sp-temp-bar-wrap"><div class="si-source-tension-bar"><i></i></div></div><strong class="sp-temp-bar-label">${escapeHTML(tension)} · ${escapeHTML(scene.mood || 'scene mood unknown')}</strong></article>
+        <article class="sp-dash-card sp-dash-card-weather"><span class="sp-dash-icon">${/rain|storm|wind/i.test(weather) ? '≋' : '☁'}</span><strong class="sp-dash-value">${escapeHTML(environmentalText)}</strong></article>
+    </div><div class="sp-dash-location"><span class="sp-dash-loc-icon">⌖</span><span class="sp-dash-loc-text">${escapeHTML([model.location?.name, ...(model.location?.parentLocations || []).map(item => item.name)].filter(Boolean).join(' ← ') || 'Unknown location')}</span></div>`;
+    const sceneBody = `${failure}${refreshReview}${dashboard}
+        ${section('scene-details', 'Scene details', sceneDetails, scene.topic ? 'live' : '', '▸')}
+        ${section('characters', 'Characters', characterBody, `${model.activeCharacters.length}`, '♙')}
+        ${section('relationships', 'Relationships', sidecarWorkspaceRelationshipMarkup(model), `${model.relationships.length}`, '↔')}
+        ${section('quest-journal', 'Quest journal', questJournal, `${questEntries.length}`, '▣')}
+        ${section('changes', 'Changes, places & objects', `<div class="si-source-change-grid"><div><strong>What changed</strong>${sidecarWorkspaceList(model.projection?.changes, 'No material change was extracted for this beat.')}</div><div><strong>Relevant objects</strong>${sidecarWorkspaceList(model.projection?.salientObjects, 'No object has current scene relevance.')}</div><div><strong>Relevant places</strong>${sidecarWorkspaceList(model.projection?.salientLocations, 'No additional place is currently salient.')}</div></div>`, `${(model.projection?.changes || []).length}`, '◇')}
+        ${section('candidates', 'Scene evidence', model.candidates.length ? model.candidates.slice(-12).reverse().map(candidate => `<article class="sp-candidate-card si-candidate-card"><header><span class="si-avatar">${sidecarWorkspaceAvatar(candidate.label || candidate.role)}</span><span class="si-candidate-title"><strong>${escapeHTML(candidate.label || candidate.role || candidate.candidateType || 'Scene candidate')}</strong><small>${escapeHTML(candidate.candidateType || 'candidate')} · ${escapeHTML(candidate.status || 'evidence')}</small></span></header><p>${escapeHTML(String(candidate.description || candidate.evidence || candidate.clothingDescription || 'Pre-canonical evidence; review required.').slice(0, 420))}</p><div class="si-card-actions">${button('Review evidence', `candidate:${escapeHTML(candidate.candidateId || '')}`)}${button('World GM', `candidate-gm:${escapeHTML(candidate.candidateId || '')}`)}</div></article>`).join('') : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◇</div><strong class="sp-empty-title">No scene candidates</strong><span class="sp-empty-sub">New people, places and props remain evidence until reviewed.</span></div>', `${model.candidates.length}`, '◇')}
+        ${section('questions', 'Questions & pressures', model.openQuestions.length ? model.openQuestions.slice(0, 10).map(question => `<article class="si-question-card"><div class="si-question-heading"><span class="si-question-mark">?</span><strong>${escapeHTML(question.prompt || question.id)}</strong><span class="sp-section-badge">${escapeHTML(question.priority || question.pressure || 'open')}</span></div><p>${escapeHTML(String(question.evidence || 'The answer remains unresolved and will be carried only while relevant.').slice(0, 360))}</p><div class="si-card-actions">${button('Open World GM', 'gm')}</div></article>`).join('') : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">?</div><strong class="sp-empty-title">No open questions</strong><span class="sp-empty-sub">Uncertainty is carried only when it remains relevant to continuity.</span></div>', `${model.openQuestions.length}`, '?')}`;
+    const relationshipBody = sidecarWorkspaceRelationshipMarkup(model);
+    const characterBrowserBody = model.activeCharacters.length ? `<div class="si-character-intro">Characters are grouped by what the authored beat establishes: active, nearby, audible and remote. Expand a card for scoped evidence.</div>${model.activeCharacters.map(entry => sidecarWorkspaceCharacterCard(entry, model)).join('')}` : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◌</div><strong class="sp-empty-title">No character evidence</strong><span class="sp-empty-sub">No character-specific presence has settled for this scene.</span></div>';
+    const historyBody = sidecarWorkspaceHistoryTimeline(model);
+    const thoughtsBody = sidecarWorkspaceThoughts(model);
+    const allKnownBody = sidecarWorkspaceKnownCharacters(model);
+    const viewBody = workspaceUi.view === 'relationships' ? `<div class="si-view-intro"><span class="si-kicker">RELATIONSHIP WEB</span><h2>People in the current world</h2><p>Signals, posture and evidence over time.</p></div>${section('relationships', 'Relationships', relationshipBody, `${model.relationships.length}`, '↔')}`
+        : workspaceUi.view === 'characters' ? `<div class="si-view-intro"><span class="si-kicker">CHARACTER BROWSER</span><h2>Who is in the beat?</h2><p>ScenePulse-style character cards backed by Horde’s canonical entities and scoped Reader evidence.</p></div>${section('characters', 'Characters', characterBrowserBody, `${model.activeCharacters.length}`, '♙')}`
+            : workspaceUi.view === 'history' ? `<div class="si-view-intro"><span class="si-kicker">SCENE HISTORY</span><h2>Reader snapshots</h2><p>Immutable derived snapshots attached to accepted Turns and Takes.</p></div>${section('history', 'History & timeline', historyBody, `${model.snapshots.length}`, '◷')}`
+                : workspaceUi.view === 'thoughts' ? `<div class="si-view-intro"><span class="si-kicker">CHARACTER READINGS</span><h2>What each person may be making of this</h2><p>Private, evidence-scoped Reader interpretation—not objective canon.</p></div>${section('thoughts', 'Provisional cognition', thoughtsBody, `${model.activeCharacters.filter(entry => entry.intelligence).length}`, '◌')}`
+                    : workspaceUi.view === 'all-known' ? `<div class="si-view-intro"><span class="si-kicker">ALL KNOWN CHARACTERS</span><h2>World registry</h2><p>Kept deliberately outside the relevance-first scene roster.</p></div>${section('all-known', 'Known characters', allKnownBody, `${model.knownCharacters.length}`, '♙')}`
                 : sceneBody;
     const rerender = () => { renderSidecarWorkspace(world, sess); };
     // Keep a single tiny bridge on window for the generated tab buttons.  It
@@ -17394,8 +19603,10 @@ function renderSidecarWorkspace(world, sess) {
     // during world renders, while still mutating the canonical timeline UI
     // state rather than introducing a second workspace state store.
     window.__hordeSceneWorkspaceView = view => {
-        if (!['scene', 'relationships', 'characters', 'history'].includes(view)) return;
+        if (!['scene', 'relationships', 'characters', 'history', 'thoughts', 'all-known'].includes(view)) return;
         workspaceUi.view = view;
+        protocol.workspaceUi = workspaceUi;
+        sess.sidecar = protocol;
         rerender();
         saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     };
@@ -17407,7 +19618,11 @@ function renderSidecarWorkspace(world, sess) {
         });
         window.__hordeSceneWorkspaceDocumentListener = true;
     }
-    host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
+    const toolbarButton = (label, view, title) => `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn ${workspaceUi.view === view ? 'sp-tb-active' : ''}" data-si-view="${view}" title="${escapeHTML(title)}" aria-label="${escapeHTML(title)}">${label}</button>`;
+    const compactPipelineAction = model.historical
+        ? `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="return-current" title="Return to the current scene" aria-label="Return to the current scene">↩</button>`
+        : `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="refresh" title="Refresh Scene Intelligence" aria-label="Refresh Scene Intelligence">↻</button>`;
+    host.innerHTML = `<div class="sp-toolbar si-source-toolbar"><div class="sp-brand si-source-brand"><span class="sp-brand-mark" aria-hidden="true">◉</span><span class="sp-brand-word">Scene<span>Pulse</span></span><small>${escapeHTML(model.hierarchy.scene?.title || model.location?.name || 'Current scene')}</small></div><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${statusClass}">${escapeHTML(model.historical ? 'History mode' : statusLabel)}</span>${compactPipelineAction}${toolbarButton('⌂', 'scene', 'Open current scene')}${toolbarButton('◌', 'thoughts', 'Open character thoughts')}${toolbarButton('◷', 'history', 'Open accepted scene history')}${toolbarButton('♙', 'all-known', 'Browse all known characters')}<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="collapse-all" title="Collapse or expand scene sections" aria-label="Collapse or expand scene sections">▦</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="backstage" title="Open Backstage evidence" aria-label="Open Backstage evidence">≡</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="gm" title="Open World GM" aria-label="Open World GM">✎</button></div><div class="sp-panel-body si-body">${viewBody}</div>`;
     // Bind the generated tab controls directly after each redraw.  The
     // workspace is rebuilt during Sidecar updates, so a one-time listener on
     // an earlier DOM node is not sufficient.  The document-level bridge above
@@ -17416,16 +19631,54 @@ function renderSidecarWorkspace(world, sess) {
         event.preventDefault();
         event.stopPropagation();
         const nextView = buttonEl.dataset.siView;
-        if (!['scene', 'relationships', 'characters', 'history'].includes(nextView)) return;
+        if (!['scene', 'relationships', 'characters', 'history', 'thoughts', 'all-known'].includes(nextView)) return;
         workspaceUi.view = nextView;
         protocol.workspaceUi = workspaceUi;
         sess.sidecar = protocol;
         rerender();
         saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     }));
-    host.querySelectorAll('.si-section').forEach(details => details.addEventListener('toggle', () => { workspaceUi.open[details.dataset.siSection] = details.open; saveState().catch(() => {}); }));
+    host.querySelectorAll('[data-si-section-toggle]').forEach(header => header.addEventListener('click', event => {
+        if (event.target.closest('[data-si-section-refresh]')) return;
+        const sectionEl = header.closest('.si-section');
+        if (!sectionEl) return;
+        const isOpen = sectionEl.classList.toggle('sp-open');
+        workspaceUi.open[header.dataset.siSectionToggle] = isOpen;
+        saveState().catch(() => {});
+    }));
+    host.querySelectorAll('[data-si-toggle="character"]').forEach(header => header.addEventListener('click', () => header.closest('.si-character-card')?.classList.toggle('sp-card-open')));
+    host.querySelectorAll('.sp-rel-header').forEach(header => header.addEventListener('click', () => header.closest('.si-rel-block')?.classList.toggle('sp-card-open')));
+    host.querySelectorAll('[data-si-snapshot]').forEach(buttonEl => buttonEl.addEventListener('click', () => {
+        workspaceUi.selectedSnapshotId = buttonEl.dataset.siSnapshot || '';
+        workspaceUi.historyMode = true;
+        protocol.workspaceUi = workspaceUi;
+        sess.sidecar = protocol;
+        rerender();
+        saveState().catch(error => console.warn('Scene Intelligence history selection persistence failed:', error));
+    }));
     host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
         const action = buttonEl.dataset.siAction || '';
+        if (action === 'return-current') {
+            workspaceUi.historyMode = false;
+            workspaceUi.selectedSnapshotId = '';
+            protocol.workspaceUi = workspaceUi;
+            sess.sidecar = protocol;
+            await saveState();
+            rerender(); return;
+        }
+        if (action === 'collapse-all') {
+            const sections = [...host.querySelectorAll('[data-si-section]')];
+            const anyOpen = sections.some(sectionEl => sectionEl.classList.contains('sp-open'));
+            sections.forEach(sectionEl => {
+                const key = sectionEl.dataset.siSection;
+                sectionEl.classList.toggle('sp-open', !anyOpen);
+                if (key) workspaceUi.open[key] = !anyOpen;
+            });
+            protocol.workspaceUi = workspaceUi;
+            sess.sidecar = protocol;
+            await saveState();
+            return;
+        }
         if (action === 'backstage') return openWorldSidecarInspector('backstage');
         if (action === 'gm') return openWorldSidecarLine({ kind: 'world_gm', title: 'World GM · Scene Intelligence', guidance: 'Resolve the current Sidecar failure or authorial ambiguity without regenerating the visible Narrator turn.' });
         if (action === 'enable-reader') {
@@ -17434,6 +19687,10 @@ function renderSidecarWorkspace(world, sess) {
             await saveState();
             showToast('Sidecar Reader enabled for this world.', 'success');
             rerender(); return;
+        }
+        if (model.historical && ['process', 'retry', 'refresh'].includes(action)) {
+            showToast('Historical Scene Intelligence is read-only. Return to the current scene to process it.', 'info');
+            return;
         }
         if (action === 'process') {
             buttonEl.disabled = true; buttonEl.textContent = 'Processing…';
@@ -17453,6 +19710,21 @@ function renderSidecarWorkspace(world, sess) {
         if (action === 'refresh') {
             buttonEl.disabled = true; buttonEl.textContent = '…';
             try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); showToast('Scene Intelligence refreshed for review.', 'success'); } catch (error) { showToast(`Scene refresh failed: ${error?.message || error}`, 'error'); }
+            rerender(); return;
+        }
+        if (action.startsWith('accept-refresh:')) {
+            buttonEl.disabled = true; buttonEl.textContent = 'Applying…';
+            try {
+                acceptSidecarReaderRefresh(world, sess, action.slice(15));
+                await saveState();
+                showToast('Scene Intelligence updated from the reviewed reading. Narration and canon were untouched.', 'success');
+            } catch (error) { showToast(`Could not apply that Reader refresh: ${error?.message || error}`, 'error'); }
+            rerender(); return;
+        }
+        if (action.startsWith('discard-refresh:')) {
+            discardSidecarReaderRefresh(world, sess, action.slice(16));
+            await saveState();
+            showToast('Reader refresh discarded. The last settled scene view remains unchanged.', 'info');
             rerender(); return;
         }
         if (action.startsWith('candidate-gm:')) {
@@ -21645,7 +23917,15 @@ function renderWorldSidecarConfigEditor(world) {
     document.getElementById('w-sidecar-reader-timeout').value = readerProfile.timeoutSeconds;
     document.getElementById('w-sidecar-reader-refresh').value = readerProfile.fullRefreshCadence;
     document.getElementById('w-sidecar-reader-tools').value = readerProfile.maxToolCalls;
-    document.querySelectorAll('#w-sidecar-reader-timeout, #w-sidecar-reader-refresh, #w-sidecar-reader-tools').forEach(input => input.disabled = tracker.readerProfileInherit !== false);
+    document.getElementById('w-sidecar-reader-provider').value = readerProfile.provider || '';
+    document.getElementById('w-sidecar-reader-model').value = readerProfile.model || '';
+    document.getElementById('w-sidecar-reader-profile-max-tokens').value = readerProfile.maxTokens || '';
+    document.getElementById('w-sidecar-reader-context-budget').value = readerProfile.contextBudget || 24000;
+    document.getElementById('w-sidecar-reader-lookup-budget').value = readerProfile.maxLookupPayload || 12000;
+    document.getElementById('w-sidecar-reader-reasoning').value = readerProfile.reasoningMode || 'inherit';
+    document.getElementById('w-sidecar-reader-reasoning-effort').value = readerProfile.reasoningEffort || 'auto';
+    document.getElementById('w-sidecar-reader-retry').value = readerProfile.retryPolicy || 'bounded';
+    document.querySelectorAll('#w-sidecar-reader-timeout, #w-sidecar-reader-refresh, #w-sidecar-reader-tools, #w-sidecar-reader-provider, #w-sidecar-reader-model, #w-sidecar-reader-profile-max-tokens, #w-sidecar-reader-context-budget, #w-sidecar-reader-lookup-budget, #w-sidecar-reader-reasoning, #w-sidecar-reader-reasoning-effort, #w-sidecar-reader-retry').forEach(input => input.disabled = tracker.readerProfileInherit !== false);
     document.getElementById('w-sidecar-provider').value = tracker.provider || '';
     renderSidecarModelOptions(normalizedProviderId(tracker.provider), tracker.model || '');
     document.getElementById('w-sidecar-reasoning-mode').value = tracker.reasoningMode || (tracker.reasoning === true ? 'enabled' : 'inherit');
@@ -21997,9 +24277,17 @@ async function saveWorld() {
                 readerProfileInherit: document.getElementById('w-sidecar-reader-profile-inherit').checked,
                 readerProfile: deriveSidecarReaderProfileRevision({
                     ...(priorSidecarConfig.tracker?.readerProfile || {}),
+                    provider: document.getElementById('w-sidecar-reader-provider').value,
+                    model: document.getElementById('w-sidecar-reader-model').value.trim(),
+                    maxTokens: document.getElementById('w-sidecar-reader-profile-max-tokens').value,
                     timeoutSeconds: document.getElementById('w-sidecar-reader-timeout').value,
                     fullRefreshCadence: document.getElementById('w-sidecar-reader-refresh').value,
-                    maxToolCalls: document.getElementById('w-sidecar-reader-tools').value
+                    maxToolCalls: document.getElementById('w-sidecar-reader-tools').value,
+                    maxLookupPayload: document.getElementById('w-sidecar-reader-lookup-budget').value,
+                    contextBudget: document.getElementById('w-sidecar-reader-context-budget').value,
+                    reasoningMode: document.getElementById('w-sidecar-reader-reasoning').value,
+                    reasoningEffort: document.getElementById('w-sidecar-reader-reasoning-effort').value,
+                    retryPolicy: document.getElementById('w-sidecar-reader-retry').value
                 }),
                 readerMaxTokens: document.getElementById('w-sidecar-reader-max-tokens').value,
                 maxTokens: document.getElementById('w-sidecar-max-tokens').value
@@ -33066,6 +35354,12 @@ function appendWorldMessageUI(msg, index = null) {
     // newer narrative (the "memory is iffy on rerolls" corruption).
     const navSess = getCurrentWorldSession();
     const isLastEntry = navSess && index !== null && index === navSess.history.length - 1;
+    // Rewind is recovery, not an edit-mode subfeature. The original submitted
+    // wording is a valid draft, so expose it whenever a later committed DM
+    // reply can be unwound safely.
+    const hasRewindableReply = msg.role === 'user' && index !== null
+        && !!activeSession?.history.slice(index + 1)
+            .find(entry => entry?.role === 'dm' && entry.turnSnapshot);
 
     // Allow editing/deletion for parity
     div.innerHTML = `
@@ -33074,11 +35368,6 @@ function appendWorldMessageUI(msg, index = null) {
             ${metaHtml}
             ${backstageHtml}
             <textarea class="msg-edit-area hidden" style="width:100%; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:8px; margin-top:8px; font-family:inherit; font-size:inherit;"></textarea>
-            <div class="msg-rewind-confirm hidden" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; padding:8px 10px; border:1px solid var(--warning); border-radius:7px; background:rgba(245,158,11,.08); font-size:.76rem; color:var(--text-2);">
-                <span>Rewind this turn to the edited draft?</span>
-                <button type="button" class="msg-rewind-yes btn btn-primary" style="padding:4px 9px; font-size:.72rem;">Yes</button>
-                <button type="button" class="msg-rewind-no btn btn-ghost" style="padding:4px 9px; font-size:.72rem;">No</button>
-            </div>
             ${msg.role === 'dm' && versions.length > 1 && !isLastEntry ? `
                 <div style="font-size:0.65rem; color:var(--text-3); margin-top:6px;" title="Takes can only be switched on the latest response — switching older ones would rewind the world state underneath everything that happened since.">🔒 take ${currentVersionIdx + 1}/${versions.length} (locked — older turn)</div>
             ` : ''}
@@ -33093,9 +35382,8 @@ function appendWorldMessageUI(msg, index = null) {
             <div class="msg-actions" style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
                 ${index !== null ? `
                 <button class="msg-edit-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">✎ Edit</button>
-                ${msg.role === 'user' ? `<button class="msg-rewind-draft-btn hidden" style="background:none; border:none; color:var(--warning); font-size:0.7rem; cursor:pointer;">↶ Rewind to draft</button>` : ''}
+                ${msg.role === 'user' ? `<button class="msg-rewind-draft-btn${hasRewindableReply ? '' : ' hidden'}" style="background:none; border:none; color:var(--warning); font-size:0.7rem; cursor:pointer;">↶ Rewind to draft</button>` : ''}
                 ${msg.role === 'dm' ? `<button class="msg-fork-btn" data-fork-turn="${turnNumber}" title="Create a new timeline from this committed turn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">⑂ Fork</button>` : ''}
-                <button class="msg-del-btn" style="background:none; border:none; color:var(--text-3); font-size:0.7rem; cursor:pointer;">🗑️ Delete</button>
                 ` : ''}
             </div>
         </div>
@@ -33104,13 +35392,9 @@ function appendWorldMessageUI(msg, index = null) {
     if (index !== null) {
         const editBtn = div.querySelector('.msg-edit-btn');
         const forkBtn = div.querySelector('.msg-fork-btn');
-        const delBtn = div.querySelector('.msg-del-btn');
         const editArea = div.querySelector('.msg-edit-area');
         const textDiv = div.querySelector('.msg-text');
         const rewindDraftBtn = div.querySelector('.msg-rewind-draft-btn');
-        const rewindConfirm = div.querySelector('.msg-rewind-confirm');
-        const rewindYes = div.querySelector('.msg-rewind-yes');
-        const rewindNo = div.querySelector('.msg-rewind-no');
         const sess = getCurrentWorldSession();
         const world = state.worlds.find(item => item.id === state.activeWorldId);
         div.querySelector('.sidecar-retry-scene-update')?.addEventListener('click', async event => {
@@ -33132,18 +35416,6 @@ function appendWorldMessageUI(msg, index = null) {
                 draft: `The Sidecar commit for ${backstageTurnId} is incomplete.\n${failure?.message || ''}\n\nPlease inspect the journaled receipt and resolve the canonical state safely.`
             });
         });
-        let pendingRewind = null;
-        const hideRewindConfirm = () => {
-            pendingRewind = null;
-            if (rewindConfirm) { rewindConfirm.classList.add('hidden'); rewindConfirm.style.display = 'none'; }
-        };
-        rewindNo?.addEventListener('click', hideRewindConfirm);
-        rewindYes?.addEventListener('click', async () => {
-            const action = pendingRewind;
-            hideRewindConfirm();
-            if (action) await action();
-        });
-
         forkBtn?.addEventListener('click', () => forkCurrentWorldTimeline(sess.id, Number(forkBtn.dataset.forkTurn), { useDefaultName: true }));
 
         if (msg.role === 'dm' && versions.length > 1 && isLastEntry) {
@@ -33181,23 +35453,18 @@ function appendWorldMessageUI(msg, index = null) {
             };
         }
 
-        delBtn.onclick = () => {
-            showConfirmModal('Delete Timeline Entry', 'This entry and everything after it will be removed so world state stays consistent. Continue?', async () => {
-                const deletedMsg = sess.history[index];
-                const world = state.worlds.find(w => w.id === state.activeWorldId);
-                const affectedDm = deletedMsg.role === 'dm'
-                    ? deletedMsg
-                    : sess.history.slice(index).find(entry => entry.role === 'dm' && entry.turnSnapshot);
-                if (world && affectedDm?.turnSnapshot) restoreWorldTurnState(world, sess, affectedDm.turnSnapshot);
-                invalidateEpisodicFrom(sess, index);
-                sess.history.splice(index);
-                await saveState();
-                renderWorldPlayState();
-            });
+        let rewindArmed = false;
+        let rewindResetTimer = 0;
+        const resetRewindButton = () => {
+            rewindArmed = false;
+            if (!rewindDraftBtn?.isConnected) return;
+            rewindDraftBtn.textContent = '↶ Rewind to draft';
+            rewindDraftBtn.removeAttribute('aria-label');
         };
-
-        const prepareRewind = () => {
-            const editedText = editArea.value.trim();
+        const rewindToDraft = async () => {
+            // When the player has not opened Edit, restore the submitted
+            // wording itself. A hidden textarea must not make rewind inert.
+            const editedText = editArea.value.trim() || String(displayText || msg.text || '').trim();
             if (!editedText) return showToast('The replay draft cannot be empty.', 'info');
             const currentSession = getCurrentWorldSession();
             const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
@@ -33205,33 +35472,43 @@ function appendWorldMessageUI(msg, index = null) {
                 ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
                 : null;
             if (!affectedDm) return showToast('There is no committed response after this message to rewind.', 'info');
-            pendingRewind = async () => {
-                const world = state.worlds.find(item => item.id === state.activeWorldId);
-                if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
-                // The snapshot restores Sidecar's selected pre-turn revision
-                // and invalidates all derived Episode, cognition, scene and
-                // sequence output sourced by the discarded tail. The ordinary
-                // legacy archive receives the same rewind for Inline timelines.
-                invalidateEpisodicFrom(currentSession, messageIndex);
-                currentSession.history.splice(messageIndex);
-                const protocol = world && window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, currentSession);
-                if (protocol) protocol.inputMode = 'narrator';
-                const input = document.getElementById('world-user-input');
-                if (input) {
-                    input.value = editedText;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-                await saveState();
-                renderWorldPlayState();
-                document.getElementById('world-user-input')?.focus();
-                showToast('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
-            };
-            if (rewindConfirm) {
-                rewindConfirm.classList.remove('hidden');
-                rewindConfirm.style.display = 'flex';
-            } else pendingRewind();
+            const world = state.worlds.find(item => item.id === state.activeWorldId);
+            if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
+            // The snapshot restores Sidecar's selected pre-turn revision
+            // and invalidates all derived Episode, cognition, scene and
+            // sequence output sourced by the discarded tail. The ordinary
+            // legacy archive receives the same rewind for Inline timelines.
+            invalidateEpisodicFrom(currentSession, messageIndex);
+            currentSession.history.splice(messageIndex);
+            const protocol = world && window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, currentSession);
+            if (protocol) protocol.inputMode = 'narrator';
+            await saveState();
+            renderWorldPlayState();
+            // renderWorldPlayState rebuilds the composer. Restore the draft
+            // only after that replacement has happened; setting it before the
+            // render made a successful rewind look like an empty draft.
+            const restoredInput = document.getElementById('world-user-input');
+            if (restoredInput) {
+                restoredInput.value = editedText;
+                restoredInput.dispatchEvent(new Event('input', { bubbles: true }));
+                resizeWorldMessageInput(restoredInput);
+                restoredInput.focus();
+            }
+            showToast('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
         };
-        rewindDraftBtn?.addEventListener('click', prepareRewind);
+        rewindDraftBtn?.addEventListener('click', async () => {
+            if (!rewindArmed) {
+                rewindArmed = true;
+                rewindDraftBtn.textContent = 'Confirm?';
+                rewindDraftBtn.setAttribute('aria-label', 'Confirm rewind to draft');
+                clearTimeout(rewindResetTimer);
+                rewindResetTimer = setTimeout(resetRewindButton, 2600);
+                return;
+            }
+            clearTimeout(rewindResetTimer);
+            rewindArmed = false;
+            await rewindToDraft();
+        });
 
         let isEditing = false;
         editBtn.onclick = async () => {
@@ -33977,6 +36254,11 @@ async function executeWorldTurn(commandOrReroll = null) {
     let labsWorldFrame = null;
     let ffPrefill = '';
     let sidecarMode = false;
+    // Failure recovery runs outside the main success path. Keep the authored
+    // artifact reference at turn scope so that it can decide safely whether
+    // to restore the player's draft or preserve a completed narration.
+    let fullText = '';
+    let sidecarTurnId = null;
 
     try {
         world = state.worlds.find(w => w.id === state.activeWorldId);
@@ -35663,7 +37945,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = "";
+        fullText = "";
         const streamedToolCalls = new Map();
         let streamError = null;       // provider error delivered inside the stream
         let reasoningSeen = false;    // model emitted hidden reasoning deltas
@@ -35802,7 +38084,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         let sidecarHandoff = '';
         let sidecarReceipt = null;
         let sidecarPacket = null;
-        let sidecarTurnId = null;
+        sidecarTurnId = null;
         let sidecarFailure = null;
         if (sidecarMode) {
             logSidecarConsoleTrace('Narrator response', {

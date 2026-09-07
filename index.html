@@ -10,7 +10,10 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260906-v1700-outfits-v13">
+    <link rel="stylesheet" href="style.css?v=20260908-scenepulse-port-v15">
+    <!-- Pinned ScenePulse component order is deliberately imported whole. -->
+    <link rel="stylesheet" href="scenepulse/vendor/ScenePulse/style.css?v=6.27.20-2888d0d">
+    <link rel="stylesheet" href="scenepulse/horde/scene-pulse-worlds.css?v=20260908-gate-b-v8">
 </head>
 <body>
 <div id="app">
@@ -1496,6 +1499,14 @@
                                         <div><label class="form-label">Reader timeout <span class="help-glyph" title="Maximum time allowed for one semantic reader request before fallback reconciliation is used.">?</span></label><input id="w-sidecar-reader-timeout" type="number" class="form-input" min="10" max="900" step="10" value="120"></div>
                                         <div><label class="form-label">Full refresh cadence <span class="help-glyph" title="Every N reader turns, request a complete envelope instead of only changed fields.">?</span></label><input id="w-sidecar-reader-refresh" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
                                         <div><label class="form-label">Max reader lookups <span class="help-glyph" title="Upper bound on read-only world lookup tool calls for one reader pass.">?</span></label><input id="w-sidecar-reader-tools" type="number" class="form-input" min="0" max="12" step="1" value="3"></div>
+                                        <div><label class="form-label">Reader provider override <span class="help-glyph" title="Blank inherits the Narrator provider. This only routes the read-only Reader pass.">?</span></label><input id="w-sidecar-reader-provider" class="form-input" placeholder="Blank = Narrator provider"></div>
+                                        <div><label class="form-label">Reader model override <span class="help-glyph" title="Blank inherits the Narrator model. This only routes the read-only Reader pass.">?</span></label><input id="w-sidecar-reader-model" class="form-input" placeholder="Blank = Narrator model"></div>
+                                        <div><label class="form-label">Reader max tokens <span class="help-glyph" title="Output budget for the structured scene reading. Blank uses the adaptive default.">?</span></label><input id="w-sidecar-reader-profile-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive"></div>
+                                        <div><label class="form-label">Reader context budget <span class="help-glyph" title="Maximum bounded evidence payload supplied to the Reader.">?</span></label><input id="w-sidecar-reader-context-budget" type="number" class="form-input" min="4000" max="120000" step="1000" value="24000"></div>
+                                        <div><label class="form-label">Reader lookup payload <span class="help-glyph" title="Maximum payload returned by all read-only world lookup tools.">?</span></label><input id="w-sidecar-reader-lookup-budget" type="number" class="form-input" min="1000" max="100000" step="1000" value="12000"></div>
+                                        <div><label class="form-label">Reader reasoning <span class="help-glyph" title="Reader-only reasoning control. Match Narrator is the normal default.">?</span></label><select id="w-sidecar-reader-reasoning" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div>
+                                        <div><label class="form-label">Reader reasoning effort <span class="help-glyph" title="Independent reader reasoning effort when supported by its provider.">?</span></label><select id="w-sidecar-reader-reasoning-effort" class="form-select"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+                                        <div><label class="form-label">Reader retry policy <span class="help-glyph" title="Bounded retries are inside one Reader stage only; a retry never regenerates Narrator prose.">?</span></label><select id="w-sidecar-reader-retry" class="form-select"><option value="bounded">Bounded retry</option><option value="none">No automatic Reader retry</option></select></div>
                                         <div><label class="form-label">Reasoning <span class="help-glyph" title="Match Narrator uses the world reasoning toggle and effort. If an optional-reasoning request hits its output limit, Sidecar retries once without optional reasoning.">?</span></label><select id="w-sidecar-reasoning-mode" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div>
                                         <div id="w-sidecar-reasoning-effort-row"><label class="form-label">Reasoning effort <span class="help-glyph" title="Auto uses the Narrator effort. Higher effort improves analysis but consumes more output budget.">?</span></label><select id="w-sidecar-reasoning-effort" class="form-select"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
                                         <div><label class="form-label">Reader tokens <span class="help-glyph" title="Output budget for the read-only evidence pass. Leave blank to use its adaptive 3,000-token default.">?</span></label><input id="w-sidecar-reader-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive default · 3,000"></div>
@@ -5583,6 +5594,7 @@
 <script src="world-mechanics.js?v=20260905-wm-v1"></script>
 <script src="world-portrait-prompt.js?v=20260905-w7-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-  <script src="app.js?v=20260907-scene-intelligence-v15"></script>
+  <script src="scenepulse/horde/scene-pulse-worlds.js?v=20260908-gate-b-v50"></script>
+  <script src="app.js?v=20260908-scenepulse-port-v42"></script>
 </body>
 </html>
