@@ -13748,6 +13748,13 @@ State backend: AGENTS. The engine-managed <context> is an already-committed cont
 The single permitted out-of-band block is Horde's hidden <scene_handoff>, described by the separate Sidecar narrator contract. It is an authorial event handoff, not persistent state, and Sidecar alone interprets it.
 Time discipline: use only the time evidence supplied in <context>. Never manufacture exact clock times or durations to satisfy a format.
 Epistemic discipline: hidden/off-screen facts in <context> are authorial awareness only. Characters know only what they witnessed, were told, or hold as committed cognition.`;
+    // Sidecar has one narrator turn with one authoritative system contract.
+    // Upstream FF presets often put reasoning/guardrail sections at an
+    // in-chat depth with role=user. That is useful for legacy prompting, but
+    // it is the wrong authority boundary here: after the player's message
+    // those blocks look like fresh user instructions. Fold them into the
+    // Sidecar system prompt while leaving Inline Legacy unchanged.
+    const sidecar = options.sidecar === true;
     const promptSections = enabled.filter(section => (section.placement || 'system') === 'system');
     const injectedHistory = enabled
         .filter(section => section.placement === 'history')
@@ -13755,12 +13762,17 @@ Epistemic discipline: hidden/off-screen facts in <context> are authorial awarene
             role: section.role === 'assistant' ? 'assistant' : (section.role === 'user' ? 'user' : 'system'),
             content: section.content,
             depth: Number(section.depth) || 0
-        }));
+        }))
+        .filter(section => !sidecar || section.role === 'assistant');
+    const foldedSidecarSections = sidecar
+        ? enabled.filter(section => section.placement === 'history' && section.role !== 'assistant')
+        : [];
     const prefill = enabled
         .filter(section => section.placement === 'prefill')
         .map(section => section.content)
         .join('\n\n');
-    const prompt = `${wrapper}\n\n${promptSections.map(section => section.content).filter(Boolean).join('\n\n')}\n\n${contextBlock}`;
+    const foldedPrompt = foldedSidecarSections.map(section => section.content).filter(Boolean);
+    const prompt = `${wrapper}\n\n${promptSections.map(section => section.content).filter(Boolean).join('\n\n')}${foldedPrompt.length ? `\n\n[SIDECAR-FOLDED PRESET GUARDRAILS]\n${foldedPrompt.join('\n\n')}` : ''}\n\n${contextBlock}`;
     return {
         os: {
             id: os.id, name: os.name, version: os.version, stateMode: os.stateMode, source: os.source,
@@ -13774,7 +13786,10 @@ Epistemic discipline: hidden/off-screen facts in <context> are authorial awarene
         },
         choices: os.choices,
         wrapper,
-        enabledSections: enabled.map(section => ({ id: section.id, name: section.name, chars: section.chars, reason: section.reason, placement: section.placement || 'system', depth: Number(section.depth) || 0, role: section.role || 'system' })),
+        enabledSections: enabled.map(section => ({ id: section.id, name: section.name, chars: section.chars, reason: section.reason,
+            placement: sidecar && section.placement === 'history' && section.role !== 'assistant' ? 'system-folded' : (section.placement || 'system'),
+            depth: Number(section.depth) || 0,
+            role: sidecar && section.placement === 'history' && section.role !== 'assistant' ? 'system' : (section.role || 'system') })),
         disabledSections: disabled,
         injectedHistory,
         prefill,
@@ -32321,7 +32336,7 @@ async function executeWorldTurn(commandOrReroll = null) {
             const qualifier = o.contradicted ? 'CONTRADICTED' : `${source}, ${certainty}% confidence`;
             return `${o.text} [${qualifier}]`;
         });
-        npcContext += `\n[NPC: ${npc.name}] [SIMULATION: ${depth.toUpperCase()}]${description}${personaStr}${activity}${dispoStr}${priorRelationship}${goalStr}${boundaryStr}\nGrounded knowledge: ${groundedKnowledge.join(' | ') || 'No persistent facts yet.'}\nNever upgrade hearsay, suspicion or belief into witnessed fact without new evidence.\n`;
+        npcContext += `\n[NPC: ${npc.name}] [SIMULATION: ${depth.toUpperCase()}]\n[PRIVATE EVIDENCE PACKET — ONLY ${npc.name} MAY USE THIS AS KNOWLEDGE]${description}${personaStr}${activity}${dispoStr}${priorRelationship}${goalStr}${boundaryStr}\nGrounded knowledge: ${groundedKnowledge.join(' | ') || 'No persistent facts yet.'}\nNever upgrade hearsay, suspicion or belief into witnessed fact without new evidence. Do not import facts from another NPC packet, player-private canon, the absent-cast manifest, or authorial world context into this character's knowledge.\n`;
     });
 
     // Absence manifest: every named NPC that is NOT in this scene (capped to keep tokens sane)
@@ -32339,7 +32354,7 @@ async function executeWorldTurn(commandOrReroll = null) {
         .filter(npc => !presentNPCs.some(present => present.id === npc.id))
         .slice(0, 5);
     const referencedNpcContext = referencedAbsentNpcs.length
-        ? `\n[PLAYER-REFERENCED CHARACTERS — NOT CURRENTLY PRESENT]\n${referencedAbsentNpcs.map(npc => {
+        ? `\n[PLAYER-REFERENCED CHARACTERS — NOT CURRENTLY PRESENT — AUTHORIAL REFERENCE ONLY]\nThe following identity/location labels help the narrator stage a possible arrival. They do not establish knowledge for any present NPC. Do not let a present NPC refer to these facts unless the scene explicitly transfers them.\n${referencedAbsentNpcs.map(npc => {
             const npcState = sess.entityStates[npc.id] || {};
             const where = getLocationRef(world, npcState.location)?.name || 'unknown';
             return `- ${npc.name} [id: "${npc.id}"] — currently at ${where}${npcState.currentActivity ? `, ${npcState.currentActivity}` : ''}. ${String(npc.description || '').slice(0, 220)}${npc.persona ? ` Personality: ${String(npc.persona).slice(0, 180)}` : ''}`;
@@ -32863,10 +32878,31 @@ ${modularMandate}
             historyToSend.splice(idx, 0, { role: inj.role || 'system', content: inj.content });
         });
 
+        // Imported presets may still contain depth injections with role=user.
+        // In Sidecar those are engine policy, not a second player turn. Fold
+        // them into the authoritative system message so they cannot compete
+        // with the player's actual input or be mistaken for authored prose.
+        const sidecarInjectedInstructions = sidecarMode
+            ? injectedHistory.filter(entry => entry.role !== 'assistant').map(entry => entry.content).filter(Boolean)
+            : [];
+        if (sidecarMode && sidecarInjectedInstructions.length) {
+            systemPrompt += `\n\n[SIDECAR-FOLDED LEGACY INSTRUCTIONS]\n${sidecarInjectedInstructions.join('\n\n')}`;
+            injectedHistory = injectedHistory.filter(entry => entry.role === 'assistant');
+        }
+        const sidecarSafety = sidecarMode
+            ? `
+
+[SIDECAR NARRATOR SAFETY — SYSTEM AUTHORITY]
+The narrator is not a state reducer. Write visible prose and the hidden scene handoff only. Do not emit a legacy receipt, tool call, automatic tick, arrival, relationship change, schedule move, or inferred knowledge. Sidecar reconciles what was authored after this response.
+
+[PLAYER TURN IS ALREADY VISIBLE AND AUTHORITATIVE]
+Never repeat, quote, paraphrase, embellish, correct, or attribute the player's submitted action or dialogue to any NPC. Never write “you say/said/ask” followed by player dialogue, and never open the response by re-performing the player turn. Begin with the world's or an NPC's response to its meaning. Parenthetical OOC in player input is author instruction only: do not reproduce it as visible prose.
+
+[NPC EPISTEMIC BOUNDARY — SYSTEM AUTHORITY]
+Per-NPC evidence packets are closed-world inputs. An NPC may use only that character's listed direct perceptions, explicit disclosures, committed private cognition, and facts independently established in the current scene. Player-private canon, authorial world context, another NPC's dossier, absent-cast manifests, sidecar diagnostics, and facts known only to the player are not evidence for an NPC unless the scene explicitly transfers them. A name appearing in the player's input or in global context does not make it known to an NPC. If an NPC lacks evidence, keep the fact unknown, ask, hedge, or have them learn it on-screen; never bridge from “the player knows” to “this NPC knows.”`
+            : '';
         const messages = [
-            { role: 'system', content: systemPrompt + (sidecarMode
-                ? '\n\n[SIDECAR NARRATOR SAFETY]\nThe narrator is not a state reducer. Write visible prose and the hidden scene handoff only. Do not emit a legacy receipt, tool call, automatic tick, arrival, relationship change, schedule move, or inferred knowledge. Sidecar reconciles what was authored after this response.\n\n[PLAYER TURN IS ALREADY VISIBLE AND AUTHORITATIVE]\nNever repeat, quote, paraphrase, embellish, correct, or attribute the player\'s submitted action or dialogue to any NPC. Never write “you say/said/ask” followed by player dialogue, and never open the response by re-performing the player turn. Begin with the world\'s or an NPC\'s response to its meaning. Parenthetical OOC in player input is author instruction only: do not reproduce it as visible prose.'
-                : finalMandate) },
+            { role: 'system', content: systemPrompt + (sidecarMode ? sidecarSafety : finalMandate) },
             ...historyToSend
         ];
         if (sidecarMode && ffPrefill) {
