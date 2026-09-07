@@ -13050,6 +13050,53 @@ function extractSidecarNarratorHandoff(value) {
     };
 }
 
+// Opening turns and downstream retries can run before executeWorldTurn has
+// assembled the narrator's tool catalogue. They still need the same native
+// commit contract; treating a missing catalogue as a hard failure strands a
+// perfectly good authored opening. This fallback is deliberately a portable
+// receipt envelope, not a second reducer or mutation path. Once the normal
+// catalogue exists it remains the source of truth and replaces this shape.
+function sidecarCommitToolFor(world = null, sess = null) {
+    if (isPlainObject(window.__hordeCommitTool)
+        && window.__hordeCommitTool?.function?.name === 'commit_world_turn'
+        && window.__hordeCommitTool?.function?.parameters) {
+        return safeJsonClone(window.__hordeCommitTool);
+    }
+    return {
+        type: 'function',
+        function: {
+            name: 'commit_world_turn',
+            description: 'Commit one canonical world-turn receipt. Use empty arrays and an empty state_updates object for a no-op beat; never invent un-authored state.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    turn_id: { type: 'string' },
+                    summary: { type: 'string' },
+                    scene: {
+                        type: 'object',
+                        properties: {
+                            player_location_id: { type: 'string' },
+                            player_location_changed: { type: 'boolean' },
+                            present_character_ids: { type: 'array', items: { type: 'string' } },
+                            nearby_character_ids: { type: 'array', items: { type: 'string' } },
+                            nearby_character_context: { type: 'object' },
+                            scene_state: { type: 'string' }
+                        },
+                        additionalProperties: true
+                    },
+                    events: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                    entity_updates: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                    state_updates: { type: 'object', additionalProperties: true },
+                    ledger_update: { type: 'string' },
+                    npc_disposition_changes: { type: 'array', items: { type: 'object', additionalProperties: true } }
+                },
+                required: ['scene', 'events', 'entity_updates'],
+                additionalProperties: true
+            }
+        }
+    };
+}
+
 function buildSidecarOpeningHandoff(world, sess, narration) {
     const frame = buildWorldSceneFrame(world, sess);
     const location = getLocationRef(world, frame.player_location_id);
@@ -13090,7 +13137,7 @@ async function bootstrapSidecarOpeningTurn(world, sess, narration) {
                 narrativeText: narration,
                 openingTurn: true
             },
-            commitTool: safeJsonClone(window.__hordeCommitTool || null),
+            commitTool: sidecarCommitToolFor(world, sess),
             handoffComplete: true
         });
         sess.lastTurnStateSource = 'sidecar';
@@ -16423,7 +16470,7 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
                 narrativeText: turn.narration,
                 retryOf: turn.id
             },
-            commitTool: safeJsonClone(window.__hordeCommitTool || null),
+            commitTool: sidecarCommitToolFor(world, sess),
             handoffComplete: turn.handoffComplete !== false,
             onStage: stage => {
                 const label = document.getElementById('world-dm-typing');
@@ -35454,7 +35501,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
 
         // Preserve the native schema for Sidecar's second foreground call, but
         // make the narrator completely tool-free in Sidecar mode.
-        const sidecarCommitTool = sidecarMode ? safeJsonClone(worldStateTool) : null;
+        const sidecarCommitTool = sidecarMode ? (safeJsonClone(worldStateTool) || sidecarCommitToolFor(world, sess)) : null;
         if (sidecarMode) toolsConfig.splice(0, toolsConfig.length);
 
         const modelId = world.model || state.globalSettings.defaultModel;
