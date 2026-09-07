@@ -17379,8 +17379,14 @@ function renderSidecarWorkspace(world, sess) {
                 : sceneBody;
     host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
     const rerender = () => { renderSidecarWorkspace(world, sess); };
-    host.querySelectorAll('[data-si-view]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
-        workspaceUi.view = buttonEl.dataset.siView; await saveState(); rerender();
+    host.querySelectorAll('[data-si-view]').forEach(buttonEl => buttonEl.addEventListener('click', () => {
+        // Repaint the workspace before waiting on the media-heavy IndexedDB
+        // snapshot.  A slow persistence pass must never make a navigation tab
+        // look dead; the selected view is already held by the canonical
+        // timeline protocol object and is persisted immediately afterwards.
+        workspaceUi.view = buttonEl.dataset.siView;
+        rerender();
+        saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     }));
     host.querySelectorAll('.si-section').forEach(details => details.addEventListener('toggle', () => { workspaceUi.open[details.dataset.siSection] = details.open; saveState().catch(() => {}); }));
     host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
