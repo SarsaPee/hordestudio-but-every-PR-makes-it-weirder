@@ -10244,3 +10244,19 @@ label[data-help] > span:first-child::after,
 .world-inline-outfit-select.is-current:hover { border-color:var(--red) !important; background:color-mix(in srgb,var(--red) 82%,#000) !important; color:#fff !important; }
 .world-inline-outfit-delete, .world-visual-outfit-delete { color:var(--danger) !important; border-color:color-mix(in srgb,var(--danger) 42%,var(--border2)) !important; background:color-mix(in srgb,var(--danger) 8%,var(--surface3)) !important; }
 .world-inline-outfit-delete:hover, .world-visual-outfit-delete:hover, .world-inline-outfit-delete.is-confirm, .world-visual-outfit-delete.is-confirm { border-color:var(--danger) !important; background:var(--danger) !important; color:#fff !important; }
+/* Pre-canonical Scene Inspector: derived scene projection, never canon. */
+.sidecar-scene-inspector { display:grid; gap:16px; color:var(--text); }
+.sidecar-scene-grid,.sidecar-scene-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.sidecar-scene-inspector section { border:1px solid var(--border); border-radius:10px; padding:13px; background:rgba(255,255,255,.018); min-width:0; }
+.sidecar-scene-inspector h3 { margin:0 0 10px; font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--text-2); }
+.sidecar-scene-inspector h4 { margin:10px 0 4px; font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--text-3); }
+.sidecar-scene-inspector ul { margin:0; padding-left:18px; display:grid; gap:4px; }
+.sidecar-scene-reading { white-space:pre-wrap; line-height:1.45; }
+.sidecar-scene-candidate { border:1px solid var(--border); border-radius:8px; margin:7px 0; overflow:hidden; }
+.sidecar-scene-candidate>summary { cursor:pointer; list-style:none; padding:9px 10px; display:flex; align-items:center; gap:7px; }
+.sidecar-scene-candidate>summary::-webkit-details-marker { display:none; }
+.sidecar-scene-candidate>summary:hover { background:rgba(255,255,255,.035); }
+.sidecar-candidate-type { border:1px solid rgba(126,124,255,.35); border-radius:999px; padding:2px 6px; font-size:.58rem; text-transform:uppercase; color:var(--accent); }
+.sidecar-candidate-body { display:grid; gap:7px; padding:0 10px 10px; font-size:.76rem; }
+.sidecar-candidate-actions { display:flex; gap:6px; flex-wrap:wrap; }
+@media (max-width:700px) { .sidecar-scene-grid,.sidecar-scene-columns { grid-template-columns:1fr; } }
