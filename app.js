@@ -14667,6 +14667,9 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
     const traversalState = window.HordeSidecarTraversal?.ensureState(protocol);
     const memoryGraph = window.HordeSidecarMemoryGraph?.graph(protocol);
     const readerSnapshot = protocol?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1) || null;
+    const pendingReaderSnapshot = !readerSnapshot
+        ? protocol?.readerSnapshots?.filter(snapshot => snapshot.status === 'pending_reconciliation').at(-1) || null
+        : null;
     const activeJourneys = (traversalState?.journeys || []).filter(journey => journey.status !== 'completed').slice(-4);
     const accessibleVehicles = window.HordeSidecarTraversal?.accessibleVehicles(world, hierarchy?.sequence?.controlledEntityId || 'player') || [];
     const activeSceneTurns = protocol?.turns?.filter(turn => turn.sceneId === hierarchy?.scene?.id).length || 0;
@@ -14748,9 +14751,21 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             relationshipProposals: (readerSnapshot.envelope?.relationshipProposals || []).slice(0, 12),
             unresolvedEvidence: (readerSnapshot.envelope?.unresolvedEvidence || []).slice(0, 12),
             lookupProvenance: (readerSnapshot.envelope?.lookupProvenance || []).slice(0, 12),
+            canonicalReferences: readerSnapshot.envelope?.canonicalReferences || {},
             provisionalCognition: (readerSnapshot.envelope?.provisionalCognition || []).slice(0, 12),
             validationWarnings: (readerSnapshot.envelope?.validationWarnings || []).slice(0, 12),
             provenance: readerSnapshot.provenance || {}
+        } : null,
+        pendingReaderEvidence: pendingReaderSnapshot ? {
+            snapshotId: pendingReaderSnapshot.id,
+            status: 'pending_reconciliation',
+            turnId: pendingReaderSnapshot.turnId,
+            summary: pendingReaderSnapshot.envelope?.summary || '',
+            scene: pendingReaderSnapshot.envelope?.scene || {},
+            presence: pendingReaderSnapshot.envelope?.presence || {},
+            temporal: pendingReaderSnapshot.envelope?.temporal || {},
+            canonicalReferences: pendingReaderSnapshot.envelope?.canonicalReferences || {},
+            note: 'Derived reader evidence is retained for reconciliation but is not canonical until the Sidecar commit succeeds.'
         } : null,
         sceneReading: sidecarHandoffSection(handoff, 'SCENE READING').slice(0, 2400),
         acceptedPlayerDetails: sidecarHandoffSection(handoff, 'ACCEPTED PLAYER DETAILS').slice(0, 2400),
@@ -15047,6 +15062,14 @@ function sidecarReadOnlyTools() {
         },
         {
             type: 'function', function: {
+                name: 'get_prior_scene_snapshots', description: 'Read bounded prior semantic reader snapshots for continuity comparison. Derived evidence only; never canonical mutation.',
+                parameters: { type: 'object', properties: {
+                    scene_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 12 }
+                }, additionalProperties: false }
+            }
+        },
+        {
+            type: 'function', function: {
                 name: 'get_world_records',
                 description: 'Read bounded canonical relationship, ledger, thread, quest, obligation, or proposal records relevant to the authored beat. Read-only; never commits or answers a question.',
                 parameters: { type: 'object', properties: {
@@ -15075,6 +15098,28 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
             reader: protocol?.sceneReader || null,
             questions: (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-12)
         };
+    }
+    if (name === 'get_prior_scene_snapshots') {
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        const sceneId = String(args.scene_id || '').trim();
+        const limit = Math.max(1, Math.min(12, Number(args.limit) || 6));
+        const snapshots = (protocol?.readerSnapshots || [])
+            .filter(snapshot => snapshot.status !== 'superseded' && (!sceneId || snapshot.sceneId === sceneId))
+            .slice(-limit)
+            .map(snapshot => ({
+                id: snapshot.id, status: snapshot.status, turnId: snapshot.turnId,
+                sceneId: snapshot.sceneId, sequenceId: snapshot.sequenceId,
+                envelope: {
+                    schemaVersion: snapshot.envelope?.schemaVersion || 1,
+                    snapshotMode: snapshot.envelope?.snapshotMode || 'delta',
+                    summary: snapshot.envelope?.summary || '',
+                    scene: snapshot.envelope?.scene || {},
+                    presence: snapshot.envelope?.presence || {},
+                    temporal: snapshot.envelope?.temporal || {},
+                    sourceTurnId: snapshot.envelope?.sourceTurnId || ''
+                }
+            }));
+        return { found: snapshots.length > 0, sceneId, snapshots, provenance: { readOnly: true, source: 'sidecar_reader_snapshots' } };
     }
     if (name === 'get_world_records') {
         const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
@@ -15160,6 +15205,7 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         changedFields: Array.isArray(source.changedFields || source.changed_fields) ? (source.changedFields || source.changed_fields).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
         refreshIndex: Math.max(0, Number(source.refreshIndex || defaults.refreshIndex) || 0),
         temporal: isPlainObject(source.temporal) ? safeJsonClone(source.temporal) : { meaning: '', precision: 'unknown', source: '' },
+        canonicalReferences: isPlainObject(source.canonicalReferences) ? safeJsonClone(source.canonicalReferences) : {},
         location: isPlainObject(source.location) ? safeJsonClone(source.location) : { activeLocationId: '', movement: [], evidence: '' },
         presence: isPlainObject(source.presence) ? safeJsonClone(source.presence) : { active: [], nearby: [], audible: [], remote: [], mentioned: [], absent: [] },
         scene: isPlainObject(source.scene) ? safeJsonClone(source.scene) : { topic: '', mood: '', tension: '', interactionStyle: '', sound: '', environment: '' },
@@ -15193,7 +15239,7 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
         if (changed && !changed.some(value => value === normalizedField.replace(/_/g, '').toLowerCase() || value.includes(normalizedField.replace(/_/g, '').toLowerCase()))) merged[field] = prior[field];
         if (incoming.snapshotMode === 'full' && !incoming.changedFields.length && !incoming[field]?.length && prior[field]?.length) merged[field] = prior[field];
     });
-    ['temporal', 'location', 'presence', 'scene', 'semanticInterpretation', 'metadata'].forEach(field => {
+    ['temporal', 'location', 'presence', 'scene', 'semanticInterpretation', 'metadata', 'canonicalReferences'].forEach(field => {
         if (!Object.prototype.hasOwnProperty.call(delta || {}, field)) merged[field] = prior[field];
         const changed = Array.isArray(incoming.changedFields) ? incoming.changedFields.map(value => String(value).replace(/_/g, '').toLowerCase()) : [];
         if (changed.length && !changed.some(value => value === field.toLowerCase() || value.includes(field.toLowerCase()))) merged[field] = prior[field];
@@ -15225,7 +15271,8 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
         durableProposals: packet.semanticInterpretation?.durableProposals || packet.durableProposals || [],
         relationshipProposals: packet.semanticInterpretation?.relationshipProposals || packet.relationshipProposals || [],
         provisionalCognition: packet.semanticInterpretation?.provisionalCognition || packet.provisionalCognition || [],
-        lookupProvenance: packet.canonicalReferences || packet.lookupProvenance || [],
+        lookupProvenance: packet.lookupProvenance || [],
+        canonicalReferences: packet.canonicalReferences || {},
         unresolvedEvidence: packet.unresolved || [],
         validationWarnings: packet.validationWarnings || [],
         controlledCharacterEvidence: packet.controlledCharacterEvidence || [],
