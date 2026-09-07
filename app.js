@@ -17379,15 +17379,17 @@ function renderSidecarWorkspace(world, sess) {
                 : sceneBody;
     host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
     const rerender = () => { renderSidecarWorkspace(world, sess); };
-    host.querySelectorAll('[data-si-view]').forEach(buttonEl => buttonEl.addEventListener('click', () => {
-        // Repaint the workspace before waiting on the media-heavy IndexedDB
-        // snapshot.  A slow persistence pass must never make a navigation tab
-        // look dead; the selected view is already held by the canonical
-        // timeline protocol object and is persisted immediately afterwards.
+    // Delegate tab navigation from the stable workspace root.  The workspace
+    // body is rebuilt on every view change; delegation keeps the controls
+    // interactive even when a provider/save callback causes a same-turn
+    // repaint, and the visual change happens before persistence completes.
+    host.onclick = event => {
+        const buttonEl = event.target?.closest?.('[data-si-view]');
+        if (!buttonEl || !host.contains(buttonEl)) return;
         workspaceUi.view = buttonEl.dataset.siView;
         rerender();
         saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
-    }));
+    };
     host.querySelectorAll('.si-section').forEach(details => details.addEventListener('toggle', () => { workspaceUi.open[details.dataset.siSection] = details.open; saveState().catch(() => {}); }));
     host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
         const action = buttonEl.dataset.siAction || '';
