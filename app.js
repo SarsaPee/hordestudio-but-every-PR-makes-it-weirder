@@ -13059,7 +13059,7 @@ async function bootstrapSidecarOpeningTurn(world, sess, narration) {
                 narrativeText: narration,
                 openingTurn: true
             },
-            commitTool: safeJsonClone(worldStateTool),
+            commitTool: safeJsonClone(window.__hordeCommitTool || null),
             handoffComplete: true
         });
         sess.lastTurnStateSource = 'sidecar';
