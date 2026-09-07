@@ -10273,6 +10273,76 @@ label[data-help] > span:first-child::after,
 @media (max-width:700px) { .sidecar-scene-grid,.sidecar-scene-columns { grid-template-columns:1fr; } }
 @media (max-width:700px) { .sidecar-scene-recovery { flex-direction:column; align-items:stretch; } }
 
+/* ScenePulse-inspired in-place Scene Intelligence Workspace.  The panel
+   structure, section rhythm and compact status language are adapted from
+   SillyTavern-ScenePulse (GPL-3.0; see THIRD_PARTY_NOTICES.md). Horde owns
+   the data, lifecycle and authority; these rules only style its projection. */
+.world-status-col.is-sidecar { min-width:280px; }
+.world-status-col.is-sidecar .world-status-toolbar,
+.world-status-col.is-sidecar #world-status-columns { display:none; }
+.world-sidecar-workspace { display:flex; flex-direction:column; min-height:0; height:100%; overflow:hidden; color:var(--text); }
+.world-sidecar-workspace.hidden { display:none; }
+.si-toolbar { flex:0 0 auto; display:flex; align-items:center; gap:7px; padding:8px 9px; border:1px solid rgba(77,184,164,.24); border-radius:10px; background:linear-gradient(135deg,rgba(77,184,164,.09),rgba(126,124,255,.045)); }
+.si-brand { display:flex; flex-direction:column; min-width:0; line-height:1.1; }
+.si-brand strong { color:var(--text); font-size:.76rem; letter-spacing:.09em; text-transform:uppercase; }
+.si-brand small { color:var(--text-3); font-size:.58rem; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.si-toolbar-spacer { flex:1; }
+.si-status { padding:3px 7px; border:1px solid rgba(77,184,164,.35); border-radius:999px; background:rgba(77,184,164,.1); color:#8cebd6; font-size:.56rem; font-weight:800; text-transform:uppercase; white-space:nowrap; }
+.si-status.is-warning { border-color:rgba(243,189,89,.5); background:rgba(243,189,89,.1); color:#ffd388; }
+.si-status.is-muted { border-color:var(--border); background:rgba(255,255,255,.03); color:var(--text-3); }
+.si-toolbar-btn { width:25px; height:25px; padding:0; border:1px solid var(--border); border-radius:6px; background:rgba(255,255,255,.035); color:var(--text-3); cursor:pointer; }
+.si-toolbar-btn:hover { border-color:#4db8a4; color:#b8f2e7; background:rgba(77,184,164,.12); }
+.si-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:3px; margin:8px 0; padding:3px; border:1px solid var(--border); border-radius:9px; background:rgba(0,0,0,.14); }
+.si-tab { border:0; border-radius:6px; padding:6px 3px; background:transparent; color:var(--text-3); font-size:.58rem; font-weight:800; cursor:pointer; }
+.si-tab:hover { color:var(--text); background:rgba(255,255,255,.045); }
+.si-tab.is-active { color:var(--text); background:rgba(126,124,255,.16); box-shadow:inset 0 0 0 1px rgba(126,124,255,.22); }
+.si-body { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; padding-right:2px; scrollbar-color:rgba(100,110,130,.3) transparent; }
+.si-body::-webkit-scrollbar { width:4px; }
+.si-body::-webkit-scrollbar-thumb { background:rgba(100,110,130,.3); border-radius:2px; }
+.si-section { border-top:1px solid var(--border); padding:9px 3px; }
+.si-section:first-child { border-top:0; }
+.si-section summary { display:flex; align-items:center; gap:7px; list-style:none; cursor:pointer; user-select:none; padding:3px 4px; }
+.si-section summary::-webkit-details-marker { display:none; }
+.si-section summary::before { content:'›'; color:var(--text-3); font-size:.78rem; transition:transform .18s ease; }
+.si-section[open] summary::before { transform:rotate(90deg); color:var(--accent); }
+.si-section summary strong { color:var(--text-2); font-size:.62rem; letter-spacing:.09em; text-transform:uppercase; }
+.si-section summary span { margin-left:auto; color:var(--text-3); font-size:.58rem; }
+.si-section-body { display:grid; gap:7px; padding:7px 4px 3px 14px; }
+.si-scene-head { display:grid; grid-template-columns:1fr auto; gap:7px; align-items:start; }
+.si-location-name { color:var(--text); font-size:.88rem; font-weight:800; }
+.si-time { color:var(--accent); font-size:.7rem; font-weight:800; text-align:right; white-space:nowrap; }
+.si-scene-summary { color:var(--text-2); font-size:.68rem; line-height:1.45; font-style:italic; }
+.si-chip-row { display:flex; flex-wrap:wrap; gap:4px; }
+.si-chip { display:inline-flex; align-items:center; gap:3px; padding:2px 6px; border:1px solid var(--border); border-radius:9px; background:rgba(255,255,255,.035); color:var(--text-2); font-size:.58rem; }
+.si-chip.active { border-color:rgba(77,184,164,.45); color:#8cebd6; }
+.si-chip.nearby { border-style:dashed; color:var(--text-3); }
+.si-chip.audible { border-color:rgba(243,189,89,.38); color:#ffd388; }
+.si-card { padding:8px; border:1px solid var(--border); border-left:3px solid var(--si-accent,#4db8a4); border-radius:8px; background:rgba(255,255,255,.025); }
+.si-card-header { display:flex; align-items:center; gap:7px; }
+.si-avatar { width:25px; height:25px; display:grid; place-items:center; flex:0 0 auto; border-radius:50%; background:rgba(126,124,255,.16); color:var(--text); font-size:.58rem; font-weight:800; }
+.si-card-header strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:.68rem; }
+.si-card-header small { margin-left:auto; color:var(--text-3); font-size:.55rem; white-space:nowrap; }
+.si-card p { margin:5px 0 0; color:var(--text-2); font-size:.63rem; line-height:1.35; }
+.si-card-actions { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.si-card-actions button { padding:4px 6px; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--text-3); font-size:.56rem; cursor:pointer; }
+.si-card-actions button:hover { border-color:var(--accent); color:var(--text); }
+.si-meter { height:5px; border-radius:5px; overflow:hidden; background:rgba(255,255,255,.06); }
+.si-meter i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#4db8a4,#7c7cff); }
+.si-empty { padding:12px 5px; color:var(--text-3); font-size:.64rem; line-height:1.45; text-align:center; }
+.si-failure { display:grid; gap:5px; padding:8px; border:1px solid rgba(243,189,89,.4); border-radius:8px; background:rgba(243,189,89,.08); }
+.si-failure strong { color:#ffd388; font-size:.68rem; }
+.si-failure span { color:var(--text-3); font-size:.61rem; line-height:1.35; }
+.si-failure .btn { justify-self:start; padding:5px 8px; font-size:.6rem; }
+.si-history-row { display:grid; grid-template-columns:auto 1fr; gap:7px; padding:6px 0; border-bottom:1px dashed var(--border); cursor:pointer; }
+.si-history-row:last-child { border-bottom:0; }
+.si-history-row:hover strong { color:var(--accent); }
+.si-history-marker { width:22px; height:22px; display:grid; place-items:center; border-radius:50%; background:rgba(126,124,255,.13); color:var(--text-3); font-size:.58rem; }
+.si-history-row strong { display:block; color:var(--text-2); font-size:.63rem; }
+.si-history-row small { display:block; margin-top:2px; color:var(--text-3); font-size:.56rem; line-height:1.35; }
+.si-retry-row { display:flex; gap:6px; flex-wrap:wrap; }
+.si-retry-row .btn { padding:5px 8px; font-size:.6rem; }
+@media (max-width:700px) { .world-status-col.is-sidecar { min-width:0; } .si-tabs { grid-template-columns:repeat(2,1fr); } .si-toolbar small { max-width:120px; } }
+
 /* Scene Intelligence Workspace adapts the ScenePulse panel language and
    card rhythm (ScenePulse, GPL-3.0; source: SillyTavern-ScenePulse-main).
    Only presentation rules are reused here; Horde retains runtime, state and

@@ -17210,6 +17210,160 @@ function sidecarSceneProjectionMarkup(world, sess) {
     return `<div class="sidecar-scene-inspector"><div class="sp-toolbar sidecar-scene-toolbar"><span class="sp-brand-title"><span class="sp-brand-accent">SCENE</span> intelligence</span><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${failedTurn || incompleteCommit ? 'is-warning' : 'is-ready'}">${incompleteCommit ? 'Commit blocked' : failedTurn ? 'Update incomplete' : 'Reader current'}</span><button type="button" class="sp-toolbar-btn sidecar-scene-refresh" title="Refresh the current Scene Intelligence projection">↻</button></div>${recoveryMarkup}<div class="sidecar-scene-grid"><section class="sp-section sidecar-scene-card"><h3>Current scene</h3><div><strong>Location</strong><div>${escapeHTML(packet?.activeLocation?.name || 'Unknown')}</div></div><div><strong>World time</strong><div>${escapeHTML(packet?.worldTime || 'Unknown')}</div></div><div><strong>Scene state</strong><div>${escapeHTML(packet?.sceneState || 'No scene projection yet.')}</div></div></section><section class="sp-section sidecar-scene-card"><h3>Scene reading</h3><div class="sidecar-scene-reading">${escapeHTML(reader.summary || packet?.sceneReading || 'No reader summary yet.')}</div>${reader.scene ? `<div class="form-hint">${escapeHTML([reader.scene.topic, reader.scene.mood, reader.scene.tension, reader.scene.interactionStyle].filter(Boolean).join(' · ') || 'No additional scene signals.')}</div>` : ''}</section></div><div class="sidecar-scene-columns"><section class="sp-section sidecar-scene-card"><h3>Cast</h3><h4>Active</h4><ul>${list(presence.active || packet?.activeCast)}</ul><h4>Nearby</h4><ul>${list(presence.nearby || packet?.nearbyCast)}</ul><h4>Audible</h4><ul>${list(presence.audible)}</ul><h4>Mentioned</h4><ul>${list(presence.mentioned)}</ul></section><section class="sp-section sidecar-scene-card"><h3>Scene entities</h3>${candidateMarkup}</section></div><section class="sp-section sidecar-scene-card"><h3>Relationships</h3><div class="sidecar-relationship-list">${relationshipMarkup}</div></section><section class="sp-section sidecar-scene-card"><h3>Current pressures</h3><ul>${list(packet?.pendingQuestions, 'No open scene questions.')}</ul></section></div>`;
 }
 
+// Human-facing Scene Intelligence render model.  This deliberately does not
+// use buildSidecarScenePacket as its completeness boundary: the packet is a
+// relevance-filtered narrator viewport, while this workspace is an inspection
+// surface over the committed timeline, Reader projection and canonical world.
+function buildSidecarWorkspaceModel(world, sess) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    if (!protocol) return null;
+    const hierarchy = window.HordeSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false }) || {};
+    const frame = buildWorldSceneFrame(world, sess) || {};
+    const clock = getWorldTimeData(world, sess);
+    const location = getLocationRef(world, frame.player_location_id);
+    const activeSnapshot = (protocol.readerSnapshots || []).filter(snapshot => snapshot.status === 'active').at(-1) || null;
+    const reader = activeSnapshot?.envelope || null;
+    const turns = (protocol.turns || []).filter(turn => turn.status !== 'superseded');
+    const latestTurn = turns.at(-1) || null;
+    const failedTurn = [...turns].reverse().find(turn => ['reconciliation_failed', 'reconciliation_pending'].includes(turn.status)) || null;
+    const incompleteCommit = sess?.sidecarIncompleteCommit || null;
+    const displayName = id => {
+        if (id === 'player' || id === hierarchy.sequence?.controlledEntityId) {
+            return sess?.playerIdentity?.name || sess?.persona?.name || 'You';
+        }
+        return (world.entities || []).find(entity => String(entity.id) === String(id))?.name || String(id || 'Unknown');
+    };
+    const normalizePresence = (values, mode) => (Array.isArray(values) ? values : []).map(value => {
+        if (typeof value === 'string') return { id: value, name: displayName(value), mode };
+        const id = String(value?.id || value?.entityId || value?.characterId || '');
+        return { id, name: String(value?.name || (id ? displayName(id) : 'Unknown')), mode: value?.mode || mode, reason: String(value?.reason || value?.evidence || '') };
+    }).filter(value => value.name);
+    const presence = reader?.presence || {};
+    const cast = {
+        active: normalizePresence(presence.active || frame.present_character_ids || packetCastFallback(protocol, sess, 'active'), 'active'),
+        nearby: normalizePresence(presence.nearby || frame.nearby_characters || packetCastFallback(protocol, sess, 'nearby'), 'nearby'),
+        audible: normalizePresence(presence.audible, 'audible'),
+        remote: normalizePresence(presence.remote, 'remote'),
+        mentioned: normalizePresence(presence.mentioned, 'mentioned'),
+        absent: normalizePresence(presence.absent, 'absent')
+    };
+    const candidates = activeReaderCandidates(protocol, { sceneId: protocol.sceneProjection?.sceneId || hierarchy.scene?.id || '' }).slice(-120);
+    const worldRelationships = [];
+    Object.entries(sess.npcRelationships || {}).forEach(([id, value]) => {
+        if (!value) return;
+        const posture = typeof value === 'string' ? value : (value.posture || value.axis || value.affinity || value.trust || '');
+        const evidence = typeof value === 'string' ? '' : (value.evidence || value.reason || value.summary || '');
+        worldRelationships.push({ id, label: displayName(id), posture: String(posture), evidence: String(evidence), source: 'canonical relationship state' });
+    });
+    const relationshipProposals = Array.isArray(reader?.relationshipProposals) ? reader.relationshipProposals.map(entry => ({
+        id: String(entry.id || entry.characterId || entry.subject || ''),
+        label: String(entry.label || entry.characterName || entry.subject || displayName(entry.characterId || entry.subject)),
+        posture: String(entry.posture || entry.axis || entry.change || entry.delta || ''),
+        evidence: String(entry.evidence || entry.reason || entry.summary || ''),
+        source: 'Reader proposal · Sidecar review required', proposal: true
+    })) : [];
+    const relationships = [...worldRelationships, ...relationshipProposals].filter((entry, index, all) => all.findIndex(other => `${other.id}|${other.source}` === `${entry.id}|${entry.source}`) === index).slice(-40);
+    const activeCharacters = [...cast.active, ...cast.nearby, ...cast.audible, ...cast.mentioned]
+        .filter((entry, index, all) => all.findIndex(other => other.id === entry.id) === index)
+        .map(entry => {
+            const entity = (world.entities || []).find(item => String(item.id) === String(entry.id));
+            const state = sess.entityStates?.[entry.id] || {};
+            return { ...entry, entity, state, appearance: String(entity?.appearance || entity?.description || ''), activity: String(state.activity || state.currentActivity || '') };
+        });
+    const snapshots = (protocol.readerSnapshots || []).filter(snapshot => snapshot.status !== 'superseded').slice(-40).reverse();
+    const memory = protocol.memoryGraph || {};
+    const openQuestions = (protocol.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-24).reverse();
+    const workspaceUi = protocol.workspaceUi && typeof protocol.workspaceUi === 'object' ? protocol.workspaceUi : (protocol.workspaceUi = { view: 'scene', open: {} });
+    workspaceUi.view = ['scene', 'relationships', 'characters', 'history'].includes(workspaceUi.view) ? workspaceUi.view : 'scene';
+    workspaceUi.open = workspaceUi.open && typeof workspaceUi.open === 'object' ? workspaceUi.open : {};
+    return {
+        protocol, hierarchy, frame, clock, location, reader, activeSnapshot, latestTurn, failedTurn, incompleteCommit,
+        cast, candidates, relationships, activeCharacters, snapshots, openQuestions, memory, workspaceUi,
+        status: incompleteCommit ? 'blocked' : failedTurn ? 'warning' : (reader ? 'ready' : 'muted'),
+        worldTime: `${clock.hours24 % 12 || 12}:${String(clock.mins).padStart(2, '0')} ${clock.hours24 >= 12 ? 'PM' : 'AM'}`
+    };
+}
+
+function packetCastFallback(protocol, sess, mode) {
+    const packet = protocol?.packet || {};
+    if (mode === 'active') return Array.isArray(packet.activeCast) ? packet.activeCast : [];
+    if (mode === 'nearby') return Array.isArray(packet.nearbyCast) ? packet.nearbyCast : [];
+    return [];
+}
+
+function sidecarWorkspaceAvatar(name) {
+    return escapeHTML(String(name || '?').trim().split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?');
+}
+
+function renderSidecarWorkspace(world, sess) {
+    const host = document.getElementById('world-sidecar-workspace');
+    const column = document.querySelector('#world-play-view .world-status-col');
+    if (!host || !column) return;
+    const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
+    column.classList.toggle('is-sidecar', sidecar);
+    host.classList.toggle('hidden', !sidecar);
+    if (!sidecar) { host.replaceChildren(); return; }
+    const model = buildSidecarWorkspaceModel(world, sess);
+    if (!model) return;
+    const { protocol, workspaceUi } = model;
+    const scrollTop = host.querySelector('.si-body')?.scrollTop || 0;
+    const currentFocus = document.activeElement?.id || '';
+    const statusLabel = model.status === 'blocked' ? 'Commit blocked' : model.status === 'warning' ? 'Update incomplete' : model.status === 'muted' ? 'Reader disabled' : 'Reader current';
+    const statusClass = model.status === 'ready' ? '' : model.status === 'muted' ? 'is-muted' : 'is-warning';
+    const section = (key, title, body, badge = '') => `<details class="si-section" data-si-section="${escapeHTML(key)}" ${workspaceUi.open[key] !== false ? 'open' : ''}><summary><strong>${escapeHTML(title)}</strong>${badge ? `<span>${escapeHTML(badge)}</span>` : ''}</summary><div class="si-section-body">${body}</div></details>`;
+    const button = (label, action, cls = 'btn btn-ghost') => `<button type="button" class="${cls}" data-si-action="${escapeHTML(action)}">${escapeHTML(label)}</button>`;
+    const failure = model.incompleteCommit
+        ? `<div class="si-failure"><strong>Canonical commit incomplete</strong><span>Progression is blocked. The journaled receipt must be recovered through World GM.</span><div class="si-retry-row">${button('Open World GM', 'gm', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
+        : model.failedTurn
+            ? `<div class="si-failure"><strong>${escapeHTML(model.failedTurn.failure?.stage === 'reader' ? 'Reader update incomplete' : 'Scene update incomplete')}</strong><span>Narration is preserved; downstream interpretation has not settled.</span><div class="si-retry-row">${button('Retry Scene Update', 'retry', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
+            : '';
+    const sceneBody = `${failure}${section('scene', 'Current scene', `<div class="si-scene-head"><div><div class="si-location-name">${escapeHTML(model.location?.name || 'Unknown location')}</div><div class="si-scene-summary">${escapeHTML(model.reader?.summary || model.protocol.packet?.sceneReading || 'No settled Reader scene description yet.')}</div></div><div class="si-time">${escapeHTML(model.worldTime)}</div></div><div class="si-chip-row">${model.cast.active.map(entry => `<span class="si-chip active">${escapeHTML(entry.name)}</span>`).join('') || '<span class="si-chip">No active cast</span>'}</div>`, model.hierarchy.scene?.title || 'Current')}${section('cast', 'Cast and presence', `<div class="si-chip-row">${Object.entries(model.cast).flatMap(([mode, entries]) => entries.map(entry => `<span class="si-chip ${escapeHTML(mode)}" title="${escapeHTML(entry.reason || mode)}">${escapeHTML(entry.name)} <small>${escapeHTML(mode)}</small></span>`)).join('') || '<span class="si-empty">No classified cast evidence yet.</span>'}</div>`, `${model.activeCharacters.length}`)}${section('entities', 'Entities and candidates', model.candidates.length ? model.candidates.slice(-12).reverse().map(candidate => `<article class="si-card"><div class="si-card-header"><span class="si-avatar">${sidecarWorkspaceAvatar(candidate.label || candidate.role)}</span><strong>${escapeHTML(candidate.label || candidate.role || candidate.candidateType || 'Scene candidate')}</strong><small>${escapeHTML(candidate.candidateType || 'candidate')}</small></div><p>${escapeHTML(String(candidate.description || candidate.evidence || candidate.clothingDescription || 'Pre-canonical evidence; review required.').slice(0, 420))}</p><div class="si-card-actions">${button('Review', `candidate:${escapeHTML(candidate.candidateId || '')}`)}${button('World GM', `candidate-gm:${escapeHTML(candidate.candidateId || '')}`)}</div></article>`).join('') : '<div class="si-empty">No pre-canonical candidates are active for this scene.</div>', `${model.candidates.length}`)}${section('pressures', 'Open questions and pressures', model.openQuestions.length ? model.openQuestions.slice(0, 10).map(question => `<article class="si-card" style="--si-accent:#d4a855"><div class="si-card-header"><strong>${escapeHTML(question.prompt || question.id)}</strong><small>${escapeHTML(question.priority || question.pressure || 'open')}</small></div><p>${escapeHTML(String(question.evidence || 'The answer remains unresolved and will be carried only while relevant.').slice(0, 360))}</p></article>`).join('') : '<div class="si-empty">No open scene questions.</div>', `${model.openQuestions.length}`)}${section('memory', 'Continuity health', `<div class="si-chip-row"><span class="si-chip">${Number(model.memory.worldHistory?.filter?.(record => record.status === 'active').length) || 0} turns</span><span class="si-chip">${Number(model.memory.episodes?.filter?.(record => record.status === 'active').length) || 0} episodes</span><span class="si-chip">${Number(model.memory.cognition?.filter?.(record => record.status !== 'superseded').length) || 0} cognition</span></div><p class="si-scene-summary">Only settled Reader/Sidecar attempts feed active continuity and background memory work.</p>`, '')}`;
+    const relationshipBody = model.relationships.length ? model.relationships.map(entry => `<article class="si-card" style="--si-accent:${entry.proposal ? '#d4a855' : '#4db8a4'}"><div class="si-card-header"><span class="si-avatar">${sidecarWorkspaceAvatar(entry.label)}</span><strong>${escapeHTML(entry.label)}</strong><small>${escapeHTML(entry.posture || 'unresolved')}</small></div>${entry.posture ? `<div class="si-meter"><i style="width:${Math.min(100, Math.max(5, Math.abs(Number(entry.posture)) || 35))}%"></i></div>` : ''}<p>${escapeHTML(entry.evidence || (entry.proposal ? 'Reader proposal awaiting Sidecar review.' : 'Canonical relationship state.'))}</p>${entry.proposal ? `<div class="si-card-actions">${button('Review evidence', `relationship:${escapeHTML(entry.id)}`)}</div>` : ''}</article>`).join('') : '<div class="si-empty">No relationship records are available for this scene.</div>';
+    const characterBody = model.activeCharacters.length ? model.activeCharacters.map(entry => `<article class="si-card"><div class="si-card-header"><span class="si-avatar">${sidecarWorkspaceAvatar(entry.name)}</span><strong>${escapeHTML(entry.name)}</strong><small>${escapeHTML(entry.mode)}</small></div><p>${escapeHTML(entry.appearance || entry.activity || 'No additional current-state detail.')}</p>${entry.activity ? `<small class="form-hint">${escapeHTML(entry.activity)}</small>` : ''}</article>`).join('') : '<div class="si-empty">No character evidence has settled yet.</div>';
+    const historyBody = model.snapshots.length ? model.snapshots.map((snapshot, index) => `<div class="si-history-row" data-si-history="${escapeHTML(snapshot.id)}"><span class="si-history-marker">${model.snapshots.length - index}</span><div><strong>${escapeHTML(snapshot.envelope?.scene?.topic || snapshot.envelope?.summary || 'Reader snapshot')}</strong><small>${escapeHTML(snapshot.envelope?.summary || '')}</small><small>${escapeHTML(snapshot.status || 'active')} · ${escapeHTML(snapshot.envelope?.snapshotMode || 'delta')} · ${escapeHTML(snapshot.turnId || '')}</small></div></div>`).join('') : '<div class="si-empty">No Reader snapshots have settled yet.</div>';
+    const viewBody = workspaceUi.view === 'relationships' ? section('relationships', 'Relationships', relationshipBody, `${model.relationships.length}`)
+        : workspaceUi.view === 'characters' ? section('characters', 'Characters', characterBody, `${model.activeCharacters.length}`)
+            : workspaceUi.view === 'history' ? section('history', 'Reader history', historyBody, `${model.snapshots.length}`)
+                : sceneBody;
+    host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
+    const rerender = () => { renderSidecarWorkspace(world, sess); };
+    host.querySelectorAll('[data-si-view]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
+        workspaceUi.view = buttonEl.dataset.siView; await saveState(); rerender();
+    }));
+    host.querySelectorAll('.si-section').forEach(details => details.addEventListener('toggle', () => { workspaceUi.open[details.dataset.siSection] = details.open; saveState().catch(() => {}); }));
+    host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
+        const action = buttonEl.dataset.siAction || '';
+        if (action === 'backstage') return openWorldSidecarInspector('backstage');
+        if (action === 'gm') return openWorldSidecarLine({ kind: 'world_gm', title: 'World GM · Scene Intelligence', guidance: 'Resolve the current Sidecar failure or authorial ambiguity without regenerating the visible Narrator turn.' });
+        if (action === 'retry') {
+            buttonEl.disabled = true; buttonEl.textContent = 'Retrying…';
+            try { await retrySidecarSceneUpdate(world, sess, model.failedTurn?.id); } catch (error) { showToast(`Scene update retry failed: ${error?.message || error}`, 'error'); }
+            rerender(); return;
+        }
+        if (action === 'refresh') {
+            buttonEl.disabled = true; buttonEl.textContent = '…';
+            try { await refreshSidecarSceneIntelligence(world, sess, model.latestTurn?.id || ''); showToast('Scene Intelligence refreshed for review.', 'success'); } catch (error) { showToast(`Scene refresh failed: ${error?.message || error}`, 'error'); }
+            rerender(); return;
+        }
+        if (action.startsWith('candidate-gm:')) {
+            const candidate = model.candidates.find(item => item.candidateId === action.slice(13));
+            if (candidate) openWorldSidecarLine({ kind: 'world_gm', title: 'Review scene candidate', guidance: 'Decide whether this candidate should match an existing record, be promoted, or remain ephemeral.', draft: `Candidate: ${candidate.label || candidate.role || candidate.candidateType}\nEvidence: ${candidate.description || candidate.evidence || ''}` });
+            return;
+        }
+        if (action.startsWith('candidate:')) {
+            const candidate = model.candidates.find(item => item.candidateId === action.slice(10));
+            if (candidate) openWorldSidecarLine({ kind: 'world_gm', title: 'Review scene candidate', guidance: 'Review this pre-canonical evidence with the World GM.', draft: `Candidate: ${candidate.label || candidate.role || candidate.candidateType}\nEvidence: ${candidate.description || candidate.evidence || ''}` });
+            return;
+        }
+        if (action.startsWith('relationship:')) {
+            const relation = model.relationships.find(item => item.id === action.slice(13));
+            if (relation) openWorldSidecarLine({ kind: 'world_gm', title: 'Review relationship evidence', guidance: 'Review this relationship posture and its evidence. Do not infer a reciprocal change without authorial support.', draft: `${relation.label}\n${relation.posture}\n${relation.evidence}` });
+        }
+    }));
+    host.querySelectorAll('[data-si-history]').forEach(row => row.addEventListener('click', () => openWorldSidecarInspector('backstage')));
+    requestAnimationFrame(() => { const body = host.querySelector('.si-body'); if (body) body.scrollTop = scrollTop; if (currentFocus) document.getElementById(currentFocus)?.focus({ preventScroll: true }); });
+}
+
 function openWorldSidecarInspector(view = 'scene') {
     closeWorldSidecarInspector();
     const world = state.worlds.find(item => item.id === state.activeWorldId);
@@ -32238,6 +32392,7 @@ function renderWorldPlayState() {
             pipelineButton.style.borderColor = sidecarAvailable ? 'var(--success)' : 'var(--warning)';
         }
     }
+    renderSidecarWorkspace(world, sess);
     renderSidecarConversation(world, sess);
 
     // Update Context Meter (Audit: Robust & Persistent)
