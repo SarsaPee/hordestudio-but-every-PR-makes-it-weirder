@@ -30753,7 +30753,10 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
             // persona, not to an NPC that happens to be mentioned nearby.
             const quoteTail = paragraph.slice(item.end, item.end + 220);
             const explicitPlayerSpeech = /\b[Yy]ou\s+(?:say|says|said|ask|asks|asked|reply|replies|replied|answer|answers|answered|tell|tells|told|call|calls|called|greet|greets|greeted|offer|offers|offered|mutter|mutters|muttered|snap|snaps|snapped|whisper|whispers|whispered|shout|shouts|shouted|quip|quips|quipped|add|adds|added)\b/.test(`${lead} ${quoteTail}`);
-            if (!item.tagged && sess && (worldSpeechIsPlayerVoice(lead, quoteTail) || explicitPlayerSpeech)) {
+            // A provider may wrap a second-person player line in an FF voice
+            // colour span. Explicit authored "You said/asked…" evidence wins
+            // over that cosmetic tag, so it cannot inherit Charlotte's colour.
+            if (sess && (worldSpeechIsPlayerVoice(lead, quoteTail) || explicitPlayerSpeech)) {
                 if (lead.trim()) paragraphHtml += `<div class="world-narrative-prose">${parseHordeMarkdown(lead)}</div>`;
                 paragraphHtml += renderWorldPlayerVoiceCard(sess, item.dialogue);
                 cursor = item.end;
