@@ -14732,6 +14732,10 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             scene: readerSnapshot.envelope?.scene || {},
             presence: readerSnapshot.envelope?.presence || {},
             temporal: readerSnapshot.envelope?.temporal || {},
+            eventClaims: (readerSnapshot.envelope?.eventClaims || []).slice(0, 20),
+            durableProposals: (readerSnapshot.envelope?.durableProposals || []).slice(0, 12),
+            relationshipProposals: (readerSnapshot.envelope?.relationshipProposals || []).slice(0, 12),
+            unresolvedEvidence: (readerSnapshot.envelope?.unresolvedEvidence || []).slice(0, 12),
             provisionalCognition: (readerSnapshot.envelope?.provisionalCognition || []).slice(0, 12),
             validationWarnings: (readerSnapshot.envelope?.validationWarnings || []).slice(0, 12),
             provenance: readerSnapshot.provenance || {}
@@ -14903,7 +14907,7 @@ function sidecarTokenLimitIncomplete(payload) {
     return ['length', 'max_tokens', 'token_limit', 'incomplete'].includes(finish);
 }
 
-async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal } = {}) {
+async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal, retryPolicy = 'bounded' } = {}) {
     const policy = sidecarReasoningPolicy(tracker, world);
     const request = async (withoutReasoning, forceCompactCommitTransport = false) => {
         const payload = safeJsonClone(body);
@@ -14931,7 +14935,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
     // catalogue advertises them. Retry the same request without reasoning so
     // a transient provider capability mismatch cannot strand an otherwise
     // valid native reconciliation receipt.
-    if (!response.ok && policy.enabled && response.status === 400) {
+    if (retryPolicy !== 'none' && !response.ok && policy.enabled && response.status === 400) {
         const detail = await response.clone().text().catch(() => '');
         if (/invalid argument|reasoning|unsupported parameter/i.test(detail)) {
             logSidecarConsoleTrace('Sidecar retry after provider 400', { model: body.model, provider, detail: detail.slice(0, 800) });
@@ -14943,7 +14947,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
     // declaration itself. This is still one native commit tool call from the
     // model's perspective and is decoded before the existing reducer path.
     const hasCommitTool = Array.isArray(body.tools) && body.tools.some(tool => tool?.function?.name === 'commit_world_turn');
-    if (!response.ok && response.status === 400 && hasCommitTool
+    if (retryPolicy !== 'none' && !response.ok && response.status === 400 && hasCommitTool
         && !sidecarUsesCompactCommitTransport(provider, body.model, body.tools.find(tool => tool?.function?.name === 'commit_world_turn'))) {
         const detail = await response.clone().text().catch(() => '');
         if (/invalid argument|tool|function|schema|parameter/i.test(detail)) {
@@ -14951,7 +14955,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
             response = await request(true, true);
         }
     }
-    if (!policy.enabled || !response.ok) return response;
+    if (retryPolicy === 'none' || !policy.enabled || !response.ok) return response;
     const payload = await response.clone().json().catch(() => null);
     if (!sidecarTokenLimitIncomplete(payload)) return response;
     showToast('Sidecar thought too hard, retrying without reasoning.', 'info');
@@ -15322,7 +15326,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         applySidecarReasoning(body, provider, readerTracker, world);
         logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt, request: safeJsonClone(body) });
         const response = await fetchSidecarCompletion(body, {
-            provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal
+            provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal, retryPolicy: profile.retryPolicy
         });
         if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar Reader failed (${response.status})`);
         finalPayload = await response.json();
@@ -35213,7 +35217,11 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                 witnesses: endingWitnesses,
                 deferPersist: true
             });
-            if (sidecarMode && aiMsgDiv.isConnected) aiMsgDiv.remove();
+            // Keep the completed streamed narration in the transcript while
+            // Reader/Reconciler work finishes. `addWorldMessage` below will
+            // replace the transient stream with the durable message; removing
+            // it here created the visible "handoff gap" users saw on Gemini
+            // and slow providers.
             if (sidecarTurnId) {
                 const sidecarTurn = sess.sidecar?.turns?.find(turn => turn.id === sidecarTurnId);
                 if (sidecarTurn) {
