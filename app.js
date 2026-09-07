@@ -11481,9 +11481,28 @@ function buildWorldSceneFrame(world, sess) {
                 .map(ref => resolveWorldActorId(world, sess, ref)).filter(Boolean).slice(0, 12)
         };
     });
+    const nearby = Object.entries(sess.sceneNearbyCharacters || {})
+        .filter(([id, entry]) => id && entry && !present.includes(id)
+            && sessionNpcs(world, sess).some(npc => npc.id === id)
+            && isNpcActive(sess.entityStates?.[id]))
+        .map(([id, entry]) => ({
+            id,
+            mode: String(entry.mode || 'nearby').slice(0, 40),
+            reason: String(entry.reason || '').slice(0, 360),
+            location_id: String(sess.entityStates?.[id]?.location || '').slice(0, 120),
+            source_turn: Number(entry.source_turn) || 0
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id));
     return {
         player_location_id: String(sess.playerLocation || ''),
         present_character_ids: present,
+        // Physically absent characters who remain materially established in
+        // this scene (audible, nearby, or otherwise off-screen involved).
+        // This is scene context, never a location mutation or a presence
+        // assertion. It gives the Context Compiler and HUD a truthful third
+        // state between "here" and a merely historical name mention.
+        nearby_character_ids: nearby.map(entry => entry.id),
+        nearby_characters: nearby,
         activities
     };
 }
@@ -11603,6 +11622,14 @@ function normalizeWorldTurnReceipt(world, sess, rawReceipt) {
             player_location_changed: sceneSource.player_location_changed === true,
             present_character_ids: (Array.isArray(sceneSource.present_character_ids)
                 ? sceneSource.present_character_ids : []).map(id => String(id || '').slice(0, 120)).filter(Boolean).slice(0, 80),
+            nearby_character_ids: (Array.isArray(sceneSource.nearby_character_ids)
+                ? sceneSource.nearby_character_ids : []).map(id => String(id || '').slice(0, 120)).filter(Boolean).slice(0, 80),
+            nearby_character_context: isPlainObject(sceneSource.nearby_character_context)
+                ? Object.fromEntries(Object.entries(sceneSource.nearby_character_context).slice(0, 80)
+                    .map(([id, value]) => [String(id || '').slice(0, 120), isPlainObject(value) ? {
+                        mode: String(value.mode || 'nearby').slice(0, 40),
+                        reason: String(value.reason || '').slice(0, 360)
+                    } : {}])) : {},
             // World mechanics owns scene telemetry and boundary evidence;
             // normalization must not strip them before the engine reads them.
             ...((window.HordeWorldMechanics?.isEnabled?.(world) && isPlainObject(sceneSource.telemetry))
@@ -12027,6 +12054,35 @@ function applyWorldEntityPatches(world, sess, patches) {
     return applied;
 }
 
+function applyWorldSceneNearbyContext(world, sess, scene, source = 'tool_call') {
+    // This is intentionally Sidecar-only. Inline Legacy has no semantic
+    // distinction between an NPC physically present and one who is merely
+    // audible/off-screen, so importing it there would fabricate a new state
+    // from old receipts. A Sidecar receipt treats this as a complete ending
+    // checksum for the off-screen scene layer.
+    if (source !== 'sidecar' && source !== 'sidecar_conversation') return [];
+    const requested = Array.isArray(scene?.nearby_character_ids) ? scene.nearby_character_ids : [];
+    const context = isPlainObject(scene?.nearby_character_context) ? scene.nearby_character_context : {};
+    const physicallyPresent = new Set(buildWorldSceneFrame(world, sess).present_character_ids || []);
+    const next = {};
+    requested.forEach(ref => {
+        const id = resolveWorldActorId(world, sess, ref);
+        if (!id || id === 'player' || physicallyPresent.has(id)) return;
+        const entity = sessionNpcs(world, sess).find(npc => npc.id === id);
+        if (!entity || !isNpcActive(sess.entityStates?.[id])) return;
+        const details = isPlainObject(context[ref]) ? context[ref]
+            : (isPlainObject(context[id]) ? context[id] : {});
+        next[id] = {
+            mode: String(details.mode || 'nearby').slice(0, 40),
+            reason: String(details.reason || '').slice(0, 360),
+            source_turn: Math.max(1, Number(sess.turnCount) || 1),
+            source: 'sidecar'
+        };
+    });
+    sess.sceneNearbyCharacters = next;
+    return Object.keys(next);
+}
+
 // Sidecar-only NPC wardrobe reconciliation. Inline Legacy keeps its existing
 // session-only outfit behaviour; Sidecar can promote narrator-evidenced NPC
 // clothing into the character's first-class wardrobe without changing the
@@ -12232,6 +12288,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         }) || { enabled: false, claims: [], rejected: [] });
     const actionResult = processStructuredActions(validation.legacyArgs, world, sess, { sidecar: sidecarSource });
     applyWorldEntityPatches(world, sess, validation.entityPatches);
+    const nearbyContext = applyWorldSceneNearbyContext(world, sess, validation.sceneAssertion, source);
     const npcOutfitUpdates = applyWorldNpcOutfitPatches(world, sess, validation.entityPatches, source);
     // Recover an omitted NPC movement only when two independent channels
     // agree: the structured ending checksum names the NPC and the visible
@@ -12267,6 +12324,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     }
     const audit = recordWorldTurnCommit(world, sess, validation, actionResult, source);
     audit.npc_outfit_updates = npcOutfitUpdates;
+    audit.nearby_character_context = nearbyContext;
     const dossierClaimResult = window.HordeDossierClaims?.applyPreparedCommit?.(world, sess, preparedDossierClaims)
         || { applied: [], rejected: [] };
     if (preparedDossierClaims.enabled) {
@@ -13663,9 +13721,16 @@ GATE 10. Auxiliary reasoning not covered above. Never draft—only concise think
 
 function buildFF54NarratorSystemStack(world, os, contextBlock, options = {}) {
     const sections = resolveFF54Sections(world, os, options);
-    const enabled = sections.filter(section => section.enabled);
-    const disabled = sections.filter(section => !section.enabled)
-        .map(section => ({ id: section.id, name: section.name, reason: section.reason }));
+    // FF's Embellish mode deliberately re-presents player text. That is
+    // incompatible with a Sidecar narrator: the player turn is already a
+    // visible, immutable record, so re-presenting it can make an NPC appear
+    // to have said it. Keep the preference intact for Inline Legacy, but
+    // suppress only this conflicting adapter section in Sidecar mode.
+    const suppressed = new Set(options.sidecar === true ? ['echo_embellish'] : []);
+    const enabled = sections.filter(section => section.enabled && !suppressed.has(section.id));
+    const disabled = sections.filter(section => !section.enabled || suppressed.has(section.id))
+        .map(section => ({ id: section.id, name: section.name,
+            reason: suppressed.has(section.id) ? 'Suppressed in Sidecar mode: player turns remain visible and must not be re-authored.' : section.reason }));
     const wrapper = `[ROLEPLAY OS — FREAKY FRANKENSTEIN 5.4 AGENTIC · HORDE COMPATIBILITY WRAPPER]
 You are running the Freaky Frankenstein 5.4 Agentic narrative framework inside Horde Studio. FF shapes how you narrate; Horde owns what is real.
 
@@ -14218,6 +14283,13 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
         // NPC-only checksum; this display/context field must not be mistaken
         // for a write payload.
         activeCast: ['player', ...frame.present_character_ids],
+        nearbyCast: (frame.nearby_characters || []).map(entry => ({
+            id: entry.id,
+            name: sessionNpcs(world, sess).find(npc => npc.id === entry.id)?.name || entry.id,
+            mode: entry.mode,
+            reason: entry.reason,
+            locationId: entry.location_id
+        })),
         activeSequence: hierarchy?.sequence ? {
             id: hierarchy.sequence.id,
             title: hierarchy.sequence.title,
@@ -14882,9 +14954,10 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const commitTransportInstruction = compactCommitTransport
         ? 'Call commit_world_turn exactly once. Put the COMPLETE receipt object inside the receipt_json argument as valid JSON text; this is still the only canonical state call for the turn.'
         : 'Call commit_world_turn exactly once with the native structured receipt; this is the only canonical state call for the turn.';
+    const scenePresenceAuthority = `[SCENE PRESENCE AUTHORITY]\nThere are three distinct states: (1) present_character_ids means physical co-presence with the player; (2) nearby_character_ids means an existing NPC is physically absent but explicitly audible, nearby, or materially off-screen involved; (3) a bare name mention is not scene state. When narration or handoff establishes state (2), include the exact canonical ID in the COMPLETE nearby_character_ids ending checksum and nearby_character_context[id] = {mode, reason}. This stores a non-moving scene-presence tag for the next packet and HUD. Never put a nearby NPC in present_character_ids, never move their location for this tag, and never invent this tag from a mere name reference.`;
     const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only evidence packet. It may identify canonical records and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nReconcile across the FF semantic domains: temporal (two-phase, header-anchored), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture (explicit commitments only), inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, cognition consistency (per-character epistemics), recovery obligations, and promotion candidates for genuinely new entities and places.\nWhere the SIDECAR READER REPORT carries controlled_character_evidence, treat user_explicit_action and user_explicit_dialogue as primary player-authored evidence and narrator_paraphrase as presentation only. Never canonize a persistent character trait from a single Narrator flourish; higher-order interpretations need repeated evidence or explicit authorial confirmation.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nWORLD MECHANICS FRAME (engine-owned state; the engine owns phases and dose arithmetic — you supply evidence only):\n${mechanicsFrame || '(no tracked mechanics state this turn)'}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
     const configuredTokens = Number(tracker.maxTokens) || 0;
-    const outfitAuthority = `[COMMIT TRANSPORT]\n${commitTransportInstruction}\n\n[NPC OUTFIT AUTHORITY] When visible narration establishes an NPC clothing change, place the exact current description in that NPC entity_updates.outfit and optionally provide outfit_name. The canonical reducer matches an existing wardrobe entry or creates a scene outfit. Never change the player outfit from Sidecar, and never infer clothing changes from portraits or off-screen assumptions.`;
+    const outfitAuthority = `${scenePresenceAuthority}\n\n[COMMIT TRANSPORT]\n${commitTransportInstruction}\n\n[NPC OUTFIT AUTHORITY] When visible narration establishes an NPC clothing change, place the exact current description in that NPC entity_updates.outfit and optionally provide outfit_name. The canonical reducer matches an existing wardrobe entry or creates a scene outfit. Never change the player outfit from Sidecar, and never infer clothing changes from portraits or off-screen assumptions.`;
     const maxTokens = configuredTokens > 0
         ? Math.max(1800, Math.min(100000, Math.trunc(configuredTokens)))
         : (tracker.reasoning === true ? 8000 : 6000);
@@ -30085,20 +30158,45 @@ function renderWorldPlayState() {
     } else {
         presList.innerHTML = '<div style="color:var(--text-3); font-size:0.8rem; padding: 4px;">No one here</div>';
     }
-    const mentionedNPCs = findRecentlyMentionedWorldNpcs(world, activeSess, new Set(presentNPCs.map(npc => npc.id)));
+    const sceneFrame = buildWorldSceneFrame(world, activeSess);
+    const presentIds = new Set(presentNPCs.map(npc => npc.id));
+    const nearbyEntries = (sceneFrame.nearby_characters || []).map(entry => ({
+        ...entry,
+        npc: sessionNpcs(world, activeSess).find(npc => npc.id === entry.id)
+    })).filter(entry => entry.npc);
+    if (nearbyEntries.length) {
+        const heading = document.createElement('div');
+        heading.style.cssText = 'color:var(--text-3);font-size:0.68rem;text-transform:uppercase;font-weight:700;margin:8px 0 2px;';
+        heading.textContent = 'Nearby / involved · not physically present';
+        presList.appendChild(heading);
+        nearbyEntries.forEach(entry => {
+            const npc = entry.npc;
+            const div = document.createElement('div');
+            div.className = 'world-present-npc world-nearby-npc';
+            div.style.cssText = 'padding:6px 8px;background:var(--surface1);border-radius:6px;border-left:3px solid var(--text-3);font-size:0.8rem;cursor:pointer;opacity:.82;';
+            const state = activeSess.entityStates?.[npc.id] || {};
+            const where = getLocationRef(world, state.location)?.name || 'elsewhere';
+            div.textContent = `${npc.name} · ${entry.mode || 'nearby'} · ${where}`;
+            div.title = entry.reason || 'Tracked as nearby or off-screen involved; this does not assert physical presence.';
+            div.onclick = () => openNpcDossier(npc.id);
+            presList.appendChild(div);
+        });
+    }
+    const mentionedNPCs = findRecentlyMentionedWorldNpcs(world, activeSess,
+        new Set([...presentIds, ...nearbyEntries.map(entry => entry.id)]));
     if (mentionedNPCs.length) {
         const heading = document.createElement('div');
         heading.style.cssText = 'color:var(--text-3);font-size:0.68rem;text-transform:uppercase;font-weight:700;margin:8px 0 2px;';
-        heading.textContent = 'Mentioned / nearby · not physically present';
+        heading.textContent = 'Mentioned recently · not scene state';
         presList.appendChild(heading);
         mentionedNPCs.forEach(npc => {
             const div = document.createElement('div');
             div.className = 'world-present-npc world-mentioned-npc';
-            div.style.cssText = 'padding:6px 8px;background:var(--surface1);border-radius:6px;border-left:3px solid var(--text-3);font-size:0.8rem;cursor:pointer;opacity:.82;';
+            div.style.cssText = 'padding:6px 8px;background:var(--surface1);border-radius:6px;border-left:3px solid var(--text-3);font-size:0.8rem;cursor:pointer;opacity:.72;';
             const state = activeSess.entityStates?.[npc.id] || {};
             const where = getLocationRef(world, state.location)?.name || 'elsewhere';
             div.textContent = `${npc.name} · ${where}`;
-            div.title = 'Mentioned or involved in recent context; this does not assert physical presence.';
+            div.title = 'Recent mention only. It does not assert presence or nearby involvement.';
             div.onclick = () => openNpcDossier(npc.id);
             presList.appendChild(div);
         });
@@ -32603,8 +32701,8 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
         const ffAgentLanes = (((ffCompilation.manifest || {}).candidates) || [])
             .filter(candidate => candidate.kept && String(candidate.lane || '').indexOf('agent_') === 0)
             .map(candidate => candidate.lane);
-        const ffStack = buildFF54NarratorSystemStack(world, ffOS, ffCompilation.contextBlock, { agentAvailability: ffAgentLanes });
-        const ffHandoffContract = `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.`;
+        const ffStack = buildFF54NarratorSystemStack(world, ffOS, ffCompilation.contextBlock, { agentAvailability: ffAgentLanes, sidecar: sidecarMode });
+        const ffHandoffContract = `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end. Separately name any already-existing character who is materially off-screen but audible, nearby, or otherwise involved; say why, without claiming they arrived.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.`;
         systemPrompt = ffStack.prompt + ffHandoffContract + (ffTurnBrief ? `\n\n${ffTurnBrief}` : '');
         const ffUserToken = (persona && persona.name) || 'the player';
         const ffSubstitute = value => String(value || '').replace(/\{\{user\}\}/g, ffUserToken);
@@ -32767,7 +32865,7 @@ ${modularMandate}
 
         const messages = [
             { role: 'system', content: systemPrompt + (sidecarMode
-                ? '\n\n[SIDECAR NARRATOR SAFETY]\nThe narrator is not a state reducer. Write visible prose and the hidden scene handoff only. Do not emit a legacy receipt, tool call, automatic tick, arrival, relationship change, schedule move, or inferred knowledge. Sidecar reconciles what was authored after this response.'
+                ? '\n\n[SIDECAR NARRATOR SAFETY]\nThe narrator is not a state reducer. Write visible prose and the hidden scene handoff only. Do not emit a legacy receipt, tool call, automatic tick, arrival, relationship change, schedule move, or inferred knowledge. Sidecar reconciles what was authored after this response.\n\n[PLAYER TURN IS ALREADY VISIBLE AND AUTHORITATIVE]\nNever repeat, quote, paraphrase, embellish, correct, or attribute the player\'s submitted action or dialogue to any NPC. Never write “you say/said/ask” followed by player dialogue, and never open the response by re-performing the player turn. Begin with the world\'s or an NPC\'s response to its meaning. Parenthetical OOC in player input is author instruction only: do not reproduce it as visible prose.'
                 : finalMandate) },
             ...historyToSend
         ];
@@ -32861,7 +32959,9 @@ ${modularMandate}
                             properties: {
                                 player_location_id: { type: "string", description: "Exact location ID where the player ends this response." },
                                 player_location_changed: { type: "boolean" },
-                                present_character_ids: { type: "array", items: { type: "string" }, description: "Complete list of NPC IDs physically present with the player at the end. Do not include absent, nearby, remembered, or merely mentioned characters." }
+                                present_character_ids: { type: "array", items: { type: "string" }, description: "Complete list of NPC IDs physically present with the player at the end. Do not include absent, nearby, remembered, or merely mentioned characters." },
+                                nearby_character_ids: { type: "array", items: { type: "string" }, description: "Complete list of existing NPC IDs who are physically absent but materially established in this scene as audible, nearby, or off-screen involved. This never moves them or marks them present. Do not include a character merely because their name was mentioned." },
+                                nearby_character_context: { type: "object", description: "For each nearby_character_id, optional {mode,reason} evidence such as audible/offscreen/nearby. Keep the reason grounded in narration or handoff." }
                             },
                             required: ["player_location_id", "player_location_changed", "present_character_ids"]
                         },
