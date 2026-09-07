@@ -17377,19 +17377,18 @@ function renderSidecarWorkspace(world, sess) {
         : workspaceUi.view === 'characters' ? section('characters', 'Characters', characterBody, `${model.activeCharacters.length}`)
             : workspaceUi.view === 'history' ? section('history', 'Reader history', historyBody, `${model.snapshots.length}`)
                 : sceneBody;
-    host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
     const rerender = () => { renderSidecarWorkspace(world, sess); };
-    // Delegate tab navigation from the stable workspace root.  The workspace
-    // body is rebuilt on every view change; delegation keeps the controls
-    // interactive even when a provider/save callback causes a same-turn
-    // repaint, and the visual change happens before persistence completes.
-    host.onclick = event => {
-        const buttonEl = event.target?.closest?.('[data-si-view]');
-        if (!buttonEl || !host.contains(buttonEl)) return;
-        workspaceUi.view = buttonEl.dataset.siView;
+    // Keep a single tiny bridge on window for the generated tab buttons.  It
+    // avoids relying on a long-lived listener attached to DOM that is rebuilt
+    // during world renders, while still mutating the canonical timeline UI
+    // state rather than introducing a second workspace state store.
+    window.__hordeSceneWorkspaceView = view => {
+        if (!['scene', 'relationships', 'characters', 'history'].includes(view)) return;
+        workspaceUi.view = view;
         rerender();
         saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     };
+    host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}" onclick="window.__hordeSceneWorkspaceView('${view}')">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
     host.querySelectorAll('.si-section').forEach(details => details.addEventListener('toggle', () => { workspaceUi.open[details.dataset.siSection] = details.open; saveState().catch(() => {}); }));
     host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
         const action = buttonEl.dataset.siAction || '';
