@@ -16908,7 +16908,9 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
             commit = commitWorldTurnReceipt(world, sess, result.proposedReceipt, {
                 playerStartLocationId: sess.playerLocation,
                 playerMovementAuthorized: false,
-                narrativeText: ''
+                narrativeText: '',
+                sourceTurnId: authorEntry.id,
+                idempotencyKey: `sidecar-conversation:${sess.id || 'timeline'}:${authorEntry.id}`
             }, 'sidecar_conversation');
             sidecarEntry.commitAudit = safeJsonClone(commit.audit);
         } catch (error) {
