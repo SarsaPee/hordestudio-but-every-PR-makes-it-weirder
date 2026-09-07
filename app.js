@@ -32677,7 +32677,14 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
         // used to inject (persona, lore, memory matrix, ledger, NPC context,
         // world state) is routed through the Sidecar Context Compiler into
         // <context> and the FF agent-data markers instead.
-        const ffTurnBrief = String(systemPrompt || '').trim();
+        // The pre-compiler prompt is the legacy Inline stack. Re-appending it
+        // here made Sidecar receive duplicate world state, legacy reducer
+        // instructions, and unscopeable NPC/player knowledge after the new
+        // handoff contract. Keep only the tiny command-specific look cue;
+        // all normal Sidecar context is already in the compiled packet.
+        const ffTurnBrief = sidecarMode
+            ? (command === 'look' ? '[IMMEDIATE TASK] Describe the established current location from the player\'s present viewpoint. Do not author a new arrival.' : '')
+            : String(systemPrompt || '').trim();
         const ffCompilation = compileFF54SidecarContext(world, sess, {
             packet: priorPacket,
             recall: sidecarRecall,
