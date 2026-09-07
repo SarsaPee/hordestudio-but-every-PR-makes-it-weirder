@@ -15165,17 +15165,28 @@ function parseSidecarReaderOutput(content, fallback = {}) {
         valid: false, summary: 'The Sidecar Reader returned no usable structured reading.',
         canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000)
     };
+    const interpretation = isPlainObject(parsed.semantic_interpretation) ? parsed.semantic_interpretation : {};
+    const semanticInterpretation = {
+        ...interpretation,
+        scene: interpretation.scene || interpretation.scene_state || {},
+        location: interpretation.location || interpretation.location_state || {},
+        presence: interpretation.presence || interpretation.cast || {},
+        events: interpretation.events || interpretation.event_claims || [],
+        durableProposals: interpretation.durableProposals || interpretation.durable_proposals || [],
+        relationshipProposals: interpretation.relationshipProposals || interpretation.relationship_proposals || [],
+        provisionalCognition: interpretation.provisionalCognition || interpretation.provisional_cognition || []
+    };
     return {
         valid: true,
         mode: parsed.mode === 'full' ? 'full' : 'delta',
         changedFields: Array.isArray(parsed.changed_fields) ? parsed.changed_fields.map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
         summary: String(parsed.summary || parsed.scene_reading || '').slice(0, 6000),
         canonicalReferences: isPlainObject(parsed.canonical_references) ? parsed.canonical_references : fallback,
-        semanticInterpretation: isPlainObject(parsed.semantic_interpretation) ? parsed.semantic_interpretation : {},
-        durableProposals: Array.isArray(parsed.semantic_interpretation?.durableProposals || parsed.semantic_interpretation?.durable_proposals)
-            ? (parsed.semantic_interpretation.durableProposals || parsed.semantic_interpretation.durable_proposals).slice(0, 40) : [],
-        relationshipProposals: Array.isArray(parsed.semantic_interpretation?.relationshipProposals || parsed.semantic_interpretation?.relationship_proposals)
-            ? (parsed.semantic_interpretation.relationshipProposals || parsed.semantic_interpretation.relationship_proposals).slice(0, 40) : [],
+        semanticInterpretation,
+        durableProposals: Array.isArray(semanticInterpretation.durableProposals)
+            ? semanticInterpretation.durableProposals.slice(0, 40) : [],
+        relationshipProposals: Array.isArray(semanticInterpretation.relationshipProposals)
+            ? semanticInterpretation.relationshipProposals.slice(0, 40) : [],
         reconciliationFocus: Array.isArray(parsed.reconciliation_focus) ? parsed.reconciliation_focus.slice(0, 30) : [],
         unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved.slice(0, 20) : [],
         proposedQuestions: Array.isArray(parsed.proposed_questions) ? parsed.proposed_questions.slice(0, 12) : [],
@@ -15267,10 +15278,10 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
         scene: packet.semanticInterpretation?.scene || packet.scene || {},
         location: packet.semanticInterpretation?.location || packet.location || {},
         presence: packet.semanticInterpretation?.presence || packet.presence || {},
-        eventClaims: packet.semanticInterpretation?.events || packet.eventClaims || [],
+        eventClaims: packet.semanticInterpretation?.events || packet.semanticInterpretation?.eventClaims || packet.eventClaims || [],
         durableProposals: packet.semanticInterpretation?.durableProposals || packet.durableProposals || [],
         relationshipProposals: packet.semanticInterpretation?.relationshipProposals || packet.relationshipProposals || [],
-        provisionalCognition: packet.semanticInterpretation?.provisionalCognition || packet.provisionalCognition || [],
+        provisionalCognition: packet.semanticInterpretation?.provisionalCognition || packet.semanticInterpretation?.provisional_cognition || packet.provisionalCognition || [],
         lookupProvenance: packet.lookupProvenance || [],
         canonicalReferences: packet.canonicalReferences || {},
         unresolvedEvidence: packet.unresolved || [],
