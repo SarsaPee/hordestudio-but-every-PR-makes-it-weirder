@@ -14845,6 +14845,22 @@ function applySidecarReasoning(body, provider, tracker = {}, world = {}, options
     return body;
 }
 
+function sidecarSupportsStructuredJson(provider, model, tracker = {}, profile = {}) {
+    const advertised = [
+        ...(Array.isArray(tracker.supportedParams) ? tracker.supportedParams : []),
+        ...(Array.isArray(profile.supportedParams) ? profile.supportedParams : []),
+        ...(Array.isArray(state.globalSettings?.supportedParams) ? state.globalSettings.supportedParams : [])
+    ].map(value => String(value || '').toLowerCase());
+    if (advertised.includes('response_format') || advertised.includes('structured_outputs')) return true;
+    // Unknown/custom providers stay on the validated prompt+parser fallback
+    // path. Use native JSON mode only when the loaded model catalogue has
+    // explicitly advertised support for it.
+    const catalogue = Array.isArray(globalThis.openRouterModels) ? globalThis.openRouterModels : [];
+    const match = catalogue.find(entry => String(entry?.id || '').toLowerCase() === String(model || '').toLowerCase());
+    return !!(match && Array.isArray(match.supported_parameters)
+        && match.supported_parameters.some(value => ['response_format', 'structured_outputs'].includes(String(value || '').toLowerCase())));
+}
+
 // OpenAI-compatible tool schemas are richer than the subset accepted by some
 // upstream adapters (notably Google AI Studio via OpenRouter). Keep the
 // canonical commit_world_turn contract intact in Horde, but project the
@@ -15159,7 +15175,13 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
 }
 
 function parseSidecarReaderOutput(content, fallback = {}) {
-    const raw = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    // Providers vary between string content and OpenAI content-part arrays.
+    // Normalize both forms before JSON repair so a valid reader envelope is
+    // not mistaken for an empty/invalid response.
+    const normalizedContent = Array.isArray(content)
+        ? content.map(part => typeof part === 'string' ? part : String(part?.text || part?.content || '')).filter(Boolean).join('\n')
+        : (isPlainObject(content) ? (content.text || content.content || '') : content);
+    const raw = String(normalizedContent || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
     const parsed = safeParseJSONRepair(raw);
     if (!isPlainObject(parsed)) return {
         valid: false, summary: 'The Sidecar Reader returned no usable structured reading.',
@@ -15422,11 +15444,26 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const maxRounds = Math.max(0, Math.min(12, Number(profile.maxToolCalls) || 3));
     for (let round = 0; round <= maxRounds; round++) {
         const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: safeJsonClone(messages), tools, tool_choice: 'auto', parallel_tool_calls: false };
+        const useNativeJson = sidecarSupportsStructuredJson(provider, model, readerTracker, profile);
+        if (useNativeJson) body.response_format = { type: 'json_object' };
         applySidecarReasoning(body, provider, readerTracker, world);
         logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt, request: safeJsonClone(body) });
-        const response = await fetchSidecarCompletion(body, {
+        let response = await fetchSidecarCompletion(body, {
             provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal, retryPolicy: profile.retryPolicy
         });
+        // Some catalogues are optimistic or provider gateways reject JSON mode
+        // for tool-capable models. Keep the native attempt bounded, then fall
+        // back to the same validated JSON parser without changing authority.
+        if (!response.ok && useNativeJson && [400, 404, 422].includes(response.status)) {
+            const detail = await response.clone().text().catch(() => '');
+            if (/response_format|json_object|structured.?output|not support|invalid argument/i.test(detail)) {
+                delete body.response_format;
+                logSidecarConsoleTrace('Reader retry without native JSON mode', { model, provider, detail: detail.slice(0, 800) });
+                response = await fetchSidecarCompletion(body, {
+                    provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal, retryPolicy: profile.retryPolicy
+                });
+            }
+        }
         if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar Reader failed (${response.status})`);
         finalPayload = await response.json();
         const choice = finalPayload?.choices?.[0] || {};
@@ -16048,9 +16085,13 @@ async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
     const activeTurns = (protocol.turns || []).filter(turn => turn.status !== 'superseded');
     const turnIds = Array.isArray(options.turnIds) && options.turnIds.length ? new Set(options.turnIds.map(String)) : null;
-    const startIndex = options.startTurnId ? Math.max(0, activeTurns.findIndex(turn => String(turn.id) === String(options.startTurnId))) : 0;
+    const startFound = options.startTurnId ? activeTurns.findIndex(turn => String(turn.id) === String(options.startTurnId)) : 0;
+    const startIndex = Math.max(0, startFound);
     const endFound = options.endTurnId ? activeTurns.findIndex(turn => String(turn.id) === String(options.endTurnId)) : activeTurns.length - 1;
-    const endIndex = endFound < 0 ? activeTurns.length - 1 : Math.max(startIndex, endFound);
+    if (options.startTurnId && startFound === -1) throw new Error('The selected reader backfill start turn is not available on this timeline.');
+    if (options.endTurnId && endFound === -1) throw new Error('The selected reader backfill end turn is not available on this timeline.');
+    if (endFound >= 0 && startIndex >= 0 && endFound < startIndex) throw new Error('Reader backfill range must end at or after its start turn.');
+    const endIndex = endFound < 0 ? activeTurns.length - 1 : endFound;
     const selectedTurns = activeTurns.slice(startIndex, endIndex + 1);
     const eligible = selectedTurns.filter(turn => (!turnIds || turnIds.has(String(turn.id)))
         && !protocol.readerSnapshots.some(snapshot => snapshot.status === 'active' && snapshot.turnId === turn.id));
@@ -16131,7 +16172,13 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
         job.model = job.model || memoryDefaults.consolidationModel || model;
     });
     const runnable = queuedJobs.filter(job => job.status === 'queued').slice(0, overallLimit);
-    if (!runnable.length) return;
+    if (!runnable.length) {
+        // Dependency transitions and newly queued work are state too. Persist
+        // them even when this wave has nothing runnable yet, otherwise a
+        // browser refresh can make a dependency-waiting job appear to vanish.
+        await saveState();
+        return;
+    }
     const providerCounts = {};
     const scheduled = runnable.filter(job => {
         const key = `${job.provider || 'default'}::${job.model || model}`;
