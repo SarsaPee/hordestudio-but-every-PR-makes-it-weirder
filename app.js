@@ -17343,12 +17343,10 @@ function sidecarWorkspaceAvatar(name) {
     return escapeHTML(String(name || '?').trim().split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?');
 }
 
-window.__hordeSceneWorkspaceBuild = 'scene-intelligence-v7';
 function renderSidecarWorkspace(world, sess) {
     const host = document.getElementById('world-sidecar-workspace');
     const column = document.querySelector('#world-play-view .world-status-col');
     if (!host || !column) return;
-    host.dataset.siBuild = 'scene-intelligence-v8';
     const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar);
     host.classList.toggle('hidden', !sidecar);
@@ -17398,7 +17396,6 @@ function renderSidecarWorkspace(world, sess) {
         });
         window.__hordeSceneWorkspaceDocumentListener = true;
     }
-    host.dataset.siViewState = workspaceUi.view;
     host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
     // Bind the generated tab controls directly after each redraw.  The
     // workspace is rebuilt during Sidecar updates, so a one-time listener on
@@ -17409,11 +17406,9 @@ function renderSidecarWorkspace(world, sess) {
         event.stopPropagation();
         const nextView = buttonEl.dataset.siView;
         if (!['scene', 'relationships', 'characters', 'history'].includes(nextView)) return;
-        host.dataset.siLastView = nextView;
         workspaceUi.view = nextView;
         protocol.workspaceUi = workspaceUi;
         sess.sidecar = protocol;
-        host.dataset.siAssignedView = String(workspaceUi.view);
         rerender();
         saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     }));
