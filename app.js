@@ -12751,7 +12751,13 @@ function stableSidecarValue(value) {
 }
 
 function sidecarReceiptFingerprint(receipt) {
-    return worldMediaHash(JSON.stringify(stableSidecarValue(receipt || {})));
+    const payload = safeJsonClone(receipt || {});
+    // Provider-generated transport identifiers are not world operations. Strip
+    // them so a safe downstream retry can reproduce the same transaction even
+    // when the model chooses a fresh receipt turn ID; all authored summaries,
+    // events, entity patches and state updates remain fingerprinted.
+    ['turn_id', 'idempotency_key', 'sidecar_idempotency_key', 'take_id', 'revision_id', 'source_turn_id'].forEach(key => delete payload[key]);
+    return worldMediaHash(JSON.stringify(stableSidecarValue(payload)));
 }
 
 function sidecarCommitIdentity(sess, context = {}, receipt = {}) {
