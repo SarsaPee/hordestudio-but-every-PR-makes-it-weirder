@@ -17343,6 +17343,7 @@ function sidecarWorkspaceAvatar(name) {
     return escapeHTML(String(name || '?').trim().split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?');
 }
 
+window.__hordeSceneWorkspaceBuild = 'scene-intelligence-v7';
 function renderSidecarWorkspace(world, sess) {
     const host = document.getElementById('world-sidecar-workspace');
     const column = document.querySelector('#world-play-view .world-status-col');
