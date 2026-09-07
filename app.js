@@ -17388,7 +17388,15 @@ function renderSidecarWorkspace(world, sess) {
         rerender();
         saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
     };
-    host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}" onclick="window.__hordeSceneWorkspaceView('${view}')">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
+    if (!window.__hordeSceneWorkspaceDocumentListener) {
+        document.addEventListener('click', event => {
+            const button = event.target?.closest?.('#world-sidecar-workspace [data-si-view]');
+            if (!button) return;
+            window.__hordeSceneWorkspaceView?.(button.dataset.siView);
+        });
+        window.__hordeSceneWorkspaceDocumentListener = true;
+    }
+    host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
     host.querySelectorAll('.si-section').forEach(details => details.addEventListener('toggle', () => { workspaceUi.open[details.dataset.siSection] = details.open; saveState().catch(() => {}); }));
     host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
         const action = buttonEl.dataset.siAction || '';
