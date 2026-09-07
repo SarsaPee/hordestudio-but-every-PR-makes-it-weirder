@@ -17397,6 +17397,19 @@ function renderSidecarWorkspace(world, sess) {
         window.__hordeSceneWorkspaceDocumentListener = true;
     }
     host.innerHTML = `<div class="si-toolbar"><div class="si-brand"><strong>Scene Intelligence</strong><small>${escapeHTML(model.hierarchy.scene?.title || 'Current scene')}</small></div><span class="si-toolbar-spacer"></span><span class="si-status ${statusClass}">${escapeHTML(statusLabel)}</span><button type="button" class="si-toolbar-btn" data-si-action="refresh" title="Refresh Reader interpretation">↻</button><button type="button" class="si-toolbar-btn" data-si-action="backstage" title="Open Backstage">⌘</button></div><div class="si-tabs">${[['scene','Scene'],['relationships','Relations'],['characters','Characters'],['history','History']].map(([view,label]) => `<button type="button" class="si-tab ${workspaceUi.view === view ? 'is-active' : ''}" data-si-view="${view}">${label}</button>`).join('')}</div><div class="si-body">${viewBody}</div>`;
+    // Bind the generated tab controls directly after each redraw.  The
+    // workspace is rebuilt during Sidecar updates, so a one-time listener on
+    // an earlier DOM node is not sufficient.  The document-level bridge above
+    // remains as a defensive fallback for host redraws that occur mid-click.
+    host.querySelectorAll('[data-si-view]').forEach(buttonEl => buttonEl.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const nextView = buttonEl.dataset.siView;
+        if (!['scene', 'relationships', 'characters', 'history'].includes(nextView)) return;
+        workspaceUi.view = nextView;
+        rerender();
+        saveState().catch(error => console.warn('Scene Intelligence view persistence failed:', error));
+    }));
     host.querySelectorAll('.si-section').forEach(details => details.addEventListener('toggle', () => { workspaceUi.open[details.dataset.siSection] = details.open; saveState().catch(() => {}); }));
     host.querySelectorAll('[data-si-action]').forEach(buttonEl => buttonEl.addEventListener('click', async () => {
         const action = buttonEl.dataset.siAction || '';
