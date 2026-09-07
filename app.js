@@ -15068,10 +15068,14 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
         const location = sidecarCanonicalLocationRecord(world, sess, args.location_id);
         return { found: !!location, location };
     }
-    if (name === 'get_current_scene_state') return {
-        found: true, scene: buildWorldSceneFrame(world, sess), clock: buildSidecarClockEvidence(world, sess),
-        questions: (window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-12)
-    };
+    if (name === 'get_current_scene_state') {
+        const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+        return {
+            found: true, scene: buildWorldSceneFrame(world, sess), clock: buildSidecarClockEvidence(world, sess),
+            reader: protocol?.sceneReader || null,
+            questions: (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-12)
+        };
+    }
     if (name === 'get_world_records') {
         const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
         const requested = new Set(Array.isArray(args.kinds) ? args.kinds : []);
@@ -15327,7 +15331,13 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
         : '';
-    const controlledEntityId = String(options.preFrame?.controlled_entity_id || sess?.sidecar?.activeControlledEntityId || sess?.controlledEntityId || 'player');
+    const readerProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const readerHierarchy = readerProtocol && window.HordeSidecarTimeline?.ensureHierarchy?.(readerProtocol, sess, { createWhenMissing: false });
+    const controlledEntityId = String(options.preFrame?.controlled_entity_id
+        || readerHierarchy?.sequence?.controlledEntityId
+        || sess?.sidecar?.activeControlledEntityId
+        || sess?.controlledEntityId
+        || 'player');
     const controlledEntity = (world.entities || []).find(entity => String(entity?.id) === controlledEntityId) || null;
     const controlledPersona = sess?.playerIdentity?.persona || sess?.persona || controlledEntity?.persona || '';
     const lookupBudget = Math.max(1000, Number(profile.maxLookupPayload) || 12000);
@@ -15972,9 +15982,13 @@ function effectiveSidecarReaderProfile(world, sess = null) {
 async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
     if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) throw new Error('Reader backfill requires a Sidecar timeline.');
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
-    const turnIds = Array.isArray(options.turnIds) && options.turnIds.length
-        ? new Set(options.turnIds.map(String)) : null;
-    const eligible = (protocol.turns || []).filter(turn => turn.status !== 'superseded' && (!turnIds || turnIds.has(String(turn.id)))
+    const activeTurns = (protocol.turns || []).filter(turn => turn.status !== 'superseded');
+    const turnIds = Array.isArray(options.turnIds) && options.turnIds.length ? new Set(options.turnIds.map(String)) : null;
+    const startIndex = options.startTurnId ? Math.max(0, activeTurns.findIndex(turn => String(turn.id) === String(options.startTurnId))) : 0;
+    const endFound = options.endTurnId ? activeTurns.findIndex(turn => String(turn.id) === String(options.endTurnId)) : activeTurns.length - 1;
+    const endIndex = endFound < 0 ? activeTurns.length - 1 : Math.max(startIndex, endFound);
+    const selectedTurns = activeTurns.slice(startIndex, endIndex + 1);
+    const eligible = selectedTurns.filter(turn => (!turnIds || turnIds.has(String(turn.id)))
         && !protocol.readerSnapshots.some(snapshot => snapshot.status === 'active' && snapshot.turnId === turn.id));
     const profile = effectiveSidecarReaderProfile(world, sess);
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
@@ -16443,6 +16457,8 @@ function openWorldSidecarInspector(view = 'scene') {
     const protocol = isSidecar ? window.HordeSidecarHooks.normalizeWorldTimeline(world, sess) : null;
     const packet = isSidecar ? (protocol.packet || buildSidecarScenePacket(world, sess)) : null;
     const latestTurn = isSidecar ? (protocol.turns || []).at(-1) : null;
+    const readerBackfillTurns = isSidecar ? (protocol.turns || []).filter(turn => turn.status !== 'superseded').slice(-120) : [];
+    const readerBackfillTurnOptions = readerBackfillTurns.map((turn, index) => `<option value="${escapeHTML(String(turn.id || ''))}">Turn ${index + 1} · ${escapeHTML(String(turn.id || '').slice(-28))}</option>`).join('');
     const title = view === 'line' ? 'World GM · private Sidecar line'
         : view === 'backstage' ? 'Backstage handoff'
         : view === 'migration' ? 'Enable Sidecar for this world'
@@ -16469,7 +16485,7 @@ function openWorldSidecarInspector(view = 'scene') {
         if (view === 'line') { openWorldSidecarLine(); return; }
         else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, roleplayOS: latestTurn?.ff54 || null, temporalBreakdown: latestTurn?.sceneHeader || null, controlledCharacterEvidence: latestTurn?.controlledCharacterEvidence || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12) }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
-        else if (view === 'memory') body = `${tabs}<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;"><button class="btn btn-primary" id="world-sidecar-reader-backfill">Backfill semantic reader</button><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${escapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${escapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
+        else if (view === 'memory') body = `${tabs}<div style="display:grid; gap:8px; margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:8px;"><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><strong>Reader backfill</strong><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><label class="form-label" style="min-width:210px;">From turn<select id="world-sidecar-reader-backfill-start" class="form-select"><option value="">First eligible turn</option>${readerBackfillTurnOptions}</select></label><label class="form-label" style="min-width:210px;">Through turn<select id="world-sidecar-reader-backfill-end" class="form-select"><option value="">Last eligible turn</option>${readerBackfillTurnOptions}</select></label><button class="btn btn-primary" id="world-sidecar-reader-backfill">Backfill selected range</button></div></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${escapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${escapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
             configuration: effectiveSidecarMemoryConfig(world),
             readerProfile: effectiveSidecarReaderProfile(world, sess),
             readerBackfill: protocol.readerBackfill || null,
@@ -16494,7 +16510,11 @@ function openWorldSidecarInspector(view = 'scene') {
     document.getElementById('world-sidecar-reader-backfill')?.addEventListener('click', async event => {
         const button = event.currentTarget; button.disabled = true; button.textContent = 'Backfilling…';
         try {
-            const result = await window.HordeSidecarReaderBackfill?.run(world, sess, { onProgress: progress => { button.textContent = `Backfilling… ${progress.completed || 0}/${progress.total || 0}`; } });
+            const result = await window.HordeSidecarReaderBackfill?.run(world, sess, {
+                startTurnId: document.getElementById('world-sidecar-reader-backfill-start')?.value || '',
+                endTurnId: document.getElementById('world-sidecar-reader-backfill-end')?.value || '',
+                onProgress: progress => { button.textContent = `Backfilling… ${progress.completed || 0}/${progress.total || 0}`; }
+            });
             showToast(`Reader backfill ${result?.status || 'completed'}: ${result?.completed || 0} completed, ${result?.failed || 0} failed.`, result?.failed ? 'warning' : 'success');
             closeWorldSidecarInspector(); openWorldSidecarInspector('memory');
         } catch (error) { showToast(`Reader backfill failed: ${error.message || error}`, 'error'); button.disabled = false; button.textContent = 'Backfill semantic reader'; }
