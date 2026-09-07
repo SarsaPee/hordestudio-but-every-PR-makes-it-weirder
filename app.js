@@ -15187,33 +15187,35 @@ function parseSidecarReaderOutput(content, fallback = {}) {
         valid: false, summary: 'The Sidecar Reader returned no usable structured reading.',
         canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000)
     };
-    const interpretation = isPlainObject(parsed.semantic_interpretation) ? parsed.semantic_interpretation : {};
+    const interpretation = isPlainObject(parsed.semantic_interpretation)
+        ? parsed.semantic_interpretation
+        : (isPlainObject(parsed.semanticInterpretation) ? parsed.semanticInterpretation : {});
     const semanticInterpretation = {
         ...interpretation,
-        scene: interpretation.scene || interpretation.scene_state || {},
-        location: interpretation.location || interpretation.location_state || {},
-        presence: interpretation.presence || interpretation.cast || {},
-        events: interpretation.events || interpretation.event_claims || [],
-        durableProposals: interpretation.durableProposals || interpretation.durable_proposals || [],
-        relationshipProposals: interpretation.relationshipProposals || interpretation.relationship_proposals || [],
-        provisionalCognition: interpretation.provisionalCognition || interpretation.provisional_cognition || []
+        scene: interpretation.scene || interpretation.scene_state || parsed.scene || parsed.scene_state || {},
+        location: interpretation.location || interpretation.location_state || parsed.location || parsed.location_state || {},
+        presence: interpretation.presence || interpretation.cast || parsed.presence || parsed.cast || {},
+        events: interpretation.events || interpretation.event_claims || parsed.events || parsed.event_claims || [],
+        durableProposals: interpretation.durableProposals || interpretation.durable_proposals || parsed.durableProposals || parsed.durable_proposals || [],
+        relationshipProposals: interpretation.relationshipProposals || interpretation.relationship_proposals || parsed.relationshipProposals || parsed.relationship_proposals || [],
+        provisionalCognition: interpretation.provisionalCognition || interpretation.provisional_cognition || parsed.provisionalCognition || parsed.provisional_cognition || []
     };
     return {
         valid: true,
         mode: parsed.mode === 'full' ? 'full' : 'delta',
-        changedFields: Array.isArray(parsed.changed_fields) ? parsed.changed_fields.map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
+        changedFields: Array.isArray(parsed.changed_fields || parsed.changedFields) ? (parsed.changed_fields || parsed.changedFields).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
         summary: String(parsed.summary || parsed.scene_reading || '').slice(0, 6000),
-        canonicalReferences: isPlainObject(parsed.canonical_references) ? parsed.canonical_references : fallback,
+        canonicalReferences: isPlainObject(parsed.canonical_references || parsed.canonicalReferences) ? (parsed.canonical_references || parsed.canonicalReferences) : fallback,
         semanticInterpretation,
         durableProposals: Array.isArray(semanticInterpretation.durableProposals)
             ? semanticInterpretation.durableProposals.slice(0, 40) : [],
         relationshipProposals: Array.isArray(semanticInterpretation.relationshipProposals)
             ? semanticInterpretation.relationshipProposals.slice(0, 40) : [],
-        reconciliationFocus: Array.isArray(parsed.reconciliation_focus) ? parsed.reconciliation_focus.slice(0, 30) : [],
+        reconciliationFocus: Array.isArray(parsed.reconciliation_focus || parsed.reconciliationFocus) ? (parsed.reconciliation_focus || parsed.reconciliationFocus).slice(0, 30) : [],
         unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved.slice(0, 20) : [],
-        proposedQuestions: Array.isArray(parsed.proposed_questions) ? parsed.proposed_questions.slice(0, 12) : [],
-        timeEvidence: parsed.time_evidence || null,
-        controlledCharacterEvidence: (Array.isArray(parsed.controlled_character_evidence) ? parsed.controlled_character_evidence : [])
+        proposedQuestions: Array.isArray(parsed.proposed_questions || parsed.proposedQuestions) ? (parsed.proposed_questions || parsed.proposedQuestions).slice(0, 12) : [],
+        timeEvidence: parsed.time_evidence || parsed.timeEvidence || null,
+        controlledCharacterEvidence: (Array.isArray(parsed.controlled_character_evidence || parsed.controlledCharacterEvidence) ? (parsed.controlled_character_evidence || parsed.controlledCharacterEvidence) : [])
             .filter(item => isPlainObject(item)).slice(0, 12).map(item => ({
                 evidence: String(item.evidence || '').slice(0, 800),
                 provenance: ['user_explicit_action', 'user_explicit_dialogue', 'narrator_paraphrase', 'sidecar_interpretation', 'behavioural_pattern_inference'].includes(item.provenance) ? item.provenance : 'sidecar_interpretation'
