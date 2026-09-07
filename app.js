@@ -14292,8 +14292,17 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
         canonical_frame: opt.canonicalSceneFrame || null,
         recent_committed_events: Array.isArray(opt.recentCanonicalEvents) ? opt.recentCanonicalEvents : [],
         temporal_evidence: packet.temporalEvidence || null,
+        semantic_reader: packet.reader ? {
+            snapshotId: packet.reader.snapshotId || '', mode: packet.reader.mode || 'delta', summary: packet.reader.summary || '',
+            scene: packet.reader.scene || {}, presence: packet.reader.presence || {}, temporal: packet.reader.temporal || {},
+            eventClaims: packet.reader.eventClaims || [], unresolvedEvidence: packet.reader.unresolvedEvidence || []
+        } : null,
         canonical_status: packet.canonicalStateStatus || ''
     }), 1, 3200);
+
+    if (packet.reader?.provisionalCognition?.length) {
+        add('cognition', 'PROVISIONAL CHARACTER COGNITION HINTS', jsonText(packet.reader.provisionalCognition) + '\nThese are uncertain, reader-derived hints scoped to the relevant character only. They are not objective canon and must not be transferred to another character.', 3, 1600);
+    }
 
     // FF inventory tracker.
     if (ruleModules.inventory || ruleModules.equipment) {
@@ -14475,6 +14484,8 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
         preClock: safeJsonClone(options.preClock || buildSidecarClockEvidence(world, sess)),
         model: String(options.model || ''),
         provider: String(options.provider || ''),
+        takeId: String(options.takeId || `take_${options.takeIndex == null ? 0 : options.takeIndex}`),
+        revisionId: String(options.revisionId || ''),
         ff54: safeJsonClone(sess && sess.sidecar && sess.sidecar.ff54) || null,
         receipt: null,
         audit: null,
@@ -14736,6 +14747,7 @@ function buildSidecarScenePacket(world, sess, handoff = '') {
             durableProposals: (readerSnapshot.envelope?.durableProposals || []).slice(0, 12),
             relationshipProposals: (readerSnapshot.envelope?.relationshipProposals || []).slice(0, 12),
             unresolvedEvidence: (readerSnapshot.envelope?.unresolvedEvidence || []).slice(0, 12),
+            lookupProvenance: (readerSnapshot.envelope?.lookupProvenance || []).slice(0, 12),
             provisionalCognition: (readerSnapshot.envelope?.provisionalCognition || []).slice(0, 12),
             validationWarnings: (readerSnapshot.envelope?.validationWarnings || []).slice(0, 12),
             provenance: readerSnapshot.provenance || {}
@@ -15141,6 +15153,7 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         visibleNarrationHash: String(source.visibleNarrationHash || defaults.visibleNarrationHash || '').slice(0, 120),
         handoffHash: String(source.handoffHash || defaults.handoffHash || '').slice(0, 120),
         snapshotMode: source.snapshotMode === 'full' ? 'full' : 'delta',
+        changedFields: Array.isArray(source.changedFields || source.changed_fields) ? (source.changedFields || source.changed_fields).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
         refreshIndex: Math.max(0, Number(source.refreshIndex || defaults.refreshIndex) || 0),
         temporal: isPlainObject(source.temporal) ? safeJsonClone(source.temporal) : { meaning: '', precision: 'unknown', source: '' },
         location: isPlainObject(source.location) ? safeJsonClone(source.location) : { activeLocationId: '', movement: [], evidence: '' },
@@ -15168,11 +15181,19 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
     const merged = { ...prior, ...incoming };
     const arrayFields = ['eventClaims', 'durableProposals', 'relationshipProposals', 'unresolvedEvidence', 'validationWarnings', 'provisionalCognition', 'lookupProvenance', 'controlledCharacterEvidence', 'reconciliationFocus'];
     arrayFields.forEach(field => {
+        const changed = Array.isArray(incoming.changedFields) && incoming.changedFields.length
+            ? incoming.changedFields.map(value => String(value).replace(/_/g, '').toLowerCase()) : null;
+        const normalizedField = field.replace(/[A-Z]/g, match => match.toLowerCase());
         if (!Object.prototype.hasOwnProperty.call(delta || {}, field)
             && !Object.prototype.hasOwnProperty.call(delta || {}, field.replace(/[A-Z]/g, match => `_${match.toLowerCase()}`))) merged[field] = prior[field];
+        if (changed && !changed.some(value => value === normalizedField.replace(/_/g, '').toLowerCase() || value.includes(normalizedField.replace(/_/g, '').toLowerCase()))) merged[field] = prior[field];
+        if (incoming.snapshotMode === 'full' && !incoming.changedFields.length && !incoming[field]?.length && prior[field]?.length) merged[field] = prior[field];
     });
     ['temporal', 'location', 'presence', 'scene', 'semanticInterpretation', 'metadata'].forEach(field => {
         if (!Object.prototype.hasOwnProperty.call(delta || {}, field)) merged[field] = prior[field];
+        const changed = Array.isArray(incoming.changedFields) ? incoming.changedFields.map(value => String(value).replace(/_/g, '').toLowerCase()) : [];
+        if (changed.length && !changed.some(value => value === field.toLowerCase() || value.includes(field.toLowerCase()))) merged[field] = prior[field];
+        if (incoming.snapshotMode === 'full' && !incoming.changedFields.length && !Object.keys(incoming[field] || {}).length && Object.keys(prior[field] || {}).length) merged[field] = prior[field];
     });
     return normalizeSidecarReaderEnvelope(merged, options);
 }
@@ -15226,6 +15247,12 @@ function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
     protocol.readerSnapshots.forEach(item => { if (item.id !== snapshot.id && item.status === 'active') item.status = 'superseded'; });
     snapshot.status = 'active'; snapshot.activatedAt = new Date().toISOString();
     snapshot.provenance = { ...(snapshot.provenance || {}), committedTurnId: turnId || snapshot.turnId };
+    protocol.sceneReader = safeJsonClone(snapshot.envelope);
+    const scene = (protocol.scenes || []).find(item => item.id === snapshot.sceneId);
+    if (scene) {
+        scene.readerSnapshotId = snapshot.id;
+        scene.readerState = safeJsonClone({ summary: snapshot.envelope.summary, scene: snapshot.envelope.scene, presence: snapshot.envelope.presence, temporal: snapshot.envelope.temporal });
+    }
     return snapshot;
 }
 
@@ -15300,9 +15327,12 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
         : '';
+    const controlledEntityId = String(options.preFrame?.controlled_entity_id || sess?.sidecar?.activeControlledEntityId || sess?.controlledEntityId || 'player');
+    const controlledEntity = (world.entities || []).find(entity => String(entity?.id) === controlledEntityId) || null;
+    const controlledPersona = sess?.playerIdentity?.persona || sess?.persona || controlledEntity?.persona || '';
     const lookupBudget = Math.max(1000, Number(profile.maxLookupPayload) || 12000);
     const boundedReferences = JSON.stringify(references).slice(0, lookupBudget);
-    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, canonical identity, relationship, ledger, thread, quest, or obligation is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: mode, changed_fields, summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence.\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock. Presence must classify every relevant named character as active, nearby, audible, remote, mentioned, or absent; only active belongs in the direct cast.\n\nCANONICAL REFERENCE MANIFEST (bounded):\n${boundedReferences}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
+    const prompt = `[SIDECAR READER]\nYou are the read-only semantic reading layer between an authored roleplay turn and the canonical world Reconciler. Establish what the visible narration and Narrator handoff mean; do not write roleplay, alter canon, or prepare a commit receipt. You may use the supplied read-only tools when a name, place, current scene fact, canonical identity, relationship, ledger, thread, quest, or obligation is genuinely uncertain. A named record returned by a tool already exists: never treat it as a new entity. If evidence is still insufficient, say UNKNOWN and propose a narrowly worded reconciliation question rather than guessing.\n\nReturn one JSON object with: mode, changed_fields, summary, canonical_references, semantic_interpretation, reconciliation_focus, unresolved, proposed_questions, time_evidence, and controlled_character_evidence.\n\nCONTROLLED ENTITY / PERSONA: ${JSON.stringify({ id: controlledEntityId, name: controlledEntity?.name || sess?.playerIdentity?.name || 'Player', persona: String(controlledPersona || '').slice(0, 2400) })}\n\ncontrolled_character_evidence: behavioural evidence for the controlled player character, each item {evidence, provenance} with provenance strictly one of user_explicit_action, user_explicit_dialogue, narrator_paraphrase, sidecar_interpretation, behavioural_pattern_inference. The player's own input is primary evidence; Narrator wording (especially FF Embellish presentation) is secondary presentation only. Never attribute a Narrator flourish to the player, and never jump from one beat to a persistent personality trait.\n\nRead the beat across the FF semantic domains: temporal (including the scene header, if present), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture, inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, and recovery obligations. A leading scene header line such as [ \u{1F550} time | \u{1F5D3} day | \u{1F4CD} place | weather ] is the Narrator's declared start state for this beat — structured temporal evidence, not a contradiction with the committed clock. Presence must classify every relevant named character as active, nearby, audible, remote, mentioned, or absent; only active belongs in the direct cast.\n\nCANONICAL REFERENCE MANIFEST (bounded):\n${boundedReferences}\n\nPRE-TURN SCENE FRAME:\n${JSON.stringify(options.preFrame || buildWorldSceneFrame(world, sess))}\n\nCLOCK EVIDENCE:\n${JSON.stringify(options.clockEvidence || buildSidecarClockEvidence(world, sess))}\n\nWORLD MECHANICS FRAME (tracked altered states; read-only evidence context):\n${readerMechanicsFrame || '(none)'}\n\nA9 EVIDENCE SEPARATION: when the mechanics frame shows a character under a tracked altered state, keep four kinds of evidence distinct in controlled_character_evidence and semantic_interpretation: user_intention (what the player's own words declare they are trying), user_compensation (explicit accounting for the tracked state — steadying, bracing, simplifying, asking for help), mechanic_conditioned_execution (how the tracked state actually shaped the execution as narrated — staggered steps, slurred words, misjudged distance), and objective_result (what observably completed in the world). Tag each item's provenance accordingly and never merge intention with result.\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(String(options.narration || '').slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${String(options.handoff || '').slice(0, 12000) || '(missing — inspect visible narration conservatively)'}`;
     const priorEnvelope = options.priorReaderEnvelope || null;
     const forceFull = options.forceFull === true;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
@@ -15317,6 +15347,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         reasoningEffort: profile.reasoningEffort === 'auto' ? tracker.reasoningEffort : profile.reasoningEffort
     };
     let finalPayload = null;
+    const lookupProvenance = [];
     const timeoutController = new AbortController();
     const timeoutId = options.signal ? null : setTimeout(() => timeoutController.abort(), Math.max(10000, Number(profile.timeoutSeconds) * 1000 || 120000));
     const readerSignal = options.signal || timeoutController.signal;
@@ -15338,18 +15369,22 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
         if (!calls.length) {
             const packet = parseSidecarReaderOutput(message.content, references);
             packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
+            packet.lookupProvenance = lookupProvenance.slice(-20);
             if (timeoutId) clearTimeout(timeoutId);
             return packet;
         }
         messages.push({ role: 'assistant', content: message.content || '', tool_calls: safeJsonClone(message.tool_calls || []) });
         calls.forEach(call => {
             const result = runSidecarReadOnlyTool(world, sess, call.function?.name, call.function?.arguments || '{}');
+            lookupProvenance.push({ tool: call.function?.name || '', arguments: safeParseJSONRepair(String(call.function?.arguments || '{}')) || {}, found: result?.found === true, at: new Date().toISOString(), resultSummary: JSON.stringify(result).slice(0, 1400) });
             messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         });
         if (round === maxRounds) messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided.' });
     }
     if (timeoutId) clearTimeout(timeoutId);
-    return parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references);
+    const fallbackPacket = parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references);
+    fallbackPacket.lookupProvenance = lookupProvenance.slice(-20);
+    return fallbackPacket;
 }
 
 function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) {
@@ -15545,7 +15580,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         handoff, narration, playerInput: options.playerInput,
         sceneHeader: safeJsonClone(temporalBreakdown),
         preFrame, preClock: clockEvidence, model, provider,
-        takeIndex: options.takeIndex, revisionId: options.revisionId,
+        takeIndex: options.takeIndex, takeId: options.takeId, revisionId: options.revisionId,
         handoffComplete: options.handoffComplete !== false
     });
     let readerPacket;
