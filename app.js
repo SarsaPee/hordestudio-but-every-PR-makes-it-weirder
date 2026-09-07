@@ -17348,6 +17348,7 @@ function renderSidecarWorkspace(world, sess) {
     const host = document.getElementById('world-sidecar-workspace');
     const column = document.querySelector('#world-play-view .world-status-col');
     if (!host || !column) return;
+    host.dataset.siBuild = 'scene-intelligence-v8';
     const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar);
     host.classList.toggle('hidden', !sidecar);
