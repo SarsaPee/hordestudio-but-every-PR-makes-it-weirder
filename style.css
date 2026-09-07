@@ -10259,4 +10259,10 @@ label[data-help] > span:first-child::after,
 .sidecar-candidate-type { border:1px solid rgba(126,124,255,.35); border-radius:999px; padding:2px 6px; font-size:.58rem; text-transform:uppercase; color:var(--accent); }
 .sidecar-candidate-body { display:grid; gap:7px; padding:0 10px 10px; font-size:.76rem; }
 .sidecar-candidate-actions { display:flex; gap:6px; flex-wrap:wrap; }
+.sidecar-scene-recovery { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 13px; border:1px solid rgba(243,189,89,.42); border-radius:10px; background:linear-gradient(135deg,rgba(243,189,89,.09),rgba(126,124,255,.035)); }
+.sidecar-scene-recovery>div { display:grid; gap:3px; min-width:0; }
+.sidecar-scene-recovery strong { color:#ffe1a6; font-size:.78rem; }
+.sidecar-scene-recovery span { color:var(--text-3); font-size:.68rem; line-height:1.35; }
+.sidecar-recovery-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 @media (max-width:700px) { .sidecar-scene-grid,.sidecar-scene-columns { grid-template-columns:1fr; } }
+@media (max-width:700px) { .sidecar-scene-recovery { flex-direction:column; align-items:stretch; } }
