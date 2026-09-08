@@ -364,7 +364,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     function reconcileVehicleEvents(protocol,world,receipt,options={}){const state=traversalState(protocol);if(!state)return[];const changes=[];(receipt?.events||[]).forEach(event=>{if(event?.type!=='movement'||event?.movement_mode!=='vehicle')return;const actorId=clean(event.actor_id,160),vehicleId=clean(event.vehicle_id||event.vehicleId,160),status=clean(event.status,40)||'completed';if(['intended','attempted','in_progress'].includes(status)){let journey=state.journeys.find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey){journey=createJourney(protocol,world,{vehicleId,originId:event.from_location_id||options.playerLocationId,destinationId:event.to_location_id||'',occupants:[actorId],source:'narrator_handoff',evidence:event.evidence||event.cause||'',runtimeKind:vehicleId?'':'rideshare'});if(journey?.id)changes.push({type:'journey_prepared',journeyId:journey.id});}return;}if(status!=='completed')return;const journey=[...state.journeys].reverse().find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey)return;journey.status='completed';journey.completedAt=stamp();journey.destinationAnchorId=clean(event.to_location_id||journey.destinationAnchorId,160);if(journey.vehicleEntityId){const vehicle=(world.entities||[]).find(entity=>entity.id===journey.vehicleEntityId),data=normalizeVehicle(vehicle);if(data)data.parkedAnchorId=journey.destinationAnchorId||data.parkedAnchorId;}else if(journey.runtimeContainer){state.recentRuntimeContainers.push({...journey.runtimeContainer,departedAt:stamp(),journeyId:journey.id});state.recentRuntimeContainers=state.recentRuntimeContainers.slice(-20);}changes.push({type:'journey_completed',journeyId:journey.id});});return changes;}
     function graph(protocol){if(!protocol)return null;const prior=object(protocol.memoryGraph)?protocol.memoryGraph:{};protocol.memoryGraph={schemaVersion:1,worldHistory:Array.isArray(prior.worldHistory)?prior.worldHistory:[],episodes:Array.isArray(prior.episodes)?prior.episodes:[],scenes:Array.isArray(prior.scenes)?prior.scenes:[],sequences:Array.isArray(prior.sequences)?prior.sequences:[],cognition:Array.isArray(prior.cognition)?prior.cognition:[],locationReferences:Array.isArray(prior.locationReferences)?prior.locationReferences:[],lastEpisodeTurnCount:Math.max(0,Number(prior.lastEpisodeTurnCount)||0),...prior};return protocol.memoryGraph;}
     function jobs(protocol){if(!protocol)return[];if(!Array.isArray(protocol.jobs))protocol.jobs=[];return protocol.jobs;}
-    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record){if(turn.readerEnvelope&&!record.readerEnvelope)record.readerEnvelope=safeJsonClone(turn.readerEnvelope);return record;}record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],readerSnapshotId:clean(turn.readerSnapshotId,160),readerEnvelope:turn.readerEnvelope?safeJsonClone(turn.readerEnvelope):null,provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id,readerSnapshotId:clean(turn.readerSnapshotId,160)}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
+    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record){if(turn.readerEnvelope){record.readerEnvelope=safeJsonClone(turn.readerEnvelope);record.readerSnapshotId=clean(turn.readerSnapshotId,160);record.readerRefreshedAt=stamp();record.provenance={...(record.provenance||{}),readerSnapshotId:record.readerSnapshotId};}return record;}record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],readerSnapshotId:clean(turn.readerSnapshotId,160),readerEnvelope:turn.readerEnvelope?safeJsonClone(turn.readerEnvelope):null,provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id,readerSnapshotId:clean(turn.readerSnapshotId,160)}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
     /* Bring pre-Sidecar visible narration into the same source-pinned graph.
        This is deliberately an evidence import, not a retroactive receipt: it
        never invents a handoff, state update, cognition, or scene boundary.
@@ -16115,6 +16115,7 @@ function sidecarTurnCognitionEvidence(intelligence = {}) {
 function queueSidecarTurnCognitionJobs(world, sess, protocol, turnRecord, projection = null) {
     if (!protocol || !turnRecord?.readerSnapshotId || !turnRecord?.readerEnvelope) return [];
     const jobs = window.HordeSidecarMemoryGraph?.ensureJobs?.(protocol) || [];
+    const readerSnapshotId = String(turnRecord.readerSnapshotId || '').trim();
     const reader = turnRecord.readerEnvelope;
     const people = projection?.people || (reader.characterIntelligence || []).map(intelligence => ({
         id: intelligence.subjectRef || intelligence.candidateId || '', candidateId: intelligence.candidateId || '', mode: intelligence.presence?.mode || '', intelligence
@@ -16132,14 +16133,37 @@ function queueSidecarTurnCognitionJobs(world, sess, protocol, turnRecord, projec
         // coverage but does not waste a character-model call pretending it has
         // usable perception evidence.
         if (!evidence) return;
-        const id = `turn_cognition:${turnRecord.id}:${subjectRef}`.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 220);
-        if (jobs.some(job => job.id === id)) return;
+        const baseId = `turn_cognition:${turnRecord.id}:${subjectRef}`.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 180);
+        const subjectJobs = jobs.filter(job => job.type === 'turn_cognition'
+            && String(job.turnId || '') === String(turnRecord.id || '')
+            && String(job.subjectRef || job.characterId || job.candidateId || '') === subjectRef);
+        // One accepted Reader reading gets one cognition job. A focused
+        // ScenePulse reread of that same settled turn is a new, inspectable
+        // derived reading: do not silently retain cognition grounded in the
+        // prior snapshot, but never erase it either.
+        if (subjectJobs.some(job => String(job.readerSnapshotId || '') === readerSnapshotId)) return;
+        const id = `${baseId}${subjectJobs.length ? `:${readerSnapshotId}` : ''}`.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 220);
+        const revisedAt = new Date().toISOString();
+        subjectJobs.forEach(job => {
+            job.status = 'superseded';
+            job.supersededAt = revisedAt;
+            job.supersededByReaderSnapshotId = readerSnapshotId;
+            job.supersededByJobId = id;
+        });
+        const memory = window.HordeSidecarMemoryGraph?.graph?.(protocol);
+        (memory?.cognition || []).forEach(record => {
+            if (!subjectJobs.some(job => job.id === record.turnCognitionJobId) || record.status !== 'active') return;
+            record.status = 'superseded';
+            record.supersededAt = revisedAt;
+            record.supersededByReaderSnapshotId = readerSnapshotId;
+            record.provenance = { ...(record.provenance || {}), supersededByReaderSnapshotId: readerSnapshotId, supersededByJobId: id };
+        });
         const canonicalEntity = (world.entities || []).find(entity => String(entity?.id) === subjectRef);
         const candidate = !canonicalEntity ? (protocol.readerCandidates || []).find(item => item.candidateId === subjectRef || item.candidateId === intelligence.candidateId) : null;
         jobs.push({
             id, type: 'turn_cognition', status: 'queued', createdAt: new Date().toISOString(), attempts: 0,
             turnId: turnRecord.id, sourceTurnIds: [turnRecord.id], sceneId: turnRecord.sceneId || protocol.activeSceneId || '',
-            sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', readerSnapshotId: turnRecord.readerSnapshotId,
+            sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', readerSnapshotId,
             characterId: canonicalEntity?.id || '', candidateId: candidate?.candidateId || intelligence.candidateId || '', subjectRef,
             access: sidecarCognitionAccessForPresence(mode), perceptionEvidence: evidence, provisionalIntelligence: safeJsonClone(intelligence),
             dependencies: [], priority: 'background', retryAt: '', diagnostics: [],
@@ -18057,6 +18081,13 @@ async function refreshScenePulseThoughts(world, sess, sidecarTurnId = '', option
     const accepted = acceptSidecarReaderRefresh(world, sess, refresh.id);
     await saveState();
     renderWorldPlayState();
+    // This is a user-invoked derived refresh, not an authored turn. Dispatch
+    // only the newly versioned cognition work in the background; it remains
+    // tied to the same settled narration and cannot alter world state.
+    if (accepted?.cognitionJobIds?.length) {
+        runSidecarBackgroundMemoryJobs(world, sess, { source: 'scenepulse_thought_refresh' })
+            .catch(error => console.warn('ScenePulse thought cognition dispatch skipped —', error.message));
+    }
     return accepted;
 }
 
@@ -18112,9 +18143,15 @@ function acceptSidecarReaderRefresh(world, sess, refreshId) {
     protocol.sceneProjection = safeJsonClone(projection);
     turn.readerEnvelope = safeJsonClone(snapshot.envelope);
     turn.readerSnapshotId = snapshot.id;
+    // The memory graph remains source-pinned to this authored turn, but its
+    // derived Reader evidence must follow the explicitly accepted refresh.
+    // This is not a new world event and never touches the native receipt.
+    window.HordeSidecarMemoryGraph?.recordTurn?.(protocol, turn);
+    const refreshedCognitionJobIds = queueSidecarTurnCognitionJobs(world, sess, protocol, turn, projection);
+    turn.turnCognitionJobIds = [...new Set([...(turn.turnCognitionJobIds || []), ...refreshedCognitionJobIds])];
     refresh.status = 'accepted'; refresh.acceptedAt = now; refresh.acceptedSnapshotId = snapshot.id;
     protocol.packet = buildSidecarScenePacket(world, sess, turn.handoff || '');
-    return { status: 'accepted', refresh, snapshot, projection };
+    return { status: 'accepted', refresh, snapshot, projection, cognitionJobIds: refreshedCognitionJobIds };
 }
 
 function discardSidecarReaderRefresh(world, sess, refreshId) {
@@ -19793,11 +19830,15 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
         });
         if (controller.signal.aborted) return { status: 'stopped' };
         if (refresh?.status === 'review') {
-            acceptSidecarReaderRefresh(world, sess, refresh.id);
+            const accepted = acceptSidecarReaderRefresh(world, sess, refresh.id);
             await saveState();
             renderWorldPlayState();
+            if (accepted?.cognitionJobIds?.length) {
+                runSidecarBackgroundMemoryJobs(world, sess, { source: 'scenepulse_reader_refresh' })
+                    .catch(error => console.warn('ScenePulse refresh cognition dispatch skipped —', error.message));
+            }
             showToast(section ? `ScenePulse ${section} refresh accepted from the authored beat.` : 'ScenePulse refresh accepted from the authored beat.', 'success');
-            return refresh;
+            return accepted;
         }
         // Recovery can return a settled retry rather than a review packet.
         // The caller still receives a truthful completion without issuing Narrator.

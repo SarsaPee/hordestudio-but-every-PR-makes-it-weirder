@@ -800,4 +800,23 @@ assert.equal(cardThoughtCognitionJob.job.candidateId, 'cand_nia', 'the cognition
 assert.equal(cardThoughtCognitionJob.job.provisionalIntelligence.sceneLocalImpression.source, 'scenepulse_character_card', 'the cognition job must retain the card-thought source marker for its existing memory pipeline');
 assert.match(cardThoughtCognitionJob.job.perceptionEvidence, /I can hear the argument through the door/, 'the existing cognition job must receive the same current ScenePulse thought as perception evidence');
 
+// A deliberate Thoughts reread replaces only the derived perception lane for
+// the same turn. Its old cognition remains inspectable as superseded evidence;
+// its replacement job is pinned to the newly accepted Reader snapshot.
+const refreshedThoughtCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() => {\n    const original = ${JSON.stringify(scenePulseCognitionEnvelope.cardOnly)};\n    const refreshed = JSON.parse(JSON.stringify(original));\n    refreshed.characterIntelligence[0].sceneLocalImpression.text = 'The argument has turned dangerous; keep clear of the door.';\n    const protocol = {\n        readerCandidates: [{ candidateId: 'cand_nia', candidateType: 'character', settlementStatus: 'settled' }],\n        jobs: [{ id: 'turn_cognition:turn_card:cand_nia', type: 'turn_cognition', status: 'completed', turnId: 'turn_card', subjectRef: 'cand_nia', readerSnapshotId: 'snapshot_card' }],\n        memoryGraph: { cognition: [{ id: 'cognition_old', status: 'active', turnCognitionJobId: 'turn_cognition:turn_card:cand_nia', provenance: { readerSnapshotId: 'snapshot_card' } }] }\n    };\n    const turn = { id: 'turn_card', readerSnapshotId: 'snapshot_thought_refresh', readerEnvelope: refreshed, sceneId: 'scene_card', sequenceId: 'sequence_card' };\n    const ids = queueSidecarTurnCognitionJobs({ entities: [] }, {}, protocol, turn);\n    return { ids, oldJob: protocol.jobs[0], newJob: protocol.jobs[1], oldCognition: protocol.memoryGraph.cognition[0] };\n})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    window: { HordeSidecarMemoryGraph: {
+        ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; },
+        graph: protocol => protocol.memoryGraph
+    } }
+});
+assert.deepEqual(JSON.parse(JSON.stringify(refreshedThoughtCognitionJob.ids)), ['turn_cognition:turn_card:cand_nia:snapshot_thought_refresh'], 'an accepted Thoughts reread must receive a snapshot-versioned cognition job');
+assert.equal(refreshedThoughtCognitionJob.oldJob.status, 'superseded', 'the earlier Reader-based cognition job must stay inspectable but no longer act as current');
+assert.equal(refreshedThoughtCognitionJob.oldCognition.status, 'superseded', 'completed cognition from the earlier Reader snapshot must remain historical rather than silently active');
+assert.equal(refreshedThoughtCognitionJob.newJob.readerSnapshotId, 'snapshot_thought_refresh', 'the replacement cognition job must be pinned to the accepted Thoughts snapshot');
+assert.match(refreshedThoughtCognitionJob.newJob.perceptionEvidence, /turned dangerous/, 'the replacement cognition job must use the refreshed ScenePulse thought');
+assert.match(app, /queueSidecarTurnCognitionJobs\(world, sess, protocol, turn, projection\)/, 'accepting a Reader refresh must queue snapshot-versioned cognition when its ScenePulse thought changed');
+assert.match(app, /source: 'scenepulse_thought_refresh'/, 'the explicit Thoughts action must dispatch only its new background cognition work');
+
 console.log('ScenePulse native-source integration contract passed.');
