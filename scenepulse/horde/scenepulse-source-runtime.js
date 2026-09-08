@@ -1100,6 +1100,17 @@
             const after = currentSnapshot(current);
             const patch = topLevelDiff(before, after);
             try {
+                // The source Custom Panels manager edits chat metadata, not
+                // the tracker snapshot. A schema-only edit therefore has no
+                // `patch` below. Persist that source-owned schema before the
+                // optional human scene edit so a successful toolbar Save
+                // cannot silently discard a panel that the user just made.
+                const sourcePanels = sourceChatPanelsForPersistence(current);
+                await dispatch('persist-scenepulse-source-settings', {
+                    preferences: sourcePreferencePatch(current.context.extensionSettings.scenepulse),
+                    chatPanels: sourcePanels.schema,
+                    hasChatPanels: sourcePanels.hasChatPanels
+                });
                 if (patch.length) {
                     await dispatch('commit-scenepulse-source-edit', {
                         source: SOURCE,

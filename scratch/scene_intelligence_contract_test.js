@@ -528,6 +528,18 @@ assert.equal(nativeCustomSchema.result.hasChatPanels, true, 'a native chat schem
 assert.equal(nativeCustomSchema.result.schema[0].fields[0].key, 'cider_line_status', 'a native custom field must cross the source boundary intact');
 assert.equal(nativeCustomSchema.mirrored[0].fields[0].key, 'cider_line_status', 'the source settings patch must mirror the live chat-local schema');
 
+const bridgeSaveStart = runtime.indexOf("bridge.querySelector('[data-horde-source-save]').addEventListener");
+const bridgeSaveEnd = runtime.indexOf("bridge.querySelector('[data-horde-source-discard]')", bridgeSaveStart);
+assert(bridgeSaveStart >= 0 && bridgeSaveEnd > bridgeSaveStart,
+    'the native toolbar Save handler must remain available for the source schema persistence contract');
+const bridgeSave = runtime.slice(bridgeSaveStart, bridgeSaveEnd);
+assert.match(bridgeSave, /const sourcePanels = sourceChatPanelsForPersistence\(current\)/,
+    'toolbar Save must collect a chat-local custom schema even when no tracker value changed');
+assert.match(bridgeSave, /await dispatch\('persist-scenepulse-source-settings'/,
+    'toolbar Save must persist a schema-only source edit before reporting success');
+assert.match(bridgeSave, /hasChatPanels: sourcePanels\.hasChatPanels/,
+    'toolbar Save must preserve an intentional empty custom-panel schema');
+
 const persistedExplicitEmptySchema = vm.runInNewContext(`${sourcePreferenceNormalizer}\n${sourcePrefs}\n(() => {\n    const protocol = { workspaceUi: { scenePulseWorlds: { customPanels: [{ name: 'Prior panel', fields: [{ key: 'prior' }] }] } } };\n    void persistScenePulseSourceRuntimePreferences(protocol, {}, { customPanels: [{ name: 'Stale default', fields: [{ key: 'stale' }] }] }, [], true);\n    return protocol.workspaceUi.scenePulseWorlds.customPanels;\n})()`, {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     protocolForSidecarTimeline: world => world,
