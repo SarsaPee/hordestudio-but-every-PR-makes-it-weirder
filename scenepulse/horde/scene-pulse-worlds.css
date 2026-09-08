@@ -117,6 +117,15 @@
 #world-sidecar-workspace { position: relative; isolation: isolate; min-height: 0; overflow: visible; background: var(--sp-bg-solid, #181a20); }
 #world-sidecar-workspace #sp-panel { position: relative; inset: auto; display: flex; width: 100%; height: 100%; min-height: 0; overflow: visible; border: 0; border-radius: 0; z-index: 2; }
 #world-sidecar-workspace #sp-panel-body { min-height: 0; overflow-y: auto; padding-bottom: 22px; }
+#world-sidecar-workspace #sp-panel-body .sp-section-header { min-width: 0; overflow: hidden; }
+/* A source Scene Details badge can legitimately contain a whole scene topic.
+   In the narrow, user-resizable Horde column it must truncate inside its own
+   header rather than create a hidden horizontal scroll that shifts every
+   section left.  The source renderer keeps the complete value in `title`. */
+#world-sidecar-workspace #sp-panel-body .sp-section-badge { min-width: 0; max-width: min(52%, 30ch); overflow: hidden; text-overflow: ellipsis; }
+#world-sidecar-workspace #sp-panel-body .sp-section-spacer { min-width: 0; }
+#world-sidecar-workspace #sp-panel-body .sp-section-refresh,
+#world-sidecar-workspace #sp-panel-body .sp-char-toggle-all { flex: 0 0 auto; }
 #world-sidecar-workspace #sp-panel .sp-toolbar { position: sticky; top: 0; z-index: 20; flex-wrap: wrap; }
 #world-sidecar-workspace #sp-panel .sp-brand-icon { appearance: none; border: 0; background: transparent; padding: 0; }
 #world-sidecar-workspace #sp-panel .sp-brand-subtitle { max-width: 230px; }

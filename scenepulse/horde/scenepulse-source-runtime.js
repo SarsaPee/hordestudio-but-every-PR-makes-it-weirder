@@ -1735,6 +1735,7 @@
         panel.querySelectorAll('.sp-section').forEach((section, index) => {
             const header = section.querySelector(':scope > .sp-section-header');
             const title = header?.querySelector('.sp-section-title');
+            const badge = header?.querySelector('.sp-section-badge');
             const content = section.querySelector(':scope > .sp-section-body');
             if (!header || !title || !content) return;
             const key = String(section.dataset.key || `section-${index + 1}`).replace(/[^A-Za-z0-9_-]/g, '-');
@@ -1745,6 +1746,9 @@
             title.tabIndex = 0;
             title.setAttribute('aria-controls', contentId);
             title.setAttribute('aria-label', `${title.textContent?.trim() || 'ScenePulse section'} section`);
+            // Compact Horde sidebars intentionally truncate verbose source
+            // badges. Preserve the source value without reformatting it.
+            if (badge?.textContent?.trim()) badge.title = badge.textContent.trim();
             sync();
             if (title.dataset.hordeSourceKeyboardDisclosure === 'true') return;
             title.dataset.hordeSourceKeyboardDisclosure = 'true';
