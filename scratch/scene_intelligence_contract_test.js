@@ -131,6 +131,9 @@ const sourceCommandStatus = lastRuntimeFunction('sourceCommandStatus');
 const sourceCommand = lastRuntimeFunction('runSourceCommand', 'async function');
 const sourceRefresh = lastRuntimeFunction('beginReaderRefresh');
 const sourceSetup = lastRuntimeFunction('showWorldsSetupGuide');
+const sourceBridgeControls = lastRuntimeFunction('injectBridgeControls');
+const sourceDiscard = lastRuntimeFunction('discardSourceEphemeralEditors');
+const sourceDiscardChanges = lastRuntimeFunction('discardSourceChanges');
 const hostActionHandler = lastFunction('bindScenePulseWorldsHostActions');
 const sourceHostActions = frozenRuntimeStringArray('SOURCE_HOST_ACTIONS');
 
@@ -315,6 +318,11 @@ assert.match(runtime, /setupGuide: 'settings-ui\/setup-guide\.js'/, 'source Setu
 assert.match(runtime, /showWorldsSetupGuide/, 'Worlds must provide a truthful source-styled setup mapping');
 assert.match(runtime, /showScenePulseWorldsSetup/, 'the source guide must receive its Worlds-specific setup capability narrowly');
 assert.match(sourceSetupGuide, /showScenePulseWorldsSetup/, 'vendored Setup Guide must delegate only when the Worlds capability is present');
+assert.match(sourceBridgeControls, /\[data-horde-source-discard\]\'\)\.addEventListener\('click'/, 'Discard remains a real source-toolbar action');
+assert.match(sourceBridgeControls, /discardSourceChanges\(panel\);/, 'Discard clears source editor DOM before restoring the fixture or live snapshot');
+assert.match(sourceDiscard, /querySelector\('#sp-panel-mgr'\)\?\.remove\(\)/, 'Discard removes the stale source panel manager');
+assert.match(sourceDiscard, /querySelector\('\.sp-cp-tmpl-menu'\)\?\.remove\(\)/, 'Discard removes a stale custom-panel template menu');
+assert.match(sourceDiscardChanges, /current\.context\.chatMetadata = clone\(current\.baseMetadata\)/, 'Discard restores the selected ScenePulse snapshot');
 assert.match(runtime, /SOURCE_LANGUAGE_OPTIONS/, 'the complete source locale set must remain available');
 assert.match(runtime, /简体中文 — Chinese \(Simplified\)/, 'the source language picker must retain native source locale labels');
 assert.match(runtime, /עברית — Hebrew/, 'the source language picker must retain the complete shipped locale list');
@@ -375,6 +383,7 @@ assert.match(css, /#sp-panel\[data-horde-source-runtime="true"\]/, 'native sourc
 assert.match(css, /\.sp-horde-compare-overlay/, 'comparison UI must be visibly styled');
 assert.match(css, /\.sp-horde-compare-disagrees/, 'comparison UI must distinguish disagreement');
 assert.match(css, /\.sp-horde-source-bridge-controls/, 'native source global Save/Discard controls must be styled');
+assert.match(css, /#world-sidecar-workspace #sp-panel\[data-horde-source-runtime="true"\] \.sp-toolbar \{[^}]*z-index: 70/, 'source Save/Discard must remain clickable over the source panel manager');
 assert.match(css, /\.sp-horde-command-overlay/, 'native source command surface must have a viewport overlay treatment');
 
 assert.match(sourceEdit, /type: 'scene_pulse_human_edit'/, 'direct edits must become human ScenePulse history nodes');

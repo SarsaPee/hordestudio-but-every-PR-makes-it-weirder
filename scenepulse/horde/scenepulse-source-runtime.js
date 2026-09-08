@@ -851,6 +851,28 @@
         runtime.historySelectionCaptureInstalled = true;
     }
 
+    function discardSourceEphemeralEditors(panel = document.getElementById('sp-panel')) {
+        // The vendored panel manager keeps direct references to the mutable
+        // custom-panel list. Remove it before restoring the snapshot so the
+        // next open reads restored ScenePulse state rather than stale DOM.
+        panel?.querySelector('#sp-panel-mgr')?.remove();
+        panel?.querySelector('#sp-tb-panels')?.classList.remove('sp-tb-active');
+        document.querySelector('.sp-cp-tmpl-menu')?.remove();
+    }
+
+    function discardSourceChanges(panel) {
+        const current = active();
+        if (!current) return false;
+        discardSourceEphemeralEditors(panel);
+        current.context.chatMetadata = clone(current.baseMetadata);
+        current.context.extensionSettings.scenepulse = clone(current.baseSettings);
+        current.dirtyMetadata = false;
+        current.dirtySettings = false;
+        runtime.modules?.settings?.invalidateSettingsCache?.();
+        renderActive().catch(error => makeToast('error', error?.message || error, 'ScenePulse discard'));
+        return true;
+    }
+
     function injectBridgeControls(panel) {
         if (panel.querySelector('[data-horde-source-status]')) return;
         const toolbar = panel.querySelector('.sp-toolbar');
@@ -888,14 +910,7 @@
             }
         });
         bridge.querySelector('[data-horde-source-discard]').addEventListener('click', () => {
-            const current = active();
-            if (!current) return;
-            current.context.chatMetadata = clone(current.baseMetadata);
-            current.context.extensionSettings.scenepulse = clone(current.baseSettings);
-            current.dirtyMetadata = false;
-            current.dirtySettings = false;
-            runtime.modules?.settings?.invalidateSettingsCache?.();
-            renderActive().catch(error => makeToast('error', error?.message || error, 'ScenePulse discard'));
+            discardSourceChanges(panel);
         });
     }
 
