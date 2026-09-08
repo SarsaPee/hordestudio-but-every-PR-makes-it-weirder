@@ -134,6 +134,7 @@ const sourceSetup = lastRuntimeFunction('showWorldsSetupGuide');
 const sourceBridgeControls = lastRuntimeFunction('injectBridgeControls');
 const sourceDiscard = lastRuntimeFunction('discardSourceEphemeralEditors');
 const sourceDiscardChanges = lastRuntimeFunction('discardSourceChanges');
+const sourceSectionAccessibility = lastRuntimeFunction('enhanceSourceSectionAccessibility');
 const hostActionHandler = lastFunction('bindScenePulseWorldsHostActions');
 const sourceHostActions = frozenRuntimeStringArray('SOURCE_HOST_ACTIONS');
 
@@ -221,6 +222,13 @@ assert.match(runtime, /current\?\.host && panel\.parentElement !== current\.host
 assert.match(runtime, /modules\.updatePanel\.updatePanel\(normalized, true\)/, 'source must render its own normalized panel');
 assert.match(runtime, /modules\.timeline\.renderTimeline\(\)/, 'source must render its own history UI');
 assert.match(runtime, /modules\.thoughts\.updateThoughts\(normalized\)/, 'source thought module must render its own panel');
+assert.match(runtime, /enhanceSourceSectionAccessibility\(panel\);/, 'native sections must receive the Worlds keyboard disclosure enhancement after each source redraw');
+assert.match(sourceSectionAccessibility, /title\.setAttribute\('role', 'button'\)/, 'the existing source title must become the keyboard disclosure control without replacing the source header');
+assert.match(sourceSectionAccessibility, /title\.setAttribute\('aria-controls', contentId\)/, 'the keyboard disclosure control must name its source section body');
+assert.match(sourceSectionAccessibility, /title\.setAttribute\('aria-expanded'/, 'the source disclosure control must expose its current state to assistive technology');
+assert.match(sourceSectionAccessibility, /event\.key !== 'Enter' && event\.key !== ' '/, 'source section disclosure must support both Enter and Space');
+assert.match(sourceSectionAccessibility, /title\.click\(\)/, 'keyboard disclosure must delegate to the original source header click behavior');
+assert.match(sourceSectionAccessibility, /queueMicrotask\(sync\)/, 'the accessibility state must follow the source click handler rather than duplicate its open-state logic');
 assert.match(runtime, /materializeNativeTracker/, 'fixture-backed fields must be materialized before source render');
 assert.match(runtime, /const customPanels = Array\.isArray\(prefs\.customPanels\) \? clone\(prefs\.customPanels\) : \[\];/, 'native runtime must render the handoff source schema rather than recreate a Horde-local tour panel');
 assert.doesNotMatch(runtime, /RPG Stats \(Tour Example\)/, 'the upstream tour panel schema must enter through the source handoff, not a duplicate runtime fallback');

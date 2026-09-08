@@ -21,7 +21,7 @@ Pinned source: `xenofei/SillyTavern-ScenePulse` at `2888d0d748033c5b16eac410f539
 | ID | Source feature / Gate-A destination | Status | Gate-A evidence and exact next boundary |
 |---|---|---|---|
 | F01 | `panel.js`, `panel.css` → `#sp-panel` in Worlds V2 | demonstrated | Browser shows ScenePulse brand, subtitle and grouped source toolbar. |
-| F02 | `section.js`, `sections.css` → sections/disclosure/refresh | ported | Source section classes, chevrons, badges and refresh controls are mounted; headers now have keyboard semantics. Gate B supplies real refresh. |
+| F02 | `section.js`, `sections.css` → sections/disclosure/refresh | ported | Source section classes, chevrons, badges and refresh controls are mounted. The source title is enhanced as the focusable disclosure control without replacing the clickable source header (avoiding a nested button role around the source refresh button): a live browser run verified `aria-expanded`/`aria-controls`, Enter open and Space close against Story Ideas. Gate B supplies real refresh; a focused live Reader-refresh pass remains pending. |
 | F03 | Dashboard environment cards | demonstrated | Source fixture renders the four source dashboard cards (calendar texture, analogue clock, temperature-gradient state, weather icon), Cafe Lune location, rain and temperature separately. Source edit mode makes date, time, temperature, weather and location live against the sealed local clone only. A real accepted Reader delta now replaces time, temperature, weather and location; its omitted date remains visibly fixture-backed. |
 | F04 | Scene Details | demonstrated | Summary, tension, topic, mood, interaction and sound render from the fixture. Source edit mode provides a real local inline path for those scene fields; empty elapsed/witness values remain deliberately absent until explicitly revealed. A real accepted Reader delta now supplies every populated Scene Details row. |
 | F05 | Relevant character cards | demonstrated | Elena, Marcus and Yuki each render through the source Right Now, Appearance, Carrying and Goals hierarchy—not generic summary cards. Source edit mode makes their populated fixture fields genuinely inline-editable against the local clone only. A real compact keyed Reader delta replaces this field with the Barista and Alex source cards, including grounded current thought/need/appearance data. |
@@ -75,7 +75,7 @@ This is the operative F-status ledger. **Source-coded** means the vendored nativ
 | ID | Fixture-rendered surface | Locally interactive | Horde-wired state |
 |---|---|---|---|
 | F01 | source-coded panel | source toolbar | wired-static native mount |
-| F02 | source-coded sections | disclosure and section controls | wired-static focused refresh |
+| F02 | source-coded sections | browser-verified keyboard disclosure; source section controls | wired-static focused refresh browser pass pending |
 | F03 | source-coded tour dashboard | fixture-local source edit | wired-static per-field Reader adoption |
 | F04 | source-coded Scene Details | fixture-local source edit | wired-static per-field Reader adoption |
 | F05 | source-coded character cards | fixture-local source edit/Wiki | wired-static compact character patches |

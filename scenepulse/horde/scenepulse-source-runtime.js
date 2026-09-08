@@ -1726,6 +1726,39 @@
         }
     }
 
+    // The upstream component deliberately uses a clickable header with a
+    // nested refresh button.  Giving that whole header `role="button"` would
+    // create invalid nested interactive controls, so Worlds adds its keyboard
+    // affordance to the existing source title instead.  The source click
+    // listener remains the one that actually opens and closes the section.
+    function enhanceSourceSectionAccessibility(panel) {
+        panel.querySelectorAll('.sp-section').forEach((section, index) => {
+            const header = section.querySelector(':scope > .sp-section-header');
+            const title = header?.querySelector('.sp-section-title');
+            const content = section.querySelector(':scope > .sp-section-body');
+            if (!header || !title || !content) return;
+            const key = String(section.dataset.key || `section-${index + 1}`).replace(/[^A-Za-z0-9_-]/g, '-');
+            const contentId = `sp-source-section-${key}-${index + 1}`;
+            content.id = contentId;
+            const sync = () => title.setAttribute('aria-expanded', String(section.classList.contains('sp-open')));
+            title.setAttribute('role', 'button');
+            title.tabIndex = 0;
+            title.setAttribute('aria-controls', contentId);
+            title.setAttribute('aria-label', `${title.textContent?.trim() || 'ScenePulse section'} section`);
+            sync();
+            if (title.dataset.hordeSourceKeyboardDisclosure === 'true') return;
+            title.dataset.hordeSourceKeyboardDisclosure = 'true';
+            title.addEventListener('keydown', event => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                title.click();
+            });
+            // Run after the source header's click handler has changed its
+            // class so aria-expanded always mirrors the native disclosure.
+            header.addEventListener('click', () => global.queueMicrotask(sync));
+        });
+    }
+
     function storyIdeaFromTarget(target) {
         const card = target.closest('.sp-idea-card');
         if (!card) return null;
@@ -2090,6 +2123,7 @@
             : (current.selectedHandoff?.scenePulse || {}));
         injectComparisonStrip(panel);
         injectFieldProvenance(panel);
+        enhanceSourceSectionAccessibility(panel);
         updateBridgeControls();
         modules.panel.showPanel();
         document.getElementById(RUNTIME_ROOT_ID)?.setAttribute('data-mounted', 'true');
