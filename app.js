@@ -16649,6 +16649,9 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
             worldMechanicsRegistryFor(world)) || '')
         : '';
     const readerProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const priorReaderSnapshotId = String(options.priorReaderSnapshotId
+        || readerProtocol?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1)?.id
+        || '').trim();
     const activeSourceProfile = scenePulseActiveSourceProfile(readerProtocol);
     const humanSceneStateContext = scenePulseHumanStatePromptContext(readerProtocol);
     const customPanelSchema = scenePulseReaderCustomPanelSchema(world, sess, readerProtocol);
@@ -16685,7 +16688,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
 For every conscious active NPC, produce a fresh concise present-tense sceneLocalImpression/innerThought and immediate need/concern for this beat. It may be a plausible new, voice-specific Reader inference when grounded in the authored beat plus established character grounding; label it reader_inference and include the grounding/evidence. Do not carry last turn's thought forward and call it new. Do not invent biography, prior events, secrets, or a private thought merely to fill a field. Nearby, audible, remote-interacting and specifically relevant off-scene subjects receive a thought only through the information they could actually receive. The controlled player's unexpressed inner life is never authored. Record coverage/status even when a subject is unconscious, unsupported, or unknown.
 
 [DELTA BASE]
-In delta mode include baseSnapshotId exactly equal to the supplied previous accepted snapshot ID; do not name a failed, historical, cross-Timeline, or guessed base. In full mode leave baseSnapshotId blank.`;
+In delta mode include baseSnapshotId exactly equal to this supplied previous accepted snapshot ID: ${priorReaderSnapshotId || '(none — use full mode)'}. Do not name a failed, historical, cross-Timeline, or guessed base. In full mode leave baseSnapshotId blank.`;
     const scenePulseInstruction = `
 
 [SCENEPULSE RICH SCENE DATA]
@@ -16701,7 +16704,7 @@ When two or more non-player names are currently present in scenePulse.characters
 The following is user-visible ScenePulse configuration, not story evidence. Its fields are flat keys directly inside scenePulse; use the exact keys and types if (and only if) this beat or established accepted Reader evidence supports a current value. Do not initialise a health, mana, reputation, enum, list, or number merely because a configured field exists. In delta mode, emit only a changed configured key; omit it when unchanged and use scenePulse.clearFields only for an explicit supported clearing. For a list value, send the full new list when it changes. In full mode, include supported configured values and omit unsupported ones. ${JSON.stringify(customPanelSchema)}
 
 [SCENEPULSE DELTA CONTRACT]
-When READER SNAPSHOT MODE is delta, scenePulse is also a compact delta: emit only changed ScenePulse fields. ALWAYS include time, date, elapsed, and the complete current charactersPresent membership; omitted fields mean unchanged. For characters, relationships, mainQuests and sideQuests, emit record patches keyed by stable characterId, relationshipId or questId and include only changed subfields. On a name reveal, retain the same stable ID, set the best established display name, and put every previous display label in aliases; emit one patch, never an old-name and new-name duplicate. A relationship patch for that person retains its relationshipId/characterId and adopts the same display name. Use {_delete:true} or {operation:"remove"} to remove one record, and scenePulse.clearFields for an explicit cleared scalar or collection. Never send an empty object or array to mean "unchanged". If a whole ephemeral collection must be replaced (for example a freshly regenerated plotBranches set), name it in scenePulse.replaceCollections and provide its full replacement array. Do not return previous relationship values or model-calculated visual deltas: the runtime derives the UI delta from current and prior accepted projections. A full refresh returns the complete shape.`;
+When READER SNAPSHOT MODE is delta, scenePulse is also a compact delta: emit only changed ScenePulse fields. ALWAYS include time, date, elapsed, and the complete current charactersPresent membership; omitted fields mean unchanged. For characters, relationships, mainQuests and sideQuests, emit record patches keyed by stable characterId, relationshipId or questId and include only changed subfields. On a name reveal, retain the same stable ID, set the best established display name, and put every previous display label in aliases; emit one patch, never an old-name and new-name duplicate. A relationship patch for that person retains its relationshipId/characterId and adopts the same display name. Use {_delete:true} or {operation:"remove"} to remove one record, and scenePulse.clearFields for an explicit cleared scalar or collection. Never send an empty object or array to mean "unchanged". If a whole ephemeral collection must be replaced (for example a freshly regenerated plotBranches set), name it in scenePulse.replaceCollections and provide its full replacement array. A relationship's first ScenePulse record is its visible baseline: include all five current numeric meters (affection, trust, desire, stress, compatibility) and their compact labels, or omit the relationship entirely when even a provisional scene relationship is unsupported. These meters are ScenePulse presentation evidence, not canonical relationship mutations. After a baseline exists, send only relationship.meterDeltas as signed numeric changes for meters that moved; do not repeat unchanged current meter values or a model-drawn UI delta. The runtime applies those deltas to the accepted source baseline and the source renderer places the previous-turn marker. A full refresh returns the complete shape.`;
     const scenePulseFocusInstruction = options.scenePulseFocus === 'thoughts' ? `
 
 [SCENEPULSE FOCUSED THOUGHT REFRESH]
@@ -16756,7 +16759,8 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
-    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse, npcRelationshipGraph. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.`;
+    const compactOutputBudget = forceFull ? 7000 : 3600;
+    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse, npcRelationshipGraph. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.\n\n[COMPLETION BUDGET — HARD]\nReturn one complete, parseable JSON object in at most ${compactOutputBudget} tokens. This is an evidence packet, not an explanation: do not repeat the same fact in summary, semantic_interpretation, and scenePulse. For each character, send role/presence/activity plus only the evidence-supported claim arrays that add a distinct fact; use at most one compact item per relevant claim category. scenePulse character cards carry visible source fields; characterIntelligence carries provenance-rich interpretation, so do not duplicate descriptions between them. Omit unsupported optional arrays and empty objects. In bootstrap delta mode with no previous envelope, send supported current scene fields and source records, but keep optional candidates, graph edges, proposals, and duplicate evidence sparse. Before responding, close every array and object: omit lower-priority optional detail rather than returning truncated JSON.`;
     const sourcePresetRole = sourceProfileContext.role || (['system', 'user', 'assistant'].includes(sourcePreset?.systemPromptRole) ? sourcePreset.systemPromptRole : 'system');
     const messages = [{ role: sourcePresetRole, content: readerPrompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
@@ -16797,6 +16801,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         return packet;
     };
     let finalPayload = null;
+    let compactRecoveryAttempted = false;
     const lookupProvenance = [];
     const timeoutController = new AbortController();
     const timeoutId = options.signal ? null : setTimeout(() => timeoutController.abort(), Math.max(10000, Number(profile.timeoutSeconds) * 1000 || 120000));
@@ -16848,6 +16853,18 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
                     : `Reader did not account for required subject(s): ${coverage.missing.join(', ') || 'unknown'}.`];
             }
             packet.lookupProvenance = lookupProvenance.slice(-20);
+            // Completion-length failures are transport-shaped, not semantic
+            // disagreement. Re-read the same immutable authored beat once
+            // with an explicit compact budget; do not call Narrator or touch
+            // canonical state while recovering the packet.
+            const finishReason = String(packet.finishReason || '').toLowerCase();
+            const capped = /(^|[_\s-])(length|max[_\s-]?tokens?)([_\s-]|$)/.test(finishReason);
+            if (!packet.valid && capped && !compactRecoveryAttempted) {
+                compactRecoveryAttempted = true;
+                messages.push({ role: 'user', content: `The previous Reader packet reached the provider completion cap and was discarded before JSON could close. Start a fresh standalone JSON packet now. Keep it under ${compactOutputBudget} tokens, preserve required subject coverage and supported ScenePulse fields, and omit optional repetition before omitting any required structure. Return JSON only.` });
+                logSidecarConsoleTrace('Reader compact recovery', { model, provider, finishReason: packet.finishReason, targetTokens: compactOutputBudget });
+                continue;
+            }
             if (timeoutId) clearTimeout(timeoutId);
             return finishReaderMetrics(packet);
         }
@@ -17340,8 +17357,33 @@ function sidecarMergeScenePulse(previous = {}, incoming = {}) {
     const keyedCollections = ['characters', 'relationships', 'mainQuests', 'sideQuests', 'plotBranches'];
     keyedCollections.forEach(collection => {
         if (!Object.prototype.hasOwnProperty.call(patch, collection) && !clearFields.includes(collection)) return;
-        const records = sidecarScenePulseRecords(patch[collection], collection);
         const base = clearFields.includes(collection) || replaceCollections.has(collection) ? [] : (prior[collection] || []);
+        const sourceRecords = sidecarScenePulseRecords(patch[collection], collection);
+        // ScenePulse relationship movement is compact signed data after a
+        // baseline exists. Apply it at the Reader reducer so the source panel
+        // always receives the current meter values it renders, while its
+        // native history continues to derive the previous-turn marker.
+        const records = collection === 'relationships' ? sourceRecords.map(raw => {
+            if (!isPlainObject(raw)) return raw;
+            const record = safeJsonClone(raw);
+            const deltas = isPlainObject(record.meterDeltas) ? record.meterDeltas
+                : (isPlainObject(record.meter_deltas) ? record.meter_deltas : null);
+            if (!deltas) return record;
+            delete record.meterDeltas;
+            delete record.meter_deltas;
+            const incomingKey = sidecarScenePulseRecordKey(record, collection);
+            const previous = base.find(item => sidecarScenePulseRecordKey(item, collection) === incomingKey)
+                || base[sidecarScenePulseRevealMatchIndex(base, record, collection)] || null;
+            if (!previous) return record;
+            ['affection', 'trust', 'desire', 'stress', 'compatibility'].forEach(meter => {
+                if (Object.prototype.hasOwnProperty.call(record, meter)) return;
+                const current = Number(previous[meter]);
+                const delta = Number(deltas[meter]);
+                if (!Number.isFinite(current) || current === -1 || !Number.isFinite(delta)) return;
+                record[meter] = Math.max(0, Math.min(100, Math.round((current + delta) * 100) / 100));
+            });
+            return record;
+        }) : sourceRecords;
         result[collection] = replaceCollections.has(collection)
             ? safeJsonClone(records).slice(0, 100)
             : sidecarMergeReaderRecords(base, records, {
@@ -17633,12 +17675,13 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const references = buildSidecarCanonicalReferenceManifest(world, sess,
         `${playerInput}\n${narration}\n${handoff}`);
     const protocolBeforeReader = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
-    const priorReaderEnvelope = protocolBeforeReader?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1)?.envelope || null;
+    const priorReaderSnapshot = protocolBeforeReader?.readerSnapshots?.filter(snapshot => snapshot.status === 'active').at(-1) || null;
+    const priorReaderEnvelope = priorReaderSnapshot?.envelope || null;
     const readerProfile = effectiveSidecarReaderProfile(world, sess);
     const readerModel = readerProfile.model || model;
     const readerProvider = readerProfile.provider ? normalizedProviderId(readerProfile.provider) : provider;
     const readerIndex = (Number(protocolBeforeReader?.readerSnapshots?.length) || 0) + 1;
-    const forceReaderFull = readerIndex === 1 || readerIndex % Math.max(1, Number(readerProfile.fullRefreshCadence) || 5) === 0;
+    const forceReaderFull = !priorReaderSnapshot || readerIndex === 1 || readerIndex % Math.max(1, Number(readerProfile.fullRefreshCadence) || 5) === 0;
     const existingTurnRecord = options.existingTurnRecord || null;
     const attempt = beginSidecarTurnAttempt(world, sess, {
         handoff, narration, playerInput,
@@ -17673,7 +17716,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         options.onStage?.('reading');
         readerPacket = await runSidecarSemanticReading(world, sess, {
             tracker, provider: readerProvider, model: readerModel, readerProfile, sidecarWorld, references, preFrame, clockEvidence,
-            priorReaderEnvelope, forceFull: forceReaderFull, playerInput, narration, handoff, signal: options.signal
+            priorReaderEnvelope, priorReaderSnapshotId: priorReaderSnapshot?.id || '', forceFull: forceReaderFull, playerInput, narration, handoff, signal: options.signal
         });
     } catch (readerError) {
         // A Reader failure is a terminal downstream failure.  Do not pass a
@@ -17977,7 +18020,14 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
         return;
     }
     sidecarRetryInProgress = true;
-    const previousReader = turn.reader && turn.reader.valid !== false ? safeJsonClone(turn.reader) : null;
+    // Reuse only a Reader result which crossed the snapshot boundary. A
+    // packet rejected before attachment (for example a wrong delta base) is
+    // not a successful Reader artifact and must be reread from the exact
+    // same authored beat instead of poisoning every subsequent retry.
+    const reusableReaderSnapshot = (protocol.readerSnapshots || []).find(snapshot => snapshot.id === turn.readerSnapshotId
+        && snapshot.turnId === turn.id && ['pending_reconciliation', 'failed'].includes(snapshot.status));
+    const previousReader = reusableReaderSnapshot && turn.reader && turn.reader.valid !== false
+        ? safeJsonClone(turn.reader) : null;
     try {
         const result = await runSidecarReconciliation(world, sess, {
             handoff: turn.handoff,

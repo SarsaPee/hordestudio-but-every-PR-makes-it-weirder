@@ -178,6 +178,11 @@ assert.match(readerPass, /Do not make a second graph-generation call/, 'the Read
 assert.match(readerPass, /SCENEPULSE STABLE RECORD IDENTITIES/, 'the first rich ScenePulse projection must require stable source record identities');
 assert.match(readerPass, /Do not derive an ID from a display name/, 'Reader identity must never be inferred from a mutable source label');
 assert.match(readerPass, /Each relationship record MUST include relationshipId and its characterId/, 'relationship dimensions need stable identity from their first source projection');
+assert.match(readerPass, /const priorReaderSnapshotId = String\(options\.priorReaderSnapshotId/, 'a delta Reader must receive the actual accepted snapshot identity rather than guess it');
+assert.match(readerPass, /COMPLETION BUDGET — HARD/, 'the Reader must favor a complete compact delta over a truncated verbose packet');
+assert.match(readerPass, /Reader compact recovery/, 'a completion-capped Reader response must receive one bounded compact reread of the same beat');
+assert.match(readerPass, /relationship\.meterDeltas as signed numeric changes/, 'Reader relationship updates must use compact signed meter deltas after their baseline');
+assert.match(lastFunction('retrySidecarSceneUpdate', 'async function'), /reusableReaderSnapshot/, 'retry may reuse only Reader evidence which crossed the snapshot boundary');
 assert.match(normalizer, /npcRelationshipGraph/, 'Reader normalization must retain the compact NPC graph beside ScenePulse fields');
 assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache updates must honor nested delta-field provenance');
 assert.match(acceptedHandoff, /npcRelationshipGraph/, 'accepted handoffs must retain Reader graph data beside the source tracker');
@@ -759,6 +764,8 @@ const mergeSource = [
 const merged = vm.runInNewContext(`${mergeSource}\nsidecarMergeScenePulse(${JSON.stringify({ characters: [{ characterId: 'elena', name: 'Elena', innerThought: 'old' }], relationships: [{ relationshipId: 'elena-rel', name: 'Elena', trust: 55 }] })}, ${JSON.stringify({ characters: [{ characterId: 'elena', innerThought: 'new' }], relationships: [{ relationshipId: 'elena-rel', trust: 61 }] })})`, scenePulseMergeContext);
 assert.deepEqual(merged.characters[0], { characterId: 'elena', name: 'Elena', innerThought: 'new' }, 'compact character delta must preserve source fields');
 assert.deepEqual(merged.relationships[0], { relationshipId: 'elena-rel', name: 'Elena', trust: 61 }, 'compact relationship delta must preserve source fields');
+const relationshipDeltaMerged = vm.runInNewContext(`${mergeSource}\nsidecarMergeScenePulse(${JSON.stringify({ relationships: [{ relationshipId: 'charlotte-rel', name: 'Charlotte', affection: 42, trust: 54, desire: 8, stress: 31, compatibility: 58 }] })}, ${JSON.stringify({ relationships: [{ relationshipId: 'charlotte-rel', meterDeltas: { affection: 3, trust: -2, stress: 4 } }] })})`, scenePulseMergeContext);
+assert.deepEqual(relationshipDeltaMerged.relationships[0], { relationshipId: 'charlotte-rel', name: 'Charlotte', affection: 45, trust: 52, desire: 8, stress: 35, compatibility: 58 }, 'a compact signed relationship delta must resolve into current source meter values without leaking a second runtime field');
 
 // The exact same nested packet shape that the one Sidecar Reader emits must
 // preserve a configured source custom-panel key through normalization and a
