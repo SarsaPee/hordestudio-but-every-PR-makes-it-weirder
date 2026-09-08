@@ -16416,6 +16416,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
             worldMechanicsRegistryFor(world)) || '')
         : '';
     const readerProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const humanSceneStateContext = scenePulseHumanStatePromptContext(readerProtocol);
     const customPanelSchema = scenePulseReaderCustomPanelSchema(world, sess, readerProtocol);
     const customPanelSchemaFingerprint = scenePulseCustomPanelSchemaFingerprint(customPanelSchema);
     const priorCustomPanelSchemaFingerprint = String(options.priorReaderEnvelope?.metadata?.scenePulseCustomPanelSchemaFingerprint || '');
@@ -16479,7 +16480,7 @@ Return one concise characterIntelligence record for every listed subject BEFORE 
 
 [APPLIED SCENEPULSE SOURCE PRESET]
 Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}). This is a Reader-only source preset; it does not change Narrator or canonical authority. ScenePulse {{sp_*}} macros in these source slots resolve only from the prior accepted Reader ScenePulse projection; no fixture fallback or Horde registry value is eligible. Apply the following source prompt-slot overrides where compatible with the evidence, read-only, and compact-delta contracts below:\n${Object.entries(resolvedPresetOverrides).map(([slot, text]) => `[${slot}]\n${String(text)}`).join('\n\n') || '(no source prompt-slot override; use the built-in ScenePulse contract)'}` : '';
-    const readerPrompt = prompt + presetInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + readerCoverageInstruction;
+    const readerPrompt = prompt + humanSceneStateContext + presetInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + readerCoverageInstruction;
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
@@ -18795,9 +18796,9 @@ function scenePulseAcceptedHandoff(world, sess) {
     // they can survive a fixture/live switch, but never supply a source field.
     const fixtureWithPreferences = uiPreferences ? Object.freeze({ ...fixture, uiPreferences }) : fixture;
     const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
-    if (!protocol || !latestTurn || sidecarTurnNeedsDownstreamRecovery(latestTurn)) return fixtureWithPreferences;
+    if (!protocol || !latestTurn || sidecarTurnNeedsDownstreamRecovery(latestTurn)) return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
     if (!['active', 'committed'].includes(String(latestTurn.status || '').toLowerCase())
-        && String(latestTurn.reconciliationStatus || '').toLowerCase() !== 'committed') return fixtureWithPreferences;
+        && String(latestTurn.reconciliationStatus || '').toLowerCase() !== 'committed') return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
 
     const settled = (protocol.readerSnapshots || [])
         .filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
@@ -18817,7 +18818,7 @@ function scenePulseAcceptedHandoff(world, sess) {
     const acceptedScenePulse = settledScenePulse && Object.keys(deltaScenePulse).length
         ? sidecarMergeScenePulse(settledScenePulse, deltaScenePulse)
         : settledScenePulse;
-    if (!settled || !sourceTurnMatches || !acceptedScenePulse || !Object.keys(acceptedScenePulse).length) return fixtureWithPreferences;
+    if (!settled || !sourceTurnMatches || !acceptedScenePulse || !Object.keys(acceptedScenePulse).length) return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
 
     const readerPreset = effectiveSidecarReaderProfile(world, sess)?.scenePulsePreset || null;
     const historySnapshots = (protocol.readerSnapshots || [])
@@ -18868,7 +18869,7 @@ function scenePulseAcceptedHandoff(world, sess) {
             replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? safeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : []
         };
     });
-    return Object.freeze({
+    return scenePulseHumanOverlay(protocol, Object.freeze({
         id: `scenepulse-live-${settled.id}`,
         status: 'accepted_live',
         source: `Accepted Horde Reader handoff · ${settled.id}`,
@@ -18882,7 +18883,7 @@ function scenePulseAcceptedHandoff(world, sess) {
         readerPreset: safeJsonClone(readerPreset),
         uiPreferences,
         provenance: Object.freeze({ turnId: String(latestTurn.id || ''), snapshotId: String(settled.id || ''), readerMode: String(envelope.snapshotMode || 'delta') })
-    });
+    }));
 }
 
 // Source Refresh regenerates a derived Reader projection for the current
@@ -19035,12 +19036,15 @@ function normalizeScenePulseWorldsPreferences(raw = {}) {
         .map(([identity, item]) => [String(identity), String(item).trim().slice(0, valueLimit)]));
     const portraitAssetIds = identityMap(source.portraitAssetIds, 160);
     const wikiNotes = identityMap(source.wikiNotes, 4_000);
+    const nativeFieldAuthority = Array.isArray(source.nativeFieldAuthority)
+        ? [...new Set(source.nativeFieldAuthority.map(key => String(key || '').trim()).filter(key => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(key)))].slice(0, 80)
+        : [];
     return {
         panels, features, compact: source.compact === true, showEmpty: source.showEmpty === true, thoughtsOpen: source.thoughtsOpen !== false,
         thoughtGhost: source.thoughtGhost === true, thoughtSnap: source.thoughtSnap !== false, thoughtFit: source.thoughtFit === true,
         thoughtWidth: number(source.thoughtWidth, 340, 220, 1400), thoughtHeight: number(source.thoughtHeight, 400, 160, 1200),
         thoughtX: number(source.thoughtX, 8, 0, 12000), thoughtY: number(source.thoughtY, 68, 0, 12000),
-        theme, fontScale: number(source.fontScale, 1, .7, 1.5), customPanels, portraitAssetIds, wikiNotes
+        theme, fontScale: number(source.fontScale, 1, .7, 1.5), customPanels, portraitAssetIds, wikiNotes, nativeFieldAuthority
     };
 }
 
@@ -19065,6 +19069,145 @@ async function persistScenePulseWorldsPreferences(world, sess, rawPreferences = 
     protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(rawPreferences);
     await saveState();
     return protocol.workspaceUi.scenePulseWorlds;
+}
+
+// The native source runtime owns these controls and data structures; Horde
+// only persists their explicitly scoped preferences. Source custom-panel
+// definitions are promoted to the World schema here, while their values stay
+// inside the source tracker snapshot for the active timeline.
+async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePreferences = {}, chatPanels = []) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    if (!protocol) throw new Error('No World timeline is available for ScenePulse source preferences.');
+    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    const previous = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
+    const incoming = isPlainObject(sourcePreferences) ? sourcePreferences : {};
+    const schema = Array.isArray(chatPanels) && chatPanels.length ? chatPanels : incoming.customPanels;
+    protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences({
+        ...previous,
+        panels: incoming.panels,
+        features: incoming.features,
+        reduceEffects: incoming.reduceEffects === true,
+        theme: incoming.theme,
+        fontScale: incoming.fontScale,
+        showEmpty: incoming.showEmpty === true,
+        openSections: incoming.openSections,
+        customPanels: schema
+    });
+    await saveState();
+    return protocol.workspaceUi.scenePulseWorlds;
+}
+
+function scenePulseSourceSnapshot(value) {
+    if (!isPlainObject(value)) throw new Error('ScenePulse source edit did not contain a tracker snapshot.');
+    const snapshot = safeJsonClone(value);
+    // Source runtime metadata describes its rendering path, not evidence.
+    // Keep any normal source metadata required by its history tools but do not
+    // promote bridge bookkeeping into a human semantic edit.
+    if (isPlainObject(snapshot._spMeta)) {
+        delete snapshot._spMeta.hordeScenePulseBridge;
+        delete snapshot._spMeta.hordeSource;
+        delete snapshot._spMeta.hordeSnapshotId;
+        delete snapshot._spMeta.hordeTurnId;
+        delete snapshot._spMeta.hordeLabel;
+        delete snapshot._spMeta.hordeCreatedAt;
+        delete snapshot._spMeta.hordeHistoryIndex;
+    }
+    return snapshot;
+}
+
+// A human source-panel save is part of the authored scene-state record. Keep
+// its compact patch available to both upcoming model lanes, without sending
+// the sealed tutorial fixture or calling the change a user-interface event.
+function scenePulseHumanStatePromptContext(protocol = null) {
+    const edits = (Array.isArray(protocol?.scenePulseHumanEdits) ? protocol.scenePulseHumanEdits : [])
+        .filter(edit => edit?.status === 'active' && edit?.author === 'human' && Array.isArray(edit?.rawPatch) && edit.rawPatch.length)
+        .slice(-12)
+        .map(edit => ({
+            id: String(edit.id || ''),
+            at: String(edit.createdAt || ''),
+            sourceTurnId: String(edit.targetTurnId || ''),
+            sceneStatePatch: safeJsonClone(edit.rawPatch)
+        }));
+    if (!edits.length) return '';
+    return `\n\n[AUTHOR-SET SCENE STATE]\nThe author has explicitly set the following current scene-state values. Treat these as authored state for continuity and as the base for future compact ScenePulse deltas. They are not narration, do not describe them as editing, and do not treat them as a canonical-world commit without supporting visible story evidence. A later explicit authored beat may supersede them.\n${JSON.stringify(edits)}`;
+}
+
+// Direct ScenePulse editing is deliberately a human tracker event—not a
+// Reader result and not a silent mutation of canonical World state. It keeps
+// the exact before/after snapshots and the native source's compact top-level
+// patch, making it inspectable, promptable, and undoable as a history node.
+async function commitScenePulseSourceEdit(world, sess, payload = {}) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    if (!protocol) throw new Error('No World timeline is available for this ScenePulse edit.');
+    const before = scenePulseSourceSnapshot(payload.before);
+    const after = scenePulseSourceSnapshot(payload.after);
+    const patch = Array.isArray(payload.patch) ? safeJsonClone(payload.patch).slice(0, 240) : [];
+    if (!patch.length) return { saved: false, reason: 'no_tracker_change' };
+    const serializedSize = JSON.stringify({ before, after, patch }).length;
+    if (serializedSize > 1_500_000) throw new Error('ScenePulse edit is too large to preserve safely in timeline history.');
+    const stamp = new Date().toISOString();
+    const targetSnapshotId = String(payload.targetSnapshotId || 'fixture').slice(0, 240);
+    const targetTurnId = String(payload.targetTurnId || '').slice(0, 240);
+    const edit = {
+        id: `scene-pulse-human-edit-${crypto.randomUUID()}`,
+        type: 'scene_pulse_human_edit',
+        status: 'active',
+        author: 'human',
+        createdAt: stamp,
+        targetSnapshotId,
+        targetTurnId,
+        sourceRuntime: String(payload?.source?.runtime || 'native-source-modules-via-horde-compatibility-scaffold').slice(0, 180),
+        sourceRevision: String(payload?.source?.revision || '').slice(0, 80),
+        before,
+        after,
+        rawPatch: patch,
+        undo: Object.freeze({ action: 'restore_scene_pulse_snapshot', targetSnapshotId, restore: before })
+    };
+    protocol.scenePulseHumanEdits = Array.isArray(protocol.scenePulseHumanEdits) ? protocol.scenePulseHumanEdits : [];
+    protocol.scenePulseHumanEdits.push(edit);
+    // Keep a bounded audit trail without deleting the only active overlay.
+    if (protocol.scenePulseHumanEdits.length > 160) protocol.scenePulseHumanEdits = protocol.scenePulseHumanEdits.slice(-160);
+    await saveState();
+    return { saved: true, id: edit.id, edit };
+}
+
+function scenePulseHumanOverlay(protocol, handoff) {
+    const edits = Array.isArray(protocol?.scenePulseHumanEdits) ? protocol.scenePulseHumanEdits : [];
+    const currentSnapshotId = String(handoff?.provenance?.snapshotId || (handoff?.status === 'accepted_fixture' ? 'fixture' : ''));
+    const edit = edits.filter(item => item?.status === 'active'
+        && String(item?.targetSnapshotId || '') === currentSnapshotId
+        && isPlainObject(item?.after))
+        .sort((left, right) => String(left?.createdAt || '').localeCompare(String(right?.createdAt || '')))
+        .at(-1);
+    if (!edit) return handoff;
+    const history = Array.isArray(handoff?.history) ? safeJsonClone(handoff.history) : [];
+    history.push({
+        id: edit.id,
+        label: 'Human ScenePulse edit',
+        current: true,
+        createdAt: edit.createdAt,
+        summary: `Human tracker edit: ${(edit.rawPatch || []).map(change => change?.key).filter(Boolean).join(', ') || 'source fields'}`,
+        turnId: edit.targetTurnId,
+        scenePulse: safeJsonClone(edit.after),
+        previousScenePulse: safeJsonClone(edit.before),
+        deltaScenePulse: safeJsonClone(edit.rawPatch || []),
+        clearFields: [],
+        replaceCollections: []
+    });
+    return Object.freeze({
+        ...handoff,
+        id: `${handoff?.id || 'scenepulse'}:${edit.id}`,
+        status: 'accepted_human',
+        fixtureScenePulse: safeJsonClone(handoff?.fixtureScenePulse || handoff?.scenePulse || {}),
+        // The native source panel renders the human selected snapshot. The
+        // unmodified Sidecar reading remains separately available for the
+        // visible comparison rather than being overwritten in place.
+        sidecarScenePulse: safeJsonClone(handoff?.scenePulse || {}),
+        scenePulse: safeJsonClone(edit.after),
+        history,
+        humanEdit: Object.freeze({ id: edit.id, author: 'human', createdAt: edit.createdAt, rawPatch: safeJsonClone(edit.rawPatch || []), undo: safeJsonClone(edit.undo || {}) }),
+        provenance: Object.freeze({ ...(handoff?.provenance || {}), humanEditId: edit.id, source: 'human_scene_pulse_edit' })
+    });
 }
 
 async function saveScenePulsePortraitOverride(world, sess, payload = {}) {
@@ -19139,6 +19282,16 @@ function bindScenePulseWorldsHostActions(host, world, sess) {
         if (detail.action === 'persist-scenepulse-view-preferences') {
             event.preventDefault();
             detail.promise = Promise.resolve().then(() => persistScenePulseWorldsPreferences(world, sess, detail.preferences || {}));
+            return;
+        }
+        if (detail.action === 'persist-scenepulse-source-settings') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => persistScenePulseSourceRuntimePreferences(world, sess, detail.preferences || {}, detail.chatPanels || []));
+            return;
+        }
+        if (detail.action === 'commit-scenepulse-source-edit') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => commitScenePulseSourceEdit(world, sess, detail));
             return;
         }
         if (detail.action === 'save-scenepulse-portrait') {
@@ -19384,18 +19537,30 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     if (!host || !column) return;
     const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar); host.classList.toggle('hidden', !sidecar);
-    if (!sidecar) { unbindScenePulseWorldsHostActions(host); window.HordeScenePulseWorlds?.unmount?.(host); host.replaceChildren(); return; }
+    if (!sidecar) {
+        unbindScenePulseWorldsHostActions(host);
+        window.HordeScenePulseSourceRuntime?.unmount?.(host);
+        window.HordeScenePulseWorlds?.unmount?.(host);
+        host.replaceChildren();
+        return;
+    }
     // Gate A remains the sealed source tutorial handoff. Once a new authored
     // beat has an exact settled Reader snapshot, Gate B overlays only that
     // source-shaped delta projection; it never substitutes Melbourne/world
     // registry data for incomplete ScenePulse fields.
     const handoff = scenePulseAcceptedHandoff(world, sess);
-    if (!window.HordeScenePulseWorlds?.mount) {
-        host.innerHTML = '<div class="sp-empty-state"><div class="sp-empty-title">ScenePulse module did not load</div></div>';
+    if (!window.HordeScenePulseSourceRuntime?.mount) {
+        host.innerHTML = '<div class="sp-empty-state"><div class="sp-empty-title">Native ScenePulse source runtime did not load</div><div class="sp-empty-sub">The compatibility scaffold is unavailable, so the source panel is intentionally not substituted with a host lookalike.</div></div>';
         return;
     }
     bindScenePulseWorldsHostActions(host, world, sess);
-    window.HordeScenePulseWorlds.mount(host, handoff);
+    // The default World HUD is the actual ScenePulse panel/runtime. The older
+    // host-drawn adapter remains vendored as a migration reference only; do
+    // not silently fall back to it when the native source bridge fails.
+    window.HordeScenePulseWorlds?.unmount?.(host);
+    window.HordeScenePulseSourceRuntime.mount(host, handoff).catch(error => {
+        console.error('Native ScenePulse source runtime failed:', error);
+    });
     return;
 
     // Gate B adapter below is intentionally unreachable until the fixture
@@ -36979,7 +37144,8 @@ ${questPrompt}${npcContext}${engineEventsPrompt}${threadsPrompt}${livingWorldPro
             .map(candidate => candidate.lane);
         const ffStack = buildFF54NarratorSystemStack(world, ffOS, ffCompilation.contextBlock, { agentAvailability: ffAgentLanes, sidecar: sidecarMode });
         const ffHandoffContract = `\n\n[SIDECAR NARRATOR MODE — SUPERSEDES EARLIER TURN-RECEIPT/TOOL INSTRUCTIONS]\nWrite only the visible roleplay prose, followed by one hidden <scene_handoff> block. Do not call tools and do not emit a world_turn_receipt or JSON. The visible prose must stand on its own. The handoff is addressed to Sidecar, not the player, and must use concise structured text:\n<scene_handoff>\nSCENE READING\n- What this completed beat means mechanically and structurally.\n\nANSWER core.time\n- Describe temporal meaning; do not invent an exact duration.\n\nANSWER core.location\n- State only completed movement, arrivals, or introduced places.\n\nANSWER core.cast\n- Who physically remains present at the end. Separately name any already-existing character who is materially off-screen but audible, nearby, or otherwise involved; say why, without claiming they arrived.\n\nANSWER core.world_changes\n- Durable facts, agreements, commitments, or contradictions established; otherwise No change.\n\nREQUESTS\n- Optional tracker work only.\n\nACCEPTED PLAYER DETAILS\n- Player-proposed details accepted as true in this scene; otherwise None.\n</scene_handoff>\nUnknown is valid. Intent is not completion. Do not force a field to change simply because it is asked.`;
-        systemPrompt = ffStack.prompt + ffHandoffContract + (ffTurnBrief ? `\n\n${ffTurnBrief}` : '');
+        const narratorHumanSceneState = scenePulseHumanStatePromptContext(protocolForSidecarTimeline(world, sess));
+        systemPrompt = ffStack.prompt + ffHandoffContract + narratorHumanSceneState + (ffTurnBrief ? `\n\n${ffTurnBrief}` : '');
         const ffUserToken = (persona && persona.name) || 'the player';
         const ffSubstitute = value => String(value || '').replace(/\{\{user\}\}/g, ffUserToken);
         systemPrompt = ffSubstitute(systemPrompt);
