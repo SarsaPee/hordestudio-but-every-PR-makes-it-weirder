@@ -59,6 +59,18 @@ function lastRuntimeFunction(name, prefix = 'function') {
     throw new Error(`unclosed runtime ${name}`);
 }
 
+function lastSourceFunction(source, name, prefix = 'function') {
+    const start = source.lastIndexOf(`${prefix} ${name}(`);
+    assert(start >= 0, `missing source ${name}`);
+    const open = source.indexOf('{', source.indexOf(') {', start));
+    let depth = 0;
+    for (let index = open; index < source.length; index += 1) {
+        if (source[index] === '{') depth += 1;
+        if (source[index] === '}' && --depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`unclosed source ${name}`);
+}
+
 function frozenRuntimeStringArray(name) {
     const start = runtime.indexOf(`const ${name} = Object.freeze([`);
     assert(start >= 0, `missing ${name}`);
@@ -274,6 +286,13 @@ assert.match(runtime, /if \(!authority\.size\) return stripControlledSourceRecor
 assert.match(runtime, /nativeFieldAuthority/, 'field-by-field authority must be explicit rather than inferred from live mode');
 assert.match(runtime, /nativeFieldHasAcceptedValue/, 'a declared field must still prove an accepted value before replacing the tutorial support');
 assert.match(runtime, /!clear\.has\(key\).*?!replace\.has\(key\).*?!hasValue\(value\)/s, 'implicit empty live values must not shrink source fixture data');
+assert.match(sourceNormalize, /preserveConfiguredCustomPanelFields\(d,o\)/, 'the native normalizer must retain configured custom-panel values for the source renderer');
+const sourceCustomPanelValues = vm.runInNewContext(`${lastSourceFunction(sourceNormalize, 'preserveConfiguredCustomPanelFields')}\npreserveConfiguredCustomPanelFields({ cider_line_status: 'Sarah wrestling regulator in cellar', unrelated_horde_field: 'must not render' }, {})`, {
+    getActivePanels: () => [{ fields: [{ key: 'cider_line_status', enabled: true }, { key: 'disabled_field', enabled: false }] }]
+});
+assert.deepEqual(JSON.parse(JSON.stringify(sourceCustomPanelValues)), {
+    cider_line_status: 'Sarah wrestling regulator in cellar'
+}, 'the native normalizer must retain only declared active custom-panel values, not arbitrary Horde fields');
 assert.match(sourceRelationshipsCss, /\.sp-meter-row \{ display: grid; grid-template-columns: auto 1fr minmax\(0, 70px\) 44px;/, 'source relationship meters must retain horizontal grid tracks');
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-fill \{ height: 100%;[\s\S]*?transition: width/, 'the coloured relationship fill must encode current horizontal width');
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-prev \{ position: absolute; top: 0; bottom: 0; width: 2px;/, 'the previous-value delta marker must remain a vertical line on the horizontal track');

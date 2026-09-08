@@ -95,6 +95,30 @@ export function isUserName(name) {
     return false;
 }
 
+// Custom panels are real ScenePulse tracker fields, but the legacy
+// normalizer below builds a deliberately closed built-in presentation object.
+// Retain only the active chat's declared custom keys after that construction:
+// this keeps an accepted custom Reader value visible without turning every
+// unknown top-level key in a compatibility handoff into source UI data.
+//
+// The values remain raw tracker values because update-panel.js owns the type
+// presentation (meter, list, enum, number, or text) from the panel schema.
+function preserveConfiguredCustomPanelFields(source, normalized) {
+    let panels = [];
+    try { panels = getActivePanels(); } catch { return normalized; }
+    if (!Array.isArray(panels)) return normalized;
+    const keys = new Set(panels.flatMap(panel => Array.isArray(panel?.fields) ? panel.fields : [])
+        .filter(field => field?.enabled !== false)
+        .map(field => String(field?.key || '').trim())
+        .filter(key => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(key)));
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(source, key) && source[key] !== undefined) {
+            normalized[key] = source[key];
+        }
+    }
+    return normalized;
+}
+
 // ── Normalization ──
 export function normalizeTracker(d){
     if(!d||typeof d!=='object')return d;
@@ -836,6 +860,7 @@ export function normalizeTracker(d){
             }
         }
     }
+    preserveConfiguredCustomPanelFields(d,o);
     if(_verbose)auditFields('normalizeTracker',o,['time','date','elapsed','location','weather','temperature','soundEnvironment','sceneTopic','sceneMood','sceneInteraction','sceneTension','sceneSummary','witnesses','charactersPresent','mainQuests','sideQuests','plotBranches','northStar','relationships','characters']);
     if(d._spMeta)o._spMeta=d._spMeta;
     _normCache.set(d, o);
