@@ -285,6 +285,12 @@ export function createSparklineCanvas(relationship, meter) {
 
 function showExpandedGraph(relationship, focusMeter) {
     document.querySelectorAll('.sp-graph-overlay').forEach(el => el.remove());
+    // Desktop hover tips are mounted at document level so they can clear the
+    // graph's clipped SVG container. They must leave with the focused graph:
+    // navigating to a historical snapshot is read-only, not a reason to leave
+    // an old scene's tooltip over the current panel.
+    const clearGraphTooltips = () => document.querySelectorAll('.sp-graph-tooltip').forEach(el => el.remove());
+    clearGraphTooltips();
 
     const target = typeof relationship === 'string' ? { name: relationship } : (relationship || {});
     const displayName = String(target.name || '').trim() || t('Relationship');
@@ -328,7 +334,7 @@ function showExpandedGraph(relationship, focusMeter) {
         </div>`;
 
         // Bind close
-        overlay.querySelector('.sp-graph-close').addEventListener('click', () => overlay.remove());
+        overlay.querySelector('.sp-graph-close').addEventListener('click', () => { clearGraphTooltips(); overlay.remove(); });
 
         // Bind legend button clicks
         overlay.querySelectorAll('.sp-graph-legend-btn').forEach(btn => {
@@ -353,6 +359,7 @@ function showExpandedGraph(relationship, focusMeter) {
             el.addEventListener('click', () => {
                 const key = Number(el.dataset.snapkey);
                 if (!key) return;
+                clearGraphTooltips();
                 overlay.remove();
                 // Load the historical snapshot
                 import('../state.js').then(s => s.setCurrentSnapshotMesIdx(key));
@@ -390,6 +397,7 @@ function showExpandedGraph(relationship, focusMeter) {
         }
 
         function _navigateTo(key) {
+            clearGraphTooltips();
             overlay.remove();
             import('../state.js').then(s => s.setCurrentSnapshotMesIdx(key));
             import('../settings.js').then(s => { const sn=s.getTrackerData().snapshots[String(key)]; if(!sn)return; import('../normalize.js').then(n=>{import('./update-panel.js').then(u=>u.updatePanel(n.normalizeTracker(sn)));import('./panel.js').then(p=>p.showPanel());import('./timeline.js').then(tl=>tl.renderTimeline())}); });
@@ -453,8 +461,8 @@ function showExpandedGraph(relationship, focusMeter) {
     };
 
     // Close on backdrop / Escape
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-    const escH = (e) => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escH); } };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) { clearGraphTooltips(); overlay.remove(); } });
+    const escH = (e) => { if (e.key === 'Escape') { clearGraphTooltips(); overlay.remove(); document.removeEventListener('keydown', escH); } };
     document.addEventListener('keydown', escH);
 
     document.documentElement.appendChild(overlay);

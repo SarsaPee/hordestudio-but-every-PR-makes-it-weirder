@@ -400,6 +400,8 @@ assert.match(sourceUpdate, /createSparklineCanvas\(rel,m\.k\)/, 'source relation
 assert.match(sourceSparklines, /function _relationshipStableKey\(entry\)/, 'source sparklines must resolve a stable relationship identity');
 assert.match(sourceSparklines, /rels\.find\(rel => _sameHistoryRelationship\(rel, target\)\)/, 'source history must use stable relationship identity rather than fuzzy names');
 assert.doesNotMatch(sourceSparklines, /nameFirst/, 'source history must not fall back to first-name matching');
+assert.match(sourceSparklines, /const clearGraphTooltips = \(\) => document\.querySelectorAll\('\.sp-graph-tooltip'\)/, 'source graph navigation must clear document-level hover tips');
+assert.match(sourceSparklines, /function _navigateTo\(key\) \{\s*clearGraphTooltips\(\);/s, 'navigating a graph point must clear its old-scene tooltip before changing snapshots');
 assert.match(sourceTimeline, /export function renderTimeline\(\)/, 'source timeline must remain callable');
 assert.match(sourceWiki, /export function openCharacterWiki\(\)/, 'source Wiki must remain a full focused source view');
 assert.match(sourceWiki, /document\.body\.appendChild\(overlay\)/, 'source Wiki must retain viewport takeover behavior');
