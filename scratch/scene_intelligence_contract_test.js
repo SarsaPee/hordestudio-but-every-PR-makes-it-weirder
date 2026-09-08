@@ -57,6 +57,8 @@ const readerPass = lastFunction('runSidecarSemanticReading', 'async function');
 const readerRefresh = lastFunction('refreshSidecarSceneIntelligence', 'async function');
 const acceptedRefresh = lastFunction('refreshAcceptedScenePulseProjection', 'async function');
 const candidateEligibility = lastFunction('scenePulseCandidatePromotionEligibility');
+const candidateCharacterEvidence = lastFunction('scenePulseCharacterEvidenceForCandidate');
+const candidatePromotionDraft = lastFunction('scenePulseCandidatePromotionDraft');
 const candidateStage = lastFunction('stageScenePulseCandidateForWorldReview', 'async function');
 const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async function');
 const impliedPromotion = lastFunction('promoteImpliedWorldRecord', 'async function');
@@ -240,6 +242,13 @@ assert.match(candidateEligibility, /sceneClosed/, 'scene closure must be a valid
 assert.match(candidateStage, /scenePulseCandidateId/, 'the promotion bridge must retain stable Reader candidate identity');
 assert.match(candidateStage, /scenePulseEvidence/, 'the promotion bridge must retain Reader evidence instead of only a display label');
 assert.match(candidateStage, /scenePulseAppearance/, 'the promotion bridge must preserve observed appearance for the visuals path');
+assert.match(candidateStage, /scenePulseSpecialist/, 'the promotion bridge must retain source specialist character state without flattening it');
+assert.match(candidateStage, /scenePulseGoals/, 'the promotion bridge must retain source needs and goals for explicit graduation');
+assert.match(candidateCharacterEvidence, /matches\.length !== 1/, 'a candidate may adopt a same-packet card only through a unique source match');
+assert.match(candidateCharacterEvidence, /scenePulseCharacter/, 'candidate graduation must retain the complete source-character evidence seam');
+assert.match(candidatePromotionDraft, /fertStatus/, 'specialist source fields must survive the explicit graduation draft');
+assert.match(promotionAppearance, /scenePulseObservedState/, 'graduated specialist state must retain observed-source provenance');
+assert.match(promotionAppearance, /!String\(canonical\.goal/, 'a ScenePulse goal may seed only an otherwise empty World goal');
 assert.match(impliedPromotion, /awaiting_scene_evidence/, 'an incomplete source candidate must remain visible rather than being promoted early');
 assert.match(impliedPromotion, /explicit author decision, not an automatic promotion/, 'an early promotion must disclose that it is a deliberate override');
 assert.match(impliedPromotion, /applyScenePulsePromotionAppearance/, 'explicit promotion must feed observed outfit and appearance into Horde visuals');
@@ -262,6 +271,32 @@ const repeatedCandidate = vm.runInNewContext(`${candidateEligibilitySource}\nsce
 assert.equal(repeatedCandidate.ready, true, 'the same candidate recurring across settled turns should become ready for explicit promotion');
 const closedSceneCandidate = vm.runInNewContext(`${candidateEligibilitySource}\nscenePulseCandidatePromotionEligibility(${JSON.stringify({ scenes: [{ id: 'scene_1', status: 'closed' }] })}, ${JSON.stringify({ candidateType: 'location', label: 'Lantern Court', settlementStatus: 'settled', sourceTurnIds: ['turn_1'], sourceSceneId: 'scene_1' })})`, candidateEligibilityContext);
 assert.equal(closedSceneCandidate.ready, true, 'a closed source scene should be a valid review boundary for a local place');
+
+const candidateCharacterEvidenceContext = {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+};
+const matchedScenePulseCharacter = vm.runInNewContext(`${candidateCharacterEvidence}\nscenePulseCharacterEvidenceForCandidate(${JSON.stringify({
+    semanticInterpretation: { scenePulse: { characters: [
+        { id: 'cand_mira', name: 'Mira', aliases: ['The Courier'], outfit: 'rain-dark coat', posture: 'leaning close', proximity: 'at the bar', fertStatus: 'N/A', fertNotes: 'No relevant state', immediateNeed: 'Hear the offer', shortTermGoal: 'Leave unseen', longTermGoal: 'Clear her name', inventory: ['sealed letter'] },
+        { id: 'cand_oren', name: 'Oren', outfit: 'work shirt' }
+    ] } }
+})}, ${JSON.stringify({ candidateId: 'cand_mira', label: 'Mira' })})`, candidateCharacterEvidenceContext);
+assert.deepEqual(JSON.parse(JSON.stringify(matchedScenePulseCharacter)), {
+    name: 'Mira', aliases: ['The Courier'], hair: '', face: '', outfit: 'rain-dark coat', posture: 'leaning close', proximity: 'at the bar', notableDetails: '', inventory: ['sealed letter'], fertStatus: 'N/A', fertNotes: 'No relevant state', immediateNeed: 'Hear the offer', shortTermGoal: 'Leave unseen', longTermGoal: 'Clear her name'
+}, 'a uniquely identified ScenePulse character card must retain rich fields beside its candidate');
+assert.equal(vm.runInNewContext(`${candidateCharacterEvidence}\nscenePulseCharacterEvidenceForCandidate(${JSON.stringify({
+    semanticInterpretation: { scenePulse: { characters: [{ name: 'Mira' }, { name: 'Mira' }] } }
+})}, ${JSON.stringify({ label: 'Mira' })})`, candidateCharacterEvidenceContext), null,
+    'ambiguous source character display names must never supply a graduation record');
+
+const candidatePromotionDraftContext = {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+};
+const richPromotionDraft = vm.runInNewContext(`${lastFunction('scenePulseCandidatePromotionKind')}\n${candidatePromotionDraft}\nscenePulseCandidatePromotionDraft(${JSON.stringify({
+    candidateType: 'character', label: 'Mira', scenePulseCharacter: matchedScenePulseCharacter
+})})`, candidatePromotionDraftContext);
+assert.equal(richPromotionDraft.specialist.fertStatus, 'N/A', 'graduation must preserve a supplied specialist state exactly');
+assert.equal(richPromotionDraft.goals.longTermGoal, 'Clear her name', 'graduation must retain ScenePulse long-term goals as evidence');
 
 const graphContext = {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)

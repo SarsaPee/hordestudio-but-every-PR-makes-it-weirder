@@ -16274,6 +16274,55 @@ function recordSidecarReaderProposals(world, sess, readerPacket, turnRecord, sna
     return entries;
 }
 
+// ScenePulse's character cards are richer than a generic candidate label.
+// When the Reader supplied both shapes in the *same packet*, retain a compact
+// observed character record beside the pre-canonical candidate. This is not a
+// name-based registry lookup: a stable id wins, and a display-name fallback is
+// admitted only when it identifies exactly one source character in this one
+// accepted scene reading. The record remains scene evidence until an explicit
+// candidate graduation chooses to use it.
+function scenePulseCharacterEvidenceForCandidate(readerPacket, candidate = {}) {
+    const scenePulse = readerPacket?.semanticInterpretation?.scenePulse || readerPacket?.scenePulse || {};
+    const characters = Array.isArray(scenePulse?.characters) ? scenePulse.characters.filter(isPlainObject).slice(0, 80) : [];
+    if (!characters.length) return null;
+    const candidateIds = new Set([
+        candidate?.candidateId, candidate?.characterId, candidate?.subjectRef,
+        candidate?.canonicalMatchId, candidate?.id
+    ].map(value => String(value || '').trim()).filter(Boolean));
+    const characterIds = character => [
+        character?.id, character?.characterId, character?.character_id,
+        character?.candidateId, character?.candidate_id, character?.subjectRef,
+        character?.subject_ref, character?.canonicalId, character?.canonical_id
+    ].map(value => String(value || '').trim()).filter(Boolean);
+    let matches = candidateIds.size
+        ? characters.filter(character => characterIds(character).some(id => candidateIds.has(id)))
+        : [];
+    if (matches.length !== 1) {
+        const labels = new Set([candidate?.label, candidate?.name]
+            .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+        if (!labels.size) return null;
+        matches = characters.filter(character => [character?.name, ...(Array.isArray(character?.aliases) ? character.aliases : [])]
+            .map(value => String(value || '').trim().toLowerCase()).some(label => labels.has(label)));
+    }
+    if (matches.length !== 1) return null;
+    const source = matches[0];
+    const text = (value, limit) => String(value || '').trim().slice(0, limit);
+    const inventory = Array.isArray(source.inventory)
+        ? source.inventory.map(value => text(value, 240)).filter(Boolean).slice(0, 40)
+        : text(source.inventory, 1800);
+    const evidence = {
+        name: text(source.name, 240), aliases: (Array.isArray(source.aliases) ? source.aliases : [])
+            .map(value => text(value, 180)).filter(Boolean).slice(0, 24),
+        hair: text(source.hair, 600), face: text(source.face, 600), outfit: text(source.outfit, 1200),
+        posture: text(source.posture, 400), proximity: text(source.proximity, 400),
+        notableDetails: text(source.notableDetails, 1200), inventory,
+        fertStatus: text(source.fertStatus, 240), fertNotes: text(source.fertNotes, 1200),
+        immediateNeed: text(source.immediateNeed, 800), shortTermGoal: text(source.shortTermGoal, 800),
+        longTermGoal: text(source.longTermGoal, 1200)
+    };
+    return Object.values(evidence).some(value => Array.isArray(value) ? value.length : value) ? evidence : null;
+}
+
 // Pre-canonical structures live beside reader snapshots. They are deliberately
 // not written through the world reducer: a bartender, room, outfit, prop or
 // vehicle can be useful to the next scene before it has earned a canonical ID.
@@ -16290,6 +16339,25 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
         settlementId: turnRecord.settlementId || '',
     }) || [];
     candidates.forEach(candidate => {
+        const sourceCharacter = candidate.candidateType === 'character'
+            ? scenePulseCharacterEvidenceForCandidate(readerPacket, candidate) : null;
+        if (sourceCharacter) {
+            // Preserve model-supplied candidate fields. The matching source
+            // card fills only absent presentation details and stays clearly
+            // marked as a same-packet ScenePulse observation.
+            const details = isPlainObject(candidate.details) ? candidate.details : {};
+            candidate.details = {
+                ...details,
+                hair: details.hair || sourceCharacter.hair,
+                face: details.face || sourceCharacter.face,
+                outfit: details.outfit || sourceCharacter.outfit,
+                posture: details.posture || sourceCharacter.posture,
+                proximity: details.proximity || sourceCharacter.proximity,
+                notableDetails: details.notableDetails || sourceCharacter.notableDetails
+            };
+            candidate.clothingDescription = candidate.clothingDescription || sourceCharacter.outfit;
+            candidate.scenePulseCharacter = safeJsonClone(sourceCharacter);
+        }
         candidate.sourceSceneId = turnRecord.sceneId || protocol.activeSceneId || '';
         candidate.sourceSequenceId = turnRecord.sequenceId || protocol.activeSequenceId || '';
         candidate.readerSnapshotId = snapshotId || candidate.readerSnapshotId || '';
@@ -19062,15 +19130,31 @@ function scenePulseCandidateReviewProjection(world, sess, protocol, options = {}
 function scenePulseCandidatePromotionDraft(candidate = {}) {
     const kind = scenePulseCandidatePromotionKind(candidate);
     const details = isPlainObject(candidate?.details) ? candidate.details : {};
+    const sourceCharacter = isPlainObject(candidate?.scenePulseCharacter) ? candidate.scenePulseCharacter : {};
     const appearance = {
-        hair: String(details.hair || '').trim().slice(0, 600),
-        face: String(details.face || '').trim().slice(0, 600),
-        outfit: String(candidate.clothingDescription || details.outfit || details.clothing || '').trim().slice(0, 1200),
+        hair: String(details.hair || sourceCharacter.hair || '').trim().slice(0, 600),
+        face: String(details.face || sourceCharacter.face || '').trim().slice(0, 600),
+        outfit: String(candidate.clothingDescription || details.outfit || details.clothing || sourceCharacter.outfit || '').trim().slice(0, 1200),
         garments: (Array.isArray(candidate.individualGarments) ? candidate.individualGarments : [])
             .map(value => String(value || '').trim()).filter(Boolean).slice(0, 24),
-        posture: String(details.posture || details.pose || '').trim().slice(0, 400),
-        notableDetails: String(details.notableDetails || details.appearance || candidate.visibleCondition || '').trim().slice(0, 1200),
+        posture: String(details.posture || details.pose || sourceCharacter.posture || '').trim().slice(0, 400),
+        notableDetails: String(details.notableDetails || details.appearance || sourceCharacter.notableDetails || candidate.visibleCondition || '').trim().slice(0, 1200),
         visibleCondition: String(candidate.visibleCondition || '').trim().slice(0, 600)
+    };
+    const specialist = {
+        fertStatus: String(sourceCharacter.fertStatus || '').trim().slice(0, 240),
+        fertNotes: String(sourceCharacter.fertNotes || '').trim().slice(0, 1200)
+    };
+    const goals = {
+        immediateNeed: String(sourceCharacter.immediateNeed || '').trim().slice(0, 800),
+        shortTermGoal: String(sourceCharacter.shortTermGoal || '').trim().slice(0, 800),
+        longTermGoal: String(sourceCharacter.longTermGoal || '').trim().slice(0, 1200)
+    };
+    const presentation = {
+        proximity: String(details.proximity || sourceCharacter.proximity || '').trim().slice(0, 400),
+        inventory: Array.isArray(sourceCharacter.inventory)
+            ? sourceCharacter.inventory.map(value => String(value || '').trim()).filter(Boolean).slice(0, 40)
+            : String(sourceCharacter.inventory || '').trim().slice(0, 1800)
     };
     const descriptiveParts = [
         candidate.role && `Observed role: ${candidate.role}`,
@@ -19086,7 +19170,7 @@ function scenePulseCandidatePromotionDraft(candidate = {}) {
                 region: String(details.region || '').trim(), map_type: String(details.mapType || details.map_type || '').trim(),
                 floor: String(details.floor || '').trim(), parent_location_id: String(candidate.parentCanonicalId || details.parentLocationId || '').trim(),
                 scenePulseCandidateId: String(candidate.candidateId || ''), scenePulseCandidateType: 'location'
-            }, appearance
+            }, appearance, specialist, goals, presentation
         };
     }
     return {
@@ -19099,7 +19183,7 @@ function scenePulseCandidatePromotionDraft(candidate = {}) {
             persona: String(details.persona || '').trim().slice(0, 1800),
             home_location: String(candidate.parentCanonicalId || details.homeLocation || '').trim(),
             scenePulseCandidateId: String(candidate.candidateId || ''), scenePulseCandidateType: 'character'
-        }, appearance
+        }, appearance, specialist, goals, presentation
     };
 }
 
@@ -19129,6 +19213,9 @@ async function stageScenePulseCandidateForWorldReview(world, sess, candidateId) 
     staged.readerSourceTurnIds = [...new Set([...(staged.readerSourceTurnIds || []), ...sourceTurnIds])].slice(-30);
     staged.scenePulseEvidence = safeJsonClone((candidate.evidence || []).slice(-24));
     staged.scenePulseAppearance = safeJsonClone(draft.appearance);
+    staged.scenePulseSpecialist = safeJsonClone(draft.specialist);
+    staged.scenePulseGoals = safeJsonClone(draft.goals);
+    staged.scenePulsePresentation = safeJsonClone(draft.presentation);
     staged.promotionEligibility = safeJsonClone(eligibility);
     staged.scenePulseDisposition = eligibility.ready ? 'world_review_ready' : 'awaiting_scene_evidence';
     staged.reviewProvenance = {
@@ -19146,6 +19233,9 @@ async function stageScenePulseCandidateForWorldReview(world, sess, candidateId) 
 function applyScenePulsePromotionAppearance(canonical, staged) {
     if (!canonical || canonical.type !== 'npc') return null;
     const appearance = isPlainObject(staged?.scenePulseAppearance) ? staged.scenePulseAppearance : {};
+    const specialist = isPlainObject(staged?.scenePulseSpecialist) ? staged.scenePulseSpecialist : {};
+    const goals = isPlainObject(staged?.scenePulseGoals) ? staged.scenePulseGoals : {};
+    const presentation = isPlainObject(staged?.scenePulsePresentation) ? staged.scenePulsePresentation : {};
     const outfitDescription = String(appearance.outfit || '').trim().slice(0, 1200);
     canonical.visuals = isPlainObject(canonical.visuals) ? canonical.visuals : {};
     const outcomes = {};
@@ -19162,6 +19252,9 @@ function applyScenePulsePromotionAppearance(canonical, staged) {
         canonical.visuals.outfits = outfits.slice(-30);
         canonical.visuals.currentOutfitId = outfit.id;
         canonical.currentOutfit = outfit.description;
+        const garments = (Array.isArray(appearance.garments) ? appearance.garments : [])
+            .map(value => String(value || '').trim()).filter(Boolean).slice(0, 24);
+        if (garments.length) outfit.scenePulseObservedGarments = garments;
         outcomes.outfitId = outfit.id;
     }
     const identityDetails = [appearance.hair, appearance.face, appearance.notableDetails]
@@ -19180,11 +19273,33 @@ function applyScenePulsePromotionAppearance(canonical, staged) {
             outcomes.subjectGuide = 'pose';
         }
     }
-    canonical.scenePulseAppearanceEvidence = {
+    const source = {
         source: 'explicit_scenepulse_candidate_promotion', promotedAt: new Date().toISOString(),
         candidateId: String(staged?.scenePulseCandidateId || ''), readerSnapshotIds: safeJsonClone(staged?.readerSnapshotIds || []),
-        sourceTurnIds: safeJsonClone(staged?.readerSourceTurnIds || []), appearance: safeJsonClone(appearance)
+        sourceTurnIds: safeJsonClone(staged?.readerSourceTurnIds || [])
     };
+    canonical.scenePulseAppearanceEvidence = { ...source, appearance: safeJsonClone(appearance) };
+    // These fields are intentionally kept as observed graduation evidence,
+    // not flattened into a generic personality or permanent-state schema.
+    // They retain provenance and can be revised by a later accepted scene.
+    const observedState = {
+        ...source,
+        presentation: safeJsonClone(presentation),
+        specialist: safeJsonClone(specialist),
+        goals: safeJsonClone(goals)
+    };
+    if (Object.values(specialist).some(Boolean) || Object.values(goals).some(Boolean)
+        || Object.values(presentation).some(value => Array.isArray(value) ? value.length : value)) {
+        canonical.scenePulseObservedState = observedState;
+        outcomes.observedState = true;
+    }
+    // A long-term goal may initialise an otherwise empty durable goal on an
+    // explicit character graduation. Never overwrite an authored Horde goal
+    // with a current ScenePulse reading.
+    if (!String(canonical.goal || '').trim() && String(goals.longTermGoal || '').trim()) {
+        canonical.goal = String(goals.longTermGoal).trim().slice(0, 1200);
+        outcomes.goalSeeded = true;
+    }
     return outcomes;
 }
 
