@@ -184,6 +184,8 @@ assert.match(readerPass, /Reader compact recovery/, 'a completion-capped Reader 
 assert.match(readerPass, /relationship\.meterDeltas as signed numeric changes/, 'Reader relationship updates must use compact signed meter deltas after their baseline');
 assert.match(readerPass, /missing any of those five meters is also unbaselined/, 'an incomplete legacy relationship must receive a full visible meter baseline before delta-only updates begin');
 assert.match(readerPass, /SCENEPULSE ACTIVE RELATIONSHIP COVERAGE/, 'an active authored exchange must populate a real ScenePulse relationship instead of leaving a source-generated unknown stub');
+assert.match(app, /if \(options\.renderReview !== false\) renderWorldPlayState\(\)/, 'a native source refresh must be able to stage a valid Reader packet without remounting before acceptance');
+assert.match(lastFunction('refreshAcceptedScenePulseProjection', 'async function'), /renderReview: false/, 'foreground ScenePulse refreshes must use the atomic stage-and-accept route');
 assert.match(lastFunction('retrySidecarSceneUpdate', 'async function'), /reusableReaderSnapshot/, 'retry may reuse only Reader evidence which crossed the snapshot boundary');
 assert.match(normalizer, /npcRelationshipGraph/, 'Reader normalization must retain the compact NPC graph beside ScenePulse fields');
 assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache updates must honor nested delta-field provenance');

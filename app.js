@@ -18123,7 +18123,12 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
     });
     protocol.readerRefreshes = protocol.readerRefreshes.slice(-40);
     await saveState();
-    renderWorldPlayState();
+    // A native ScenePulse refresh accepts this review immediately below.
+    // Do not remount the source panel between staging and acceptance: doing
+    // so can detach the originating host action while its valid Reader
+    // packet is still in flight. Backstage refreshes retain their review
+    // render; foreground source controls request the atomic route instead.
+    if (options.renderReview !== false) renderWorldPlayState();
     return protocol.readerRefreshes.at(-1);
 }
 
@@ -19895,6 +19900,7 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
             // projection of this same authored beat.
             forceFull: options.forceFull === true,
             scenePulseFocus: section,
+            renderReview: false,
             signal: controller.signal
         });
         if (controller.signal.aborted) return { status: 'stopped' };
