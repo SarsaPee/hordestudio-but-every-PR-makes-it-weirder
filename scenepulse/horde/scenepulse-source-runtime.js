@@ -318,6 +318,7 @@
         const replace = new Set([...(handoff?.replaceCollections || []), ...(live.replaceCollections || [])].map(String));
         if (clear.has(key) || replace.has(key)) return true;
         const fixture = plain(handoff?.fixtureScenePulse) ? handoff.fixtureScenePulse : {};
+        if (key === 'relationships' && own(fixture, key) && !hasCompleteSourceRelationshipProjection(live[key])) return false;
         // A sparse packet's accidental blank must never erase a populated
         // source feature. A named clear or collection replacement is the
         // handoff's explicit decision to replace it with an empty value.
@@ -330,6 +331,107 @@
         return nativeFieldHasAcceptedValue(handoff, key) ? 'reader' : 'example';
     }
 
+    // ScenePulse always renders the controlled person as the Relationship
+    // Web's anchored centre.  A Reader packet may still include that person
+    // in its rich character collection (the explicit `role: Protagonist` in
+    // the live packet is an example).  Preserve that raw packet for Inspect,
+    // but never pass the duplicate card through the source tracker: it would
+    // create a second, NPC-shaped copy of the player in Wiki/Web/history.
+    // This uses only an explicit controlled role/flag or stable id, never a
+    // World registry lookup or an ambiguous display-name guess.
+    function controlledSourceCharacter(record) {
+        if (!plain(record)) return false;
+        if (record.controlled === true || record.isControlled === true || record.isPlayer === true || record.is_player === true) return true;
+        const stableId = String(record.characterId || record.character_id || record.id || '').trim().toLowerCase();
+        if (stableId === 'player' || stableId === 'user' || stableId === 'protagonist') return true;
+        return /^(?:protagonist|player|user|controlled character)$/i.test(String(record.role || '').trim());
+    }
+
+    function declaredSourcePlayerName(handoff) {
+        const candidates = [handoff?.scenePulse, handoff?.fixtureScenePulse]
+            .filter(plain)
+            .flatMap(tracker => Array.isArray(tracker.characters) ? tracker.characters : []);
+        const controlled = candidates.find(controlledSourceCharacter);
+        return String(controlled?.name || '').trim();
+    }
+
+    function stripControlledSourceRecords(tracker) {
+        if (!plain(tracker)) return tracker;
+        const controlled = (Array.isArray(tracker.characters) ? tracker.characters : []).filter(controlledSourceCharacter);
+        if (!controlled.length) return tracker;
+        const ids = new Set(controlled.map(record => String(record.characterId || record.character_id || record.id || '').trim().toLowerCase()).filter(Boolean));
+        const names = new Set(controlled.map(record => String(record.name || '').trim().toLowerCase()).filter(Boolean));
+        const matches = record => {
+            if (typeof record === 'string') return names.has(record.trim().toLowerCase());
+            if (!plain(record)) return false;
+            const id = String(record.characterId || record.character_id || record.id || record.subjectRef || record.subject_ref || '').trim().toLowerCase();
+            const name = String(record.name || record.label || '').trim().toLowerCase();
+            return (!!id && ids.has(id)) || (!!name && names.has(name));
+        };
+        tracker.characters = (Array.isArray(tracker.characters) ? tracker.characters : []).filter(record => !matches(record));
+        if (Array.isArray(tracker.charactersPresent)) tracker.charactersPresent = tracker.charactersPresent.filter(record => !matches(record));
+        if (Array.isArray(tracker.relationships)) tracker.relationships = tracker.relationships.filter(record => !matches(record));
+        if (Array.isArray(tracker.witnesses)) tracker.witnesses = tracker.witnesses.filter(record => !matches(record));
+        return tracker;
+    }
+
+    // Relationship cards are compound source objects: showing only a name
+    // makes the vendored renderer synthesize an "unknown / ?" card. That is
+    // not a partially-live ScenePulse relationship; it is a broken fixture
+    // replacement. Keep the sealed, fully populated relationship support
+    // until Sidecar has supplied every source-visible relationship dimension,
+    // or has explicitly cleared/replaced the collection.
+    function hasCompleteSourceRelationshipProjection(value) {
+        if (!Array.isArray(value) || !value.length) return false;
+        const meterValue = meter => {
+            if (meter && typeof meter === 'object') return Number.isFinite(Number(meter.value ?? meter.score));
+            return Number.isFinite(Number(meter));
+        };
+        return value.some(record => plain(record)
+            && ['name', 'relType', 'relPhase', 'timeTogether', 'milestone'].every(key => String(record[key] || '').trim())
+            && ['affection', 'trust', 'desire', 'stress', 'compatibility'].every(key => meterValue(record[key]))
+            && ['affectionLabel', 'trustLabel', 'desireLabel', 'stressLabel', 'compatibilityLabel'].every(key => String(record[key] || '').trim()));
+    }
+
+    // `filterForView()` quite properly keeps the source roster and
+    // relationship cards in lockstep. During field-by-field adoption, a live
+    // Charlotte card plus a still-fixture relationship collection would
+    // otherwise cause that source invariant to manufacture a Charlotte
+    // "unknown" relationship and hide every populated tutorial card. Keep
+    // the fixture's matching character support in this *display* snapshot
+    // until a complete live relationship collection arrives. The raw accepted
+    // handoff stays untouched for Inspect and no Horde registry is involved.
+    function preserveFixtureRelationshipDisplaySupport(tracker, handoff) {
+        if (handoff?.status !== 'accepted_live' || nativeFieldHasAcceptedValue(handoff, 'relationships')) return tracker;
+        const fixture = stripControlledSourceRecords(clone(handoff?.fixtureScenePulse || {}));
+        const relationNames = new Set((Array.isArray(fixture.relationships) ? fixture.relationships : [])
+            .map(record => String(record?.name || '').trim().toLowerCase()).filter(Boolean));
+        if (!relationNames.size) return tracker;
+        const existing = new Set((Array.isArray(tracker.characters) ? tracker.characters : [])
+            .map(record => String(record?.name || '').trim().toLowerCase()).filter(Boolean));
+        const support = (Array.isArray(fixture.characters) ? fixture.characters : [])
+            .filter(record => relationNames.has(String(record?.name || '').trim().toLowerCase()))
+            .filter(record => !existing.has(String(record?.name || '').trim().toLowerCase()));
+        if (support.length) tracker.characters = [...(Array.isArray(tracker.characters) ? tracker.characters : []), ...clone(support)];
+        // This is already a deliberate source-compatible view: its fallback
+        // cards are paired with their populated fixture relationships, so the
+        // upstream filter must not discard them or invent empty stubs.
+        tracker._spViewFiltered = true;
+        return tracker;
+    }
+
+    function fixtureDisplaySupportFields(handoff) {
+        const fields = new Set();
+        if (handoff?.status !== 'accepted_live' || nativeFieldHasAcceptedValue(handoff, 'relationships')) return fields;
+        const fixtureRelationships = Array.isArray(handoff?.fixtureScenePulse?.relationships)
+            ? handoff.fixtureScenePulse.relationships : [];
+        if (fixtureRelationships.length) {
+            fields.add('relationships');
+            fields.add('characters');
+        }
+        return fields;
+    }
+
     // ScenePulse's fixture is a complete source tracker. Worlds declares the
     // scene-facing field families that a settled Sidecar packet may support,
     // but this function still adopts them one field at a time: omission or an
@@ -337,23 +439,24 @@
     // blanket "live mode" replacement and never reaches into a Horde registry.
     function materializeNativeTracker(handoff) {
         const fixture = clone(handoff?.fixtureScenePulse || handoff?.scenePulse || {});
-        if (handoff?.status === 'accepted_fixture') return fixture;
-        if (handoff?.status === 'accepted_human') return clone(handoff?.scenePulse || fixture);
+        if (handoff?.status === 'accepted_fixture') return stripControlledSourceRecords(fixture);
+        if (handoff?.status === 'accepted_human') return stripControlledSourceRecords(clone(handoff?.scenePulse || fixture));
         const authority = nativeFieldAuthority(handoff);
-        if (!authority.size) return fixture;
+        if (!authority.size) return stripControlledSourceRecords(fixture);
         const live = plain(handoff?.scenePulse) ? handoff.scenePulse : {};
         const clear = new Set([...(handoff?.clearFields || []), ...(live.clearFields || [])].map(String));
         const replace = new Set([...(handoff?.replaceCollections || []), ...(live.replaceCollections || [])].map(String));
         Object.entries(live).forEach(([key, value]) => {
             if (key === 'clearFields' || key === 'replaceCollections' || value === undefined || !authority.has(key)) return;
-            if (own(fixture, key) && !clear.has(key) && !replace.has(key) && !hasValue(value)) return;
+            if (own(fixture, key) && !clear.has(key) && !replace.has(key)
+                && (!hasValue(value) || (key === 'relationships' && !hasCompleteSourceRelationshipProjection(value)))) return;
             fixture[key] = clone(value);
         });
         clear.forEach(key => {
             if (key.includes('.') || !authority.has(key)) return;
             fixture[key] = emptyCollectionKeys.has(key) ? [] : '';
         });
-        return fixture;
+        return preserveFixtureRelationshipDisplaySupport(stripControlledSourceRecords(fixture), handoff);
     }
 
     function snapshotMeta(kind, handoff, index, extras = {}) {
@@ -536,7 +639,7 @@
         // ScenePulse's normalizer already knows how to omit the controlled
         // player from NPC relationship/character lists. Give it only an
         // explicit ScenePulse tracker role—not a Horde registry lookup.
-        const playerName = (nativeTracker.characters || []).find(character => /^(?:protagonist|player|user)$/i.test(String(character?.role || '').trim()))?.name || 'Player';
+        const playerName = declaredSourcePlayerName(handoff) || 'Player';
         const baseMetadata = clone(metadata);
         const baseSettings = clone(extensionSettings.scenepulse);
         const context = {
@@ -817,6 +920,30 @@
         return clone(snapshots[key] || {});
     }
 
+    // The native renderer is deliberately allowed to repair internally
+    // contradictory tracker values (for example, `desire: 10` alongside a
+    // `Platonic` label becomes zero in ScenePulse's own normalizer).  Every
+    // source surface has to receive that same resolved snapshot: the panel,
+    // Wiki, relationship Web, export, and source history must not disagree
+    // merely because one module walked the raw handoff while another used the
+    // source normalizer.  The raw Sidecar handoff remains on
+    // `current.sidecarTracker` for the on-demand comparison; this only makes
+    // the foreground ScenePulse product internally coherent.
+    function retainSourceNormalizedSnapshot(current, normalized) {
+        if (!current || !plain(normalized)) return clone(normalized || {});
+        const key = String(current.currentKey ?? '');
+        const snapshots = current.context?.chatMetadata?.scenepulse?.snapshots;
+        const baselineSnapshots = current.baseMetadata?.scenepulse?.snapshots;
+        if (!snapshots || !key) return clone(normalized);
+        const resolved = clone(normalized);
+        snapshots[key] = clone(resolved);
+        // Source preferences/save logic compares against this baseline.  Keep
+        // its presentation clone in lock-step so a source-normalizer repair
+        // can never be mistaken for a human ScenePulse edit.
+        if (baselineSnapshots && own(baselineSnapshots, key)) baselineSnapshots[key] = clone(resolved);
+        return resolved;
+    }
+
     function snapshotKeys(current) {
         return Object.keys(current?.context?.chatMetadata?.scenepulse?.snapshots || {})
             .map(Number).filter(Number.isFinite).sort((left, right) => left - right);
@@ -987,6 +1114,19 @@
         return `<details class="sp-horde-compare-value"><summary><small>${escapeHtml(source)}</small>${escapeHtml(summary)}</summary><pre>${escapeHtml(bounded)}</pre></details>`;
     }
 
+    // Keep the raw Sidecar packet inspectable, but recognize one deliberate
+    // source boundary in the comparison: ScenePulse renders the controlled
+    // person as the Web's centre, never as another scene/NPC card.  This does
+    // not reconcile arbitrary arrays or hide a substantive discrepancy. It
+    // applies only when removing an explicitly identified controlled record
+    // makes the two representations exactly equal.
+    function controlledPlayerBoundaryEquivalent(native, sidecar, key) {
+        if (!['characters', 'charactersPresent'].includes(String(key))) return false;
+        if (semanticEqual(native?.[key], sidecar?.[key])) return false;
+        const sourceCompatibleSidecar = stripControlledSourceRecords(clone(sidecar || {}));
+        return semanticEqual(native?.[key], sourceCompatibleSidecar?.[key]);
+    }
+
     function fieldHandoffReview(handoff, native, sidecar, key) {
         const same = semanticEqual(native[key], sidecar[key]);
         const scenePulseHas = own(native, key);
@@ -1002,6 +1142,13 @@
                 route: same ? 'Authored state agrees' : 'Authored state retained',
                 tone: same ? 'authored' : 'review',
                 reason: same ? 'The direct ScenePulse edit and the last accepted Sidecar state agree for this field.' : 'A direct ScenePulse edit is visible here; the prior Sidecar state remains alongside it until a later authored turn resolves the difference.'
+            };
+        }
+        if (controlledPlayerBoundaryEquivalent(native, sidecar, key)) {
+            return {
+                route: 'Source player centre',
+                tone: 'controlled-player',
+                reason: 'Sidecar retains its explicit controlled player in the raw handoff. ScenePulse renders that person as the Relationship Web anchor rather than an NPC card; the remaining source character records agree exactly.'
             };
         }
         const source = nativeFieldSource(handoff, key);
@@ -1133,10 +1280,21 @@
             return `<section class="sp-horde-graph-review is-scaffolded"><header><strong>NPC relationship web</strong><span>Source control retained</span></header><p>ScenePulse keeps its native relationship-web surface available. Sidecar has not supplied a settled graph for this visible character roster, so no canonical relationship state has been inferred or substituted.</p></section>`;
         }
         const cache = sourceRelationshipGraphCache(handoff, native);
+        const sourceRoster = [...new Set((Array.isArray(native?.characters) ? native.characters : [])
+            .map(character => String(character?.name || '').trim()).filter(Boolean))];
+        const playerName = declaredSourcePlayerName(handoff).toLowerCase();
+        const graphRoster = [...new Set((Array.isArray(graph.roster) ? graph.roster : [])
+            .map(name => String(name || '').trim()).filter(Boolean))];
+        const graphIncludesControlledPlayer = Boolean(playerName && graphRoster.some(name => name.toLowerCase() === playerName));
         const edgeCount = Array.isArray(graph.edges) ? graph.edges.length : 0;
         const organizationCount = Array.isArray(graph.organizations) ? graph.organizations.length : 0;
         const rosterCount = Array.isArray(graph.roster) ? graph.roster.length : 0;
-        return `<section class="sp-horde-graph-review ${cache ? 'is-ready' : 'is-scaffolded'}"><header><strong>NPC relationship web</strong><span>${cache ? 'Reader graph mounted' : 'Roster mapping held'}</span></header><p>${cache ? `The source web is displaying ${edgeCount} Reader-derived edge${edgeCount === 1 ? '' : 's'} across ${rosterCount} scene character${rosterCount === 1 ? '' : 's'}${organizationCount ? ` and ${organizationCount} organization${organizationCount === 1 ? '' : 's'}` : ''}. It remains a scene interpretation beside Horde, not a canonical relationship mutation.` : 'Sidecar supplied a graph packet, but ScenePulse is still showing a different or incomplete character roster. The graph stays withheld until that source field is supported; neither system is silently rewritten.'}</p><details><summary>Reader graph packet</summary><pre>${escapeHtml(JSON.stringify(compactValue(graph), null, 2))}</pre></details></section>`;
+        const heldReason = sourceRoster.length < 2
+            ? `This scene currently has ${sourceRoster.length} visible ScenePulse NPC${sourceRoster.length === 1 ? '' : 's'}. The controlled player is the Web anchor, not an NPC graph node, so ScenePulse will wait for a second visible NPC before mounting an NPC-to-NPC graph.`
+            : graphIncludesControlledPlayer
+                ? 'Sidecar’s graph packet still includes the controlled player. ScenePulse retains that raw packet here, but waits for an NPC-only roster before mounting it.'
+                : 'Sidecar supplied a graph packet, but ScenePulse is still showing a different or incomplete character roster. The graph stays withheld until that source field is supported; neither system is silently rewritten.';
+        return `<section class="sp-horde-graph-review ${cache ? 'is-ready' : 'is-scaffolded'}"><header><strong>NPC relationship web</strong><span>${cache ? 'Reader graph mounted' : sourceRoster.length < 2 ? 'Awaiting second NPC' : graphIncludesControlledPlayer ? 'Player excluded from NPC graph' : 'Roster mapping held'}</span></header><p>${cache ? `The source web is displaying ${edgeCount} Reader-derived edge${edgeCount === 1 ? '' : 's'} across ${rosterCount} scene character${rosterCount === 1 ? '' : 's'}${organizationCount ? ` and ${organizationCount} organization${organizationCount === 1 ? '' : 's'}` : ''}. It remains a scene interpretation beside Horde, not a canonical relationship mutation.` : heldReason}</p><details><summary>Reader graph packet</summary><pre>${escapeHtml(JSON.stringify(compactValue(graph), null, 2))}</pre></details></section>`;
     }
 
     function showComparison() {
@@ -1149,8 +1307,10 @@
         const keys = new Set([...Object.keys(native), ...Object.keys(sidecar)]);
         const reviews = [...keys].sort().map(key => {
             const same = semanticEqual(native[key], sidecar[key]);
-            const state = same ? 'agrees' : !own(sidecar, key) ? 'native-only' : !own(native, key) ? 'sidecar-only' : 'disagrees';
-            return { key, state, review: fieldHandoffReview(handoff, native, sidecar, key) };
+            const review = fieldHandoffReview(handoff, native, sidecar, key);
+            const state = same ? 'agrees' : review.tone === 'controlled-player' ? 'source-boundary'
+                : !own(sidecar, key) ? 'native-only' : !own(native, key) ? 'sidecar-only' : 'disagrees';
+            return { key, state, review };
         });
         const rows = reviews.map(({ key, state, review }) => {
             const source = nativeFieldSource(handoff, key);
@@ -1746,7 +1906,8 @@
         Object.entries(sections).forEach(([sectionKey, fields]) => {
             const section = panel.querySelector(`.sp-section[data-key="${sectionKey}"]`);
             if (!section) return;
-            const fallbackCount = fields.filter(field => nativeFieldSource(current.handoff, field) === 'example').length;
+            const fallbackCount = fields.filter(field => nativeFieldSource(current.handoff, field) === 'example'
+                || current.fixtureDisplaySupport?.has(field)).length;
             section.querySelector('.sp-horde-example-badge')?.remove();
             if (!fallbackCount) return;
             const header = section.querySelector('.sp-section-header');
@@ -2175,13 +2336,14 @@
         // Use the exact native snapshot key rather than a Horde turn index.
         modules.state?.setCurrentSnapshotMesIdx?.(Number(current.currentKey));
         modules.state?.setLastDeltaPayload?.(clone(current.handoff?.deltaScenePulse || null));
-        const normalized = modules.normalize.normalizeTracker(snapshot);
+        const normalized = retainSourceNormalizedSnapshot(current, modules.normalize.normalizeTracker(snapshot));
         applySourceDashboardDisplayGrammar(normalized);
         modules.updatePanel.updatePanel(normalized, true);
         modules.timeline.renderTimeline();
         modules.thoughts.updateThoughts(normalized);
-        current.nativeTracker = clone(snapshot);
+        current.nativeTracker = clone(normalized);
         current.selectedHandoff = handoffForCurrentSnapshot(current);
+        current.fixtureDisplaySupport = fixtureDisplaySupportFields(current.selectedHandoff || current.handoff);
         current.sidecarTracker = clone(current.selectedHandoff?.status === 'accepted_human'
             ? (current.handoff?.sidecarScenePulse || {})
             : (current.selectedHandoff?.scenePulse || {}));
