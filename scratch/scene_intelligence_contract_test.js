@@ -652,11 +652,15 @@ const readerEnvelopeSource = [
     graphNormalizer,
     normalizer,
     mergeSource,
-    merger
+    merger,
+    lastFunction('parseSidecarReaderOutput')
 ].join('\n');
-const customPanelEnvelope = vm.runInNewContext(`${readerEnvelopeSource}\n(() => {\n    const base = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: { scenePulse: { health: 40 } } });\n    const patch = normalizeSidecarReaderEnvelope({ mode: 'delta', changed_fields: ['scenePulse.health'], semantic_interpretation: { scenePulse: { health: 64 } } });\n    return { base, patch, merged: mergeSidecarReaderEnvelope(base, patch) };\n})()`, readerEnvelopeContext);
+readerEnvelopeContext.safeParseJSONRepair = raw => { try { return JSON.parse(String(raw)); } catch (_) { return null; } };
+const customPanelEnvelope = vm.runInNewContext(`${readerEnvelopeSource}\n(() => {\n    const base = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: { scenePulse: { health: 40 } } });\n    const patch = normalizeSidecarReaderEnvelope({ mode: 'delta', changed_fields: ['scenePulse.health'], semantic_interpretation: { scenePulse: { health: 64 } } });\n    const parsed = parseSidecarReaderOutput(JSON.stringify({ mode: 'full', semantic_interpretation: { scenePulse: { health: 64 } } }));\n    return { base, patch, merged: mergeSidecarReaderEnvelope(base, patch), parsed };\n})()`, readerEnvelopeContext);
 assert.equal(customPanelEnvelope.base.scenePulse.health, 40, 'a nested Sidecar full reading must retain a configured custom-panel field');
 assert.equal(customPanelEnvelope.patch.scenePulse.health, 64, 'a nested Sidecar custom-panel delta must retain its updated value');
 assert.equal(customPanelEnvelope.merged.scenePulse.health, 64, 'a compact Sidecar custom-panel delta must replace only its named accepted field');
+assert.equal(customPanelEnvelope.parsed.valid, true, 'a supported ScenePulse-only full reading must be accepted rather than discarded as empty');
+assert.equal(customPanelEnvelope.parsed.scenePulse.health, 64, 'parser acceptance must retain the ScenePulse custom-panel value it validated');
 
 console.log('ScenePulse native-source integration contract passed.');
