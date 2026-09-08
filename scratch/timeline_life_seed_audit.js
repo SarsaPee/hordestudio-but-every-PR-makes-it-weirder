@@ -4,7 +4,8 @@ const vm = require('node:vm');
 const { app, buildContext, functionSource } = require('./app_source.js');
 
 const context = { console };
-buildContext(vm, ['stableWorldRoll', 'lifeSeedSlug', 'chooseTimelineHome', 'fallbackTimelineLifePlan'], context);
+context.isPlainObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
+buildContext(vm, ['stableWorldRoll', 'lifeSeedSlug', 'livingClamp', 'chooseTimelineHome', 'authoredStartingRelationshipSeeds', 'fallbackTimelineLifePlan'], context);
 
 const world = {
     id: 'town', name: '2005 Suburbia', description: 'A suburban school life simulation.',
@@ -36,6 +37,22 @@ assert(/New Session Setup/.test(app), 'the old Session Zero name is still expose
 assert(/getTimelinePersona\(sess\)/.test(app), 'world narration still reads only the mutable global Persona');
 assert(/relationshipToPlayer/.test(functionSource('applyTimelineLifePlan')), 'seeded relationships are not committed as structured state');
 assert(/homeLocationId/.test(functionSource('applyTimelineLifePlan')), 'seeded home is not committed to player identity');
+assert(/const authoredHome = getLocationRef\(world, origin\?\.homeLocationId\)/.test(functionSource('applyTimelineLifePlan')), 'the model can still override an authored player home');
+assert(/authoredStartingRelationshipSeeds\(world, origin\)\.forEach/.test(functionSource('applyTimelineLifePlan')), 'authored relationships are not merged back over model output');
+
+world.groups = [{ id: 'family_mercer', name: 'Mercer Family', type: 'household' }];
+world.entities = [
+    { id: 'mara', name: 'Mara Mercer', type: 'npc', groupIds: ['family_mercer'] },
+    { id: 'alex', name: 'Alex Mercer', type: 'npc', groupIds: ['family_mercer'] }
+];
+const authored = context.authoredStartingRelationshipSeeds(world, {
+    householdId: 'family_mercer',
+    startingRelationships: [{ npcId: 'mara', label: 'mother', disposition: 91 }]
+});
+assert.equal(authored.length, 2, 'household members were left at the model’s mercy');
+assert.deepEqual({ id: authored[0].npc.id, label: authored[0].label, disposition: authored[0].disposition },
+    { id: 'mara', label: 'mother', disposition: 91 });
+assert.equal(authored[1].label, 'household member');
 
 console.log('✓ rich household resolution');
 console.log('✓ parent professions and workplace');
@@ -43,4 +60,5 @@ console.log('✓ persistent school social anchors');
 console.log('✓ timeline-scoped Persona selection');
 console.log('✓ structured home and relationship commit');
 console.log('✓ reversible New Session Setup dismissal');
-console.log('\n6 timeline life-seed audits passed.');
+console.log('✓ author-owned home, family, groups and relationships');
+console.log('\n7 timeline life-seed audits passed.');

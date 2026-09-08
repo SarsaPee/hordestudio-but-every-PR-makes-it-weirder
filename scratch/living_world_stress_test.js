@@ -6,7 +6,7 @@ const { performance } = require('node:perf_hooks');
 
 const appPath = path.join(__dirname, '..', 'app.js');
 const source = fs.readFileSync(appPath, 'utf8');
-const helperStart = source.indexOf('function livingClamp');
+const helperStart = source.indexOf('function isValidScheduleTime');
 const helperEnd = source.indexOf('function validateWorldReferences', helperStart);
 const actionsStart = source.indexOf('function processStructuredActions(args)');
 const actionsEnd = source.indexOf('// (removed: processAIActions', actionsStart);
@@ -119,8 +119,11 @@ const context = {
     renderWorldLocations() {}
 };
 vm.createContext(context);
+Object.assign(context, { livingClamp: require('../vh-simulation-core').livingClamp, livingId: require('../vh-simulation-core').livingId });
 vm.runInContext(source.slice(helperStart, helperEnd), context, { filename: 'living-world-helpers.js' });
 vm.runInContext(source.slice(actionsStart, actionsEnd), context, { filename: 'living-world-actions.js' });
+// Load the actual navigation dependencies instead of assuming schedules teleport.
+require('./app_source.js').buildContext(vm, ['worldForSession', 'findWorldTravelPath', 'getWorldPathTravelTime'], context);
 
 function makeWorld(locationCount = 3, npcCount = 3) {
     const locations = Array.from({ length: locationCount }, (_, index) => ({
@@ -421,12 +424,25 @@ function json(value) {
     assert.equal(sess.npcRelationships['npc_0|npc_1'].score, -25);
 
     // A story-created timeline override is honored even if authored schedules are disabled.
+    world.locations[2].exits.push('to Location 1');
     sess.entityStates.npc_0.location = 'loc_2';
     const scheduleResult = context.syncNPCSchedules(world, sess);
     assert.equal(sess.entityStates.npc_0.location, 'loc_1');
     assert.equal(scheduleResult.moves, 1);
     assert.equal(scheduleResult.active, 1);
     assert.equal(sess.livingWorldActivity.activeSchedules, 1);
+
+    context.processStructuredActions({
+        schedule_updates: [{
+            npc_id: 'npc_0', replace: true,
+            blocks: [
+                { time: '08:00', location_id: 'loc_1', activity: 'weekday shift', days: ['weekday'] },
+                { time: '08:00', location_id: 'loc_2', activity: 'weekend breakfast', days: ['weekend'] }
+            ]
+        }]
+    });
+    assert.equal(sess.npcScheduleOverrides.npc_0.length, 2,
+        'same-time routines on different days must not overwrite one another');
 }
 
 // Exact documented world limits: 2,000 locations, 5,000 NPCs, 500 events.

@@ -5,6 +5,7 @@ const { buildContext } = require('./app_source');
 
 const diagnostics = [];
 let fetchCalls = [];
+let needleOptions = null;
 let nextContent = JSON.stringify({
     signals: { warmth: 2, pressure: 0, vulnerability: 0, boundaryRespect: 1, urgency: 0, hostility: 0, reciprocity: 1 },
     messageKind: 'affection', evidence: 'missed you', confidence: 0.88
@@ -22,6 +23,19 @@ context.window = context;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync('labs-core.js', 'utf8'), context, { filename: 'labs-core.js' });
 vm.runInContext(fs.readFileSync('labs-tasks.js', 'utf8'), context, { filename: 'labs-tasks.js' });
+context.HordeLabsNeedle = {
+    async completeStructured(options) {
+        needleOptions = options;
+        return {
+            matched: true, confidence: 0.96,
+            candidate: {
+                actorId: 'player', intent: 'move', destinationId: 'guest_hall', targetId: '',
+                phase: 'completed', outfitOperation: 'none', outfitText: '', durationMinutes: 0,
+                evidence: 'I finally head to Guest Wing Hallway'
+            }
+        };
+    }
+};
 
 async function run() {
     const appSource = fs.readFileSync('app.js', 'utf8');
@@ -32,6 +46,11 @@ async function run() {
     assert.match(appSource, /labsProposal\('social_signal'[\s\S]+?'chat'/, 'Chat has an opt-in social-signal hook');
     assert.match(appSource, /labsProposal\('social_signal'[\s\S]+?'humans'/, 'Virtual Humans have an opt-in social-signal hook');
     assert.match(appSource, /requestWorldMicroFrame[\s\S]+?world_micro_frame/, 'Worlds has a Micro-capable semantic preflight');
+    assert.match(appSource, /explicitly named place[\s\S]+?addLocation\(resolveWorldContainmentParent/,
+        'the World Sensor prioritizes an explicitly named destination before dense child expansion');
+    const taskSource = fs.readFileSync('labs-tasks.js', 'utf8');
+    assert.match(taskSource, /world_micro_frame[\s\S]+?needleInput\(envelope\)[\s\S]+?rawText\.slice\(-380\)/,
+        'TinyBrain 2 receives a bounded complete capsule that preserves the player\'s final action');
     assert.match(appSource, /updateChatHudFromTurn/, 'Traditional and Labs chat HUD controllers are wired into completed turns');
     assert.match(appSource, /rerollHudBefore[\s\S]+?chatHudState/, 'Reroll restores the prior timeline HUD state');
     assert.match(htmlSource, /id="tab-hud"[\s\S]+?id="chat-status-col"|id="chat-status-col"[\s\S]+?id="tab-hud"/, 'Chat HUD authoring and right sidebar are present');
@@ -129,6 +148,24 @@ async function run() {
     assert.equal(result.accepted, true, 'unparseable Micro output degrades to a validated no-op');
     assert.equal(result.candidate.intent, 'other');
     assert.equal(result.candidate.confidence, 0);
+
+    const longPrefix = 'I discuss the paperwork with everyone in the lobby. '.repeat(28);
+    const finalAction = 'I finally head to Guest Wing Hallway';
+    Labs.configure({ enabled: true, runtime: 'needle', budget: 'responsive', needleConfidence: 0.85,
+        policies: { worlds: 'assist' } });
+    result = await Labs.propose('world_micro_frame', {
+        text: longPrefix + finalAction, currentLocationId: 'lobby', currentOutfit: '',
+        actors: [{ id: 'player', name: 'Player' }], allowedActorIds: ['player'], allowedTargetIds: ['player'],
+        locations: Array.from({ length: 16 }, (_, index) => ({
+            id: index === 0 ? 'guest_hall' : `room_${index}`,
+            name: index === 0 ? 'Guest Wing Hallway' : `Conference Room ${index}`
+        })),
+        allowedLocationIds: ['guest_hall', ...Array.from({ length: 15 }, (_, index) => `room_${index + 1}`)]
+    }, { mode: 'worlds' });
+    assert.equal(result.accepted, true);
+    assert(needleOptions.input.length <= 2200, 'TinyBrain capsule exceeded its runtime context');
+    assert(needleOptions.input.includes(finalAction), 'the final action was truncated from TinyBrain input');
+    assert(needleOptions.input.includes('guest_hall=Guest Wing Hallway'), 'the named destination was truncated from TinyBrain input');
 
     nextContent = JSON.stringify({
         events: [{ actorId: 'npc_unknown', kind: 'move', targetId: '', locationId: 'hall', phase: 'completed', evidence: 'walk out', confidence: .9 }],

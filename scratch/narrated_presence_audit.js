@@ -16,7 +16,7 @@ const { app, functionSource, buildContext } = require('./app_source.js');
 
 const context = { console: { warn() {}, log() {} } };
 buildContext(vm, [
-    'detectNarratedPresence', 'applyNarratedPresence',
+    'detectNarratedPresence', 'detectNarratedDepartures', 'applyNarratedPresence',
     'detectNarratedLocation', 'applyNarratedLocation',
     'detectNarratedOutfit', 'applyNarratedOutfit',
     'stripSpokenDialogue', 'isVisibleToSession', 'sessionNpcs', 'isNpcActive',
@@ -191,6 +191,44 @@ test('a person attribute places them; a possession does not', () => {
 test('an attribute is still vetoed by an elsewhere marker', () => {
     assert.deepEqual(detect("Emily's voice carries from downstairs."), [],
         'a voice from elsewhere was treated as presence');
+});
+
+test('recorded voices and images do not place a person in the room', () => {
+    assert.deepEqual(detect("Emily's voice plays on the answering machine."), []);
+    assert.deepEqual(detect('Emily appears in the photograph on the desk.'), []);
+    assert.deepEqual(detect('Emily looks tired on the video screen.'), []);
+});
+
+test('a later definite arrival outranks an earlier elsewhere mention', () => {
+    assert.deepEqual(detect('Emily is downstairs. A minute later, Emily steps into the hallway.'), ['Emily Carter']);
+});
+
+test('shared first names never pull multiple people into a scene', () => {
+    const world = makeWorld();
+    world.entities.push({ id: 'e_emily_2', name: 'Emily Stone', type: 'npc' });
+    const sess = makeSession();
+    sess.entityStates.e_emily_2 = { location: 'kitchen' };
+    assert.deepEqual(Array.from(context.detectNarratedPresence(world, sess, 'Emily steps into the hallway.')), [],
+        'an ambiguous first name teleported multiple people');
+    assert.deepEqual(Array.from(context.detectNarratedPresence(world, sess, 'Emily Carter steps into the hallway.'), hit => hit.id), ['e_emily']);
+});
+
+test('explicit departures are detected without treating possessions as movement', () => {
+    const world = makeWorld();
+    world.locations[0].exits = ['to Kitchen'];
+    world.locations[1].exits = ['to Upstairs Hallway'];
+    const sess = makeSession();
+    sess.entityStates.e_emily.location = 'hall';
+    assert.deepEqual(Array.from(context.detectNarratedDepartures(world, sess, 'Emily Carter walks out.'), hit => hit.id), ['e_emily']);
+    assert.deepEqual(Array.from(context.detectNarratedDepartures(world, sess, 'Emily leaves her bag beside you.')), []);
+});
+
+test('turn commits preserve position when a departure is missing its canonical event', () => {
+    const source = functionSource('commitWorldTurnReceipt');
+    assert(source.includes("detectNarratedPresence(world, sess, context.narrativeText, { includePinned: true })"));
+    assert(!source.includes('detectNarratedDepartures(world, sess, context.narrativeText)'));
+    assert(source.includes('validation.recoveredDepartures = []'));
+    assert(!source.includes('entState.location = hit.destinationId || null'));
 });
 
 // Following the prose to a location that exists -------------------------------

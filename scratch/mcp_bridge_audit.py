@@ -15,6 +15,68 @@ import horde_mcp_bridge as bridge
 
 
 class McpBridgeAudit(unittest.TestCase):
+    @mock.patch.object(bridge, "http_request", return_value=(200, {}, b""))
+    @mock.patch.object(bridge, "call_tool")
+    def test_magnific_local_reference_upload_and_finalize(self, call, put):
+        call.side_effect = [{"structuredContent":{"proxyUploadUrl":"https://upload.invalid/put", "path":"temporary/path"}}, {"structuredContent":{"identifier":"creation-ref", "status":"completed"}}]
+        source = {"mode":"test", "references":[{"type":"image", "identifier":"data:image/png;base64,aGVsbG8="}]}
+        prepared = bridge.prepare_magnific_references(source)
+        self.assertEqual(prepared["references"], [{"type":"image", "identifier":"creation-ref"}])
+        self.assertEqual(call.call_args_list[0].args[1], "creations_request_upload")
+        self.assertEqual(call.call_args_list[1].args[1], "creations_finalize_upload")
+        self.assertEqual(put.call_args.kwargs["method"], "PUT")
+        self.assertTrue(source["references"][0]["identifier"].startswith("data:"))
+
+    @mock.patch.object(bridge, "http_request", return_value=(500, {}, b""))
+    @mock.patch.object(bridge, "call_tool", return_value={"structuredContent":{"proxyUploadUrl":"https://upload.invalid/put", "path":"temporary/path"}})
+    def test_magnific_failed_upload_does_not_finalize(self, call, put):
+        with self.assertRaisesRegex(RuntimeError, "upload failed"):
+            bridge.prepare_magnific_references({"references":[{"type":"image", "identifier":"data:image/png;base64,aGVsbG8="}]})
+        self.assertEqual(call.call_count,1)
+
+    @mock.patch.object(bridge.time, "sleep")
+    @mock.patch.object(bridge, "call_tool")
+    def test_magnific_polls_creation_not_generation(self, call, _sleep):
+        call.side_effect = [{"content":[{"type":"text", "text":"status: processing"}]}, {"content":[{"type":"text", "text":"status: completed\nurl: https://output.invalid/image.png"}]}]
+        result = bridge.wait_magnific_image({"structuredContent":{"creation":{"identifier":"job","status":"pending"}}})
+        self.assertEqual(result["url"],"https://output.invalid/image.png")
+        self.assertTrue(all(c.args[1] == 'creations_get' for c in call.call_args_list))
+
+    @mock.patch.object(bridge, "ensure_mcp")
+    @mock.patch.object(bridge, "mcp_post")
+    def test_tool_catalog_paginates(self, post, _ensure):
+        post.side_effect = [({"tools": [{"name": "first"}], "nextCursor": "page2"}, {}), ({"tools": [{"name": "second"}]}, {})]
+        self.assertEqual([tool["name"] for tool in bridge.list_tools("higgsfield")], ["first", "second"])
+        self.assertEqual(post.call_args_list[1].args[1]["params"], {"cursor": "page2"})
+
+    @mock.patch.object(bridge, "download_image", return_value="output")
+    def test_generated_image_ignores_reference_echo(self, download):
+        result = {"structuredContent": {"results": [{"params": {"medias": [{"url": "https://reference.invalid/source.png"}]}, "results": {"rawUrl": "https://output.invalid/result.png"}}]}}
+        self.assertEqual(bridge.result_image(result)[0], "output")
+        download.assert_called_once_with("https://output.invalid/result.png")
+
+    @mock.patch.object(bridge, "list_tools", return_value=[{"name":"media_upload"}, {"name":"media_confirm"}])
+    @mock.patch.object(bridge, "http_request", return_value=(200, {}, b""))
+    @mock.patch.object(bridge, "call_tool")
+    def test_higgsfield_upload_confirm_precedes_generation(self, call, upload, _tools):
+        call.side_effect = [
+            {"structuredContent":{"uploads":[{"upload_url":"https://storage.invalid/upload", "media_id":"fixture-id"}]}},
+            {"structuredContent":{"results":[{"media_id":"fixture-id", "status":"confirmed"}]}}
+        ]
+        original = {"params":{"model":"fixture", "medias":[{"role":"image", "value":"data:image/png;base64,aGVsbG8="}]}}
+        prepared = bridge.prepare_higgsfield_references(original)
+        self.assertEqual(prepared["params"]["medias"][0]["value"], "fixture-id")
+        self.assertTrue(original["params"]["medias"][0]["value"].startswith("data:"))
+        self.assertEqual(upload.call_args.kwargs["method"], "PUT")
+        self.assertEqual(call.call_args_list[1].args[1], "media_confirm")
+
+    @mock.patch.object(bridge, "list_tools", return_value=[{"name":"jobs_wait"}])
+    @mock.patch.object(bridge, "call_tool", return_value={"structuredContent":{"all_terminal":True, "jobs":[{"status":"completed", "result_url":"https://output.invalid/result.png"}]}})
+    def test_pending_job_is_polled_without_resubmission(self, call, _tools):
+        result = bridge.wait_higgsfield_image({"structuredContent":{"results":[{"id":"job", "status":"queued"}]}})
+        self.assertTrue(result["all_terminal"])
+        self.assertEqual(call.call_args.args[1], "jobs_wait")
+
     @mock.patch.object(bridge, "safe_fal_url")
     @mock.patch.object(bridge, "json_request")
     def test_fal_content_policy_errors_are_typed_and_do_not_echo_inputs(self, request, _safe):

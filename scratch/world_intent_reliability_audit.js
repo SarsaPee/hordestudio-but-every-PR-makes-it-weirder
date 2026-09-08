@@ -67,6 +67,20 @@ test('movement after a first-person action still updates the canonical room', ()
     assert.equal(context.extractUserMovementTarget('I watch as Emily leaves the room'), '');
 });
 
+test('compound travel prose from the reported guest-wing case commits movement', () => {
+    const resort = {
+        locations: [
+            { id: 'main', name: 'Main Building', mapType: 'building', exits: ['to Guest Wing Hallway'] },
+            { id: 'guest_hall', name: 'Guest Wing Hallway', mapType: 'room', exits: ['to Main Building'] }
+        ]
+    };
+    const reported = 'I grab the key card and turn to Rolf "you should get in touch with the wedding planner for that" I shrug as I turn to head out to Guest Wing Hallway';
+    assert.equal(context.extractUserMovementTarget(reported), 'Guest Wing Hallway');
+    assert.equal(resolveMovement(resort, reported, 'main').target?.id, 'guest_hall');
+    assert.equal(resolveMovement(resort, "I'm walking to Guest Wing Hallway", 'main').target?.id, 'guest_hall');
+    assert.equal(resolveMovement(resort, 'I start to walk toward the Guest Wing Hallway', 'main').target?.id, 'guest_hall');
+});
+
 test('a pronoun cannot fuzzy-teleport the player past a later explicit destination', () => {
     const home = {
         locations: [

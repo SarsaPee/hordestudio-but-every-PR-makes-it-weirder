@@ -1,0 +1,84 @@
+{
+  "generatedAt": "2026-09-07T10:23:18.755Z",
+  "affect": {
+    "validExplicitDelta": {
+      "enabled": true,
+      "before": {
+        "valence": 0,
+        "emotionalActivation": 0,
+        "sexualArousal": 0
+      },
+      "after": {
+        "valence": 6,
+        "emotionalActivation": 8,
+        "sexualArousal": 12
+      },
+      "sanitizedSexualDelta": 12
+    },
+    "onlyEmotionalActivation": {
+      "enabled": true,
+      "before": {
+        "valence": 0,
+        "emotionalActivation": 0,
+        "sexualArousal": 0
+      },
+      "after": {
+        "valence": 6,
+        "emotionalActivation": 8,
+        "sexualArousal": 0
+      },
+      "sanitizedSexualDelta": null
+    },
+    "disabledSexualSystem": {
+      "enabled": false,
+      "before": {
+        "valence": 0,
+        "emotionalActivation": 0,
+        "sexualArousal": 0
+      },
+      "after": {
+        "valence": 6,
+        "emotionalActivation": 8,
+        "sexualArousal": 0
+      },
+      "sanitizedSexualDelta": 0
+    },
+    "zeroObserverTransaction": {
+      "enabled": true,
+      "before": {
+        "valence": 0,
+        "emotionalActivation": 0,
+        "sexualArousal": 0
+      },
+      "after": {
+        "valence": 0,
+        "emotionalActivation": 0,
+        "sexualArousal": 0
+      },
+      "sanitizedSexualDelta": 0
+    }
+  },
+  "transition": {
+    "before": "available",
+    "after": "asleep",
+    "pendingContact": null,
+    "messageCount": 1,
+    "latestLedger": [
+      {
+        "id": "vh_schedule_transition_sleeper_sleep_home_asleep_1788825600000",
+        "kind": "travel",
+        "summary": "Ada's routine advanced from reading at home to asleep at home.",
+        "createdAt": 1788825600000,
+        "costCalls": 0
+      }
+    ]
+  },
+  "delayedObserver": {
+    "sourceTimeline": "old",
+    "activeTimeline": "new",
+    "stateWriteTargets": [
+      "new"
+    ],
+    "newTimelineValence": 6
+  }
+}

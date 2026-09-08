@@ -10,3 +10,6 @@ assets/readme/horde-studio-v12-poster.png
 scratch/debug_*.js
 scratch/simulate.py
 scratch/verify_*.py
+
+# Optional platform-specific local Node runtime for VH background simulation
+runtime/

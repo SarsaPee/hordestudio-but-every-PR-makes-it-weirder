@@ -19,11 +19,14 @@ import hashlib
 import ipaddress
 import json
 import math
+import platform
 import mimetypes
 import os
 import re
 import secrets
 import socket
+import shutil
+import subprocess
 import stat
 import sys
 import threading
@@ -64,7 +67,7 @@ HOST = os.environ.get("HORDE_SERVER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("HORDE_SERVER_PORT", "43127"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
-BRIDGE_BUILD = "20260905-v173"
+BRIDGE_BUILD = "20260908-mcp-" + hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
 APP_INSTANCE_ID = hashlib.sha256(str(APP_DIR).encode("utf-8")).hexdigest()[:16]
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
 MAX_VIDEO_BYTES = 160 * 1024 * 1024
@@ -135,6 +138,10 @@ STATIC_FILES = {
     "/multiplayer.js": ("multiplayer.js", "text/javascript"),
     "/multiplayer-engine.js": ("multiplayer-engine.js", "text/javascript"),
     "/rpg-mechanics.js": ("rpg-mechanics.js", "text/javascript"),
+    "/vh-world-engine.js": ("vh-world-engine.js", "application/javascript"),
+    "/vh-simulation-core.js": ("vh-simulation-core.js", "application/javascript"),
+    "/vh-conversation-engine.js": ("vh-conversation-engine.js", "application/javascript"),
+    "/vh-activity-engine.js": ("vh-activity-engine.js", "text/javascript"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/worlds/policy-panic.horde_world": ("Policy Panic at Bramble and Pike.horde_world", "application/json"),
     "/Start%20Horde%20Studio.command": ("Start Horde Studio.command", "application/octet-stream"),
@@ -191,6 +198,7 @@ class AlwaysOnRuntime:
         self.usage_day = ""
         self.usage_count = 0
         self.in_flight: set[str] = set()
+        self.lease_generation = 0
         self.last_error = ""
         self.consecutive_failures = 0
         self._restore_queue()
@@ -262,11 +270,16 @@ class AlwaysOnRuntime:
             safe_headers = {str(k)[:100]: str(v)[:4000] for k, v in list(headers.items())[:30]}
             cleaned[human_id] = {
                 "id": human_id,
+                "simulation": raw.get("simulation") if isinstance(raw.get("simulation"), dict) else None,
+                "snapshotId": str(raw.get("snapshotId") or "")[:100],
+                "baseMessageIds": raw.get("baseMessageIds") if isinstance(raw.get("baseMessageIds"), list) else [],
+                "contextSize": max(1024, int(raw.get("contextSize") or 8192)),
                 "name": str(raw.get("name") or "Virtual Human")[:160],
                 "timelineId": str(raw.get("timelineId") or "")[:100],
                 "messagesEnabled": raw.get("messagesEnabled") is True,
                 "socialEnabled": raw.get("socialEnabled") is True,
                 "messageDueAt": max(0, int(raw.get("messageDueAt") or 0)),
+                "plannedMessageDueAt": max(0, int(raw.get("messageDueAt") or 0)),
                 "socialDueAt": max(0, int(raw.get("socialDueAt") or 0)),
                 "hasSpoken": raw.get("hasSpoken") is True,
                 "stateRevision": max(0, int(raw.get("stateRevision") or 0)),
@@ -283,6 +296,7 @@ class AlwaysOnRuntime:
                 "nextAllowedAt": max(0, int(raw.get("nextAllowedAt") or 0)),
             }
         with self.lock:
+            self.lease_generation += 1
             self.enabled = body.get("enabled") is True
             self.paused = body.get("paused") is True
             self.pause_reason = "paused by user" if self.paused else ""
@@ -313,6 +327,8 @@ class AlwaysOnRuntime:
                 "consecutiveFailures": self.consecutive_failures,
                 "queuePersistent": True,
                 "credentialsPersistent": False,
+                "sharedSimulation": bool(self._node_path()),
+                "simulationError": "" if self._node_path() else "Install Node.js 18+ or set HORDE_NODE_EXECUTABLE to enable closed-browser simulation.",
             }
 
     def pending_events(self, client_id: str) -> list[dict[str, Any]]:
@@ -355,6 +371,65 @@ class AlwaysOnRuntime:
                 with self.lock:
                     self.last_error = str(error)[:500]
 
+    def _node_path(self) -> str | None:
+        configured = os.environ.get("HORDE_NODE_EXECUTABLE")
+        if configured and Path(configured).is_file():
+            return configured
+        bundled = APP_DIR / "runtime" / f"{platform.system().lower()}-{platform.machine().lower()}" / ("node.exe" if os.name == "nt" else "node")
+        return str(bundled) if bundled.is_file() else shutil.which("node")
+
+    def _simulation(self, human: dict[str, Any], now_ms: int, commit: dict | None = None) -> dict | None:
+        snapshot = human.get("simulation")
+        if not isinstance(snapshot, dict):
+            return None
+        node = self._node_path()
+        if not node:
+            raise RuntimeError("Shared VH simulation needs Node.js 18+ (PATH or HORDE_NODE_EXECUTABLE).")
+        payload = {**snapshot, "now": now_ms, "commit": commit}
+        result = subprocess.run([node, str(APP_DIR / "vh-host-worker.js")],
+                                input=json.dumps(payload), text=True, capture_output=True, timeout=30, cwd=APP_DIR)
+        if result.returncode:
+            raise RuntimeError("Simulation failed: " + result.stderr[:300])
+        state = json.loads(result.stdout)
+        route = state.get("routeRequest")
+        if route and not commit:
+            try:
+                route_result = maps_request("route", route)
+            except Exception:
+                route_result = {}
+            # The shared worker validates journey identity and applies the
+            # fresh estimate; only the journey outcome is persisted, not a
+            # reusable provider route cache.
+            followup = {"companion": state["companion"], "messages": state["messages"],
+                        "experience": snapshot.get("experience", {}), "now": now_ms,
+                        "routeResult": {"id": route["id"], "result": route_result}}
+            routed = subprocess.run([node, str(APP_DIR / "vh-host-worker.js")],
+                                    input=json.dumps(followup), text=True, capture_output=True, timeout=30, cwd=APP_DIR)
+            if routed.returncode:
+                raise RuntimeError("Route application failed in shared simulation.")
+            state = json.loads(routed.stdout)
+
+        human["simulation"] = {"companion": state["companion"], "messages": state["messages"],
+                               "experience": snapshot.get("experience", {})}
+        human["allowOpening"] = bool(state.get("openingDueAt"))
+        human["pendingIds"] = state["pendingIds"]
+        human["replyIds"] = state["replyIds"]
+        human["present"] = state["present"]
+        human["dialogueGuidance"] = state.get("dialogueGuidance", "")
+        human["feeling"] = state["feeling"]
+        if state["pendingIds"]:
+            human["messageDueAt"] = now_ms if state["due"] else 0
+            human["hasSpoken"] = True
+        elif not state["available"]:
+            human["messageDueAt"] = 0
+        elif state.get("openingDueAt"):
+            human["messageDueAt"] = state["openingDueAt"]
+        elif state.get("followupDueAt"):
+            human["messageDueAt"] = state["followupDueAt"]
+        elif not human.get("messageDueAt"):
+            human["messageDueAt"] = human.get("plannedMessageDueAt", 0)
+        return state
+
     def _tick(self) -> None:
         now_ms = int(time.time() * 1000)
         candidate: tuple[str, str, dict[str, Any]] | None = None
@@ -366,22 +441,25 @@ class AlwaysOnRuntime:
             for human_id, human in self.humans.items():
                 if human_id in self.in_flight or now_ms < int(human.get("nextAllowedAt") or 0):
                     continue
-                if human.get("messagesEnabled") and human.get("hasSpoken") and 0 < human.get("messageDueAt", 0) <= now_ms:
+                if human.get("simulation"):
+                    self._simulation(human, now_ms)
+                if human.get("messagesEnabled") and (human.get("hasSpoken") or human.get("allowOpening")) and 0 < human.get("messageDueAt", 0) <= now_ms:
                     candidate = (human_id, "message", dict(human)); break
-                if human.get("socialEnabled") and 0 < human.get("socialDueAt", 0) <= now_ms:
+                if human.get("socialEnabled") and (not human.get("simulation") or human.get("present", {}).get("availability") == "available") and 0 < human.get("socialDueAt", 0) <= now_ms:
                     candidate = (human_id, "social_status", dict(human)); break
             if not candidate:
                 return
+            generation = self.lease_generation
             self.in_flight.add(candidate[0])
         human_id, kind, human = candidate
         try:
             result = self._generate(human, kind)
             next_minutes = max(self.minimum_minutes, min(1440, int(result.get("next_check_minutes") or self.minimum_minutes)))
             with self.lock:
-                lease_reclaimed = (time.time() - self.last_heartbeat) < self.handoff_seconds
+                lease_reclaimed = generation != self.lease_generation or (time.time() - self.last_heartbeat) < self.handoff_seconds
                 agency_paused = self.paused
                 live = self.humans.get(human_id)
-                if live:
+                if live and not lease_reclaimed:
                     live["nextAllowedAt"] = now_ms + next_minutes * 60000
                     live["messageDueAt" if kind == "message" else "socialDueAt"] = now_ms + next_minutes * 60000
                 self.usage_count += 1
@@ -392,13 +470,30 @@ class AlwaysOnRuntime:
                 # The user may reopen Horde Studio while a provider request is
                 # already in flight. The browser immediately regains authority;
                 # discarding this late result prevents a duplicated reply.
-                if not lease_reclaimed and not agency_paused and decision == kind and text:
+                if not lease_reclaimed and not agency_paused and self.enabled and live is not None and decision == kind and text:
                     event_id = f"always_{secrets.token_hex(12)}"
+                    consumed = list(human.get("replyIds") or []) if kind == "message" else []
+                    snapshot = self._simulation(human, now_ms, {"state": result.get("state") or {}, "text": text} if kind == "message" else None) if human.get("simulation") else None
+                    if snapshot:
+                        for message in human["simulation"]["messages"]:
+                            if message.get("id") in consumed:
+                                message.update({"awaitingReply": False, "replyDueAt": 0, "readAt": now_ms, "deliveryState": "read"})
+                        if kind == "message":
+                            human["simulation"]["messages"].append({"id": event_id, "role": "companion", "type": "text", "text": text, "timestamp": now_ms})
+                        live["simulation"] = human["simulation"]
+                        # At most one outstanding transaction per snapshot.
+                        live["messagesEnabled"] = False
+                        live["socialEnabled"] = False
                     self.events[event_id] = {
                         "id": event_id, "kind": kind, "humanId": human_id,
                         "timelineId": human.get("timelineId", ""), "text": text,
                         "createdAt": now_ms, "reason": str(result.get("reason") or "")[:500],
-                        "stateRevision": human.get("stateRevision", 0)
+                        "stateRevision": human.get("stateRevision", 0),
+                        "snapshotId": human.get("snapshotId", ""),
+                        "baseMessageIds": human.get("baseMessageIds", []),
+                        "consumedMessageIds": consumed,
+                        "affectCommitted": bool(snapshot and snapshot.get("affectCommitted")),
+                        "simulation": human.get("simulation") if snapshot else None
                     }
                 self._persist_queue()
         except Exception as error:
@@ -421,7 +516,7 @@ class AlwaysOnRuntime:
         provider = human["provider"]
         if not provider.get("model"):
             raise RuntimeError("No text model was selected.")
-        purpose = ("Decide whether to send one natural autonomous text message now."
+        purpose = ("Reply naturally to the pending player messages. Continue the actual conversation; do not merely comment on it." if kind == "message" and human.get("pendingIds") else "Decide whether to send one natural autonomous text message now."
                    if kind == "message" else
                    "Decide whether to publish one short text-only social status now.")
         system = (
@@ -430,11 +525,19 @@ class AlwaysOnRuntime:
             " The only valid reason for acting now is: " + str(human.get("initiativeReason") or "none supplied") + ". "
             "Return JSON only: {\"decision\":\"" + kind + "|none\",\"text\":\"...\","
             "\"reason\":\"brief private reason\",\"next_check_minutes\":120}. "
-            "Choosing none is correct when contact would feel forced.\n\n" + human.get("context", "")
+            "For a real pending reply, answer it unless your boundaries require taking space. Choosing none is correct when autonomous contact would feel forced. "
+            "Also return state with evidence-backed valence_change, arousal_change, mood_label, relationship_change, and optional conversation (topic, openQuestion, status, intention, optional reaction with summary, exact evidence quote from the current player message, lingerMinutes 5-360, and optional engagement 0-100 reflecting interest in continuing this exchange, not affection or agreement). A reaction is a temporary subjective impression, never a new fact or a second emotional adjustment. Zero affect is valid.\n\n" + human.get("context", "")
+            + ("\n\n" + human.get("dialogueGuidance", "") if kind == "message" else "")
+            + "\n\nCURRENT SIMULATION (supersedes earlier time/activity): " + json.dumps({"present": human.get("present"), "feeling": human.get("feeling")})
         )
         recent = []
-        for item in human.get("recentMessages", [])[-24:]:
+        source = human.get("simulation", {}).get("messages", human.get("recentMessages", []))
+        for item in source[-24:]:
             if not isinstance(item, dict):
+                continue
+            if item.get("invalidated") or item.get("role") not in ("user", "companion"):
+                continue
+            if human.get("simulation") and item.get("role") == "user" and item.get("awaitingReply") and item.get("id") not in human.get("replyIds", []):
                 continue
             role = "assistant" if item.get("role") == "companion" else "user"
             text = str(item.get("text") or "")[:1000]
@@ -446,6 +549,13 @@ class AlwaysOnRuntime:
             "model": provider["model"], "messages": [{"role": "system", "content": system}, *recent],
             "temperature": provider["temperature"], "max_tokens": provider["maxTokens"]
         }
+        if human.get("simulation"):
+            fitted = subprocess.run([self._node_path(), str(APP_DIR / "vh-host-worker.js")],
+                                    input=json.dumps({"request": payload, "contextSize": human.get("contextSize", 8192)}),
+                                    text=True, capture_output=True, timeout=30, cwd=APP_DIR)
+            if fitted.returncode:
+                raise RuntimeError(fitted.stderr[:500])
+            payload = json.loads(fitted.stdout)["body"]
         status, _, data = json_request(provider["baseUrl"] + "/chat/completions", method="POST",
                                        headers={"Content-Type": "application/json", **provider["headers"]},
                                        payload=payload, timeout=120)
@@ -456,10 +566,10 @@ class AlwaysOnRuntime:
                    if isinstance(data, dict) else "")
         if isinstance(content, list):
             content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
-        match = re.search(r"\{[\s\S]*\}", str(content or ""))
-        if not match:
-            raise RuntimeError("Background model did not return JSON.")
-        parsed = json.loads(match.group(0))
+        value = str(content or "").strip()
+        if value.startswith("```") and value.endswith("```"):
+            value = value.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {"decision": "none"}
 
 
@@ -1120,6 +1230,134 @@ def json_request(
         return status, response_headers, {"raw": raw.decode("utf-8", "replace")}
 
 
+def maps_key(provider="google"):
+    settings = load_store().get("maps", {})
+    field, env = ("orsKey", "OPENROUTESERVICE_API_KEY") if provider == "openrouteservice" else ("googleKey", "GOOGLE_MAPS_API_KEY")
+    return str(settings.get(field, "") or os.environ.get(env, "")).strip()
+
+
+def maps_settings_status():
+    settings = load_store().get("maps", {})
+    saved = bool(settings.get("googleKey"))
+    ors_saved = bool(settings.get("orsKey"))
+    return {"configured": bool(maps_key()), "source": "settings" if saved else "environment" if maps_key() else "none",
+            "provider": settings.get("provider", "google"), "orsConfigured": bool(maps_key("openrouteservice")),
+            "orsSource": "settings" if ors_saved else "environment" if maps_key("openrouteservice") else "none"}
+
+
+def update_maps_settings(body):
+    with store_lock:
+        value = load_store()
+        settings = value.setdefault("maps", {})
+        if "provider" in body:
+            if body["provider"] not in {"google", "openrouteservice"}:
+                raise ValueError("Unknown maps provider.")
+            settings["provider"] = body["provider"]
+        for field, remove in (("googleKey", "remove"), ("orsKey", "removeOrs")):
+            if body.get(remove) is True:
+                settings.pop(field, None)
+            elif field in body:
+                key = str(body[field]).strip()
+                if key:
+                    if len(key) > 1000 or not re.fullmatch(r"[A-Za-z0-9_.=+/-]+", key):
+                        raise ValueError("Invalid API key format.")
+                    settings[field] = key
+        save_store(value)
+    return maps_settings_status()
+
+
+def maps_request(action, body):
+    provider = body.get("provider") or load_store().get("maps", {}).get("provider", "google")
+    if provider == "openrouteservice":
+        return openroute_request(action, body)
+    if provider != "google":
+        raise ValueError("Unknown maps provider.")
+    return {**google_maps_request(action, body), "provider": "google", "attribution": "Google Maps"}
+
+
+def maps_coordinates(value):
+    if not isinstance(value, list) or len(value) != 2 or any(isinstance(v, bool) or not isinstance(v, (float, int)) for v in value):
+        raise ValueError("Select coordinates for both places using openrouteservice search, or enter longitude and latitude.")
+    lon, lat = value
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+        raise ValueError("Coordinates are outside the supported range.")
+    return [lon, lat]
+
+
+def openroute_request(action, body):
+    key = maps_key("openrouteservice")
+    if not key:
+        raise ValueError("Add an openrouteservice key in Settings → Connections → Maps & places.")
+    headers = {"Authorization": key}
+    attribution = "openrouteservice / © OpenStreetMap contributors"
+    if action == "search":
+        query = str(body.get("query", "")).strip()
+        if not query or len(query) > 300:
+            raise ValueError("Enter a place and city (maximum 300 characters).")
+        url = "https://api.heigit.org/pelias/v1/search?" + urllib.parse.urlencode({"text": query, "size": 5})
+        status, _, result = json_request(url, "GET", headers, timeout=12)
+    elif action == "route":
+        profiles = {"WALK": "foot-walking", "BICYCLE": "cycling-regular", "DRIVE": "driving-car", "RIDESHARE": "driving-car"}
+        mode = body.get("mode", "WALK")
+        if mode not in profiles:
+            raise ValueError("openrouteservice does not support transit here. Use authored transit times or select Google explicitly.")
+        coords = [maps_coordinates(body.get("originCoordinates")), maps_coordinates(body.get("destinationCoordinates"))]
+        url = "https://api.heigit.org/openrouteservice/v2/directions/" + profiles[mode] + "/json"
+        status, _, result = json_request(url, "POST", headers, {"coordinates": coords, "instructions": False, "geometry": False}, timeout=12)
+    else:
+        raise ValueError("Unknown maps operation.")
+    if status >= 400:
+        raise ValueError(f"openrouteservice request failed ({status}). Check the key, service access and quota.")
+    if action == "search":
+        places = []
+        for feature in result.get("features", [])[:5]:
+            try:
+                coords = maps_coordinates(feature.get("geometry", {}).get("coordinates"))
+            except ValueError:
+                continue
+            props = feature.get("properties", {})
+            places.append({"id": str(props.get("gid", "")), "displayName": {"text": str(props.get("name", props.get("label", "Place")))[:300]},
+                           "formattedAddress": str(props.get("label", ""))[:500], "coordinates": coords})
+        return {"provider": "openrouteservice", "attribution": attribution, "places": places}
+    routes = []
+    for route in result.get("routes", [])[:1]:
+        summary = route.get("summary", {})
+        duration, distance = summary.get("duration"), summary.get("distance")
+        if isinstance(duration, (int, float)) and 0 < duration <= 86400 and isinstance(distance, (int, float)) and distance >= 0:
+            routes.append({"duration": f"{duration}s", "distanceMeters": distance})
+    return {"provider": "openrouteservice", "attribution": attribution, "routes": routes}
+
+
+def google_maps_request(action, body):
+    """Explicit, read-only Maps calls. Key stays in the launcher's environment."""
+    key = maps_key()
+    if not key:
+        raise ValueError("Add a Google Maps key in Settings → Connections → Maps & places. Enable Places API (New) and Routes API.")
+    if action == "search":
+        query = str(body.get("query", "")).strip()
+        if not query or len(query) > 300:
+            raise ValueError("Enter a place and city (maximum 300 characters).")
+        url = "https://places.googleapis.com/v1/places:searchText"
+        payload = {"textQuery": query, "pageSize": 5}
+        fields = "places.id,places.displayName,places.formattedAddress"
+    elif action == "route":
+        origin, destination = str(body.get("origin", "")), str(body.get("destination", ""))
+        mode = body.get("mode", "WALK")
+        if not all(re.fullmatch(r"[A-Za-z0-9_-]{1,300}", v) for v in (origin, destination)):
+            raise ValueError("Select both Google places first.")
+        if mode not in {"WALK", "DRIVE", "BICYCLE", "TRANSIT"}:
+            raise ValueError("Unsupported travel mode.")
+        url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+        payload = {"origin": {"placeId": origin}, "destination": {"placeId": destination}, "travelMode": mode}
+        fields = "routes.duration,routes.distanceMeters"
+    else:
+        raise ValueError("Unknown Maps operation.")
+    status, _, result = json_request(url, "POST", {"X-Goog-Api-Key": key, "X-Goog-FieldMask": fields}, payload, timeout=12)
+    if status >= 400:
+        raise ValueError(f"Google Maps request failed ({status}). Check API enablement, billing and key restrictions.")
+    return result
+
+
 def parse_www_authenticate(value: str) -> str:
     match = re.search(r'(?:resource_metadata|resource_metadata_url)="([^"]+)"', value or "", re.I)
     return match.group(1) if match else ""
@@ -1387,12 +1625,25 @@ def ensure_mcp(provider_id: str) -> None:
 
 def list_tools(provider_id: str) -> list[dict[str, Any]]:
     ensure_mcp(provider_id)
-    result, _ = mcp_post(provider_id, {
-        "jsonrpc": "2.0", "id": secrets.randbelow(1_000_000),
-        "method": "tools/list", "params": {},
-    }, 60)
-    tools = result.get("tools") or []
-    return tools if isinstance(tools, list) else []
+    tools = []
+    cursor = None
+    seen = set()
+    for _ in range(100):
+        result, _ = mcp_post(provider_id, {
+            "jsonrpc": "2.0", "id": secrets.randbelow(1_000_000),
+            "method": "tools/list", "params": {"cursor": cursor} if cursor else {},
+        }, 60)
+        page = result.get("tools") or []
+        if not isinstance(page, list):
+            raise RuntimeError("The MCP server returned an invalid tool catalog.")
+        tools.extend(page)
+        cursor = result.get("nextCursor")
+        if not cursor:
+            return list({tool["name"]: tool for tool in tools if isinstance(tool, dict) and tool.get("name")}.values())
+        if cursor in seen:
+            raise RuntimeError("The MCP tool catalog repeated its pagination cursor.")
+        seen.add(cursor)
+    raise RuntimeError("The MCP tool catalog exceeded the pagination limit.")
 
 
 def call_tool(provider_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1407,6 +1658,173 @@ def call_tool(provider_id: str, name: str, arguments: dict[str, Any]) -> dict[st
     return result
 
 
+def mcp_result_data(result: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(result.get("structuredContent"), dict):
+        return result["structuredContent"]
+    for item in result.get("content", []):
+        if isinstance(item, dict) and item.get("type") == "text":
+            try:
+                data = json.loads(item.get("text", ""))
+                if isinstance(data, dict):
+                    return data
+            except (ValueError, TypeError):
+                pass
+    return result
+
+
+def mcp_generated_values(value: Any):
+    # Request echoes contain source images, thumbnails and documentation links.
+    # They must never be mistaken for the paid output.
+    if isinstance(value, dict):
+        yield value
+        for key, child in value.items():
+            if key not in {"params", "arguments", "input", "inputs", "references", "medias", "reference_images", "input_images"}:
+                yield from mcp_generated_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from mcp_generated_values(child)
+
+
+def prepare_higgsfield_references(arguments: dict[str, Any]) -> dict[str, Any]:
+    arguments = json.loads(json.dumps(arguments))
+    params = arguments.get("params", arguments)
+    for media in params.get("medias", []):
+        value = media.get("value", "")
+        if not isinstance(value, str) or not value.startswith("data:"):
+            continue
+        match = re.fullmatch(r"data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)", value)
+        if not match:
+            raise ValueError("Reference must be a PNG, JPEG or WebP data image.")
+        content = base64.b64decode(match[2], validate=True)
+        if not content or len(content) > 20 * 1024 * 1024:
+            raise ValueError("Reference must be between 1 byte and 20 MiB.")
+        available = {tool["name"] for tool in list_tools("higgsfield")}
+        def operation(name):
+            return next((key for key in (name, "higgsfield_" + name) if key in available), None)
+        upload, confirm = operation("media_upload"), operation("media_confirm")
+        if not upload or not confirm:
+            raise RuntimeError("This Higgsfield connection does not advertise local reference upload. No generation was submitted.")
+        slot = mcp_result_data(call_tool("higgsfield", upload, {
+            "filename": "identity-reference." + match[1].split("/")[1], "content_type": match[1], "method": "upload_url"
+        }))
+        entries = slot.get("uploads") or []
+        if not entries or slot.get("error"):
+            raise RuntimeError("Higgsfield did not provide a reference upload slot.")
+        entry = entries[0]
+        url, media_id = entry.get("upload_url", ""), entry.get("media_id", "")
+        if not url.startswith("https://") or not media_id:
+            raise RuntimeError("Higgsfield returned an invalid reference upload slot.")
+        status, _, _ = http_request(url, method="PUT", headers={"Content-Type": match[1]}, body=content)
+        if not 200 <= status < 300:
+            raise RuntimeError("Higgsfield reference upload failed; no generation was submitted.")
+        confirmed = mcp_result_data(call_tool("higgsfield", confirm, {"media_id": media_id, "type": "image"}))
+        if confirmed.get("error") or not any(item.get("media_id") == media_id for item in confirmed.get("results", [])):
+            raise RuntimeError("Higgsfield did not confirm the reference; no generation was submitted.")
+        media["value"] = media_id
+    return arguments
+
+
+def prepare_magnific_references(arguments: dict[str, Any]) -> dict[str, Any]:
+    arguments = json.loads(json.dumps(arguments))
+    for reference in arguments.get("references", []):
+        value = reference.get("identifier", "")
+        if reference.get("type") != "image" or not isinstance(value, str):
+            continue
+        if value.startswith("https://"):
+            uploaded = mcp_result_data(call_tool("magnific", "creations_upload_image", {"url": value}))
+        elif value.startswith("data:"):
+            match = re.fullmatch(r"data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)", value)
+            if not match:
+                raise ValueError("Magnific references must be PNG, JPEG or WebP images.")
+            content = base64.b64decode(match[2], validate=True)
+            if not content or len(content) > 25 * 1024 * 1024:
+                raise ValueError("Magnific references must be between 1 byte and 25 MiB.")
+            slot = mcp_result_data(call_tool("magnific", "creations_request_upload", {"mimeType": match[1]}))
+            if slot.get("uploads"):
+                slot = slot["uploads"][0]
+            url, path = slot.get("proxyUploadUrl", ""), slot.get("path", "")
+            if not url.startswith("https://") or not path or slot.get("error"):
+                raise RuntimeError("Magnific did not return a valid reference upload slot; generation was not submitted.")
+            status, _, _ = http_request(url, method="PUT", headers={"Content-Type": match[1]}, body=content)
+            if not 200 <= status < 300:
+                raise RuntimeError("Magnific reference upload failed; generation was not submitted.")
+            uploaded = mcp_result_data(call_tool("magnific", "creations_finalize_upload", {"path": path, "visible": False}))
+        else:
+            continue  # Already a provider creation identifier.
+        identifier = uploaded.get("identifier")
+        if not identifier or uploaded.get("error") or uploaded.get("errorCount"):
+            raise RuntimeError("Magnific did not finalize the reference; generation was not submitted.")
+        reference["identifier"] = identifier
+    return arguments
+
+
+def magnific_creation_fields(result: dict[str, Any]) -> dict[str, Any]:
+    data = mcp_result_data(result)
+    if isinstance(data.get("creation"), dict):
+        return data["creation"]
+    if data.get("url") or data.get("status") or data.get("error"):
+        return data
+    # creations_get can return the same lean text format as the model catalog.
+    fields = {}
+    for item in result.get("content", []):
+        if item.get("type") != "text":
+            continue
+        for line in item.get("text", "").splitlines():
+            match = re.fullmatch(r'\s*(url|status|identifier): (.+)', line)
+            if match:
+                try:
+                    fields[match[1]] = json.loads(match[2])
+                except ValueError:
+                    fields[match[1]] = match[2]
+    return fields
+
+
+def wait_magnific_image(result: dict[str, Any]) -> dict[str, Any]:
+    data = mcp_result_data(result)
+    if data.get("error"):
+        raise RuntimeError(str(data["error"]))
+    creations = data.get("creations") or ([data["creation"]] if data.get("creation") else [])
+    identifiers = [item["identifier"] for item in creations if isinstance(item, dict) and item.get("identifier")]
+    if not identifiers:
+        raise RuntimeError("Magnific returned no creation identifier. Check the provider before retrying.")
+    # The VH photo slot displays one image. Keep all submitted IDs in errors.
+    deadline = time.monotonic() + 270
+    while time.monotonic() < deadline:
+        creation = magnific_creation_fields(call_tool("magnific", "creations_get", {"creationIdentifier": identifiers[0]}))
+        status = str(creation.get("status", "")).lower()
+        if creation.get("error") or status in {"failed", "error", "cancelled", "canceled", "rejected"}:
+            raise RuntimeError(f"Magnific creation {identifiers[0]} failed. Check the provider for details.")
+        url = creation.get("url")
+        if isinstance(url, str) and url.startswith("https://") and status not in {"pending", "queued", "processing", "in_progress", "generating"}:
+            return {"url": url}
+        time.sleep(2)
+    raise RuntimeError("Magnific generation is still pending: " + ", ".join(identifiers) + ". Check the provider before resubmitting.")
+
+
+def wait_higgsfield_image(result: dict[str, Any]) -> dict[str, Any]:
+    data = mcp_result_data(result)
+    if data.get("error") or data.get("unlim_choice"):
+        raise RuntimeError(str(data.get("error") or data["unlim_choice"].get("message") or "Choose a billing balance in the tool settings."))
+    jobs = data.get("results") or []
+    pending = [job for job in jobs if isinstance(job, dict) and job.get("id") and job.get("status") not in {"completed", "failed", "canceled", "nsfw", "ip_detected"}]
+    if not pending:
+        return data
+    names = {tool["name"] for tool in list_tools("higgsfield")}
+    waiter = next((name for name in ("jobs_wait", "higgsfield_jobs_wait") if name in names), None)
+    if not waiter:
+        raise RuntimeError("Generation was submitted but is still pending. This connection has no supported job-status tool; do not resubmit blindly.")
+    for _ in range(18):
+        data = mcp_result_data(call_tool("higgsfield", waiter, {
+            "jobs": [{"index": index, "job_id": job["id"]} for index, job in enumerate(pending[:8])], "timeout_seconds": 15
+        }))
+        if data.get("error"):
+            raise RuntimeError(str(data["error"]))
+        if data.get("all_terminal"):
+            return data
+        time.sleep(min(2, max(0.25, float(data.get("poll_after_seconds") or 1))))
+    raise RuntimeError("Generation is still pending at Higgsfield. Check the provider before resubmitting.")
+
+
 def walk_values(value: Any):
     if isinstance(value, dict):
         yield value
@@ -1419,13 +1837,14 @@ def walk_values(value: Any):
 
 def result_image(result: dict[str, Any]) -> tuple[str, str]:
     download_candidates: list[str] = []
-    for item in walk_values(result):
+    result = mcp_result_data(result)
+    for item in mcp_generated_values(result):
         item_type = str(item.get("type", "")).lower()
         data = item.get("data")
         mime = str(item.get("mimeType") or item.get("mime_type") or "")
         if item_type == "image" and isinstance(data, str) and data:
             return f"data:{mime or 'image/png'};base64,{data}", "embedded"
-        for key in ("url", "uri", "image_url", "imageUrl", "download_url", "downloadUrl"):
+        for key in ("rawUrl", "result_url", "url", "uri", "image_url", "imageUrl", "download_url", "downloadUrl"):
             candidate = item.get(key)
             if isinstance(candidate, str) and re.match(r"^https?://", candidate):
                 download_candidates.append(candidate)
@@ -2818,9 +3237,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
         try:
             if self.serve_app_file(parsed.path):
                 return
+            if parsed.path == "/maps/settings":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Maps settings are loopback-only."})
+                return self.respond(200, maps_settings_status())
             if parsed.path == "/health":
                 return self.respond(200, {"ok": True, "service": "Horde Studio MCP Bridge", "version": 2,
                                           "build": BRIDGE_BUILD, "appInstance": APP_INSTANCE_ID,
+                                          "capabilities": {"magnificReferenceImport": 1},
                                           "alwaysOn": always_on_runtime.status(),
                                           "multiplayer": {"running": bool(multiplayer_runtime.server),
                                                           "port": multiplayer_runtime.port,
@@ -2872,6 +3296,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         try:
             parsed_path = urllib.parse.urlparse(self.path).path
+            if parsed_path == "/maps/settings":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Maps settings are loopback-only."})
+                return self.respond(200, update_maps_settings(self.read_json()))
+            if parsed_path in {"/maps/search", "/maps/route"}:
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Maps access is loopback-only."})
+                return self.respond(200, maps_request(parsed_path.rsplit("/", 1)[-1], self.read_json()))
             if parsed_path == "/shutdown":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Server shutdown is loopback-only."})
@@ -3025,8 +3457,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 arguments = body.get("arguments")
                 if not tool or not isinstance(arguments, dict):
                     return self.respond(400, {"error": "tool and arguments are required."})
+                if action == "generate" and provider_id == "higgsfield":
+                    arguments = prepare_higgsfield_references(arguments)
+                if action == "generate" and provider_id == "magnific":
+                    arguments = prepare_magnific_references(arguments)
                 result = call_tool(provider_id, tool, arguments)
                 if action == "generate":
+                    if provider_id == "magnific":
+                        result = wait_magnific_image(result)
+                    if provider_id == "higgsfield":
+                        result = wait_higgsfield_image(result)
                     image, source = result_image(result)
                     return self.respond(200, {"image": image, "source": source})
                 return self.respond(200, {"result": result})

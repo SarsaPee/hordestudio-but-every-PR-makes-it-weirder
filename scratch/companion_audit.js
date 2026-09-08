@@ -66,7 +66,7 @@ buildContext(vm, [
     'companionConnectionPrompt', 'companionConsumeStartingScenario',
     'buildProceduralCompanionLifeProfile', 'companionScheduleBlockAt',
     'companionSituationAt', 'companionPlanLifeDay', 'advanceCompanionLifePlan', 'advanceCompanionLife', 'companionWeatherLabel',
-    'companionResponsePlan', 'companionInitiativeDelayMs', 'companionUnansweredState', 'companionCommunicationCadence',
+    'companionResponsePlan', 'advanceCompanionMessageAttention', 'companionInitiativeDelayMs', 'companionUnansweredState', 'companionCommunicationCadence',
     'companionElapsedLabel', 'companionTimestampLabel', 'companionSilenceSensitivity',
     'companionSilenceInterpretation', 'companionCurrentSilence', 'applyCompanionSilenceProgress',
     'companionNextInitiativeAt', 'companionNextSocialPostAt', 'reconcileCompanionSocialSchedule',
@@ -81,6 +81,7 @@ buildContext(vm, [
     'companionUsesFixedTimezoneOffset', 'companionFixedOffsetDate',
     'formatCompanionUtcOffset', 'companionLocalDateInfo',
     'buildCompanionSystemPrompt', 'buildCompanionMessages',
+    'companionMcpSchema', 'companionMcpReferenceValue',
     'splitCompanionReplyIntoBubbles', 'sanitizeCompanionTextReply',
     'companionProtocolLeakDetected', 'quarantineCompanionProtocolText', 'companionVisibleReplyLimit',
     'repairCompanionProtocolLeaks', 'normalizeCompanionPhotoStyle',
@@ -166,7 +167,7 @@ test('a blank companion gets every field a downstream function assumes', () => {
     assert.equal(c.desirePattern, 'mixed');
     assert.equal(c.sexualInitiative, false);
     assert(c.lifeProfile && c.lifeRuntime && Array.isArray(c.lifeProfile.weeklySchedule));
-    assert(c.continuityRuntime && c.continuityRuntime.version === 6);
+    assert(c.continuityRuntime && c.continuityRuntime.version === 7);
     assert.equal(c.separatedCognition, true);
     assert.equal(c.observerModel, '');
     assert.deepEqual(Array.from(c.observerInputModalities), ['text']);
@@ -452,6 +453,7 @@ test('rumination makes anger and sadness decay more slowly', () => {
 test('delayed processors retain part of a reaction until its due time', () => {
     const now = Date.UTC(2026, 7, 11, 15, 0);
     const c = freshCompanion({ id: 'delayed-emotions', reactionTiming: 'delayed' });
+    c.emotionState.lastUpdated = now;
     context.applyCompanionEmotionUpdate(c, {
         emotion_changes: { sadness: 30, anger: 20 },
         toward_player_emotions: { sadness: 24 },
@@ -490,27 +492,22 @@ test('emotion blends are descriptive and legacy mood labels still bridge forward
     assert(c.emotionState.felt.anger > 0);
 });
 
-test('anger creates a persistent cool-off and can mechanically suppress a reply', () => {
+test('anger creates a persistent cool-off that withholds attention until reconsideration', () => {
     const now = Date.UTC(2026, 7, 11, 12, 0);
     const c = freshCompanion({ id: 'angry-human', conflictRecovery: 'slow' });
     c.humanDynamics.anger = 45;
-    context.applyCompanionMoodUpdate(c, {
-        valence_change: -12, arousal_change: 16, mood_label: 'angry', relationship_change: -3,
-        anger_change: 30, stress_change: 20, cool_off_minutes: 180,
-        cooldown_reason: 'the argument crossed a boundary'
-    }, now);
-    assert(c.humanDynamics.anger >= 70);
-    assert(c.humanDynamics.cooldownUntil >= now + 180 * 60_000);
-    let refused = null;
-    for (let index = 0; index < 100 && !refused; index += 1) {
-        const message = context.normalizeCompanionMessage({ id: `anger-${index}`, role: 'user', text: 'hello', timestamp: now });
-        const plan = context.companionResponsePlan(c, message, now, {
-            realTimeLife: false, replyDelays: true, allowNoReply: true
-        });
-        if (!plan.willReply) refused = plan;
-    }
-    assert(refused, 'high anger and active cooling-off should be capable of refusing a reply');
-    assert.equal(refused.reason, 'mood');
+    context.applyCompanionMoodUpdate(c, { valence_change: -12, arousal_change: 16,
+        mood_label: 'angry', anger_change: 30, stress_change: 20, cool_off_minutes: 180,
+        cooldown_reason: 'the argument crossed a boundary' }, now);
+    const experience = { realTimeLife: false, replyDelays: true, allowNoReply: true };
+    const message = context.normalizeCompanionMessage({ id: 'anger', role: 'user', text: 'hello', timestamp: now });
+    const plan = context.companionResponsePlan(c, message, now, experience);
+    Object.assign(message, { attention: plan.attention, deliveredAt: plan.deliveredAt, awaitingReply: true });
+    context.advanceCompanionMessageAttention(c, message, plan.attention.nextCheckAt, experience);
+    assert.equal(message.attention.stage, 'withheld');
+    assert.equal(message.replyDueAt, 0);
+    assert(message.attention.nextCheckAt >= now + 180 * 60000);
+    assert(message.awaitingReply, 'withholding remains eligible for context-driven reconsideration');
 });
 
 test('conflict recovery profile changes how long anger remains active', () => {
@@ -643,7 +640,7 @@ test('wide candid framing while alone uses a propped phone and prompt carries th
     };
     const prompt = context.buildCompanionPhotoPrompt(c, 'wide candid of me walking across the room with both hands visible', { atMs: now });
     assert.match(prompt, /Camera provenance — Timer \/ propped phone/);
-    assert.match(prompt, /Never invent an unseen friend, photographer or group/);
+    assert.match(prompt, /Do not add an unseen friend or photographer/);
 });
 
 test('self-capture policy prevents a present friend from becoming photographer', () => {
@@ -814,7 +811,7 @@ test('MCP generation maps the full scene and identity reference to the advertise
         imageSource: 'higgsfield',
         basePhoto: 'data:image/jpeg;base64,identity',
         mcpImageTool: 'create_image',
-        mcpImageArguments: { aspect_ratio: '9:16' }
+        mcpImageArguments: { aspect_ratio: '9:16', mode: 'standard' }
     });
     context.companionMcpToolCatalog.higgsfield = [{
         name: 'create_image',
@@ -1346,9 +1343,14 @@ test('structured busy blocks defer replies until a natural break', () => {
             }]
         }
     });
-    const message = context.normalizeCompanionMessage({ id: 'meeting-msg', role: 'user', text: 'hey', timestamp: mondayTen });
+    const message = context.normalizeCompanionMessage({ id: 'meeting-msg', role: 'user', deliveryState: 'sent', readAt: 0, text: 'hey', timestamp: mondayTen });
     const plan = context.companionResponsePlan(c, message, mondayTen);
-    if (plan.willReply) assert(plan.replyDueAt >= Date.UTC(2026, 0, 5, 12, 0));
+    assert.equal(plan.replyDueAt, 0);
+    Object.assign(message, { attention: plan.attention, deliveredAt: plan.deliveredAt, awaitingReply: true });
+    context.advanceCompanionMessageAttention(c, message, plan.attention.nextCheckAt, context.normalizeCompanionChatExperience());
+    assert.equal(message.attention.stage, 'deferred');
+    assert.equal(message.replyDueAt, 0);
+    assert(message.readAt > mondayTen, 'a phone check is separate from being available to answer');
 });
 
 test('wildcard catch-up is seeded, bounded and never duplicates a day', () => {
@@ -1376,21 +1378,23 @@ test('wildcard catch-up is seeded, bounded and never duplicates a day', () => {
 test('sleep keeps a willing reply unread until it is opened after wake time', () => {
     const now = new Date(2026, 0, 15, 3, 0).getTime();
     const c = freshCompanion({ sleepArchetype: 'normal' });
-    const message = context.normalizeCompanionMessage({ id: 'sleep-msg', role: 'user', text: 'hey', timestamp: now });
+    const message = context.normalizeCompanionMessage({ id: 'sleep-msg', role: 'user', deliveryState: 'sent', readAt: 0, text: 'hey', timestamp: now });
     const plan = context.companionResponsePlan(c, message, now);
     assert.equal(plan.life.availability, 'asleep');
-    assert(plan.readAt >= new Date(2026, 0, 15, 7, 0).getTime());
-    if (plan.willReply) assert.equal(plan.replyDueAt, plan.readAt);
+    assert.equal(plan.readAt, 0);
+    assert.equal(plan.replyDueAt, 0);
+    assert(plan.attention.nextCheckAt >= new Date(2026, 0, 15, 7, 0).getTime());
 });
 
 test('a busy human opens and answers later instead of pre-generating a reply', () => {
     const now = new Date(2026, 0, 15, 12, 0).getTime();
     const c = freshCompanion();
-    const message = context.normalizeCompanionMessage({ id: 'busy-msg', role: 'user', text: 'lunch?', timestamp: now });
+    const message = context.normalizeCompanionMessage({ id: 'busy-msg', role: 'user', deliveryState: 'sent', readAt: 0, text: 'lunch?', timestamp: now });
     const plan = context.companionResponsePlan(c, message, now);
     assert.equal(plan.life.availability, 'busy');
-    assert(plan.readAt >= now + 30_000);
-    if (plan.willReply) assert.equal(plan.replyDueAt, plan.readAt);
+    assert.equal(plan.readAt, 0);
+    assert.equal(plan.replyDueAt, 0);
+    assert(plan.attention.nextCheckAt >= now + 30_000);
 });
 
 test('chat immersion defaults preserve the full simulation for existing timelines', () => {
@@ -1457,37 +1461,33 @@ test('pausing real-time life removes live schedule authority from the model prom
     assert(!prompt.includes('you are asleep and will not see this until you wake up'));
 });
 
-test('a sufficiently bad mood can leave a message on read with no scheduled reply', () => {
+test('relationship tension can leave a seen message without a scheduled answer', () => {
     const now = new Date(2026, 0, 15, 20, 0).getTime();
-    const c = freshCompanion({ mood: { label: 'angry', valence: -80, lastUpdated: now } });
-    let message;
-    for (let i = 0; i < 100; i++) {
-        const candidate = context.normalizeCompanionMessage({ id: `angry-${i}`, role: 'user', text: 'hello', timestamp: now });
-        const roll = context.companionSeededRoll(`${c.id}|reply|${candidate.id}|${now}`);
-        const reconsider = context.companionSeededRoll(`${c.id}|reconsider|${candidate.id}`);
-        if (roll < 0.62 && reconsider < 0.35) { message = candidate; break; }
-    }
-    const plan = context.companionResponsePlan(c, message, now);
-    assert.equal(plan.willReply, false);
-    assert.equal(plan.replyDueAt, 0);
-    assert.equal(plan.reason, 'mood');
+    const c = freshCompanion();
+    c.humanDynamics.anger = 95;
+    c.relationshipDynamics.resentment = 90;
+    const message = context.normalizeCompanionMessage({ id: 'strained', role: 'user', text: 'hello',
+        timestamp: now, deliveryState: 'read', readAt: now, awaitingReply: true });
+    context.advanceCompanionMessageAttention(c, message, now, { realTimeLife: false, replyDelays: true, allowNoReply: true });
+    assert.equal(message.attention.stage, 'withheld');
+    assert.equal(message.replyDueAt, 0);
 });
 
-test('an angry human can reconsider and open a message hours later', () => {
+test('reconsideration depends on eased pressure rather than a lucky message seed', () => {
     const now = new Date(2026, 0, 15, 20, 0).getTime();
-    const c = freshCompanion({ mood: { label: 'angry', valence: -80, lastUpdated: now } });
-    let message;
-    for (let i = 0; i < 200; i++) {
-        const candidate = context.normalizeCompanionMessage({ id: `reconsider-${i}`, role: 'user', text: 'hello', timestamp: now });
-        const roll = context.companionSeededRoll(`${c.id}|reply|${candidate.id}|${now}`);
-        const reconsider = context.companionSeededRoll(`${c.id}|reconsider|${candidate.id}`);
-        if (roll < 0.62 && reconsider >= 0.78) { message = candidate; break; }
-    }
-    const plan = context.companionResponsePlan(c, message, now);
-    assert.equal(plan.willReply, true);
-    assert.equal(plan.reason, 'mood');
-    assert.equal(plan.replyDueAt, plan.readAt);
-    assert(plan.readAt > now + 40 * 60_000);
+    const c = freshCompanion();
+    c.humanDynamics.anger = 95; c.relationshipDynamics.resentment = 90;
+    const experience = { realTimeLife: false, replyDelays: true, allowNoReply: true };
+    const message = context.normalizeCompanionMessage({ id: 'reconsider', role: 'user', text: 'hello',
+        timestamp: now, deliveryState: 'read', readAt: now, awaitingReply: true });
+    context.advanceCompanionMessageAttention(c, message, now, experience);
+    assert.equal(message.attention.stage, 'withheld');
+    c.humanDynamics.anger = 0; c.relationshipDynamics.resentment = 0;
+    c.humanDynamics.energy = 90; c.humanDynamics.stress = 10;
+    context.advanceCompanionMessageAttention(c, message, now + 60000, experience);
+    assert.equal(message.attention.stage, 'ready');
+    context.advanceCompanionMessageAttention(c, message, message.attention.lastEvaluatedAt, experience);
+    assert.equal(message.attention.stage, 'ready');
 });
 
 test('initiative timing is disabled by default and finite when enabled', () => {
@@ -1748,6 +1748,12 @@ test('a long single paragraph is still split, on sentence boundaries', () => {
     const bubbles = context.splitCompanionReplyIntoBubbles(long);
     assert(bubbles.length > 1, 'a 450-character single bubble was sent as one wall of text');
     bubbles.forEach(bubble => assert(bubble.length <= 350, `a bubble ran to ${bubble.length} characters`));
+});
+
+test('bubble splitting preserves punctuation, URLs, emoji and an unfinished suffix', () => {
+    const text = '...wait?!💅 https://example.com/a?b=1 ' + 'a'.repeat(350) + '. Next thought...and an unfinished';
+    const bubbles = context.splitCompanionReplyIntoBubbles(text);
+    assert.equal(bubbles.join(' ').replace(/\s+/g, ' '), text.replace(/\s+/g, ' '));
 });
 
 test('text-message bursts can be disabled per timeline', () => {
@@ -2496,10 +2502,10 @@ test('saved parameter-only leaks become a reversible recovery card', () => {
     assert.match(repaired[0].generationError, /blocked/i);
 });
 
-test('visible reply ceiling catches providers that ignore max_tokens', () => {
+test('delivered replies are preserved regardless of approximate character budget', () => {
     const text = `${'word '.repeat(500)}Final sentence.`;
     const clipped = context.companionVisibleReplyLimit(text, { maxTokens: 128 });
-    assert(clipped.length <= 128 * 3.2);
+    assert.equal(clipped, text);
 });
 
 test('already-saved protocol bubbles are collapsed back into one clean reply', () => {
@@ -2848,6 +2854,26 @@ test('Life Architect plans authored routines and due promises with explicit caus
     assert(plan.some(item => item.kind === 'schedule' && /Authored Monday routine/.test(item.cause)));
     assert(plan.some(item => item.kind === 'obligation' && item.summary === 'Call the player after work'));
     assert.equal(c.lifeRuntime.plannedDateKey, '2026-09-07');
+});
+
+test('desire context ignores suggestive place names and initiative respects actual bandwidth', () => {
+    const now=Date.UTC(2026,8,8,12),c=freshCompanion({age:30,libidoEnabled:true,sexualInitiative:true,
+        humanDynamics:{desire:90,sexualArousal:90,inhibition:0,energy:80,lastUpdated:now},
+        relationshipDynamics:{attraction:80}});
+    const original=context.companionSituationAt;
+    try {
+        c.lifeProfile.places=[{id:'home',kind:'home',label:'Home'}];
+        context.companionSituationAt=()=>({placeId:'home',placeLabel:'Romantic partner hotel',activity:'working',availability:'available',withNames:[]});
+        assert.equal(context.companionSexualContext(c,now).intimateContext,false);
+        assert.equal(context.companionSexualContext(c,now).privateOpportunity,true);
+        for(const availability of ['busy','asleep','private']) {
+            context.companionSituationAt=()=>({placeId:'home',activity:'resting',availability,withNames:[]});
+            assert.equal(context.companionSexualContext(c,now).privateOpportunity,false);
+            assert.equal(context.companionSexualDecisionState(c,c.humanDynamics,now).canInitiate,false);
+        }
+        context.companionSituationAt=()=>({placeId:'home',activity:'resting',availability:'available',source:'travel',withNames:[]});
+        assert.equal(context.companionSexualDecisionState(c,c.humanDynamics,now).canInitiate,false);
+    } finally { context.companionSituationAt=original; }
 });
 
 (async () => {

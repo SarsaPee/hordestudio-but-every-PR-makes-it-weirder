@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260905-v173">
+    <link rel="stylesheet" href="style.css?v=20260908-reply-cleanup">
 </head>
 <body>
 <div id="app">
@@ -778,6 +778,7 @@
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-sandbox"><span>04</span><strong>Starting lives</strong><small>Define who players can begin as, including world-specific skills and perks.</small></button>
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-ai"><span>05</span><strong>Rules &amp; models</strong><small>Choose narrative-only play or optional RPG rules, checks and model behavior.</small></button>
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-visuals"><span>06</span><strong>Presentation</strong><small>Add optional banners, room art, portraits and visual styling.</small></button>
+                            <button type="button" class="creator-overview-card" data-companion-studio-target="cs-chat-style"><span>05</span><strong>Chat style</strong><small>Fine-tune voice, conversational habits and example exchanges.</small></button>
                             <details class="creator-advanced-card">
                                 <summary>Advanced world systems</summary>
                                 <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-architect-agent">Architect Agent</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
@@ -2247,6 +2248,7 @@
                     <div class="studio-tabs">
                         <button class="companion-studio-tab active" data-tab="cs-overview">Overview</button>
                         <button class="companion-studio-tab" data-tab="cs-identity">Identity</button>
+                        <button class="companion-studio-tab" data-tab="cs-chat-style">Chat style</button>
                         <button class="companion-studio-tab" data-tab="cs-mind">Inner Life</button>
                         <button class="companion-studio-tab" data-tab="cs-life">Active Life</button>
                         <button class="companion-studio-tab" data-tab="cs-social">Social Media</button>
@@ -2272,6 +2274,22 @@
                             <button type="button" class="creator-overview-card" data-companion-studio-target="cs-life"><span>03</span><strong>Active life</strong><small>Build routines, commitments, friends and autonomous life events.</small></button>
                             <button type="button" class="creator-overview-card" data-companion-studio-target="cs-models"><span>04</span><strong>Conversation brain</strong><small>Choose text models and reasoning independently from media providers.</small></button>
                             <details class="creator-advanced-card"><summary>Optional media &amp; voice</summary><div><button type="button" data-companion-studio-target="cs-social">Social Media</button><button type="button" data-companion-studio-target="cs-video">Video &amp; Clips</button><button type="button" data-companion-studio-target="cs-voice">Photos &amp; Voice</button></div></details>
+                        </div>
+                    </div>
+                    <div id="tab-cs-chat-style" class="studio-panel hidden"><div id="cs-voice-builder" class="form-section"></div>
+                        <div class="panel-header"><h2>Chat style</h2><p>Shape how this person participates in a conversation. Their feelings and situation still influence how they speak.</p></div>
+                        <div class="form-body">
+                            <div class="form-section"><label class="form-label" for="cs-texting-style">Writing voice</label>
+                                <textarea id="cs-texting-style" class="form-textarea" rows="3" placeholder="Mostly lowercase, dry humour, occasional fragments; more careful punctuation when upset."></textarea></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-length">Usual reply length</label>
+                                <select id="cs-chat-length" class="form-select"><option value="adaptive">Adapt to the conversation</option><option value="brief">Usually brief</option><option value="expansive">More expressive</option></select></div>
+                            <div class="form-section"><label class="form-label" for="cs-conversation-style">Conversational habits</label>
+                                <textarea id="cs-conversation-style" class="form-textarea" rows="4" placeholder="Offers her own opinions. Follows up on plans. Teases when comfortable. Shares small details from established activities; doesn't just comment on everything I say."></textarea></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-examples">Example exchanges</label>
+                                <textarea id="cs-chat-examples" class="form-textarea" rows="6" placeholder="Player: cafe or park?&#10;Her: cafe. i need caffeine before i pretend to be outdoorsy&#10;&#10;Player: long day?&#10;Her: yeah. tell me something completely unrelated to work"></textarea>
+                                <p class="form-hint">Examples teach rhythm and voice. They are not added as memories or copied as scripted replies.</p></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-avoid">Habits to avoid</label>
+                                <textarea id="cs-chat-avoid" class="form-textarea" rows="3" placeholder="Repeating my message back, therapy language, a question at the end of every reply, constant compliments."></textarea></div>
                         </div>
                     </div>
                     <!-- Identity -->
@@ -2348,10 +2366,7 @@
                                     <textarea id="cs-social-world" class="form-textarea" rows="3" placeholder="Where they live, family, friends, coworkers, pets, recurring tensions..."></textarea>
                                 </div>
                             </div>
-                            <div class="form-section">
-                                <label class="form-label">Texting Style</label>
-                                <textarea id="cs-texting-style" class="form-textarea" rows="3" placeholder="lowercase, double-texts when excited, uses 'lol' and 'omg' unironically, rarely uses full stops"></textarea>
-                            </div>
+
                         </div>
                     </div>
 
@@ -2739,6 +2754,12 @@
                                 <p id="cs-life-generator-status" class="form-hint" aria-live="polite">Generate with the selected model, or start manually with a local editable template. The simulator uses a simple fallback routine until either path is saved.</p>
                                 <div id="cs-life-editor" class="vh-life-editor hidden"></div>
                                 <div id="cs-life-overview" class="vh-life-overview hidden"></div>
+                                <details class="form-section"><summary>Recurring place references</summary>
+                                    <p class="form-hint">References belong to saved recurring locations. Add or rename locations in Places; use fixed room roles and the linked location selector here. Removing a card keeps the location and its routes. Photos combine the base identity, previous photo and matching room images. Generating a reference uses image-provider credits.</p>
+                                    <div id="cs-photo-locations"></div><button type="button" id="cs-photo-location-add" class="btn btn-ghost">Add place reference</button>
+                                </details>
+
+<div id="cs-world-systems"></div>
                             </section>
                         </div>
                     </div>
@@ -2978,7 +2999,7 @@
                             <div>
                                 <span class="vh-eyebrow">Runtime</span>
                                 <h2>AI &amp; Models</h2>
-                                <p>Choose how this virtual human thinks. The conversation model stays focused on natural dialogue; an optional private observer updates memory and relationship state after the reply is already visible.</p>
+                                <p>Choose how this virtual human thinks. The conversation model expresses and records immediate feelings. A private observer adds evidence-backed memory and understanding after the reply.</p>
                             </div>
                             <div class="vh-model-header-actions">
                                 <button id="cs-unlock-all-params" class="btn btn-ghost" type="button" title="Show every control even when the provider catalog does not advertise it.">🔓 Unlock all parameters</button>
@@ -3043,7 +3064,7 @@
                                     <div>
                                         <span class="vh-model-kicker">Cognition architecture</span>
                                         <h3>Separate voice from memory</h3>
-                                        <p class="form-hint">Recommended. The reply appears first; a private observer then records only evidence-backed changes. This prevents internal state markup leaking into chat and keeps the speaking model natural.</p>
+                                        <p class="form-hint">Recommended. Immediate feelings accompany the reply; a private observer then enriches memory and understanding without counting the same emotional reaction twice.</p>
                                     </div>
                                 </div>
                                 <label class="toggle-row vh-config-toggle">
@@ -3241,6 +3262,9 @@
                                             <option value="anime">Cinematic Anime</option>
                                         </select>
                                     </div>
+                                    <label class="form-label">Personal photo direction<textarea id="cs-photo-direction" class="form-textarea" rows="4" placeholder="e.g. Playful expressions, tilted framing, candid movement, subtle bloom and motion softness. Rarely poses with a straight face."></textarea></label><label class="form-label">Keep follow-up photo continuity within (minutes; 0 disables)<input id="cs-photo-continuity-minutes" class="form-input" type="number" min="0" max="360" value="90"></label>
+                                    <label class="form-label"><input type="checkbox" id="cs-photo-large-breasts"> Large breasts</label>
+                                    <p class="form-hint">Reinforce bust size in character photos, including when using an identity reference.</p>
                                     <p class="form-hint" id="cs-photo-style-description">Believable phone-camera realism with the small flaws real snapshots keep.</p>
                                 </div>
                                 <div class="vh-photo-style-control">
@@ -3504,6 +3528,7 @@
 
         <!-- ────────── COMPANION CHAT (the actual texting thread) ────────── -->
         <section id="companion-chat-view" class="view hidden">
+            <dialog id="cc-gift-dialog" class="companion-gift-dialog"><button type="button" id="cc-gift-close" class="btn btn-ghost" aria-label="Close gifts">Close</button><div id="cc-life-actions"></div></dialog>
             <div class="companion-chat-header">
                 <button id="companion-chat-back-btn" class="companion-header-btn" title="Back to Virtual Human" aria-label="Back to Virtual Human">‹</button>
                 <div class="companion-chat-avatar-wrap">
@@ -3579,6 +3604,10 @@
                 </details>
             </div>
             <div class="companion-chat-context">
+                <label class="companion-persona-picker" for="cc-persona-select">Your profile
+                    <select id="cc-persona-select" aria-label="Your active persona for this chat"></select>
+                </label>
+                <details id="cc-profile-details"></details>
                 <span id="cc-mood-badge">mood: —</span>
                 <span class="companion-context-separator">•</span>
                 <span id="cc-agency-status">responds when messaged</span>
@@ -3606,6 +3635,7 @@
                 <small id="companion-typing-label">typing…</small>
             </div>
             <div class="companion-composer">
+                <button id="cc-gift-open" class="companion-icon-btn" type="button" title="Gifts and simulated cash" aria-label="Gifts and simulated cash">🎁</button>
                 <button id="companion-emoji-btn" class="companion-icon-btn" title="Emoji">＋</button>
                 <button id="companion-photo-request-btn" class="companion-icon-btn" title="Send your photo to this virtual human" aria-label="Send your photo to this virtual human">▧</button>
                 <button id="companion-voice-request-btn" class="companion-icon-btn" title="Send a voice note" aria-label="Send a voice note">🎙</button>
@@ -3723,7 +3753,7 @@
                 </div>
             </section>
 
-            <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember">
+            <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember maps google places geography">
                 <div class="settings-section-head"><span class="settings-section-kicker">Cloud access</span><h3>Connections</h3><p>Connect only what you use. Your active text provider opens first; image providers stay independent.</p></div>
                 <div class="settings-provider-grid">
             <details id="openrouter-key-block" class="settings-provider-card" data-provider="openrouter">
@@ -3825,6 +3855,28 @@
                 <p class="form-hint">Horde Studio calls <code>BASE_URL/models</code> and <code>BASE_URL/chat/completions</code>. HTTPS endpoints and localhost HTTP are allowed. Select or type the exact model in <strong>Default Model</strong> below; per-character and per-world selectors use this catalog too.</p>
                 <button id="test-custom-conn-btn" class="btn btn-ghost" type="button">Test connection</button>
                 <div id="custom-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
+            </details>
+            <details class="settings-disclosure-card" id="maps-settings-card">
+                <summary class="settings-disclosure-summary"><span><small>Real locations</small><strong>Maps &amp; places</strong></span></summary>
+                <div class="settings-disclosure-body">
+                    <label class="form-label" for="global-maps-provider">Place search &amp; routing provider</label>
+                    <select class="form-select" id="global-maps-provider"><option value="google">Google Maps</option><option value="openrouteservice">openrouteservice (free key)</option></select>
+                    <p class="form-hint">Provider selection applies to search, previews and automatic journey estimates. There is no automatic fallback to another provider.</p>
+                    <label class="form-label" for="global-openroute-key">openrouteservice API key</label>
+                    <input id="global-openroute-key" type="password" class="form-input" autocomplete="off" spellcheck="false" placeholder="Paste your HeiGIT / openrouteservice key">
+                    <button id="save-openroute-key" type="button" class="btn btn-primary">Save openrouteservice key</button>
+                    <button id="remove-openroute-key" type="button" class="btn btn-ghost">Remove openrouteservice key</button>
+                    <p id="openroute-key-status" class="form-hint" aria-live="polite">Open this panel to check configuration.</p>
+                    <p class="form-hint">Walking, cycling and driving routes; transit uses your authored times unless you explicitly select Google. <a href="https://account.heigit.org/" target="_blank" rel="noopener noreferrer">Get a free API key</a> · <a href="https://account.heigit.org/info/plans" target="_blank" rel="noopener noreferrer">Usage limits</a></p>
+                    <label class="form-label" for="global-google-maps-key">Google Maps API key</label>
+                    <input id="global-google-maps-key" type="password" class="form-input" autocomplete="off" spellcheck="false" placeholder="Paste a new key to save or replace it">
+                    <p class="form-hint">Enable Places API (New) and Routes API in your Google project. Billing is required. This key is saved by your local launcher, outside browser backups. Saving does not call Google.</p>
+                    <button id="save-google-maps-key" class="btn btn-primary" type="button">Save Maps key</button>
+                    <button id="remove-google-maps-key" class="btn btn-ghost" type="button">Remove saved key</button>
+                    <button id="refresh-google-maps-key" class="btn btn-ghost" type="button">Check setup</button>
+                    <p id="google-maps-key-status" class="form-hint" aria-live="polite">Check setup to see whether a key is configured.</p>
+                    <p class="form-hint">Use this under VH Studio → Active Life → Recurring places. <a href="https://developers.google.com/maps/documentation/routes/get-api-key" target="_blank" rel="noopener noreferrer">Google setup instructions</a></p>
+                </div>
             </details>
             <div id="cloud-key-storage-block" class="settings-security-row">
                 <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.8rem; color:var(--text-2); cursor:pointer;">
@@ -5149,12 +5201,16 @@
 <script src="labs-core.js?v=20260822-v161"></script>
 <script src="labs-tasks.js?v=20260822-v161"></script>
 <script src="labs-guide.js?v=20260822-v161"></script>
-    <script src="help-system.js?v=20260905-v173"></script>
+    <script src="help-system.js?v=20260908-reply-cleanup"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer-engine.js?v=20260902-v171"></script>
 <script src="multiplayer.js?v=20260902-v171"></script>
 <script src="video-worlds.js?v=20260902-v171"></script>
-    <script src="app.js?v=20260905-v173"></script>
+    <script src="vh-conversation-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-activity-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-world-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
+    <script src="app.js?v=20260908-reply-cleanup"></script>
 </body>
 </html>

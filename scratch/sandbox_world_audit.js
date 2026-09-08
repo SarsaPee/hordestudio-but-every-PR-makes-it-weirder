@@ -16,6 +16,7 @@ buildContext(vm, [
     'normalizeWorldSandboxConfig',
     'seedWorldSocietyState',
     'normalizeWorldSocietyState',
+    'authoredStartingRelationshipSeeds',
     'applyStartingLifeToSession',
     'runSocietySimulationTick',
     'getLocalSocietySettlement',
@@ -23,6 +24,7 @@ buildContext(vm, [
     'stableWorldRoll',
     'livingClamp',
     'livingId',
+    'safeJsonClone',
     'getLocationRef',
     'getWorldTimeData',
     'addWorldNews'
@@ -102,11 +104,19 @@ test('starting life never mutates the authored template', () => {
 test('a hand-made world can author and persist its own starting life', () => {
     const value = {
         id: 'custom_world', name: 'Custom World',
-        locations: [{ id: 'custom_home', name: 'Custom Home' }],
+        locations: [{ id: 'custom_home', name: 'Custom Home' }, { id: 'custom_office', name: 'Custom Office' }],
+        entities: [{ id: 'npc_mara', name: 'Mara', type: 'npc', groupIds: ['family_mara'] }],
+        groups: [
+            { id: 'family_mara', name: 'Mara Family', type: 'household' },
+            { id: 'company_night', name: 'Night Company', type: 'company' }
+        ],
         factions: [],
         startingLives: [{
             id: 'custom_life', name: 'Night-shift Clerk', role: 'clerk',
-            startLocationId: 'custom_home', inventory: ['store keys'],
+            startLocationId: 'custom_office', homeLocationId: 'custom_home',
+            householdId: 'family_mara', groupIds: ['company_night'],
+            startingRelationships: [{ npcId: 'npc_mara', label: 'older sister', disposition: 82 }],
+            inventory: ['store keys'],
             obligations: ['open at midnight'], statOverrides: { cash: 12 }
         }]
     };
@@ -114,9 +124,21 @@ test('a hand-made world can author and persist its own starting life', () => {
     const reloaded = JSON.parse(JSON.stringify(value));
     context.normalizeWorldSandboxConfig(reloaded);
     assert.equal(reloaded.startingLives.length, 1);
-    assert.equal(reloaded.startingLives[0].startLocationId, 'custom_home');
-    assert.deepEqual(reloaded.startingLives[0].inventory, ['store keys']);
+    assert.equal(reloaded.startingLives[0].startLocationId, 'custom_office');
+    assert.equal(reloaded.startingLives[0].homeLocationId, 'custom_home');
+    assert.equal(reloaded.startingLives[0].householdId, 'family_mara');
+    assert.deepEqual(Array.from(reloaded.startingLives[0].groupIds), ['family_mara', 'company_night']);
+    assert.deepEqual(JSON.parse(JSON.stringify(reloaded.startingLives[0].startingRelationships)),
+        [{ npcId: 'npc_mara', label: 'older sister', disposition: 82 }]);
+    assert.deepEqual(Array.from(reloaded.startingLives[0].inventory), ['store keys']);
     assert.equal(reloaded.startingLives[0].statOverrides.cash, 12);
+    const timeline = session({ ...reloaded, hudConfig: { stats: [] } });
+    context.applyStartingLifeToSession(reloaded, timeline, 'custom_life');
+    assert.equal(timeline.playerIdentity.homeLocationId, 'custom_home');
+    assert.equal(timeline.playerIdentity.householdId, 'family_mara');
+    assert.deepEqual(Array.from(timeline.playerIdentity.groupIds), ['family_mara', 'company_night']);
+    assert.equal(timeline.entityStates.npc_mara.relationshipToPlayer, 'older sister');
+    assert.equal(timeline.entityStates.npc_mara.disposition, 82);
 });
 
 test('previewing several lives does not accumulate their wealth or allegiance', () => {
