@@ -883,7 +883,7 @@
 
     function installHistorySelectionCapture() {
         if (runtime.historySelectionCaptureInstalled) return;
-        global.addEventListener('click', event => {
+        document.addEventListener('click', event => {
             const target = event.target instanceof Element ? event.target : null;
             if (!target || !active()) return;
             if (target.closest('#sp-timeline .sp-tl-node, #sp-timeline .sp-tl-disc-btn, .sp-browse-item')) {
@@ -1983,7 +1983,7 @@
 
     function installPanelCapture() {
         if (runtime.panelCaptureInstalled) return;
-        document.addEventListener('click', event => {
+        global.addEventListener('click', event => {
             const target = event.target instanceof Element ? event.target : null;
             if (!target?.closest('#sp-panel')) return;
             const refresh = target.closest('#sp-tb-regen,.sp-section-refresh');
