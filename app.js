@@ -16810,7 +16810,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         const rawCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
         const calls = rawCalls.filter(call => availableTools.some(tool => tool.function.name === call?.function?.name));
         if (!rawCalls.length) {
-            const packet = parseSidecarReaderOutput(message.content, references);
+            const packet = parseSidecarReaderOutput(message.content, references, { controlledEntityId });
             packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
             const coverage = validateSidecarReaderCoverage(packet, requiredSubjects, packet.finishReason);
             packet.requiredCharacterSubjects = safeJsonClone(requiredSubjects);
@@ -16843,7 +16843,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         if (round === maxRounds) messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided.' });
     }
     if (timeoutId) clearTimeout(timeoutId);
-    const fallbackPacket = parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references);
+    const fallbackPacket = parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references, { controlledEntityId });
     fallbackPacket.lookupProvenance = lookupProvenance.slice(-20);
     return finishReaderMetrics(fallbackPacket);
 }
@@ -16923,6 +16923,119 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
     };
 }
 
+// A ScenePulse character card is not merely display decoration: its thought
+// is a subject-scoped reading from this same Reader packet.  Mirror that one
+// observation into the existing character-intelligence lane when the Reader
+// did not already provide it there.  This lets the normal cognition pipeline
+// consider the thought as a provisional lead, while retaining the foreground
+// card as the complete visible source record.
+//
+// Deliberately do not use a display name to discover an identity, consult a
+// World record, or invent a presence state.  A card without a stable source
+// identity plus explicit current-scene presence stays ScenePulse-only.  The
+// controlled character is also excluded even if a malformed packet includes
+// an apparent inner thought for them.
+function scenePulseCharacterCognitionBridge(scenePulse = {}, suppliedIntelligence = [], defaults = {}) {
+    const source = isPlainObject(scenePulse) ? scenePulse : {};
+    const cards = Array.isArray(source.characters) ? source.characters.filter(isPlainObject).slice(0, 80) : [];
+    const entries = Array.isArray(suppliedIntelligence) ? suppliedIntelligence.map(item => safeJsonClone(item)) : [];
+    const controlledId = String(defaults?.controlledEntityId || '').trim();
+    const normalizedPresence = value => {
+        const mode = String(isPlainObject(value) ? value.mode : value || '').trim().toLowerCase();
+        return ['active', 'nearby', 'audible', 'remote'].includes(mode) ? mode : '';
+    };
+    const text = value => {
+        if (Array.isArray(value)) return value.map(text).filter(Boolean).join(' ').slice(0, 1800);
+        if (isPlainObject(value)) return String(value.text || value.thought || value.value || value.summary || '').trim().slice(0, 1800);
+        return String(value || '').trim().slice(0, 1800);
+    };
+    const roster = Array.isArray(source.charactersPresent) ? source.charactersPresent : [];
+    const rosterPresence = (stableId, name, card) => {
+        const direct = normalizedPresence(card?.presence || card?.presenceMode || card?.presence_mode);
+        if (direct) return direct;
+        const wantedName = String(name || '').trim().toLowerCase();
+        const matched = roster.find(member => {
+            const value = isPlainObject(member) ? member : { id: member, name: member };
+            const id = String(value.characterId || value.character_id || value.candidateId || value.candidate_id || value.id || '').trim();
+            const label = String(value.name || value.label || (typeof member === 'string' ? member : '')).trim().toLowerCase();
+            return id === stableId || (!!wantedName && label === wantedName);
+        });
+        if (!matched) return '';
+        return normalizedPresence(matched) || 'active';
+    };
+    const stableIdentity = card => String(card?.characterId || card?.character_id || card?.candidateId || card?.candidate_id || card?.id || '').trim().slice(0, 180);
+    const controlledCard = (card, stableId) => card?.controlled === true || card?.isControlled === true
+        || card?.isPlayer === true || card?.is_player === true
+        || (!!controlledId && stableId === controlledId)
+        || /^(?:player|user|protagonist|controlled character)$/i.test(String(card?.role || '').trim());
+    let bridged = false;
+    cards.forEach(card => {
+        const stableId = stableIdentity(card);
+        const name = String(card?.name || card?.label || '').trim().slice(0, 240);
+        const thought = text(card?.innerThought || card?.inner_thought);
+        if (!stableId || !name || !thought || controlledCard(card, stableId)) return;
+        const presenceMode = rosterPresence(stableId, name, card);
+        if (!presenceMode) return;
+        const matchIndexes = entries.map((entry, index) => {
+            const entryId = String(entry?.subjectRef || entry?.candidateId || '').trim();
+            return entryId === stableId ? index : -1;
+        }).filter(index => index >= 0);
+        // Multiple intelligence records for one source identity are already
+        // an ambiguity. Preserve both supplied records rather than guessing
+        // which one should receive card evidence.
+        if (matchIndexes.length > 1) return;
+        const sourceClaim = {
+            text: thought, subjectRef: stableId, epistemicKind: 'reader_inference',
+            uncertainty: '', confidence: null,
+            evidence: [{ excerpt: 'Same-packet ScenePulse character card.' }], source: 'scenepulse_character_card'
+        };
+        const visibleState = Object.fromEntries([
+            ['hair', card.hair], ['face', card.face], ['outfit', card.outfit], ['posture', card.posture],
+            ['proximity', card.proximity], ['notableDetails', card.notableDetails], ['inventory', card.inventory]
+        ].filter(([, value]) => Array.isArray(value) ? value.length : text(value)).map(([key, value]) => [key, safeJsonClone(value)]));
+        const immediateNeed = text(card.immediateNeed || card.immediate_need);
+        const sourceGoals = {
+            immediateNeed,
+            shortTerm: text(card.shortTermGoal || card.short_term_goal),
+            longTerm: text(card.longTermGoal || card.long_term_goal)
+        };
+        if (matchIndexes.length === 1) {
+            const index = matchIndexes[0];
+            const entry = entries[index];
+            let changed = false;
+            if (!entry.sceneLocalImpression) { entry.sceneLocalImpression = sourceClaim; changed = true; }
+            if (!normalizedPresence(entry.presence) && presenceMode) { entry.presence = { ...(isPlainObject(entry.presence) ? entry.presence : {}), mode: presenceMode }; changed = true; }
+            if (!Array.isArray(entry.immediateObjectiveOrConcern) || !entry.immediateObjectiveOrConcern.length) {
+                if (immediateNeed) { entry.immediateObjectiveOrConcern = [sidecarReaderClaim({ text: immediateNeed, source: 'scenepulse_character_card' }, stableId)]; changed = true; }
+            }
+            entry.goals = isPlainObject(entry.goals) ? entry.goals : {};
+            ['immediateNeed', 'shortTerm', 'longTerm'].forEach(key => {
+                if (!String(entry.goals[key] || '').trim() && sourceGoals[key]) { entry.goals[key] = sourceGoals[key]; changed = true; }
+            });
+            entry.visibleState = isPlainObject(entry.visibleState) ? entry.visibleState : {};
+            Object.entries(visibleState).forEach(([key, value]) => {
+                if (entry.visibleState[key] === undefined || entry.visibleState[key] === null || entry.visibleState[key] === '') {
+                    entry.visibleState[key] = value; changed = true;
+                }
+            });
+            if (changed) {
+                entry.changedDimensions = [...new Set([...(Array.isArray(entry.changedDimensions) ? entry.changedDimensions : []), 'scenepulseCharacterCard'])].slice(0, 30);
+                bridged = true;
+            }
+            return;
+        }
+        const derived = normalizeSidecarCharacterIntelligence({
+            subjectRef: stableId, candidateId: String(card.candidateId || card.candidate_id || '').trim(), name, role: String(card.role || '').trim(),
+            presence: { mode: presenceMode }, innerThought: sourceClaim,
+            immediateNeed, goals: sourceGoals, visibleState,
+            changedDimensions: ['scenepulseCharacterCard'], status: 'evaluated'
+        }, defaults);
+        entries.push(derived);
+        bridged = true;
+    });
+    return { characterIntelligence: entries.slice(0, 48), bridged };
+}
+
 // The vendored ScenePulse relationship web expects one small graph cache:
 // named NPC-to-NPC edges plus optional organizations.  It is deliberately a
 // Reader interpretation beside the source tracker, not a World relationship
@@ -16982,9 +17095,12 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         return direct === undefined ? sidecarReaderValue(semantic, ...names) : direct;
     };
     const cleanList = (input, limit = 40) => Array.isArray(input) ? input.slice(0, limit).map(item => isPlainObject(item) ? safeJsonClone(item) : String(item || '').slice(0, 800)) : [];
+    const scenePulse = isPlainObject(value('scenePulse', 'scene_pulse', 'scenepulse')) ? safeJsonClone(value('scenePulse', 'scene_pulse', 'scenepulse')) : {};
     const characterInput = value('characterIntelligence', 'character_intelligence', 'characters') || [];
-    const characterIntelligence = (Array.isArray(characterInput) ? characterInput : Object.values(characterInput || {}))
+    const suppliedCharacterIntelligence = (Array.isArray(characterInput) ? characterInput : Object.values(characterInput || {}))
         .map(item => normalizeSidecarCharacterIntelligence(item, defaults)).filter(item => item.subjectRef || item.name || item.candidateId).slice(0, 48);
+    const scenePulseCognition = scenePulseCharacterCognitionBridge(scenePulse, suppliedCharacterIntelligence, defaults);
+    const characterIntelligence = scenePulseCognition.characterIntelligence;
     const coverage = isPlainObject(value('coverage')) ? safeJsonClone(value('coverage')) : {};
     return {
         schemaVersion: 2,
@@ -17001,7 +17117,11 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         changedFields: Array.isArray(source.changedFields || source.changed_fields) ? (source.changedFields || source.changed_fields).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 100) : [],
         clearFields: Array.isArray(source.clearFields || source.clear_fields) ? (source.clearFields || source.clear_fields).map(String).slice(0, 80) : [],
         suppliedFields: supplied.map(String).slice(0, 140),
-        semanticSuppliedFields: semanticSupplied.map(String).slice(0, 140),
+        // The character-intelligence supplement is deterministically derived
+        // from an explicitly supplied rich ScenePulse character card. Mark it
+        // as supplied so a compact card-only delta reaches the existing
+        // cognition lane instead of being discarded as an unrelated omission.
+        semanticSuppliedFields: [...new Set([...semanticSupplied.map(String), ...(scenePulseCognition.bridged ? ['characterIntelligence'] : [])])].slice(0, 140),
         requiredCharacterSubjects: cleanList(value('requiredCharacterSubjects', 'required_character_subjects'), 24),
         refreshIndex: Math.max(0, Number(source.refreshIndex || defaults.refreshIndex) || 0),
         temporal: isPlainObject(value('temporal', 'timeEvidence', 'time_evidence')) ? safeJsonClone(value('temporal', 'timeEvidence', 'time_evidence')) : {},
@@ -17014,7 +17134,7 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         // fields beside (not in place of) Horde's settled scene envelope so
         // a later delta never has to flatten thoughts, quest detail, meters,
         // or branch hooks back into a generic status summary.
-        scenePulse: isPlainObject(value('scenePulse', 'scene_pulse', 'scenepulse')) ? safeJsonClone(value('scenePulse', 'scene_pulse', 'scenepulse')) : {},
+        scenePulse,
         // This is intentionally adjacent to scenePulse rather than inside
         // it: the source relationship web consumes a native cache, while the
         // graph remains a Reader-derived comparison surface, never canon.
@@ -17043,12 +17163,12 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
     };
 }
 
-function parseSidecarReaderOutput(content, fallback = {}) {
+function parseSidecarReaderOutput(content, fallback = {}, defaults = {}) {
     const normalizedContent = Array.isArray(content) ? content.map(part => typeof part === 'string' ? part : String(part?.text || part?.content || '')).filter(Boolean).join('\n') : (isPlainObject(content) ? (content.text || content.content || '') : content);
     const raw = String(normalizedContent || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
     const parsed = safeParseJSONRepair(raw);
     if (!isPlainObject(parsed)) return { valid: false, error: 'reader_invalid_json', summary: 'The Sidecar Reader returned no usable structured reading.', canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000) };
-    const envelope = normalizeSidecarReaderEnvelope({ ...parsed, canonicalReferences: parsed.canonicalReferences || parsed.canonical_references || fallback });
+    const envelope = normalizeSidecarReaderEnvelope({ ...parsed, canonicalReferences: parsed.canonicalReferences || parsed.canonical_references || fallback }, defaults);
     const hasScene = Object.keys(envelope.scene || {}).length > 0 || Object.keys(envelope.location || {}).length > 0 || Object.keys(envelope.presence || {}).length > 0;
     // A configured ScenePulse custom-panel value is independently useful
     // reader evidence. Do not reject a compact full/section reading merely
@@ -17261,6 +17381,7 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
         missingBase.code = 'reader_delta_without_base';
         throw missingBase;
     }
+    const controlledEntityId = String(options.controlledEntityId || sess?.controlledEntityId || 'player').trim();
     const source = normalizeSidecarReaderEnvelope({
         ...packet, profileRevision: profile.revision, promptRevision: profile.promptRevision,
         sourceTurnId: turnRecord.id, sourceTakeId: turnRecord.takeId || options.takeId || '', sourceRevisionId: turnRecord.revisionId || options.revisionId || '',
@@ -17269,8 +17390,11 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
         handoffHash: worldMediaHash(String(turnRecord.authorialArtifact?.handoff ?? turnRecord.handoff ?? '')),
         refreshIndex: Number(options.refreshIndex) || 0, snapshotMode: options.fullRefresh ? 'full' : (packet.mode === 'full' ? 'full' : 'delta'),
         baseSnapshotId: previousSnapshot?.id || '', metadata: { ...(packet.metadata || {}), model: packet.model || '', provider: packet.provider || '', finishReason: packet.finishReason || '', rounds: packet.rounds || 1, scenePulsePreset: safeJsonClone(profile.scenePulsePreset || null), usage: safeJsonClone(packet.readerMetrics || {}), capturedAt: new Date().toISOString() }
+    }, { controlledEntityId });
+    const envelope = mergeSidecarReaderEnvelope(previousSnapshot?.envelope || null, source, {
+        profileRevision: profile.revision, promptRevision: profile.promptRevision,
+        sourceTurnId: turnRecord.id, baseSnapshotId: previousSnapshot?.id || '', controlledEntityId
     });
-    const envelope = mergeSidecarReaderEnvelope(previousSnapshot?.envelope || null, source, { profileRevision: profile.revision, promptRevision: profile.promptRevision, sourceTurnId: turnRecord.id, baseSnapshotId: previousSnapshot?.id || '' });
     const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), attemptId: source.sourceAttemptId, turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: previousSnapshot?.id || '' } };
     protocol.readerSnapshots.push(snapshot); protocol.readerSnapshots = protocol.readerSnapshots.slice(-400);
     turnRecord.readerEnvelope = safeJsonClone(envelope); turnRecord.readerSnapshotId = snapshot.id;

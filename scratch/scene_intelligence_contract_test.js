@@ -93,6 +93,8 @@ function objectLiteralAfter(source, marker) {
 
 const normalizer = lastFunction('normalizeSidecarReaderEnvelope');
 const merger = lastFunction('mergeSidecarReaderEnvelope');
+const characterIntelligenceNormalizer = lastFunction('normalizeSidecarCharacterIntelligence');
+const scenePulseCharacterCognitionBridge = lastFunction('scenePulseCharacterCognitionBridge');
 const currentTurn = lastFunction('currentSidecarAuthoredTurn');
 const acceptedHandoff = lastFunction('scenePulseAcceptedHandoff');
 const humanOverlay = lastFunction('scenePulseHumanOverlay');
@@ -130,6 +132,10 @@ const sourceHostActions = frozenRuntimeStringArray('SOURCE_HOST_ACTIONS');
 
 assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain semantic supplied-field provenance');
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
+assert.match(normalizer, /scenePulseCharacterCognitionBridge/, 'a rich ScenePulse character card must be able to supplement the existing cognition lane');
+assert.match(scenePulseCharacterCognitionBridge, /if \(!stableId \|\| !name \|\| !thought \|\| controlledCard/, 'card cognition may not use a display name or invent a subject identity');
+assert.match(scenePulseCharacterCognitionBridge, /const presenceMode = rosterPresence\(stableId, name, card\);[\s\S]*?if \(!presenceMode\) return;/, 'card cognition may not invent current-scene presence');
+assert.match(scenePulseCharacterCognitionBridge, /controlledCard\(card, stableId\)/, 'a rich ScenePulse card must never create an unexpressed player thought');
 assert.equal((app.match(/^function normalizeSidecarReaderEnvelope\(/gm) || []).length, 1, 'only one active Sidecar Reader normalizer may exist');
 assert.equal((app.match(/^function parseSidecarReaderOutput\(/gm) || []).length, 1, 'only one active Sidecar Reader parser may exist');
 assert.equal((app.match(/^function mergeSidecarReaderEnvelope\(/gm) || []).length, 1, 'only one active Sidecar Reader delta merger may exist');
@@ -747,6 +753,9 @@ const readerEnvelopeContext = {
 };
 const readerEnvelopeSource = [
     lastFunction('sidecarReaderValue'),
+    lastFunction('sidecarReaderClaim'),
+    characterIntelligenceNormalizer,
+    scenePulseCharacterCognitionBridge,
     graphNormalizer,
     normalizer,
     mergeSource,
@@ -760,5 +769,19 @@ assert.equal(customPanelEnvelope.patch.scenePulse.health, 64, 'a nested Sidecar 
 assert.equal(customPanelEnvelope.merged.scenePulse.health, 64, 'a compact Sidecar custom-panel delta must replace only its named accepted field');
 assert.equal(customPanelEnvelope.parsed.valid, true, 'a supported ScenePulse-only full reading must be accepted rather than discarded as empty');
 assert.equal(customPanelEnvelope.parsed.scenePulse.health, 64, 'parser acceptance must retain the ScenePulse custom-panel value it validated');
+
+// A card-only compact ScenePulse delta still has to reach the subject-scoped
+// cognition lane. This is a same-packet bridge: it needs a stable ID and
+// explicit roster membership, never a Horde name lookup. The memory worker
+// already consumes characterIntelligence, so this preserves the rich source
+// thought without introducing another memory system.
+const scenePulseCognitionEnvelope = vm.runInNewContext(`${readerEnvelopeSource}\n(() => {\n    const base = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: {\n        characterIntelligence: [{ subjectRef: 'cand_mira', candidateId: 'cand_mira', name: 'Mira', presence: { mode: 'active' }, sceneLocalImpression: 'Old cautious thought.' }],\n        scenePulse: { charactersPresent: [{ candidateId: 'cand_mira', mode: 'active' }], characters: [{ characterId: 'cand_mira', name: 'Mira', innerThought: 'Old cautious thought.' }] }\n    } }, { controlledEntityId: 'player' });\n    const patch = normalizeSidecarReaderEnvelope({ mode: 'delta', semantic_interpretation: {\n        scenePulse: { charactersPresent: [{ candidateId: 'cand_mira', mode: 'active' }], characters: [{ characterId: 'cand_mira', name: 'Mira', role: 'Courier', innerThought: 'I need to get the package out before anyone notices.', immediateNeed: 'Reach the east gate', shortTermGoal: 'Avoid the patrol', longTermGoal: 'Clear her brother', outfit: 'Rain-dark courier coat', posture: 'Ready to run' }] }\n    } }, { controlledEntityId: 'player' });\n    const cardOnly = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: {\n        scenePulse: { charactersPresent: [{ candidateId: 'cand_nia', mode: 'nearby' }], characters: [{ characterId: 'cand_nia', name: 'Nia', innerThought: 'I can hear the argument through the door.', outfit: 'Blue work jacket' }] }\n    } }, { controlledEntityId: 'player' });\n    const controlled = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: {\n        scenePulse: { charactersPresent: ['player'], characters: [{ characterId: 'player', name: 'Fei', role: 'Player', innerThought: 'This must not enter cognition.' }] }\n    } }, { controlledEntityId: 'player' });\n    return { base, patch, merged: mergeSidecarReaderEnvelope(base, patch, { controlledEntityId: 'player' }), cardOnly, controlled };\n})()`, readerEnvelopeContext);
+assert(scenePulseCognitionEnvelope.patch.semanticSuppliedFields.includes('characterIntelligence'), 'a card-only delta must explicitly reach the character-intelligence merge lane');
+assert.equal(scenePulseCognitionEnvelope.merged.characterIntelligence[0].sceneLocalImpression.text, 'I need to get the package out before anyone notices.', 'a current ScenePulse thought must replace the prior subject-scoped provisional thought');
+assert.equal(scenePulseCognitionEnvelope.merged.characterIntelligence[0].immediateObjectiveOrConcern[0].text, 'Reach the east gate', 'a card-only ScenePulse thought must retain its paired immediate need for cognition');
+assert.equal(scenePulseCognitionEnvelope.merged.characterIntelligence[0].visibleState.outfit, 'Rain-dark courier coat', 'a card-only ScenePulse observation must retain visible state beside its thought');
+assert.equal(scenePulseCognitionEnvelope.cardOnly.characterIntelligence[0].sceneLocalImpression.source, 'scenepulse_character_card', 'a card-derived thought must remain labeled as a same-packet provisional source');
+assert.equal(scenePulseCognitionEnvelope.cardOnly.characterIntelligence[0].presence.mode, 'nearby', 'the bridge must preserve explicit ScenePulse roster presence rather than inventing active presence');
+assert.equal(scenePulseCognitionEnvelope.controlled.characterIntelligence.length, 0, 'the bridge must never create private cognition from a controlled-player ScenePulse card');
 
 console.log('ScenePulse native-source integration contract passed.');
