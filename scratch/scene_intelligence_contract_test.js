@@ -784,4 +784,20 @@ assert.equal(scenePulseCognitionEnvelope.cardOnly.characterIntelligence[0].scene
 assert.equal(scenePulseCognitionEnvelope.cardOnly.characterIntelligence[0].presence.mode, 'nearby', 'the bridge must preserve explicit ScenePulse roster presence rather than inventing active presence');
 assert.equal(scenePulseCognitionEnvelope.controlled.characterIntelligence.length, 0, 'the bridge must never create private cognition from a controlled-player ScenePulse card');
 
+const cognitionQueueSource = [
+    lastFunction('sidecarProjectionClaimText'),
+    lastFunction('sidecarCognitionAccessForPresence'),
+    lastFunction('sidecarTurnCognitionEvidence'),
+    lastFunction('queueSidecarTurnCognitionJobs')
+].join('\n');
+const cardThoughtCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() => {\n    const protocol = { readerCandidates: [{ candidateId: 'cand_nia', candidateType: 'character', settlementStatus: 'settled' }] };\n    const turn = { id: 'turn_card', readerSnapshotId: 'snapshot_card', readerEnvelope: ${JSON.stringify(scenePulseCognitionEnvelope.cardOnly)}, sceneId: 'scene_card', sequenceId: 'sequence_card' };\n    const ids = queueSidecarTurnCognitionJobs({ entities: [] }, {}, protocol, turn);\n    return { ids, job: protocol.jobs[0] };\n})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    window: { HordeSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
+});
+assert.deepEqual(JSON.parse(JSON.stringify(cardThoughtCognitionJob.ids)), ['turn_cognition:turn_card:cand_nia'], 'a same-packet ScenePulse card thought must queue exactly one existing turn-cognition job');
+assert.equal(cardThoughtCognitionJob.job.candidateId, 'cand_nia', 'the cognition job must retain the ScenePulse stable candidate ID');
+assert.equal(cardThoughtCognitionJob.job.provisionalIntelligence.sceneLocalImpression.source, 'scenepulse_character_card', 'the cognition job must retain the card-thought source marker for its existing memory pipeline');
+assert.match(cardThoughtCognitionJob.job.perceptionEvidence, /I can hear the argument through the door/, 'the existing cognition job must receive the same current ScenePulse thought as perception evidence');
+
 console.log('ScenePulse native-source integration contract passed.');
