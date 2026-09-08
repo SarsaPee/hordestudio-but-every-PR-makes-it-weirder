@@ -110,6 +110,45 @@
     const hasValue = value => Array.isArray(value) ? value.length > 0 : plain(value) ? Object.keys(value).length > 0 : value !== undefined && value !== null && String(value).trim() !== '';
     const now = () => new Date().toISOString();
 
+    // The source dashboard deliberately has a compact date/clock parser: its
+    // native Reader emits `8/14/2026 (Friday)` and 24-hour time. Worlds keeps
+    // its accepted handoff in its own human-readable form (`Friday, August
+    // 14, 2026`, `6:30 PM`). Adapt a display clone at the source boundary so
+    // the authentic ScenePulse renderer receives the grammar it expects
+    // without mutating, relabelling, or otherwise taking ownership of the
+    // settled Horde field.
+    function applySourceDashboardDisplayGrammar(display) {
+        if (!plain(display)) return display;
+        const monthNumbers = Object.freeze({
+            january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+            july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
+        });
+        const weekdays = Object.freeze(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
+        const rawDate = String(display.date || '').trim();
+        const namedDate = rawDate.match(/^(?:(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),?\s+)?(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+)(\d{4})(?:\s+(?:AD|CE))?$/i);
+        const isoDate = rawDate.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if (namedDate) {
+            const month = monthNumbers[namedDate[2].toLowerCase()];
+            const day = Number(namedDate[3]);
+            const year = Number(namedDate[4]);
+            const weekday = namedDate[1] || weekdays[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+            display.date = `${month}/${day}/${year} (${weekday})`;
+        } else if (isoDate) {
+            const year = Number(isoDate[1]);
+            const month = Number(isoDate[2]);
+            const day = Number(isoDate[3]);
+            display.date = `${month}/${day}/${year} (${weekdays[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]})`;
+        }
+        const rawTime = String(display.time || '').trim();
+        const twelveHour = rawTime.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        if (twelveHour) {
+            let hour = Number(twelveHour[1]) % 12;
+            if (twelveHour[3].toUpperCase() === 'PM') hour += 12;
+            display.time = `${String(hour).padStart(2, '0')}:${twelveHour[2]}`;
+        }
+        return display;
+    }
+
     const runtime = {
         epoch: 0,
         current: null,
@@ -1914,6 +1953,19 @@
             });
             if (result?.status === 'stopped') {
                 makeToast('info', 'ScenePulse update stopped. The current scene is unchanged.', 'ScenePulse');
+            } else if (flight.section === 'scene') {
+                // Updating Scene Details rebuilds the source panel. The
+                // browser's scroll-anchor can otherwise retain the old scene
+                // body position and slice the permanent dashboard off above
+                // its own "CURRENT SCENE" bar. A scene refresh returns to
+                // the complete source context; other section refreshes retain
+                // the user's reading position.
+                const restoreSceneContext = () => {
+                    const body = document.getElementById('sp-panel-body');
+                    if (body?.closest('#world-sidecar-workspace')) body.scrollTop = 0;
+                };
+                restoreSceneContext();
+                requestAnimationFrame(restoreSceneContext);
             }
             return result;
         } catch (error) {
@@ -2117,6 +2169,7 @@
         modules.state?.setCurrentSnapshotMesIdx?.(Number(current.currentKey));
         modules.state?.setLastDeltaPayload?.(clone(current.handoff?.deltaScenePulse || null));
         const normalized = modules.normalize.normalizeTracker(snapshot);
+        applySourceDashboardDisplayGrammar(normalized);
         modules.updatePanel.updatePanel(normalized, true);
         modules.timeline.renderTimeline();
         modules.thoughts.updateThoughts(normalized);
