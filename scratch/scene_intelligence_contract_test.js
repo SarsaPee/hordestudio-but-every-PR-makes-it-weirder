@@ -23,6 +23,7 @@ const sourceNormalize = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'norma
 const sourceTimeline = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'timeline.js');
 const sourceWiki = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-wiki.js');
 const sourceWeb = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-web.js');
+const sourceSparklines = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'sparklines.js');
 const sourceLoading = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'loading.js');
 const sourceSetupGuide = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'setup-guide.js');
 const sourceI18n = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'i18n.js');
@@ -183,6 +184,10 @@ assert.match(sourceUpdate, /const _prevRel=_previousRelationship\(rel\)/, 'the v
 assert.match(sourceUpdate, /_sameStoredRelationship\(r,rel\)/, 'source relationship metadata edits must update the stable stored relationship');
 assert.match(sourceUpdate, /const _characterStableKey=entry=>/, 'source relationship cards must retain stable character identity for portrait/dossier matching');
 assert.match(sourceUpdate, /const sameCharacter=relCharacterKey&&charKey\?relCharacterKey===charKey/, 'source relationship cards must prefer stable character identity before display names');
+assert.match(sourceUpdate, /createSparklineCanvas\(rel,m\.k\)/, 'source relationship sparklines must receive the full stable source record');
+assert.match(sourceSparklines, /function _relationshipStableKey\(entry\)/, 'source sparklines must resolve a stable relationship identity');
+assert.match(sourceSparklines, /rels\.find\(rel => _sameHistoryRelationship\(rel, target\)\)/, 'source history must use stable relationship identity rather than fuzzy names');
+assert.doesNotMatch(sourceSparklines, /nameFirst/, 'source history must not fall back to first-name matching');
 assert.match(sourceTimeline, /export function renderTimeline\(\)/, 'source timeline must remain callable');
 assert.match(sourceWiki, /export function openCharacterWiki\(\)/, 'source Wiki must remain a full focused source view');
 assert.match(sourceWiki, /document\.body\.appendChild\(overlay\)/, 'source Wiki must retain viewport takeover behavior');
@@ -245,6 +250,25 @@ assert.match(sourcePrefs, /dashCards: incoming\.dashCards/, 'source dashboard-ca
 assert.match(sourcePrefs, /fieldToggles: incoming\.fieldToggles/, 'source field-visibility choices must persist through the scoped World preference boundary');
 assert.match(sourcePrefs, /setupDismissed: incoming\.setupDismissed === true/, 'source setup completion must persist as a scoped UI preference');
 assert.match(sourcePrefs, /thoughtPanelFit|thoughtFit: incoming\.thoughtFit/, 'source thought-panel behavior must persist through the scoped World preference boundary');
+
+const sparkIdentityStart = sourceSparklines.indexOf('function _relationshipStableKey(entry)');
+const sparkHistoryStart = sourceSparklines.indexOf('export function getMeterHistory(relationship)');
+const sparkHistoryEnd = sourceSparklines.indexOf('/**\n * Draw a mini sparkline', sparkHistoryStart);
+assert(sparkIdentityStart >= 0 && sparkHistoryStart > sparkIdentityStart && sparkHistoryEnd > sparkHistoryStart,
+    'source sparkline identity helpers and history reader must remain extractable for the continuity contract');
+const sparkHistorySource = [
+    sourceSparklines.slice(sparkIdentityStart, sparkHistoryStart),
+    'const getTrackerData = () => ({ snapshots: {',
+    "  1: { relationships: [{ relationshipId: 'rel_yvette', name: 'Hooded Stranger', affection: 12 }] },",
+    "  2: { relationships: [{ relationshipId: 'rel_yvette', name: 'Yvette', affection: 30 }] },",
+    "  3: { relationships: [{ relationshipId: 'rel_other', name: 'Yvette', affection: 99 }] }",
+    '} });',
+    sourceSparklines.slice(sparkHistoryStart, sparkHistoryEnd).replace('export function', 'function')
+].join('\n');
+const sparkHistory = vm.runInNewContext(`${sparkHistorySource}\ngetMeterHistory({ relationshipId: 'rel_yvette', name: 'Yvette' })`);
+assert.deepEqual(JSON.parse(JSON.stringify(sparkHistory.affection)), [12, 30, null],
+    'source relationship history must survive a name reveal but not attach a same-named different relationship');
+
 assert.match(app, /nativeFieldAuthority/, 'Horde preference storage must preserve the explicit source-to-Sidecar field authority ledger');
 assert.match(app, /detail\.action === 'commit-scenepulse-source-edit'/, 'Horde must claim source edit commits');
 assert.match(app, /detail\.action === 'persist-scenepulse-source-settings'/, 'Horde must claim source preference saves');

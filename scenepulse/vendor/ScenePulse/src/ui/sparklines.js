@@ -131,15 +131,31 @@ const METER_COLORS = {
     compatibility: '#5b8cc4',
 };
 
+// Relationship history must follow the opaque source relationship or character
+// identity, not a mutable presentation label.  The exact-name branch remains
+// only for legacy snapshots saved before compact ScenePulse IDs existed.
+function _relationshipStableKey(entry) {
+    const relationshipId = String(entry?.relationshipId || entry?.relationship_id || entry?.id || '').trim();
+    if (relationshipId) return `r:${relationshipId}`;
+    const characterId = String(entry?.characterId || entry?.character_id || entry?.subjectRef || entry?.subject_ref || '').trim();
+    return characterId ? `c:${characterId}` : '';
+}
+
+function _sameHistoryRelationship(left, right) {
+    const leftKey = _relationshipStableKey(left);
+    const rightKey = _relationshipStableKey(right);
+    if (leftKey && rightKey) return leftKey === rightKey;
+    return String(left?.name || '').trim().toLowerCase() === String(right?.name || '').trim().toLowerCase();
+}
+
 /**
- * Gather meter history for a character across all snapshots.
+ * Gather meter history for a relationship across all snapshots.
  */
-export function getMeterHistory(charName) {
+export function getMeterHistory(relationship) {
     const data = getTrackerData();
     const snapKeys = Object.keys(data.snapshots || {}).map(Number).sort((a, b) => a - b);
     const history = { affection: [], trust: [], desire: [], stress: [], compatibility: [] };
-    const nameLow = (charName || '').toLowerCase().trim();
-    const nameFirst = nameLow.split(/\s/)[0];
+    const target = typeof relationship === 'string' ? { name: relationship } : (relationship || {});
 
     for (const key of snapKeys) {
         const snap = data.snapshots[String(key)];
@@ -148,11 +164,7 @@ export function getMeterHistory(charName) {
             for (const m of Object.keys(history)) history[m].push(null);
             continue;
         }
-        const match = rels.find(r => {
-            const rn = (r.name || '').toLowerCase().trim();
-            return rn === nameLow || nameLow.startsWith(rn + ' ') || rn.startsWith(nameLow + ' ')
-                || (nameFirst.length > 2 && rn.split(/\s/)[0] === nameFirst);
-        });
+        const match = rels.find(rel => _sameHistoryRelationship(rel, target));
         if (match) {
             for (const m of Object.keys(history)) {
                 const val = match[m];
@@ -232,8 +244,8 @@ export function drawSparkline(canvas, values, color) {
 /**
  * Create a sparkline canvas element for a specific meter.
  */
-export function createSparklineCanvas(charName, meter) {
-    const history = getMeterHistory(charName);
+export function createSparklineCanvas(relationship, meter) {
+    const history = getMeterHistory(relationship);
     const values = history[meter];
     const nonNull = values ? values.filter(v => v !== null).length : 0;
 
@@ -263,7 +275,7 @@ export function createSparklineCanvas(charName, meter) {
 
     canvas.addEventListener('click', (e) => {
         e.stopPropagation();
-        showExpandedGraph(charName, meter, e.target);
+        showExpandedGraph(relationship, meter, e.target);
     });
 
     return canvas;
@@ -271,10 +283,12 @@ export function createSparklineCanvas(charName, meter) {
 
 // ── Full-screen SVG graph ──
 
-function showExpandedGraph(charName, focusMeter) {
+function showExpandedGraph(relationship, focusMeter) {
     document.querySelectorAll('.sp-graph-overlay').forEach(el => el.remove());
 
-    const history = getMeterHistory(charName);
+    const target = typeof relationship === 'string' ? { name: relationship } : (relationship || {});
+    const displayName = String(target.name || '').trim() || t('Relationship');
+    const history = getMeterHistory(target);
     const data = getTrackerData();
     const snapKeys = Object.keys(data.snapshots || {}).map(Number).sort((a, b) => a - b);
 
@@ -299,7 +313,7 @@ function showExpandedGraph(charName, focusMeter) {
 
         overlay.innerHTML = `<div class="sp-graph-container">
             <div class="sp-graph-header">
-                <span class="sp-graph-title">${charName} — ${t('Relationship History')}</span>
+                <span class="sp-graph-title">${esc(displayName)} — ${t('Relationship History')}</span>
                 <button class="sp-graph-close">✕</button>
             </div>
             <div class="sp-graph-svg-wrap">${_buildSvgGraph(history, activeMeter, snapKeys)}</div>

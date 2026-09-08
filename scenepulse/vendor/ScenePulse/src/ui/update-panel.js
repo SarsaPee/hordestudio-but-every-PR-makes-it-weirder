@@ -848,7 +848,7 @@ if(rel.relType)hh+=`<span class="sp-rel-type-badge" data-ft="rel_type" title="${
         else if(v===-1||label==='N/A'){row.innerHTML=`<div class="sp-meter-label">${esc(m.l)}</div><div class="sp-meter-bar-na"></div><div class="sp-meter-value-na">N/A</div>`;meterWrap.appendChild(row)}
         else{const cv=clamp(v,0,100);row.innerHTML=_tagHtml+`<div class="sp-meter-label">${esc(m.l)}</div>${_bar(cv)}<div class="sp-meter-value">${cv}${_deltaHtml}${_faceInline}</div>`;meterWrap.appendChild(row)}
         // Add sparkline as 4th grid column (separated from value to prevent overlap)
-        const _sparkCanvas=createSparklineCanvas(displayName,m.k);
+        const _sparkCanvas=createSparklineCanvas(rel,m.k);
         if(_sparkCanvas){row.appendChild(_sparkCanvas)}
         _body.appendChild(meterWrap)}bl.appendChild(_body);f.appendChild(bl)}return f;
     },s);
