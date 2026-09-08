@@ -124,6 +124,8 @@ const candidateDuplicateResolution = lastFunction('resolveScenePulseCandidateDup
 const impliedPromotion = lastFunction('promoteImpliedWorldRecord', 'async function');
 const promotionAppearance = lastFunction('applyScenePulsePromotionAppearance');
 const graphNormalizer = lastFunction('normalizeSidecarNpcRelationshipGraph');
+const worldStatusResize = lastFunction('initWorldStatusResizeHandle');
+const restoreScenePulseStatusWidth = lastFunction('restoreScenePulseStatusColumnWidth');
 const sourceMacroOrigin = lastRuntimeFunction('sourceMacroOrigin');
 const sourceCommandStatus = lastRuntimeFunction('sourceCommandStatus');
 const sourceCommand = lastRuntimeFunction('runSourceCommand', 'async function');
@@ -195,6 +197,7 @@ assert.match(acceptedHandoff, /npcRelationshipGraph/, 'accepted handoffs must re
 
 assert.match(html, /scenepulse-source-runtime\.js/, 'native source runtime must be loaded before app.js');
 assert.match(panelMount, /HordeScenePulseSourceRuntime\.mount\(host, handoff\)/, 'World HUD must mount native source runtime');
+assert.match(panelMount, /if \(sidecar\) restoreScenePulseStatusColumnWidth\(column\);/, 'ScenePulse must restore its own compact sidebar width rather than inherit an oversized HUD column');
 assert.doesNotMatch(panelMount.slice(0, panelMount.indexOf('// Gate B adapter below')), /HordeScenePulseWorlds\.mount\(host, handoff\)/, 'native source failure must not silently fall back to the hand-drawn adapter');
 assert.match(panelMount, /intentionally not substituted with a host lookalike/, 'failure state must remain truthful');
 assert.match(panelMount, /if \(state\.view !== 'worldPlay'\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'a late World redraw may not mount ScenePulse over a library route');
@@ -210,6 +213,8 @@ assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/relationship-web\.js`\)/, 'runti
 assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/loading\.js`\)/, 'runtime must load the source loading lifecycle primitives');
 assert.doesNotMatch(runtime, /import\(`\$\{ROOT\}\/index\.js`\)/, 'runtime must not launch ScenePulse autonomous ST/provider interceptor');
 assert.match(runtime, /modules\.panel\.createPanel\(\)/, 'source must create its own panel DOM');
+assert.match(runtime, /const current = active\(\);\s*if \(current\?\.host && panel\.parentElement !== current\.host\) current\.host\.appendChild\(panel\);/, 'the source mount must resolve its active Horde host before reparenting the panel');
+assert.match(runtime, /current\?\.host && panel\.parentElement !== current\.host\) current\.host\.appendChild\(panel\)/, 'the source panel must be reparented into the World status column rather than cover the app viewport');
 assert.match(runtime, /modules\.updatePanel\.updatePanel\(normalized, true\)/, 'source must render its own normalized panel');
 assert.match(runtime, /modules\.timeline\.renderTimeline\(\)/, 'source must render its own history UI');
 assert.match(runtime, /modules\.thoughts\.updateThoughts\(normalized\)/, 'source thought module must render its own panel');
@@ -224,6 +229,14 @@ assert.match(sourceRelationshipsCss, /\.sp-meter-row \{ display: grid; grid-temp
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-fill \{ height: 100%;[\s\S]*?transition: width/, 'the coloured relationship fill must encode current horizontal width');
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-prev \{ position: absolute; top: 0; bottom: 0; width: 2px;/, 'the previous-value delta marker must remain a vertical line on the horizontal track');
 assert.ok(html.indexOf('scenepulse/vendor/ScenePulse/style.css') < html.indexOf('scenepulse/horde/scene-pulse-worlds.css'), 'the native Horde bridge stylesheet must load after the vendored source CSS');
+assert.match(css, /#world-sidecar-workspace > #sp-panel\[data-horde-source-runtime="true"\]:not\(\.sp-mode-mobile\):not\(\.sp-mode-tablet\) \{ position: relative !important; inset: auto !important;/, 'desktop native ScenePulse must stay contained in the World status column');
+assert.doesNotMatch(css, /#sp-panel\[data-horde-source-runtime="true"\] \{ position: fixed !important; inset: 0 !important;/, 'the native bridge must not turn the desktop ScenePulse sidebar into a viewport takeover');
+assert.match(css, /#world-play-view \.world-status-col\.is-sidecar \{ width: var\(--world-scenepulse-sidebar-w,340px\) !important; min-width: 280px !important; max-width: 520px !important; flex: 0 0 var\(--world-scenepulse-sidebar-w,340px\) !important; \}/, 'ScenePulse needs its own compact resizable World column');
+assert.match(worldStatusResize, /column\.classList\.contains\('is-sidecar'\).*?applyScenePulseStatusColumnWidth\(column, value\)/s, 'the existing resize handle must control the ScenePulse column independently');
+assert.match(worldStatusResize, /hordeScenePulseSidebarWidthV2/, 'ScenePulse sidebar width must persist after a manual resize');
+assert.match(restoreScenePulseStatusWidth, /const fallback = 340/, 'a fresh ScenePulse World must open at the compact sidebar width');
+assert.match(restoreScenePulseStatusWidth, /The old full-status-column width is deliberately not migrated/, 'a stale broad HUD setting must not force ScenePulse back into a split view');
+assert.match(app, /column\.style\.setProperty\('flex-basis', `\$\{width\}px`, 'important'\)/, 'the compact source width must win over broad late HUD CSS');
 assert.match(css, /#world-sidecar-workspace \.sp-meter-row \{ grid-template-columns: auto minmax\(0,1fr\) minmax\(0,70px\) 44px; \}/, 'the final native bridge cascade must preserve a horizontal relationship-meter row');
 assert.match(css, /#world-sidecar-workspace \.sp-meter-bar-wrap \{ position: relative; display: block; min-width: 0; height: 8px; overflow: visible; border-radius: 5px; \}/, 'the native bridge must retain a horizontal meter track box');
 assert.match(css, /#world-sidecar-workspace \.sp-meter-bar-track \{ position: absolute; inset: 0; overflow: hidden; border-radius: 5px; \}/, 'the native bridge must clip the current fill inside its horizontal track');

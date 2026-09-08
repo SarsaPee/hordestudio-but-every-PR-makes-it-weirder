@@ -415,12 +415,12 @@
 @media (max-width: 760px) { #sp-worlds-overlay-root .sp-command-overlay { place-items: stretch; padding: 8px; } #sp-worlds-overlay-root .sp-command-console { width: 100%; max-height: calc(100vh - 16px); } #sp-worlds-overlay-root .sp-command-body { grid-template-columns: 1fr; } #sp-worlds-overlay-root .sp-command-body > aside { border-right: 0; border-bottom: 1px solid var(--sp-border); } #sp-worlds-overlay-root .sp-command-body > aside button { display: inline-grid; width: auto; margin: 2px; } #sp-worlds-overlay-root .sp-macro-list { grid-template-columns: 1fr; } }
 
 /* Native ScenePulse source runtime -------------------------------------------------
-   These selectors intentionally target the source DOM which the bridge mounts at
-   document level. They do not restyle a lookalike host panel. The source panel
-   remains the active renderer while this makes it the World HUD rather than a
-   narrow SillyTavern sidebar. Source wiki/web overlays keep their own viewport
-   takeover contract. */
-#sp-panel[data-horde-source-runtime="true"] { position: fixed !important; inset: 0 !important; z-index: 1000; display: flex; width: auto !important; height: auto !important; min-width: 0; min-height: 0; border: 0; border-radius: 0; background: var(--sp-bg-solid,#17191f); }
+   The source creates #sp-panel at document level, then the bridge reparents it
+   into the World status column.  Keep the source panel a proper sidebar on
+   desktop; source-owned wiki, web and dialog overlays continue to use their
+   original viewport takeover behaviour. */
+#world-play-view .world-status-col.is-sidecar { width: var(--world-scenepulse-sidebar-w,340px) !important; min-width: 280px !important; max-width: 520px !important; flex: 0 0 var(--world-scenepulse-sidebar-w,340px) !important; }
+#world-sidecar-workspace > #sp-panel[data-horde-source-runtime="true"]:not(.sp-mode-mobile):not(.sp-mode-tablet) { position: relative !important; inset: auto !important; z-index: 1; display: flex; flex: 1 1 auto; align-self: stretch; width: 100% !important; height: 100% !important; min-width: 0; min-height: 0; max-width: 100%; border: 0; border-radius: 0; background: var(--sp-bg-solid,#17191f); }
 #sp-panel[data-horde-source-runtime="true"] #sp-panel-body { min-width: 0; min-height: 0; overflow-y: auto; padding-bottom: 28px; }
 #sp-panel[data-horde-source-runtime="true"] .sp-toolbar { position: sticky; top: 0; z-index: 42; flex-wrap: wrap; }
 #sp-panel[data-horde-source-runtime="true"] .sp-horde-source-bridge-controls { display: inline-flex; align-items: center; gap: 4px; min-width: 0; margin-left: auto; }

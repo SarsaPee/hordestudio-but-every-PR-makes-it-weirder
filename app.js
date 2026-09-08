@@ -21412,6 +21412,8 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     }
     const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar); host.classList.toggle('hidden', !sidecar);
+    if (sidecar) restoreScenePulseStatusColumnWidth(column);
+    else clearScenePulseStatusColumnWidth(column);
     if (!sidecar) {
         unbindScenePulseWorldsHostActions(host);
         window.HordeScenePulseSourceRuntime?.unmount?.(host);
@@ -32928,13 +32930,18 @@ function initWorldStatusResizeHandle() {
     if (!handle || !column || handle.dataset.initialized) return;
     handle.dataset.initialized = 'true';
     const applyWidth = value => {
+        if (column.classList.contains('is-sidecar')) return applyScenePulseStatusColumnWidth(column, value);
         const width = Math.max(240, Math.min(720, Number(value) || 320));
         document.documentElement.style.setProperty('--world-status-w', `${width}px`);
         return width;
     };
     try {
-        const saved = Number(localStorage.getItem('hordeWorldStatusWidth'));
-        if (Number.isFinite(saved)) applyWidth(saved);
+        const storedStatusWidth = localStorage.getItem('hordeWorldStatusWidth');
+        const saved = storedStatusWidth === null ? Number.NaN : Number(storedStatusWidth);
+        if (Number.isFinite(saved)) document.documentElement.style.setProperty('--world-status-w', `${Math.max(240, Math.min(720, saved))}px`);
+        const storedScenePulseWidth = localStorage.getItem('hordeScenePulseSidebarWidthV2');
+        const scenePulseSaved = storedScenePulseWidth === null ? Number.NaN : Number(storedScenePulseWidth);
+        if (Number.isFinite(scenePulseSaved)) document.documentElement.style.setProperty('--world-scenepulse-sidebar-w', `${Math.max(280, Math.min(520, scenePulseSaved))}px`);
     } catch (_) { /* localStorage may be unavailable */ }
     let dragging = false;
     handle.addEventListener('pointerdown', event => {
@@ -32950,10 +32957,50 @@ function initWorldStatusResizeHandle() {
         dragging = false;
         handle.classList.remove('is-dragging');
         try { handle.releasePointerCapture?.(event.pointerId); } catch (_) { /* already released */ }
-        try { localStorage.setItem('hordeWorldStatusWidth', String(parseInt(getComputedStyle(document.documentElement).getPropertyValue('--world-status-w'), 10))); } catch (_) { /* localStorage may be unavailable */ }
+        try {
+            const scenePulse = column.classList.contains('is-sidecar');
+            const property = scenePulse ? '--world-scenepulse-sidebar-w' : '--world-status-w';
+            localStorage.setItem(scenePulse ? 'hordeScenePulseSidebarWidthV2' : 'hordeWorldStatusWidth', String(parseInt(getComputedStyle(document.documentElement).getPropertyValue(property), 10)));
+        } catch (_) { /* localStorage may be unavailable */ }
     };
     handle.addEventListener('pointerup', stop);
     handle.addEventListener('pointercancel', stop);
+}
+
+function applyScenePulseStatusColumnWidth(column, value) {
+    const width = Math.max(280, Math.min(520, Number(value) || 340));
+    document.documentElement.style.setProperty('--world-scenepulse-sidebar-w', `${width}px`);
+    // The late World Play stylesheet has several broad HUD declarations. Put
+    // the source runtime's compact width on its concrete column as well, so a
+    // stale generic status preference cannot silently reopen a half-screen
+    // ScenePulse panel. Pointer resizing uses this same function.
+    if (column) {
+        column.style.setProperty('width', `${width}px`, 'important');
+        column.style.setProperty('flex-basis', `${width}px`, 'important');
+        column.style.setProperty('min-width', '280px', 'important');
+        column.style.setProperty('max-width', '520px', 'important');
+    }
+    return width;
+}
+
+function clearScenePulseStatusColumnWidth(column) {
+    if (!column) return;
+    ['width', 'flex-basis', 'min-width', 'max-width'].forEach(property => column.style.removeProperty(property));
+}
+
+function restoreScenePulseStatusColumnWidth(column) {
+    const fallback = 340;
+    try {
+        // The old full-status-column width is deliberately not migrated: it
+        // predates the source sidebar and would reopen ScenePulse as a split
+        // screen. This V2 preference belongs solely to ScenePulse.
+        const raw = localStorage.getItem('hordeScenePulseSidebarWidthV2');
+        const saved = raw === null ? Number.NaN : Number(raw);
+        const width = Number.isFinite(saved) ? Math.max(280, Math.min(520, saved)) : fallback;
+        return applyScenePulseStatusColumnWidth(column, width);
+    } catch (_) {
+        return applyScenePulseStatusColumnWidth(column, fallback);
+    }
 }
 
 function prepareWorldStatusSections(container) {

@@ -2029,6 +2029,13 @@
         runtime.modules.panel.createPanel();
         const panel = document.getElementById('sp-panel');
         if (!panel) throw new Error('ScenePulse source panel did not create its DOM root.');
+        // ScenePulse creates its source panel at document level for
+        // SillyTavern.  In Worlds, the panel itself belongs in the status
+        // column; only source overlays (wiki, web and dialogs) should take
+        // over the viewport.  Reparenting keeps the actual source component
+        // intact while giving it a real World-local containing block.
+        const current = active();
+        if (current?.host && panel.parentElement !== current.host) current.host.appendChild(panel);
         panel.dataset.hordeSourceRuntime = 'true';
         panel.dataset.hordeSourceRevision = SOURCE.revision;
         injectBridgeControls(panel);
