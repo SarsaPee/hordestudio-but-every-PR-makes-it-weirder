@@ -55,6 +55,8 @@ const resolveQuestTranslation = lastFunction('resolveScenePulseQuestTranslation'
 const relationshipChanges = lastFunction('scenePulseRelationshipChanges');
 const relationshipTranslations = lastFunction('applyScenePulseRelationshipEditTranslations');
 const relationshipApply = lastFunction('applyScenePulseRelationshipChange');
+const relationshipPromptProjection = lastFunction('scenePulseRelationshipPromptProjection');
+const ffContextCompiler = lastFunction('compileFF54SidecarContext');
 const panelMount = lastFunction('renderScenePulseWorldsWorkspace');
 const nativePresentationAuthority = lastFunction('scenePulseDeclaredNativeFieldAuthority');
 const readerPass = lastFunction('runSidecarSemanticReading', 'async function');
@@ -209,6 +211,8 @@ assert.match(relationshipTranslations, /scenePulseRelationshipChanges\(edit\.bef
 assert.match(relationshipApply, /scenePulseRelationshipTarget/, 'relationship translation must resolve a named identity boundary before writing Horde state');
 assert.match(relationshipApply, /lastMeterDeltas/, 'Horde relationship state must retain compact signed source meter deltas');
 assert.doesNotMatch(relationshipApply, /\.find\([^\n]*name/i, 'relationship translation must not look up a Horde person by display name');
+assert.match(ffContextCompiler, /scenePulseRelationshipPromptProjection/, 'the Narrator active-cast prompt must receive a bounded ScenePulse relationship projection');
+assert.match(ffContextCompiler, /scenePulse_relationship_note/, 'the Narrator prompt must distinguish a signed delta from the current relationship meter');
 assert.match(resolveQuestTranslation, /\['link', 'create'\]/, 'a title collision must require an explicit link-or-separate decision');
 assert.match(app, /detail\.action === 'resolve-scenepulse-quest-translation'/, 'Horde must claim the narrow unresolved Quest Journal decision');
 assert.match(css, /\.sp-horde-quest-translation-review/, 'Inspect Quest Journal outcomes must retain a source-styled review treatment');
@@ -421,6 +425,31 @@ assert.deepEqual(JSON.parse(JSON.stringify(relationshipApplyResult.record.sceneP
     affection: 2, trust: 13
 }, 'Horde must retain the compact source delta vector for prompt generation');
 assert.equal(relationshipApplyResult.links[0].targetEntityId, 'yvette', 'the source relationship must retain an explicit stable identity link after promotion');
+
+const relationshipPromptSource = [
+    "const SCENEPULSE_RELATIONSHIP_METERS = Object.freeze(['affection', 'trust', 'desire', 'stress', 'compatibility']);",
+    'const isPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
+    lastFunction('scenePulseRelationshipMeter'),
+    relationshipPromptProjection
+].join('\n');
+const promptRelationships = vm.runInNewContext(`${relationshipPromptSource}\nscenePulseRelationshipPromptProjection(${JSON.stringify({
+    npcRelationships: {
+        'player|yvette': {
+            scenePulse: {
+                status: 'current', sourceKey: 'relationship:rel_yvette', name: 'Yvette', relType: 'ally', relPhase: 'warming',
+                meters: { affection: 5, trust: 38, desire: 0, stress: 55, compatibility: 30 },
+                labels: { affection: 'warm', trust: 'building' }, lastMeterDeltas: { affection: 2, trust: 13 },
+                history: [{ relationship: { name: 'this audit must not reach the prompt' } }]
+            }
+        },
+        'player|gone': { scenePulse: { status: 'historical', meters: { trust: 99 }, lastMeterDeltas: { trust: 1 } } }
+    }
+})}, ['yvette'], 'player')`);
+assert.deepEqual(JSON.parse(JSON.stringify(promptRelationships)), [{
+    between: ['player', 'yvette'], status: 'current', sourceKey: 'relationship:rel_yvette', name: 'Yvette', relType: 'ally', relPhase: 'warming',
+    timeTogether: '', milestone: '', meters: { affection: 5, trust: 38, desire: 0, stress: 55, compatibility: 30 },
+    labels: { affection: 'warm', trust: 'building' }, lastMeterDeltas: { affection: 2, trust: 13 }, sourceTurnId: ''
+}], 'Narrator relationship context must carry current dimensions and compact deltas without audit history or retired scene state');
 
 const sourceRuntimeContext = {
     window: {},

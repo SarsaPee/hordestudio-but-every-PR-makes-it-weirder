@@ -14670,15 +14670,22 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
     ].filter(Boolean).join('\n\n'), 1, 3600, { mandatory: !!String(opt.personaContext || '').trim() });
 
     // FF character tracker — active cast state + relationship posture.
+    const controlledEntityId = String((packet.activeSequence || {}).controlledEntityId || sess?.controlledEntityId || 'player');
     const relationships = (Array.isArray(world && world.relationships) ? world.relationships : [])
         .filter(record => record && (castIds.indexOf(record.a) !== -1 || castIds.indexOf(record.b) !== -1))
         .slice(-12)
         .map(record => ({ between: [record.a, record.b], label: record.label, score: record.score, reason: record.reason }));
+    const scenePulseRelationships = scenePulseRelationshipPromptProjection(sess, castIds, controlledEntityId);
     add('agent_character_tracker', 'ACTIVE CAST', jsonText({
         present_cast: (opt.presentNPCs || []).map(npc => npc && npc.name).filter(Boolean),
-        controlled_entity: (packet.activeSequence || {}).controlledEntityId || 'player',
+        controlled_entity: controlledEntityId,
         activities: packet.activities || null,
         relationships: relationships,
+        // The full rich state and the last signed delta are both useful to
+        // the Narrator. The vector is relative to the previous ScenePulse
+        // source reading, never a replacement for the current meter value.
+        scenePulse_relationships: scenePulseRelationships,
+        scenePulse_relationship_note: 'ScenePulse meters are current relationship presentation state. lastMeterDeltas are signed changes from the prior accepted source reading; use them as movement, never as the current value.',
         presence_note: 'Committed presence only. A mentioned destination is not arrival; a nearby voice is not physical presence.'
     }), 1, 2200);
 
@@ -20499,6 +20506,41 @@ function applyScenePulseRelationshipEditTranslations(world, sess, protocol, edit
         protocol.scenePulseRelationshipTranslations = protocol.scenePulseRelationshipTranslations.slice(-320);
     }
     return results;
+}
+
+// Narration needs the useful relationship signal, not the full audit trail.
+// Feed only the current source dimensions and their most recent compact delta
+// into the active-cast context. This lets a model distinguish “trust 38” from
+// “trust rose by 13” without confusing an old history entry for present state.
+function scenePulseRelationshipPromptProjection(sess, relevantEntityIds = [], controlledEntityId = 'player') {
+    const relevant = new Set([controlledEntityId, ...(Array.isArray(relevantEntityIds) ? relevantEntityIds : [])]
+        .map(value => String(value || '').trim()).filter(Boolean));
+    return Object.entries(isPlainObject(sess?.npcRelationships) ? sess.npcRelationships : {})
+        .map(([key, record]) => {
+            const source = isPlainObject(record?.scenePulse) ? record.scenePulse : null;
+            if (!source || String(source.status || '') !== 'current') return null;
+            const participants = String(key || '').split('|').filter(Boolean);
+            if (participants.length !== 2 || !participants.some(id => relevant.has(id))) return null;
+            const meters = {};
+            const labels = {};
+            const deltas = {};
+            SCENEPULSE_RELATIONSHIP_METERS.forEach(meter => {
+                const value = scenePulseRelationshipMeter(source?.meters?.[meter]);
+                if (value !== null) meters[meter] = value;
+                const label = String(source?.labels?.[meter] || '').trim().slice(0, 180);
+                if (label) labels[meter] = label;
+                const delta = Number(source?.lastMeterDeltas?.[meter]);
+                if (Number.isFinite(delta) && delta !== 0) deltas[meter] = Math.round(delta * 100) / 100;
+            });
+            return {
+                between: participants, status: String(source.status || '').slice(0, 40),
+                sourceKey: String(source.sourceKey || '').slice(0, 240), name: String(source.name || '').slice(0, 240),
+                relType: String(source.relType || '').slice(0, 180), relPhase: String(source.relPhase || '').slice(0, 180),
+                timeTogether: String(source.timeTogether || '').slice(0, 240), milestone: String(source.milestone || '').slice(0, 1_200),
+                meters, labels, lastMeterDeltas: deltas,
+                sourceTurnId: String(source.lastSourceTurnId || '').slice(0, 180)
+            };
+        }).filter(Boolean).slice(-12);
 }
 
 // A human source-panel save is part of the authored scene-state record. Keep
