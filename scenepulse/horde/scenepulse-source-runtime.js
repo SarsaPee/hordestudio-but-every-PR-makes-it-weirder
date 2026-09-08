@@ -159,7 +159,8 @@
         originalToastr: Object.getOwnPropertyDescriptor(global, 'toastr'),
         facadeInstalled: false,
         // The source renderer can replace `#sp-panel` after a Reader result.
-        // Capture at the stable document boundary and filter to that panel.
+        // Capture at the stable window boundary (before Horde's document
+        // handlers) and filter to that panel.
         panelCaptureInstalled: false,
         portraitCaptureInstalled: false,
         thoughtRefreshCaptureInstalled: false,
@@ -882,7 +883,7 @@
 
     function installHistorySelectionCapture() {
         if (runtime.historySelectionCaptureInstalled) return;
-        document.addEventListener('click', event => {
+        global.addEventListener('click', event => {
             const target = event.target instanceof Element ? event.target : null;
             if (!target || !active()) return;
             if (target.closest('#sp-timeline .sp-tl-node, #sp-timeline .sp-tl-disc-btn, .sp-browse-item')) {
