@@ -23,6 +23,8 @@ const sourceTimeline = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', '
 const sourceWiki = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-wiki.js');
 const sourceWeb = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-web.js');
 const sourceSlots = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'prompts', 'slots.js');
+const sourceMacros = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'macros.js');
+const sourceCommands = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'slash-commands.js');
 
 function lastFunction(name, prefix = 'function') {
     const start = app.lastIndexOf(`${prefix} ${name}(`);
@@ -44,6 +46,13 @@ const humanOverlay = lastFunction('scenePulseHumanOverlay');
 const sourceEdit = lastFunction('commitScenePulseSourceEdit', 'async function');
 const sourcePrefs = lastFunction('persistScenePulseSourceRuntimePreferences', 'async function');
 const panelMount = lastFunction('renderScenePulseWorldsWorkspace');
+const nativePresentationAuthority = lastFunction('scenePulseDeclaredNativeFieldAuthority');
+const readerPass = lastFunction('runSidecarSemanticReading', 'async function');
+const candidateEligibility = lastFunction('scenePulseCandidatePromotionEligibility');
+const candidateStage = lastFunction('stageScenePulseCandidateForWorldReview', 'async function');
+const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async function');
+const impliedPromotion = lastFunction('promoteImpliedWorldRecord', 'async function');
+const promotionAppearance = lastFunction('applyScenePulsePromotionAppearance');
 
 assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain semantic supplied-field provenance');
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
@@ -52,6 +61,13 @@ assert.match(app, /const SCENEPULSE_TOUR_EXAMPLE_DATA = Object\.freeze/, 'the ac
 assert.match(acceptedHandoff, /scenePulseHumanOverlay\(protocol, fixtureWithPreferences\)/, 'fixture state must accept an explicit human edit overlay without registry backfill');
 assert.match(acceptedHandoff, /settlementStatus === 'settled'[\s\S]*snapshot\?\.turnId/, 'live handoff must be exact-turn settled');
 assert.doesNotMatch(acceptedHandoff, /world\.entities|world\.quests|sess\.quests/, 'accepted ScenePulse handoff must not borrow Horde registry fields');
+assert.match(nativePresentationAuthority, /SCENEPULSE_NATIVE_PRESENTATION_FIELDS/, 'the ScenePulse-facing ownership family must be explicit');
+assert.match(acceptedHandoff, /nativeFieldAuthority/, 'each accepted handoff must carry the declared source-field authority');
+assert.match(acceptedHandoff, /candidateReview/, 'settled identity handoffs must remain beside the ScenePulse tracker rather than inside it');
+assert.match(app, /function scenePulseActiveSourceProfile\(/, 'the selected source Profile must be resolvable at the Reader boundary');
+assert.match(app, /function scenePulseSourceProfilePromptContext\(/, 'the selected source Profile needs a constrained Reader prompt context');
+assert.match(readerPass, /sourceProfileContext\.instruction/, 'source Profile instructions must reach the Sidecar Reader');
+assert.match(readerPass, /scenePulseSourceProfile/, 'accepted Reader metadata must retain source Profile provenance');
 
 assert.match(html, /scenepulse-source-runtime\.js/, 'native source runtime must be loaded before app.js');
 assert.match(panelMount, /HordeScenePulseSourceRuntime\.mount\(host, handoff\)/, 'World HUD must mount native source runtime');
@@ -70,13 +86,38 @@ assert.match(runtime, /modules\.updatePanel\.updatePanel\(normalized, true\)/, '
 assert.match(runtime, /modules\.timeline\.renderTimeline\(\)/, 'source must render its own history UI');
 assert.match(runtime, /modules\.thoughts\.updateThoughts\(normalized\)/, 'source thought module must render its own panel');
 assert.match(runtime, /materializeNativeTracker/, 'fixture-backed fields must be materialized before source render');
-assert.match(runtime, /if \(!authority\.size\) return fixture/, 'the native source surface must remain fixture-only until a field sync path is explicitly granted');
+assert.match(runtime, /if \(!authority\.size\) return fixture/, 'an older handoff with no declared field path must remain fixture-backed');
 assert.match(runtime, /nativeFieldAuthority/, 'field-by-field authority must be explicit rather than inferred from live mode');
+assert.match(runtime, /nativeFieldHasAcceptedValue/, 'a declared field must still prove an accepted value before replacing the tutorial support');
 assert.match(runtime, /!clear\.has\(key\).*?!replace\.has\(key\).*?!hasValue\(value\)/s, 'implicit empty live values must not shrink source fixture data');
 assert.match(runtime, /for \(let index = 0; index < 12; index \+= 1\)/, 'fixture-only source mount must exercise the populated tutorial timeline');
-assert.match(runtime, /ScenePulse source materialization beside Sidecar’s settled handoff/, 'the native and Sidecar readings need a visible comparison surface');
-assert.match(runtime, /disagreement is retained for review; neither column is silently overwritten/i, 'conflicts must remain inspectable');
+assert.match(runtime, /ScenePulse handoff review/, 'the native and Sidecar readings need a visible comparison surface');
+assert.match(runtime, /A difference is evidence to review, not a cue to erase either system/i, 'conflicts must remain inspectable');
+assert.match(runtime, /Tutorial support retained/, 'unsupported fields must remain visibly scaffolded instead of disappearing');
+assert.match(runtime, /Settled handoff adopted/, 'the comparison must distinguish a real accepted replacement from fixture support');
+assert.match(runtime, /installHistorySelectionCapture/, 'source timeline and Browse All selections must keep the comparison aligned with the selected source snapshot');
+assert.match(runtime, /loadOptionalSourceModule/, 'an optional source utility may not prevent the foreground ScenePulse panel from mounting');
+assert.match(runtime, /profileManager: 'settings-ui\/profiles-manager\.js'/, 'source Profiles must remain a real vendored surface');
+assert.match(runtime, /guidedTour: 'settings-ui\/guided-tour\.js'/, 'source Guided Tour must remain a real vendored surface');
+assert.match(runtime, /promptEditor: 'ui\/prompt-editor\.js'/, 'source Prompt Editor must remain a real vendored surface');
+assert.match(runtime, /presetBrowser: 'ui\/preset-browser\.js'/, 'source Preset Browser must remain a real vendored surface');
+assert.match(runtime, /debugInspector: 'ui\/debug-inspector\.js'/, 'source Debug Inspector must remain a lazy vendored surface');
+assert.match(runtime, /openDebugInspector\?\.\('activity'\)/, 'native toolbar diagnostics must call the upstream Debug Inspector');
+assert.match(runtime, /macros: 'macros\.js'/, 'native commands must inspect the actual source macro vocabulary');
+assert.match(runtime, /showSourceCommandOverlay/, 'native runtime must expose a real ScenePulse command surface');
+assert.match(runtime, /\/sp regen \[section\]/, 'source slash command help must retain section regeneration');
+assert.match(runtime, /\/sp refresh/, 'source slash command help must retain complete refresh');
+assert.match(runtime, /\/sp clear/, 'source slash command help must retain clear semantics');
+assert.match(runtime, /export-scenepulse-history/, 'source command export must cross the narrow Horde action boundary');
+assert.match(runtime, /clear-scenepulse-history/, 'source command clear must cross the narrow Horde action boundary');
+assert.match(runtime, /forceFull: false/, 'source regen must preserve compact Sidecar delta cadence');
+assert.match(runtime, /forceFull: true/, 'source refresh must request one full Sidecar projection');
+assert.match(runtime, /sourceMacroProjection/, 'macro previews need their own fixture-safe source projection');
+assert.match(runtime, /return clone\(current\?\.sidecarTracker \|\| \{\}\)/, 'live macro previews must read accepted Sidecar data rather than fixture support');
+assert.doesNotMatch(runtime, /generateTracker/, 'native source commands must not start ScenePulse autonomous generation');
+assert.match(runtime, /sourceProfiles: clone\(settings\?\.profiles \|\| \[\]\)/, 'source Profile edits must return through the settings bridge');
 assert.match(runtime, /refresh-scene-pulse/, 'source refresh controls must dispatch to Sidecar');
+assert.match(runtime, /#sp-thought-panel \.sp-tp-regen/, 'the body-level source Thoughts refresh must also cross the Reader boundary');
 assert.match(runtime, /stage-story-idea/, 'source Story Idea controls must dispatch to Horde actions');
 assert.match(runtime, /commit-scenepulse-source-edit/, 'source edit saves must cross an auditable host boundary');
 assert.match(runtime, /persist-scenepulse-source-settings/, 'source preference saves must use a separate host boundary');
@@ -92,11 +133,14 @@ assert.match(sourceWiki, /document\.body\.appendChild\(overlay\)/, 'source Wiki 
 assert.match(sourceWeb, /export function openRelationshipWeb\(entries\)/, 'source relationship graph must remain callable');
 assert.match(sourceSlots, /ONLY return fields whose values CHANGED/, 'source delta contract must remain compact');
 assert.match(sourceSlots, /ALWAYS include: time, date, elapsed/, 'source delta contract must retain temporal continuity');
+assert.match(sourceMacros, /sp_relationships/, 'vendored macro vocabulary must retain relationship context');
+assert.match(sourceCommands, /\/sp refresh/, 'vendored slash vocabulary must retain full refresh');
 
 assert.match(css, /#sp-panel\[data-horde-source-runtime="true"\]/, 'native source panel must be styled as World HUD, not a narrow ST sidebar');
 assert.match(css, /\.sp-horde-compare-overlay/, 'comparison UI must be visibly styled');
 assert.match(css, /\.sp-horde-compare-disagrees/, 'comparison UI must distinguish disagreement');
 assert.match(css, /\.sp-horde-source-bridge-controls/, 'native source global Save/Discard controls must be styled');
+assert.match(css, /\.sp-horde-command-overlay/, 'native source command surface must have a viewport overlay treatment');
 
 assert.match(sourceEdit, /type: 'scene_pulse_human_edit'/, 'direct edits must become human ScenePulse history nodes');
 assert.match(sourceEdit, /author: 'human'/, 'direct edit author must be preserved');
@@ -108,11 +152,100 @@ assert.match(app, /do not describe them as editing/, 'model context must preserv
 assert.match(humanOverlay, /sidecarScenePulse/, 'human overlay must preserve unmodified Sidecar reading for comparison');
 assert.match(humanOverlay, /Human ScenePulse edit/, 'human edit must appear in source history');
 assert.match(sourcePrefs, /customPanels: schema/, 'source custom-panel definition must persist as World schema');
+assert.match(sourcePrefs, /sourceProfiles: incoming\.sourceProfiles/, 'source Profiles must persist through the scoped World preference boundary');
+assert.match(sourcePrefs, /sourceActiveProfileId: incoming\.sourceActiveProfileId/, 'the active source Profile must persist through the scoped World preference boundary');
+assert.match(sourcePrefs, /dashCards: incoming\.dashCards/, 'source dashboard-card choices must persist through the scoped World preference boundary');
+assert.match(sourcePrefs, /fieldToggles: incoming\.fieldToggles/, 'source field-visibility choices must persist through the scoped World preference boundary');
+assert.match(sourcePrefs, /thoughtPanelFit|thoughtFit: incoming\.thoughtFit/, 'source thought-panel behavior must persist through the scoped World preference boundary');
 assert.match(app, /nativeFieldAuthority/, 'Horde preference storage must preserve the explicit source-to-Sidecar field authority ledger');
 assert.match(app, /detail\.action === 'commit-scenepulse-source-edit'/, 'Horde must claim source edit commits');
 assert.match(app, /detail\.action === 'persist-scenepulse-source-settings'/, 'Horde must claim source preference saves');
 assert.match(app, /detail\.action === 'stage-story-idea'/, 'Horde must claim source Story Idea actions');
 assert.match(app, /detail\.action === 'refresh-scene-pulse'/, 'Horde must claim source Reader refresh actions');
+assert.match(app, /forceFull: detail\.forceFull === true/, 'Horde must preserve source regen versus full-refresh intent');
+assert.match(app, /SCENEPULSE FOCUSED SECTION REFRESH/, 'section refresh must focus the single Sidecar Reader pass without invoking Narrator');
+assert.match(runtime, /save-scenepulse-portrait/, 'source portraits must cross a named portable host boundary');
+assert.match(runtime, /clear-scenepulse-portrait/, 'source portrait clearing must cross a named portable host boundary');
+assert.match(runtime, /portraitIdentityForCharacter/, 'portrait associations must use ScenePulse stable identities, not a canonical registry fallback');
+assert.match(runtime, /Accepted compact delta for this selection/, 'comparison must show the compact handoff that explains a disagreement');
+assert.match(runtime, /this view makes no authority change by itself/i, 'comparison must expose conflicts without silently choosing an authority');
+assert.match(runtime, /Scene identity handoffs/, 'Inspect must expose the ScenePulse-to-Horde identity scaffold alongside field comparison');
+assert.match(runtime, /stage-scenepulse-candidate-review/, 'candidate review must use an explicit narrow host action');
+assert.match(runtime, /promote-scenepulse-candidate/, 'a staged candidate must be able to request explicit durable promotion');
+assert.match(runtime, /Create with author decision/, 'an early durable decision must be visibly distinct from ordinary promotion readiness');
+assert.match(runtime, /link-scenepulse-candidate/, 'a verified Reader identity match must require an explicit link action');
+assert.match(runtime, /keep-scenepulse-candidate-scene-only/, 'the author must be able to keep an incomplete bridge visibly ScenePulse-only');
+assert.match(css, /\.sp-horde-candidate-review/, 'identity handoff cards must have a distinct comparison treatment');
+
+assert.match(candidateEligibility, /settlementStatus !== 'settled'/, 'candidate promotion must reject unsettled Reader state');
+assert.match(candidateEligibility, /sourceTurnIds\.length >= 2/, 'candidate promotion readiness must reward repeated settled evidence');
+assert.match(candidateEligibility, /sceneClosed/, 'scene closure must be a valid review boundary');
+assert.match(candidateStage, /scenePulseCandidateId/, 'the promotion bridge must retain stable Reader candidate identity');
+assert.match(candidateStage, /scenePulseEvidence/, 'the promotion bridge must retain Reader evidence instead of only a display label');
+assert.match(candidateStage, /scenePulseAppearance/, 'the promotion bridge must preserve observed appearance for the visuals path');
+assert.match(impliedPromotion, /awaiting_scene_evidence/, 'an incomplete source candidate must remain visible rather than being promoted early');
+assert.match(impliedPromotion, /explicit author decision, not an automatic promotion/, 'an early promotion must disclose that it is a deliberate override');
+assert.match(impliedPromotion, /applyScenePulsePromotionAppearance/, 'explicit promotion must feed observed outfit and appearance into Horde visuals');
+assert.match(impliedPromotion, /markScenePulseCandidatePromotionOutcome/, 'explicit promotion must write canonical identity back to the Reader candidate');
+assert.match(candidateLink, /Reader did not provide a verified canonical identity/, 'name similarity alone must not silently link a ScenePulse candidate');
+assert.match(app, /detail\.action === 'stage-scenepulse-candidate-review'/, 'Horde must claim candidate review staging');
+assert.match(app, /detail\.action === 'promote-scenepulse-candidate'/, 'Horde must claim candidate promotion');
+assert.match(app, /detail\.action === 'link-scenepulse-candidate'/, 'Horde must claim canonical identity linking');
+
+const candidateEligibilitySource = [
+    lastFunction('scenePulseCandidatePromotionKind'),
+    lastFunction('scenePulseCandidateSourceTurnIds'),
+    lastFunction('scenePulseCandidatePromotionEligibility')
+].join('\n');
+const candidateEligibilityContext = {};
+const onceSeenCandidate = vm.runInNewContext(`${candidateEligibilitySource}\nscenePulseCandidatePromotionEligibility({}, ${JSON.stringify({ candidateType: 'character', label: 'Mira', settlementStatus: 'settled', sourceTurnIds: ['turn_1'] })})`, candidateEligibilityContext);
+assert.equal(onceSeenCandidate.reviewable, true, 'a settled named candidate should be eligible for visible World review');
+assert.equal(onceSeenCandidate.ready, false, 'one settled appearance alone must not silently earn a durable record');
+const repeatedCandidate = vm.runInNewContext(`${candidateEligibilitySource}\nscenePulseCandidatePromotionEligibility({}, ${JSON.stringify({ candidateType: 'character', label: 'Mira', settlementStatus: 'settled', sourceTurnIds: ['turn_1', 'turn_2'] })})`, candidateEligibilityContext);
+assert.equal(repeatedCandidate.ready, true, 'the same candidate recurring across settled turns should become ready for explicit promotion');
+const closedSceneCandidate = vm.runInNewContext(`${candidateEligibilitySource}\nscenePulseCandidatePromotionEligibility(${JSON.stringify({ scenes: [{ id: 'scene_1', status: 'closed' }] })}, ${JSON.stringify({ candidateType: 'location', label: 'Lantern Court', settlementStatus: 'settled', sourceTurnIds: ['turn_1'], sourceSceneId: 'scene_1' })})`, candidateEligibilityContext);
+assert.equal(closedSceneCandidate.ready, true, 'a closed source scene should be a valid review boundary for a local place');
+
+const sourceRuntimeContext = {
+    window: {},
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    console
+};
+sourceRuntimeContext.window.setTimeout = sourceRuntimeContext.setTimeout;
+sourceRuntimeContext.window.clearTimeout = sourceRuntimeContext.clearTimeout;
+vm.runInNewContext(runtime, sourceRuntimeContext);
+const materializeSourceTracker = sourceRuntimeContext.window.HordeScenePulseSourceRuntime.materializeNativeTracker;
+const fixtureTracker = {
+    time: '3:08 PM',
+    relationships: [{ relationshipId: 'yvette', name: 'Yvette', trust: 25 }],
+    characters: [{ characterId: 'yvette', name: 'Yvette', innerThought: 'fixture thought' }]
+};
+const scaffoldBase = {
+    status: 'accepted_live',
+    fixtureScenePulse: fixtureTracker,
+    nativeFieldAuthority: ['time', 'relationships', 'characters']
+};
+assert.deepEqual(
+    JSON.parse(JSON.stringify(materializeSourceTracker({ ...scaffoldBase, scenePulse: { time: '3:18 PM', relationships: [] } }).relationships)),
+    fixtureTracker.relationships,
+    'an unnamed empty Sidecar collection must not erase the working ScenePulse tutorial feature'
+);
+assert.equal(
+    materializeSourceTracker({ ...scaffoldBase, scenePulse: { time: '3:18 PM', relationships: [] } }).time,
+    '3:18 PM',
+    'an accepted populated field must replace just that supported ScenePulse field'
+);
+assert.deepEqual(
+    JSON.parse(JSON.stringify(materializeSourceTracker({ ...scaffoldBase, scenePulse: { relationships: [] }, replaceCollections: ['relationships'] }).relationships)),
+    [],
+    'a named replacement may intentionally clear a supported ScenePulse collection'
+);
+assert.deepEqual(
+    JSON.parse(JSON.stringify(materializeSourceTracker({ ...scaffoldBase, scenePulse: { time: '3:18 PM' } }).characters)),
+    fixtureTracker.characters,
+    'an omitted Sidecar field must keep its complete source fixture support'
+);
 
 const scenePulseMergeContext = {
     safeJsonClone: value => JSON.parse(JSON.stringify(value)),

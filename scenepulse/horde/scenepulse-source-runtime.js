@@ -10,7 +10,9 @@
  * Do not import ScenePulse's index.js here. Its event interceptor owns an ST
  * conversation and independently invokes provider generation. In Worlds,
  * source refresh controls are routed to the existing Sidecar Reader boundary
- * instead, so the two systems can be compared without silently racing calls.
+ * instead. Normal Worlds play therefore has one semantic reading pass; an
+ * upstream extractor can only ever be an explicit diagnostic, never a second
+ * foreground producer racing the accepted ScenePulse projection.
  */
 (function hordeScenePulseSourceRuntime(global) {
     'use strict';
@@ -23,11 +25,54 @@
             'settings.js', 'normalize.js', 'ui/panel.js', 'ui/update-panel.js',
             'ui/timeline.js', 'ui/thoughts.js', 'ui/character-wiki.js',
             'ui/relationship-web.js', 'ui/weather.js', 'ui/time-tint.js',
-            'settings-ui/custom-panels.js', 'presets/built-in.js'
+            'state.js', 'ui/diff-viewer.js', 'ui/analytics.js',
+            'settings-ui/custom-panels.js', 'settings-ui/profiles-manager.js',
+            'settings-ui/guided-tour.js', 'ui/prompt-editor.js',
+            'ui/preset-browser.js', 'ui/debug-inspector.js', 'macros.js',
+            'slash-commands.js', 'presets/built-in.js'
         ])
     });
     const ROOT = '/scenepulse/vendor/ScenePulse/src';
     const RUNTIME_ROOT_ID = 'sp-horde-source-runtime-root';
+    // Source utilities are deliberately loaded after the panel is alive.  The
+    // foreground must remain the actual ScenePulse panel even if an optional
+    // authoring or diagnostic surface acquires a new upstream dependency.
+    // This is not a replacement implementation: the eventual overlay is
+    // still the vendored ScenePulse module.
+    const OPTIONAL_SOURCE_MODULES = Object.freeze({
+        diffViewer: 'ui/diff-viewer.js',
+        analytics: 'ui/analytics.js',
+        profileManager: 'settings-ui/profiles-manager.js',
+        guidedTour: 'settings-ui/guided-tour.js',
+        promptEditor: 'ui/prompt-editor.js',
+        presetBrowser: 'ui/preset-browser.js',
+        debugInspector: 'ui/debug-inspector.js',
+        macros: 'macros.js'
+    });
+    // These names and aliases are the vendored ScenePulse slash vocabulary.
+    // Worlds deliberately adapts their *host actions* rather than registering
+    // the upstream SillyTavern parser, whose refresh handler would independently
+    // call ScenePulse's generation engine.
+    const SOURCE_MACRO_FALLBACK_NAMES = Object.freeze([
+        'sp_location', 'sp_time', 'sp_date', 'sp_mood', 'sp_tension',
+        'sp_weather', 'sp_topic', 'sp_summary', 'sp_temperature',
+        'sp_northstar', 'sp_characters', 'sp_char_count', 'sp_relationships',
+        'sp_quests', 'sp_main_quests', 'sp_side_quests', 'sp_quest_count',
+        'sp_active_profile'
+    ]);
+    const SOURCE_MACRO_DESCRIPTIONS = Object.freeze({
+        sp_location: 'Current scene location', sp_time: 'Current scene time', sp_date: 'Current scene date',
+        sp_mood: 'Current scene mood', sp_tension: 'Current scene tension', sp_weather: 'Current weather',
+        sp_topic: 'Current scene topic', sp_summary: 'Current scene summary', sp_temperature: 'Current temperature',
+        sp_northstar: 'Current North Star', sp_characters: 'Characters in this scene',
+        sp_char_count: 'Number of characters in this scene', sp_relationships: 'Relationship summaries',
+        sp_quests: 'Active quests', sp_main_quests: 'Active main quests', sp_side_quests: 'Active side quests',
+        sp_quest_count: 'Number of active quests', sp_active_profile: 'Selected ScenePulse profile'
+    });
+    const SOURCE_SECTION_ALIASES = Object.freeze({
+        dashboard: 'dashboard', scene: 'scene', quests: 'quests', relationships: 'relationships',
+        characters: 'characters', branches: 'branches', storyideas: 'branches', 'story-ideas': 'branches'
+    });
     const clone = value => JSON.parse(JSON.stringify(value ?? {}));
     const plain = value => !!value && typeof value === 'object' && !Array.isArray(value);
     const own = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
@@ -40,11 +85,17 @@
         current: null,
         modules: null,
         loading: null,
+        optionalLoads: {},
         originalSillyTavern: Object.getOwnPropertyDescriptor(global, 'SillyTavern'),
         originalToastr: Object.getOwnPropertyDescriptor(global, 'toastr'),
         facadeInstalled: false,
         panelCaptureInstalled: false,
-        resizeObserver: null
+        portraitCaptureInstalled: false,
+        thoughtRefreshCaptureInstalled: false,
+        historySelectionCaptureInstalled: false,
+        historySelectionTimer: null,
+        resizeObserver: null,
+        commandOverlayCleanup: null
     };
 
     function compactValue(value) {
@@ -79,6 +130,26 @@
                 { key: 'reputation', label: 'Reputation', type: 'text', desc: 'Standing with the local guild', enabled: true }
             ] }
         ];
+        const tracker = materializeNativeTracker(handoff);
+        const portraitSources = plain(prefs.portraitSources) ? prefs.portraitSources : {};
+        const charPortraits = {};
+        (Array.isArray(tracker.characters) ? tracker.characters : []).forEach((character, index) => {
+            const source = portraitSources[portraitIdentityForCharacter(handoff, character, index)];
+            if (!source) return;
+            [character?.name, ...(Array.isArray(character?.aliases) ? character.aliases : [])]
+                .map(name => String(name || '').toLowerCase().trim())
+                .filter(Boolean)
+                .forEach(name => { charPortraits[name] = source; });
+        });
+        const defaultProfile = {
+            id: 'worlds-source-default', name: 'World default', description: '', schema: null, systemPrompt: null,
+            promptOverrides: {}, systemPromptRole: 'system', appliedPresetId: null, schemaVersion: 1,
+            panels: {}, fieldToggles: {}, dashCards: {}, customPanels: clone(customPanels)
+        };
+        const profiles = Array.isArray(prefs.sourceProfiles) && prefs.sourceProfiles.length
+            ? clone(prefs.sourceProfiles) : [defaultProfile];
+        const activeProfileId = profiles.some(profile => profile?.id === prefs.sourceActiveProfileId)
+            ? prefs.sourceActiveProfileId : profiles[0].id;
         return {
             enabled: true,
             // Horde owns turn dispatch. Native source refresh controls are
@@ -102,16 +173,29 @@
             reduceVisualEffects: prefs.reduceEffects === true,
             theme: prefs.theme || 'default',
             fontScale: Number(prefs.fontScale) || 1,
+            language: String(prefs.language || ''),
             showEmptyFields: prefs.showEmpty === true,
+            dashCards: clone(prefs.dashCards || { date: true, time: true, weather: true, temperature: true, location: true }),
+            fieldToggles: clone(prefs.fieldToggles || {}),
+            thoughtPanelTruncate: prefs.thoughtTruncate === true,
+            thoughtPanelFit: prefs.thoughtFit === true,
+            thoughtGhost: prefs.thoughtGhost !== false,
+            thoughtSnapLeft: prefs.thoughtSnap !== false,
+            thoughtPos: { x: Number(prefs.thoughtX) || 8, y: Number(prefs.thoughtY) || 68 },
+            thoughtSize: { w: Number(prefs.thoughtWidth) || 340, h: Number(prefs.thoughtHeight) || 400 },
             openSections: clone(prefs.openSections || { scene: true, quests: true, relationships: true, characters: true, branches: false }),
             customPanels,
-            // The bridge writes name-keyed source portrait values only from
-            // portable Horde presentation assets; no character registry is
-            // exposed as an implicit source of visual data.
-            charPortraits: {},
+            // Source portrait rendering remains name/alias compatible, while
+            // this map is derived only from portable Horde assets keyed by a
+            // stable ScenePulse identity.  No registry avatar is exposed as a
+            // fallback source.
+            charPortraits,
             wikiNotes: clone(prefs.wikiNotes || {}),
-            profiles: [],
-            activeProfileId: '',
+            // These are source-shaped World configuration bundles.  Source
+            // Profile Manager and Prompt Editor mutate them directly; the
+            // bridge saves them through the same scoped preference action.
+            profiles,
+            activeProfileId,
             // Prevent the source's one-time ST preset migration from
             // mistaking a read-only compatibility context for a user edit.
             _fallbackPresetMigrationDone: true
@@ -119,16 +203,51 @@
     }
 
     function nativeFieldAuthority(handoff) {
-        return new Set((Array.isArray(handoff?.uiPreferences?.nativeFieldAuthority)
-            ? handoff.uiPreferences.nativeFieldAuthority : [])
+        // Field ownership is declared by Worlds V2's integration policy.  A
+        // legacy persisted preference is retained only as a backwards-safe
+        // fallback for an older handoff; it is not a user-controlled route to
+        // make arbitrary Horde state appear in the native source panel.
+        return new Set((Array.isArray(handoff?.nativeFieldAuthority)
+            ? handoff.nativeFieldAuthority
+            : (Array.isArray(handoff?.uiPreferences?.nativeFieldAuthority)
+                ? handoff.uiPreferences.nativeFieldAuthority : []))
             .map(String).filter(key => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(key)));
     }
 
-    // ScenePulse's fixture is a complete source tracker. The compatibility
-    // scaffold begins with *no* Sidecar field authority: every fixture feature
-    // stays visibly working until that exact native-to-Sidecar route has been
-    // accepted. A future field can be granted authority one at a time; this
-    // function is intentionally not a blanket "live mode" replacement.
+    function portraitIdentityForCharacter(handoff, character = {}, index = 0) {
+        const supplied = String(character?.characterId || character?.id || '').trim();
+        const fallback = String(character?.name || `character-${index + 1}`)
+            .toLowerCase().replace(/[^a-z0-9_.:-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 140);
+        const token = (supplied || fallback || `character-${index + 1}`)
+            .replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 180);
+        return `${handoff?.status === 'accepted_fixture' ? 'fixture' : 'reader'}:${token}`;
+    }
+
+    function nativeFieldHasAcceptedValue(handoff, key) {
+        if (handoff?.status !== 'accepted_live') return false;
+        const live = plain(handoff?.scenePulse) ? handoff.scenePulse : {};
+        if (!nativeFieldAuthority(handoff).has(key) || !own(live, key)) return false;
+        const clear = new Set([...(handoff?.clearFields || []), ...(live.clearFields || [])].map(String));
+        const replace = new Set([...(handoff?.replaceCollections || []), ...(live.replaceCollections || [])].map(String));
+        if (clear.has(key) || replace.has(key)) return true;
+        const fixture = plain(handoff?.fixtureScenePulse) ? handoff.fixtureScenePulse : {};
+        // A sparse packet's accidental blank must never erase a populated
+        // source feature. A named clear or collection replacement is the
+        // handoff's explicit decision to replace it with an empty value.
+        return !own(fixture, key) || hasValue(live[key]);
+    }
+
+    function nativeFieldSource(handoff, key) {
+        if (handoff?.status === 'accepted_fixture') return 'example';
+        if (handoff?.status === 'accepted_human') return 'authored';
+        return nativeFieldHasAcceptedValue(handoff, key) ? 'reader' : 'example';
+    }
+
+    // ScenePulse's fixture is a complete source tracker. Worlds declares the
+    // scene-facing field families that a settled Sidecar packet may support,
+    // but this function still adopts them one field at a time: omission or an
+    // unnamed blank leaves the source value visibly in place. It is not a
+    // blanket "live mode" replacement and never reaches into a Horde registry.
     function materializeNativeTracker(handoff) {
         const fixture = clone(handoff?.fixtureScenePulse || handoff?.scenePulse || {});
         if (handoff?.status === 'accepted_fixture') return fixture;
@@ -151,6 +270,10 @@
     }
 
     function snapshotMeta(kind, handoff, index, extras = {}) {
+        const analytics = plain(extras.analytics) ? extras.analytics : {};
+        const elapsedMs = Number(analytics.elapsedMs);
+        const promptTokens = Number(analytics.promptTokens);
+        const completionTokens = Number(analytics.completionTokens);
         return {
             hordeScenePulseBridge: true,
             hordeSource: kind,
@@ -159,6 +282,16 @@
             hordeLabel: String(extras.label || ''),
             hordeCreatedAt: String(extras.createdAt || now()),
             hordeHistoryIndex: index,
+            // These source-compatible values are copied only from measured
+            // Sidecar Reader metadata.  Missing provider usage remains zero
+            // here and is rendered as unavailable by the bridge analytics
+            // summary rather than being invented as a real token count.
+            promptTokens: Number.isFinite(promptTokens) && promptTokens > 0 ? promptTokens : 0,
+            completionTokens: Number.isFinite(completionTokens) && completionTokens > 0 ? completionTokens : 0,
+            elapsed: Number.isFinite(elapsedMs) && elapsedMs > 0 ? elapsedMs / 1000 : 0,
+            source: String(analytics.model || analytics.provider || '').trim() ? 'reader' : '',
+            injectionMethod: String(analytics.mode || '') === 'delta' ? 'inline' : '',
+            deltaMode: String(analytics.mode || '') === 'delta',
             savedAt: String(extras.createdAt || now())
         };
     }
@@ -195,7 +328,7 @@
                 });
                 addSnapshot(snapshots, 1000 + index, historical, snapshotMeta('sidecar-materialization', handoff, index, {
                     label: entry?.label || `Reader turn ${index + 1}`,
-                    snapshotId: entry?.id,
+                    snapshotId: entry?.id, analytics: entry?.analytics,
                     turnId: entry?.turnId,
                     createdAt: entry?.createdAt
                 }));
@@ -227,9 +360,13 @@
         const metadata = sourceMetadata(handoff);
         const nativeSettings = sourceSettings(handoff);
         // ScenePulse's manager uses a timeline-local copy of the World
-        // schema. Seed a new timeline from the World schema so the populated
-        // tutorial panel is still complete before any source manager save.
-        if (!metadata.scenepulse.chatPanels.length) metadata.scenepulse.chatPanels = clone(nativeSettings.customPanels || []);
+        // schema. Seed a new timeline from the selected native source
+        // Profile first (then the World default) so Profile Manager, Prompt
+        // Editor and the Reader see the same visible custom fields.
+        if (!metadata.scenepulse.chatPanels.length) {
+            const activeProfile = (nativeSettings.profiles || []).find(profile => profile?.id === nativeSettings.activeProfileId);
+            metadata.scenepulse.chatPanels = clone(activeProfile?.customPanels?.length ? activeProfile.customPanels : (nativeSettings.customPanels || []));
+        }
         const extensionSettings = { scenepulse: nativeSettings };
         const nativeTracker = materializeNativeTracker(handoff);
         // ScenePulse's normalizer already knows how to omit the controlled
@@ -320,12 +457,33 @@
             import(`${ROOT}/ui/character-wiki.js`),
             import(`${ROOT}/ui/relationship-web.js`),
             import(`${ROOT}/ui/weather.js`),
-            import(`${ROOT}/ui/time-tint.js`)
-        ]).then(([settings, normalize, panel, updatePanel, timeline, thoughts, wiki, relationshipWeb, weather, timeTint]) => {
-            runtime.modules = { settings, normalize, panel, updatePanel, timeline, thoughts, wiki, relationshipWeb, weather, timeTint };
+            import(`${ROOT}/ui/time-tint.js`),
+            import(`${ROOT}/state.js`)
+        ]).then(([settings, normalize, panel, updatePanel, timeline, thoughts, wiki, relationshipWeb, weather, timeTint, state]) => {
+            runtime.modules = { settings, normalize, panel, updatePanel, timeline, thoughts, wiki, relationshipWeb, weather, timeTint, state };
             return runtime.modules;
+        }).catch(error => {
+            runtime.loading = null;
+            throw error;
         });
         return runtime.loading;
+    }
+
+    function loadOptionalSourceModule(name) {
+        const relative = OPTIONAL_SOURCE_MODULES[name];
+        if (!relative) return Promise.reject(new Error(`Unknown ScenePulse utility: ${name}`));
+        if (runtime.modules?.[name]) return Promise.resolve(runtime.modules[name]);
+        if (runtime.optionalLoads[name]) return runtime.optionalLoads[name];
+        const pending = import(`${ROOT}/${relative}`).then(module => {
+            if (runtime.modules) runtime.modules[name] = module;
+            delete runtime.optionalLoads[name];
+            return module;
+        }).catch(error => {
+            delete runtime.optionalLoads[name];
+            throw error;
+        });
+        runtime.optionalLoads[name] = pending;
+        return pending;
     }
 
     function dispatch(action, extra = {}) {
@@ -346,7 +504,7 @@
         const status = panel.querySelector('[data-horde-source-status]');
         if (save) { save.disabled = !dirty; save.classList.toggle('sp-horde-bridge-dirty', dirty); }
         if (discard) discard.disabled = !dirty;
-        if (status) status.textContent = dirty ? 'Native draft pending' : 'Native source runtime';
+        if (status) status.textContent = dirty ? 'Changes pending' : 'ScenePulse';
     }
 
     function sourcePreferencePatch(settings) {
@@ -368,9 +526,22 @@
             reduceEffects: settings?.reduceVisualEffects === true,
             theme: settings?.theme || 'default',
             fontScale: Number(settings?.fontScale) || 1,
+            language: String(settings?.language || ''),
             showEmpty: settings?.showEmptyFields === true,
+            dashCards: clone(settings?.dashCards || {}),
+            fieldToggles: clone(settings?.fieldToggles || {}),
+            thoughtTruncate: settings?.thoughtPanelTruncate === true,
+            thoughtFit: settings?.thoughtPanelFit === true,
+            thoughtGhost: settings?.thoughtGhost !== false,
+            thoughtSnap: settings?.thoughtSnapLeft !== false,
+            thoughtWidth: Number(settings?.thoughtSize?.w) || 340,
+            thoughtHeight: Number(settings?.thoughtSize?.h) || 400,
+            thoughtX: Number(settings?.thoughtPos?.x) || 8,
+            thoughtY: Number(settings?.thoughtPos?.y) || 68,
             openSections: clone(settings?.openSections || {}),
-            customPanels: clone(settings?.customPanels || [])
+            customPanels: clone(settings?.customPanels || []),
+            sourceProfiles: clone(settings?.profiles || []),
+            sourceActiveProfileId: String(settings?.activeProfileId || '')
         };
     }
 
@@ -403,13 +574,81 @@
         return clone(snapshots[key] || {});
     }
 
+    function snapshotKeys(current) {
+        return Object.keys(current?.context?.chatMetadata?.scenepulse?.snapshots || {})
+            .map(Number).filter(Number.isFinite).sort((left, right) => left - right);
+    }
+
+    function handoffForCurrentSnapshot(current) {
+        const history = Array.isArray(current?.handoff?.history) ? current.handoff.history : [];
+        const key = Number(current?.currentKey);
+        const index = snapshotKeys(current).indexOf(key);
+        const entry = index >= 0 ? history[index] : null;
+        if (!entry) return current?.handoff || {};
+        const human = String(entry?.id || '').startsWith('scene-pulse-human-edit-');
+        return {
+            ...current.handoff,
+            id: human ? `${current.handoff?.id || 'scenepulse'}:${entry.id}` : current.handoff?.id,
+            status: human ? 'accepted_human' : 'accepted_live',
+            scenePulse: clone(entry.scenePulse || {}),
+            previousScenePulse: clone(entry.previousScenePulse || {}),
+            deltaScenePulse: clone(entry.deltaScenePulse || {}),
+            clearFields: clone(entry.clearFields || []),
+            replaceCollections: clone(entry.replaceCollections || []),
+            candidateReview: clone(entry.candidateReview || current.handoff?.candidateReview || []),
+            provenance: {
+                ...(current.handoff?.provenance || {}),
+                snapshotId: String(entry.id || current.handoff?.provenance?.snapshotId || ''),
+                turnId: String(entry.turnId || current.handoff?.provenance?.turnId || '')
+            }
+        };
+    }
+
+    function syncCurrentSourceSnapshot() {
+        const current = active();
+        const selected = Number(runtime.modules?.state?.currentSnapshotMesIdx);
+        if (!current || !Number.isFinite(selected)
+            || !current.context?.chatMetadata?.scenepulse?.snapshots?.[String(selected)]) return;
+        current.currentKey = selected;
+        current.nativeTracker = currentSnapshot(current);
+        current.selectedHandoff = handoffForCurrentSnapshot(current);
+        current.sidecarTracker = clone(current.selectedHandoff?.status === 'accepted_human'
+            ? (current.handoff?.sidecarScenePulse || {})
+            : (current.selectedHandoff?.scenePulse || {}));
+        const panel = document.getElementById('sp-panel');
+        if (panel?.dataset.hordeSourceRuntime) {
+            injectComparisonStrip(panel);
+            injectFieldProvenance(panel);
+        }
+    }
+
+    function scheduleSourceHistorySelectionSync() {
+        global.clearTimeout(runtime.historySelectionTimer);
+        // Source timeline selection redraws on a deliberate 200 ms debounce.
+        // Synchronise only after that real source redraw; do not recreate its
+        // history flow or guess a Horde message index from a visible label.
+        runtime.historySelectionTimer = global.setTimeout(syncCurrentSourceSnapshot, 260);
+    }
+
+    function installHistorySelectionCapture() {
+        if (runtime.historySelectionCaptureInstalled) return;
+        document.addEventListener('click', event => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (!target || !active()) return;
+            if (target.closest('#sp-timeline .sp-tl-node, #sp-timeline .sp-tl-disc-btn, .sp-browse-item')) {
+                scheduleSourceHistorySelectionSync();
+            }
+        }, true);
+        runtime.historySelectionCaptureInstalled = true;
+    }
+
     function injectBridgeControls(panel) {
         if (panel.querySelector('[data-horde-source-status]')) return;
         const toolbar = panel.querySelector('.sp-toolbar');
         if (!toolbar) return;
         const bridge = document.createElement('div');
         bridge.className = 'sp-horde-source-bridge-controls';
-        bridge.innerHTML = '<span class="sp-horde-source-status" data-horde-source-status>Native source runtime</span><button type="button" class="sp-toolbar-btn sp-horde-bridge-save" data-horde-source-save title="Save native ScenePulse edits" disabled>Save</button><button type="button" class="sp-toolbar-btn sp-horde-bridge-discard" data-horde-source-discard title="Discard native ScenePulse edits" disabled>Discard</button>';
+        bridge.innerHTML = '<span class="sp-horde-source-status" data-horde-source-status>ScenePulse</span><button type="button" class="sp-toolbar-btn sp-horde-bridge-save" data-horde-source-save title="Save ScenePulse edits" disabled>Save</button><button type="button" class="sp-toolbar-btn sp-horde-bridge-discard" data-horde-source-discard title="Discard ScenePulse edits" disabled>Discard</button>';
         toolbar.appendChild(bridge);
         bridge.querySelector('[data-horde-source-save]').addEventListener('click', async () => {
             const current = active();
@@ -458,28 +697,501 @@
         return text ? text.slice(0, 120) : 'empty';
     }
 
+    // The inspection route is intentionally a real comparison, not a census
+    // of field counts.  A field can stay fixture-backed while Sidecar offers
+    // a competing accepted value, so reviewers need the compact values that
+    // caused that branch of the scaffold to remain in place.  This data is
+    // already present in the narrow handoff and never reaches the World
+    // registry, draft, narration transcript, or provider request body.
+    function comparisonValueMarkup(value, source) {
+        const summary = formatValue(value);
+        const normalized = compactValue(value);
+        let serialized = '';
+        try { serialized = JSON.stringify(normalized, null, 2); } catch { serialized = String(normalized ?? ''); }
+        if (!serialized || serialized === '{}') {
+            return `<span class="sp-horde-compare-value"><small>${escapeHtml(source)}</small>${escapeHtml(summary)}</span>`;
+        }
+        const bounded = serialized.length > 12_000
+            ? `${serialized.slice(0, 12_000)}\n… truncated in the comparison view (${serialized.length.toLocaleString()} characters total)`
+            : serialized;
+        return `<details class="sp-horde-compare-value"><summary><small>${escapeHtml(source)}</small>${escapeHtml(summary)}</summary><pre>${escapeHtml(bounded)}</pre></details>`;
+    }
+
+    function fieldHandoffReview(handoff, native, sidecar, key) {
+        const same = semanticEqual(native[key], sidecar[key]);
+        const scenePulseHas = own(native, key);
+        const sidecarHas = own(sidecar, key);
+        const delta = plain(handoff?.deltaScenePulse) ? handoff.deltaScenePulse : {};
+        const suppliedNow = own(delta, key)
+            || [...(handoff?.clearFields || []), ...(handoff?.replaceCollections || [])].map(String).includes(key);
+        if (handoff?.status === 'accepted_fixture') {
+            return { route: 'Tutorial support', tone: 'fixture', reason: 'The sealed ScenePulse tutorial is carrying this feature while no authored handoff is selected.' };
+        }
+        if (handoff?.status === 'accepted_human') {
+            return {
+                route: same ? 'Authored state agrees' : 'Authored state retained',
+                tone: same ? 'authored' : 'review',
+                reason: same ? 'The direct ScenePulse edit and the last accepted Sidecar state agree for this field.' : 'A direct ScenePulse edit is visible here; the prior Sidecar state remains alongside it until a later authored turn resolves the difference.'
+            };
+        }
+        const source = nativeFieldSource(handoff, key);
+        if (source === 'reader') {
+            return {
+                route: same ? 'Settled handoff adopted' : 'Adapter review',
+                tone: same ? 'adopted' : 'review',
+                reason: same
+                    ? (suppliedNow ? 'This settled handoff supplied the field and ScenePulse adopted it.' : 'This value is retained from an earlier accepted Sidecar handoff.')
+                    : 'ScenePulse’s source normalization differs from the settled Sidecar value; retain both until the mapping is reviewed.'
+            };
+        }
+        if (sidecarHas) {
+            return {
+                route: 'Tutorial support retained',
+                tone: 'fixture',
+                reason: suppliedNow
+                    ? 'The handoff named an empty or incomplete value without an explicit clear, so the populated ScenePulse tutorial value remains visible.'
+                    : 'This Sidecar value is not adopted for the selected ScenePulse field; the source value stays visible until its handoff route is complete.'
+            };
+        }
+        if (scenePulseHas) return { route: 'Tutorial support retained', tone: 'fixture', reason: 'Sidecar has not supplied this field yet, so ScenePulse remains fully supported by its tutorial state.' };
+        return { route: 'Sidecar-only', tone: 'review', reason: 'Sidecar has a field ScenePulse is not currently showing. Keep both visible while its source mapping is decided.' };
+    }
+
+    function candidateReviewMarkup(candidates) {
+        if (!Array.isArray(candidates) || !candidates.length) return '';
+        const cards = candidates.map(candidate => {
+            const id = String(candidate?.candidateId || '').trim();
+            if (!id) return '';
+            const eligibility = plain(candidate?.eligibility) ? candidate.eligibility : {};
+            const staged = plain(candidate?.staged) ? candidate.staged : null;
+            const canonical = plain(candidate?.canonical) ? candidate.canonical : null;
+            const promoted = ['promoted', 'matched'].includes(String(candidate?.candidateStatus || '').toLowerCase())
+                || ['promoted', 'resolved'].includes(String(staged?.status || '').toLowerCase());
+            const source = [
+                candidate?.candidateType || 'candidate',
+                candidate?.sourceTurnIds?.length ? `${candidate.sourceTurnIds.length} settled turn${candidate.sourceTurnIds.length === 1 ? '' : 's'}` : '',
+                Number.isFinite(Number(candidate?.confidence)) ? `${Math.round(Number(candidate.confidence) * 100)}% Reader confidence` : ''
+            ].filter(Boolean).join(' · ');
+            const standing = canonical
+                ? (promoted ? `Linked to Horde ${canonical.kind || 'record'} “${canonical.name || canonical.id}”.`
+                    : `Reader has a specific Horde identity candidate: “${canonical.name || canonical.id}”.`)
+                : staged
+                    ? (staged.disposition === 'scene_only_by_author' ? 'Kept as ScenePulse-only by author choice.'
+                        : eligibility.ready ? 'World review is staged; it can now be promoted explicitly.'
+                            : 'World review is staged, but more scene evidence is needed before promotion.')
+                    : 'ScenePulse evidence only; Horde has not been asked to create or link a durable record.';
+            const actions = [];
+            if (canonical && !promoted && String(candidate.readerCanonicalMatchId || '') === String(canonical.id || '')) {
+                actions.push(`<button type="button" data-horde-candidate-match="${escapeHtml(id)}">Link verified identity</button>`);
+            }
+            if (!canonical && (!staged || staged.disposition === 'scene_only_by_author')) {
+                actions.push(`<button type="button" data-horde-candidate-stage="${escapeHtml(id)}">Stage World review</button>`);
+            }
+            if (!canonical && staged && eligibility.ready && !promoted) {
+                actions.push(`<button type="button" data-horde-candidate-promote="${escapeHtml(id)}">Create durable record</button>`);
+            }
+            if (!canonical && staged && !eligibility.ready && !promoted) {
+                actions.push(`<button type="button" class="sp-horde-candidate-secondary" data-horde-candidate-resolve="${escapeHtml(id)}">Create with author decision</button>`);
+            }
+            if (!canonical && !promoted) {
+                actions.push(`<button type="button" class="sp-horde-candidate-secondary" data-horde-candidate-scene-only="${escapeHtml(id)}">Keep ScenePulse-only</button>`);
+            }
+            return `<article class="sp-horde-candidate-review-card"><header><span><strong>${escapeHtml(candidate.label || 'Scene candidate')}</strong><small>${escapeHtml(source)}</small></span><span class="sp-horde-candidate-state ${eligibility.ready ? 'is-ready' : ''}">${escapeHtml(promoted ? 'linked' : staged ? staged.disposition || staged.status || 'staged' : 'scene-only')}</span></header>${candidate.description ? `<p>${escapeHtml(String(candidate.description).slice(0, 700))}</p>` : ''}<div class="sp-horde-candidate-standing">${escapeHtml(standing)}</div>${eligibility.reason ? `<small class="sp-horde-candidate-reason">${escapeHtml(eligibility.reason)}</small>` : ''}${actions.length ? `<div class="sp-horde-candidate-actions">${actions.join('')}</div>` : ''}</article>`;
+        }).filter(Boolean).join('');
+        return cards ? `<section class="sp-horde-candidate-review"><header><strong>Scene identity handoffs</strong><small>These are the settled Reader candidates beside the visible ScenePulse scene. Review actions are explicit: a candidate stays visible here until a Horde record is actually linked or created.</small></header><div>${cards}</div></section>` : '';
+    }
+
     function showComparison() {
         const current = active();
         if (!current) return;
         document.querySelector('.sp-horde-compare-overlay')?.remove();
         const native = compactValue(current.nativeTracker || {});
         const sidecar = compactValue(current.sidecarTracker || {});
+        const handoff = current.selectedHandoff || current.handoff || {};
         const keys = new Set([...Object.keys(native), ...Object.keys(sidecar)]);
-        const rows = [...keys].sort().map(key => {
+        const reviews = [...keys].sort().map(key => {
             const same = semanticEqual(native[key], sidecar[key]);
             const state = same ? 'agrees' : !own(sidecar, key) ? 'native-only' : !own(native, key) ? 'sidecar-only' : 'disagrees';
-            return `<tr class="sp-horde-compare-${state}"><th>${escapeHtml(key)}</th><td>${escapeHtml(formatValue(native[key]))}</td><td>${escapeHtml(formatValue(sidecar[key]))}</td><td>${escapeHtml(state)}</td></tr>`;
+            return { key, state, review: fieldHandoffReview(handoff, native, sidecar, key) };
+        });
+        const rows = reviews.map(({ key, state, review }) => {
+            const source = nativeFieldSource(handoff, key);
+            const sourceLabel = source === 'reader' ? 'settled Reader field'
+                : source === 'authored' ? 'direct authored state' : 'sealed tutorial support';
+            return `<tr class="sp-horde-compare-${state} sp-horde-compare-route-${escapeHtml(review.tone)}"><th>${escapeHtml(key)}</th><td>${comparisonValueMarkup(native[key], sourceLabel)}</td><td>${comparisonValueMarkup(sidecar[key], 'Sidecar accepted projection')}</td><td><strong>${escapeHtml(review.route)}</strong><small>${escapeHtml(review.reason)}</small></td><td>${escapeHtml(state)}</td></tr>`;
         }).join('');
+        const reviewCount = reviews.filter(item => item.review.tone === 'review').length;
+        const fixtureCount = reviews.filter(item => item.review.tone === 'fixture').length;
+        const rawDelta = compactValue(handoff?.deltaScenePulse || {});
+        const clearFields = Array.isArray(handoff?.clearFields) ? handoff.clearFields : [];
+        const replaceCollections = Array.isArray(handoff?.replaceCollections) ? handoff.replaceCollections : [];
+        const candidateReview = Array.isArray(handoff?.candidateReview) ? handoff.candidateReview : [];
+        const candidateMarkup = candidateReviewMarkup(candidateReview);
+        const deltaSummary = Object.keys(rawDelta).length || clearFields.length || replaceCollections.length
+            ? `<details class="sp-horde-compare-delta"><summary>Accepted compact delta for this selection</summary><pre>${escapeHtml(JSON.stringify({ scenePulse: rawDelta, clearFields, replaceCollections }, null, 2))}</pre></details>`
+            : '<p class="sp-horde-compare-delta-empty">No accepted compact Reader delta is attached to this selection.</p>';
         const overlay = document.createElement('div');
         overlay.className = 'sp-horde-compare-overlay';
-        overlay.innerHTML = `<section class="sp-horde-compare-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse and Sidecar comparison"><header><span><strong>Two live readings</strong><small>ScenePulse source materialization beside Sidecar’s settled handoff. Disagreement is retained for review; neither column is silently overwritten.</small></span><button type="button" aria-label="Close comparison">×</button></header><div class="sp-horde-compare-provenance"><span>Native: ${escapeHtml(current.handoff?.status === 'accepted_fixture' ? 'sealed TOUR_EXAMPLE_DATA' : 'ScenePulse source tracker')}</span><span>Sidecar: ${escapeHtml(current.handoff?.provenance?.snapshotId ? `settled ${current.handoff.provenance.snapshotId}` : 'no settled Reader packet')}</span></div><div class="sp-horde-compare-table-wrap"><table><thead><tr><th>Field</th><th>ScenePulse</th><th>Sidecar</th><th>Comparison</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No tracker fields.</td></tr>'}</tbody></table></div></section>`;
+        overlay.innerHTML = `<section class="sp-horde-compare-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse and Sidecar handoff review"><header><span><strong>ScenePulse handoff review</strong><small>ScenePulse remains complete in the foreground while Sidecar’s accepted state is retained beside it. A difference is evidence to review, not a cue to erase either system. Open a value to see the exact handoff that produced the difference; this view makes no authority change by itself.</small></span><button type="button" aria-label="Close comparison">×</button></header><div class="sp-horde-compare-provenance"><span>ScenePulse: ${escapeHtml(handoff?.status === 'accepted_fixture' ? 'sealed TOUR_EXAMPLE_DATA' : handoff?.status === 'accepted_human' ? 'direct authored scene state' : 'source materialization')}</span><span>Sidecar: ${escapeHtml(handoff?.provenance?.snapshotId ? `settled ${handoff.provenance.snapshotId}` : 'no settled Reader packet')}</span><span>Tutorial-supported fields: ${fixtureCount}</span><span>Needs mapping review: ${reviewCount}</span>${candidateReview.length ? `<span>Identity handoffs: ${candidateReview.length}</span>` : ''}</div>${candidateMarkup}<div class="sp-horde-compare-table-wrap"><table><thead><tr><th>Field</th><th>ScenePulse showing</th><th>Sidecar state</th><th>Scaffold status</th><th>Comparison</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No tracker fields.</td></tr>'}</tbody></table></div><footer>${deltaSummary}</footer></section>`;
         overlay.querySelector('button').addEventListener('click', () => overlay.remove());
         overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
+        const bindCandidateAction = (selector, action, successMessage, extra = {}) => {
+            overlay.querySelectorAll(selector).forEach(button => button.addEventListener('click', async () => {
+                button.disabled = true;
+                try {
+                    const result = await dispatch(action, {
+                        ...extra,
+                        candidateId: button.dataset.hordeCandidateStage || button.dataset.hordeCandidatePromote || button.dataset.hordeCandidateResolve || button.dataset.hordeCandidateMatch || button.dataset.hordeCandidateSceneOnly || ''
+                    });
+                    overlay.remove();
+                    const message = result?.status === 'awaiting_evidence'
+                        ? 'The candidate remains visibly ScenePulse-backed while it gathers more evidence.'
+                        : successMessage;
+                    makeToast('success', message, 'ScenePulse review');
+                } catch (error) {
+                    button.disabled = false;
+                    makeToast('error', error?.message || error, 'ScenePulse review');
+                }
+            }));
+        };
+        bindCandidateAction('[data-horde-candidate-stage]', 'stage-scenepulse-candidate-review', 'World review staged; ScenePulse remains unchanged.');
+        bindCandidateAction('[data-horde-candidate-promote]', 'promote-scenepulse-candidate', 'Promotion is awaiting your explicit confirmation.');
+        bindCandidateAction('[data-horde-candidate-resolve]', 'promote-scenepulse-candidate', 'Promotion is awaiting your explicit confirmation.', { allowEarly: true });
+        bindCandidateAction('[data-horde-candidate-match]', 'link-scenepulse-candidate', 'Identity link is awaiting your explicit confirmation.');
+        bindCandidateAction('[data-horde-candidate-scene-only]', 'keep-scenepulse-candidate-scene-only', 'The candidate remains visible in ScenePulse only.');
         document.body.appendChild(overlay);
     }
 
     function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    }
+
+    // The source macro module resolves from ScenePulse's latest ST snapshot.
+    // That would include the visible tutorial scaffold in Worlds, so do not
+    // call its handlers for a live prompt preview.  Reproduce its small,
+    // public value contract against the accepted Sidecar projection instead:
+    // fixture values are useful in the sealed tour, but never leak into a
+    // live macro or a Reader prompt merely because they look complete.
+    function sourceMacroProjection(current) {
+        const handoff = current?.selectedHandoff || current?.handoff || {};
+        if (handoff.status === 'accepted_fixture') return clone(current?.nativeTracker || {});
+        return clone(current?.sidecarTracker || {});
+    }
+
+    function sourceMacroRows(value) {
+        if (Array.isArray(value)) return value;
+        return plain(value) ? Object.values(value) : [];
+    }
+
+    function sourceMacroValues(current) {
+        const source = plain(sourceMacroProjection(current)) ? sourceMacroProjection(current) : {};
+        const scalar = key => {
+            const value = source[key];
+            if (value === undefined || value === null) return '';
+            if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean).join(', ');
+            return String(value).trim();
+        };
+        const characters = sourceMacroRows(source.characters);
+        const characterName = value => {
+            if (plain(value)) return String(value.name || value.displayName || value.characterId || value.id || '').trim();
+            const raw = String(value || '').trim();
+            const found = characters.find(item => [item?.id, item?.characterId, item?.candidateId]
+                .map(key => String(key || '').trim()).includes(raw));
+            return String(found?.name || raw).trim();
+        };
+        const present = sourceMacroRows(source.charactersPresent).map(characterName).filter(Boolean);
+        const characterNames = present.length ? present : characters.map(item => String(item?.name || '').trim()).filter(Boolean);
+        const relationships = sourceMacroRows(source.relationships).map(relationship => {
+            const name = String(relationship?.name || '').trim();
+            if (!name) return '';
+            const parts = [];
+            if (relationship.relType) parts.push(String(relationship.relType).trim());
+            if (Number.isFinite(Number(relationship.affection))) parts.push(`aff:${Number(relationship.affection)}`);
+            return `${name}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+        }).filter(Boolean);
+        const activeQuests = rows => sourceMacroRows(rows)
+            .filter(item => String(item?.urgency || item?.status || '').toLowerCase() !== 'resolved')
+            .map(item => String(item?.name || item?.title || '').trim()).filter(Boolean);
+        const mainQuests = activeQuests(source.mainQuests);
+        const sideQuests = activeQuests(source.sideQuests);
+        const settings = current?.context?.extensionSettings?.scenepulse || {};
+        const activeProfile = sourceMacroRows(settings.profiles)
+            .find(profile => String(profile?.id || '') === String(settings.activeProfileId || '')) || null;
+        return Object.freeze({
+            sp_location: scalar('location'), sp_time: scalar('time'), sp_date: scalar('date'),
+            sp_mood: scalar('sceneMood'), sp_tension: scalar('sceneTension'), sp_weather: scalar('weather'),
+            sp_topic: scalar('sceneTopic'), sp_summary: scalar('sceneSummary'), sp_temperature: scalar('temperature'),
+            sp_northstar: scalar('northStar'), sp_characters: characterNames.join(', '),
+            sp_char_count: String(characterNames.length), sp_relationships: relationships.join(', '),
+            sp_quests: [...mainQuests, ...sideQuests].join(', '), sp_main_quests: mainQuests.join(', '),
+            sp_side_quests: sideQuests.join(', '), sp_quest_count: String(mainQuests.length + sideQuests.length),
+            sp_active_profile: String(activeProfile?.name || '').trim()
+        });
+    }
+
+    function sourceMacroOrigin(current) {
+        const handoff = current?.selectedHandoff || current?.handoff || {};
+        if (handoff.status === 'accepted_fixture') return 'sealed tutorial scene';
+        if (handoff.status === 'accepted_human') return 'last accepted scene (direct edit kept separate)';
+        return 'accepted scene projection';
+    }
+
+    function sourceReaderSnapshotCount(current) {
+        const handoff = current?.handoff || {};
+        if (handoff.status === 'accepted_fixture') return 0;
+        return (Array.isArray(handoff.history) ? handoff.history : [])
+            .filter(entry => !String(entry?.id || '').startsWith('scene-pulse-human-edit-')).length;
+    }
+
+    function sourceCommandHelp() {
+        return [
+            `ScenePulse v${SOURCE.version} — Commands`,
+            '  /sp status — show the current scene projection',
+            '  /sp regen [section] — reread the accepted beat (dashboard, scene, quests, relationships, characters, branches)',
+            '  /sp refresh — reread the accepted beat as a complete projection',
+            '  /sp clear — clear accepted ScenePulse Reader snapshots after confirmation',
+            '  /sp toggle <panel> — toggle a built-in or custom panel',
+            '  /sp profile [name] — list or select a source profile',
+            '  /sp export — export accepted ScenePulse Reader history',
+            '  /sp debug — open ScenePulse diagnostics',
+            '  /sp help — show this help',
+            '',
+            'Shortcuts: /sp-status, /sp-regen, /sp-refresh, /sp-clear, /sp-toggle, /sp-profile, /sp-export, /sp-debug, /sp-help',
+            'Alias: /scenepulse <command>'
+        ].join('\n');
+    }
+
+    function sourceCommandStatus(current) {
+        const values = sourceMacroValues(current);
+        const handoff = current?.selectedHandoff || current?.handoff || {};
+        const settings = current?.context?.extensionSettings?.scenepulse || {};
+        const enabled = Object.entries(settings.panels || {}).filter(([, value]) => value !== false).map(([key]) => key);
+        const projection = sourceMacroProjection(current);
+        const characters = sourceMacroRows(projection.characters);
+        const relationships = sourceMacroRows(projection.relationships);
+        return [
+            `ScenePulse v${SOURCE.version} — Status`,
+            `Scene data: ${sourceMacroOrigin(current)}`,
+            `Profile: ${values.sp_active_profile || '(none)'}`,
+            `Snapshots: ${sourceReaderSnapshotCount(current)} accepted Reader snapshot${sourceReaderSnapshotCount(current) === 1 ? '' : 's'}`,
+            `Panels: ${enabled.join(', ') || 'none'}`,
+            '',
+            `Time: ${values.sp_time || '—'} | Date: ${values.sp_date || '—'}`,
+            `Location: ${values.sp_location || '—'}`,
+            `Weather: ${values.sp_weather || '—'} | Temp: ${values.sp_temperature || '—'}`,
+            `Mood: ${values.sp_mood || '—'} | Tension: ${values.sp_tension || '—'}`,
+            `Topic: ${values.sp_topic || '—'}`,
+            '',
+            `Characters (${characters.length}): ${values.sp_characters || 'none'}`,
+            `Relationships (${relationships.length}): ${values.sp_relationships || 'none'}`,
+            `Quests: ${values.sp_quest_count || '0'} active`,
+            `North Star: ${values.sp_northstar || 'Not revealed'}`,
+            handoff.status === 'accepted_fixture' ? '\nExample tutorial only — no Reader call has been made.' : ''
+        ].filter(Boolean).join('\n');
+    }
+
+    function parseSourceCommand(input) {
+        const parts = String(input || '').trim().replace(/^\//, '').split(/\s+/).filter(Boolean);
+        if (!parts.length) return { command: 'help', argument: '' };
+        let head = String(parts.shift() || '').toLowerCase();
+        let command = '';
+        if (head === 'sp' || head === 'scenepulse') command = String(parts.shift() || 'help').toLowerCase();
+        else if (head.startsWith('sp-')) command = head.slice(3);
+        else if (head.startsWith('scenepulse-')) command = head.slice('scenepulse-'.length);
+        else return { command: 'unknown', argument: [head, ...parts].join(' ') };
+        const aliases = { regenerate: 'regen', profiles: 'profile' };
+        return { command: aliases[command] || command || 'help', argument: parts.join(' ').trim() };
+    }
+
+    async function persistSourceCommandSettings(current) {
+        if (!current) return;
+        current.dirtySettings = true;
+        current.dirtyMetadata = true;
+        updateBridgeControls();
+        await dispatch('persist-scenepulse-source-settings', {
+            preferences: sourcePreferencePatch(current.context.extensionSettings.scenepulse),
+            chatPanels: clone(current.context.chatMetadata?.scenepulse?.chatPanels || [])
+        });
+        current.baseSettings = clone(current.context.extensionSettings.scenepulse);
+        current.baseMetadata = clone(current.context.chatMetadata);
+        current.dirtySettings = false;
+        current.dirtyMetadata = false;
+        updateBridgeControls();
+    }
+
+    async function sourceCommandToggle(current, rawPanel) {
+        const requested = String(rawPanel || '').trim();
+        const wanted = requested.toLowerCase().replace(/[ _-]+/g, '');
+        const settings = current?.context?.extensionSettings?.scenepulse;
+        if (!settings) throw new Error('ScenePulse settings are unavailable.');
+        if (!requested) {
+            const builtins = Object.entries(settings.panels || {}).map(([key, value]) => `  ${key}: ${value !== false ? 'ON' : 'OFF'}`);
+            const custom = sourceMacroRows(current.context?.chatMetadata?.scenepulse?.chatPanels)
+                .map(panel => `  ${panel.name}: ${panel.enabled !== false ? 'ON' : 'OFF'}`);
+            return `ScenePulse panels:\n${[...builtins, ...(custom.length ? ['Custom panels:', ...custom] : [])].join('\n')}\n\nUsage: /sp toggle <panel>`;
+        }
+        const builtInAliases = { storyideas: 'storyIdeas', branches: 'storyIdeas' };
+        const builtIn = Object.keys(settings.panels || {}).find(key => key.toLowerCase().replace(/[ _-]+/g, '') === wanted)
+            || builtInAliases[wanted] || '';
+        if (builtIn && Object.prototype.hasOwnProperty.call(settings.panels || {}, builtIn)) {
+            settings.panels[builtIn] = settings.panels[builtIn] === false;
+            await persistSourceCommandSettings(current);
+            await renderActive();
+            return `${builtIn === 'storyIdeas' ? 'Story Ideas' : builtIn}: ${settings.panels[builtIn] ? 'ON' : 'OFF'}`;
+        }
+        const panels = sourceMacroRows(current.context?.chatMetadata?.scenepulse?.chatPanels);
+        const custom = panels.find(panel => String(panel?.name || '').toLowerCase() === requested.toLowerCase());
+        if (custom) {
+            custom.enabled = custom.enabled === false;
+            await persistSourceCommandSettings(current);
+            await renderActive();
+            return `${custom.name} (custom): ${custom.enabled ? 'ON' : 'OFF'}`;
+        }
+        const choices = [...Object.keys(settings.panels || {}), ...panels.map(panel => panel.name)].filter(Boolean).join(', ');
+        return `Unknown panel: ${requested}. Valid: ${choices || '(none)'}`;
+    }
+
+    async function sourceCommandProfile(current, rawProfile) {
+        const settings = current?.context?.extensionSettings?.scenepulse;
+        if (!settings) throw new Error('ScenePulse settings are unavailable.');
+        const profiles = sourceMacroRows(settings.profiles);
+        const activeProfile = profiles.find(profile => String(profile?.id || '') === String(settings.activeProfileId || '')) || null;
+        const target = String(rawProfile || '').trim();
+        if (!target) {
+            if (!profiles.length) return 'No ScenePulse profiles are defined.';
+            const rows = profiles.map(profile => {
+                const tags = [profile?.systemPrompt ? 'prompt' : '', profile?.schema ? 'schema' : '',
+                    sourceMacroRows(profile?.customPanels).length ? `${sourceMacroRows(profile.customPanels).length} panels` : ''].filter(Boolean);
+                return `${activeProfile?.id === profile?.id ? '* ' : '  '}${profile?.name || profile?.id}${tags.length ? ` (${tags.join(', ')})` : ''}`;
+            });
+            return `ScenePulse profiles:\n${rows.join('\n')}\n\nUsage: /sp profile <name>`;
+        }
+        const next = profiles.find(profile => String(profile?.name || '').toLowerCase() === target.toLowerCase());
+        if (!next) return `Unknown profile: "${target}". Available: ${profiles.map(profile => profile?.name).filter(Boolean).join(', ') || '(none)'}`;
+        if (activeProfile?.id === next.id) return `Already using profile: ${next.name}`;
+        settings.activeProfileId = next.id;
+        await persistSourceCommandSettings(current);
+        runtime.modules?.settings?.invalidateSettingsCache?.();
+        await renderActive();
+        return `Switched to profile: ${next.name}. The next Reader pass will use this ScenePulse prompt and field configuration.`;
+    }
+
+    async function runSourceCommand(current, input, options = {}) {
+        const parsed = parseSourceCommand(input);
+        const handoff = current?.selectedHandoff || current?.handoff || {};
+        const live = handoff.status === 'accepted_live' || handoff.status === 'accepted_human';
+        const section = SOURCE_SECTION_ALIASES[String(parsed.argument || '').toLowerCase()];
+        switch (parsed.command) {
+        case 'status': return { text: sourceCommandStatus(current) };
+        case 'help': return { text: sourceCommandHelp() };
+        case 'regen':
+            if (parsed.argument && !section) return { text: `Unknown section: ${parsed.argument}. Valid: ${Object.keys(SOURCE_SECTION_ALIASES).join(', ')}` };
+            if (!live) return { text: 'The sealed tutorial has no authored beat to reread. Send an authored World turn first.' };
+            await dispatch('refresh-scene-pulse', { section: section || '', forceFull: false, sourceCommand: 'regen' });
+            return { text: `ScenePulse ${section ? `${section} ` : ''}reread completed from the accepted authored beat.` };
+        case 'refresh':
+            if (!live) return { text: 'The sealed tutorial has no authored beat to refresh. Send an authored World turn first.' };
+            await dispatch('refresh-scene-pulse', { section: '', forceFull: true, sourceCommand: 'refresh' });
+            return { text: 'Complete ScenePulse reread completed from the accepted authored beat.' };
+        case 'clear':
+            if (!live) return { text: 'The sealed tutorial is not stored Reader history, so there is nothing to clear.' };
+            if (!options.confirmed) return { confirmClear: true, text: `Clear ${sourceReaderSnapshotCount(current)} accepted ScenePulse Reader snapshot${sourceReaderSnapshotCount(current) === 1 ? '' : 's'}? Authored narration and World records stay intact.` };
+            {
+                const result = await dispatch('clear-scenepulse-history');
+                return { text: result?.message || 'ScenePulse Reader history cleared.' };
+            }
+        case 'toggle': return { text: await sourceCommandToggle(current, parsed.argument) };
+        case 'export':
+            if (!live) return { text: 'The sealed tutorial is not exportable World Reader history. Send an authored World turn first.' };
+            {
+                const result = await dispatch('export-scenepulse-history');
+                return { text: result?.message || 'ScenePulse Reader history exported.' };
+            }
+        case 'debug':
+            await loadOptionalSourceModule('debugInspector').then(module => module.openDebugInspector?.('activity'));
+            return { text: 'Opened ScenePulse diagnostics.' };
+        case 'profile': return { text: await sourceCommandProfile(current, parsed.argument) };
+        default: return { text: `Unknown command: ${String(input || '').trim()}. Use /sp help.` };
+        }
+    }
+
+    function copySourceMacro(name, value) {
+        const text = `{{${name}}}`;
+        if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text)
+            .then(() => `Copied ${text}${value ? ` → ${value}` : ''}.`)
+            .catch(() => `${text}${value ? ` → ${value}` : ''}`);
+        return Promise.resolve(`${text}${value ? ` → ${value}` : ''}`);
+    }
+
+    function closeSourceCommandOverlay() {
+        const cleanup = runtime.commandOverlayCleanup;
+        runtime.commandOverlayCleanup = null;
+        if (typeof cleanup === 'function') cleanup();
+        else document.querySelector('.sp-horde-command-overlay')?.remove();
+    }
+
+    function showSourceCommandOverlay() {
+        const initial = active();
+        if (!initial) return;
+        closeSourceCommandOverlay();
+        const overlay = document.createElement('div');
+        overlay.className = 'sp-horde-command-overlay';
+        const state = { input: '/sp status', output: '', pendingClear: false, busy: false, macroNames: [...SOURCE_MACRO_FALLBACK_NAMES] };
+        const close = () => {
+            document.removeEventListener('keydown', onKeydown, true);
+            overlay.remove();
+            if (runtime.commandOverlayCleanup === close) runtime.commandOverlayCleanup = null;
+        };
+        const execute = async (input, confirmed = false) => {
+            const current = active();
+            if (!current) { close(); return; }
+            state.input = input;
+            state.busy = true;
+            state.pendingClear = false;
+            render();
+            try {
+                const result = await runSourceCommand(current, input, { confirmed });
+                state.output = result?.text || '';
+                state.pendingClear = result?.confirmClear === true;
+            } catch (error) {
+                state.output = `Could not run ScenePulse command: ${error?.message || error}`;
+            } finally {
+                state.busy = false;
+                if (overlay.isConnected) render();
+            }
+        };
+        const render = () => {
+            const current = active();
+            if (!current) { close(); return; }
+            const values = sourceMacroValues(current);
+            const macroCards = state.macroNames.map(name => `<button type="button" class="sp-horde-command-macro" data-horde-source-macro="${escapeHtml(name)}" title="Copy {{${escapeHtml(name)}}}"><code>{{${escapeHtml(name)}}}</code><span>${escapeHtml(values[name] || '—')}</span><small>${escapeHtml(SOURCE_MACRO_DESCRIPTIONS[name] || 'ScenePulse macro')}</small></button>`).join('');
+            const confirmation = state.pendingClear
+                ? '<div class="sp-horde-command-confirm"><strong>Clear ScenePulse Reader history?</strong><span>This removes only accepted ScenePulse projections. The authored story and World records remain.</span><span><button type="button" data-horde-source-command-confirm>Clear snapshots</button><button type="button" data-horde-source-command-cancel>Cancel</button></span></div>' : '';
+            overlay.innerHTML = `<section class="sp-horde-command-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse commands and macros"><header><span><strong>ScenePulse commands</strong><small>Source command vocabulary, routed through the current World. ${escapeHtml(sourceMacroOrigin(current))} powers these macro previews.</small></span><button type="button" aria-label="Close ScenePulse commands" data-horde-source-command-close>×</button></header><div class="sp-horde-command-body"><section class="sp-horde-command-runner"><form data-horde-source-command-form><label for="sp-horde-command-input">Command</label><span><input id="sp-horde-command-input" type="text" value="${escapeHtml(state.input)}" autocomplete="off" spellcheck="false" placeholder="/sp status" ${state.busy ? 'disabled' : ''}><button type="submit" ${state.busy ? 'disabled' : ''}>${state.busy ? 'Working…' : 'Run'}</button></span></form><div class="sp-horde-command-shortcuts"><button type="button" data-horde-source-command-shortcut="/sp status">status</button><button type="button" data-horde-source-command-shortcut="/sp regen">regen</button><button type="button" data-horde-source-command-shortcut="/sp refresh">refresh</button><button type="button" data-horde-source-command-shortcut="/sp profile">profile</button><button type="button" data-horde-source-command-shortcut="/sp export">export</button><button type="button" data-horde-source-command-shortcut="/sp help">help</button></div>${confirmation}${state.output ? `<pre class="sp-horde-command-output">${escapeHtml(state.output)}</pre>` : '<p class="sp-horde-command-hint">Try <code>/sp status</code>, or click a macro to copy its source token.</p>'}</section><section class="sp-horde-command-macros"><header><strong>Source macros</strong><small>${escapeHtml(sourceMacroOrigin(current))} · ${state.macroNames.length} available</small></header><div>${macroCards}</div></section></div></section>`;
+            overlay.querySelector('[data-horde-source-command-close]')?.addEventListener('click', close);
+            overlay.querySelector('[data-horde-source-command-form]')?.addEventListener('submit', event => {
+                event.preventDefault();
+                execute(overlay.querySelector('#sp-horde-command-input')?.value || '/sp help');
+            });
+            overlay.querySelectorAll('[data-horde-source-command-shortcut]').forEach(button => button.addEventListener('click', () => execute(button.dataset.hordeSourceCommandShortcut || '/sp help')));
+            overlay.querySelector('[data-horde-source-command-confirm]')?.addEventListener('click', () => execute('/sp clear', true));
+            overlay.querySelector('[data-horde-source-command-cancel]')?.addEventListener('click', () => { state.pendingClear = false; state.output = 'Clear cancelled.'; render(); });
+            overlay.querySelectorAll('[data-horde-source-macro]').forEach(button => button.addEventListener('click', () => {
+                const name = button.dataset.hordeSourceMacro || '';
+                copySourceMacro(name, values[name] || '').then(message => { state.output = message; render(); });
+            }));
+        };
+        const onKeydown = event => { if (event.key === 'Escape') { event.preventDefault(); close(); } };
+        runtime.commandOverlayCleanup = close;
+        overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+        document.body.appendChild(overlay);
+        render();
+        global.setTimeout(() => overlay.querySelector('#sp-horde-command-input')?.focus(), 0);
+        loadOptionalSourceModule('macros').then(module => {
+            const names = Object.keys(module?.HANDLERS || {}).filter(name => /^sp_[a-z_]+$/.test(name));
+            if (names.length && overlay.isConnected) { state.macroNames = names; render(); }
+        }).catch(() => {});
+        document.addEventListener('keydown', onKeydown, true);
     }
 
     function injectComparisonStrip(panel) {
@@ -493,10 +1205,95 @@
             panel.insertBefore(strip, body || null);
         }
         const fixture = current.handoff?.status === 'accepted_fixture';
-        const sourceText = fixture || !nativeFieldAuthority(current.handoff).size ? 'ScenePulse: sealed tutorial state' : 'ScenePulse: native materialized tracker';
-        const sidecarText = fixture ? 'Sidecar: not consulted' : `Sidecar: settled ${current.handoff?.provenance?.snapshotId || 'handoff'}`;
-        strip.innerHTML = `<span class="sp-horde-runtime-native">${escapeHtml(sourceText)}</span><span class="sp-horde-runtime-divider">↔</span><span class="sp-horde-runtime-sidecar">${escapeHtml(sidecarText)}</span><button type="button" data-horde-source-compare>Compare</button>`;
+        const sourceText = fixture ? 'Example scene' : current.handoff?.status === 'accepted_human' ? 'Authored scene state' : 'Current scene';
+        // The comparison is deliberately available, but its implementation
+        // vocabulary stays inside the on-demand development overlay.  Normal
+        // roleplay UI should read as ScenePulse, not as a backend dashboard.
+        strip.innerHTML = `<span class="sp-horde-runtime-native">${escapeHtml(sourceText)}</span><button type="button" data-horde-source-compare>Inspect</button>`;
         strip.querySelector('[data-horde-source-compare]').addEventListener('click', showComparison);
+    }
+
+    function injectSourceUtilities(panel) {
+        if (panel.querySelector('[data-horde-source-utilities]')) return;
+        const toolbar = panel.querySelector('.sp-toolbar');
+        if (!toolbar) return;
+        const utilities = document.createElement('span');
+        utilities.className = 'sp-horde-source-utilities';
+        utilities.dataset.hordeSourceUtilities = 'true';
+        // These are source feature entry points.  The markup uses the same
+        // source toolbar class; the implementation delegates to the vendored
+        // ScenePulse overlays rather than recreating a host inspector.
+        utilities.innerHTML = '<button type="button" class="sp-toolbar-btn" data-horde-source-diff title="Inspect ScenePulse changes" aria-label="Inspect ScenePulse changes">Δ</button><button type="button" class="sp-toolbar-btn" data-horde-source-analytics title="ScenePulse activity and timing" aria-label="ScenePulse activity and timing">◷</button><button type="button" class="sp-toolbar-btn" data-horde-source-tools title="ScenePulse tools" aria-label="ScenePulse tools">⋯</button><span class="sp-horde-source-tools-menu" hidden><button type="button" data-horde-source-tool="profiles">Profiles</button><button type="button" data-horde-source-tool="prompt">Prompt editor</button><button type="button" data-horde-source-tool="presets">Presets</button><button type="button" data-horde-source-tool="commands">Commands &amp; macros</button><button type="button" data-horde-source-tool="debug">Debug inspector</button><button type="button" data-horde-source-tool="tour">Guided tour</button></span>';
+        toolbar.appendChild(utilities);
+        utilities.querySelector('[data-horde-source-diff]').addEventListener('click', () => {
+            const current = active();
+            if (!current) return;
+            loadOptionalSourceModule('diffViewer')
+                .then(module => module.openDiffViewer?.(Number(current.currentKey)))
+                .catch(error => makeToast('error', error?.message || error, 'ScenePulse changes'));
+        });
+        utilities.querySelector('[data-horde-source-analytics]').addEventListener('click', () => {
+            loadOptionalSourceModule('analytics')
+                .then(module => module.openAnalytics?.())
+                .catch(error => makeToast('error', error?.message || error, 'ScenePulse activity'));
+        });
+        const menu = utilities.querySelector('.sp-horde-source-tools-menu');
+        utilities.querySelector('[data-horde-source-tools]').addEventListener('click', () => {
+            if (menu) menu.hidden = !menu.hidden;
+        });
+        utilities.querySelectorAll('[data-horde-source-tool]').forEach(button => button.addEventListener('click', () => {
+            if (menu) menu.hidden = true;
+            const tool = button.dataset.hordeSourceTool;
+            if (tool === 'commands') { showSourceCommandOverlay(); return; }
+            const utility = ({ profiles: 'profileManager', prompt: 'promptEditor', presets: 'presetBrowser', debug: 'debugInspector', tour: 'guidedTour' })[tool];
+            if (!utility) return;
+            loadOptionalSourceModule(utility).then(module => {
+                if (tool === 'profiles') module.openProfilesManager?.(() => persistSettings());
+                if (tool === 'prompt') module.openPromptEditor?.();
+                if (tool === 'presets') module.openPresetBrowser?.();
+                if (tool === 'debug') module.openDebugInspector?.('activity');
+                if (tool === 'tour') module.startGuidedTour?.();
+            }).catch(error => makeToast('error', error?.message || error, 'ScenePulse tools'));
+        }));
+    }
+
+    function injectFieldProvenance(panel) {
+        const current = active();
+        if (!current || current.handoff?.status === 'accepted_fixture') return;
+        const sections = {
+            scene: ['sceneSummary', 'sceneTension', 'sceneTopic', 'sceneMood', 'sceneInteraction', 'elapsed', 'soundEnvironment', 'witnesses'],
+            quests: ['northStar', 'mainQuests', 'sideQuests'],
+            relationships: ['relationships'],
+            characters: ['characters', 'charactersPresent'],
+            branches: ['plotBranches']
+        };
+        Object.entries(sections).forEach(([sectionKey, fields]) => {
+            const section = panel.querySelector(`.sp-section[data-key="${sectionKey}"]`);
+            if (!section) return;
+            const fallbackCount = fields.filter(field => nativeFieldSource(current.handoff, field) === 'example').length;
+            section.querySelector('.sp-horde-example-badge')?.remove();
+            if (!fallbackCount) return;
+            const header = section.querySelector('.sp-section-header');
+            if (!header) return;
+            const badge = document.createElement('span');
+            badge.className = 'sp-horde-example-badge';
+            badge.title = fallbackCount === fields.length
+                ? 'This section is showing source example values until the current scene provides them.'
+                : 'Some values in this section are still source example values.';
+            badge.textContent = fallbackCount === fields.length ? 'Example' : 'Some example values';
+            header.appendChild(badge);
+        });
+        const dashboardFields = ['time', 'date', 'location', 'weather', 'temperature'];
+        const dashboardFallback = dashboardFields.some(field => nativeFieldSource(current.handoff, field) === 'example');
+        const environment = panel.querySelector('.sp-env-permanent');
+        environment?.querySelector('.sp-horde-example-badge')?.remove();
+        if (environment && dashboardFallback) {
+            const badge = document.createElement('span');
+            badge.className = 'sp-horde-example-badge sp-horde-dashboard-example-badge';
+            badge.textContent = 'Example values';
+            badge.title = 'One or more environment values are still source example values.';
+            environment.appendChild(badge);
+        }
     }
 
     function storyIdeaFromTarget(target) {
@@ -533,6 +1330,132 @@
         runtime.panelCaptureInstalled = true;
     }
 
+    function installThoughtRefreshCapture() {
+        if (runtime.thoughtRefreshCaptureInstalled) return;
+        // Thoughts live in the source's body-level floating panel, outside
+        // #sp-panel. Route its native refresh affordance through the same
+        // exact-turn Reader boundary as the source toolbar instead of letting
+        // the vendored extension begin an independent provider pipeline.
+        document.addEventListener('click', event => {
+            const target = event.target instanceof Element ? event.target : null;
+            const refresh = target?.closest?.('#sp-thought-panel .sp-tp-regen');
+            if (!refresh || !active()) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            refresh.disabled = true;
+            refresh.classList.add('sp-spinning');
+            dispatch('refresh-scene-pulse', { section: 'thoughts' })
+                .catch(error => makeToast('error', error?.message || error, 'ScenePulse thoughts'))
+                .finally(() => { refresh.disabled = false; refresh.classList.remove('sp-spinning'); });
+        }, true);
+        runtime.thoughtRefreshCaptureInstalled = true;
+    }
+
+    function nativeCharacterForName(name) {
+        const current = active();
+        const wanted = String(name || '').trim().toLowerCase();
+        if (!current || !wanted) return { character: null, index: -1 };
+        const characters = Array.isArray(current.nativeTracker?.characters) ? current.nativeTracker.characters : [];
+        const index = characters.findIndex(character => {
+            const labels = [character?.name, ...(Array.isArray(character?.aliases) ? character.aliases : [])]
+                .map(label => String(label || '').trim().toLowerCase());
+            return labels.includes(wanted);
+        });
+        return { character: index >= 0 ? characters[index] : { name }, index };
+    }
+
+    function portraitNameFromTarget(target) {
+        const portrait = target?.closest?.('.sp-char-portrait,.sp-wiki-avatar-slot,.sp-wiki-avatar');
+        if (!portrait) return '';
+        const card = portrait.closest('.sp-char-card,.sp-rel-block,.sp-wiki-entry,.sp-char-offscene-stub,.sp-tp-card,.sp-tp-name,.sp-wiki-grid-inner');
+        const name = card?.querySelector?.('.sp-char-name,.sp-rel-name,.sp-wiki-name,.sp-char-offscene-name,.sp-tp-name-text,.sp-wiki-grid-name')?.textContent;
+        return String(name || '').trim();
+    }
+
+    function applyPortraitSource(identity, name, source) {
+        const current = active();
+        if (!current) return;
+        const prefs = current.handoff?.uiPreferences;
+        if (prefs) {
+            prefs.portraitSources = plain(prefs.portraitSources) ? prefs.portraitSources : {};
+            if (source) prefs.portraitSources[identity] = source;
+            else delete prefs.portraitSources[identity];
+        }
+        const settings = current.context?.extensionSettings?.scenepulse;
+        if (settings) {
+            settings.charPortraits = plain(settings.charPortraits) ? settings.charPortraits : {};
+            if (source) settings.charPortraits[String(name || '').toLowerCase().trim()] = source;
+            else delete settings.charPortraits[String(name || '').toLowerCase().trim()];
+        }
+    }
+
+    function openHostPortraitPicker(name) {
+        const current = active();
+        if (!current || !name) return;
+        const { character, index } = nativeCharacterForName(name);
+        const identity = portraitIdentityForCharacter(current.handoff, character, index);
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.style.display = 'none';
+        input.addEventListener('change', () => {
+            const file = input.files?.[0];
+            input.remove();
+            if (!file) return;
+            if (file.size > 8 * 1024 * 1024) {
+                makeToast('warning', 'Choose an image smaller than 8 MB.', 'Portrait');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const data = typeof reader.result === 'string' ? reader.result : '';
+                if (!data) { makeToast('error', 'The image could not be read.', 'Portrait'); return; }
+                try {
+                    const saved = await dispatch('save-scenepulse-portrait', { identity, data, label: name });
+                    applyPortraitSource(identity, name, saved?.source || data);
+                    await renderActive();
+                    makeToast('success', 'Portrait saved.', name);
+                } catch (error) {
+                    makeToast('error', error?.message || error, 'Portrait');
+                }
+            };
+            reader.onerror = () => makeToast('error', 'The image could not be read.', 'Portrait');
+            reader.readAsDataURL(file);
+        }, { once: true });
+        document.body.appendChild(input);
+        input.click();
+    }
+
+    function installPortraitCapture() {
+        if (runtime.portraitCaptureInstalled) return;
+        document.addEventListener('click', event => {
+            const target = event.target instanceof Element ? event.target : null;
+            const name = portraitNameFromTarget(target);
+            if (!name || !active()) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            openHostPortraitPicker(name);
+        }, true);
+        document.addEventListener('contextmenu', event => {
+            const target = event.target instanceof Element ? event.target : null;
+            const name = portraitNameFromTarget(target);
+            const current = active();
+            if (!name || !current) return;
+            const { character, index } = nativeCharacterForName(name);
+            const identity = portraitIdentityForCharacter(current.handoff, character, index);
+            const source = current.handoff?.uiPreferences?.portraitSources?.[identity];
+            if (!source) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            dispatch('clear-scenepulse-portrait', { identity }).then(async () => {
+                applyPortraitSource(identity, name, '');
+                await renderActive();
+                makeToast('info', 'Portrait cleared.', name);
+            }).catch(error => makeToast('error', error?.message || error, 'Portrait'));
+        }, true);
+        runtime.portraitCaptureInstalled = true;
+    }
+
     function ensurePanel() {
         const existing = document.getElementById('sp-panel');
         if (existing && !existing.dataset.hordeSourceRuntime) existing.remove();
@@ -543,7 +1466,11 @@
         panel.dataset.hordeSourceRevision = SOURCE.revision;
         injectBridgeControls(panel);
         injectComparisonStrip(panel);
+        injectSourceUtilities(panel);
         installPanelCapture(panel);
+        installThoughtRefreshCapture();
+        installPortraitCapture();
+        installHistorySelectionCapture();
         return panel;
     }
 
@@ -554,11 +1481,22 @@
         modules.settings.invalidateSettingsCache?.();
         const panel = ensurePanel();
         const snapshot = currentSnapshot(current);
+        // Source meters, changed-field dots, sparklines, diff inspector and
+        // timeline all resolve their predecessor through this source state.
+        // Use the exact native snapshot key rather than a Horde turn index.
+        modules.state?.setCurrentSnapshotMesIdx?.(Number(current.currentKey));
+        modules.state?.setLastDeltaPayload?.(clone(current.handoff?.deltaScenePulse || null));
         const normalized = modules.normalize.normalizeTracker(snapshot);
         modules.updatePanel.updatePanel(normalized, true);
         modules.timeline.renderTimeline();
         modules.thoughts.updateThoughts(normalized);
+        current.nativeTracker = clone(snapshot);
+        current.selectedHandoff = handoffForCurrentSnapshot(current);
+        current.sidecarTracker = clone(current.selectedHandoff?.status === 'accepted_human'
+            ? (current.handoff?.sidecarScenePulse || {})
+            : (current.selectedHandoff?.scenePulse || {}));
         injectComparisonStrip(panel);
+        injectFieldProvenance(panel);
         updateBridgeControls();
         modules.panel.showPanel();
         document.getElementById(RUNTIME_ROOT_ID)?.setAttribute('data-mounted', 'true');
@@ -589,12 +1527,15 @@
 
     function unmount(host) {
         runtime.epoch += 1;
+        global.clearTimeout(runtime.historySelectionTimer);
+        runtime.historySelectionTimer = null;
         runtime.current = null;
         const panel = document.getElementById('sp-panel');
         if (panel?.dataset.hordeSourceRuntime) panel.classList.remove('sp-visible');
         document.querySelector('.sp-wiki-overlay')?.remove();
         document.querySelector('.sp-web-overlay')?.remove();
         document.querySelector('.sp-horde-compare-overlay')?.remove();
+        closeSourceCommandOverlay();
         document.getElementById('sp-weather-overlay')?.remove();
         document.getElementById('sp-time-tint')?.remove();
         if (host) host.replaceChildren();

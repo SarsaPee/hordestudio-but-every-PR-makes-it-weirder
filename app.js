@@ -226,7 +226,47 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
     function closeSequence(protocol,timeline,reason='author_closed') { const active=hierarchy(protocol,timeline); if(!active)return null; const {sequence,scene}=active; sequence.status='closed';sequence.closedAt=stamp();sequence.closeReason=clean(reason,240);sequence.endTurnId=(protocol.turns||[]).filter(turn=>turn.sequenceId===sequence.id).at(-1)?.id||'';sequence.closure={closedAt:sequence.closedAt,unresolvedQuestionIds:(protocol.questions||[]).filter(question=>question.status==='open').map(question=>question.id).slice(-40),provisionalLocationIds:(protocol.provisionalLocations||[]).filter(location=>location.status!=='resolved').map(location=>location.id).slice(-40),provisionalEntityIds:(protocol.provisionalEntities||[]).filter(entity=>entity.status!=='resolved').map(entity=>entity.id).slice(-40),status:'reconciliation_pending'}; if(scene.status==='active'){scene.status='closed';scene.closedAt=stamp();scene.endTurnId=sequence.endTurnId;scene.provisionalReview={status:'pending',reviewedAt:''};} protocol.activeSequenceId='';protocol.activeSceneId='';return sequence; }
     function recordTimelineTurn(protocol,timeline,turn){const active=hierarchy(protocol,timeline);if(!active||!turn)return turn;turn.sequenceId=active.sequence.id;turn.sceneId=active.scene.id;turn.controlledEntityId=active.sequence.controlledEntityId;active.sequence.endTurnId=turn.id;active.scene.endTurnId=turn.id;return turn;}
     function pressure(protocol,timeline,options={}) { const f=object(options.factors)?options.factors:{}, values={contextRatio:Math.max(0,Math.min(1,Number(options.contextRatio)||0)),historyCount:Math.max(0,Number(options.historyCount)||0),sceneTurns:(protocol.turns||[]).filter(turn=>turn.sceneId===protocol.activeSceneId).length,openQuestions:(protocol.questions||[]).filter(question=>question.status==='open').length,blockingQuestions:Math.max(0,Number(f.blockingQuestions)||0),activeCast:Math.max(0,Number(f.activeCast)||0),retrievedMemoryCount:Math.max(0,Number(f.retrievedMemoryCount)||0),canonicalChars:Math.max(0,Number(f.canonicalChars)||0),sceneChars:Math.max(0,Number(f.sceneChars)||0),sequenceTurns:Math.max(0,Number(f.sequenceTurns)||0),reconciliationFriction:Math.max(0,Number(f.reconciliationFriction)||0),sourceRetirement:Math.max(0,Number(f.sourceRetirement)||0)}, weights={contextRatio:45,historyCount:.08,sceneTurns:2,openQuestions:2,blockingQuestions:5,activeCast:1.5,retrievedMemoryCount:.5,canonicalChars:.002,sceneChars:.002,sequenceTurns:.5,reconciliationFriction:3,sourceRetirement:2,...(object(options.weights)?options.weights:{})}; const score=Math.min(100,Math.round(Object.entries(values).reduce((total,[name,value])=>total+value*Number(weights[name]||0),0))), threshold=object(options.thresholds)?options.thresholds:{},watch=Math.max(1,Math.min(99,Number(threshold.watch)||45)),refresh=Math.max(watch+1,Math.min(100,Number(threshold.refresh)||70));return {score,recommendation:score>=refresh?'recommend_refresh':score>=watch?'watch':'clear',factors:values,weights,thresholds:{watch,refresh},generatedAt:stamp()}; }
-    function stage(protocol,kind,raw,evidence={}) { if(!protocol)return null; const field=kind==='location'?'provisionalLocations':'provisionalEntities';if(!Array.isArray(protocol[field]))protocol[field]=[];const name=clean(raw?.name,180);if(!name)return null;let entry=protocol[field].find(record=>record.status!=='promoted'&&key(record.name)===key(name));if(!entry){entry={id:identifier(kind==='location'?'provisional_location':'provisional_entity'),kind,name,status:'implicit',createdAt:stamp(),updatedAt:stamp(),evidence:[],candidateCanonicalIds:[],promotionRequested:false,promotedCanonicalId:''};protocol[field].push(entry);}const proof={at:stamp(),source:clean(evidence.source||'narrator_handoff',80),turnId:clean(evidence.turnId,160),narration:clean(evidence.narration,3000),handoff:clean(evidence.handoff,3000),proposed:raw};entry.evidence=[...(entry.evidence||[]),proof].slice(-20);entry.updatedAt=proof.at;entry.description=clean(raw?.description,1800)||entry.description||'';entry.parentHint=clean(raw?.parent_location_id||raw?.connects_to||raw?.home_location,180)||entry.parentHint||'';if(kind==='location'){entry.region=clean(raw?.region,180)||entry.region||'';entry.mapType=clean(raw?.map_type,40)||entry.mapType||'';entry.floor=clean(raw?.floor,80)||entry.floor||'';}else entry.persona=clean(raw?.persona,1800)||entry.persona||'';return entry; }
+    function stage(protocol,kind,raw,evidence={}) {
+        if (!protocol) return null;
+        const field = kind === 'location' ? 'provisionalLocations' : 'provisionalEntities';
+        if (!Array.isArray(protocol[field])) protocol[field] = [];
+        const name = clean(raw?.name, 180);
+        if (!name) return null;
+        // A Reader candidate's stable id is real scene identity.  Never
+        // collapse two same-named people or places just because a later
+        // promotion bridge happens to see the same display label.
+        const scenePulseCandidateId = clean(raw?.scenePulseCandidateId || raw?.sourceCandidateId, 180);
+        let entry = protocol[field].find(record => {
+            if (record.status === 'promoted') return false;
+            if (scenePulseCandidateId) return clean(record.scenePulseCandidateId, 180) === scenePulseCandidateId;
+            return !clean(record.scenePulseCandidateId, 180) && key(record.name) === key(name);
+        });
+        if (!entry) {
+            entry = {
+                id: identifier(kind === 'location' ? 'provisional_location' : 'provisional_entity'),
+                kind, name, status: 'implicit', createdAt: stamp(), updatedAt: stamp(), evidence: [],
+                candidateCanonicalIds: [], promotionRequested: false, promotedCanonicalId: ''
+            };
+            protocol[field].push(entry);
+        }
+        const proof = {
+            at: stamp(), source: clean(evidence.source || 'narrator_handoff', 80),
+            turnId: clean(evidence.turnId, 160), narration: clean(evidence.narration, 3000),
+            handoff: clean(evidence.handoff, 3000), proposed: raw
+        };
+        entry.evidence = [...(entry.evidence || []), proof].slice(-20);
+        entry.updatedAt = proof.at;
+        entry.description = clean(raw?.description, 1800) || entry.description || '';
+        entry.parentHint = clean(raw?.parent_location_id || raw?.connects_to || raw?.home_location, 180) || entry.parentHint || '';
+        if (scenePulseCandidateId) entry.scenePulseCandidateId = scenePulseCandidateId;
+        if (raw?.scenePulseCandidateType) entry.scenePulseCandidateType = clean(raw.scenePulseCandidateType, 40);
+        if (kind === 'location') {
+            entry.region = clean(raw?.region, 180) || entry.region || '';
+            entry.mapType = clean(raw?.map_type, 40) || entry.mapType || '';
+            entry.floor = clean(raw?.floor, 80) || entry.floor || '';
+        } else entry.persona = clean(raw?.persona, 1800) || entry.persona || '';
+        return entry;
+    }
     function normalizeReaderCandidate(raw = {}, defaults = {}) {
         const source = isPlainObject(raw) ? raw : {};
         const typeMap = { character: 'character', entity: 'character', npc: 'character', location: 'location', local_space: 'location', space: 'location', outfit: 'outfit', clothing: 'outfit', prop: 'prop', item: 'prop', vehicle: 'vehicle', relationship: 'relationship', thread: 'thread', quest: 'thread' };
@@ -16372,10 +16412,22 @@ const SCENEPULSE_TOUR_CUSTOM_PANELS = Object.freeze([Object.freeze({
 // keyed by `field.key`. A bounded copy prevents a large local configuration
 // from becoming an accidental prompt payload, and an unsupported field is
 // never permission for the model to invent a value.
+function scenePulseActiveSourceProfile(protocol = null) {
+    const preferences = normalizeScenePulseWorldsPreferences(protocol?.workspaceUi?.scenePulseWorlds || {});
+    const profiles = Array.isArray(preferences.sourceProfiles) ? preferences.sourceProfiles : [];
+    const activeId = String(preferences.sourceActiveProfileId || '');
+    return profiles.find(profile => String(profile?.id || '') === activeId) || null;
+}
+
 function scenePulseReaderCustomPanelSchema(world, sess, protocol = null) {
     const workspace = protocol || protocolForSidecarTimeline(world, sess);
     const preferences = normalizeScenePulseWorldsPreferences(workspace?.workspaceUi?.scenePulseWorlds || {});
-    const sourcePanels = preferences.customPanels.length ? preferences.customPanels : SCENEPULSE_TOUR_CUSTOM_PANELS;
+    const activeProfile = scenePulseActiveSourceProfile(workspace);
+    // A timeline-local custom schema takes precedence once a user has edited
+    // it. Before then, the selected source Profile supplies its own native
+    // schema; only if neither exists do we seed the sealed tour schema.
+    const sourcePanels = preferences.customPanels.length ? preferences.customPanels
+        : (Array.isArray(activeProfile?.customPanels) && activeProfile.customPanels.length ? activeProfile.customPanels : SCENEPULSE_TOUR_CUSTOM_PANELS);
     return sourcePanels.slice(0, 12).map(panel => ({
         name: String(panel?.name || 'Custom Panel').slice(0, 120),
         enabled: panel?.enabled !== false,
@@ -16399,6 +16451,26 @@ function scenePulseCustomPanelSchemaFingerprint(schema = []) {
     })));
 }
 
+function scenePulseSourceProfilePromptContext(sourceProfile, priorScenePulse, readerProfile) {
+    if (!isPlainObject(sourceProfile)) return { instruction: '', overrides: {}, role: null, provenance: null };
+    const overrides = isPlainObject(sourceProfile.promptOverrides) ? sourceProfile.promptOverrides : {};
+    const systemPrompt = typeof sourceProfile.systemPrompt === 'string'
+        ? expandScenePulseSourceMacros(sourceProfile.systemPrompt, priorScenePulse, readerProfile).slice(0, 24_000) : '';
+    const schema = typeof sourceProfile.schema === 'string' ? sourceProfile.schema.slice(0, 24_000) : '';
+    const hasGuidance = !!(systemPrompt || schema || Object.keys(overrides).length);
+    const role = hasGuidance && ['system', 'user', 'assistant'].includes(sourceProfile.systemPromptRole)
+        ? sourceProfile.systemPromptRole : null;
+    const instruction = hasGuidance
+        ? `\n\n[ACTIVE SCENEPULSE SOURCE PROFILE]\nProfile: ${String(sourceProfile.name || sourceProfile.id || 'ScenePulse Profile').slice(0, 120)} (${String(sourceProfile.id || '').slice(0, 180)}). This is user-authored ScenePulse configuration for the Reader’s presentation projection. Follow it only where it is compatible with the evidence-only, no-canon, rich ScenePulse, and compact-delta rules in this request. It may refine how supported scene data is expressed; it cannot require invented values, override visible narration, or change canonical authority.${systemPrompt ? `\n\n[PROFILE PROMPT]\n${systemPrompt}` : ''}${schema ? `\n\n[PROFILE SCHEMA]\n${schema}` : ''}`
+        : '';
+    return {
+        instruction,
+        overrides,
+        role,
+        provenance: { id: String(sourceProfile.id || ''), name: String(sourceProfile.name || '').slice(0, 120), updatedAt: String(sourceProfile.updatedAt || ''), appliedPresetId: String(sourceProfile.appliedPresetId || ''), overrideCount: Object.keys(overrides).length, hasSystemPrompt: !!systemPrompt, hasSchema: !!schema }
+    };
+}
+
 async function runSidecarSemanticReading(world, sess, options = {}) {
     const tracker = options.tracker || {};
     const profile = options.readerProfile || effectiveSidecarReaderProfile(world, sess);
@@ -16416,6 +16488,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
             worldMechanicsRegistryFor(world)) || '')
         : '';
     const readerProtocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
+    const activeSourceProfile = scenePulseActiveSourceProfile(readerProtocol);
     const humanSceneStateContext = scenePulseHumanStatePromptContext(readerProtocol);
     const customPanelSchema = scenePulseReaderCustomPanelSchema(world, sess, readerProtocol);
     const customPanelSchemaFingerprint = scenePulseCustomPanelSchemaFingerprint(customPanelSchema);
@@ -16466,6 +16539,18 @@ When READER SNAPSHOT MODE is delta, scenePulse is also a compact delta: emit onl
 
 [SCENEPULSE FOCUSED THOUGHT REFRESH]
 The user explicitly requested fresh Inner Thoughts for this already-authored beat. Re-read the existing narration and grounding; do not call or simulate Narrator, do not alter the authored event, and do not create a new turn. Re-evaluate every conscious scene-relevant NPC's first-person innerThought, immediate need, and short/long goals. Return the complete Reader envelope as requested, but make the new thought text genuinely fresh rather than copying a prior phrase.` : '';
+    const scenePulseSectionFocus = {
+        dashboard: 'dashboard environment (time, date, location, weather and temperature)',
+        scene: 'Scene Details (summary, topic, mood, interaction, tension, sound and witnesses)',
+        quests: 'Quest Journal and North Star',
+        relationships: 'relationship dimensions, labels and current phase',
+        characters: 'current-scene character cards, appearance, needs, goals and grounded thoughts',
+        branches: 'Story Ideas / plot branches'
+    }[String(options.scenePulseFocus || '')] || '';
+    const scenePulseSectionFocusInstruction = scenePulseSectionFocus ? `
+
+[SCENEPULSE FOCUSED SECTION REFRESH]
+The user explicitly requested a fresh check of ${scenePulseSectionFocus} for this already-authored beat. Re-read the visible narration and existing grounding. Do not call or simulate Narrator, alter the authored event, create a new turn, or pad unrelated fields. Return the complete Reader envelope required by this request, concentrating on evidence-supported changes to that ScenePulse section. In delta mode, emit only its changed fields; omit unsupported values rather than manufacturing a complete card.` : '';
     const readerCoverageInstruction = `
 
 [REQUIRED SUBJECT COVERAGE]
@@ -16474,18 +16559,22 @@ Return one concise characterIntelligence record for every listed subject BEFORE 
     const sourcePreset = profile.scenePulsePreset || null;
     const presetOverrides = sourcePreset?.promptOverrides && typeof sourcePreset.promptOverrides === 'object' ? sourcePreset.promptOverrides : {};
     const priorScenePulseForMacros = isPlainObject(options.priorReaderEnvelope?.scenePulse) ? options.priorReaderEnvelope.scenePulse : {};
-    const resolvedPresetOverrides = Object.fromEntries(Object.entries(presetOverrides)
+    const sourceProfileContext = scenePulseSourceProfilePromptContext(activeSourceProfile, priorScenePulseForMacros, profile);
+    // A selected source Profile is the user's ScenePulse authoring choice.
+    // Its slot edits override an advisory preset, but neither can displace
+    // the Sidecar evidence, delta, or canonical-boundary contracts below.
+    const resolvedPresetOverrides = Object.fromEntries(Object.entries({ ...presetOverrides, ...sourceProfileContext.overrides })
         .map(([slot, text]) => [slot, expandScenePulseSourceMacros(text, priorScenePulseForMacros, profile)]));
     const presetInstruction = sourcePreset?.id ? `
 
 [APPLIED SCENEPULSE SOURCE PRESET]
 Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}). This is a Reader-only source preset; it does not change Narrator or canonical authority. ScenePulse {{sp_*}} macros in these source slots resolve only from the prior accepted Reader ScenePulse projection; no fixture fallback or Horde registry value is eligible. Apply the following source prompt-slot overrides where compatible with the evidence, read-only, and compact-delta contracts below:\n${Object.entries(resolvedPresetOverrides).map(([slot, text]) => `[${slot}]\n${String(text)}`).join('\n\n') || '(no source prompt-slot override; use the built-in ScenePulse contract)'}` : '';
-    const readerPrompt = prompt + humanSceneStateContext + presetInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + readerCoverageInstruction;
+    const readerPrompt = prompt + humanSceneStateContext + sourceProfileContext.instruction + presetInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + scenePulseSectionFocusInstruction + readerCoverageInstruction;
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
     const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.`;
-    const sourcePresetRole = ['system', 'user', 'assistant'].includes(sourcePreset?.systemPromptRole) ? sourcePreset.systemPromptRole : 'system';
+    const sourcePresetRole = sourceProfileContext.role || (['system', 'user', 'assistant'].includes(sourcePreset?.systemPromptRole) ? sourcePreset.systemPromptRole : 'system');
     const messages = [{ role: sourcePresetRole, content: readerPrompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
     const readerTracker = {
@@ -16519,7 +16608,8 @@ Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}). Thi
         packet.metadata = {
             ...(isPlainObject(packet.metadata) ? packet.metadata : {}),
             scenePulseCustomPanelSchemaFingerprint: customPanelSchemaFingerprint,
-            scenePulseCustomPanelCount: customPanelSchema.length
+            scenePulseCustomPanelCount: customPanelSchema.length,
+            scenePulseSourceProfile: safeJsonClone(sourceProfileContext.provenance)
         };
         return packet;
     };
@@ -17595,10 +17685,15 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
     const provider = profile.provider ? normalizedProviderId(profile.provider) : normalizedProviderId(state.globalSettings?.apiProvider || 'openrouter');
     const model = profile.model || world.model || state.globalSettings.defaultModel;
     const references = buildSidecarCanonicalReferenceManifest(world, sess, `${turn.playerInput || ''}\n${turn.narration || ''}\n${turn.handoff || ''}`);
+    // Source /sp regen preserves ScenePulse's compact-delta cadence; /sp
+    // refresh explicitly asks for one complete projection. Both reread this
+    // exact accepted beat through the single Sidecar Reader—never Narrator or
+    // ScenePulse's autonomous source generation pipeline.
+    const forceFull = options.forceFull === true;
     const packet = await runSidecarSemanticReading(world, sess, {
         tracker, provider, model, readerProfile: profile, sidecarWorld: { ...world, model, provider }, references,
         preFrame: turn.preFrame || buildWorldSceneFrame(world, sess), clockEvidence: turn.preClock || buildSidecarClockEvidence(world, sess),
-        priorReaderEnvelope: turn.readerEnvelope || turn.reader || null, forceFull: true,
+        priorReaderEnvelope: turn.readerEnvelope || turn.reader || null, forceFull,
         playerInput: turn.playerInput || '', narration: turn.narration || '', handoff: turn.handoff || '',
         scenePulseFocus: options.scenePulseFocus || ''
     });
@@ -17606,8 +17701,8 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
     protocol.readerRefreshes.push({
         id: `reader_refresh_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
         status: 'review', sourceTurnId: turn.id, createdAt: new Date().toISOString(),
-        envelope: normalizeSidecarReaderEnvelope(packet, { sourceTurnId: turn.id, profileRevision: profile.revision, promptRevision: profile.promptRevision, snapshotMode: 'full' }),
-        provenance: { source: 'scene_intelligence_refresh', provider, model, profileRevision: profile.revision, scenePulseFocus: options.scenePulseFocus || '' }
+        envelope: normalizeSidecarReaderEnvelope(packet, { sourceTurnId: turn.id, profileRevision: profile.revision, promptRevision: profile.promptRevision, snapshotMode: forceFull ? 'full' : 'delta' }),
+        provenance: { source: 'scene_intelligence_refresh', provider, model, profileRevision: profile.revision, scenePulseFocus: options.scenePulseFocus || '', forceFull }
     });
     protocol.readerRefreshes = protocol.readerRefreshes.slice(-40);
     await saveState();
@@ -17619,7 +17714,7 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
 // never calls Narrator and the only promoted record is the derived, reviewed
 // scene snapshot for this exact already-settled authored turn.
 async function refreshScenePulseThoughts(world, sess, sidecarTurnId = '') {
-    const refresh = await refreshSidecarSceneIntelligence(world, sess, sidecarTurnId, { scenePulseFocus: 'thoughts' });
+    const refresh = await refreshSidecarSceneIntelligence(world, sess, sidecarTurnId, { scenePulseFocus: 'thoughts', forceFull: true });
     if (refresh?.status !== 'review') return refresh;
     const accepted = acceptSidecarReaderRefresh(world, sess, refresh.id);
     await saveState();
@@ -18758,6 +18853,34 @@ const SCENEPULSE_TOUR_TIMELINE = Object.freeze(Array.from({ length: 12 }, (_, in
     id: `tour-${15 + index}`, label: `#${15 + index}`, current: index === 11
 })));
 
+// Worlds V2 has one explicit ownership policy for the native ScenePulse
+// presentation.  This is deliberately code-owned rather than a hidden UI
+// preference: a Reader projection may supply these scene-facing families,
+// while Horde's entity registry, quest database, and location graph may not
+// silently leak into them.  If the Reader has not supplied one, the sealed
+// source fixture remains visible as an *Example* fallback until a real
+// accepted packet does.
+//
+// Custom-panel keys are added below from their user-authored schema.  They
+// are named field authority, not an "all fields" escape hatch, so a future
+// source addition still has to be consciously classified before it can
+// replace the source fixture in a live World.
+const SCENEPULSE_NATIVE_PRESENTATION_FIELDS = Object.freeze([
+    'time', 'date', 'elapsed', 'temporalIntent',
+    'location', 'weather', 'temperature', 'soundEnvironment', 'witnesses',
+    'sceneTopic', 'sceneMood', 'sceneInteraction', 'sceneTension', 'sceneSummary',
+    'charactersPresent', 'characters', 'relationships',
+    'northStar', 'mainQuests', 'sideQuests', 'plotBranches'
+]);
+
+function scenePulseDeclaredNativeFieldAuthority(uiPreferences = {}) {
+    const customKeys = (Array.isArray(uiPreferences?.customPanels) ? uiPreferences.customPanels : [])
+        .flatMap(panel => Array.isArray(panel?.fields) ? panel.fields : [])
+        .map(field => String(field?.key || '').trim())
+        .filter(key => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(key));
+    return [...new Set([...SCENEPULSE_NATIVE_PRESENTATION_FIELDS, ...customKeys])];
+}
+
 function sealScenePulseTourFixture(value) {
     if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
     Object.values(value).forEach(sealScenePulseTourFixture);
@@ -18781,6 +18904,295 @@ function scenePulseTourState() {
     return window.HordeScenePulseTour;
 }
 
+// ScenePulse candidates are deliberately scene evidence first.  These helpers
+// provide the narrow, explicit bridge into Horde's durable record workflow:
+// they never inspect the registry to complete a source card, never make a
+// candidate canonical on sight, and keep the stable Reader candidate id all
+// the way through review, promotion, and later audit.
+function scenePulseCandidatePromotionKind(candidate = {}) {
+    const type = String(candidate?.candidateType || '').toLowerCase();
+    if (type === 'character') return 'entity';
+    if (type === 'location') return 'location';
+    return '';
+}
+
+function scenePulseCandidateSourceTurnIds(candidate = {}) {
+    const evidenceTurnIds = (Array.isArray(candidate?.evidence) ? candidate.evidence : [])
+        .map(entry => String(entry?.sourceTurnId || entry?.turnId || '').trim());
+    return [...new Set([...(Array.isArray(candidate?.sourceTurnIds) ? candidate.sourceTurnIds : []), ...evidenceTurnIds]
+        .map(value => String(value || '').trim()).filter(Boolean))].slice(-30);
+}
+
+function scenePulseCandidatePromotionEligibility(protocol, candidate = {}) {
+    const kind = scenePulseCandidatePromotionKind(candidate);
+    const label = String(candidate?.label || candidate?.name || '').trim();
+    if (!kind) return { reviewable: false, ready: false, reason: 'Only scene characters and locations can graduate into Horde records.' };
+    if (candidate?.settlementStatus !== 'settled' || candidate?.attemptStatus === 'pending') {
+        return { reviewable: false, ready: false, reason: 'This candidate has not reached a settled Reader snapshot.' };
+    }
+    if (!label) return { reviewable: false, ready: false, reason: 'The Reader did not establish a usable name or label for this candidate.' };
+    if (['rejected', 'retired', 'stale', 'superseded'].includes(String(candidate?.status || '').toLowerCase())) {
+        return { reviewable: false, ready: false, reason: 'This candidate is no longer active scene evidence.' };
+    }
+    const sourceTurnIds = scenePulseCandidateSourceTurnIds(candidate);
+    const sourceScene = (protocol?.scenes || []).find(scene => String(scene?.id || '') === String(candidate?.sourceSceneId || ''));
+    const sceneClosed = sourceScene?.status === 'closed';
+    const readerAccepted = String(candidate?.status || '').toLowerCase() === 'accepted';
+    const repeated = sourceTurnIds.length >= 2;
+    const ready = repeated || sceneClosed || readerAccepted;
+    return {
+        reviewable: true,
+        ready,
+        sourceTurnCount: sourceTurnIds.length,
+        sceneClosed,
+        reason: ready
+            ? (repeated ? 'Observed in more than one settled authored turn.' : sceneClosed ? 'Its source scene has closed and is ready for review.' : 'The Reader explicitly marked this candidate accepted.')
+            : 'It remains scene evidence until it recurs, its scene closes, or the author explicitly resolves it in World review.'
+    };
+}
+
+function scenePulseCandidateCanonicalRecord(world, candidate = {}) {
+    const kind = scenePulseCandidatePromotionKind(candidate);
+    const canonicalId = String(candidate?.canonicalMatchId || '').trim();
+    if (!kind || !canonicalId) return null;
+    if (kind === 'location') return (world?.locations || []).find(record => String(record?.id || '') === canonicalId) || null;
+    const record = (world?.entities || []).find(item => String(item?.id || '') === canonicalId) || null;
+    return ['npc', 'character', 'person'].includes(String(record?.type || '').toLowerCase()) ? record : null;
+}
+
+function scenePulseCandidateReviewProjection(world, sess, protocol, options = {}) {
+    const turnId = String(options?.turnId || '').trim();
+    const snapshotId = String(options?.snapshotId || '').trim();
+    if (!protocol || (!turnId && !snapshotId)) return [];
+    const provisional = [...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])];
+    return activeReaderCandidates(protocol).filter(candidate => {
+        if (!scenePulseCandidatePromotionKind(candidate)) return false;
+        const matchesSnapshot = !!snapshotId && String(candidate.readerSnapshotId || '') === snapshotId;
+        const matchesTurn = !!turnId && scenePulseCandidateSourceTurnIds(candidate).includes(turnId);
+        return matchesSnapshot || matchesTurn;
+    }).map(candidate => {
+        const staged = provisional.find(record => String(record?.scenePulseCandidateId || '') === String(candidate.candidateId || '')) || null;
+        const canonical = scenePulseCandidateCanonicalRecord(world, candidate)
+            || ((staged?.promotedCanonicalId || staged?.resolvedCanonicalId) ? (() => {
+                const records = staged.kind === 'location' ? (world?.locations || []) : (world?.entities || []);
+                return records.find(record => String(record?.id || '') === String(staged.promotedCanonicalId || staged.resolvedCanonicalId)) || null;
+            })() : null);
+        const eligibility = scenePulseCandidatePromotionEligibility(protocol, candidate);
+        return {
+            candidateId: String(candidate.candidateId || ''), candidateType: String(candidate.candidateType || ''),
+            label: String(candidate.label || candidate.name || candidate.role || 'Scene candidate').slice(0, 240),
+            role: String(candidate.role || '').slice(0, 180), description: String(candidate.description || '').slice(0, 1800),
+            confidence: Number.isFinite(Number(candidate.confidence)) ? Number(candidate.confidence) : null,
+            settlementStatus: String(candidate.settlementStatus || ''), candidateStatus: String(candidate.status || ''),
+            sourceTurnIds: safeJsonClone(scenePulseCandidateSourceTurnIds(candidate)), readerSnapshotId: String(candidate.readerSnapshotId || ''),
+            sourceSceneId: String(candidate.sourceSceneId || ''), eligibility,
+            staged: staged ? {
+                id: String(staged.id || ''), status: String(staged.status || ''),
+                promotionRequested: staged.promotionRequested === true,
+                sourceTurnIds: safeJsonClone(staged.readerSourceTurnIds || []),
+                disposition: String(staged.scenePulseDisposition || '')
+            } : null,
+            canonical: canonical ? { id: String(canonical.id || ''), name: String(canonical.name || ''), kind: staged?.kind || scenePulseCandidatePromotionKind(candidate) } : null,
+            // This id is surfaced only for an explicit identity decision; a
+            // name match never becomes a silent canonical link.
+            readerCanonicalMatchId: String(candidate.canonicalMatchId || '')
+        };
+    }).slice(-80);
+}
+
+function scenePulseCandidatePromotionDraft(candidate = {}) {
+    const kind = scenePulseCandidatePromotionKind(candidate);
+    const details = isPlainObject(candidate?.details) ? candidate.details : {};
+    const appearance = {
+        hair: String(details.hair || '').trim().slice(0, 600),
+        face: String(details.face || '').trim().slice(0, 600),
+        outfit: String(candidate.clothingDescription || details.outfit || details.clothing || '').trim().slice(0, 1200),
+        garments: (Array.isArray(candidate.individualGarments) ? candidate.individualGarments : [])
+            .map(value => String(value || '').trim()).filter(Boolean).slice(0, 24),
+        posture: String(details.posture || details.pose || '').trim().slice(0, 400),
+        notableDetails: String(details.notableDetails || details.appearance || candidate.visibleCondition || '').trim().slice(0, 1200),
+        visibleCondition: String(candidate.visibleCondition || '').trim().slice(0, 600)
+    };
+    const descriptiveParts = [
+        candidate.role && `Observed role: ${candidate.role}`,
+        candidate.description,
+        appearance.visibleCondition && `Visible condition: ${appearance.visibleCondition}`,
+        appearance.outfit && `Observed outfit: ${appearance.outfit}`
+    ].map(value => String(value || '').trim()).filter(Boolean);
+    if (kind === 'location') {
+        return {
+            kind, raw: {
+                name: String(candidate.label || candidate.name || '').trim(),
+                description: descriptiveParts.join('\n').slice(0, 1800),
+                region: String(details.region || '').trim(), map_type: String(details.mapType || details.map_type || '').trim(),
+                floor: String(details.floor || '').trim(), parent_location_id: String(candidate.parentCanonicalId || details.parentLocationId || '').trim(),
+                scenePulseCandidateId: String(candidate.candidateId || ''), scenePulseCandidateType: 'location'
+            }, appearance
+        };
+    }
+    return {
+        kind, raw: {
+            name: String(candidate.label || candidate.name || '').trim(),
+            description: descriptiveParts.join('\n').slice(0, 1800),
+            // A role or visual description is not a fabricated character
+            // persona. Only Reader evidence explicitly marked persona may
+            // initialize this durable field.
+            persona: String(details.persona || '').trim().slice(0, 1800),
+            home_location: String(candidate.parentCanonicalId || details.homeLocation || '').trim(),
+            scenePulseCandidateId: String(candidate.candidateId || ''), scenePulseCandidateType: 'character'
+        }, appearance
+    };
+}
+
+function scenePulsePromotionRecordForCandidate(protocol, candidateId) {
+    return [...(protocol?.provisionalLocations || []), ...(protocol?.provisionalEntities || [])]
+        .find(record => String(record?.scenePulseCandidateId || '') === String(candidateId || '')) || null;
+}
+
+async function stageScenePulseCandidateForWorldReview(world, sess, candidateId) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const candidate = protocol?.readerCandidates?.find(item => String(item?.candidateId || '') === String(candidateId || ''));
+    const eligibility = scenePulseCandidatePromotionEligibility(protocol, candidate);
+    if (!candidate || !eligibility.reviewable) throw new Error(eligibility.reason || 'That ScenePulse candidate cannot be reviewed.');
+    const draft = scenePulseCandidatePromotionDraft(candidate);
+    const sourceTurnIds = scenePulseCandidateSourceTurnIds(candidate);
+    const sourceTurn = [...(protocol.turns || [])].reverse()
+        .find(turn => sourceTurnIds.includes(String(turn?.id || ''))) || null;
+    const staged = window.HordeSidecarPromotion?.stage?.(protocol, draft.kind, draft.raw, {
+        source: 'scenepulse_reader_candidate', turnId: sourceTurnIds.at(-1) || '',
+        narration: String(sourceTurn?.narration || ''), handoff: String(sourceTurn?.handoff || '')
+    });
+    if (!staged) throw new Error('The candidate could not be staged for World review.');
+    staged.scenePulseCandidateId = String(candidate.candidateId || '');
+    staged.scenePulseCandidateType = String(candidate.candidateType || '');
+    staged.readerSnapshotIds = [...new Set([...(staged.readerSnapshotIds || []), candidate.readerSnapshotId]
+        .map(value => String(value || '').trim()).filter(Boolean))].slice(-30);
+    staged.readerSourceTurnIds = [...new Set([...(staged.readerSourceTurnIds || []), ...sourceTurnIds])].slice(-30);
+    staged.scenePulseEvidence = safeJsonClone((candidate.evidence || []).slice(-24));
+    staged.scenePulseAppearance = safeJsonClone(draft.appearance);
+    staged.promotionEligibility = safeJsonClone(eligibility);
+    staged.scenePulseDisposition = eligibility.ready ? 'world_review_ready' : 'awaiting_scene_evidence';
+    staged.reviewProvenance = {
+        source: 'explicit_scenepulse_comparison_review', reviewedAt: new Date().toISOString(),
+        candidateId: staged.scenePulseCandidateId, readerSnapshotId: String(candidate.readerSnapshotId || ''), sourceTurnIds: safeJsonClone(sourceTurnIds)
+    };
+    candidate.provisionalId = staged.id;
+    candidate.promotionDisposition = staged.scenePulseDisposition;
+    protocol.packet = buildSidecarScenePacket(world, sess);
+    await saveState();
+    renderWorldPlayState();
+    return { status: staged.scenePulseDisposition, provisionalId: staged.id, eligibility };
+}
+
+function applyScenePulsePromotionAppearance(canonical, staged) {
+    if (!canonical || canonical.type !== 'npc') return null;
+    const appearance = isPlainObject(staged?.scenePulseAppearance) ? staged.scenePulseAppearance : {};
+    const outfitDescription = String(appearance.outfit || '').trim().slice(0, 1200);
+    canonical.visuals = isPlainObject(canonical.visuals) ? canonical.visuals : {};
+    const outcomes = {};
+    if (outfitDescription) {
+        const outfits = worldOutfits(canonical);
+        let outfit = outfits.find(item => String(item?.description || '').toLowerCase() === outfitDescription.toLowerCase());
+        if (!outfit) {
+            outfit = {
+                id: `outfit_scenepulse_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+                name: 'Observed scene outfit', description: outfitDescription, imageAssetIds: []
+            };
+            outfits.push(outfit);
+        }
+        canonical.visuals.outfits = outfits.slice(-30);
+        canonical.visuals.currentOutfitId = outfit.id;
+        canonical.currentOutfit = outfit.description;
+        outcomes.outfitId = outfit.id;
+    }
+    const identityDetails = [appearance.hair, appearance.face, appearance.notableDetails]
+        .map(value => String(value || '').trim()).filter(Boolean).join('; ').slice(0, 600);
+    if (identityDetails) {
+        canonical.visuals.portraitIdentityGuide = normalizeWorldVisualIdentityGuide(canonical.visuals.portraitIdentityGuide);
+        if (!canonical.visuals.portraitIdentityGuide.appearanceDetails) {
+            canonical.visuals.portraitIdentityGuide.appearanceDetails = identityDetails;
+            outcomes.identityGuide = 'appearanceDetails';
+        }
+    }
+    if (appearance.posture) {
+        canonical.visuals.portraitSubjectGuide = normalizeWorldVisualSubjectGuide(canonical.visuals.portraitSubjectGuide);
+        if (!canonical.visuals.portraitSubjectGuide.pose) {
+            canonical.visuals.portraitSubjectGuide.pose = String(appearance.posture).slice(0, 400);
+            outcomes.subjectGuide = 'pose';
+        }
+    }
+    canonical.scenePulseAppearanceEvidence = {
+        source: 'explicit_scenepulse_candidate_promotion', promotedAt: new Date().toISOString(),
+        candidateId: String(staged?.scenePulseCandidateId || ''), readerSnapshotIds: safeJsonClone(staged?.readerSnapshotIds || []),
+        sourceTurnIds: safeJsonClone(staged?.readerSourceTurnIds || []), appearance: safeJsonClone(appearance)
+    };
+    return outcomes;
+}
+
+function markScenePulseCandidatePromotionOutcome(protocol, staged, canonical, outcome = 'promoted') {
+    if (!protocol || !staged || !canonical) return null;
+    const candidate = protocol.readerCandidates?.find(item => String(item?.candidateId || '') === String(staged.scenePulseCandidateId || ''));
+    if (!candidate) return null;
+    candidate.status = outcome === 'matched' ? 'matched' : 'promoted';
+    candidate.canonicalMatchId = String(canonical.id || '');
+    candidate.provisionalId = String(staged.id || '');
+    candidate.promotionDisposition = outcome === 'matched' ? 'canonical_identity_linked' : 'canonical_record_created';
+    candidate.promotionProvenance = {
+        source: outcome === 'matched' ? 'explicit_scenepulse_identity_link' : 'explicit_scenepulse_candidate_promotion',
+        at: new Date().toISOString(), canonicalId: String(canonical.id || ''), provisionalId: String(staged.id || ''),
+        readerSnapshotIds: safeJsonClone(staged.readerSnapshotIds || []), sourceTurnIds: safeJsonClone(staged.readerSourceTurnIds || [])
+    };
+    return candidate;
+}
+
+async function linkScenePulseCandidateToCanonical(world, sess, candidateId) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const candidate = protocol?.readerCandidates?.find(item => String(item?.candidateId || '') === String(candidateId || ''));
+    const eligibility = scenePulseCandidatePromotionEligibility(protocol, candidate);
+    const canonical = scenePulseCandidateCanonicalRecord(world, candidate);
+    if (!candidate || !eligibility.reviewable) throw new Error(eligibility.reason || 'That ScenePulse candidate cannot be linked.');
+    if (!canonical) throw new Error('The Reader did not provide a verified canonical identity to link.');
+    const staged = scenePulsePromotionRecordForCandidate(protocol, candidateId);
+    showConfirmModal(`Link ${candidate.label || candidate.name}`, `Link this settled ScenePulse candidate to Horde’s existing ${canonical.type === 'npc' ? 'character' : 'location'} “${canonical.name}”? This preserves both evidence trails and creates no new record.`, async () => {
+        if (staged) {
+            staged.status = 'resolved'; staged.resolvedCanonicalId = canonical.id;
+            staged.scenePulseDisposition = 'canonical_identity_linked';
+        }
+        markScenePulseCandidatePromotionOutcome(protocol, staged || { scenePulseCandidateId: candidateId, id: '' }, canonical, 'matched');
+        protocol.refinements.push({
+            id: `scenepulse_identity_link_${Date.now().toString(36)}`, createdAt: new Date().toISOString(),
+            source: 'direct_user_refinement', userText: `Linked ScenePulse candidate ${candidate.label || candidateId} to ${canonical.name}.`,
+            committed: true, candidateId: String(candidateId || ''), canonicalId: canonical.id
+        });
+        protocol.refinements = protocol.refinements.slice(-200);
+        protocol.packet = buildSidecarScenePacket(world, sess);
+        await saveState();
+        renderWorldPlayState();
+        showToast(`${candidate.label || candidate.name} is now linked to ${canonical.name}.`, 'success');
+    });
+    return { status: 'confirmation_required', canonicalId: canonical.id };
+}
+
+async function keepScenePulseCandidateSceneOnly(world, sess, candidateId) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const candidate = protocol?.readerCandidates?.find(item => String(item?.candidateId || '') === String(candidateId || ''));
+    if (!candidate) throw new Error('The ScenePulse candidate is no longer available.');
+    candidate.promotionDisposition = 'scene_only_by_author';
+    candidate.promotionProvenance = {
+        source: 'explicit_scenepulse_scene_only', at: new Date().toISOString(),
+        readerSnapshotId: String(candidate.readerSnapshotId || ''), sourceTurnIds: safeJsonClone(scenePulseCandidateSourceTurnIds(candidate))
+    };
+    const staged = scenePulsePromotionRecordForCandidate(protocol, candidateId);
+    if (staged && staged.status !== 'promoted') {
+        staged.scenePulseDisposition = 'scene_only_by_author';
+        staged.status = 'scene_only';
+    }
+    protocol.packet = buildSidecarScenePacket(world, sess);
+    await saveState();
+    renderWorldPlayState();
+    return { status: 'scene_only' };
+}
+
 // Gate B is intentionally a very small host boundary.  ScenePulse receives
 // only the sealed source fixture plus an exact, settled Reader projection for
 // the newest authored beat.  In particular, do not "help" a sparse Reader
@@ -18791,10 +19203,14 @@ function scenePulseAcceptedHandoff(world, sess) {
     const fixture = scenePulseTourState().acceptedHandoff;
     const protocol = protocolForSidecarTimeline(world, sess);
     const storedUiPreferences = protocol?.workspaceUi?.scenePulseWorlds;
-    const uiPreferences = storedUiPreferences ? scenePulseWorldsHandoffPreferences(world, storedUiPreferences) : null;
+    // Settings are always handed to the source runtime, including the first
+    // fixture mount.  They cannot add story data; they only determine source
+    // controls, visual treatment, custom-schema fields, and portraits.
+    const uiPreferences = scenePulseWorldsHandoffPreferences(world, storedUiPreferences || {});
+    const nativeFieldAuthority = scenePulseDeclaredNativeFieldAuthority(uiPreferences);
     // UI preferences are deliberately outside the ScenePulse data projection:
     // they can survive a fixture/live switch, but never supply a source field.
-    const fixtureWithPreferences = uiPreferences ? Object.freeze({ ...fixture, uiPreferences }) : fixture;
+    const fixtureWithPreferences = Object.freeze({ ...fixture, uiPreferences, nativeFieldAuthority });
     const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
     if (!protocol || !latestTurn || sidecarTurnNeedsDownstreamRecovery(latestTurn)) return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
     if (!['active', 'committed'].includes(String(latestTurn.status || '').toLowerCase())
@@ -18866,7 +19282,13 @@ function scenePulseAcceptedHandoff(world, sess) {
             previousScenePulse: priorStored ? safeJsonClone(Object.keys(priorDelta).length ? sidecarMergeScenePulse(priorStored, priorDelta) : priorStored) : null,
             deltaScenePulse: safeJsonClone(rawDelta),
             clearFields: Array.isArray(rawDelta.clearFields || rawDelta.clear_fields) ? safeJsonClone(rawDelta.clearFields || rawDelta.clear_fields) : [],
-            replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? safeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : []
+            replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? safeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : [],
+            // This lives beside the source tracker, never inside it. The
+            // native panel remains a ScenePulse rendering; Inspect can show
+            // whether a settled scene candidate has a parallel Horde review.
+            candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
+                snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
+            }))
         };
     });
     return scenePulseHumanOverlay(protocol, Object.freeze({
@@ -18881,7 +19303,11 @@ function scenePulseAcceptedHandoff(world, sess) {
         replaceCollections: Array.isArray(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) ? safeJsonClone(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) : [],
         history: safeJsonClone(history),
         readerPreset: safeJsonClone(readerPreset),
+        candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
+            snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
+        })),
         uiPreferences,
+        nativeFieldAuthority,
         provenance: Object.freeze({ turnId: String(latestTurn.id || ''), snapshotId: String(settled.id || ''), readerMode: String(envelope.snapshotMode || 'delta') })
     }));
 }
@@ -18899,7 +19325,12 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
         showToast('ScenePulse thoughts refreshed from the accepted authored beat.', 'success');
         return;
     }
-    const refresh = await refreshSidecarSceneIntelligence(world, sess, latestTurn.id);
+    const refresh = await refreshSidecarSceneIntelligence(world, sess, latestTurn.id, {
+        // Source toolbar/section refreshes retain compact delta semantics;
+        // the explicit source /sp refresh command requests a complete frame.
+        forceFull: options.forceFull === true,
+        scenePulseFocus: section
+    });
     if (refresh?.status === 'review') {
         acceptSidecarReaderRefresh(world, sess, refresh.id);
         await saveState();
@@ -19017,9 +19448,13 @@ function normalizeScenePulseWorldsPreferences(raw = {}) {
     const bools = (value, keys) => Object.fromEntries(keys.map(key => [key, value?.[key] !== false]));
     const panels = bools(source.panels, ['dashboard', 'scene', 'quests', 'relationships', 'characters', 'branches']);
     const features = bools(source.features, ['thoughts', 'weather', 'timeTint', 'transitions']);
+    const dashCards = bools(source.dashCards, ['date', 'time', 'weather', 'temperature', 'location']);
     const theme = ['default', 'midnight', 'fantasy', 'cyberpunk', 'minimal'].includes(String(source.theme || '')) ? source.theme : 'default';
     const number = (value, fallback, min, max) => Number.isFinite(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback;
-    const customPanels = Array.isArray(source.customPanels) ? source.customPanels.slice(0, 20).map(panel => ({
+    const normalizeBooleanMap = (value, limit = 640) => Object.fromEntries(Object.entries(isPlainObject(value) ? value : {})
+        .filter(([key, item]) => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(String(key)) && typeof item === 'boolean')
+        .slice(0, limit));
+    const normalizeCustomPanels = value => Array.isArray(value) ? value.slice(0, 20).map(panel => ({
         name: String(panel?.name || 'Custom Panel').slice(0, 120), enabled: panel?.enabled !== false,
         fields: (Array.isArray(panel?.fields) ? panel.fields : []).slice(0, 80).map(field => ({
             key: String(field?.key || 'field').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 80) || 'field',
@@ -19030,6 +19465,7 @@ function normalizeScenePulseWorldsPreferences(raw = {}) {
             invert: field?.invert === true
         }))
     })) : [];
+    const customPanels = normalizeCustomPanels(source.customPanels);
     const identityMap = (value, valueLimit) => Object.fromEntries(Object.entries(isPlainObject(value) ? value : {})
         .filter(([identity, item]) => /^(?:reader|fixture):[A-Za-z0-9_.:-]{1,180}$/.test(String(identity || '')) && String(item || '').trim())
         .slice(0, 120)
@@ -19039,12 +19475,40 @@ function normalizeScenePulseWorldsPreferences(raw = {}) {
     const nativeFieldAuthority = Array.isArray(source.nativeFieldAuthority)
         ? [...new Set(source.nativeFieldAuthority.map(key => String(key || '').trim()).filter(key => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(key)))].slice(0, 80)
         : [];
+    const sourceProfiles = Array.isArray(source.sourceProfiles) ? source.sourceProfiles.slice(0, 16).map((profile, index) => {
+        const promptOverrides = Object.fromEntries(Object.entries(isPlainObject(profile?.promptOverrides) ? profile.promptOverrides : {})
+            .filter(([key, value]) => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(String(key)) && typeof value === 'string')
+            .slice(0, 32)
+            .map(([key, value]) => [String(key), String(value).slice(0, 48_000)]));
+        return {
+            id: /^[A-Za-z0-9_.:-]{1,180}$/.test(String(profile?.id || '')) ? String(profile.id) : `worlds-source-profile-${index + 1}`,
+            name: String(profile?.name || 'ScenePulse Profile').slice(0, 120),
+            description: String(profile?.description || '').slice(0, 1_200),
+            schema: typeof profile?.schema === 'string' ? profile.schema.slice(0, 160_000) : null,
+            systemPrompt: typeof profile?.systemPrompt === 'string' ? profile.systemPrompt.slice(0, 160_000) : null,
+            promptOverrides,
+            systemPromptRole: ['system', 'user', 'assistant'].includes(String(profile?.systemPromptRole || '')) ? profile.systemPromptRole : 'system',
+            appliedPresetId: typeof profile?.appliedPresetId === 'string' ? profile.appliedPresetId.slice(0, 240) : null,
+            schemaVersion: Number.isInteger(Number(profile?.schemaVersion)) ? Math.max(1, Math.min(16, Number(profile.schemaVersion))) : 1,
+            panels: normalizeBooleanMap(profile?.panels, 64),
+            fieldToggles: normalizeBooleanMap(profile?.fieldToggles),
+            dashCards: normalizeBooleanMap(profile?.dashCards, 64),
+            customPanels: normalizeCustomPanels(profile?.customPanels),
+            createdAt: String(profile?.createdAt || '').slice(0, 80),
+            updatedAt: String(profile?.updatedAt || '').slice(0, 80)
+        };
+    }) : [];
+    const sourceActiveProfileId = sourceProfiles.some(profile => profile.id === String(source.sourceActiveProfileId || ''))
+        ? String(source.sourceActiveProfileId) : (sourceProfiles[0]?.id || '');
     return {
         panels, features, compact: source.compact === true, showEmpty: source.showEmpty === true, thoughtsOpen: source.thoughtsOpen !== false,
-        thoughtGhost: source.thoughtGhost === true, thoughtSnap: source.thoughtSnap !== false, thoughtFit: source.thoughtFit === true,
+        dashCards, fieldToggles: normalizeBooleanMap(source.fieldToggles), language: String(source.language || '').slice(0, 80),
+        thoughtGhost: source.thoughtGhost !== false, thoughtSnap: source.thoughtSnap !== false, thoughtFit: source.thoughtFit === true,
+        thoughtTruncate: source.thoughtTruncate === true,
         thoughtWidth: number(source.thoughtWidth, 340, 220, 1400), thoughtHeight: number(source.thoughtHeight, 400, 160, 1200),
         thoughtX: number(source.thoughtX, 8, 0, 12000), thoughtY: number(source.thoughtY, 68, 0, 12000),
-        theme, fontScale: number(source.fontScale, 1, .7, 1.5), customPanels, portraitAssetIds, wikiNotes, nativeFieldAuthority
+        theme, fontScale: number(source.fontScale, 1, .7, 1.5), customPanels, sourceProfiles, sourceActiveProfileId,
+        portraitAssetIds, wikiNotes, nativeFieldAuthority
     };
 }
 
@@ -19086,12 +19550,25 @@ async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePref
         ...previous,
         panels: incoming.panels,
         features: incoming.features,
+        dashCards: incoming.dashCards,
+        fieldToggles: incoming.fieldToggles,
         reduceEffects: incoming.reduceEffects === true,
         theme: incoming.theme,
         fontScale: incoming.fontScale,
+        language: incoming.language,
         showEmpty: incoming.showEmpty === true,
+        thoughtGhost: incoming.thoughtGhost !== false,
+        thoughtSnap: incoming.thoughtSnap !== false,
+        thoughtFit: incoming.thoughtFit === true,
+        thoughtTruncate: incoming.thoughtTruncate === true,
+        thoughtWidth: incoming.thoughtWidth,
+        thoughtHeight: incoming.thoughtHeight,
+        thoughtX: incoming.thoughtX,
+        thoughtY: incoming.thoughtY,
         openSections: incoming.openSections,
-        customPanels: schema
+        customPanels: schema,
+        sourceProfiles: incoming.sourceProfiles,
+        sourceActiveProfileId: incoming.sourceActiveProfileId
     });
     await saveState();
     return protocol.workspaceUi.scenePulseWorlds;
@@ -19261,7 +19738,36 @@ function bindScenePulseWorldsHostActions(host, world, sess) {
         }
         if (detail.action === 'refresh-scene-pulse') {
             event.preventDefault();
-            detail.promise = Promise.resolve().then(() => refreshAcceptedScenePulseProjection(world, sess, { section: detail.section || '' }));
+            detail.promise = Promise.resolve().then(() => refreshAcceptedScenePulseProjection(world, sess, {
+                section: detail.section || '', forceFull: detail.forceFull === true
+            }));
+            return;
+        }
+        if (detail.action === 'stage-scenepulse-candidate-review') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => stageScenePulseCandidateForWorldReview(world, sess, detail.candidateId));
+            return;
+        }
+        if (detail.action === 'promote-scenepulse-candidate') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(async () => {
+                const staged = await stageScenePulseCandidateForWorldReview(world, sess, detail.candidateId);
+                if (!staged.eligibility?.ready && detail.allowEarly !== true) return staged;
+                return promoteImpliedWorldRecord({
+                    provisionalId: staged.provisionalId, candidateId: detail.candidateId,
+                    allowEarly: detail.allowEarly === true
+                });
+            });
+            return;
+        }
+        if (detail.action === 'link-scenepulse-candidate') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => linkScenePulseCandidateToCanonical(world, sess, detail.candidateId));
+            return;
+        }
+        if (detail.action === 'keep-scenepulse-candidate-scene-only') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => keepScenePulseCandidateSceneOnly(world, sess, detail.candidateId));
             return;
         }
         if (detail.action === 'apply-scenepulse-preset') {
@@ -29974,7 +30480,7 @@ async function planAndApproveWorldSequence() {
     }
 }
 
-async function promoteImpliedWorldRecord() {
+async function promoteImpliedWorldRecord(options = {}) {
     const world = state.worlds.find(item => item.id === state.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess || !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
@@ -29984,15 +30490,42 @@ async function promoteImpliedWorldRecord() {
     const protocol = window.HordeSidecarHooks.normalizeWorldTimeline(world, sess);
     window.HordeSidecarPromotion?.ensure(protocol);
     const candidates = [...protocol.provisionalLocations, ...protocol.provisionalEntities]
-        .filter(record => record.status !== 'promoted');
+        .filter(record => !['promoted', 'resolved'].includes(record.status));
     if (!candidates.length) {
         showToast('There are no implied locations or characters awaiting review.', 'info');
-        return;
+        return { status: 'empty' };
     }
-    const menu = candidates.map((record, index) => `${index + 1}. ${record.kind === 'location' ? 'Place' : 'Character'} — ${record.name}`).join('\n');
-    const choice = Number(prompt(`Promote which implied record?\n\n${menu}\n\nEnter a number.`, ''));
-    const record = candidates[choice - 1];
-    if (!record) return;
+    const requestedId = String(options.provisionalId || '').trim();
+    let record = requestedId ? candidates.find(item => String(item.id || '') === requestedId) : null;
+    if (!record && requestedId) throw new Error('That ScenePulse review record is no longer available for promotion.');
+    if (!record) {
+        const menu = candidates.map((entry, index) => `${index + 1}. ${entry.kind === 'location' ? 'Place' : 'Character'} — ${entry.name}`).join('\n');
+        const choice = Number(prompt(`Promote which implied record?\n\n${menu}\n\nEnter a number.`, ''));
+        record = candidates[choice - 1];
+    }
+    if (!record) return { status: 'cancelled' };
+    const expectedCandidateId = String(options.candidateId || '').trim();
+    if (expectedCandidateId && String(record.scenePulseCandidateId || '') !== expectedCandidateId) {
+        throw new Error('The requested ScenePulse candidate no longer matches this review record.');
+    }
+    const readerCandidate = record.scenePulseCandidateId
+        ? protocol.readerCandidates?.find(item => String(item?.candidateId || '') === String(record.scenePulseCandidateId || ''))
+        : null;
+    const eligibility = readerCandidate ? scenePulseCandidatePromotionEligibility(protocol, readerCandidate) : null;
+    // A source candidate may be staged as a visible scaffold immediately,
+    // but it only becomes a durable record after recurrent/closed-scene
+    // evidence (or a later explicit World resolution). This protects the
+    // source surface from shrinking merely because Horde has not caught up.
+    if (readerCandidate && !eligibility?.ready && options.allowEarly !== true) {
+        record.status = 'awaiting_evidence';
+        record.scenePulseDisposition = 'awaiting_scene_evidence';
+        record.promotionEligibility = safeJsonClone(eligibility);
+        protocol.packet = buildSidecarScenePacket(world, sess);
+        await saveState();
+        renderWorldPlayState();
+        showToast(`${record.name} remains a ScenePulse candidate until it recurs, its scene closes, or World review explicitly resolves it.`, 'info');
+        return { status: 'awaiting_evidence', provisionalId: record.id, eligibility };
+    }
     const visibleLocations = sessionLocations(world, sess);
     const locationMatch = record.kind === 'location' ? findFuzzyLocation(record.name, visibleLocations) : null;
     const entityMatch = record.kind === 'entity'
@@ -30010,9 +30543,12 @@ async function promoteImpliedWorldRecord() {
         await saveState();
         renderWorldPlayState();
         showToast('A possible duplicate was found, so Sidecar kept this as a question instead of creating a duplicate.', 'info');
-        return;
+        return { status: 'needs_resolution', provisionalId: record.id, canonicalId: existing.id };
     }
-    showConfirmModal(`Promote ${record.name}`, `Create a persistent ${record.kind === 'location' ? 'location' : 'character'} from the details established in recent narration? This does not retroactively change the scene.`, async () => {
+    const earlyDecisionNotice = readerCandidate && !eligibility?.ready
+        ? ' This candidate has not yet met the normal repeat-or-scene-closure threshold; this is an explicit author decision, not an automatic promotion.'
+        : '';
+    showConfirmModal(`Promote ${record.name}`, `Create a persistent ${record.kind === 'location' ? 'location' : 'character'} from the details established in recent narration? This does not retroactively change the scene.${earlyDecisionNotice}`, async () => {
         window.HordeSidecarPromotion?.markPromotionRequested(protocol, record.id);
         const frame = buildWorldSceneFrame(world, sess);
         const receipt = {
@@ -30040,13 +30576,18 @@ async function promoteImpliedWorldRecord() {
             : world.entities.find(entity => entity.name === record.name && entity.sessionOrigin === sess.id);
         if (!canonical) throw new Error('The native reducer did not create the requested record.');
         window.HordeSidecarPromotion?.markPromoted(protocol, record.id, canonical.id);
+        const visualOutcome = applyScenePulsePromotionAppearance(canonical, record);
+        if (readerCandidate) markScenePulseCandidatePromotionOutcome(protocol, record, canonical, 'promoted');
         protocol.refinements.push({ id: `promotion_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), source: 'direct_user_refinement',
-            userText: `Promoted implied ${record.kind}: ${record.name}`, committed: true, audit: safeJsonClone(commit.audit), provisionalId: record.id, canonicalId: canonical.id });
+            userText: `Promoted implied ${record.kind}: ${record.name}`, committed: true, audit: safeJsonClone(commit.audit), provisionalId: record.id, canonicalId: canonical.id,
+            candidateId: String(record.scenePulseCandidateId || ''), visualOutcome: safeJsonClone(visualOutcome || {}) });
+        protocol.refinements = protocol.refinements.slice(-200);
         protocol.packet = buildSidecarScenePacket(world, sess);
         await saveState();
         renderWorldPlayState();
         showToast(`${record.name} is now a persistent ${record.kind === 'location' ? 'location' : 'character'}.`, 'success');
     });
+    return { status: 'confirmation_required', provisionalId: record.id, eligibility };
 }
 
 function renderWorldItemCatalogControls(world = state.editingWorld) {
