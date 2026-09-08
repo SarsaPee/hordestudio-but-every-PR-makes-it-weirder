@@ -153,7 +153,7 @@ assert.match(sourceLoading, /export function showThoughtLoading/, 'vendored sour
 assert.match(runtime, /sourceRelationshipGraphCache/, 'the source relationship web needs a roster-checked Sidecar cache seam');
 assert.match(runtime, /requestScenePulseRelationshipGraph/, 'native source graph generation must cross a named Reader boundary');
 assert.match(runtime, /npcRelationshipGraph: true/, 'the source relationship-web affordance must remain available in Worlds');
-assert.match(runtime, /Return ScenePulse history to the current accepted beat/, 'historical source views must not refresh or relabel the newest NPC graph');
+assert.match(runtime, /Return ScenePulse history to the current scene/, 'historical source views must not refresh or relabel the newest NPC graph');
 assert.match(runtime, /stage-story-idea/, 'source Story Idea controls must dispatch to Horde actions');
 assert.match(runtime, /commit-scenepulse-source-edit/, 'source edit saves must cross an auditable host boundary');
 assert.match(runtime, /questTranslationMarkup/, 'Inspect must expose source Quest Journal outcomes without replacing the native journal');

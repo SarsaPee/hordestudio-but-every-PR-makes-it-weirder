@@ -19529,7 +19529,7 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
         if (section === 'thoughts') {
             const refreshedThoughts = await refreshScenePulseThoughts(world, sess, latestTurn.id, { signal: controller.signal });
             if (controller.signal.aborted) return { status: 'stopped' };
-            showToast('ScenePulse thoughts refreshed from the accepted authored beat.', 'success');
+            showToast('ScenePulse thoughts refreshed for the current scene.', 'success');
             return refreshedThoughts;
         }
         const refresh = await refreshSidecarSceneIntelligence(world, sess, latestTurn.id, {
@@ -19550,7 +19550,7 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
         }
         // Recovery can return a settled retry rather than a review packet.
         // The caller still receives a truthful completion without issuing Narrator.
-        showToast('ScenePulse refresh settled against the accepted authored beat.', 'success');
+        showToast('ScenePulse refreshed for the current scene.', 'success');
         return refresh;
     } catch (error) {
         if (controller.signal.aborted) {
@@ -19621,7 +19621,7 @@ function exportScenePulseReaderHistory(world, sess) {
     const protocol = protocolForSidecarTimeline(world, sess);
     const snapshots = (protocol?.readerSnapshots || []).filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
         && snapshot?.settlementStatus === 'settled');
-    if (!snapshots.length) return { count: 0, message: 'No accepted ScenePulse Reader snapshots to export.' };
+    if (!snapshots.length) return { count: 0, message: 'No ScenePulse snapshots to export.' };
     const profile = effectiveSidecarReaderProfile(world, sess);
     const exportData = {
         extension: 'ScenePulse', version: '6.27.20', exportedAt: new Date().toISOString(),
@@ -19641,7 +19641,7 @@ function exportScenePulseReaderHistory(world, sess) {
     const url = URL.createObjectURL(new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `scenepulse-reader-history-${Date.now()}.json`; anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
-    return { count: snapshots.length, message: `Exported ${snapshots.length} accepted ScenePulse Reader snapshot${snapshots.length === 1 ? '' : 's'}.` };
+    return { count: snapshots.length, message: `Exported ${snapshots.length} ScenePulse snapshot${snapshots.length === 1 ? '' : 's'}.` };
 }
 
 // Source /sp clear clears tracker data, not the chat.  Keep that destructive
@@ -19653,7 +19653,7 @@ async function clearScenePulseReaderHistory(world, sess) {
     if (!protocol) throw new Error('No World ScenePulse tracker is available.');
     const count = (protocol.readerSnapshots || []).filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
         && snapshot?.settlementStatus === 'settled').length;
-    if (!count) return { count: 0, message: 'No accepted ScenePulse Reader snapshots to clear.' };
+    if (!count) return { count: 0, message: 'No ScenePulse snapshots to clear.' };
     protocol.readerSnapshots = [];
     protocol.readerRefreshes = [];
     protocol.sceneProjections = [];
