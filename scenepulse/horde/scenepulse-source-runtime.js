@@ -166,6 +166,10 @@
         thoughtRefreshCaptureInstalled: false,
         historySelectionCaptureInstalled: false,
         historySelectionTimer: null,
+        // A physical reload/re-entry must start from the source dashboard.
+        // Later refreshes preserve the reader's position unless the focused
+        // Scene Details action explicitly returns to that dashboard.
+        resetPanelScrollOnNextMount: true,
         resizeObserver: null,
         commandOverlayCleanup: null,
         // A guided tour is a display-only remount of the sealed source
@@ -2186,6 +2190,15 @@
         enhanceSourceSectionAccessibility(panel);
         updateBridgeControls();
         modules.panel.showPanel();
+        if (runtime.resetPanelScrollOnNextMount) {
+            runtime.resetPanelScrollOnNextMount = false;
+            const resetDashboardPosition = () => {
+                const body = document.getElementById('sp-panel-body');
+                if (body?.closest('#world-sidecar-workspace')) body.scrollTop = 0;
+            };
+            resetDashboardPosition();
+            requestAnimationFrame(resetDashboardPosition);
+        }
         document.getElementById(RUNTIME_ROOT_ID)?.setAttribute('data-mounted', 'true');
     }
 
@@ -2293,6 +2306,7 @@
 
     function unmount(host) {
         runtime.epoch += 1;
+        runtime.resetPanelScrollOnNextMount = true;
         global.clearTimeout(runtime.historySelectionTimer);
         runtime.historySelectionTimer = null;
         runtime.current = null;
