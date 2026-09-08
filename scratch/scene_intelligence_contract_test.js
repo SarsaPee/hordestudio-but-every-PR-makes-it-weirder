@@ -109,6 +109,8 @@ const relationshipApply = lastFunction('applyScenePulseRelationshipChange');
 const relationshipPromptProjection = lastFunction('scenePulseRelationshipPromptProjection');
 const ffContextCompiler = lastFunction('compileFF54SidecarContext');
 const panelMount = lastFunction('renderScenePulseWorldsWorkspace');
+const switchViewFunction = lastFunction('switchView');
+const enterWorldFunction = lastFunction('enterWorld');
 const nativePresentationAuthority = lastFunction('scenePulseDeclaredNativeFieldAuthority');
 const readerPass = lastFunction('runSidecarSemanticReading', 'async function');
 const readerRefresh = lastFunction('refreshSidecarSceneIntelligence', 'async function');
@@ -182,6 +184,9 @@ assert.match(html, /scenepulse-source-runtime\.js/, 'native source runtime must 
 assert.match(panelMount, /HordeScenePulseSourceRuntime\.mount\(host, handoff\)/, 'World HUD must mount native source runtime');
 assert.doesNotMatch(panelMount.slice(0, panelMount.indexOf('// Gate B adapter below')), /HordeScenePulseWorlds\.mount\(host, handoff\)/, 'native source failure must not silently fall back to the hand-drawn adapter');
 assert.match(panelMount, /intentionally not substituted with a host lookalike/, 'failure state must remain truthful');
+assert.match(panelMount, /if \(state\.view !== 'worldPlay'\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'a late World redraw may not mount ScenePulse over a library route');
+assert.match(switchViewFunction, /state\.view === 'worldPlay' && viewName !== 'worldPlay'[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'leaving World Play must remove the source runtime and its document-level effects');
+assert.ok(enterWorldFunction.indexOf("switchView('worldPlay');") < enterWorldFunction.indexOf('renderWorldPlayState();'), 'entering a World must activate the World route before mounting the ScenePulse runtime');
 
 assert.match(runtime, /native-source-modules-via-horde-compatibility-scaffold/, 'runtime must identify its temporary compatibility role');
 assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/panel\.js`\)/, 'runtime must import the source panel module');

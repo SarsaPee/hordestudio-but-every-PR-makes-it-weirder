@@ -8476,6 +8476,7 @@ function switchView(viewName) {
     if (state.view === 'worldPlay' && viewName !== 'worldPlay') {
         const scenePulseHost = document.getElementById('world-sidecar-workspace');
         unbindScenePulseWorldsHostActions(scenePulseHost);
+        window.HordeScenePulseSourceRuntime?.unmount?.(scenePulseHost);
         window.HordeScenePulseWorlds?.unmount?.(scenePulseHost);
     }
     state.view = viewName;
@@ -21325,6 +21326,16 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     const host = document.getElementById('world-sidecar-workspace');
     const column = document.querySelector('#world-play-view .world-status-col');
     if (!host || !column) return;
+    // The upstream panel has a document-level weather/effects layer.  A late
+    // Sidecar redraw must never remount it over the library or another Horde
+    // route simply because a World remains selected in workspace state.
+    if (state.view !== 'worldPlay') {
+        unbindScenePulseWorldsHostActions(host);
+        window.HordeScenePulseSourceRuntime?.unmount?.(host);
+        window.HordeScenePulseWorlds?.unmount?.(host);
+        host.replaceChildren();
+        return;
+    }
     const sidecar = window.HordeSidecarHooks?.isSidecarWorld?.(world, sess) === true;
     column.classList.toggle('is-sidecar', sidecar); host.classList.toggle('hidden', !sidecar);
     if (!sidecar) {
@@ -35945,8 +35956,8 @@ function enterWorld(worldId, sessionId = null) {
     if (entryScheduleSync.moves > 0) saveState().catch(() => {});
     
     document.getElementById('world-active-name').textContent = 'Living world';
-    renderWorldPlayState();
     switchView('worldPlay');
+    renderWorldPlayState();
     
     // If history is empty, run New Session Setup then trigger the DM intro.
     if (sess.history.length === 0) {
