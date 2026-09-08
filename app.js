@@ -15739,7 +15739,11 @@ function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
     return { found: false, error: `Unknown read-only Sidecar tool: ${String(name || '')}` };
 }
 
-function parseSidecarReaderOutput(content, fallback = {}) {
+// Retired Reader-v1 adapters are deliberately not part of the runtime. Keep
+// their historical migration code isolated under uncallable names while old
+// saved-session migrations are retired; all active paths use the v2 Reader
+// declarations below.
+function retiredSidecarReaderV1ParseOutput(content, fallback = {}) {
     // Providers vary between string content and OpenAI content-part arrays.
     // Normalize both forms before JSON repair so a valid reader envelope is
     // not mistaken for an empty/invalid response.
@@ -15792,7 +15796,7 @@ function parseSidecarReaderOutput(content, fallback = {}) {
     };
 }
 
-function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
+function retiredSidecarReaderV1NormalizeEnvelope(raw = {}, defaults = {}) {
     const source = isPlainObject(raw) ? raw : {};
     const cleanList = (value, limit = 40) => Array.isArray(value) ? value.slice(0, limit).map(item => isPlainObject(item) ? safeJsonClone(item) : String(item || '').slice(0, 800)) : [];
     return {
@@ -15828,7 +15832,7 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
     };
 }
 
-function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
+function retiredSidecarReaderV1MergeEnvelope(previous, delta, options = {}) {
     const prior = normalizeSidecarReaderEnvelope(previous || {}, options);
     const incoming = normalizeSidecarReaderEnvelope(delta || {}, options);
     if (incoming.snapshotMode === 'full' || !previous) return incoming;
@@ -15852,7 +15856,7 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
     return normalizeSidecarReaderEnvelope(merged, options);
 }
 
-function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = {}) {
+function retiredSidecarReaderV1AttachSnapshot(world, sess, turnRecord, packet, options = {}) {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turnRecord || !packet) return null;
     const profile = options.profile || effectiveSidecarReaderProfile(world, sess);
@@ -16789,9 +16793,9 @@ Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}). Thi
  * Scene Intelligence Reader v2.
  *
  * Keep this normalization in the integrated runtime rather than bolting a
- * ScenePulse-shaped cache onto the side. The functions intentionally replace
- * the first v1 declarations above: every consumer now gets one evidence
- * model, including older Reader payloads adapted at this boundary.
+ * ScenePulse-shaped cache onto the side. It is the sole active Reader
+ * boundary: it adapts older payload shapes before every consumer receives
+ * one evidence model.
  */
 function sidecarReaderValue(source, ...names) {
     for (const name of names) if (source && Object.prototype.hasOwnProperty.call(source, name)) return source[name];
@@ -16987,11 +16991,15 @@ function parseSidecarReaderOutput(content, fallback = {}) {
     if (!isPlainObject(parsed)) return { valid: false, error: 'reader_invalid_json', summary: 'The Sidecar Reader returned no usable structured reading.', canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000) };
     const envelope = normalizeSidecarReaderEnvelope({ ...parsed, canonicalReferences: parsed.canonicalReferences || parsed.canonical_references || fallback });
     const hasScene = Object.keys(envelope.scene || {}).length > 0 || Object.keys(envelope.location || {}).length > 0 || Object.keys(envelope.presence || {}).length > 0;
+    // A configured ScenePulse custom-panel value is independently useful
+    // reader evidence. Do not reject a compact full/section reading merely
+    // because it changes only a supported source field such as health.
+    const hasScenePulse = Object.keys(envelope.scenePulse || {}).length > 0;
     const declaredDelta = envelope.snapshotMode === 'delta'
         && (Object.prototype.hasOwnProperty.call(parsed, 'changed_fields') || Object.prototype.hasOwnProperty.call(parsed, 'changedFields')
             || Object.prototype.hasOwnProperty.call(parsed, 'coverage') || Object.prototype.hasOwnProperty.call(parsed, 'clear_fields') || Object.prototype.hasOwnProperty.call(parsed, 'clearFields'));
-    const hasMeaning = !!envelope.summary || hasScene || envelope.eventClaims.length || envelope.characterIntelligence.length || !!envelope.npcRelationshipGraph || envelope.changes.length || Object.keys(envelope.coverage || {}).length > 0 || declaredDelta;
-    const valid = hasMeaning && (envelope.snapshotMode !== 'full' || hasScene || !!envelope.summary || envelope.characterIntelligence.length > 0);
+    const hasMeaning = !!envelope.summary || hasScene || hasScenePulse || envelope.eventClaims.length || envelope.characterIntelligence.length || !!envelope.npcRelationshipGraph || envelope.changes.length || Object.keys(envelope.coverage || {}).length > 0 || declaredDelta;
+    const valid = hasMeaning && (envelope.snapshotMode !== 'full' || hasScene || hasScenePulse || !!envelope.summary || envelope.characterIntelligence.length > 0);
     return {
         ...envelope, valid, error: valid ? '' : 'reader_empty_envelope',
         mode: envelope.snapshotMode, raw: raw.slice(0, 12000),

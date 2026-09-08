@@ -101,6 +101,10 @@ const graphNormalizer = lastFunction('normalizeSidecarNpcRelationshipGraph');
 
 assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain semantic supplied-field provenance');
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
+assert.equal((app.match(/^function normalizeSidecarReaderEnvelope\(/gm) || []).length, 1, 'only one active Sidecar Reader normalizer may exist');
+assert.equal((app.match(/^function parseSidecarReaderOutput\(/gm) || []).length, 1, 'only one active Sidecar Reader parser may exist');
+assert.equal((app.match(/^function mergeSidecarReaderEnvelope\(/gm) || []).length, 1, 'only one active Sidecar Reader delta merger may exist');
+assert.equal((app.match(/^function attachSidecarReaderSnapshot\(/gm) || []).length, 1, 'only one active Sidecar Reader snapshot attachment path may exist');
 assert.match(currentTurn, /sess\.history.*\.reverse\(\)/s, 'current authored turn must follow visible history');
 assert.match(app, /const SCENEPULSE_TOUR_EXAMPLE_DATA = Object\.freeze/, 'the actual source tutorial fixture must remain present');
 const vendoredTourFixture = vm.runInNewContext(`(${objectLiteralAfter(sourceConstants, 'export const TOUR_EXAMPLE_DATA=')})`);
@@ -634,5 +638,25 @@ const mergeSource = [
 const merged = vm.runInNewContext(`${mergeSource}\nsidecarMergeScenePulse(${JSON.stringify({ characters: [{ characterId: 'elena', name: 'Elena', innerThought: 'old' }], relationships: [{ relationshipId: 'elena-rel', name: 'Elena', trust: 55 }] })}, ${JSON.stringify({ characters: [{ characterId: 'elena', innerThought: 'new' }], relationships: [{ relationshipId: 'elena-rel', trust: 61 }] })})`, scenePulseMergeContext);
 assert.deepEqual(merged.characters[0], { characterId: 'elena', name: 'Elena', innerThought: 'new' }, 'compact character delta must preserve source fields');
 assert.deepEqual(merged.relationships[0], { relationshipId: 'elena-rel', name: 'Elena', trust: 61 }, 'compact relationship delta must preserve source fields');
+
+// The exact same nested packet shape that the one Sidecar Reader emits must
+// preserve a configured source custom-panel key through normalization and a
+// compact delta merge. The fixture renderer then decides whether that
+// accepted field supersedes its tutorial value.
+const readerEnvelopeContext = {
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+};
+const readerEnvelopeSource = [
+    lastFunction('sidecarReaderValue'),
+    graphNormalizer,
+    normalizer,
+    mergeSource,
+    merger
+].join('\n');
+const customPanelEnvelope = vm.runInNewContext(`${readerEnvelopeSource}\n(() => {\n    const base = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: { scenePulse: { health: 40 } } });\n    const patch = normalizeSidecarReaderEnvelope({ mode: 'delta', changed_fields: ['scenePulse.health'], semantic_interpretation: { scenePulse: { health: 64 } } });\n    return { base, patch, merged: mergeSidecarReaderEnvelope(base, patch) };\n})()`, readerEnvelopeContext);
+assert.equal(customPanelEnvelope.base.scenePulse.health, 40, 'a nested Sidecar full reading must retain a configured custom-panel field');
+assert.equal(customPanelEnvelope.patch.scenePulse.health, 64, 'a nested Sidecar custom-panel delta must retain its updated value');
+assert.equal(customPanelEnvelope.merged.scenePulse.health, 64, 'a compact Sidecar custom-panel delta must replace only its named accepted field');
 
 console.log('ScenePulse native-source integration contract passed.');
