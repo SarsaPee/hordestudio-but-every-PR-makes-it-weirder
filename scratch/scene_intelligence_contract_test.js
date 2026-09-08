@@ -155,6 +155,8 @@ assert.match(runtime, /showWorldsSetupGuide/, 'Worlds must provide a truthful so
 assert.match(runtime, /showScenePulseWorldsSetup/, 'the source guide must receive its Worlds-specific setup capability narrowly');
 assert.match(sourceSetupGuide, /showScenePulseWorldsSetup/, 'vendored Setup Guide must delegate only when the Worlds capability is present');
 assert.match(runtime, /SOURCE_LANGUAGE_OPTIONS/, 'the complete source locale set must remain available');
+assert.match(runtime, /简体中文 — Chinese \(Simplified\)/, 'the source language picker must retain native source locale labels');
+assert.match(runtime, /עברית — Hebrew/, 'the source language picker must retain the complete shipped locale list');
 assert.match(runtime, /showSourceLanguagePicker/, 'language selection must be a real ScenePulse configuration action');
 assert.match(runtime, /modules\.i18n\?\.initI18n/, 'the source locale loader must initialize before source render');
 assert.match(sourceI18n, /export async function initI18n/, 'vendored source locale files must remain the locale authority');

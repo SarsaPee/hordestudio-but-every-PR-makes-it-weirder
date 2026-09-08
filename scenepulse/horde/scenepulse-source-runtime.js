@@ -77,11 +77,18 @@
     // Keep the source locale labels (and its complete shipped locale set)
     // rather than inventing a smaller Horde-only language menu.
     const SOURCE_LANGUAGE_OPTIONS = Object.freeze([
-        'English', 'Chinese (Simplified)', 'Chinese (Traditional)', 'Spanish', 'Hindi', 'Arabic', 'Portuguese', 'Russian',
-        'Japanese', 'French', 'German', 'Korean', 'Turkish', 'Vietnamese', 'Italian', 'Thai', 'Polish', 'Ukrainian',
-        'Indonesian', 'Dutch', 'Romanian', 'Czech', 'Greek', 'Hungarian', 'Swedish', 'Malay', 'Finnish', 'Danish',
-        'Norwegian', 'Hebrew'
-    ]);
+        ['English', 'English'], ['Chinese (Simplified)', '简体中文 — Chinese (Simplified)'],
+        ['Chinese (Traditional)', '繁體中文 — Chinese (Traditional)'], ['Spanish', 'Español — Spanish'],
+        ['Hindi', 'हिन्दी — Hindi'], ['Arabic', 'العربية — Arabic'], ['Portuguese', 'Português — Portuguese'],
+        ['Russian', 'Русский — Russian'], ['Japanese', '日本語 — Japanese'], ['French', 'Français — French'],
+        ['German', 'Deutsch — German'], ['Korean', '한국어 — Korean'], ['Turkish', 'Türkçe — Turkish'],
+        ['Vietnamese', 'Tiếng Việt — Vietnamese'], ['Italian', 'Italiano — Italian'], ['Thai', 'ไทย — Thai'],
+        ['Polish', 'Polski — Polish'], ['Ukrainian', 'Українська — Ukrainian'], ['Indonesian', 'Bahasa Indonesia — Indonesian'],
+        ['Dutch', 'Nederlands — Dutch'], ['Romanian', 'Română — Romanian'], ['Czech', 'Čeština — Czech'],
+        ['Greek', 'Ελληνικά — Greek'], ['Hungarian', 'Magyar — Hungarian'], ['Swedish', 'Svenska — Swedish'],
+        ['Malay', 'Bahasa Melayu — Malay'], ['Finnish', 'Suomi — Finnish'], ['Danish', 'Dansk — Danish'],
+        ['Norwegian', 'Norsk — Norwegian'], ['Hebrew', 'עברית — Hebrew']
+    ].map(([value, label]) => Object.freeze({ value, label })));
     const clone = value => JSON.parse(JSON.stringify(value ?? {}));
     const plain = value => !!value && typeof value === 'object' && !Array.isArray(value);
     const own = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
@@ -1452,7 +1459,7 @@
         overlay.className = 'sp-horde-command-overlay sp-horde-language-overlay';
         const selected = String(settings.language || '');
         const options = [`<option value="">Auto-detect</option>`, ...SOURCE_LANGUAGE_OPTIONS.map(language =>
-            `<option value="${escapeHtml(language)}"${selected === language ? ' selected' : ''}>${escapeHtml(language)}</option>`)].join('');
+            `<option value="${escapeHtml(language.value)}"${selected === language.value ? ' selected' : ''}>${escapeHtml(language.label)}</option>`)].join('');
         overlay.innerHTML = `<section class="sp-horde-command-dialog sp-horde-language-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse language"><header><span><strong>ScenePulse language</strong><small>Uses the original ScenePulse locale files. This changes ScenePulse interface text only.</small></span><button type="button" aria-label="Close ScenePulse language">×</button></header><div class="sp-horde-command-body"><section class="sp-horde-command-runner"><label class="sp-fs" for="sp-horde-language-select"><span>Language</span><select id="sp-horde-language-select">${options}</select></label><p class="sp-horde-command-hint">Auto-detect follows the browser preference when ScenePulse has no saved language.</p><div class="sp-horde-command-shortcuts"><button type="button" data-horde-source-language-save>Apply language</button></div></section></div></section>`;
         const close = () => overlay.remove();
         const apply = async () => {
