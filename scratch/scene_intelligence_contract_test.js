@@ -19,6 +19,7 @@ const css = read('scenepulse', 'horde', 'scene-pulse-worlds.css');
 const html = read('index.html');
 const sourcePanel = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'panel.js');
 const sourceUpdate = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'update-panel.js');
+const sourceNormalize = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'normalize.js');
 const sourceTimeline = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'timeline.js');
 const sourceWiki = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-wiki.js');
 const sourceWeb = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-web.js');
@@ -51,6 +52,9 @@ const sourcePrefs = lastFunction('persistScenePulseSourceRuntimePreferences', 'a
 const questChanges = lastFunction('scenePulseQuestChanges');
 const questTranslations = lastFunction('applyScenePulseQuestEditTranslations');
 const resolveQuestTranslation = lastFunction('resolveScenePulseQuestTranslation', 'async function');
+const relationshipChanges = lastFunction('scenePulseRelationshipChanges');
+const relationshipTranslations = lastFunction('applyScenePulseRelationshipEditTranslations');
+const relationshipApply = lastFunction('applyScenePulseRelationshipChange');
 const panelMount = lastFunction('renderScenePulseWorldsWorkspace');
 const nativePresentationAuthority = lastFunction('scenePulseDeclaredNativeFieldAuthority');
 const readerPass = lastFunction('runSidecarSemanticReading', 'async function');
@@ -75,6 +79,7 @@ assert.doesNotMatch(acceptedHandoff, /world\.entities|world\.quests|sess\.quests
 assert.match(nativePresentationAuthority, /SCENEPULSE_NATIVE_PRESENTATION_FIELDS/, 'the ScenePulse-facing ownership family must be explicit');
 assert.match(acceptedHandoff, /nativeFieldAuthority/, 'each accepted handoff must carry the declared source-field authority');
 assert.match(acceptedHandoff, /candidateReview/, 'settled identity handoffs must remain beside the ScenePulse tracker rather than inside it');
+assert.match(acceptedHandoff, /relationshipReview/, 'saved ScenePulse relationship translations must remain Inspect-only beside the source tracker');
 assert.match(app, /function scenePulseActiveSourceProfile\(/, 'the selected source Profile must be resolvable at the Reader boundary');
 assert.match(app, /function scenePulseSourceProfilePromptContext\(/, 'the selected source Profile needs a constrained Reader prompt context');
 assert.match(readerPass, /sourceProfileContext\.instruction/, 'source Profile instructions must reach the Sidecar Reader');
@@ -150,6 +155,8 @@ assert.match(runtime, /Return ScenePulse history to the current accepted beat/, 
 assert.match(runtime, /stage-story-idea/, 'source Story Idea controls must dispatch to Horde actions');
 assert.match(runtime, /commit-scenepulse-source-edit/, 'source edit saves must cross an auditable host boundary');
 assert.match(runtime, /questTranslationMarkup/, 'Inspect must expose source Quest Journal outcomes without replacing the native journal');
+assert.match(runtime, /relationshipTranslationMarkup/, 'Inspect must expose explicit relationship outcomes without replacing native meters');
+assert.match(runtime, /only changed values as deltas/i, 'relationship Inspect cards must surface compact meter deltas');
 assert.match(runtime, /resolve-scenepulse-quest-translation/, 'only an identical-title collision may request an Inspect-only World decision');
 assert.match(runtime, /persist-scenepulse-source-settings/, 'source preference saves must use a separate host boundary');
 assert.match(runtime, /setupGuide: 'settings-ui\/setup-guide\.js'/, 'source Setup Guide must remain an imported utility');
@@ -194,11 +201,19 @@ assert.match(sourceEdit, /type: 'scene_pulse_human_edit'/, 'direct edits must be
 assert.match(sourceEdit, /author: 'human'/, 'direct edit author must be preserved');
 assert.match(sourceEdit, /before,[\s\S]*after,[\s\S]*rawPatch: patch,[\s\S]*undo:/, 'direct edit must preserve before, after, raw patch, and undo data');
 assert.match(sourceEdit, /applyScenePulseQuestEditTranslations/, 'a saved live Quest Journal action must translate through the explicit World boundary');
+assert.match(sourceEdit, /applyScenePulseRelationshipEditTranslations/, 'a saved live relationship action must use an explicit Horde translation');
 assert.match(questTranslations, /edit\.targetSnapshotId === 'fixture'/, 'fixture Quest Journal actions must remain fixture-local');
+assert.match(relationshipTranslations, /edit\.targetSnapshotId === 'fixture'/, 'fixture relationship actions must remain fixture-local');
 assert.match(questTranslations, /scenePulseQuestChanges\(edit\.before, edit\.after\)/, 'the translator must derive actual source quest mutations rather than inventing World data');
+assert.match(relationshipTranslations, /scenePulseRelationshipChanges\(edit\.before, edit\.after\)/, 'relationship translation must derive exact source meter changes');
+assert.match(relationshipApply, /scenePulseRelationshipTarget/, 'relationship translation must resolve a named identity boundary before writing Horde state');
+assert.match(relationshipApply, /lastMeterDeltas/, 'Horde relationship state must retain compact signed source meter deltas');
+assert.doesNotMatch(relationshipApply, /\.find\([^\n]*name/i, 'relationship translation must not look up a Horde person by display name');
 assert.match(resolveQuestTranslation, /\['link', 'create'\]/, 'a title collision must require an explicit link-or-separate decision');
 assert.match(app, /detail\.action === 'resolve-scenepulse-quest-translation'/, 'Horde must claim the narrow unresolved Quest Journal decision');
 assert.match(css, /\.sp-horde-quest-translation-review/, 'Inspect Quest Journal outcomes must retain a source-styled review treatment');
+assert.match(css, /\.sp-horde-relationship-translation-review/, 'Inspect relationship outcomes must retain a source-styled review treatment');
+assert.match(sourceNormalize, /nr\.relationshipId/, 'source-side relationship normalization must retain compact relationship identity');
 assert.match(app, /function scenePulseHumanStatePromptContext\(/, 'human ScenePulse state needs a compact prompt context');
 assert.match(app, /const readerPrompt = prompt \+ humanSceneStateContext/, 'human ScenePulse state must reach the Reader prompt');
 assert.match(app, /ffStack\.prompt \+ ffHandoffContract \+ narratorHumanSceneState/, 'human ScenePulse state must reach the Narrator prompt');
@@ -342,6 +357,70 @@ assert.deepEqual(JSON.parse(JSON.stringify(questDiff.map(change => ({ operation:
     { operation: 'complete', sourceKey: 'mainQuests:find the signal', previousSourceKey: 'mainQuests:find the signal' },
     { operation: 'rename', sourceKey: 'sideQuests:meet rowan at the ferry', previousSourceKey: 'sideQuests:meet rowan' }
 ], 'Quest Journal translation must preserve a resolved action and only match a rename when its source detail is uniquely unchanged');
+
+const relationshipDiffSource = [
+    "const SCENEPULSE_RELATIONSHIP_METERS = Object.freeze(['affection', 'trust', 'desire', 'stress', 'compatibility']);",
+    "const SCENEPULSE_RELATIONSHIP_TEXT_FIELDS = Object.freeze(['name', 'relType', 'relPhase', 'timeTogether', 'milestone']);",
+    'const safeJsonClone = value => JSON.parse(JSON.stringify(value));',
+    'const isPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
+    lastFunction('scenePulseRelationshipSafeId'),
+    lastFunction('scenePulseRelationshipMeter'),
+    lastFunction('scenePulseRelationshipSourceEntry'),
+    lastFunction('scenePulseRelationshipEntries'),
+    lastFunction('scenePulseRelationshipEqual'),
+    lastFunction('scenePulseRelationshipChangedMeters'),
+    lastFunction('scenePulseRelationshipChangedFields'),
+    lastFunction('scenePulseRelationshipChange'),
+    relationshipChanges
+].join('\n');
+const relationshipBefore = { relationships: [{
+    relationshipId: 'rel_yvette', characterId: 'cand_yvette', name: 'Yvette', relType: 'Ally', relPhase: 'Wary', timeTogether: '3 weeks', milestone: 'Old promise',
+    affection: 3, affectionLabel: 'minimal', trust: 25, trustLabel: 'growing', desire: 0, desireLabel: 'none', stress: 55, stressLabel: 'moderate', compatibility: 30, compatibilityLabel: 'uncertain'
+}] };
+const relationshipAfter = { relationships: [{
+    relationshipId: 'rel_yvette', characterId: 'cand_yvette', name: 'Yvette', relType: 'Ally', relPhase: 'Wary', timeTogether: '3 weeks', milestone: 'Offered a route out',
+    affection: 5, affectionLabel: 'warming', trust: 38, trustLabel: 'building', desire: 0, desireLabel: 'none', stress: 55, stressLabel: 'moderate', compatibility: 30, compatibilityLabel: 'uncertain'
+}] };
+const relationshipDiff = vm.runInNewContext(`${relationshipDiffSource}\nscenePulseRelationshipChanges(${JSON.stringify(relationshipBefore)}, ${JSON.stringify(relationshipAfter)})`);
+assert.deepEqual(JSON.parse(JSON.stringify(relationshipDiff.map(change => ({ operation: change.operation, sourceKey: change.sourceKey, meterDeltas: change.meterDeltas, changedFields: change.changedFields })))), [{
+    operation: 'update', sourceKey: 'relationship:rel_yvette', meterDeltas: { affection: 2, trust: 13 },
+    changedFields: ['milestone', 'affection', 'affectionLabel', 'trust', 'trustLabel']
+}], 'relationship edits must preserve full five-meter state while recording only changed numeric meters as deltas');
+
+const relationshipApplySource = [
+    "const SCENEPULSE_RELATIONSHIP_METERS = Object.freeze(['affection', 'trust', 'desire', 'stress', 'compatibility']);",
+    "const SCENEPULSE_RELATIONSHIP_TEXT_FIELDS = Object.freeze(['name', 'relType', 'relPhase', 'timeTogether', 'milestone']);",
+    'const safeJsonClone = value => JSON.parse(JSON.stringify(value));',
+    'const isPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
+    lastFunction('scenePulseRelationshipSafeId'),
+    lastFunction('scenePulseRelationshipMeter'),
+    lastFunction('scenePulseRelationshipSourceEntry'),
+    lastFunction('scenePulseRelationshipEntries'),
+    lastFunction('scenePulseRelationshipEqual'),
+    lastFunction('scenePulseRelationshipChangedMeters'),
+    lastFunction('scenePulseRelationshipChangedFields'),
+    lastFunction('scenePulseRelationshipChange'),
+    lastFunction('scenePulseRelationshipLinks'),
+    lastFunction('scenePulseRelationshipSourceKeys'),
+    lastFunction('linkScenePulseRelationship'),
+    lastFunction('scenePulseRelationshipControlledEntity'),
+    lastFunction('scenePulseRelationshipTarget'),
+    lastFunction('scenePulseRelationshipTranslationResult'),
+    relationshipApply
+].join('\n');
+const relationshipApplyContext = {
+    crypto: { randomUUID: () => 'relationship-test' },
+    relationshipKey: (a, b) => [String(a), String(b)].sort().join('|')
+};
+const relationshipApplyResult = vm.runInNewContext(`${relationshipApplySource}\n(() => {\n    const world = { entities: [{ id: 'yvette', type: 'npc', name: 'Yvette' }] };\n    const sess = { controlledEntityId: 'player', playerIdentity: { name: 'Fei' }, npcRelationships: {} };\n    const protocol = { activeSequenceId: 'seq_1', sequences: [{ id: 'seq_1', controlledEntityId: 'player' }], readerCandidates: [{ candidateId: 'cand_yvette', candidateType: 'character', status: 'promoted', canonicalMatchId: 'yvette' }] };\n    const change = scenePulseRelationshipChange('update', scenePulseRelationshipSourceEntry(${JSON.stringify(relationshipBefore.relationships[0])}), scenePulseRelationshipSourceEntry(${JSON.stringify(relationshipAfter.relationships[0])}));\n    const result = applyScenePulseRelationshipChange(world, sess, protocol, change, { sourceEditId: 'edit_1', targetSnapshotId: 'snapshot_1', targetTurnId: 'turn_1' });\n    return { result, record: sess.npcRelationships['player|yvette'], links: protocol.scenePulseRelationshipLinks };\n})()`, relationshipApplyContext);
+assert.equal(relationshipApplyResult.result.status, 'applied', 'a promoted stable candidate must permit an explicit relationship-state translation');
+assert.deepEqual(JSON.parse(JSON.stringify(relationshipApplyResult.record.scenePulse.meters)), {
+    affection: 5, trust: 38, desire: 0, stress: 55, compatibility: 30
+}, 'Horde must retain all five ScenePulse current dimensions without reducing them to score');
+assert.deepEqual(JSON.parse(JSON.stringify(relationshipApplyResult.record.scenePulse.lastMeterDeltas)), {
+    affection: 2, trust: 13
+}, 'Horde must retain the compact source delta vector for prompt generation');
+assert.equal(relationshipApplyResult.links[0].targetEntityId, 'yvette', 'the source relationship must retain an explicit stable identity link after promotion');
 
 const sourceRuntimeContext = {
     window: {},

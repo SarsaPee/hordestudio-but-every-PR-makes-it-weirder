@@ -969,6 +969,31 @@
         return cards ? `<section class="sp-horde-quest-translation-review"><header><strong>Quest Journal actions</strong><small>Saved ScenePulse quest actions update their established World quest directly. Only an identical title without a link needs a choice here.</small></header><div>${cards}</div></section>` : '';
     }
 
+    // Relationship meters stay owned by the source panel. Inspect only
+    // reports an explicit saved translation: its current five-dimensional
+    // state and the compact deltas Horde retained below the linked People
+    // record. An unlinked source identity stays visibly ScenePulse-only;
+    // this display never manufactures a person from a name.
+    function relationshipTranslationMarkup(records) {
+        if (!Array.isArray(records) || !records.length) return '';
+        const meterNames = {
+            affection: 'Affection', trust: 'Trust', desire: 'Desire', stress: 'Stress', compatibility: 'Compatibility'
+        };
+        const cards = records.map(record => {
+            const source = plain(record?.sourceRelationship) ? record.sourceRelationship : {};
+            const title = String(source?.name || record?.sourceKey || 'Relationship').trim();
+            const status = String(record?.status || 'scene_only');
+            const labels = { applied: 'People updated', scene_only: 'Scene-only', unresolved: 'Unresolved' };
+            const deltas = plain(record?.meterDeltas) ? Object.entries(record.meterDeltas)
+                .filter(([key, value]) => meterNames[key] && Number.isFinite(Number(value)) && Number(value) !== 0)
+                .map(([key, value]) => `${meterNames[key]} ${Number(value) > 0 ? '+' : ''}${Number(value)}`) : [];
+            const metadata = [source?.relType, source?.relPhase, source?.timeTogether].filter(Boolean).join(' · ');
+            const destination = record?.targetName ? `Linked person: ${record.targetName}` : '';
+            return `<article class="sp-horde-relationship-translation-card is-${escapeHtml(status)}"><header><span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(String(record?.operation || 'update').replace(/_/g, ' '))}${metadata ? ` · ${escapeHtml(metadata)}` : ''}</small></span><span>${escapeHtml(labels[status] || status)}</span></header>${deltas.length ? `<p class="sp-horde-relationship-deltas">${escapeHtml(deltas.join(' · '))}</p>` : ''}${destination ? `<small class="sp-horde-relationship-destination">${escapeHtml(destination)}</small>` : ''}${record?.reason ? `<small class="sp-horde-relationship-translation-reason">${escapeHtml(record.reason)}</small>` : ''}</article>`;
+        }).join('');
+        return cards ? `<section class="sp-horde-relationship-translation-review"><header><strong>Relationship actions</strong><small>Saved source meter changes retain their five dimensions and only changed values as deltas. Unlinked records remain fully visible in ScenePulse.</small></header><div>${cards}</div></section>` : '';
+    }
+
     function relationshipGraphReviewMarkup(handoff, native) {
         const graph = plain(handoff?.npcRelationshipGraph) ? handoff.npcRelationshipGraph : null;
         if (!graph) {
@@ -1009,13 +1034,15 @@
         const candidateMarkup = candidateReviewMarkup(candidateReview);
         const questReview = Array.isArray(handoff?.questReview) ? handoff.questReview : [];
         const questMarkup = questTranslationMarkup(questReview);
+        const relationshipReview = Array.isArray(handoff?.relationshipReview) ? handoff.relationshipReview : [];
+        const relationshipMarkup = relationshipTranslationMarkup(relationshipReview);
         const graphMarkup = relationshipGraphReviewMarkup(handoff, native);
         const deltaSummary = Object.keys(rawDelta).length || clearFields.length || replaceCollections.length
             ? `<details class="sp-horde-compare-delta"><summary>Accepted compact delta for this selection</summary><pre>${escapeHtml(JSON.stringify({ scenePulse: rawDelta, clearFields, replaceCollections }, null, 2))}</pre></details>`
             : '<p class="sp-horde-compare-delta-empty">No accepted compact Reader delta is attached to this selection.</p>';
         const overlay = document.createElement('div');
         overlay.className = 'sp-horde-compare-overlay';
-        overlay.innerHTML = `<section class="sp-horde-compare-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse and Sidecar handoff review"><header><span><strong>ScenePulse handoff review</strong><small>ScenePulse remains complete in the foreground while Sidecar’s accepted state is retained beside it. A difference is evidence to review, not a cue to erase either system. Open a value to see the exact handoff that produced the difference; this view makes no authority change by itself.</small></span><button type="button" aria-label="Close comparison">×</button></header><div class="sp-horde-compare-provenance"><span>ScenePulse: ${escapeHtml(handoff?.status === 'accepted_fixture' ? 'sealed TOUR_EXAMPLE_DATA' : handoff?.status === 'accepted_human' ? 'direct authored scene state' : 'source materialization')}</span><span>Sidecar: ${escapeHtml(handoff?.provenance?.snapshotId ? `settled ${handoff.provenance.snapshotId}` : 'no settled Reader packet')}</span><span>Tutorial-supported fields: ${fixtureCount}</span><span>Needs mapping review: ${reviewCount}</span>${candidateReview.length ? `<span>Identity handoffs: ${candidateReview.length}</span>` : ''}${questReview.length ? `<span>Quest actions: ${questReview.length}</span>` : ''}</div>${candidateMarkup}${questMarkup}${graphMarkup}<div class="sp-horde-compare-table-wrap"><table><thead><tr><th>Field</th><th>ScenePulse showing</th><th>Sidecar state</th><th>Scaffold status</th><th>Comparison</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No tracker fields.</td></tr>'}</tbody></table></div><footer>${deltaSummary}</footer></section>`;
+        overlay.innerHTML = `<section class="sp-horde-compare-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse and Sidecar handoff review"><header><span><strong>ScenePulse handoff review</strong><small>ScenePulse remains complete in the foreground while Sidecar’s accepted state is retained beside it. A difference is evidence to review, not a cue to erase either system. Open a value to see the exact handoff that produced the difference; this view makes no authority change by itself.</small></span><button type="button" aria-label="Close comparison">×</button></header><div class="sp-horde-compare-provenance"><span>ScenePulse: ${escapeHtml(handoff?.status === 'accepted_fixture' ? 'sealed TOUR_EXAMPLE_DATA' : handoff?.status === 'accepted_human' ? 'direct authored scene state' : 'source materialization')}</span><span>Sidecar: ${escapeHtml(handoff?.provenance?.snapshotId ? `settled ${handoff.provenance.snapshotId}` : 'no settled Reader packet')}</span><span>Tutorial-supported fields: ${fixtureCount}</span><span>Needs mapping review: ${reviewCount}</span>${candidateReview.length ? `<span>Identity handoffs: ${candidateReview.length}</span>` : ''}${questReview.length ? `<span>Quest actions: ${questReview.length}</span>` : ''}${relationshipReview.length ? `<span>Relationship actions: ${relationshipReview.length}</span>` : ''}</div>${candidateMarkup}${questMarkup}${relationshipMarkup}${graphMarkup}<div class="sp-horde-compare-table-wrap"><table><thead><tr><th>Field</th><th>ScenePulse showing</th><th>Sidecar state</th><th>Scaffold status</th><th>Comparison</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No tracker fields.</td></tr>'}</tbody></table></div><footer>${deltaSummary}</footer></section>`;
         overlay.querySelector('button').addEventListener('click', () => overlay.remove());
         overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
         const bindCandidateAction = (selector, action, successMessage, extra = {}) => {

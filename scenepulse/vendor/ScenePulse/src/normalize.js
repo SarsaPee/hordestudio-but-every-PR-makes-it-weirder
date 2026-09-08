@@ -287,6 +287,17 @@ export function normalizeTracker(d){
         rn=rn.replace(/['\u2018\u2019\u2018\u2019]s\s+(view|perspective|opinion|feelings?|perception|relationship)\s+(of|on|toward|towards|about|with)\s+.*/i,'')
              .replace(/\s+(to|toward|towards|about|on|view of)\s+.*/i,'').trim();
         const nr={name:rn};
+        // Worlds V2 supplies compact ScenePulse relationship patches keyed
+        // by a stable relationship or character id.  The upstream renderer
+        // does not need either field to draw a meter, but preserving them
+        // through normalization is essential: it lets the accepted source
+        // snapshot retain identity across a reveal, a delta, and a direct
+        // source-panel save.  They remain opaque source metadata here; no
+        // registry lookup or display-name matching occurs in this module.
+        const _spRelId=String(r.relationshipId||r.relationship_id||r.id||'').trim();
+        const _spCharId=String(r.characterId||r.character_id||r.subjectRef||r.subject_ref||'').trim();
+        if(_spRelId)nr.relationshipId=_spRelId.slice(0,180);
+        if(_spCharId)nr.characterId=_spCharId.slice(0,180);
         nr.relType=r.relType||r.type||'';nr.relPhase=r.relPhase||r.phase||'';
         nr.timeTogether=r.timeTogether||r.duration||r.known||'';
         nr.milestone=r.milestone||r.nextMilestone||'';

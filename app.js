@@ -19473,6 +19473,9 @@ function scenePulseAcceptedHandoff(world, sess) {
             // source tracker.
             questReview: safeJsonClone(scenePulseQuestReviewProjection(protocol, {
                 snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
+            })),
+            relationshipReview: safeJsonClone(scenePulseRelationshipReviewProjection(protocol, {
+                snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
             }))
         };
     });
@@ -19493,6 +19496,9 @@ function scenePulseAcceptedHandoff(world, sess) {
             snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
         })),
         questReview: safeJsonClone(scenePulseQuestReviewProjection(protocol, {
+            snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
+        })),
+        relationshipReview: safeJsonClone(scenePulseRelationshipReviewProjection(protocol, {
             snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
         })),
         uiPreferences,
@@ -20156,6 +20162,345 @@ async function resolveScenePulseQuestTranslation(world, sess, translationId, cho
     return outcome;
 }
 
+// ScenePulse relationships are deliberately more expressive than Horde's
+// legacy score/label pair.  Preserve the source's five current meters and
+// its compact change vector below the session relationship instead of
+// flattening them into an invented affinity score.  This path starts only at
+// an explicit source-panel save, and only when the source record carries a
+// stable identity which has already been linked or promoted in Horde.
+const SCENEPULSE_RELATIONSHIP_METERS = Object.freeze([
+    'affection', 'trust', 'desire', 'stress', 'compatibility'
+]);
+const SCENEPULSE_RELATIONSHIP_TEXT_FIELDS = Object.freeze([
+    'name', 'relType', 'relPhase', 'timeTogether', 'milestone'
+]);
+
+function scenePulseRelationshipSafeId(value) {
+    const id = String(value || '').trim();
+    return /^[A-Za-z0-9_.:-]{1,180}$/.test(id) ? id : '';
+}
+
+function scenePulseRelationshipMeter(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    // Native ScenePulse uses -1 as its explicit N/A meter state. Retain it
+    // distinctly rather than coercing it to a false zero.
+    if (numeric === -1) return -1;
+    return Math.max(0, Math.min(100, Math.round(numeric * 100) / 100));
+}
+
+function scenePulseRelationshipSourceEntry(raw, index = 0) {
+    if (!isPlainObject(raw)) return null;
+    const relationshipId = scenePulseRelationshipSafeId(raw.relationshipId || raw.relationship_id || raw.id);
+    const characterId = scenePulseRelationshipSafeId(raw.characterId || raw.character_id || raw.subjectRef || raw.subject_ref);
+    const identityKind = relationshipId ? 'relationship' : characterId ? 'character' : 'unlinked';
+    const sourceKey = relationshipId ? `relationship:${relationshipId}`
+        : characterId ? `character:${characterId}`
+            // An unlinked item is included in the review trail so an explicit
+            // source edit is not silently lost. It can never mutate Horde.
+            : `unlinked:${Math.max(0, Number(index) || 0)}`;
+    const text = (value, limit) => String(value || '').trim().slice(0, limit);
+    const meters = {};
+    const labels = {};
+    SCENEPULSE_RELATIONSHIP_METERS.forEach(key => {
+        meters[key] = scenePulseRelationshipMeter(raw[key]);
+        labels[key] = text(raw[`${key}Label`] || raw[`${key}label`], 180);
+    });
+    return Object.freeze({
+        sourceKey, identityKind, relationshipId, characterId,
+        name: text(raw.name || raw.character || '', 240),
+        relType: text(raw.relType || raw.type || '', 180),
+        relPhase: text(raw.relPhase || raw.phase || '', 180),
+        timeTogether: text(raw.timeTogether || raw.duration || raw.known || '', 240),
+        milestone: text(raw.milestone || raw.nextMilestone || '', 1_200),
+        meters, labels
+    });
+}
+
+function scenePulseRelationshipEntries(snapshot = {}) {
+    return (Array.isArray(snapshot?.relationships) ? snapshot.relationships : [])
+        .map((raw, index) => scenePulseRelationshipSourceEntry(raw, index)).filter(Boolean);
+}
+
+function scenePulseRelationshipEqual(left, right) {
+    if (!left || !right) return false;
+    const comparable = entry => ({
+        name: entry.name, relType: entry.relType, relPhase: entry.relPhase,
+        timeTogether: entry.timeTogether, milestone: entry.milestone,
+        meters: entry.meters, labels: entry.labels
+    });
+    return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
+}
+
+function scenePulseRelationshipChangedMeters(before, after) {
+    const result = {};
+    SCENEPULSE_RELATIONSHIP_METERS.forEach(key => {
+        const previous = before?.meters?.[key] ?? null;
+        const current = after?.meters?.[key] ?? null;
+        if (previous === current || previous === null || current === null || previous === -1 || current === -1) return;
+        result[key] = Math.round((current - previous) * 100) / 100;
+    });
+    return result;
+}
+
+function scenePulseRelationshipChangedFields(before, after) {
+    const fields = [];
+    SCENEPULSE_RELATIONSHIP_TEXT_FIELDS.slice(1).forEach(key => {
+        if (String(before?.[key] || '') !== String(after?.[key] || '')) fields.push(key);
+    });
+    SCENEPULSE_RELATIONSHIP_METERS.forEach(key => {
+        if (before?.meters?.[key] !== after?.meters?.[key]) fields.push(key);
+        if (String(before?.labels?.[key] || '') !== String(after?.labels?.[key] || '')) fields.push(`${key}Label`);
+    });
+    return fields;
+}
+
+function scenePulseRelationshipChange(operation, before, after, reason = '') {
+    const source = after || before;
+    if (!source) return null;
+    return Object.freeze({
+        operation,
+        sourceKey: String(source.sourceKey || ''),
+        previousSourceKey: String(before?.sourceKey || ''),
+        sourceRelationship: safeJsonClone(after || before),
+        previousRelationship: safeJsonClone(before || null),
+        meterDeltas: safeJsonClone(scenePulseRelationshipChangedMeters(before, after)),
+        changedFields: scenePulseRelationshipChangedFields(before || {}, after || {}),
+        reason: String(reason || '').slice(0, 400)
+    });
+}
+
+// Stable source identity is mandatory for a World translation. A name may
+// still render beautifully in ScenePulse, but it is never an identity key.
+function scenePulseRelationshipChanges(before = {}, after = {}) {
+    const changes = [];
+    const index = entries => entries.reduce((map, entry) => {
+        const values = map.get(entry.sourceKey) || [];
+        values.push(entry);
+        map.set(entry.sourceKey, values);
+        return map;
+    }, new Map());
+    const prior = index(scenePulseRelationshipEntries(before));
+    const next = index(scenePulseRelationshipEntries(after));
+    const keys = new Set([...prior.keys(), ...next.keys()]);
+    keys.forEach(key => {
+        const oldEntries = prior.get(key) || [];
+        const newEntries = next.get(key) || [];
+        if (oldEntries.length > 1 || newEntries.length > 1) {
+            changes.push(scenePulseRelationshipChange('unresolved', oldEntries[0] || null, newEntries[0] || null,
+                'Duplicate ScenePulse relationship identities cannot be translated into one World relationship.'));
+            return;
+        }
+        const oldEntry = oldEntries[0] || null;
+        const newEntry = newEntries[0] || null;
+        if (!oldEntry) changes.push(scenePulseRelationshipChange('add', null, newEntry));
+        else if (!newEntry) changes.push(scenePulseRelationshipChange('remove', oldEntry, null));
+        else if (!scenePulseRelationshipEqual(oldEntry, newEntry)) changes.push(scenePulseRelationshipChange('update', oldEntry, newEntry));
+    });
+    return changes.filter(Boolean).slice(0, 80);
+}
+
+function scenePulseRelationshipLinks(protocol) {
+    const links = (Array.isArray(protocol?.scenePulseRelationshipLinks) ? protocol.scenePulseRelationshipLinks : [])
+        .filter(link => isPlainObject(link))
+        .map(link => ({
+            sourceKeys: [...new Set((Array.isArray(link.sourceKeys) ? link.sourceKeys : [])
+                .map(value => String(value || '').trim())
+                .filter(value => /^(?:relationship|character):[A-Za-z0-9_.:-]{1,180}$/.test(value)))].slice(-12),
+            controlledEntityId: String(link.controlledEntityId || '').trim().slice(0, 180),
+            targetEntityId: String(link.targetEntityId || '').trim().slice(0, 180),
+            createdAt: String(link.createdAt || '').slice(0, 80),
+            updatedAt: String(link.updatedAt || '').slice(0, 80)
+        }))
+        .filter(link => link.sourceKeys.length && link.controlledEntityId && link.targetEntityId)
+        .slice(-500);
+    if (protocol) protocol.scenePulseRelationshipLinks = links;
+    return links;
+}
+
+function scenePulseRelationshipSourceKeys(entry = {}) {
+    const keys = [];
+    if (entry.relationshipId) keys.push(`relationship:${entry.relationshipId}`);
+    if (entry.characterId) keys.push(`character:${entry.characterId}`);
+    return keys;
+}
+
+function linkScenePulseRelationship(protocol, controlledEntityId, targetEntityId, ...sourceKeys) {
+    const keys = [...new Set(sourceKeys.flat().map(value => String(value || '').trim())
+        .filter(value => /^(?:relationship|character):[A-Za-z0-9_.:-]{1,180}$/.test(value)))];
+    if (!protocol || !keys.length || !controlledEntityId || !targetEntityId) return null;
+    const links = scenePulseRelationshipLinks(protocol);
+    let link = links.find(item => item.controlledEntityId === controlledEntityId
+        && item.targetEntityId === targetEntityId
+        && item.sourceKeys.some(key => keys.includes(key)));
+    const stamp = new Date().toISOString();
+    if (!link) {
+        link = { sourceKeys: [], controlledEntityId, targetEntityId, createdAt: stamp, updatedAt: stamp };
+        links.push(link);
+    }
+    link.sourceKeys = [...new Set([...(link.sourceKeys || []), ...keys])].slice(-12);
+    link.updatedAt = stamp;
+    protocol.scenePulseRelationshipLinks = links.slice(-500);
+    return link;
+}
+
+function scenePulseRelationshipControlledEntity(world, sess, protocol) {
+    const activeSequence = (Array.isArray(protocol?.sequences) ? protocol.sequences : [])
+        .find(sequence => String(sequence?.id || '') === String(protocol?.activeSequenceId || '')) || null;
+    const id = String(activeSequence?.controlledEntityId || sess?.controlledEntityId || 'player').trim();
+    if (!id) return null;
+    if (id === 'player') return { id, name: String(sess?.playerIdentity?.name || 'Player') };
+    return (world?.entities || []).find(entity => String(entity?.id || '') === id
+        && ['npc', 'character', 'person'].includes(String(entity?.type || '').toLowerCase())) || null;
+}
+
+// Resolve only explicit edges: an established link, a promoted Reader
+// candidate id, or a source characterId which exactly is a World entity id.
+// Display names/aliases deliberately do not participate.
+function scenePulseRelationshipTarget(world, sess, protocol, entry) {
+    const controlled = scenePulseRelationshipControlledEntity(world, sess, protocol);
+    if (!controlled) return { reason: 'The current controlled character has no stable World identity.' };
+    const keys = scenePulseRelationshipSourceKeys(entry);
+    const people = (world?.entities || []).filter(entity => ['npc', 'character', 'person']
+        .includes(String(entity?.type || '').toLowerCase()));
+    const byId = new Map(people.map(entity => [String(entity.id || ''), entity]));
+    const linked = scenePulseRelationshipLinks(protocol).find(link => link.controlledEntityId === controlled.id
+        && link.sourceKeys.some(key => keys.includes(key)));
+    if (linked) {
+        const target = byId.get(linked.targetEntityId);
+        if (target && target.id !== controlled.id) return { controlled, target, source: 'established_relationship_link' };
+    }
+    const candidateId = String(entry?.characterId || '').trim();
+    const candidateMatches = (Array.isArray(protocol?.readerCandidates) ? protocol.readerCandidates : [])
+        .filter(candidate => candidate?.candidateType === 'character'
+            && String(candidate?.candidateId || '') === candidateId
+            && ['matched', 'promoted'].includes(String(candidate?.status || '').toLowerCase())
+            && byId.has(String(candidate?.canonicalMatchId || '')));
+    const candidateTargetIds = [...new Set(candidateMatches.map(candidate => String(candidate.canonicalMatchId)))];
+    if (candidateTargetIds.length === 1) {
+        const target = byId.get(candidateTargetIds[0]);
+        if (target && target.id !== controlled.id) return { controlled, target, source: 'promoted_scene_candidate' };
+    }
+    const direct = candidateId ? byId.get(candidateId) : null;
+    if (direct && direct.id !== controlled.id) return { controlled, target: direct, source: 'exact_source_character_id' };
+    if (entry?.identityKind === 'unlinked') return { reason: 'This ScenePulse relationship has no stable relationshipId or characterId yet.' };
+    return { reason: 'This ScenePulse relationship is still scene-only because its stable character identity has not been linked or promoted.' };
+}
+
+function scenePulseRelationshipTranslationResult(change, status, options = {}) {
+    return {
+        id: `scene-pulse-relationship-${crypto.randomUUID()}`,
+        type: 'scene_pulse_relationship_translation', status,
+        operation: String(change?.operation || 'update'),
+        sourceKey: String(change?.sourceKey || '').slice(0, 240),
+        previousSourceKey: String(change?.previousSourceKey || '').slice(0, 240),
+        sourceRelationship: safeJsonClone(change?.sourceRelationship || {}),
+        previousRelationship: safeJsonClone(change?.previousRelationship || null),
+        meterDeltas: safeJsonClone(change?.meterDeltas || {}),
+        changedFields: safeJsonClone(change?.changedFields || []),
+        relationshipKey: String(options.relationshipKey || '').slice(0, 400),
+        controlledEntityId: String(options.controlledEntityId || '').slice(0, 180),
+        targetEntityId: String(options.targetEntityId || '').slice(0, 180),
+        targetName: String(options.targetName || '').slice(0, 240),
+        reason: String(options.reason || change?.reason || '').slice(0, 700),
+        createdAt: new Date().toISOString(),
+        sourceEditId: String(options.sourceEditId || '').slice(0, 240),
+        targetSnapshotId: String(options.targetSnapshotId || '').slice(0, 240),
+        targetTurnId: String(options.targetTurnId || '').slice(0, 240)
+    };
+}
+
+function applyScenePulseRelationshipChange(world, sess, protocol, change, options = {}) {
+    const source = change?.sourceRelationship || change?.previousRelationship;
+    if (!source || change?.operation === 'unresolved') {
+        return scenePulseRelationshipTranslationResult(change, 'unresolved', {
+            ...options, reason: change?.reason || 'This ScenePulse relationship change could not be identified safely.'
+        });
+    }
+    const resolution = scenePulseRelationshipTarget(world, sess, protocol, source);
+    if (!resolution.controlled || !resolution.target) {
+        return scenePulseRelationshipTranslationResult(change, 'scene_only', {
+            ...options, reason: resolution.reason || 'This relationship is still represented only in ScenePulse.'
+        });
+    }
+    const key = relationshipKey(resolution.controlled.id, resolution.target.id);
+    if (!isPlainObject(sess.npcRelationships)) sess.npcRelationships = {};
+    const existing = isPlainObject(sess.npcRelationships[key]) ? sess.npcRelationships[key] : null;
+    if (change.operation === 'remove' && !existing) {
+        return scenePulseRelationshipTranslationResult(change, 'scene_only', {
+            ...options, relationshipKey: key, controlledEntityId: resolution.controlled.id,
+            targetEntityId: resolution.target.id, targetName: resolution.target.name,
+            reason: 'The relationship was removed from the ScenePulse scene, but Horde had no established relationship state to retire.'
+        });
+    }
+    const record = existing || { score: 0, label: '', reason: '', lastChangedTurn: 0, autoManaged: false };
+    const previousScenePulse = isPlainObject(record.scenePulse) ? record.scenePulse : {};
+    const history = Array.isArray(previousScenePulse.history) ? previousScenePulse.history.slice(-47) : [];
+    const relationSnapshot = safeJsonClone(source);
+    const event = {
+        at: new Date().toISOString(), operation: change.operation,
+        sourceEditId: String(options.sourceEditId || ''), targetSnapshotId: String(options.targetSnapshotId || ''),
+        targetTurnId: String(options.targetTurnId || ''), meterDeltas: safeJsonClone(change.meterDeltas || {}),
+        changedFields: safeJsonClone(change.changedFields || []), relationship: relationSnapshot
+    };
+    history.push(event);
+    // Source removal is a current-scene change, not evidence that a Person's
+    // prior relationship should be deleted. Keep the last rich state as
+    // historical and let a later explicit World action govern real removal.
+    record.scenePulse = change.operation === 'remove'
+        ? {
+            ...previousScenePulse, sourceKey: source.sourceKey, relationshipId: source.relationshipId || '',
+            characterId: source.characterId || '', name: source.name || previousScenePulse.name || '',
+            status: 'historical', lastSeenAt: event.at, lastSourceTurnId: event.targetTurnId,
+            lastSourceSnapshotId: event.targetSnapshotId, lastMeterDeltas: {}, history
+        }
+        : {
+            version: 1, sourceKey: source.sourceKey, relationshipId: source.relationshipId || '',
+            characterId: source.characterId || '', name: source.name || '', status: 'current',
+            relType: source.relType || '', relPhase: source.relPhase || '', timeTogether: source.timeTogether || '',
+            milestone: source.milestone || '', meters: safeJsonClone(source.meters || {}), labels: safeJsonClone(source.labels || {}),
+            lastMeterDeltas: safeJsonClone(change.meterDeltas || {}), lastChangedFields: safeJsonClone(change.changedFields || []),
+            lastSeenAt: event.at, lastSourceTurnId: event.targetTurnId, lastSourceSnapshotId: event.targetSnapshotId,
+            source: 'explicit_scenepulse_relationship_edit', history
+        };
+    sess.npcRelationships[key] = record;
+    linkScenePulseRelationship(protocol, resolution.controlled.id, resolution.target.id, scenePulseRelationshipSourceKeys(source));
+    return scenePulseRelationshipTranslationResult(change, 'applied', {
+        ...options, relationshipKey: key, controlledEntityId: resolution.controlled.id,
+        targetEntityId: resolution.target.id, targetName: resolution.target.name,
+        reason: change.operation === 'remove'
+            ? 'The current ScenePulse relationship was retired while its prior rich state remains in Horde history.'
+            : `Saved ScenePulse relationship dimensions for ${resolution.target.name || resolution.target.id}; only changed meters are retained as deltas.`
+    });
+}
+
+function scenePulseRelationshipReviewProjection(protocol, options = {}) {
+    const snapshotId = String(options.snapshotId || '');
+    const turnId = String(options.turnId || '');
+    return (Array.isArray(protocol?.scenePulseRelationshipTranslations) ? protocol.scenePulseRelationshipTranslations : [])
+        .filter(item => item?.type === 'scene_pulse_relationship_translation'
+            && (!snapshotId || String(item?.targetSnapshotId || '') === snapshotId)
+            && (!turnId || String(item?.targetTurnId || '') === turnId))
+        .slice(-32).map(item => safeJsonClone(item));
+}
+
+function applyScenePulseRelationshipEditTranslations(world, sess, protocol, edit) {
+    if (!edit?.targetTurnId || edit.targetSnapshotId === 'fixture') return [];
+    const changes = scenePulseRelationshipChanges(edit.before, edit.after);
+    if (!changes.length) return [];
+    const results = changes.map(change => applyScenePulseRelationshipChange(world, sess, protocol, change, {
+        sourceEditId: edit.id, targetSnapshotId: edit.targetSnapshotId, targetTurnId: edit.targetTurnId
+    }));
+    protocol.scenePulseRelationshipTranslations = Array.isArray(protocol.scenePulseRelationshipTranslations)
+        ? protocol.scenePulseRelationshipTranslations : [];
+    protocol.scenePulseRelationshipTranslations.push(...results);
+    if (protocol.scenePulseRelationshipTranslations.length > 320) {
+        protocol.scenePulseRelationshipTranslations = protocol.scenePulseRelationshipTranslations.slice(-320);
+    }
+    return results;
+}
+
 // A human source-panel save is part of the authored scene-state record. Keep
 // its compact patch available to both upcoming model lanes, without sending
 // the sealed tutorial fixture or calling the change a user-interface event.
@@ -20209,13 +20554,18 @@ async function commitScenePulseSourceEdit(world, sess, payload = {}) {
     // Keep a bounded audit trail without deleting the only active overlay.
     if (protocol.scenePulseHumanEdits.length > 160) protocol.scenePulseHumanEdits = protocol.scenePulseHumanEdits.slice(-160);
     // A saved edit is the explicit author boundary for native ScenePulse
-    // controls. Translate only its Quest Journal changes: ordinary source
-    // fields remain scene presentation, while an established Quest link may
-    // update the same Horde quest immediately. Ambiguous titles stay visible
-    // as Unresolved review items instead of being guessed or duplicated.
+    // controls. Translate only explicit Quest Journal and relationship-source
+    // edits: ordinary source fields remain scene presentation. Quest title
+    // collisions and unlinked relationship identities remain visible in
+    // Inspect instead of being guessed or duplicated.
     const questTranslations = applyScenePulseQuestEditTranslations(world, sess, protocol, edit);
+    const relationshipTranslations = applyScenePulseRelationshipEditTranslations(world, sess, protocol, edit);
     await saveState();
-    return { saved: true, id: edit.id, edit, questTranslations: safeJsonClone(questTranslations) };
+    return {
+        saved: true, id: edit.id, edit,
+        questTranslations: safeJsonClone(questTranslations),
+        relationshipTranslations: safeJsonClone(relationshipTranslations)
+    };
 }
 
 function scenePulseHumanOverlay(protocol, handoff) {
