@@ -995,8 +995,22 @@
         const latestKey = snapshotKeys(current).at(-1);
         const graphCache = Number(current.currentKey) === Number(latestKey)
             ? sourceRelationshipGraphCache(current.selectedHandoff, current.nativeTracker) : null;
-        if (graphCache) current.context.chatMetadata.scenepulse.relationshipGraph = graphCache;
-        else delete current.context.chatMetadata.scenepulse.relationshipGraph;
+        // `relationshipGraph` is a derived Reader cache, not a source edit.
+        // Keep the comparison baseline aligned while history selection hides
+        // it from an older scene. Otherwise merely opening a past graph point
+        // makes the native toolbar claim there are unsaved user changes.
+        const liveScenePulse = current.context.chatMetadata?.scenepulse;
+        const baseScenePulse = current.baseMetadata?.scenepulse;
+        if (graphCache) {
+            if (liveScenePulse) liveScenePulse.relationshipGraph = clone(graphCache);
+            if (baseScenePulse) baseScenePulse.relationshipGraph = clone(graphCache);
+        } else {
+            if (liveScenePulse) delete liveScenePulse.relationshipGraph;
+            if (baseScenePulse) delete baseScenePulse.relationshipGraph;
+        }
+        // Keep a genuine edit pending, but clear a status produced only by
+        // the history-local cache transition above.
+        markMetadataDirty();
         const panel = document.getElementById('sp-panel');
         if (panel?.dataset.hordeSourceRuntime) {
             injectComparisonStrip(panel);
@@ -1017,7 +1031,13 @@
         document.addEventListener('click', event => {
             const target = event.target instanceof Element ? event.target : null;
             if (!target || !active()) return;
-            if (target.closest('#sp-timeline .sp-tl-node, #sp-timeline .sp-tl-disc-btn, .sp-browse-item')) {
+            if (target.closest([
+                '#sp-timeline .sp-tl-node',
+                '#sp-timeline .sp-tl-disc-btn',
+                '.sp-browse-item',
+                '.sp-graph-overlay .sp-graph-dot-hit',
+                '.sp-graph-overlay .sp-graph-xlabel'
+            ].join(', '))) {
                 scheduleSourceHistorySelectionSync();
             }
         }, true);

@@ -297,6 +297,10 @@ assert.match(runtime, /Tutorial support retained/, 'unsupported fields must rema
 assert.match(runtime, /Settled handoff adopted/, 'the comparison must distinguish a real accepted replacement from fixture support');
 assert.match(runtime, /current\.handoff\?\.lastKnown \? 'Last known scene'/, 'an incomplete latest handoff must leave the source panel visibly anchored to its last known scene');
 assert.match(runtime, /installHistorySelectionCapture/, 'source timeline and Browse All selections must keep the comparison aligned with the selected source snapshot');
+assert.match(runtime, /\.sp-graph-overlay \.sp-graph-dot-hit/, 'source relationship-history graph points must select the corresponding historical ScenePulse snapshot');
+assert.match(runtime, /\.sp-graph-overlay \.sp-graph-xlabel/, 'source relationship-history graph labels must select the corresponding historical ScenePulse snapshot');
+assert.match(runtime, /derived Reader cache, not a source edit/, 'history selection must classify the Reader relationship graph as derived state rather than a source edit');
+assert.match(runtime, /if \(baseScenePulse\) delete baseScenePulse\.relationshipGraph/, 'a historical source view must remove the derived graph cache from both live and baseline metadata');
 assert.match(runtime, /loadOptionalSourceModule/, 'an optional source utility may not prevent the foreground ScenePulse panel from mounting');
 assert.match(runtime, /profileManager: 'settings-ui\/profiles-manager\.js'/, 'source Profiles must remain a real vendored surface');
 assert.match(runtime, /guidedTour: 'settings-ui\/guided-tour\.js'/, 'source Guided Tour must remain a real vendored surface');
