@@ -18440,6 +18440,27 @@ function parseSidecarCognitionOutput(content) {
     return { memories };
 }
 
+// A ScenePulse thought has already crossed the settled Reader boundary as a
+// character-scoped, provisional impression. If the optional background
+// cognition model refuses its small JSON contract, retain that exact thought
+// as the bounded cognition claim rather than dropping the perception or
+// inventing a replacement. This fallback applies only to a job that carries
+// the accepted subject thought; generic episode cognition still requires its
+// own structured model output.
+function sidecarCognitionThoughtFallback(job = {}) {
+    const intelligence = isPlainObject(job?.provisionalIntelligence) ? job.provisionalIntelligence : {};
+    const thought = sidecarProjectionClaimText(intelligence.sceneLocalImpression).slice(0, 3000);
+    if (!thought) return [];
+    const reportedConfidence = Number(intelligence?.sceneLocalImpression?.confidence);
+    return [{
+        text: thought,
+        epistemicStatus: 'interpretation',
+        importance: 0.45,
+        confidence: Number.isFinite(reportedConfidence) ? Math.max(0, Math.min(1, reportedConfidence)) : 0.55,
+        sourceTurnIds: Array.isArray(job.sourceTurnIds) ? job.sourceTurnIds.slice(0, 12) : []
+    }];
+}
+
 function sidecarLocationEmbeddingText(world, location) {
     const ancestry = [];
     let parentId = location?.parentLocationId;
@@ -18736,15 +18757,17 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
                         jobWorld, { scope: 'sidecar' }))
                 });
                 if (!response.ok) throw new Error(`Cognition consolidation failed (${response.status})`);
-                const output = parseSidecarCognitionOutput((await response.json())?.choices?.[0]?.message?.content || '');
-                if (!output) throw new Error('Cognition consolidation returned no usable JSON.');
+                let output = parseSidecarCognitionOutput((await response.json())?.choices?.[0]?.message?.content || '');
+                const thoughtFallback = !output && turnScoped ? sidecarCognitionThoughtFallback(job) : [];
+                if (!output && !thoughtFallback.length) throw new Error('Cognition consolidation returned no usable JSON.');
+                if (!output) output = { memories: thoughtFallback, fallback: 'accepted_scenepulse_thought' };
                 if ((Number(sess._memEpoch) || 0) !== startMemoryEpoch) return;
                 output.memories.forEach(memory => graph.cognition.push({
                     id: `cognition_${Date.now().toString(36)}_${graph.cognition.length + 1}`, status: 'active', createdAt: new Date().toISOString(),
                     characterId: character.id, characterName: character.name, episodeId: episode?.id || '', turnCognitionJobId: turnScoped ? job.id : '', readerSnapshotId: job.readerSnapshotId || '', text: memory.text,
                     epistemicStatus: memory.epistemicStatus, importance: memory.importance, confidence: memory.confidence,
                     sourceTurnIds: memory.sourceTurnIds.length ? memory.sourceTurnIds : episode.sourceTurnIds,
-                    provenance: { source: turnScoped ? 'character_turn_cognition' : 'character_cognition_consolidation', access: job.access, perceptionEvidence: job.perceptionEvidence || '', sourceEpisodeId: episode?.id || '', sourceTurnIds: sourceIds, readerSnapshotId: job.readerSnapshotId || '', provisionalReaderInput: turnScoped ? safeJsonClone(job.provisionalIntelligence || null) : null }
+                    provenance: { source: turnScoped ? (output.fallback ? 'character_turn_cognition_reader_thought_fallback' : 'character_turn_cognition') : 'character_cognition_consolidation', access: job.access, perceptionEvidence: job.perceptionEvidence || '', sourceEpisodeId: episode?.id || '', sourceTurnIds: sourceIds, readerSnapshotId: job.readerSnapshotId || '', provisionalReaderInput: turnScoped ? safeJsonClone(job.provisionalIntelligence || null) : null }
                 }));
                 graph.cognition = graph.cognition.slice(-4000);
                 await vectorizeSidecarMemoryRecords(graph.cognition.filter(record => record.turnCognitionJobId === job.id || (!turnScoped && record.episodeId === episode?.id && record.characterId === character.id)));

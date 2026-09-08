@@ -95,6 +95,7 @@ const normalizer = lastFunction('normalizeSidecarReaderEnvelope');
 const merger = lastFunction('mergeSidecarReaderEnvelope');
 const characterPresenceNormalizer = lastFunction('normalizeSidecarPresenceMode');
 const characterIntelligenceNormalizer = lastFunction('normalizeSidecarCharacterIntelligence');
+const cognitionThoughtFallback = lastFunction('sidecarCognitionThoughtFallback');
 const scenePulseCharacterCognitionBridge = lastFunction('scenePulseCharacterCognitionBridge');
 const currentTurn = lastFunction('currentSidecarAuthoredTurn');
 const acceptedHandoff = lastFunction('scenePulseAcceptedHandoff');
@@ -153,6 +154,7 @@ assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain seman
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
 assert.match(normalizer, /scenePulseCharacterCognitionBridge/, 'a rich ScenePulse character card must be able to supplement the existing cognition lane');
 assert.match(characterPresenceNormalizer, /in_person/, 'a declared in-person Reader presence must normalize to the ScenePulse active lane');
+assert.match(app, /character_turn_cognition_reader_thought_fallback/, 'an invalid optional cognition-model response must retain the accepted ScenePulse thought rather than dropping it');
 assert.match(scenePulseCharacterCognitionBridge, /if \(!stableId \|\| !name \|\| !thought \|\| controlledCard/, 'card cognition may not use a display name or invent a subject identity');
 assert.match(scenePulseCharacterCognitionBridge, /const presenceMode = rosterPresence\(stableId, name, card\);[\s\S]*?if \(!presenceMode\) return;/, 'card cognition may not invent current-scene presence');
 assert.match(scenePulseCharacterCognitionBridge, /controlledCard\(card, stableId\)/, 'a rich ScenePulse card must never create an unexpressed player thought');
@@ -980,6 +982,17 @@ const inPersonCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() =>
 });
 assert.deepEqual(JSON.parse(JSON.stringify(inPersonCognitionJob.ids)), ['turn_cognition:turn_live_presence:npc_charlotte'], 'a declared in-person live Reader participant must enter the existing cognition queue');
 assert.equal(inPersonCognitionJob.job.access, 'visual', 'a normalized in-person participant receives visual cognition access');
+
+const acceptedThoughtFallback = vm.runInNewContext(`${lastFunction('sidecarProjectionClaimText')}\n${cognitionThoughtFallback}\nsidecarCognitionThoughtFallback(${JSON.stringify({
+    sourceTurnIds: ['turn_live_presence'],
+    provisionalIntelligence: { sceneLocalImpression: { text: 'Nobody shows up in an ironed collar on a sodden Friday without a proper excuse.', confidence: 0.85 } }
+})})`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+});
+assert.equal(acceptedThoughtFallback.length, 1, 'a settled ScenePulse thought must survive an optional cognition-model format failure');
+assert.equal(acceptedThoughtFallback[0].text, 'Nobody shows up in an ironed collar on a sodden Friday without a proper excuse.', 'the fallback must retain the exact accepted thought instead of synthesizing a new memory');
+assert.equal(acceptedThoughtFallback[0].epistemicStatus, 'interpretation', 'the fallback must remain provisional interpretation rather than durable fact');
+assert.deepEqual(JSON.parse(JSON.stringify(acceptedThoughtFallback[0].sourceTurnIds)), ['turn_live_presence'], 'the fallback must retain its authored-turn provenance');
 
 // A deliberate Thoughts reread replaces only the derived perception lane for
 // the same turn. Its old cognition remains inspectable as superseded evidence;
