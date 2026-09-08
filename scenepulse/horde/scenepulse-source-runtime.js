@@ -158,9 +158,9 @@
         originalSillyTavern: Object.getOwnPropertyDescriptor(global, 'SillyTavern'),
         originalToastr: Object.getOwnPropertyDescriptor(global, 'toastr'),
         facadeInstalled: false,
-        // `createPanel()` may replace the source DOM during a normal Horde remount.
-        // Keep this panel-scoped so the bridge is installed on the replacement.
-        panelCapturePanel: null,
+        // The source renderer can replace `#sp-panel` after a Reader result.
+        // Capture at the stable document boundary and filter to that panel.
+        panelCaptureInstalled: false,
         portraitCaptureInstalled: false,
         thoughtRefreshCaptureInstalled: false,
         historySelectionCaptureInstalled: false,
@@ -1980,11 +1980,11 @@
         }
     }
 
-    function installPanelCapture(panel) {
-        if (runtime.panelCapturePanel === panel) return;
-        panel.addEventListener('click', event => {
+    function installPanelCapture() {
+        if (runtime.panelCaptureInstalled) return;
+        document.addEventListener('click', event => {
             const target = event.target instanceof Element ? event.target : null;
-            if (!target) return;
+            if (!target?.closest('#sp-panel')) return;
             const refresh = target.closest('#sp-tb-regen,.sp-section-refresh');
             if (refresh) {
                 event.preventDefault(); event.stopImmediatePropagation();
@@ -2000,7 +2000,7 @@
                 if (direction) dispatch('stage-story-idea', { direction, inject: !!inject }).catch(error => makeToast('error', error?.message || error, 'Story idea'));
             }
         }, true);
-        runtime.panelCapturePanel = panel;
+        runtime.panelCaptureInstalled = true;
     }
 
     function installThoughtRefreshCapture() {
@@ -2295,7 +2295,6 @@
         global.clearTimeout(runtime.historySelectionTimer);
         runtime.historySelectionTimer = null;
         runtime.current = null;
-        runtime.panelCapturePanel = null;
         const panel = document.getElementById('sp-panel');
         if (panel?.dataset.hordeSourceRuntime) panel.classList.remove('sp-visible');
         document.querySelector('.sp-wiki-overlay')?.remove();
