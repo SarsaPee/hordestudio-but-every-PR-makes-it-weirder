@@ -382,10 +382,16 @@ export function normalizeTracker(d){
         }
     }
     if(_verbose&&o.relationships.length)log('Rel[0]:',JSON.stringify(o.relationships[0]).substring(0,300));
+    // Stable source identity takes precedence when carrying a relationship
+    // between snapshots.  A new alias or revealed name must not start a false
+    // meter history.  Exact display-name matching is retained only for legacy
+    // snapshots that were saved before relationship / character IDs existed.
+    const _relationshipStableKey=entry=>{const relationshipId=String(entry?.relationshipId||entry?.relationship_id||entry?.id||'').trim();if(relationshipId)return`r:${relationshipId}`;const characterId=String(entry?.characterId||entry?.character_id||entry?.subjectRef||entry?.subject_ref||'').trim();return characterId?`c:${characterId}`:''};
+    const _sameRelationship=(left,right)=>{const leftKey=_relationshipStableKey(left);const rightKey=_relationshipStableKey(right);return leftKey&&rightKey?leftKey===rightKey:String(left?.name||'').toLowerCase()===String(right?.name||'').toLowerCase()};
     // Carry forward: fill empty relationship fields from previous snapshot's matching relationship
     try{const prev=getLatestSnapshot();if(prev?.relationships?.length){
         for(const rel of o.relationships){
-            const prevRel=prev.relationships.find(pr=>pr.name===rel.name);
+            const prevRel=prev.relationships.find(pr=>_sameRelationship(pr,rel));
             if(!prevRel)continue;
             for(const fk of['relType','relPhase','timeTogether']){
                 if(!rel[fk]&&prevRel[fk]){rel[fk]=prevRel[fk];log('Rel carry-forward:',rel.name,fk,'\u2190',prevRel[fk])}
@@ -802,7 +808,7 @@ export function normalizeTracker(d){
         // Relationship milestone: extend existing carry-forward
         if(o.relationships?.length&&_prev.relationships?.length){
             for(const _rel of o.relationships){
-                const _prel=_prev.relationships.find(pr=>pr.name===_rel.name);
+                const _prel=_prev.relationships.find(pr=>_sameRelationship(pr,_rel));
                 if(_prel&&!_rel.milestone&&_prel.milestone){_rel.milestone=_prel.milestone;if(_verbose)log('Rel carry-forward:',_rel.name,'milestone')}
             }
         }

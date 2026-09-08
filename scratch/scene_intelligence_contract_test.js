@@ -177,6 +177,10 @@ assert.match(sourcePanel, /sp-tb-wiki/, 'source toolbar must retain Character Wi
 assert.match(sourcePanel, /sp-tb-edit/, 'source edit mode must remain present');
 assert.match(sourceUpdate, /sp-idea-paste.*sp-idea-inject/s, 'source Story Ideas must retain source action controls');
 assert.match(sourceUpdate, /sp-meter-bar-track/, 'source relationship meter renderer must remain present');
+assert.match(sourceUpdate, /const _relStableKey=entry=>/, 'source meter history must retain a stable relationship identity key');
+assert.match(sourceUpdate, /const _previousRelationship=rel=>/, 'source meter history must resolve the preceding relationship by stable identity');
+assert.match(sourceUpdate, /const _prevRel=_previousRelationship\(rel\)/, 'the vertical prior-value marker must use the stable predecessor lookup');
+assert.match(sourceUpdate, /_sameStoredRelationship\(r,rel\)/, 'source relationship metadata edits must update the stable stored relationship');
 assert.match(sourceTimeline, /export function renderTimeline\(\)/, 'source timeline must remain callable');
 assert.match(sourceWiki, /export function openCharacterWiki\(\)/, 'source Wiki must remain a full focused source view');
 assert.match(sourceWiki, /document\.body\.appendChild\(overlay\)/, 'source Wiki must retain viewport takeover behavior');
@@ -218,6 +222,9 @@ assert.match(app, /detail\.action === 'resolve-scenepulse-quest-translation'/, '
 assert.match(css, /\.sp-horde-quest-translation-review/, 'Inspect Quest Journal outcomes must retain a source-styled review treatment');
 assert.match(css, /\.sp-horde-relationship-translation-review/, 'Inspect relationship outcomes must retain a source-styled review treatment');
 assert.match(sourceNormalize, /nr\.relationshipId/, 'source-side relationship normalization must retain compact relationship identity');
+assert.match(sourceNormalize, /const _sameRelationship=\(left,right\)=>/, 'source relationship carry-forward must prefer stable identity before legacy names');
+assert.match(sourceNormalize, /find\(pr=>_sameRelationship\(pr,rel\)\)/, 'source relationship carry-forward must preserve continuity across a name reveal');
+assert.match(sourceNormalize, /find\(pr=>_sameRelationship\(pr,_rel\)\)/, 'source relationship milestones must preserve continuity across a name reveal');
 assert.match(app, /function scenePulseHumanStatePromptContext\(/, 'human ScenePulse state needs a compact prompt context');
 assert.match(app, /const readerPrompt = prompt \+ humanSceneStateContext/, 'human ScenePulse state must reach the Reader prompt');
 assert.match(app, /ffStack\.prompt \+ ffHandoffContract \+ narratorHumanSceneState/, 'human ScenePulse state must reach the Narrator prompt');
