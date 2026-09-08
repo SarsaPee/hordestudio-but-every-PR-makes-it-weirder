@@ -19624,9 +19624,19 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
 // effect on a later Reader call; accepted turns retain their original prompt
 // provenance and no Narrator or canonical state is replayed.
 async function applyScenePulseReaderPreset(world, sess, rawPreset = {}) {
+    const existing = world?.sidecarConfig?.tracker?.readerProfile || {};
+    if (!isPlainObject(rawPreset) || !Object.keys(rawPreset).length) {
+        const { scenePulsePreset, ...withoutScenePulsePreset } = existing;
+        world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({
+            ...world,
+            sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerProfileInherit: false, readerProfile: withoutScenePulsePreset } }
+        }) || world.sidecarConfig;
+        await saveState();
+        renderWorldPlayState();
+        return null;
+    }
     const profile = window.HordeSidecarReader?.normalizeProfile?.({ scenePulsePreset: rawPreset }) || {};
     if (!profile.scenePulsePreset?.id) throw new Error('The ScenePulse preset is incomplete.');
-    const existing = world?.sidecarConfig?.tracker?.readerProfile || {};
     world.sidecarConfig = window.HordeSidecarMode?.normalizeWorldConfig?.({
         ...world,
         sidecarConfig: { ...(world.sidecarConfig || {}), tracker: { ...(world.sidecarConfig?.tracker || {}), readerProfileInherit: false, readerProfile: { ...existing, scenePulsePreset: profile.scenePulsePreset } } }

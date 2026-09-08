@@ -59,6 +59,15 @@ function lastRuntimeFunction(name, prefix = 'function') {
     throw new Error(`unclosed runtime ${name}`);
 }
 
+function frozenRuntimeStringArray(name) {
+    const start = runtime.indexOf(`const ${name} = Object.freeze([`);
+    assert(start >= 0, `missing ${name}`);
+    const expressionStart = runtime.indexOf('Object.freeze(', start);
+    const expressionEnd = runtime.indexOf(');', expressionStart);
+    assert(expressionEnd > expressionStart, `unclosed ${name}`);
+    return vm.runInNewContext(runtime.slice(expressionStart, expressionEnd + 1));
+}
+
 function objectLiteralAfter(source, marker) {
     const markerIndex = source.indexOf(marker);
     assert(markerIndex >= 0, `missing ${marker}`);
@@ -115,6 +124,8 @@ const sourceCommandStatus = lastRuntimeFunction('sourceCommandStatus');
 const sourceCommand = lastRuntimeFunction('runSourceCommand', 'async function');
 const sourceRefresh = lastRuntimeFunction('beginReaderRefresh');
 const sourceSetup = lastRuntimeFunction('showWorldsSetupGuide');
+const hostActionHandler = lastFunction('bindScenePulseWorldsHostActions');
+const sourceHostActions = frozenRuntimeStringArray('SOURCE_HOST_ACTIONS');
 
 assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain semantic supplied-field provenance');
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
@@ -198,6 +209,17 @@ assert.match(runtime, /profileManager: 'settings-ui\/profiles-manager\.js'/, 'so
 assert.match(runtime, /guidedTour: 'settings-ui\/guided-tour\.js'/, 'source Guided Tour must remain a real vendored surface');
 assert.match(runtime, /promptEditor: 'ui\/prompt-editor\.js'/, 'source Prompt Editor must remain a real vendored surface');
 assert.match(runtime, /presetBrowser: 'ui\/preset-browser\.js'/, 'source Preset Browser must remain a real vendored surface');
+assert.match(runtime, /presetCatalogue: 'presets\/built-in\.js'/, 'source preset application must resolve the actual vendored preset catalogue');
+assert.match(runtime, /SOURCE_HOST_ACTIONS\.includes\(name\)/, 'the native bridge must reject unclaimed source action events');
+sourceHostActions.forEach(action => assert.match(hostActionHandler,
+    new RegExp(`detail\\.action === '${action}'`), `Horde must claim the native source action ${action}`));
+assert.match(runtime, /syncSourceReaderPreset/, 'a source Profile preset must synchronize to the Reader prompt provenance');
+assert.match(runtime, /dispatch\('apply-scenepulse-preset', \{ preset: preset \? clone\(preset\) : null \}\)/,
+    'preset selection and clearing must cross a named host boundary rather than becoming a local-only browser state');
+assert.match(hostActionHandler, /detail\.action === 'apply-scenepulse-preset'/,
+    'Horde must claim the source preset apply action');
+assert.match(app, /if \(!isPlainObject\(rawPreset\) \|\| !Object\.keys\(rawPreset\)\.length\)/,
+    'clearing a source preset must remove only its Reader-prompt overlay');
 assert.match(runtime, /debugInspector: 'ui\/debug-inspector\.js'/, 'source Debug Inspector must remain a lazy vendored surface');
 assert.match(runtime, /openDebugInspector\?\.\('activity'\)/, 'native toolbar diagnostics must call the upstream Debug Inspector');
 assert.match(runtime, /macros: 'macros\.js'/, 'native commands must inspect the actual source macro vocabulary');

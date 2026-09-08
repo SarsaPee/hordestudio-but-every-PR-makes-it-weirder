@@ -34,6 +34,18 @@
     });
     const ROOT = '/scenepulse/vendor/ScenePulse/src';
     const RUNTIME_ROOT_ID = 'sp-horde-source-runtime-root';
+    // Every source control that crosses into Horde has an explicit contract.
+    // Do not let a newly added source button dispatch an unclaimed event and
+    // look successful because the host returned an empty promise.
+    const SOURCE_HOST_ACTIONS = Object.freeze([
+        'stage-story-idea', 'refresh-scene-pulse', 'stop-scene-pulse-refresh',
+        'persist-scenepulse-source-settings', 'commit-scenepulse-source-edit',
+        'stage-scenepulse-candidate-review', 'promote-scenepulse-candidate',
+        'link-scenepulse-candidate', 'keep-scenepulse-candidate-scene-only',
+        'resolve-scenepulse-quest-translation', 'apply-scenepulse-preset',
+        'clear-scenepulse-history', 'export-scenepulse-history',
+        'save-scenepulse-portrait', 'clear-scenepulse-portrait'
+    ]);
     // Source utilities are deliberately loaded after the panel is alive.  The
     // foreground must remain the actual ScenePulse panel even if an optional
     // authoring or diagnostic surface acquires a new upstream dependency.
@@ -47,6 +59,7 @@
         guidedTour: 'settings-ui/guided-tour.js',
         promptEditor: 'ui/prompt-editor.js',
         presetBrowser: 'ui/preset-browser.js',
+        presetCatalogue: 'presets/built-in.js',
         debugInspector: 'ui/debug-inspector.js',
         macros: 'macros.js'
     });
@@ -616,7 +629,9 @@
     function dispatch(action, extra = {}) {
         const current = active();
         if (!current?.host) return Promise.reject(new Error('ScenePulse source bridge has no active Horde workspace.'));
-        const detail = { action, ...extra };
+        const name = String(action || '');
+        if (!SOURCE_HOST_ACTIONS.includes(name)) return Promise.reject(new Error(`ScenePulse action “${name || 'unknown'}” is not available in this World.`));
+        const detail = { action: name, ...extra };
         current.host.dispatchEvent(new CustomEvent('horde-scenepulse-action', { bubbles: false, cancelable: true, detail }));
         return detail.promise || Promise.resolve(null);
     }
@@ -673,18 +688,59 @@
         };
     }
 
+    function sourceActiveProfile(settings = {}) {
+        const profiles = Array.isArray(settings?.profiles) ? settings.profiles : [];
+        const activeId = String(settings?.activeProfileId || '');
+        return profiles.find(profile => String(profile?.id || '') === activeId) || profiles[0] || null;
+    }
+
+    function sourceAppliedPresetId(settings = {}) {
+        return String(sourceActiveProfile(settings)?.appliedPresetId || '').trim();
+    }
+
+    async function syncSourceReaderPreset(current, previousSettings = {}) {
+        const presetId = sourceAppliedPresetId(current?.context?.extensionSettings?.scenepulse);
+        if (presetId === sourceAppliedPresetId(previousSettings)) return null;
+        let preset = null;
+        if (presetId) {
+            const catalogue = await loadOptionalSourceModule('presetCatalogue');
+            preset = (Array.isArray(catalogue?.BUILT_IN_PRESETS) ? catalogue.BUILT_IN_PRESETS : [])
+                .find(entry => String(entry?.id || '') === presetId) || null;
+            if (!preset) throw new Error(`The selected ScenePulse preset “${presetId}” is not available in this build.`);
+        }
+        // This keeps the selected source Profile and the Reader's compact
+        // preset provenance in agreement. It changes neither Narrator nor
+        // provider/sampler routing; clearing a source preset clears only the
+        // corresponding Reader-prompt overlay.
+        return dispatch('apply-scenepulse-preset', { preset: preset ? clone(preset) : null });
+    }
+
     function persistSettings() {
         const current = active();
         if (!current) return;
+        const previousSettings = clone(current.baseSettings);
         runtime.modules?.i18n?.resetI18nCache?.();
         current.dirtySettings = true;
         updateBridgeControls();
         // Preference saves are not tracker evidence. Persist them through a
         // distinct host action so they cannot masquerade as a Reader update.
-        dispatch('persist-scenepulse-source-settings', {
+        return dispatch('persist-scenepulse-source-settings', {
             preferences: sourcePreferencePatch(current.context.extensionSettings.scenepulse),
             chatPanels: clone(current.context.chatMetadata?.scenepulse?.chatPanels || [])
-        }).catch(error => makeToast('error', error?.message || error, 'ScenePulse preferences'));
+        }).then(async result => {
+            await syncSourceReaderPreset(current, previousSettings);
+            if (active() === current) {
+                current.baseSettings = clone(current.context.extensionSettings.scenepulse);
+                current.baseMetadata = clone(current.context.chatMetadata);
+                current.dirtySettings = false;
+                current.dirtyMetadata = false;
+                updateBridgeControls();
+            }
+            return result;
+        }).catch(error => {
+            makeToast('error', error?.message || error, 'ScenePulse preferences');
+            return null;
+        });
     }
 
     function markMetadataDirty() {
@@ -1228,6 +1284,7 @@
 
     async function persistSourceCommandSettings(current) {
         if (!current) return;
+        const previousSettings = clone(current.baseSettings);
         current.dirtySettings = true;
         current.dirtyMetadata = true;
         updateBridgeControls();
@@ -1235,6 +1292,7 @@
             preferences: sourcePreferencePatch(current.context.extensionSettings.scenepulse),
             chatPanels: clone(current.context.chatMetadata?.scenepulse?.chatPanels || [])
         });
+        await syncSourceReaderPreset(current, previousSettings);
         current.baseSettings = clone(current.context.extensionSettings.scenepulse);
         current.baseMetadata = clone(current.context.chatMetadata);
         current.dirtySettings = false;
