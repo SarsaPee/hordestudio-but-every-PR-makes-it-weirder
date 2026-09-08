@@ -184,6 +184,9 @@ assert.match(sourceUpdate, /const _prevRel=_previousRelationship\(rel\)/, 'the v
 assert.match(sourceUpdate, /_sameStoredRelationship\(r,rel\)/, 'source relationship metadata edits must update the stable stored relationship');
 assert.match(sourceUpdate, /const _characterStableKey=entry=>/, 'source relationship cards must retain stable character identity for portrait/dossier matching');
 assert.match(sourceUpdate, /const sameCharacter=relCharacterKey&&charKey\?relCharacterKey===charKey/, 'source relationship cards must prefer stable character identity before display names');
+assert.match(sourceUpdate, /const _charStableKey=entry=>/, 'source character change markers must retain stable character identity');
+assert.match(sourceUpdate, /const exact=prev\.filter\(candidate=>_charStableKey\(candidate\)===stable\)/, 'source character change markers must compare the preceding card by stable identity');
+assert.match(sourceUpdate, /legacy\.length===1\?legacy\[0\]:null/, 'source character change markers must refuse ambiguous legacy alias matches');
 assert.match(sourceUpdate, /createSparklineCanvas\(rel,m\.k\)/, 'source relationship sparklines must receive the full stable source record');
 assert.match(sourceSparklines, /function _relationshipStableKey\(entry\)/, 'source sparklines must resolve a stable relationship identity');
 assert.match(sourceSparklines, /rels\.find\(rel => _sameHistoryRelationship\(rel, target\)\)/, 'source history must use stable relationship identity rather than fuzzy names');

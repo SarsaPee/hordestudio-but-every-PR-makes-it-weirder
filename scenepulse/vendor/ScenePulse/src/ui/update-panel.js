@@ -901,27 +901,20 @@ if(rel.relType)hh+=`<span class="sp-rel-type-badge" data-ft="rel_type" title="${
         // a matching prev entry (new this turn) get no indicators; existing
         // characters get a dot next to any field that differs from prev.
         const _prevSnapForDelta = _currentMsgIdx ? getPrevSnapshot(_currentMsgIdx) : null;
-        // Resolve a character entry in the previous snapshot by name or
-        // alias. Falls back to searching prev.characters by any alias on
-        // the current char, AND by any alias on the prev char matching
-        // the current canonical name. Alias-aware so an unknown→known
-        // reveal doesn't blow up the delta comparison.
+        // Resolve a character entry in the previous snapshot by stable source
+        // identity first. A compact id survives an unknown→known reveal,
+        // while the exact alias intersection remains a unique legacy fallback
+        // for snapshots that predate source ids.
+        const _charStableKey=entry=>String(entry?.characterId||entry?.character_id||entry?.id||entry?.candidateId||entry?.candidate_id||entry?.subjectRef||entry?.subject_ref||'').trim().toLowerCase();
+        const _charNames=entry=>new Set([entry?.name,...(Array.isArray(entry?.aliases)?entry.aliases:[])].map(value=>String(value||'').trim().toLowerCase()).filter(Boolean));
+        const _sameLegacyCharacter=(left,right)=>{const leftNames=_charNames(left);return [..._charNames(right)].some(name=>leftNames.has(name))};
         const _findPrevCh = (ch) => {
             if (!_prevSnapForDelta || !Array.isArray(_prevSnapForDelta.characters)) return null;
-            const canonLow = (ch.name || '').toLowerCase().trim();
             const prev = _prevSnapForDelta.characters;
-            let match = prev.find(c => (c?.name || '').toLowerCase().trim() === canonLow);
-            if (match) return match;
-            if (Array.isArray(ch.aliases) && ch.aliases.length) {
-                const aliasSet = new Set(ch.aliases.map(a => (a || '').toLowerCase().trim()));
-                match = prev.find(c => aliasSet.has((c?.name || '').toLowerCase().trim()));
-                if (match) return match;
-            }
-            match = prev.find(c =>
-                Array.isArray(c?.aliases) &&
-                c.aliases.some(a => (a || '').toLowerCase().trim() === canonLow)
-            );
-            return match || null;
+            const stable=_charStableKey(ch);
+            if(stable){const exact=prev.filter(candidate=>_charStableKey(candidate)===stable);if(exact.length===1)return exact[0];if(exact.length>1)return null;const legacy=prev.filter(candidate=>!_charStableKey(candidate)&&_sameLegacyCharacter(candidate,ch));return legacy.length===1?legacy[0]:null}
+            const legacy=prev.filter(candidate=>_sameLegacyCharacter(candidate,ch));
+            return legacy.length===1?legacy[0]:null;
         };
         // Compute a Set of field names that differ between current and prev.
         // Used to stamp a "changed" CSS class on grid-row values.
