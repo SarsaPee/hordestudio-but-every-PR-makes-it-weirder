@@ -93,6 +93,7 @@ function objectLiteralAfter(source, marker) {
 
 const normalizer = lastFunction('normalizeSidecarReaderEnvelope');
 const merger = lastFunction('mergeSidecarReaderEnvelope');
+const characterPresenceNormalizer = lastFunction('normalizeSidecarPresenceMode');
 const characterIntelligenceNormalizer = lastFunction('normalizeSidecarCharacterIntelligence');
 const scenePulseCharacterCognitionBridge = lastFunction('scenePulseCharacterCognitionBridge');
 const currentTurn = lastFunction('currentSidecarAuthoredTurn');
@@ -151,6 +152,7 @@ const sourceHostActions = frozenRuntimeStringArray('SOURCE_HOST_ACTIONS');
 assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain semantic supplied-field provenance');
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
 assert.match(normalizer, /scenePulseCharacterCognitionBridge/, 'a rich ScenePulse character card must be able to supplement the existing cognition lane');
+assert.match(characterPresenceNormalizer, /in_person/, 'a declared in-person Reader presence must normalize to the ScenePulse active lane');
 assert.match(scenePulseCharacterCognitionBridge, /if \(!stableId \|\| !name \|\| !thought \|\| controlledCard/, 'card cognition may not use a display name or invent a subject identity');
 assert.match(scenePulseCharacterCognitionBridge, /const presenceMode = rosterPresence\(stableId, name, card\);[\s\S]*?if \(!presenceMode\) return;/, 'card cognition may not invent current-scene presence');
 assert.match(scenePulseCharacterCognitionBridge, /controlledCard\(card, stableId\)/, 'a rich ScenePulse card must never create an unexpressed player thought');
@@ -892,6 +894,7 @@ const readerEnvelopeContext = {
 const readerEnvelopeSource = [
     lastFunction('sidecarReaderValue'),
     lastFunction('sidecarReaderClaim'),
+    characterPresenceNormalizer,
     characterIntelligenceNormalizer,
     scenePulseCharacterCognitionBridge,
     graphNormalizer,
@@ -941,6 +944,14 @@ assert.equal(scenePulseCognitionEnvelope.cardOnly.characterIntelligence[0].scene
 assert.equal(scenePulseCognitionEnvelope.cardOnly.characterIntelligence[0].presence.mode, 'nearby', 'the bridge must preserve explicit ScenePulse roster presence rather than inventing active presence');
 assert.equal(scenePulseCognitionEnvelope.controlled.characterIntelligence.length, 0, 'the bridge must never create private cognition from a controlled-player ScenePulse card');
 
+// Gemini's live packet labels a direct participant `in_person`. That is an
+// explicit synonym, not a new inference: it must become the same active lane
+// consumed by the existing turn-cognition queue.
+const inPersonCognitionEnvelope = vm.runInNewContext(`${readerEnvelopeSource}\n(() => normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: {
+    characterIntelligence: [{ subjectRef: 'npc_charlotte', name: 'Charlotte', presence: { mode: 'in_person', location: 'loc_guildhall_bar' }, sceneLocalImpression: 'A crisp collar means something happened today.' }]
+} }))()`, readerEnvelopeContext);
+assert.equal(inPersonCognitionEnvelope.characterIntelligence[0].presence.mode, 'active', 'declared in-person Reader presence must normalize to active rather than suppressing cognition');
+
 const cognitionQueueSource = [
     lastFunction('sidecarProjectionClaimText'),
     lastFunction('sidecarCognitionAccessForPresence'),
@@ -956,6 +967,19 @@ assert.deepEqual(JSON.parse(JSON.stringify(cardThoughtCognitionJob.ids)), ['turn
 assert.equal(cardThoughtCognitionJob.job.candidateId, 'cand_nia', 'the cognition job must retain the ScenePulse stable candidate ID');
 assert.equal(cardThoughtCognitionJob.job.provisionalIntelligence.sceneLocalImpression.source, 'scenepulse_character_card', 'the cognition job must retain the card-thought source marker for its existing memory pipeline');
 assert.match(cardThoughtCognitionJob.job.perceptionEvidence, /I can hear the argument through the door/, 'the existing cognition job must receive the same current ScenePulse thought as perception evidence');
+
+const inPersonCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() => {
+    const protocol = {};
+    const turn = { id: 'turn_live_presence', readerSnapshotId: 'snapshot_live_presence', readerEnvelope: ${JSON.stringify(inPersonCognitionEnvelope)}, sceneId: 'scene_live_presence', sequenceId: 'sequence_live_presence' };
+    const ids = queueSidecarTurnCognitionJobs({ entities: [{ id: 'npc_charlotte', type: 'npc', name: 'Charlotte' }] }, {}, protocol, turn);
+    return { ids, job: protocol.jobs[0] };
+})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    window: { HordeSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
+});
+assert.deepEqual(JSON.parse(JSON.stringify(inPersonCognitionJob.ids)), ['turn_cognition:turn_live_presence:npc_charlotte'], 'a declared in-person live Reader participant must enter the existing cognition queue');
+assert.equal(inPersonCognitionJob.job.access, 'visual', 'a normalized in-person participant receives visual cognition access');
 
 // A deliberate Thoughts reread replaces only the derived perception lane for
 // the same turn. Its old cognition remains inspectable as superseded evidence;

@@ -17064,6 +17064,20 @@ function sidecarReaderClaim(raw, subjectRef = '') {
     };
 }
 
+// The Reader prompt names the four ScenePulse presence lanes, but providers
+// occasionally return an equivalent natural-language value such as
+// `in_person`. Normalize only those declared synonyms at the boundary. An
+// unknown value remains unknown: it must not manufacture an active character
+// or make a cognition job eligible merely because a name was mentioned.
+function normalizeSidecarPresenceMode(value = '') {
+    const mode = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    if (['active', 'in_person', 'present', 'onsite', 'on_scene', 'direct'].includes(mode)) return 'active';
+    if (['nearby', 'adjacent', 'local'].includes(mode)) return 'nearby';
+    if (['audible', 'heard', 'offscreen_audible'].includes(mode)) return 'audible';
+    if (['remote', 'phone', 'call', 'online', 'video_call'].includes(mode)) return 'remote';
+    return '';
+}
+
 function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
     const source = isPlainObject(raw) ? raw : {};
     const subjectRef = String(source.subjectRef || source.subject_ref || source.characterId || source.character_id || source.id || source.candidateId || source.candidate_id || '').slice(0, 180);
@@ -17077,13 +17091,17 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
             return { ...claim, targetRef: String(item.targetRef || item.target_ref || item.target || claim.targetRef || '').slice(0, 180) };
         }).filter(Boolean).slice(0, 20);
     const coverage = isPlainObject(source.coverage) ? safeJsonClone(source.coverage) : {};
+    const rawPresence = isPlainObject(source.presence)
+        ? safeJsonClone(source.presence)
+        : { mode: String(source.presence || source.presenceMode || source.presence_mode || '').slice(0, 40), location: String(source.location || source.position || '').slice(0, 300), channel: String(source.channel || '').slice(0, 80) };
+    const presenceMode = normalizeSidecarPresenceMode(rawPresence.mode);
     return {
         subjectRef,
         candidateId: String(source.candidateId || source.candidate_id || '').slice(0, 180),
         name: String(source.name || source.label || '').slice(0, 240),
         role: String(source.role || '').slice(0, 240),
         relevance: isPlainObject(source.relevance) ? safeJsonClone(source.relevance) : { category: String(source.relevance || '').slice(0, 80), reason: String(source.relevanceReason || source.relevance_reason || '').slice(0, 800) },
-        presence: isPlainObject(source.presence) ? safeJsonClone(source.presence) : { mode: String(source.presence || source.presenceMode || source.presence_mode || '').slice(0, 40), location: String(source.location || source.position || '').slice(0, 300), channel: String(source.channel || '').slice(0, 80) },
+        presence: { ...rawPresence, mode: presenceMode },
         activity: scalar(source.activity), visibleState: isPlainObject(source.visibleState || source.visible_state) ? safeJsonClone(source.visibleState || source.visible_state) : {},
         emotionalPosture: claimList(source.emotionalPosture || source.emotional_posture),
         attentionFocus: claimList(source.attentionFocus || source.attention_focus),
