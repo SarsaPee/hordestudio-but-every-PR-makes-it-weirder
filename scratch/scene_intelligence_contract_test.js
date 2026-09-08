@@ -114,7 +114,9 @@ const enterWorldFunction = lastFunction('enterWorld');
 const nativePresentationAuthority = lastFunction('scenePulseDeclaredNativeFieldAuthority');
 const readerPass = lastFunction('runSidecarSemanticReading', 'async function');
 const readerRefresh = lastFunction('refreshSidecarSceneIntelligence', 'async function');
+const acceptedReaderRefresh = lastFunction('acceptSidecarReaderRefresh');
 const acceptedRefresh = lastFunction('refreshAcceptedScenePulseProjection', 'async function');
+const snapshotRawEnvelope = lastFunction('sidecarReaderSnapshotRawEnvelope');
 const candidateEligibility = lastFunction('scenePulseCandidatePromotionEligibility');
 const candidateCharacterEvidence = lastFunction('scenePulseCharacterEvidenceForCandidate');
 const candidatePromotionDraft = lastFunction('scenePulseCandidatePromotionDraft');
@@ -195,12 +197,20 @@ assert.match(readerPass, /const priorReaderSnapshotId = String\(options\.priorRe
 assert.match(readerPass, /COMPLETION BUDGET — HARD/, 'the Reader must favor a complete compact delta over a truncated verbose packet');
 assert.match(readerPass, /Reader compact recovery/, 'a completion-capped Reader response must receive one bounded compact reread of the same beat');
 assert.match(readerPass, /relationship\.meterDeltas as signed numeric changes/, 'Reader relationship updates must use compact signed meter deltas after their baseline');
-assert.match(readerPass, /missing any of those five meters is also unbaselined/, 'an incomplete legacy relationship must receive a full visible meter baseline before delta-only updates begin');
+assert.match(readerPass, /missing any of those five meters or five named labels is also unbaselined/, 'an incomplete legacy relationship must receive a full visible meter-and-label baseline before delta-only updates begin');
+assert.match(readerPass, /affectionLabel, trustLabel, desireLabel, stressLabel, compatibilityLabel/, 'a relationship baseline must provide all five named ScenePulse meter labels');
+assert.match(readerPass, /Never substitute a generic labels array/, 'the Reader may not collapse distinct source meter labels into an ambiguous list');
 assert.match(readerPass, /SCENEPULSE ACTIVE RELATIONSHIP COVERAGE/, 'an active authored exchange must populate a real ScenePulse relationship instead of leaving a source-generated unknown stub');
 assert.match(app, /if \(options\.renderReview !== false\) renderWorldPlayState\(\)/, 'a native source refresh must be able to stage a valid Reader packet without remounting before acceptance');
 assert.match(lastFunction('refreshAcceptedScenePulseProjection', 'async function'), /renderReview: false/, 'foreground ScenePulse refreshes must use the atomic stage-and-accept route');
 assert.match(app, /readerSnapshots: \[\], readerRefreshes: \[\]/, 'the Sidecar protocol must persist Reader refreshes until they are accepted or rejected');
 assert.match(app, /'readerSnapshots','readerRefreshes','sceneProjections'/, 'the timeline normalizer must retain the Reader review ledger through refresh staging');
+assert.match(app, /rawEnvelope: safeJsonClone\(source\)/, 'each settled Reader snapshot must retain its exact compact packet beside its cumulative projection');
+assert.match(snapshotRawEnvelope, /snapshot\?\.rawEnvelope/, 'the source handoff must prefer a snapshot-specific packet over the authored turn fallback');
+assert.match(acceptedReaderRefresh, /mode: replacesProjection \? 'full' : 'delta'/, 'a focused ScenePulse refresh must preserve compact-delta mode through acceptance');
+assert.match(acceptedReaderRefresh, /fullRefresh: replacesProjection/, 'only an explicitly full Reader reread may replace the settled projection');
+assert.match(acceptedHandoff, /sidecarReaderSnapshotRawEnvelope\(settled, sourceTurn\)/, 'Inspect must read the currently settled refresh packet, not an older authored-turn delta');
+assert.match(acceptedHandoff, /const acceptedScenePulse = settledScenePulse;/, 'the render boundary must not apply an accepted compact delta twice');
 assert.match(lastFunction('retrySidecarSceneUpdate', 'async function'), /reusableReaderSnapshot/, 'retry may reuse only Reader evidence which crossed the snapshot boundary');
 assert.match(normalizer, /npcRelationshipGraph/, 'Reader normalization must retain the compact NPC graph beside ScenePulse fields');
 assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache updates must honor nested delta-field provenance');
@@ -851,6 +861,25 @@ assert.equal(customPanelEnvelope.patch.scenePulse.health, 64, 'a nested Sidecar 
 assert.equal(customPanelEnvelope.merged.scenePulse.health, 64, 'a compact Sidecar custom-panel delta must replace only its named accepted field');
 assert.equal(customPanelEnvelope.parsed.valid, true, 'a supported ScenePulse-only full reading must be accepted rather than discarded as empty');
 assert.equal(customPanelEnvelope.parsed.scenePulse.health, 64, 'parser acceptance must retain the ScenePulse custom-panel value it validated');
+
+// A source section refresh is intentionally sparse. It must update its
+// relationship packet without erasing the accepted Quest Journal projection
+// simply because the Reader was not asked to reread quests.
+const focusedRelationshipRefresh = vm.runInNewContext(`${readerEnvelopeSource}\n(() => {
+    const base = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: {
+        scenePulse: {
+            mainQuests: [{ questId: 'quest_post', title: 'The New Post', priority: 'moderate' }],
+            relationships: [{ relationshipId: 'rel_charlotte', characterId: 'npc_charlotte', name: 'Charlotte', relType: 'friendly_bartender', relPhase: 'established_regular', timeTogether: '3 years', milestone: 'Regular patron banter', affection: 47, trust: 58, desire: 10, stress: 12, compatibility: 54, affectionLabel: 'Fond Familiarity', trustLabel: 'Reliable Confidante', desireLabel: 'Strictly Platonic', stressLabel: 'Easygoing Calm', compatibilityLabel: 'Sharp Banter' }]
+        }
+    } });
+    const focusedDelta = normalizeSidecarReaderEnvelope({ mode: 'delta', changed_fields: ['scenePulse.relationships'], semantic_interpretation: {
+        scenePulse: { relationships: [{ relationshipId: 'rel_charlotte', affectionLabel: 'Warm Regard', trustLabel: 'Reliable Confidante' }] }
+    } });
+    return { merged: mergeSidecarReaderEnvelope(base, focusedDelta), focusedDelta };
+})()`, readerEnvelopeContext);
+assert.equal(focusedRelationshipRefresh.merged.scenePulse.mainQuests[0].title, 'The New Post', 'a relationship-only Reader refresh must retain the already accepted Quest Journal');
+assert.equal(focusedRelationshipRefresh.merged.scenePulse.relationships[0].affectionLabel, 'Warm Regard', 'a relationship-only Reader refresh must update the focused source field');
+assert.deepEqual(JSON.parse(JSON.stringify(focusedRelationshipRefresh.focusedDelta.scenePulse.mainQuests || [])), [], 'the compact refresh packet must remain sparse for Inspect rather than being rewritten as a fake full packet');
 
 // A card-only compact ScenePulse delta still has to reach the subject-scoped
 // cognition lane. This is a same-packet bridge: it needs a stable ID and

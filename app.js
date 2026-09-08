@@ -16704,13 +16704,13 @@ When two or more non-player names are currently present in scenePulse.characters
 The following is user-visible ScenePulse configuration, not story evidence. Its fields are flat keys directly inside scenePulse; use the exact keys and types if (and only if) this beat or established accepted Reader evidence supports a current value. Do not initialise a health, mana, reputation, enum, list, or number merely because a configured field exists. In delta mode, emit only a changed configured key; omit it when unchanged and use scenePulse.clearFields only for an explicit supported clearing. For a list value, send the full new list when it changes. In full mode, include supported configured values and omit unsupported ones. ${JSON.stringify(customPanelSchema)}
 
 [SCENEPULSE DELTA CONTRACT]
-When READER SNAPSHOT MODE is delta, scenePulse is also a compact delta: emit only changed ScenePulse fields. ALWAYS include time, date, elapsed, and the complete current charactersPresent membership; omitted fields mean unchanged. For characters, relationships, mainQuests and sideQuests, emit record patches keyed by stable characterId, relationshipId or questId and include only changed subfields. On a name reveal, retain the same stable ID, set the best established display name, and put every previous display label in aliases; emit one patch, never an old-name and new-name duplicate. A relationship patch for that person retains its relationshipId/characterId and adopts the same display name. Use {_delete:true} or {operation:"remove"} to remove one record, and scenePulse.clearFields for an explicit cleared scalar or collection. Never send an empty object or array to mean "unchanged". If a whole ephemeral collection must be replaced (for example a freshly regenerated plotBranches set), name it in scenePulse.replaceCollections and provide its full replacement array. A relationship's first ScenePulse record is its visible baseline: include all five current numeric meters (affection, trust, desire, stress, compatibility) and their compact labels, or omit the relationship entirely when even a provisional scene relationship is unsupported. A previously stored relationship missing any of those five meters is also unbaselined: complete it with all five current values on this read before using deltas. These meters are ScenePulse presentation evidence, not canonical relationship mutations. After a complete baseline exists, send only relationship.meterDeltas as signed numeric changes for meters that moved; do not repeat unchanged current meter values or a model-drawn UI delta. The runtime applies those deltas to the accepted source baseline and the source renderer places the previous-turn marker. A full refresh returns the complete shape.
+When READER SNAPSHOT MODE is delta, scenePulse is also a compact delta: emit only changed ScenePulse fields. ALWAYS include time, date, elapsed, and the complete current charactersPresent membership; omitted fields mean unchanged. For characters, relationships, mainQuests and sideQuests, emit record patches keyed by stable characterId, relationshipId or questId and include only changed subfields. On a name reveal, retain the same stable ID, set the best established display name, and put every previous display label in aliases; emit one patch, never an old-name and new-name duplicate. A relationship patch for that person retains its relationshipId/characterId and adopts the same display name. Use {_delete:true} or {operation:"remove"} to remove one record, and scenePulse.clearFields for an explicit cleared scalar or collection. Never send an empty object or array to mean "unchanged". If a whole ephemeral collection must be replaced (for example a freshly regenerated plotBranches set), name it in scenePulse.replaceCollections and provide its full replacement array. A relationship's first ScenePulse record is its visible baseline: include every source-visible field: name, relationshipId, characterId, relType, relPhase, timeTogether, milestone, all five current numeric meters (affection, trust, desire, stress, compatibility), and all five explicit compact labels (affectionLabel, trustLabel, desireLabel, stressLabel, compatibilityLabel). Each label is a grounded 1–3 word phrase for its own meter. Never substitute a generic labels array. Omit the relationship entirely when even this provisional source baseline is unsupported. A previously stored relationship missing any of those five meters or five named labels is also unbaselined: complete it with the full visible baseline on this read before using deltas. These meters are ScenePulse presentation evidence, not canonical relationship mutations. After a complete baseline exists, send only relationship.meterDeltas as signed numeric changes for meters that moved; do not repeat unchanged current meter values or a model-drawn UI delta. The runtime applies those deltas to the accepted source baseline and the source renderer places the previous-turn marker. A full refresh returns the complete shape.
 `;
 
 const scenePulseActiveRelationshipCoverageInstruction = `
 
 [SCENEPULSE ACTIVE RELATIONSHIP COVERAGE]
-For every scenePulse character who directly exchanges dialogue/actions with the controlled character in this beat, or appears in relationshipShifts, emit that character's scenePulse.relationships record. This is required current-scene coverage, not a census: do not add merely mentioned, registry-only, or unrelated people. Use the same stable characterId and relationshipId on every later delta. A short ordinary interaction still earns a conservative provisional baseline when it establishes a real current relationship posture; do not omit the record and leave the source renderer to fabricate an unknown stub. The five meters describe the present interactional state, not a canonical verdict, and their labels should be compact and grounded in the visible beat.`;
+For every scenePulse character who directly exchanges dialogue/actions with the controlled character in this beat, or appears in relationshipShifts, emit that character's scenePulse.relationships record. This is required current-scene coverage, not a census: do not add merely mentioned, registry-only, or unrelated people. Use the same stable characterId and relationshipId on every later delta. A short ordinary interaction still earns a conservative provisional baseline when it establishes a real current relationship posture; do not omit the record and leave the source renderer to fabricate an unknown stub. The five meters describe the present interactional state, not a canonical verdict. On a baseline, write the five named source fields affectionLabel, trustLabel, desireLabel, stressLabel and compatibilityLabel; do not send a generic labels array.`;
     const scenePulseFocusInstruction = (options.scenePulseFocus === 'thoughts' ? `
 
 [SCENEPULSE FOCUSED THOUGHT REFRESH]
@@ -17468,7 +17468,11 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
         profileRevision: profile.revision, promptRevision: profile.promptRevision,
         sourceTurnId: turnRecord.id, baseSnapshotId: previousSnapshot?.id || '', controlledEntityId
     });
-    const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), attemptId: source.sourceAttemptId, turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: previousSnapshot?.id || '' } };
+    // Keep the exact Reader packet beside the materialized envelope. The
+    // envelope is deliberately cumulative so the source panel never shrinks
+    // when a focused reread omits unrelated fields; Inspect and timeline
+    // delta markers still need the small packet that produced this snapshot.
+    const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), attemptId: source.sourceAttemptId, turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, rawEnvelope: safeJsonClone(source), provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: previousSnapshot?.id || '' } };
     protocol.readerSnapshots.push(snapshot); protocol.readerSnapshots = protocol.readerSnapshots.slice(-400);
     turnRecord.readerEnvelope = safeJsonClone(envelope); turnRecord.readerSnapshotId = snapshot.id;
     // Pending interpretation is audit/retry evidence only. Never publish it
@@ -18182,12 +18186,20 @@ function acceptSidecarReaderRefresh(world, sess, refreshId) {
         throw error;
     }
     const profile = effectiveSidecarReaderProfile(world, sess);
+    // A source section refresh is normally a compact delta. Preserve that
+    // mode through acceptance so attachSidecarReaderSnapshot merges it with
+    // the current settled projection instead of replacing unrelated source
+    // fields with the tutorial fallback. Only an explicitly requested full
+    // reread is allowed to replace the projection.
+    const replacesProjection = refresh.provenance?.forceFull === true
+        || String(refresh.envelope?.snapshotMode || refresh.envelope?.mode || '').toLowerCase() === 'full';
     const packet = {
-        ...safeJsonClone(refresh.envelope || {}), valid: true, mode: 'full', snapshotMode: 'full',
+        ...safeJsonClone(refresh.envelope || {}), valid: true,
+        mode: replacesProjection ? 'full' : 'delta', snapshotMode: replacesProjection ? 'full' : 'delta',
         model: refresh.provenance?.model || '', provider: refresh.provenance?.provider || '', finishReason: 'review_accepted'
     };
     const snapshot = attachSidecarReaderSnapshot(world, sess, turn, packet, {
-        profile, fullRefresh: true, refreshIndex: Number(refresh.envelope?.refreshIndex || 0) + 1,
+        profile, fullRefresh: replacesProjection, refreshIndex: Number(refresh.envelope?.refreshIndex || 0) + 1,
         takeId: turn.takeId || '', revisionId: turn.revisionId || '', attemptId: `reader_refresh_review:${refresh.id}`
     });
     if (!snapshot) throw new Error('Could not stage the accepted Reader refresh.');
@@ -19724,6 +19736,14 @@ async function keepScenePulseCandidateSceneOnly(world, sess, candidateId) {
     return { status: 'scene_only' };
 }
 
+// An accepted snapshot keeps both its cumulative projection and the exact
+// compact Reader packet that created it. Older snapshots predate rawEnvelope;
+// only those use the authored turn's legacy Reader packet as a fallback.
+function sidecarReaderSnapshotRawEnvelope(snapshot, sourceTurn = null) {
+    if (isPlainObject(snapshot?.rawEnvelope)) return snapshot.rawEnvelope;
+    return isPlainObject(sourceTurn?.reader) ? sourceTurn.reader : {};
+}
+
 // Gate B is intentionally a very small host boundary.  ScenePulse receives
 // only the sealed source fixture plus an exact, settled Reader projection for
 // the newest authored beat.  In particular, do not "help" a sparse Reader
@@ -19766,16 +19786,16 @@ function scenePulseAcceptedHandoff(world, sess) {
         || String(settled.turnId || '') !== String(latestTurn.id || ''));
     const envelope = settled?.envelope || null;
     const sourceTurnMatches = String(envelope?.sourceTurnId || settled?.turnId || '') === String(sourceTurn?.id || '');
-    // Reader stores the unmerged packet on the authored Turn.  Keep it for
-    // the source Diff Inspector. Reapply the exact current compact patch to
-    // the settled projection at this presentation boundary: it is idempotent
-    // for a valid envelope and repairs already-stored keyed record maps from
-    // before the reducer learned that compact wire form.
-    const deltaScenePulse = isPlainObject(sourceTurn?.reader?.scenePulse) ? sourceTurn.reader.scenePulse : {};
+    // The source panel receives the materialized settled projection. Inspect
+    // receives this snapshot's exact compact packet; a focused reread must
+    // not show the older packet stored on its authored turn.
+    const rawReaderEnvelope = sidecarReaderSnapshotRawEnvelope(settled, sourceTurn);
+    const deltaScenePulse = isPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
     const settledScenePulse = isPlainObject(envelope?.scenePulse) ? envelope.scenePulse : null;
-    const acceptedScenePulse = settledScenePulse && Object.keys(deltaScenePulse).length
-        ? sidecarMergeScenePulse(settledScenePulse, deltaScenePulse)
-        : settledScenePulse;
+    // attachSidecarReaderSnapshot already materializes compact deltas. Do not
+    // apply meterDeltas again at render time: that would double an accepted
+    // relationship change on every redraw.
+    const acceptedScenePulse = settledScenePulse;
     if (!settled || !sourceTurnMatches || !acceptedScenePulse || !Object.keys(acceptedScenePulse).length) return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
 
     const readerPreset = effectiveSidecarReaderProfile(world, sess)?.scenePulsePreset || null;
@@ -19783,15 +19803,14 @@ function scenePulseAcceptedHandoff(world, sess) {
     const predecessor = currentIndex > 0 ? historySnapshots[currentIndex - 1] : null;
     const history = historySnapshots.slice(0, currentIndex + 1).map((snapshot, index, snapshots) => {
         const sourceTurn = (protocol.turns || []).find(turn => String(turn?.id || '') === String(snapshot.turnId || '')) || null;
-        const rawDelta = isPlainObject(sourceTurn?.reader?.scenePulse) ? sourceTurn.reader.scenePulse : {};
+        const rawReaderEnvelope = sidecarReaderSnapshotRawEnvelope(snapshot, sourceTurn);
+        const rawDelta = isPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
         const storedProjection = isPlainObject(snapshot.envelope?.scenePulse) ? snapshot.envelope.scenePulse : {};
-        // Preserve the source's compact wire packet for that particular
-        // accepted moment, while repairing historical keyed maps with the
-        // same idempotent reducer used for the current projection.
-        const projection = Object.keys(rawDelta).length ? sidecarMergeScenePulse(storedProjection, rawDelta) : storedProjection;
+        const projection = storedProjection;
         const priorSnapshot = index > 0 ? snapshots[index - 1] : null;
         const priorTurn = priorSnapshot && (protocol.turns || []).find(turn => String(turn?.id || '') === String(priorSnapshot.turnId || ''));
-        const priorDelta = isPlainObject(priorTurn?.reader?.scenePulse) ? priorTurn.reader.scenePulse : {};
+        const priorRawEnvelope = sidecarReaderSnapshotRawEnvelope(priorSnapshot, priorTurn);
+        const priorDelta = isPlainObject(priorRawEnvelope?.scenePulse) ? priorRawEnvelope.scenePulse : {};
         const priorStored = isPlainObject(priorSnapshot?.envelope?.scenePulse) ? priorSnapshot.envelope.scenePulse : null;
         const usage = snapshot.envelope?.metadata?.usage;
         // Historic snapshots may have placeholder zeroes from before calls
@@ -19818,7 +19837,7 @@ function scenePulseAcceptedHandoff(world, sess) {
                 changedFields: Object.keys(rawDelta).filter(key => !['clearFields', 'clear_fields', 'replaceCollections', 'replace_collections'].includes(key)).length
             },
             scenePulse: safeJsonClone(projection),
-            previousScenePulse: priorStored ? safeJsonClone(Object.keys(priorDelta).length ? sidecarMergeScenePulse(priorStored, priorDelta) : priorStored) : null,
+            previousScenePulse: priorStored ? safeJsonClone(priorStored) : null,
             deltaScenePulse: safeJsonClone(rawDelta),
             clearFields: Array.isArray(rawDelta.clearFields || rawDelta.clear_fields) ? safeJsonClone(rawDelta.clearFields || rawDelta.clear_fields) : [],
             replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? safeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : [],
