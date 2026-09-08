@@ -10,6 +10,15 @@ import { _spSaveLS } from './bind-ui.js';
 import { startGuidedTour } from './guided-tour.js';
 
 export function showSetupGuide(){
+    // Worlds V2 preserves this source module and its native entry point, but
+    // it does not have SillyTavern connection profiles or a fallback tracker
+    // pipeline. Its narrowly injected host capability supplies a truthful
+    // source-styled wizard instead. Ordinary ScenePulse installations keep
+    // the upstream setup flow below unchanged.
+    try {
+        const worldsSetup = SillyTavern?.getContext?.()?.showScenePulseWorldsSetup;
+        if (typeof worldsSetup === 'function') return worldsSetup();
+    } catch {}
     // Remove any existing guide
     document.getElementById('sp-setup-overlay')?.remove();
     const s=getSettings();

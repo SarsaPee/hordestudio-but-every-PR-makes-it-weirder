@@ -2472,6 +2472,10 @@ function attributionHeaders() {
         : {};
 }
 let worldGenController = null;   // AbortController for the in-flight world turn (user Stop)
+// Source ScenePulse refreshes reread an already-authored beat.  Keep their
+// stop control separate from the narrator's in-flight turn controller: a
+// stopped reread must never cancel, alter, or rewind the World turn itself.
+let scenePulseReaderRefreshController = null;
 
 let state = {
     view: 'library',
@@ -17748,7 +17752,7 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
         preFrame: turn.preFrame || buildWorldSceneFrame(world, sess), clockEvidence: turn.preClock || buildSidecarClockEvidence(world, sess),
         priorReaderEnvelope: turn.readerEnvelope || turn.reader || null, forceFull,
         playerInput: turn.playerInput || '', narration: turn.narration || '', handoff: turn.handoff || '',
-        scenePulseFocus: options.scenePulseFocus || ''
+        scenePulseFocus: options.scenePulseFocus || '', signal: options.signal
     });
     protocol.readerRefreshes = Array.isArray(protocol.readerRefreshes) ? protocol.readerRefreshes : [];
     protocol.readerRefreshes.push({
@@ -17766,8 +17770,10 @@ async function refreshSidecarSceneIntelligence(world, sess, sidecarTurnId = '', 
 // The source Thoughts affordance is an actual focused Reader operation.  It
 // never calls Narrator and the only promoted record is the derived, reviewed
 // scene snapshot for this exact already-settled authored turn.
-async function refreshScenePulseThoughts(world, sess, sidecarTurnId = '') {
-    const refresh = await refreshSidecarSceneIntelligence(world, sess, sidecarTurnId, { scenePulseFocus: 'thoughts', forceFull: true });
+async function refreshScenePulseThoughts(world, sess, sidecarTurnId = '', options = {}) {
+    const refresh = await refreshSidecarSceneIntelligence(world, sess, sidecarTurnId, {
+        scenePulseFocus: 'thoughts', forceFull: true, signal: options.signal
+    });
     if (refresh?.status !== 'review') return refresh;
     const accepted = acceptSidecarReaderRefresh(world, sess, refresh.id);
     await saveState();
@@ -19345,6 +19351,13 @@ function scenePulseAcceptedHandoff(world, sess) {
             // whether a settled scene candidate has a parallel Horde review.
             candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
                 snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
+            })),
+            // A Quest Journal action is translated only from an explicit
+            // source save. Its compact outcome remains beside this historical
+            // scene snapshot for Inspect; no Horde quest is used to fill the
+            // source tracker.
+            questReview: safeJsonClone(scenePulseQuestReviewProjection(protocol, {
+                snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
             }))
         };
     });
@@ -19364,6 +19377,9 @@ function scenePulseAcceptedHandoff(world, sess) {
         candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
             snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
         })),
+        questReview: safeJsonClone(scenePulseQuestReviewProjection(protocol, {
+            snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
+        })),
         uiPreferences,
         nativeFieldAuthority,
         provenance: Object.freeze({ turnId: String(latestTurn.id || ''), snapshotId: String(settled.id || ''), readerMode: String(envelope.snapshotMode || 'delta') })
@@ -19377,28 +19393,54 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
     const protocol = protocolForSidecarTimeline(world, sess);
     const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
     if (!latestTurn) throw new Error('No accepted authored turn is available to refresh.');
+    if (scenePulseReaderRefreshController) throw new Error('ScenePulse is already updating this scene.');
     const section = String(options?.section || '');
-    if (section === 'thoughts') {
-        await refreshScenePulseThoughts(world, sess, latestTurn.id);
-        showToast('ScenePulse thoughts refreshed from the accepted authored beat.', 'success');
-        return;
+    const controller = new AbortController();
+    scenePulseReaderRefreshController = controller;
+    try {
+        if (section === 'thoughts') {
+            const refreshedThoughts = await refreshScenePulseThoughts(world, sess, latestTurn.id, { signal: controller.signal });
+            if (controller.signal.aborted) return { status: 'stopped' };
+            showToast('ScenePulse thoughts refreshed from the accepted authored beat.', 'success');
+            return refreshedThoughts;
+        }
+        const refresh = await refreshSidecarSceneIntelligence(world, sess, latestTurn.id, {
+            // Source toolbar/section refreshes retain compact-delta cadence;
+            // the explicit source /sp refresh command requests one complete
+            // projection of this same authored beat.
+            forceFull: options.forceFull === true,
+            scenePulseFocus: section,
+            signal: controller.signal
+        });
+        if (controller.signal.aborted) return { status: 'stopped' };
+        if (refresh?.status === 'review') {
+            acceptSidecarReaderRefresh(world, sess, refresh.id);
+            await saveState();
+            renderWorldPlayState();
+            showToast(section ? `ScenePulse ${section} refresh accepted from the authored beat.` : 'ScenePulse refresh accepted from the authored beat.', 'success');
+            return refresh;
+        }
+        // Recovery can return a settled retry rather than a review packet.
+        // The caller still receives a truthful completion without issuing Narrator.
+        showToast('ScenePulse refresh settled against the accepted authored beat.', 'success');
+        return refresh;
+    } catch (error) {
+        if (controller.signal.aborted) {
+            // Keep the accepted tracker exactly as it was.  The native source
+            // UI can offer Retry; this is not a failed or new World turn.
+            showToast('ScenePulse update stopped. The current scene was left unchanged.', 'info');
+            return { status: 'stopped' };
+        }
+        throw error;
+    } finally {
+        if (scenePulseReaderRefreshController === controller) scenePulseReaderRefreshController = null;
     }
-    const refresh = await refreshSidecarSceneIntelligence(world, sess, latestTurn.id, {
-        // Source toolbar/section refreshes retain compact delta semantics;
-        // the explicit source /sp refresh command requests a complete frame.
-        forceFull: options.forceFull === true,
-        scenePulseFocus: section
-    });
-    if (refresh?.status === 'review') {
-        acceptSidecarReaderRefresh(world, sess, refresh.id);
-        await saveState();
-        renderWorldPlayState();
-        showToast(section ? `ScenePulse ${section} refresh accepted from the authored beat.` : 'ScenePulse refresh accepted from the authored beat.', 'success');
-        return;
-    }
-    // Recovery can return a settled retry rather than a review packet. The
-    // caller still receives a truthful completion without issuing Narrator.
-    showToast('ScenePulse refresh settled against the accepted authored beat.', 'success');
+}
+
+function stopScenePulseReaderRefresh() {
+    if (!scenePulseReaderRefreshController) return { stopped: false };
+    scenePulseReaderRefreshController.abort();
+    return { stopped: true };
 }
 
 // Keep the source Story-Idea controls source-faithful without placing Horde
@@ -19560,7 +19602,7 @@ function normalizeScenePulseWorldsPreferences(raw = {}) {
     const sourceActiveProfileId = sourceProfiles.some(profile => profile.id === String(source.sourceActiveProfileId || ''))
         ? String(source.sourceActiveProfileId) : (sourceProfiles[0]?.id || '');
     return {
-        panels, features, compact: source.compact === true, showEmpty: source.showEmpty === true, thoughtsOpen: source.thoughtsOpen !== false,
+        panels, features, compact: source.compact === true, showEmpty: source.showEmpty === true, setupDismissed: source.setupDismissed === true, thoughtsOpen: source.thoughtsOpen !== false,
         dashCards, fieldToggles: normalizeBooleanMap(source.fieldToggles), language: String(source.language || '').slice(0, 80),
         thoughtGhost: source.thoughtGhost !== false, thoughtSnap: source.thoughtSnap !== false, thoughtFit: source.thoughtFit === true,
         thoughtTruncate: source.thoughtTruncate === true,
@@ -19615,6 +19657,7 @@ async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePref
         theme: incoming.theme,
         fontScale: incoming.fontScale,
         language: incoming.language,
+        setupDismissed: incoming.setupDismissed === true,
         showEmpty: incoming.showEmpty === true,
         thoughtGhost: incoming.thoughtGhost !== false,
         thoughtSnap: incoming.thoughtSnap !== false,
@@ -19649,6 +19692,353 @@ function scenePulseSourceSnapshot(value) {
         delete snapshot._spMeta.hordeHistoryIndex;
     }
     return snapshot;
+}
+
+// Quest Journal is a ScenePulse surface, but its source actions can carry a
+// real author decision about an existing World quest.  Keep the translation
+// deliberately narrow: the native source tracker remains the first place an
+// edit is made, then a saved *live* edit updates the World only when the
+// connection is already known and unambiguous.  A same-named World quest is
+// never silently claimed; it stays Unresolved in Inspect until the author
+// chooses to link it or to create a distinct quest.
+const SCENEPULSE_QUEST_TIERS = Object.freeze(['mainQuests', 'sideQuests']);
+
+function scenePulseQuestTextKey(value) {
+    return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 180);
+}
+
+function scenePulseQuestSourceKey(tier, name) {
+    const tierKey = SCENEPULSE_QUEST_TIERS.includes(tier) ? tier : 'sideQuests';
+    const titleKey = scenePulseQuestTextKey(name);
+    return titleKey ? `${tierKey}:${titleKey}` : '';
+}
+
+function scenePulseQuestUrgency(value) {
+    const urgency = String(value || '').trim().toLowerCase();
+    return ['critical', 'high', 'moderate', 'low', 'resolved'].includes(urgency) ? urgency : 'moderate';
+}
+
+function scenePulseQuestSourceEntry(tier, raw, index) {
+    const name = String(raw?.name || raw?.title || '').trim().slice(0, 200);
+    const sourceKey = scenePulseQuestSourceKey(tier, name);
+    if (!name || !sourceKey) return null;
+    return Object.freeze({
+        tier,
+        index,
+        sourceKey,
+        name,
+        urgency: scenePulseQuestUrgency(raw?.urgency || raw?.status),
+        detail: String(raw?.detail || raw?.description || '').trim().slice(0, 1000)
+    });
+}
+
+function scenePulseQuestEntries(snapshot = {}, tier) {
+    const values = Array.isArray(snapshot?.[tier]) ? snapshot[tier] : [];
+    return values.map((item, index) => scenePulseQuestSourceEntry(tier, item, index)).filter(Boolean);
+}
+
+function scenePulseQuestSameContent(left, right) {
+    return !!left && !!right
+        && left.name === right.name
+        && left.urgency === right.urgency
+        && scenePulseQuestTextKey(left.detail) === scenePulseQuestTextKey(right.detail);
+}
+
+function scenePulseQuestSameNonNameContent(left, right) {
+    return !!left && !!right
+        && left.urgency === right.urgency
+        && scenePulseQuestTextKey(left.detail) === scenePulseQuestTextKey(right.detail);
+}
+
+function scenePulseQuestChange(operation, before, after, reason = '') {
+    const source = after || before;
+    if (!source) return null;
+    return Object.freeze({
+        operation,
+        tier: source.tier,
+        sourceKey: String(after?.sourceKey || before?.sourceKey || ''),
+        previousSourceKey: String(before?.sourceKey || ''),
+        sourceQuest: safeJsonClone(after || before),
+        previousQuest: safeJsonClone(before || null),
+        reason: String(reason || '').slice(0, 300)
+    });
+}
+
+// The source tracker has no quest IDs.  Exact name/tier matches are stable;
+// a rename is recognised only when its non-name content is uniquely identical.
+// Everything else remains scene-only rather than guessing which durable quest
+// the author meant.
+function scenePulseQuestChanges(before = {}, after = {}) {
+    const changes = [];
+    for (const tier of SCENEPULSE_QUEST_TIERS) {
+        const beforeEntries = scenePulseQuestEntries(before, tier);
+        const afterEntries = scenePulseQuestEntries(after, tier);
+        const beforeByKey = new Map();
+        const afterByKey = new Map();
+        beforeEntries.forEach(entry => beforeByKey.set(entry.sourceKey, [...(beforeByKey.get(entry.sourceKey) || []), entry]));
+        afterEntries.forEach(entry => afterByKey.set(entry.sourceKey, [...(afterByKey.get(entry.sourceKey) || []), entry]));
+        const beforeUnmatched = [];
+        const afterUnmatched = [];
+        const allKeys = new Set([...beforeByKey.keys(), ...afterByKey.keys()]);
+        for (const key of allKeys) {
+            const oldEntries = beforeByKey.get(key) || [];
+            const newEntries = afterByKey.get(key) || [];
+            if (oldEntries.length > 1 || newEntries.length > 1) {
+                changes.push(scenePulseQuestChange('unresolved', oldEntries[0] || null, newEntries[0] || null,
+                    'ScenePulse has duplicate quest titles in this tier, so no World quest was guessed.'));
+                continue;
+            }
+            const oldEntry = oldEntries[0] || null;
+            const newEntry = newEntries[0] || null;
+            if (!oldEntry) { afterUnmatched.push(newEntry); continue; }
+            if (!newEntry) { beforeUnmatched.push(oldEntry); continue; }
+            if (scenePulseQuestSameContent(oldEntry, newEntry)) continue;
+            const operation = oldEntry.urgency !== 'resolved' && newEntry.urgency === 'resolved'
+                ? 'complete'
+                : oldEntry.urgency === 'resolved' && newEntry.urgency !== 'resolved'
+                    ? 'restore' : 'update';
+            changes.push(scenePulseQuestChange(operation, oldEntry, newEntry));
+        }
+        // A source name edit preserves all other source fields. Pair only a
+        // unique identical-content old/new pair; pairing arbitrary removed
+        // and added rows would corrupt an unrelated Horde quest.
+        const consumedBefore = new Set();
+        const consumedAfter = new Set();
+        beforeUnmatched.forEach(oldEntry => {
+            const candidates = afterUnmatched.filter(newEntry => !consumedAfter.has(newEntry.sourceKey)
+                && scenePulseQuestSameNonNameContent(oldEntry, newEntry));
+            if (candidates.length !== 1) return;
+            const newEntry = candidates[0];
+            consumedBefore.add(oldEntry.sourceKey);
+            consumedAfter.add(newEntry.sourceKey);
+            changes.push(scenePulseQuestChange('rename', oldEntry, newEntry));
+        });
+        beforeUnmatched.filter(entry => !consumedBefore.has(entry.sourceKey))
+            .forEach(entry => changes.push(scenePulseQuestChange('remove', entry, null)));
+        afterUnmatched.filter(entry => !consumedAfter.has(entry.sourceKey))
+            .forEach(entry => changes.push(scenePulseQuestChange('add', null, entry)));
+    }
+    return changes.filter(Boolean).slice(0, 80);
+}
+
+function scenePulseQuestLinks(protocol) {
+    const raw = Array.isArray(protocol?.scenePulseQuestLinks) ? protocol.scenePulseQuestLinks : [];
+    const links = raw.filter(link => isPlainObject(link)
+        && String(link?.questId || '').trim()
+        && Array.isArray(link?.sourceKeys))
+        .slice(-500).map(link => ({
+            questId: String(link.questId).trim().slice(0, 160),
+            sourceKeys: [...new Set(link.sourceKeys.map(value => String(value || '').trim()).filter(value => /^[A-Za-z]+Quests:[a-z0-9 ]{1,180}$/.test(value)))].slice(-32),
+            createdAt: String(link.createdAt || '').slice(0, 80),
+            updatedAt: String(link.updatedAt || '').slice(0, 80)
+        })).filter(link => link.sourceKeys.length);
+    protocol.scenePulseQuestLinks = links;
+    return links;
+}
+
+function scenePulseQuestLinkedRecord(protocol, sourceKey, previousSourceKey = '') {
+    const keys = new Set([sourceKey, previousSourceKey].map(value => String(value || '').trim()).filter(Boolean));
+    return scenePulseQuestLinks(protocol).find(link => link.sourceKeys.some(key => keys.has(key))) || null;
+}
+
+function linkScenePulseQuest(protocol, questId, ...sourceKeys) {
+    const keys = [...new Set(sourceKeys.map(value => String(value || '').trim())
+        .filter(value => /^[A-Za-z]+Quests:[a-z0-9 ]{1,180}$/.test(value)))];
+    if (!keys.length || !questId) return null;
+    const links = scenePulseQuestLinks(protocol);
+    let link = links.find(item => item.questId === questId || item.sourceKeys.some(key => keys.includes(key)));
+    const stamp = new Date().toISOString();
+    if (!link) {
+        link = { questId: String(questId).slice(0, 160), sourceKeys: [], createdAt: stamp, updatedAt: stamp };
+        links.push(link);
+    }
+    link.questId = String(questId).slice(0, 160);
+    link.sourceKeys = [...new Set([...(link.sourceKeys || []), ...keys])].slice(-32);
+    link.updatedAt = stamp;
+    protocol.scenePulseQuestLinks = links.slice(-500);
+    return link;
+}
+
+function scenePulseQuestStableId(sourceKey) {
+    let hash = 5381;
+    for (const char of String(sourceKey || 'scene-pulse-quest')) hash = ((hash << 5) + hash + char.charCodeAt(0)) | 0;
+    return `spq_${(hash >>> 0).toString(36)}`;
+}
+
+function scenePulseQuestExactTitleCollision(sess, sourceQuest, excludeQuestId = '') {
+    const titleKey = questTextKey(sourceQuest?.name);
+    if (!titleKey) return null;
+    return (sess?.quests || []).find(quest => String(quest?.id || '') !== String(excludeQuestId || '')
+        && questTextKey(quest?.title) === titleKey) || null;
+}
+
+function scenePulseQuestWorldRecord(world, sess, sourceQuest, link) {
+    const status = sourceQuest?.urgency === 'resolved' ? 'completed' : 'active';
+    const quest = {
+        id: makeQuestId(sess, sourceQuest.name, scenePulseQuestStableId(sourceQuest.sourceKey)),
+        title: sourceQuest.name,
+        description: sourceQuest.detail,
+        giver: '',
+        status,
+        objectives: [],
+        rewards: normalizeQuestRewards(null),
+        rewardsGranted: false,
+        rewardReceipt: '',
+        createdTurn: sess.turnCount || 1,
+        updatedTurn: sess.turnCount || 1,
+        resolvedTurn: status === 'completed' ? (sess.turnCount || 1) : null,
+        rewardGrantedTurn: null,
+        completionNote: '',
+        scenePulseUrgency: sourceQuest.urgency,
+        scenePulseLink: { sourceKeys: [sourceQuest.sourceKey], linkedAt: new Date().toISOString() }
+    };
+    sess.quests.push(quest);
+    linkScenePulseQuest(protocolForSidecarTimeline(world, sess), quest.id, sourceQuest.sourceKey, ...(link?.sourceKeys || []));
+    return quest;
+}
+
+function scenePulseQuestTranslationResult(change, status, options = {}) {
+    return {
+        id: `scene-pulse-quest-${crypto.randomUUID()}`,
+        type: 'scene_pulse_quest_translation',
+        status,
+        operation: change.operation,
+        tier: change.tier,
+        sourceKey: change.sourceKey,
+        previousSourceKey: change.previousSourceKey,
+        sourceQuest: safeJsonClone(change.sourceQuest),
+        previousQuest: safeJsonClone(change.previousQuest),
+        questId: String(options.questId || '').slice(0, 160),
+        collisionQuestId: String(options.collisionQuestId || '').slice(0, 160),
+        reason: String(options.reason || change.reason || '').slice(0, 600),
+        createdAt: new Date().toISOString(),
+        sourceEditId: String(options.sourceEditId || '').slice(0, 240),
+        targetSnapshotId: String(options.targetSnapshotId || '').slice(0, 240),
+        targetTurnId: String(options.targetTurnId || '').slice(0, 240)
+    };
+}
+
+function applyScenePulseQuestChange(world, sess, protocol, change, options = {}) {
+    const sourceQuest = change?.sourceQuest || change?.previousQuest;
+    if (!sourceQuest?.name || change.operation === 'unresolved') {
+        return scenePulseQuestTranslationResult(change, 'unresolved', { ...options, reason: change.reason || 'This source quest change could not be identified safely.' });
+    }
+    normalizeQuestState(world, sess);
+    const linked = scenePulseQuestLinkedRecord(protocol, change.sourceKey, change.previousSourceKey);
+    let quest = linked ? (sess.quests || []).find(item => String(item?.id || '') === linked.questId) : null;
+    if (!quest && change.operation === 'add') {
+        const collision = scenePulseQuestExactTitleCollision(sess, sourceQuest);
+        if (collision && options.choice !== 'link') {
+            if (options.choice !== 'create') {
+                return scenePulseQuestTranslationResult(change, 'unresolved', {
+                    ...options, collisionQuestId: collision.id,
+                    reason: 'A World quest already has this exact title. Choose a link or create it separately in Inspect.'
+                });
+            }
+        }
+        if (collision && options.choice === 'link') {
+            quest = collision;
+            linkScenePulseQuest(protocol, quest.id, change.sourceKey, change.previousSourceKey);
+        } else {
+            quest = scenePulseQuestWorldRecord(world, sess, sourceQuest, linked);
+        }
+    }
+    if (!quest && change.operation === 'remove') {
+        return scenePulseQuestTranslationResult(change, 'scene_only', { ...options,
+            reason: 'This quest only existed in ScenePulse, so removing it did not alter a World quest.' });
+    }
+    if (!quest) {
+        return scenePulseQuestTranslationResult(change, 'unresolved', { ...options,
+            reason: 'This ScenePulse quest has no established World quest link yet.' });
+    }
+    linkScenePulseQuest(protocol, quest.id, change.sourceKey, change.previousSourceKey, ...(linked?.sourceKeys || []));
+    quest.scenePulseLink = { sourceKeys: scenePulseQuestLinkedRecord(protocol, change.sourceKey, change.previousSourceKey)?.sourceKeys || [change.sourceKey], linkedAt: new Date().toISOString() };
+    if (change.operation === 'remove') {
+        quest.status = 'abandoned';
+        quest.resolvedTurn = sess.turnCount || 1;
+    } else if (change.operation === 'restore') {
+        if (quest.rewardsGranted && formatQuestRewardSummary(quest)) {
+            return scenePulseQuestTranslationResult(change, 'unresolved', { ...options, questId: quest.id,
+                reason: 'This World quest has already settled rewards, so it cannot be restored automatically.' });
+        }
+        quest.status = 'active';
+        quest.resolvedTurn = null;
+        quest.rewardsGranted = false;
+        quest.rewardGrantedTurn = null;
+        quest.rewardReceipt = '';
+        quest.title = sourceQuest.name;
+        quest.description = sourceQuest.detail;
+        quest.scenePulseUrgency = sourceQuest.urgency;
+    } else {
+        quest.title = sourceQuest.name;
+        quest.description = sourceQuest.detail;
+        quest.scenePulseUrgency = sourceQuest.urgency;
+        if (change.operation === 'complete') {
+            quest.status = 'completed';
+            quest.resolvedTurn = sess.turnCount || 1;
+            grantQuestRewards(world, sess, quest);
+        }
+    }
+    quest.updatedTurn = sess.turnCount || 1;
+    normalizeQuestState(world, sess);
+    return scenePulseQuestTranslationResult(change, 'applied', { ...options, questId: quest.id });
+}
+
+function scenePulseQuestReviewProjection(protocol, options = {}) {
+    const snapshotId = String(options.snapshotId || '');
+    const turnId = String(options.turnId || '');
+    return (Array.isArray(protocol?.scenePulseQuestTranslations) ? protocol.scenePulseQuestTranslations : [])
+        .filter(item => item?.type === 'scene_pulse_quest_translation'
+            && (!snapshotId || String(item?.targetSnapshotId || '') === snapshotId)
+            && (!turnId || String(item?.targetTurnId || '') === turnId))
+        .slice(-24).map(item => safeJsonClone(item));
+}
+
+function applyScenePulseQuestEditTranslations(world, sess, protocol, edit) {
+    if (!edit?.targetTurnId || edit.targetSnapshotId === 'fixture') return [];
+    const changes = scenePulseQuestChanges(edit.before, edit.after);
+    if (!changes.length) return [];
+    const results = changes.map(change => applyScenePulseQuestChange(world, sess, protocol, change, {
+        sourceEditId: edit.id,
+        targetSnapshotId: edit.targetSnapshotId,
+        targetTurnId: edit.targetTurnId
+    }));
+    protocol.scenePulseQuestTranslations = Array.isArray(protocol.scenePulseQuestTranslations) ? protocol.scenePulseQuestTranslations : [];
+    protocol.scenePulseQuestTranslations.push(...results);
+    if (protocol.scenePulseQuestTranslations.length > 320) protocol.scenePulseQuestTranslations = protocol.scenePulseQuestTranslations.slice(-320);
+    return results;
+}
+
+async function resolveScenePulseQuestTranslation(world, sess, translationId, choice = '') {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const translation = (protocol?.scenePulseQuestTranslations || []).find(item => String(item?.id || '') === String(translationId || ''));
+    if (!translation || translation.status !== 'unresolved') throw new Error('That ScenePulse quest change is no longer awaiting a World decision.');
+    if (!['link', 'create'].includes(choice)) throw new Error('Choose whether to link the matching World quest or create a separate one.');
+    const change = {
+        operation: translation.operation,
+        tier: translation.tier,
+        sourceKey: translation.sourceKey,
+        previousSourceKey: translation.previousSourceKey,
+        sourceQuest: safeJsonClone(translation.sourceQuest || {}),
+        previousQuest: safeJsonClone(translation.previousQuest || {}),
+        reason: translation.reason || ''
+    };
+    const outcome = applyScenePulseQuestChange(world, sess, protocol, change, {
+        choice,
+        sourceEditId: translation.sourceEditId,
+        targetSnapshotId: translation.targetSnapshotId,
+        targetTurnId: translation.targetTurnId
+    });
+    if (outcome.status === 'unresolved') throw new Error(outcome.reason || 'The World quest could not be resolved.');
+    translation.status = 'resolved';
+    translation.resolvedAt = new Date().toISOString();
+    translation.resolution = choice;
+    translation.resolvedQuestId = outcome.questId || '';
+    protocol.scenePulseQuestTranslations.push(outcome);
+    if (protocol.scenePulseQuestTranslations.length > 320) protocol.scenePulseQuestTranslations = protocol.scenePulseQuestTranslations.slice(-320);
+    await saveState();
+    renderWorldPlayState();
+    return outcome;
 }
 
 // A human source-panel save is part of the authored scene-state record. Keep
@@ -19703,8 +20093,14 @@ async function commitScenePulseSourceEdit(world, sess, payload = {}) {
     protocol.scenePulseHumanEdits.push(edit);
     // Keep a bounded audit trail without deleting the only active overlay.
     if (protocol.scenePulseHumanEdits.length > 160) protocol.scenePulseHumanEdits = protocol.scenePulseHumanEdits.slice(-160);
+    // A saved edit is the explicit author boundary for native ScenePulse
+    // controls. Translate only its Quest Journal changes: ordinary source
+    // fields remain scene presentation, while an established Quest link may
+    // update the same Horde quest immediately. Ambiguous titles stay visible
+    // as Unresolved review items instead of being guessed or duplicated.
+    const questTranslations = applyScenePulseQuestEditTranslations(world, sess, protocol, edit);
     await saveState();
-    return { saved: true, id: edit.id, edit };
+    return { saved: true, id: edit.id, edit, questTranslations: safeJsonClone(questTranslations) };
 }
 
 function scenePulseHumanOverlay(protocol, handoff) {
@@ -19802,6 +20198,11 @@ function bindScenePulseWorldsHostActions(host, world, sess) {
             }));
             return;
         }
+        if (detail.action === 'stop-scene-pulse-refresh') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => stopScenePulseReaderRefresh());
+            return;
+        }
         if (detail.action === 'stage-scenepulse-candidate-review') {
             event.preventDefault();
             detail.promise = Promise.resolve().then(() => stageScenePulseCandidateForWorldReview(world, sess, detail.candidateId));
@@ -19857,6 +20258,12 @@ function bindScenePulseWorldsHostActions(host, world, sess) {
         if (detail.action === 'commit-scenepulse-source-edit') {
             event.preventDefault();
             detail.promise = Promise.resolve().then(() => commitScenePulseSourceEdit(world, sess, detail));
+            return;
+        }
+        if (detail.action === 'resolve-scenepulse-quest-translation') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => resolveScenePulseQuestTranslation(world, sess,
+                detail.translationId, detail.choice));
             return;
         }
         if (detail.action === 'save-scenepulse-portrait') {
@@ -33541,7 +33948,18 @@ function normalizeQuestState(world, sess) {
             updatedTurn: Math.max(1, parseInt(quest.updatedTurn) || parseInt(quest.createdTurn) || 1),
             resolvedTurn: quest.resolvedTurn == null ? null : Math.max(1, parseInt(quest.resolvedTurn) || 1),
             rewardGrantedTurn: quest.rewardGrantedTurn == null ? null : Math.max(1, parseInt(quest.rewardGrantedTurn) || 1),
-            completionNote: String(quest.completionNote || '').trim().slice(0, 500)
+            completionNote: String(quest.completionNote || '').trim().slice(0, 500),
+            // Source Quest Journal links are provenance for an explicitly
+            // translated author action. They make no tracker fields appear in
+            // Horde's normal quest UI; they only let later source edits reach
+            // the same World quest without name-guessing.
+            scenePulseUrgency: scenePulseQuestUrgency(quest.scenePulseUrgency || ''),
+            scenePulseLink: isPlainObject(quest.scenePulseLink) ? {
+                sourceKeys: [...new Set((Array.isArray(quest.scenePulseLink.sourceKeys) ? quest.scenePulseLink.sourceKeys : [])
+                    .map(value => String(value || '').trim())
+                    .filter(value => /^[A-Za-z]+Quests:[a-z0-9 ]{1,180}$/.test(value)))].slice(-32),
+                linkedAt: String(quest.scenePulseLink.linkedAt || '').slice(0, 80)
+            } : { sourceKeys: [], linkedAt: '' }
         };
     });
     return sess.quests;

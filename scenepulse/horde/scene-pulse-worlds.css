@@ -491,6 +491,26 @@
 .sp-horde-candidate-actions button:hover { border-color: var(--sp-accent,#4db8a4); background: color-mix(in srgb,var(--sp-accent,#4db8a4) 18%,transparent); }
 .sp-horde-candidate-actions button[disabled] { cursor: wait; opacity: .55; }
 .sp-horde-candidate-actions .sp-horde-candidate-secondary { border-color: var(--sp-border-strong,#38515b); background: transparent; color: var(--sp-text-dim,#92a1a7); }
+.sp-horde-quest-translation-review { max-height: 235px; overflow: auto; border-bottom: 1px solid var(--sp-border,#29373d); padding: 11px 16px 13px; background: rgba(96,83,141,.08); }
+.sp-horde-quest-translation-review > header { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 9px; }
+.sp-horde-quest-translation-review > header strong { color: var(--sp-text-bright,#f0f5f7); font: 700 10px/1.2 var(--sp-font-mono,monospace); letter-spacing: .06em; text-transform: uppercase; }
+.sp-horde-quest-translation-review > header small { max-width: 680px; color: var(--sp-text-dim,#92a1a7); font-size: 10px; line-height: 1.35; }
+.sp-horde-quest-translation-review > div { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 8px; }
+.sp-horde-quest-translation-card { display: grid; gap: 6px; min-width: 0; border: 1px solid var(--sp-border,#29373d); border-left: 3px solid #7f79bc; border-radius: 6px; padding: 9px; background: rgba(0,0,0,.12); }
+.sp-horde-quest-translation-card.is-applied { border-left-color: #71cb9a; }
+.sp-horde-quest-translation-card.is-unresolved { border-left-color: #e0b365; }
+.sp-horde-quest-translation-card.is-scene_only { border-left-color: #93aee8; }
+.sp-horde-quest-translation-card > header { display: flex; justify-content: space-between; gap: 9px; }
+.sp-horde-quest-translation-card > header strong, .sp-horde-quest-translation-card > header small { display: block; }
+.sp-horde-quest-translation-card > header strong { overflow: hidden; color: var(--sp-text-bright,#f0f5f7); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.sp-horde-quest-translation-card > header small, .sp-horde-quest-translation-card > header > span:last-child, .sp-horde-quest-translation-reason { color: var(--sp-text-dim,#92a1a7); font: 700 8px/1.3 var(--sp-font-mono,monospace); letter-spacing: .035em; text-transform: uppercase; }
+.sp-horde-quest-translation-card.is-applied > header > span:last-child { color: #8cdda9; }
+.sp-horde-quest-translation-card.is-unresolved > header > span:last-child { color: #f0c37c; }
+.sp-horde-quest-translation-card p { display: -webkit-box; margin: 0; overflow: hidden; color: var(--sp-text,#d6e0e4); font-size: 10px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.sp-horde-quest-translation-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.sp-horde-quest-translation-actions button { border: 1px solid color-mix(in srgb,#b7a2ec 50%,var(--sp-border,#29373d)); border-radius: 4px; padding: 4px 6px; background: color-mix(in srgb,#b7a2ec 10%,transparent); color: #d3c3ff; cursor: pointer; font: 700 8px/1.2 var(--sp-font-mono,monospace); letter-spacing: .035em; text-transform: uppercase; }
+.sp-horde-quest-translation-actions button:hover { border-color: #d3c3ff; background: color-mix(in srgb,#b7a2ec 18%,transparent); }
+.sp-horde-quest-translation-actions button[disabled] { cursor: wait; opacity: .55; }
 .sp-horde-graph-review { display: grid; gap: 7px; margin: 0; border-bottom: 1px solid var(--sp-border,#29373d); padding: 11px 16px 13px; background: rgba(61,102,123,.06); }
 .sp-horde-graph-review > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .sp-horde-graph-review > header strong { color: var(--sp-text-bright,#f0f5f7); font: 700 10px/1.2 var(--sp-font-mono,monospace); letter-spacing: .06em; text-transform: uppercase; }

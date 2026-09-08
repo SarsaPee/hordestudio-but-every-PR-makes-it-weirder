@@ -22,6 +22,9 @@ const sourceUpdate = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'up
 const sourceTimeline = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'timeline.js');
 const sourceWiki = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-wiki.js');
 const sourceWeb = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-web.js');
+const sourceLoading = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'loading.js');
+const sourceSetupGuide = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'setup-guide.js');
+const sourceI18n = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'i18n.js');
 const sourceSlots = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'prompts', 'slots.js');
 const sourceMacros = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'macros.js');
 const sourceCommands = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'slash-commands.js');
@@ -45,9 +48,14 @@ const acceptedHandoff = lastFunction('scenePulseAcceptedHandoff');
 const humanOverlay = lastFunction('scenePulseHumanOverlay');
 const sourceEdit = lastFunction('commitScenePulseSourceEdit', 'async function');
 const sourcePrefs = lastFunction('persistScenePulseSourceRuntimePreferences', 'async function');
+const questChanges = lastFunction('scenePulseQuestChanges');
+const questTranslations = lastFunction('applyScenePulseQuestEditTranslations');
+const resolveQuestTranslation = lastFunction('resolveScenePulseQuestTranslation', 'async function');
 const panelMount = lastFunction('renderScenePulseWorldsWorkspace');
 const nativePresentationAuthority = lastFunction('scenePulseDeclaredNativeFieldAuthority');
 const readerPass = lastFunction('runSidecarSemanticReading', 'async function');
+const readerRefresh = lastFunction('refreshSidecarSceneIntelligence', 'async function');
+const acceptedRefresh = lastFunction('refreshAcceptedScenePulseProjection', 'async function');
 const candidateEligibility = lastFunction('scenePulseCandidatePromotionEligibility');
 const candidateStage = lastFunction('stageScenePulseCandidateForWorldReview', 'async function');
 const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async function');
@@ -86,6 +94,7 @@ assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/update-panel\.js`\)/, 'runtime m
 assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/timeline\.js`\)/, 'runtime must import the source history renderer');
 assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/character-wiki\.js`\)/, 'runtime must load source wiki behavior');
 assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/relationship-web\.js`\)/, 'runtime must load source relationship-web behavior');
+assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/loading\.js`\)/, 'runtime must load the source loading lifecycle primitives');
 assert.doesNotMatch(runtime, /import\(`\$\{ROOT\}\/index\.js`\)/, 'runtime must not launch ScenePulse autonomous ST/provider interceptor');
 assert.match(runtime, /modules\.panel\.createPanel\(\)/, 'source must create its own panel DOM');
 assert.match(runtime, /modules\.updatePanel\.updatePanel\(normalized, true\)/, 'source must render its own normalized panel');
@@ -124,13 +133,31 @@ assert.doesNotMatch(runtime, /generateTracker/, 'native source commands must not
 assert.match(runtime, /sourceProfiles: clone\(settings\?\.profiles \|\| \[\]\)/, 'source Profile edits must return through the settings bridge');
 assert.match(runtime, /refresh-scene-pulse/, 'source refresh controls must dispatch to Sidecar');
 assert.match(runtime, /#sp-thought-panel \.sp-tp-regen/, 'the body-level source Thoughts refresh must also cross the Reader boundary');
+assert.match(runtime, /runSourceReaderRefresh/, 'native source refresh affordances must use one source-styled Reader lifecycle');
+assert.match(runtime, /showLoadingOverlay/, 'section and full-panel refreshes must visibly use source loading overlays');
+assert.match(runtime, /showThoughtLoading/, 'Thought regeneration must visibly use the source thought-loading overlay');
+assert.match(runtime, /sp-stop-btn/, 'Reader stop must retain the source stop-button visual treatment');
+assert.match(runtime, /stop-scene-pulse-refresh/, 'the native stop control must cross a narrow Reader-only host action');
+assert.match(runtime, /sp-recovery-card/, 'failed rereads must retain the source recovery-card treatment');
+assert.match(sourceLoading, /export function showLoadingOverlay/, 'vendored source loading overlays must remain callable');
+assert.match(sourceLoading, /export function showThoughtLoading/, 'vendored source thought loading must remain callable');
 assert.match(runtime, /sourceRelationshipGraphCache/, 'the source relationship web needs a roster-checked Sidecar cache seam');
 assert.match(runtime, /requestScenePulseRelationshipGraph/, 'native source graph generation must cross a named Reader boundary');
 assert.match(runtime, /npcRelationshipGraph: true/, 'the source relationship-web affordance must remain available in Worlds');
 assert.match(runtime, /Return ScenePulse history to the current accepted beat/, 'historical source views must not refresh or relabel the newest NPC graph');
 assert.match(runtime, /stage-story-idea/, 'source Story Idea controls must dispatch to Horde actions');
 assert.match(runtime, /commit-scenepulse-source-edit/, 'source edit saves must cross an auditable host boundary');
+assert.match(runtime, /questTranslationMarkup/, 'Inspect must expose source Quest Journal outcomes without replacing the native journal');
+assert.match(runtime, /resolve-scenepulse-quest-translation/, 'only an identical-title collision may request an Inspect-only World decision');
 assert.match(runtime, /persist-scenepulse-source-settings/, 'source preference saves must use a separate host boundary');
+assert.match(runtime, /setupGuide: 'settings-ui\/setup-guide\.js'/, 'source Setup Guide must remain an imported utility');
+assert.match(runtime, /showWorldsSetupGuide/, 'Worlds must provide a truthful source-styled setup mapping');
+assert.match(runtime, /showScenePulseWorldsSetup/, 'the source guide must receive its Worlds-specific setup capability narrowly');
+assert.match(sourceSetupGuide, /showScenePulseWorldsSetup/, 'vendored Setup Guide must delegate only when the Worlds capability is present');
+assert.match(runtime, /SOURCE_LANGUAGE_OPTIONS/, 'the complete source locale set must remain available');
+assert.match(runtime, /showSourceLanguagePicker/, 'language selection must be a real ScenePulse configuration action');
+assert.match(runtime, /modules\.i18n\?\.initI18n/, 'the source locale loader must initialize before source render');
+assert.match(sourceI18n, /export async function initI18n/, 'vendored source locale files must remain the locale authority');
 
 assert.match(sourcePanel, /export function createPanel\(\)/, 'vendored source panel must remain the actual panel creator');
 assert.match(sourcePanel, /sp-tb-wiki/, 'source toolbar must retain Character Wiki');
@@ -162,6 +189,12 @@ assert.match(css, /\.sp-horde-command-overlay/, 'native source command surface m
 assert.match(sourceEdit, /type: 'scene_pulse_human_edit'/, 'direct edits must become human ScenePulse history nodes');
 assert.match(sourceEdit, /author: 'human'/, 'direct edit author must be preserved');
 assert.match(sourceEdit, /before,[\s\S]*after,[\s\S]*rawPatch: patch,[\s\S]*undo:/, 'direct edit must preserve before, after, raw patch, and undo data');
+assert.match(sourceEdit, /applyScenePulseQuestEditTranslations/, 'a saved live Quest Journal action must translate through the explicit World boundary');
+assert.match(questTranslations, /edit\.targetSnapshotId === 'fixture'/, 'fixture Quest Journal actions must remain fixture-local');
+assert.match(questTranslations, /scenePulseQuestChanges\(edit\.before, edit\.after\)/, 'the translator must derive actual source quest mutations rather than inventing World data');
+assert.match(resolveQuestTranslation, /\['link', 'create'\]/, 'a title collision must require an explicit link-or-separate decision');
+assert.match(app, /detail\.action === 'resolve-scenepulse-quest-translation'/, 'Horde must claim the narrow unresolved Quest Journal decision');
+assert.match(css, /\.sp-horde-quest-translation-review/, 'Inspect Quest Journal outcomes must retain a source-styled review treatment');
 assert.match(app, /function scenePulseHumanStatePromptContext\(/, 'human ScenePulse state needs a compact prompt context');
 assert.match(app, /const readerPrompt = prompt \+ humanSceneStateContext/, 'human ScenePulse state must reach the Reader prompt');
 assert.match(app, /ffStack\.prompt \+ ffHandoffContract \+ narratorHumanSceneState/, 'human ScenePulse state must reach the Narrator prompt');
@@ -173,12 +206,17 @@ assert.match(sourcePrefs, /sourceProfiles: incoming\.sourceProfiles/, 'source Pr
 assert.match(sourcePrefs, /sourceActiveProfileId: incoming\.sourceActiveProfileId/, 'the active source Profile must persist through the scoped World preference boundary');
 assert.match(sourcePrefs, /dashCards: incoming\.dashCards/, 'source dashboard-card choices must persist through the scoped World preference boundary');
 assert.match(sourcePrefs, /fieldToggles: incoming\.fieldToggles/, 'source field-visibility choices must persist through the scoped World preference boundary');
+assert.match(sourcePrefs, /setupDismissed: incoming\.setupDismissed === true/, 'source setup completion must persist as a scoped UI preference');
 assert.match(sourcePrefs, /thoughtPanelFit|thoughtFit: incoming\.thoughtFit/, 'source thought-panel behavior must persist through the scoped World preference boundary');
 assert.match(app, /nativeFieldAuthority/, 'Horde preference storage must preserve the explicit source-to-Sidecar field authority ledger');
 assert.match(app, /detail\.action === 'commit-scenepulse-source-edit'/, 'Horde must claim source edit commits');
 assert.match(app, /detail\.action === 'persist-scenepulse-source-settings'/, 'Horde must claim source preference saves');
 assert.match(app, /detail\.action === 'stage-story-idea'/, 'Horde must claim source Story Idea actions');
 assert.match(app, /detail\.action === 'refresh-scene-pulse'/, 'Horde must claim source Reader refresh actions');
+assert.match(app, /detail\.action === 'stop-scene-pulse-refresh'/, 'Horde must claim source Reader stop actions');
+assert.match(acceptedRefresh, /scenePulseReaderRefreshController/, 'a ScenePulse stop must use a separate Reader controller');
+assert.match(acceptedRefresh, /The current scene was left unchanged/, 'stopping a reread must preserve the accepted scene');
+assert.match(readerRefresh, /signal: options\.signal/, 'the Sidecar Reader fetch must receive the native stop signal');
 assert.match(app, /forceFull: detail\.forceFull === true/, 'Horde must preserve source regen versus full-refresh intent');
 assert.match(app, /SCENEPULSE FOCUSED SECTION REFRESH/, 'section refresh must focus the single Sidecar Reader pass without invoking Narrator');
 assert.match(runtime, /save-scenepulse-portrait/, 'source portraits must cross a named portable host boundary');
@@ -242,6 +280,31 @@ assert.deepEqual(JSON.parse(JSON.stringify(normalizedGraph)), {
 }, 'NPC graph normalization must keep only declared roster names and compact source-safe fields');
 assert.equal(vm.runInNewContext(`${graphNormalizer}\nnormalizeSidecarNpcRelationshipGraph(${JSON.stringify({ roster: ['Mira'], edges: [] })})`, graphContext), null,
     'a graph with fewer than two declared scene characters must remain absent rather than becoming a misleading cache');
+
+const questDiffSource = [
+    "const SCENEPULSE_QUEST_TIERS = Object.freeze(['mainQuests', 'sideQuests']);",
+    'const safeJsonClone = value => JSON.parse(JSON.stringify(value));',
+    lastFunction('scenePulseQuestTextKey'),
+    lastFunction('scenePulseQuestSourceKey'),
+    lastFunction('scenePulseQuestUrgency'),
+    lastFunction('scenePulseQuestSourceEntry'),
+    lastFunction('scenePulseQuestEntries'),
+    lastFunction('scenePulseQuestSameContent'),
+    lastFunction('scenePulseQuestSameNonNameContent'),
+    lastFunction('scenePulseQuestChange'),
+    questChanges
+].join('\n');
+const questDiff = vm.runInNewContext(`${questDiffSource}\nscenePulseQuestChanges(${JSON.stringify({
+    mainQuests: [{ name: 'Find the signal', urgency: 'high', detail: 'Trace the radio tower.' }],
+    sideQuests: [{ name: 'Meet Rowan', urgency: 'low', detail: 'At the ferry.' }]
+})}, ${JSON.stringify({
+    mainQuests: [{ name: 'Find the signal', urgency: 'resolved', detail: 'Trace the radio tower.' }],
+    sideQuests: [{ name: 'Meet Rowan at the ferry', urgency: 'low', detail: 'At the ferry.' }]
+})})`);
+assert.deepEqual(JSON.parse(JSON.stringify(questDiff.map(change => ({ operation: change.operation, sourceKey: change.sourceKey, previousSourceKey: change.previousSourceKey })))), [
+    { operation: 'complete', sourceKey: 'mainQuests:find the signal', previousSourceKey: 'mainQuests:find the signal' },
+    { operation: 'rename', sourceKey: 'sideQuests:meet rowan at the ferry', previousSourceKey: 'sideQuests:meet rowan' }
+], 'Quest Journal translation must preserve a resolved action and only match a rename when its source detail is uniquely unchanged');
 
 const sourceRuntimeContext = {
     window: {},
