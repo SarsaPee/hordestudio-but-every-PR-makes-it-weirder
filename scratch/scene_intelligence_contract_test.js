@@ -102,6 +102,7 @@ const acceptedHandoff = lastFunction('scenePulseAcceptedHandoff');
 const humanOverlay = lastFunction('scenePulseHumanOverlay');
 const sourceEdit = lastFunction('commitScenePulseSourceEdit', 'async function');
 const sourcePrefs = lastFunction('persistScenePulseSourceRuntimePreferences', 'async function');
+const sourcePreferenceNormalizer = lastFunction('normalizeScenePulseWorldsPreferences');
 const questChanges = lastFunction('scenePulseQuestChanges');
 const questTranslations = lastFunction('applyScenePulseQuestEditTranslations');
 const resolveQuestTranslation = lastFunction('resolveScenePulseQuestTranslation', 'async function');
@@ -520,6 +521,19 @@ assert.match(app, /nativeFieldAuthority/, 'Horde preference storage must preserv
 assert.match(app, /detail\.action === 'commit-scenepulse-source-edit'/, 'Horde must claim source edit commits');
 assert.match(app, /detail\.action === 'persist-scenepulse-source-settings'/, 'Horde must claim source preference saves');
 assert.match(app, /detail\.hasChatPanels === true/, 'the host must forward native custom-panel override presence to the persistence boundary');
+
+const sourceChatPanelPersistence = lastRuntimeFunction('sourceChatPanelsForPersistence');
+const nativeCustomSchema = vm.runInNewContext(`${sourceChatPanelPersistence}\n(() => {\n    const current = { context: { chatMetadata: { scenepulse: { chatPanels: [{ name: 'Venue check', fields: [{ key: 'cider_line_status', label: 'Cider-line status', type: 'text' }] }] } }, extensionSettings: { scenepulse: { customPanels: [{ name: 'Stale default', fields: [{ key: 'stale' }] }] } } } };\n    const result = sourceChatPanelsForPersistence(current);\n    return { result, mirrored: current.context.extensionSettings.scenepulse.customPanels };\n})()`, { clone: value => JSON.parse(JSON.stringify(value)) });
+assert.equal(nativeCustomSchema.result.hasChatPanels, true, 'a native chat schema must declare that it is authoritative');
+assert.equal(nativeCustomSchema.result.schema[0].fields[0].key, 'cider_line_status', 'a native custom field must cross the source boundary intact');
+assert.equal(nativeCustomSchema.mirrored[0].fields[0].key, 'cider_line_status', 'the source settings patch must mirror the live chat-local schema');
+
+const persistedExplicitEmptySchema = vm.runInNewContext(`${sourcePreferenceNormalizer}\n${sourcePrefs}\n(() => {\n    const protocol = { workspaceUi: { scenePulseWorlds: { customPanels: [{ name: 'Prior panel', fields: [{ key: 'prior' }] }] } } };\n    void persistScenePulseSourceRuntimePreferences(protocol, {}, { customPanels: [{ name: 'Stale default', fields: [{ key: 'stale' }] }] }, [], true);\n    return protocol.workspaceUi.scenePulseWorlds.customPanels;\n})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    protocolForSidecarTimeline: world => world,
+    saveState: async () => {}
+});
+assert.deepEqual(JSON.parse(JSON.stringify(persistedExplicitEmptySchema)), [], 'an explicitly empty native custom schema must not resurrect stale source defaults');
 assert.match(app, /detail\.action === 'stage-story-idea'/, 'Horde must claim source Story Idea actions');
 assert.match(app, /detail\.action === 'refresh-scene-pulse'/, 'Horde must claim source Reader refresh actions');
 assert.match(app, /detail\.action === 'stop-scene-pulse-refresh'/, 'Horde must claim source Reader stop actions');
