@@ -12982,7 +12982,13 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     let npcOutfitUpdates;
     let audit;
     try {
-    actionResult = processStructuredActions(validation.legacyArgs, world, sess, { sidecar: sidecarSource });
+    actionResult = processStructuredActions(validation.legacyArgs, world, sess, {
+        sidecar: sidecarSource,
+        // Only an explicit author choice in the ScenePulse Inspect scaffold
+        // can permit a same-named introduced record. Model receipts never
+        // receive this capability.
+        scenePulseSeparatePromotionId: String(context.scenePulseSeparatePromotionId || '')
+    });
     applyWorldEntityPatches(world, sess, validation.entityPatches);
     nearbyContext = applyWorldSceneNearbyContext(world, sess, validation.sceneAssertion, source);
     npcOutfitUpdates = applyWorldNpcOutfitPatches(world, sess, validation.entityPatches, source);
@@ -19148,7 +19154,13 @@ function scenePulseCandidateReviewProjection(world, sess, protocol, options = {}
                 id: String(staged.id || ''), status: String(staged.status || ''),
                 promotionRequested: staged.promotionRequested === true,
                 sourceTurnIds: safeJsonClone(staged.readerSourceTurnIds || []),
-                disposition: String(staged.scenePulseDisposition || '')
+                disposition: String(staged.scenePulseDisposition || ''),
+                duplicateCandidates: (Array.isArray(staged.duplicateCanonicalCandidates) ? staged.duplicateCanonicalCandidates : [])
+                    .filter(entry => isPlainObject(entry) && String(entry?.id || '').trim())
+                    .slice(-8).map(entry => ({
+                        id: String(entry.id || '').slice(0, 180), name: String(entry.name || entry.id || '').slice(0, 240),
+                        kind: String(entry.kind || '').slice(0, 40)
+                    }))
             } : null,
             canonical: canonical ? { id: String(canonical.id || ''), name: String(canonical.name || ''), kind: staged?.kind || scenePulseCandidatePromotionKind(candidate) } : null,
             // This id is surfaced only for an explicit identity decision; a
@@ -19376,6 +19388,47 @@ async function linkScenePulseCandidateToCanonical(world, sess, candidateId) {
         showToast(`${candidate.label || candidate.name} is now linked to ${canonical.name}.`, 'success');
     });
     return { status: 'confirmation_required', canonicalId: canonical.id };
+}
+
+// A name/shape collision found while the author explicitly promotes a
+// ScenePulse candidate is a development comparison, not a question for the
+// roleplay player. Keep the two possible records visible in Inspect until the
+// author chooses this exact link or explicitly creates a distinct record.
+async function resolveScenePulseCandidateDuplicate(world, sess, candidateId, canonicalId, choice) {
+    const protocol = protocolForSidecarTimeline(world, sess);
+    const candidate = protocol?.readerCandidates?.find(item => String(item?.candidateId || '') === String(candidateId || ''));
+    const staged = scenePulsePromotionRecordForCandidate(protocol, candidateId);
+    const kind = scenePulseCandidatePromotionKind(candidate);
+    const requested = String(canonicalId || '').trim();
+    const duplicate = (Array.isArray(staged?.duplicateCanonicalCandidates) ? staged.duplicateCanonicalCandidates : [])
+        .find(entry => String(entry?.id || '') === requested) || null;
+    if (!candidate || !staged || !kind || !duplicate) throw new Error('That duplicate comparison is no longer available.');
+    if (!['link', 'create'].includes(String(choice || ''))) throw new Error('Choose whether to link the existing record or create separately.');
+    const canonical = kind === 'location'
+        ? (world?.locations || []).find(record => String(record?.id || '') === requested) || null
+        : (world?.entities || []).find(record => String(record?.id || '') === requested && ['npc', 'character', 'person'].includes(String(record?.type || '').toLowerCase())) || null;
+    if (!canonical) throw new Error('The compared Horde record is no longer available.');
+    if (choice === 'create') {
+        return promoteImpliedWorldRecord({ provisionalId: staged.id, candidateId, allowDuplicate: true });
+    }
+    showConfirmModal(`Link ${candidate.label || candidate.name}`, `Use the existing ${kind === 'location' ? 'location' : 'character'} “${canonical.name}” for this ScenePulse candidate? This is an explicit author decision; it does not change the visible scene.`, async () => {
+        staged.status = 'resolved';
+        staged.resolvedCanonicalId = canonical.id;
+        staged.scenePulseDisposition = 'canonical_identity_linked_author_choice';
+        staged.duplicateResolution = { choice: 'link', canonicalId: canonical.id, at: new Date().toISOString() };
+        markScenePulseCandidatePromotionOutcome(protocol, staged, canonical, 'matched');
+        protocol.refinements.push({
+            id: `scenepulse_duplicate_link_${Date.now().toString(36)}`, createdAt: new Date().toISOString(),
+            source: 'direct_user_refinement', userText: `Linked ScenePulse candidate ${candidate.label || candidateId} to existing ${canonical.name}.`,
+            committed: true, candidateId: String(candidateId || ''), canonicalId: canonical.id, duplicateResolution: 'link'
+        });
+        protocol.refinements = protocol.refinements.slice(-200);
+        protocol.packet = buildSidecarScenePacket(world, sess);
+        await saveState();
+        renderWorldPlayState();
+        showToast(`${candidate.label || candidate.name} is now linked to ${canonical.name}.`, 'success');
+    });
+    return { status: 'confirmation_required', canonicalId: canonical.id, choice: 'link' };
 }
 
 async function keepScenePulseCandidateSceneOnly(world, sess, candidateId) {
@@ -20772,6 +20825,12 @@ function bindScenePulseWorldsHostActions(host, world, sess) {
         if (detail.action === 'keep-scenepulse-candidate-scene-only') {
             event.preventDefault();
             detail.promise = Promise.resolve().then(() => keepScenePulseCandidateSceneOnly(world, sess, detail.candidateId));
+            return;
+        }
+        if (detail.action === 'resolve-scenepulse-candidate-duplicate') {
+            event.preventDefault();
+            detail.promise = Promise.resolve().then(() => resolveScenePulseCandidateDuplicate(world, sess,
+                detail.candidateId, detail.canonicalId, detail.choice));
             return;
         }
         if (detail.action === 'apply-scenepulse-preset') {
@@ -31541,18 +31600,19 @@ async function promoteImpliedWorldRecord(options = {}) {
     const entityMatch = record.kind === 'entity'
         ? world.entities.find(entity => isVisibleToSession(entity, sess) && String(entity.name || '').trim().toLowerCase() === record.name.toLowerCase())
         : null;
-    if (locationMatch || entityMatch) {
+    if ((locationMatch || entityMatch) && options.allowDuplicate !== true) {
         const existing = locationMatch || entityMatch;
-        queueSidecarQuestion(world, sess,
-            `${record.name} may already refer to the tracked ${record.kind === 'location' ? 'location' : 'character'} “${existing.name}”. Should this implied reference be linked to that existing record, or does it describe something distinct?`,
-            JSON.stringify({ provisionalId: record.id, canonicalCandidateId: existing.id, evidence: record.evidence?.slice(-2) || [] }), {
-                id: `reconcile.promotion.${record.id}`, origin: 'progressive_promotion', target: 'user', pressure: 'medium'
-            });
         record.candidateCanonicalIds = [...new Set([...(record.candidateCanonicalIds || []), existing.id])];
+        record.duplicateCanonicalCandidates = [...(Array.isArray(record.duplicateCanonicalCandidates) ? record.duplicateCanonicalCandidates : [])
+            .filter(entry => String(entry?.id || '') !== String(existing.id || '')), {
+            id: String(existing.id || ''), name: String(existing.name || ''), kind: record.kind,
+            detectedAt: new Date().toISOString(), detectedBy: record.kind === 'location' ? 'location comparison' : 'exact character-name comparison'
+        }].slice(-8);
         record.status = 'needs_resolution';
+        record.scenePulseDisposition = 'duplicate_requires_author_choice';
         await saveState();
         renderWorldPlayState();
-        showToast('A possible duplicate was found, so Sidecar kept this as a question instead of creating a duplicate.', 'info');
+        showToast('A possible duplicate is available in ScenePulse Inspect for an explicit author choice.', 'info');
         return { status: 'needs_resolution', provisionalId: record.id, canonicalId: existing.id };
     }
     const earlyDecisionNotice = readerCandidate && !eligibility?.ready
@@ -31560,6 +31620,10 @@ async function promoteImpliedWorldRecord(options = {}) {
         : '';
     showConfirmModal(`Promote ${record.name}`, `Create a persistent ${record.kind === 'location' ? 'location' : 'character'} from the details established in recent narration? This does not retroactively change the scene.${earlyDecisionNotice}`, async () => {
         window.HordeSidecarPromotion?.markPromotionRequested(protocol, record.id);
+        const explicitSeparatePromotionId = options.allowDuplicate === true ? String(record.id || '') : '';
+        const introducedId = record.kind === 'location'
+            ? `loc_${record.id.replace(/^provisional_location_/, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`.slice(0, 100)
+            : `ent_${record.id.replace(/^provisional_entity_/, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`.slice(0, 100);
         const frame = buildWorldSceneFrame(world, sess);
         const receipt = {
             summary: `Promoted implied ${record.kind} ${record.name} from established narrative evidence.`,
@@ -31568,22 +31632,24 @@ async function promoteImpliedWorldRecord(options = {}) {
         };
         if (record.kind === 'location') {
             receipt.location_introduced = [{
-                id: `loc_${record.id.replace(/^provisional_location_/, '').replace(/[^a-zA-Z0-9_-]/g, '_')}`.slice(0, 100),
+                id: introducedId,
                 name: record.name, description: record.description || 'A location established in recent narration.', region: record.region || '',
                 map_type: record.mapType || undefined, parent_location_id: record.parentHint || undefined,
-                connects_to: record.parentHint || undefined, floor: record.floor || undefined
+                connects_to: record.parentHint || undefined, floor: record.floor || undefined,
+                scenePulseSeparatePromotionId: explicitSeparatePromotionId || undefined
             }];
         } else {
-            receipt.npc_introduced = [{ name: record.name, description: record.description || 'A character established in recent narration.', persona: record.persona || '', home_location: record.parentHint || undefined }];
+            receipt.npc_introduced = [{ id: introducedId, name: record.name, description: record.description || 'A character established in recent narration.', persona: record.persona || '', home_location: record.parentHint || undefined,
+                scenePulseSeparatePromotionId: explicitSeparatePromotionId || undefined }];
         }
         const commit = commitWorldTurnReceipt(world, sess, receipt, {
             playerStartLocationId: sess.playerLocation,
             playerMovementAuthorized: false,
-            narrativeText: ''
+            narrativeText: '', scenePulseSeparatePromotionId: explicitSeparatePromotionId
         }, 'sidecar_conversation');
         const canonical = record.kind === 'location'
-            ? world.locations.find(location => location.name === record.name && location.sessionOrigin === sess.id)
-            : world.entities.find(entity => entity.name === record.name && entity.sessionOrigin === sess.id);
+            ? world.locations.find(location => location.id === introducedId)
+            : world.entities.find(entity => entity.id === introducedId);
         if (!canonical) throw new Error('The native reducer did not create the requested record.');
         window.HordeSidecarPromotion?.markPromoted(protocol, record.id, canonical.id);
         const visualOutcome = applyScenePulsePromotionAppearance(canonical, record);
@@ -41348,7 +41414,9 @@ function processStructuredActions(args, explicitWorld = null, explicitSession = 
     // a just-introduced location in the same tool call resolves correctly.
     if (args.location_introduced && Array.isArray(args.location_introduced)) {
         args.location_introduced.forEach(li => {
-            if (!li.name || findFuzzyLocation(li.name, sessionLocations(world, sess))) return; // already exists here
+            const explicitSeparatePromotion = String(options?.scenePulseSeparatePromotionId || '')
+                && String(li?.scenePulseSeparatePromotionId || '') === String(options.scenePulseSeparatePromotionId);
+            if (!li.name || (!explicitSeparatePromotion && findFuzzyLocation(li.name, sessionLocations(world, sess)))) return; // already exists here
             const requestedId = String(li.id || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100);
             const newLoc = {
                 id: requestedId && !world.locations.some(location => location.id === requestedId)
@@ -41868,9 +41936,14 @@ function processStructuredActions(args, explicitWorld = null, explicitSession = 
         args.npc_introduced.forEach(npc => {
             if (!npc.name) return;
             const existing = world.entities.find(e => isVisibleToSession(e, sess) && e.name.toLowerCase() === npc.name.trim().toLowerCase());
-            if (!existing) {
+            const explicitSeparatePromotion = String(options?.scenePulseSeparatePromotionId || '')
+                && String(npc?.scenePulseSeparatePromotionId || '') === String(options.scenePulseSeparatePromotionId);
+            if (!existing || explicitSeparatePromotion) {
                 // Generate and inject a brand new NPC
-                const newId = 'ent_' + Date.now() + Math.floor(Math.random() * 1000);
+                const requestedId = explicitSeparatePromotion
+                    ? String(npc?.id || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100) : '';
+                const newId = requestedId && !world.entities.some(entity => entity.id === requestedId)
+                    ? requestedId : 'ent_' + Date.now() + Math.floor(Math.random() * 1000);
                 // Home: only if the narrative states one — meeting someone at an inn
                 // must NOT make them a resident of the inn. No home = wanderer.
                 const statedHome = npc.home_location ? findFuzzyLocation(npc.home_location, sessionLocations(world, sess)) : null;

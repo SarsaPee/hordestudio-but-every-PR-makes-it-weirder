@@ -116,6 +116,7 @@ const candidateCharacterEvidence = lastFunction('scenePulseCharacterEvidenceForC
 const candidatePromotionDraft = lastFunction('scenePulseCandidatePromotionDraft');
 const candidateStage = lastFunction('stageScenePulseCandidateForWorldReview', 'async function');
 const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async function');
+const candidateDuplicateResolution = lastFunction('resolveScenePulseCandidateDuplicate', 'async function');
 const impliedPromotion = lastFunction('promoteImpliedWorldRecord', 'async function');
 const promotionAppearance = lastFunction('applyScenePulsePromotionAppearance');
 const graphNormalizer = lastFunction('normalizeSidecarNpcRelationshipGraph');
@@ -438,9 +439,21 @@ assert.match(impliedPromotion, /explicit author decision, not an automatic promo
 assert.match(impliedPromotion, /applyScenePulsePromotionAppearance/, 'explicit promotion must feed observed outfit and appearance into Horde visuals');
 assert.match(impliedPromotion, /markScenePulseCandidatePromotionOutcome/, 'explicit promotion must write canonical identity back to the Reader candidate');
 assert.match(candidateLink, /Reader did not provide a verified canonical identity/, 'name similarity alone must not silently link a ScenePulse candidate');
+assert.match(candidateDuplicateResolution, /duplicateCanonicalCandidates/, 'a promotion collision must remain an explicit Inspect comparison');
+assert.match(candidateDuplicateResolution, /\['link', 'create'\]/, 'a candidate collision must require an explicit link-or-create author choice');
+assert.match(candidateDuplicateResolution, /allowDuplicate: true/, 'an explicit separate-record choice must be the only path that can request a same-named promotion');
+assert.doesNotMatch(impliedPromotion, /queueSidecarQuestion/, 'a ScenePulse promotion collision must not create a player-flow Sidecar question');
+assert.match(impliedPromotion, /duplicateCanonicalCandidates/, 'a possible duplicate must remain stored beside the staged source candidate for Inspect');
+assert.match(impliedPromotion, /scenePulseSeparatePromotionId/, 'same-named promotion requires a private explicit-author capability');
+assert.match(impliedPromotion, /location\.id === introducedId/, 'a separate location promotion must resolve the newly created record by stable ID');
+assert.match(impliedPromotion, /entity\.id === introducedId/, 'a separate character promotion must resolve the newly created record by stable ID');
 assert.match(app, /detail\.action === 'stage-scenepulse-candidate-review'/, 'Horde must claim candidate review staging');
 assert.match(app, /detail\.action === 'promote-scenepulse-candidate'/, 'Horde must claim candidate promotion');
 assert.match(app, /detail\.action === 'link-scenepulse-candidate'/, 'Horde must claim canonical identity linking');
+assert.match(app, /detail\.action === 'resolve-scenepulse-candidate-duplicate'/, 'Horde must claim the Inspect-only duplicate resolution action');
+assert.match(runtime, /data-horde-candidate-duplicate-link/, 'Inspect must render an explicit duplicate-link control');
+assert.match(runtime, /data-horde-candidate-duplicate-create/, 'Inspect must render an explicit separate-record control');
+assert.match(app, /explicitSeparatePromotion/, 'the Horde reducer must recognize only the explicit ScenePulse duplicate-promotion capability');
 
 const candidateEligibilitySource = [
     lastFunction('scenePulseCandidatePromotionKind'),

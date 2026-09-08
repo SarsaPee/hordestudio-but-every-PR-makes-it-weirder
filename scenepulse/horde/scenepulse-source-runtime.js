@@ -42,6 +42,7 @@
         'persist-scenepulse-source-settings', 'commit-scenepulse-source-edit',
         'stage-scenepulse-candidate-review', 'promote-scenepulse-candidate',
         'link-scenepulse-candidate', 'keep-scenepulse-candidate-scene-only',
+        'resolve-scenepulse-candidate-duplicate',
         'resolve-scenepulse-quest-translation', 'apply-scenepulse-preset',
         'clear-scenepulse-history', 'export-scenepulse-history',
         'save-scenepulse-portrait', 'clear-scenepulse-portrait'
@@ -962,6 +963,8 @@
             const eligibility = plain(candidate?.eligibility) ? candidate.eligibility : {};
             const staged = plain(candidate?.staged) ? candidate.staged : null;
             const canonical = plain(candidate?.canonical) ? candidate.canonical : null;
+            const duplicate = (Array.isArray(staged?.duplicateCandidates) ? staged.duplicateCandidates : [])
+                .find(entry => String(entry?.id || '').trim()) || null;
             const promoted = ['promoted', 'matched'].includes(String(candidate?.candidateStatus || '').toLowerCase())
                 || ['promoted', 'resolved'].includes(String(staged?.status || '').toLowerCase());
             const source = [
@@ -984,10 +987,14 @@
             if (!canonical && (!staged || staged.disposition === 'scene_only_by_author')) {
                 actions.push(`<button type="button" data-horde-candidate-stage="${escapeHtml(id)}">Stage World review</button>`);
             }
-            if (!canonical && staged && eligibility.ready && !promoted) {
+            if (!canonical && staged && duplicate && !promoted) {
+                actions.push(`<button type="button" data-horde-candidate-duplicate-link="${escapeHtml(id)}" data-horde-candidate-duplicate-canonical="${escapeHtml(String(duplicate.id))}">Link ${escapeHtml(String(duplicate.name || 'existing record').slice(0, 90))}</button>`);
+                actions.push(`<button type="button" class="sp-horde-candidate-secondary" data-horde-candidate-duplicate-create="${escapeHtml(id)}" data-horde-candidate-duplicate-canonical="${escapeHtml(String(duplicate.id))}">Create separately</button>`);
+            }
+            if (!canonical && staged && !duplicate && eligibility.ready && !promoted) {
                 actions.push(`<button type="button" data-horde-candidate-promote="${escapeHtml(id)}">Create durable record</button>`);
             }
-            if (!canonical && staged && !eligibility.ready && !promoted) {
+            if (!canonical && staged && !duplicate && !eligibility.ready && !promoted) {
                 actions.push(`<button type="button" class="sp-horde-candidate-secondary" data-horde-candidate-resolve="${escapeHtml(id)}">Create with author decision</button>`);
             }
             if (!canonical && !promoted) {
@@ -1123,6 +1130,24 @@
         bindCandidateAction('[data-horde-candidate-resolve]', 'promote-scenepulse-candidate', 'Promotion is awaiting your explicit confirmation.', { allowEarly: true });
         bindCandidateAction('[data-horde-candidate-match]', 'link-scenepulse-candidate', 'Identity link is awaiting your explicit confirmation.');
         bindCandidateAction('[data-horde-candidate-scene-only]', 'keep-scenepulse-candidate-scene-only', 'The candidate remains visible in ScenePulse only.');
+        const bindDuplicateResolution = (selector, choice, message) => {
+            overlay.querySelectorAll(selector).forEach(button => button.addEventListener('click', async () => {
+                button.disabled = true;
+                try {
+                    await dispatch('resolve-scenepulse-candidate-duplicate', {
+                        candidateId: button.dataset.hordeCandidateDuplicateLink || button.dataset.hordeCandidateDuplicateCreate || '',
+                        canonicalId: button.dataset.hordeCandidateDuplicateCanonical || '', choice
+                    });
+                    overlay.remove();
+                    makeToast('success', message, 'ScenePulse review');
+                } catch (error) {
+                    button.disabled = false;
+                    makeToast('error', error?.message || error, 'ScenePulse review');
+                }
+            }));
+        };
+        bindDuplicateResolution('[data-horde-candidate-duplicate-link]', 'link', 'Identity link is awaiting your explicit confirmation.');
+        bindDuplicateResolution('[data-horde-candidate-duplicate-create]', 'create', 'Separate record creation is awaiting your explicit confirmation.');
         const bindQuestTranslation = (selector, choice, message) => {
             overlay.querySelectorAll(selector).forEach(button => button.addEventListener('click', async () => {
                 button.disabled = true;
