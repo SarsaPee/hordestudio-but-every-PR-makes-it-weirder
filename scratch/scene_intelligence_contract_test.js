@@ -119,6 +119,7 @@ const acceptedRefresh = lastFunction('refreshAcceptedScenePulseProjection', 'asy
 const snapshotRawEnvelope = lastFunction('sidecarReaderSnapshotRawEnvelope');
 const candidateEligibility = lastFunction('scenePulseCandidatePromotionEligibility');
 const candidateCharacterEvidence = lastFunction('scenePulseCharacterEvidenceForCandidate');
+const controlledCandidatePredicate = lastFunction('scenePulseCandidateIsControlledCharacter');
 const candidatePromotionDraft = lastFunction('scenePulseCandidatePromotionDraft');
 const candidateStage = lastFunction('stageScenePulseCandidateForWorldReview', 'async function');
 const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async function');
@@ -542,6 +543,11 @@ assert.match(candidateStage, /scenePulseSpecialist/, 'the promotion bridge must 
 assert.match(candidateStage, /scenePulseGoals/, 'the promotion bridge must retain source needs and goals for explicit graduation');
 assert.match(candidateCharacterEvidence, /matches\.length !== 1/, 'a candidate may adopt a same-packet card only through a unique source match');
 assert.match(candidateCharacterEvidence, /scenePulseCharacter/, 'candidate graduation must retain the complete source-character evidence seam');
+assert.match(app, /function scenePulseCharacterCandidatesFromCards/, 'stable source cards must retain a pre-canonical candidate route when the Reader omits its optional candidate array');
+assert.match(app, /accepted_scenepulse_character_card/, 'source-card candidate evidence must retain its ScenePulse provenance');
+assert.match(app, /explicitCanonicalId/, 'a source card with an explicit canonical ID must not be recast as a new candidate');
+assert.match(acceptedReaderRefresh, /recordSidecarReaderCandidates\(world, sess, packet, turn, snapshot\.id\)/, 'an accepted native ScenePulse refresh must publish its source-only character candidate handoffs');
+assert.match(app, /controlled_player_candidate_exclusion/, 'the controlled player must never remain in the ScenePulse promotion lane');
 assert.match(candidatePromotionDraft, /fertStatus/, 'specialist source fields must survive the explicit graduation draft');
 assert.match(promotionAppearance, /scenePulseObservedState/, 'graduated specialist state must retain observed-source provenance');
 assert.match(promotionAppearance, /!String\(canonical\.goal/, 'a ScenePulse goal may seed only an otherwise empty World goal');
@@ -596,6 +602,39 @@ assert.equal(vm.runInNewContext(`${candidateCharacterEvidence}\nscenePulseCharac
     semanticInterpretation: { scenePulse: { characters: [{ name: 'Mira' }, { name: 'Mira' }] } }
 })}, ${JSON.stringify({ label: 'Mira' })})`, candidateCharacterEvidenceContext), null,
     'ambiguous source character display names must never supply a graduation record');
+
+const sourceCardCandidateContext = {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+};
+const sourceCardCandidate = vm.runInNewContext(`${[
+    lastFunction('scenePulseCharacterCardIdentity'),
+    lastFunction('scenePulseCharacterCardEvidence'),
+    lastFunction('scenePulseCharacterCardHistory'),
+    lastFunction('scenePulseCharacterCandidatesFromCards')
+].join('\n')}\nscenePulseCharacterCandidatesFromCards(${JSON.stringify({
+    scenePulse: { characters: [{ characterId: 'cand_mira', name: 'Mira', role: 'Courier', outfit: 'rain-dark coat', immediateNeed: 'Deliver the letter', longTermGoal: 'Clear her name' }] }
+})}, ${JSON.stringify({
+    readerCandidates: [], readerSnapshots: [{ status: 'accepted_historical', settlementStatus: 'settled', turnId: 'turn_1', id: 'snapshot_1', envelope: { scenePulse: { characters: [{ characterId: 'cand_mira', name: 'Mira', role: 'Courier' }] } } }]
+})}, ${JSON.stringify({ id: 'turn_2' })}, 'snapshot_2')`, sourceCardCandidateContext);
+assert.equal(sourceCardCandidate.length, 1, 'a stable accepted ScenePulse card must produce a reviewable source candidate if the Reader omitted candidateStructures');
+assert.deepEqual(JSON.parse(JSON.stringify(sourceCardCandidate[0].sourceTurnIds)), ['turn_1', 'turn_2'], 'source-card candidates must retain repeated accepted turn evidence without a registry lookup');
+assert.equal(sourceCardCandidate[0].details.outfit, 'rain-dark coat', 'source-card candidate fallback must retain rich presentation evidence');
+assert.equal(vm.runInNewContext(`${[
+    lastFunction('scenePulseCharacterCardIdentity'),
+    lastFunction('scenePulseCharacterCardEvidence'),
+    lastFunction('scenePulseCharacterCardHistory'),
+    lastFunction('scenePulseCharacterCandidatesFromCards')
+].join('\n')}\nscenePulseCharacterCandidatesFromCards(${JSON.stringify({
+    scenePulse: { characters: [{ characterId: 'ent_mira', canonicalId: 'ent_mira', name: 'Mira' }] }
+})}, { readerCandidates: [], readerSnapshots: [] }, { id: 'turn_2' }, 'snapshot_2').length`, sourceCardCandidateContext), 0,
+    'an explicitly canonical source card must not create a duplicate candidate bridge');
+
+assert.equal(vm.runInNewContext(`${controlledCandidatePredicate}\nscenePulseCandidateIsControlledCharacter(${JSON.stringify({ candidateType: 'character', candidateId: 'player_alex', label: 'Alex' })}, { id: 'player_alex', names: new Set(['alex']) })`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), Set
+}), true, 'the controlled player must not surface as a ScenePulse graduation candidate');
+assert.equal(vm.runInNewContext(`${controlledCandidatePredicate}\nscenePulseCandidateIsControlledCharacter(${JSON.stringify({ candidateType: 'character', candidateId: 'cand_charlotte', label: 'Charlotte' })}, { id: 'player_alex', names: new Set(['alex']) })`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), Set
+}), false, 'a scene NPC with another stable ID must remain reviewable');
 
 const candidatePromotionDraftContext = {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)

@@ -16365,14 +16365,134 @@ function scenePulseCharacterEvidenceForCandidate(readerPacket, candidate = {}) {
     return Object.values(evidence).some(value => Array.isArray(value) ? value.length : value) ? evidence : null;
 }
 
+// A complete ScenePulse character card already has a stable source identity.
+// Providers occasionally omit the parallel candidateStructures array to save
+// tokens, which must not make that card disappear from Horde's explicit
+// review scaffold.  Derive the *pre-canonical* candidate from the accepted
+// source card in that narrow case.  This deliberately never consults a World
+// record or treats a display name as an identity match: an explicitly supplied
+// canonical ID stays out of this bridge, and an id-less card stays ScenePulse
+// presentation only.
+function scenePulseCharacterCardIdentity(card = {}) {
+    const source = isPlainObject(card) ? card : {};
+    return [source.candidateId, source.candidate_id, source.characterId,
+        source.character_id, source.id, source.subjectRef, source.subject_ref]
+        .map(value => String(value || '').trim()).find(Boolean) || '';
+}
+
+function scenePulseCharacterCardEvidence(card = {}, sourceTurnId = '', readerSnapshotId = '') {
+    const source = isPlainObject(card) ? card : {};
+    const text = [source.role, source.immediateNeed, source.shortTermGoal,
+        source.longTermGoal, source.notableDetails]
+        .map(value => String(value || '').trim()).filter(Boolean).join(' · ').slice(0, 1800);
+    return {
+        source: 'accepted_scenepulse_character_card', sourceTurnId: String(sourceTurnId || '').slice(0, 180),
+        readerSnapshotId: String(readerSnapshotId || '').slice(0, 180), text
+    };
+}
+
+function scenePulseCharacterCardHistory(protocol, candidateId = '') {
+    const identity = String(candidateId || '').trim();
+    if (!identity) return [];
+    return (protocol?.readerSnapshots || [])
+        .filter(snapshot => ['active', 'accepted_historical'].includes(String(snapshot?.status || ''))
+            && snapshot?.settlementStatus === 'settled')
+        .map(snapshot => {
+            const cards = Array.isArray(snapshot?.envelope?.scenePulse?.characters)
+                ? snapshot.envelope.scenePulse.characters : [];
+            const card = cards.find(item => isPlainObject(item)
+                && scenePulseCharacterCardIdentity(item) === identity) || null;
+            if (!card) return null;
+            return {
+                sourceTurnId: String(snapshot?.turnId || '').trim(), readerSnapshotId: String(snapshot?.id || '').trim(),
+                card, evidence: scenePulseCharacterCardEvidence(card, snapshot?.turnId, snapshot?.id)
+            };
+        }).filter(Boolean).slice(-30);
+}
+
+function scenePulseCharacterCandidatesFromCards(readerPacket, protocol, turnRecord, snapshotId = '', rawCandidates = []) {
+    const scenePulse = readerPacket?.semanticInterpretation?.scenePulse || readerPacket?.scenePulse || {};
+    const cards = Array.isArray(scenePulse?.characters) ? scenePulse.characters.filter(isPlainObject).slice(0, 80) : [];
+    const rawIds = new Set((Array.isArray(rawCandidates) ? rawCandidates : []).filter(isPlainObject).flatMap(candidate => [
+        candidate.candidateId, candidate.candidate_id, candidate.characterId, candidate.character_id,
+        candidate.id, candidate.subjectRef, candidate.subject_ref
+    ]).map(value => String(value || '').trim()).filter(Boolean));
+    const knownIds = new Set((protocol?.readerCandidates || []).flatMap(candidate => [
+        candidate?.candidateId, candidate?.canonicalMatchId
+    ]).map(value => String(value || '').trim()).filter(Boolean));
+    return cards.map(card => {
+        const candidateId = scenePulseCharacterCardIdentity(card);
+        const label = String(card?.name || '').trim().slice(0, 240);
+        const explicitCanonicalId = String(card?.canonicalId || card?.canonical_id || '').trim();
+        if (!candidateId || !label || card?._isPrimary === true || explicitCanonicalId || rawIds.has(candidateId) || knownIds.has(candidateId)) return null;
+        const history = scenePulseCharacterCardHistory(protocol, candidateId);
+        const sourceTurnIds = [...new Set([...history.map(entry => entry.sourceTurnId), String(turnRecord?.id || '')]
+            .map(value => String(value || '').trim()).filter(Boolean))].slice(-30);
+        const sourceEvidence = [...history.map(entry => entry.evidence), scenePulseCharacterCardEvidence(card, turnRecord?.id, snapshotId)]
+            .filter(entry => entry.sourceTurnId || entry.text).slice(-24);
+        return {
+            candidateId, candidateType: 'character', label, role: String(card?.role || '').trim().slice(0, 180),
+            description: [card?.role, card?.immediateNeed, card?.shortTermGoal, card?.longTermGoal, card?.notableDetails]
+                .map(value => String(value || '').trim()).filter(Boolean).join('\n').slice(0, 2400),
+            presence: 'active', details: {
+                hair: String(card?.hair || '').trim().slice(0, 600), face: String(card?.face || '').trim().slice(0, 600),
+                outfit: String(card?.outfit || '').trim().slice(0, 1200), posture: String(card?.posture || '').trim().slice(0, 400),
+                proximity: String(card?.proximity || '').trim().slice(0, 400), notableDetails: String(card?.notableDetails || '').trim().slice(0, 1200)
+            },
+            clothingDescription: String(card?.outfit || '').trim().slice(0, 1200),
+            sourceTurnIds, evidence: sourceEvidence
+        };
+    }).filter(Boolean);
+}
+
+// The controlled player may have a source card and an evidence-scoped
+// character reading, but is never a pre-canonical ScenePulse candidate. This
+// is an exclusion guard, not an identity lookup: it prevents an accidental
+// self-promotion route while leaving the player card in the foreground.
+function scenePulseControlledCharacterReference(world, sess) {
+    const id = String(sess?.controlledEntityId || sess?.sidecar?.activeControlledEntityId || '').trim();
+    const entity = id ? (world?.entities || []).find(item => String(item?.id || '') === id) : null;
+    const names = new Set([entity?.name, sess?.playerIdentity?.name, sess?.playerName]
+        .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+    return { id, names };
+}
+
+function scenePulseCandidateIsControlledCharacter(candidate = {}, controlled = {}) {
+    const source = isPlainObject(candidate) ? candidate : {};
+    const type = String(source.candidateType || source.candidate_type || source.type || '').trim().toLowerCase();
+    if (type && !['character', 'entity', 'npc', 'person'].includes(type)) return false;
+    const controlledId = String(controlled?.id || '').trim();
+    const ids = [source.candidateId, source.candidate_id, source.characterId, source.character_id,
+        source.subjectRef, source.subject_ref, source.canonicalMatchId, source.canonical_match_id, source.canonicalId, source.canonical_id]
+        .map(value => String(value || '').trim()).filter(Boolean);
+    if (controlledId && ids.includes(controlledId)) return true;
+    const label = String(source.label || source.name || '').trim().toLowerCase();
+    return !!label && controlled?.names instanceof Set && controlled.names.has(label);
+}
+
 // Pre-canonical structures live beside reader snapshots. They are deliberately
 // not written through the world reducer: a bartender, room, outfit, prop or
 // vehicle can be useful to the next scene before it has earned a canonical ID.
 function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, snapshotId = '') {
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol || !turnRecord || !readerPacket) return [];
-    const raw = readerPacket.candidateStructures || readerPacket.candidates || readerPacket.semanticInterpretation?.candidateStructures || [];
-    const candidates = window.HordeSidecarHooks?.mergeReaderCandidates?.(protocol, raw, {
+    const controlled = scenePulseControlledCharacterReference(world, sess);
+    const raw = (readerPacket.candidateStructures || readerPacket.candidates || readerPacket.semanticInterpretation?.candidateStructures || [])
+        .filter(candidate => !scenePulseCandidateIsControlledCharacter(candidate, controlled));
+    // A prior packet may have carried the player despite the Reader contract.
+    // Retire that derived record rather than letting it appear as an identity
+    // handoff or persist a self-promotion option after the source refresh.
+    (protocol.readerCandidates || []).filter(candidate => scenePulseCandidateIsControlledCharacter(candidate, controlled)).forEach(candidate => {
+        candidate.status = 'superseded';
+        candidate.promotionDisposition = 'controlled_player_excluded';
+        candidate.promotionProvenance = { source: 'controlled_player_candidate_exclusion', at: new Date().toISOString() };
+    });
+    // Candidate structures are the primary Reader route. Source-card fallback
+    // is only used for a stable, non-canonical card the Reader actually
+    // supplied in this same accepted packet; it never imports a Horde registry
+    // record to make ScenePulse look more complete.
+    const sourceCardCandidates = scenePulseCharacterCandidatesFromCards(readerPacket, protocol, turnRecord, snapshotId, raw);
+    const candidates = window.HordeSidecarHooks?.mergeReaderCandidates?.(protocol, [...raw, ...sourceCardCandidates], {
         sourceTurnId: turnRecord.id,
         sourceTakeId: turnRecord.takeId || '',
         sourceRevisionId: turnRecord.revisionId || '',
@@ -16380,7 +16500,15 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
         attemptId: turnRecord.settledAttemptId || turnRecord.currentAttemptId || '',
         settlementId: turnRecord.settlementId || '',
     }) || [];
-    candidates.forEach(candidate => {
+    const sourceCards = new Map((readerPacket?.semanticInterpretation?.scenePulse?.characters || readerPacket?.scenePulse?.characters || [])
+        .filter(isPlainObject).map(card => [scenePulseCharacterCardIdentity(card), card]).filter(([identity]) => identity));
+    // Include earlier source-derived candidates so their stable source card
+    // keeps collecting settled evidence on a later delta without overwriting
+    // a promotion/match decision with a new `derived` status.
+    const sourceCandidates = [...new Map([...candidates, ...(protocol.readerCandidates || []).filter(candidate => sourceCards.has(String(candidate?.candidateId || '')))]
+        .map(candidate => [String(candidate?.candidateId || ''), candidate])).values()];
+    sourceCandidates.forEach(candidate => {
+        const sourceCard = sourceCards.get(String(candidate?.candidateId || '')) || null;
         const sourceCharacter = candidate.candidateType === 'character'
             ? scenePulseCharacterEvidenceForCandidate(readerPacket, candidate) : null;
         if (sourceCharacter) {
@@ -16400,6 +16528,13 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
             candidate.clothingDescription = candidate.clothingDescription || sourceCharacter.outfit;
             candidate.scenePulseCharacter = safeJsonClone(sourceCharacter);
         }
+        if (sourceCard) {
+            const history = scenePulseCharacterCardHistory(protocol, candidate.candidateId);
+            candidate.sourceTurnIds = [...new Set([...(candidate.sourceTurnIds || []), ...history.map(entry => entry.sourceTurnId), turnRecord.id]
+                .map(value => String(value || '').trim()).filter(Boolean))].slice(-30);
+            candidate.evidence = [...(candidate.evidence || []), ...history.map(entry => entry.evidence), scenePulseCharacterCardEvidence(sourceCard, turnRecord.id, snapshotId)]
+                .filter(entry => entry?.sourceTurnId || entry?.text).slice(-24);
+        }
         candidate.sourceSceneId = turnRecord.sceneId || protocol.activeSceneId || '';
         candidate.sourceSequenceId = turnRecord.sequenceId || protocol.activeSequenceId || '';
         candidate.readerSnapshotId = snapshotId || candidate.readerSnapshotId || '';
@@ -16416,7 +16551,7 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
     // Candidate records are one input to the projection, not the projection
     // itself.  Publication assembles the complete dimensional scene view only
     // once this attempt has settled.
-    return candidates;
+    return sourceCandidates;
 }
 
 /*
@@ -18204,6 +18339,11 @@ function acceptSidecarReaderRefresh(world, sess, refreshId) {
     });
     if (!snapshot) throw new Error('Could not stage the accepted Reader refresh.');
     activateSidecarReaderSnapshot(world, sess, snapshot.id, turn.id);
+    // A focused native ScenePulse refresh is still an accepted Reader packet.
+    // Publish its scene-local candidates through the same narrow source-card
+    // bridge as an authored settlement; otherwise a fully rendered refreshed
+    // character card could never reach explicit Horde review.
+    recordSidecarReaderCandidates(world, sess, packet, turn, snapshot.id);
     const projection = buildSidecarSceneProjection(world, sess, protocol, {
         snapshotId: snapshot.id, turn, frame: turn.postFrame || buildWorldSceneFrame(world, sess)
     });
