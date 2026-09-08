@@ -183,6 +183,7 @@ assert.match(readerPass, /COMPLETION BUDGET — HARD/, 'the Reader must favor a 
 assert.match(readerPass, /Reader compact recovery/, 'a completion-capped Reader response must receive one bounded compact reread of the same beat');
 assert.match(readerPass, /relationship\.meterDeltas as signed numeric changes/, 'Reader relationship updates must use compact signed meter deltas after their baseline');
 assert.match(readerPass, /missing any of those five meters is also unbaselined/, 'an incomplete legacy relationship must receive a full visible meter baseline before delta-only updates begin');
+assert.match(readerPass, /SCENEPULSE ACTIVE RELATIONSHIP COVERAGE/, 'an active authored exchange must populate a real ScenePulse relationship instead of leaving a source-generated unknown stub');
 assert.match(lastFunction('retrySidecarSceneUpdate', 'async function'), /reusableReaderSnapshot/, 'retry may reuse only Reader evidence which crossed the snapshot boundary');
 assert.match(normalizer, /npcRelationshipGraph/, 'Reader normalization must retain the compact NPC graph beside ScenePulse fields');
 assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache updates must honor nested delta-field provenance');
