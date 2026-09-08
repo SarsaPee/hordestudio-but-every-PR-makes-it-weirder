@@ -217,6 +217,10 @@ export function getCachedGraph() {
     return {
         edges: Array.isArray(cache.edges) ? cache.edges : [],
         organizations: Array.isArray(cache.organizations) ? cache.organizations : [],
+        // Worlds V2 may supply this exact source cache from its one settled
+        // Sidecar Reader pass. Existing ScenePulse callers ignore the extra
+        // provenance field; the source overlay can disclose it when present.
+        source: typeof cache.source === 'string' ? cache.source : '',
     };
 }
 
@@ -683,6 +687,29 @@ export async function generateGraph() {
         };
         _setCache(cache);
         return { edges: cache.edges, organizations: cache.organizations };
+    }
+
+    // Worlds V2 compatibility scaffold: retain the source action and graph
+    // renderer, but route its inference request through the host's already
+    // authoritative semantic Reader. This avoids a competing ScenePulse
+    // quiet-prompt call while letting the foreground source feature remain
+    // whole and visibly Reader-derived. Ordinary ScenePulse installations do
+    // not expose this capability and continue through the source path below.
+    let worldsReaderGraph = null;
+    try { worldsReaderGraph = SillyTavern.getContext()?.requestScenePulseRelationshipGraph; } catch {}
+    if (typeof worldsReaderGraph === 'function') {
+        const supplied = await worldsReaderGraph();
+        const cache = {
+            fingerprint: _fingerprint(snap),
+            generatedAt: Date.now(),
+            edges: Array.isArray(supplied?.edges) ? supplied.edges : [],
+            organizations: Array.isArray(supplied?.organizations) ? supplied.organizations : [],
+            source: 'sidecar_reader',
+            sourceSnapshotId: String(supplied?.sourceSnapshotId || ''),
+            sourceTurnId: String(supplied?.sourceTurnId || ''),
+        };
+        _setCache(cache);
+        return { edges: cache.edges, organizations: cache.organizations, source: cache.source };
     }
 
     let userName = 'You';

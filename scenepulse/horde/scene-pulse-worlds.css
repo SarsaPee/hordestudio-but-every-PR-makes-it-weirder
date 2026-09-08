@@ -235,6 +235,7 @@
 #world-sidecar-workspace .sp-web-fixture-note { margin: auto 2px 2px; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); line-height: 1.35; }
 #world-sidecar-workspace .sp-web-detail { margin: 0 12px 12px; padding: 9px; border: 1px solid var(--sp-border); border-radius: 6px; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); }
 #world-sidecar-workspace .sp-web-footer, #world-sidecar-workspace .sp-browse-container footer { padding: 7px 12px; border-top: 1px solid var(--sp-border); color: var(--sp-text-dim); font-size: var(--sp-fs-xs); text-align: center; }
+#world-sidecar-workspace .sp-web-source-note, #sp-worlds-overlay-root .sp-web-source-note { display: inline-flex; align-items: center; gap: 5px; border: 1px solid color-mix(in srgb,var(--sp-accent,#4db8a4) 42%,transparent); border-radius: 999px; padding: 2px 7px; color: var(--sp-accent,#4db8a4); background: color-mix(in srgb,var(--sp-accent,#4db8a4) 9%,transparent); font: 700 9px/1.25 var(--sp-font-mono,monospace); letter-spacing: .045em; text-transform: uppercase; }
 
 #world-sidecar-workspace .sp-diff-tabs, #world-sidecar-workspace .sp-profile-tabs { display: flex; gap: 3px; padding: 8px 12px; border-bottom: 1px solid var(--sp-border); overflow-x: auto; }
 #world-sidecar-workspace .sp-diff-tabs button, #world-sidecar-workspace .sp-profile-tabs button { border: 1px solid transparent; border-radius: 5px; padding: 4px 6px; background: transparent; color: var(--sp-text-dim); white-space: nowrap; font: inherit; font-size: var(--sp-fs-xs); }
@@ -490,6 +491,15 @@
 .sp-horde-candidate-actions button:hover { border-color: var(--sp-accent,#4db8a4); background: color-mix(in srgb,var(--sp-accent,#4db8a4) 18%,transparent); }
 .sp-horde-candidate-actions button[disabled] { cursor: wait; opacity: .55; }
 .sp-horde-candidate-actions .sp-horde-candidate-secondary { border-color: var(--sp-border-strong,#38515b); background: transparent; color: var(--sp-text-dim,#92a1a7); }
+.sp-horde-graph-review { display: grid; gap: 7px; margin: 0; border-bottom: 1px solid var(--sp-border,#29373d); padding: 11px 16px 13px; background: rgba(61,102,123,.06); }
+.sp-horde-graph-review > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sp-horde-graph-review > header strong { color: var(--sp-text-bright,#f0f5f7); font: 700 10px/1.2 var(--sp-font-mono,monospace); letter-spacing: .06em; text-transform: uppercase; }
+.sp-horde-graph-review > header span { border: 1px solid color-mix(in srgb,#93aee8 42%,transparent); border-radius: 999px; padding: 2px 5px; color: #a8bae9; background: rgba(147,174,232,.1); font: 700 8px/1 var(--sp-font-mono,monospace); letter-spacing: .04em; text-transform: uppercase; }
+.sp-horde-graph-review.is-ready > header span { border-color: color-mix(in srgb,#71cb9a 48%,transparent); color: #8cdda9; background: rgba(113,203,154,.1); }
+.sp-horde-graph-review p { max-width: 860px; margin: 0; color: var(--sp-text-dim,#92a1a7); font-size: 10px; line-height: 1.4; }
+.sp-horde-graph-review details { width: fit-content; max-width: 100%; color: var(--sp-text-dim,#92a1a7); font: 700 9px/1.35 var(--sp-font-mono,monospace); letter-spacing: .025em; }
+.sp-horde-graph-review summary { cursor: pointer; }
+.sp-horde-graph-review pre { max-height: 180px; max-width: min(860px,100%); margin: 6px 0 0; overflow: auto; border: 1px solid var(--sp-border,#29373d); border-radius: 5px; padding: 8px; background: rgba(0,0,0,.18); color: var(--sp-text,#d6e0e4); font: 10px/1.4 var(--sp-font-mono,monospace); white-space: pre-wrap; }
 .sp-horde-command-overlay { position: fixed; inset: 0; z-index: 100115; display: grid; place-items: center; padding: 24px; background: rgba(5,7,12,.8); backdrop-filter: blur(7px); }
 .sp-horde-command-dialog { display: flex; flex-direction: column; width: min(1080px,calc(100vw - 48px)); max-height: min(760px,calc(100vh - 48px)); overflow: hidden; border: 1px solid var(--sp-border-strong,#38515b); border-radius: 10px; background: var(--sp-bg-solid,#15181d); box-shadow: 0 28px 90px rgba(0,0,0,.62); color: var(--sp-text,#d6e0e4); }
 .sp-horde-command-dialog > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--sp-border,#29373d); }

@@ -16530,6 +16530,9 @@ In delta mode include baseSnapshotId exactly equal to the supplied previous acce
 [SCENEPULSE RICH SCENE DATA]
 Also return semantic_interpretation.scenePulse for this same beat. Its full shape is {time,date,elapsed,temporalIntent,location,weather,temperature,sceneTopic,sceneMood,sceneInteraction,sceneTension,sceneSummary,soundEnvironment,witnesses,charactersPresent,northStar,mainQuests,sideQuests,relationships,characters,plotBranches}. Keep it rich enough to drive the source ScenePulse interface, not a generic status card. characters[] items may include name, aliases, archetype, role, innerThought, immediateNeed, shortTermGoal, longTermGoal, hair, face, outfit, posture, proximity, notableDetails, inventory, fertStatus, fertNotes. For each conscious scene-relevant NPC, innerThought is one to three first-person, present-tense sentences in that character's own voice. It must be grounded in this beat and established character grounding; it must not contain provenance labels, confidence scores, technical caveats, fabricated biography, unseen events, or a claim of the controlled player's unexpressed thoughts. Omit rather than pad an unsupported thought. relationships[] use ScenePulse's name, relType, relPhase, timeTogether, milestone, affection/trust/desire/stress/compatibility and labels. mainQuests and sideQuests describe only established durable objectives; an empty list is valid. plotBranches are suggestions, not events: when the visible beat supports creative continuation, return exactly one grounded direction for each of dramatic, intense, comedic, twist, and exploratory; otherwise return []. scenePulse is a presentation projection of this response, not persistent canon or a second state store.
 
+[SCENEPULSE NPC RELATIONSHIP WEB]
+When two or more non-player names are currently present in scenePulse.characters and the authored beat or established accepted Reader evidence supports their mutual structure, return semantic_interpretation.npcRelationshipGraph as one compact whole cache: {roster:[exact current scenePulse.characters names],edges:[{from,to,type,label,direction,evidence}],organizations:[{name,kind,members}]}. This drives ScenePulse's source Relationship Web only; it is a Reader-derived scene interpretation, never a canonical relationship mutation. roster must contain the complete current non-player ScenePulse character roster using exactly those display names. Every edge endpoint and organization member must be in roster; never include the controlled player, a registry-only person, or a guessed off-screen name. type is one of family, friend, ally, rival, antagonist, mentor, authority, lover, lust, acquaintance, unknown; direction is from-to or reciprocal; label is a compact grounded phrase. Emit the graph only when it changes, except a focused relationships refresh must return it even when the evidence-backed result is an empty edges array. Use npcRelationshipGraph:null only to explicitly clear a previously accepted graph. Do not make a second graph-generation call: this one Reader pass is the graph's only inference path.
+
 [SCENEPULSE CUSTOM PANEL SCHEMA]
 The following is user-visible ScenePulse configuration, not story evidence. Its fields are flat keys directly inside scenePulse; use the exact keys and types if (and only if) this beat or established accepted Reader evidence supports a current value. Do not initialise a health, mana, reputation, enum, list, or number merely because a configured field exists. In delta mode, emit only a changed configured key; omit it when unchanged and use scenePulse.clearFields only for an explicit supported clearing. For a list value, send the full new list when it changes. In full mode, include supported configured values and omit unsupported ones. ${JSON.stringify(customPanelSchema)}
 
@@ -16543,7 +16546,7 @@ The user explicitly requested fresh Inner Thoughts for this already-authored bea
         dashboard: 'dashboard environment (time, date, location, weather and temperature)',
         scene: 'Scene Details (summary, topic, mood, interaction, tension, sound and witnesses)',
         quests: 'Quest Journal and North Star',
-        relationships: 'relationship dimensions, labels and current phase',
+        relationships: 'relationship dimensions, labels, current phase, and the Reader-derived NPC relationship web',
         characters: 'current-scene character cards, appearance, needs, goals and grounded thoughts',
         branches: 'Story Ideas / plot branches'
     }[String(options.scenePulseFocus || '')] || '';
@@ -16573,7 +16576,7 @@ Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}). Thi
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
-    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.`;
+    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse, npcRelationshipGraph. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.`;
     const sourcePresetRole = sourceProfileContext.role || (['system', 'user', 'assistant'].includes(sourcePreset?.systemPromptRole) ? sourcePreset.systemPromptRole : 'system');
     const messages = [{ role: sourcePresetRole, content: readerPrompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
@@ -16765,6 +16768,48 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
     };
 }
 
+// The vendored ScenePulse relationship web expects one small graph cache:
+// named NPC-to-NPC edges plus optional organizations.  It is deliberately a
+// Reader interpretation beside the source tracker, not a World relationship
+// mutation.  Keep this boundary compact and validate it before it can reach
+// the native source overlay: a graph may only name people the Reader itself
+// supplied in its explicitly declared source roster.
+function normalizeSidecarNpcRelationshipGraph(raw) {
+    if (!isPlainObject(raw)) return null;
+    const name = value => String(value || '').trim().replace(/\s+/g, ' ').slice(0, 180);
+    const edgeTypes = new Set(['family', 'friend', 'ally', 'rival', 'antagonist', 'mentor', 'authority', 'lover', 'lust', 'acquaintance', 'unknown']);
+    const roster = [...new Set((Array.isArray(raw.roster) ? raw.roster : (Array.isArray(raw.characters) ? raw.characters : []))
+        .map(item => name(isPlainObject(item) ? (item.name || item.label) : item))
+        .filter(Boolean))].slice(0, 48);
+    const rosterByLower = new Map(roster.map(item => [item.toLowerCase(), item]));
+    const edges = (Array.isArray(raw.edges) ? raw.edges : []).map(item => {
+        if (!isPlainObject(item)) return null;
+        const from = rosterByLower.get(name(item.from || item.source || item.subject).toLowerCase()) || '';
+        const to = rosterByLower.get(name(item.to || item.target).toLowerCase()) || '';
+        const type = String(item.type || item.kind || 'unknown').trim().toLowerCase();
+        if (!from || !to || from.toLowerCase() === to.toLowerCase() || !edgeTypes.has(type)) return null;
+        return {
+            from, to, type,
+            label: name(item.label || item.summary || type).slice(0, 180),
+            direction: String(item.direction || '').toLowerCase() === 'reciprocal' ? 'reciprocal' : 'from-to',
+            evidence: String(item.evidence || item.reason || '').trim().slice(0, 900)
+        };
+    }).filter(Boolean).slice(0, 30);
+    const organizations = (Array.isArray(raw.organizations) ? raw.organizations : []).map(item => {
+        if (!isPlainObject(item)) return null;
+        const members = [...new Set((Array.isArray(item.members) ? item.members : [])
+            .map(member => rosterByLower.get(name(member).toLowerCase()) || '')
+            .filter(Boolean))].slice(0, 48);
+        const orgName = name(item.name || item.label).slice(0, 120);
+        if (!orgName || members.length < 2) return null;
+        return { name: orgName, kind: name(item.kind || 'group').slice(0, 48) || 'group', members };
+    }).filter(Boolean).slice(0, 24);
+    // A roster is the graph's compact consistency check.  Without it, an
+    // old delta could be rendered against a later source character list.
+    if (roster.length < 2) return null;
+    return { version: 1, roster, edges, organizations };
+}
+
 function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
     const source = isPlainObject(raw) ? raw : {};
     const semantic = isPlainObject(source.semanticInterpretation || source.semantic_interpretation) ? (source.semanticInterpretation || source.semantic_interpretation) : {};
@@ -16815,6 +16860,10 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         // a later delta never has to flatten thoughts, quest detail, meters,
         // or branch hooks back into a generic status summary.
         scenePulse: isPlainObject(value('scenePulse', 'scene_pulse', 'scenepulse')) ? safeJsonClone(value('scenePulse', 'scene_pulse', 'scenepulse')) : {},
+        // This is intentionally adjacent to scenePulse rather than inside
+        // it: the source relationship web consumes a native cache, while the
+        // graph remains a Reader-derived comparison surface, never canon.
+        npcRelationshipGraph: normalizeSidecarNpcRelationshipGraph(value('npcRelationshipGraph', 'npc_relationship_graph', 'scenePulseRelationshipGraph', 'scene_pulse_relationship_graph')),
         characterIntelligence,
         relationshipPostures: cleanList(value('relationshipPostures', 'relationship_postures', 'relationshipProposals', 'relationship_proposals'), 60),
         relationshipShifts: cleanList(value('relationshipShifts', 'relationship_shifts'), 60),
@@ -16849,7 +16898,7 @@ function parseSidecarReaderOutput(content, fallback = {}) {
     const declaredDelta = envelope.snapshotMode === 'delta'
         && (Object.prototype.hasOwnProperty.call(parsed, 'changed_fields') || Object.prototype.hasOwnProperty.call(parsed, 'changedFields')
             || Object.prototype.hasOwnProperty.call(parsed, 'coverage') || Object.prototype.hasOwnProperty.call(parsed, 'clear_fields') || Object.prototype.hasOwnProperty.call(parsed, 'clearFields'));
-    const hasMeaning = !!envelope.summary || hasScene || envelope.eventClaims.length || envelope.characterIntelligence.length || envelope.changes.length || Object.keys(envelope.coverage || {}).length > 0 || declaredDelta;
+    const hasMeaning = !!envelope.summary || hasScene || envelope.eventClaims.length || envelope.characterIntelligence.length || !!envelope.npcRelationshipGraph || envelope.changes.length || Object.keys(envelope.coverage || {}).length > 0 || declaredDelta;
     const valid = hasMeaning && (envelope.snapshotMode !== 'full' || hasScene || !!envelope.summary || envelope.characterIntelligence.length > 0);
     return {
         ...envelope, valid, error: valid ? '' : 'reader_empty_envelope',
@@ -16857,7 +16906,7 @@ function parseSidecarReaderOutput(content, fallback = {}) {
         proposedQuestions: Array.isArray(parsed.proposedQuestions || parsed.proposed_questions) ? (parsed.proposedQuestions || parsed.proposed_questions).slice(0, 20) : [],
         unresolved: envelope.unresolvedEvidence,
         timeEvidence: envelope.temporal,
-        semanticInterpretation: { scene: envelope.scene, location: envelope.location, presence: envelope.presence, environment: envelope.environment, scenePulse: envelope.scenePulse, characterIntelligence: envelope.characterIntelligence, events: envelope.eventClaims, candidateStructures: envelope.candidateStructures, durableProposals: envelope.durableProposals, relationshipProposals: envelope.relationshipProposals, provisionalCognition: envelope.provisionalCognition }
+        semanticInterpretation: { scene: envelope.scene, location: envelope.location, presence: envelope.presence, environment: envelope.environment, scenePulse: envelope.scenePulse, npcRelationshipGraph: envelope.npcRelationshipGraph, characterIntelligence: envelope.characterIntelligence, events: envelope.eventClaims, candidateStructures: envelope.candidateStructures, durableProposals: envelope.durableProposals, relationshipProposals: envelope.relationshipProposals, provisionalCognition: envelope.provisionalCognition }
     };
 }
 
@@ -17016,6 +17065,10 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
     const objectFields = ['temporal', 'canonicalReferences', 'location', 'presence', 'environment', 'scene', 'coverage', 'metadata'];
     objectFields.forEach(field => { if (providedField(field)) merged[field] = sidecarMergeReaderObject(prior[field], incoming[field], incoming.clearFields || []); });
     if (providedField('scenePulse')) merged.scenePulse = sidecarMergeScenePulse(prior.scenePulse, incoming.scenePulse);
+    // NPC graph updates are intentionally whole-cache replacements.  A
+    // partial edge patch would be less compact in practice and can leave a
+    // stale tie visible after a name/roster change.
+    if (providedField('npcRelationshipGraph')) merged.npcRelationshipGraph = safeJsonClone(incoming.npcRelationshipGraph);
     const arrayFields = ['characterIntelligence', 'requiredCharacterSubjects', 'relationshipPostures', 'relationshipShifts', 'eventClaims', 'candidateStructures', 'durableProposals', 'relationshipProposals', 'pressures', 'currentThreads', 'salientObjects', 'salientLocations', 'changes', 'unresolvedEvidence', 'validationWarnings', 'provisionalCognition', 'lookupProvenance', 'controlledCharacterEvidence', 'reconciliationFocus'];
     arrayFields.forEach(field => { if (providedField(field)) merged[field] = sidecarMergeReaderRecords(prior[field], incoming[field], { limit: field === 'characterIntelligence' ? 48 : 100 }); });
     const perSnapshotFields = new Set(['changedFields', 'clearFields', 'refreshIndex', 'baseSnapshotId', 'snapshotMode', 'sourceTurnId', 'sourceTakeId', 'sourceRevisionId', 'sourceAttemptId', 'visibleNarrationHash', 'handoffHash', 'profileRevision', 'promptRevision']);
@@ -19283,6 +19336,10 @@ function scenePulseAcceptedHandoff(world, sess) {
             deltaScenePulse: safeJsonClone(rawDelta),
             clearFields: Array.isArray(rawDelta.clearFields || rawDelta.clear_fields) ? safeJsonClone(rawDelta.clearFields || rawDelta.clear_fields) : [],
             replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? safeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : [],
+            // The graph travels beside this historical source projection so
+            // Inspect can show a Reader-derived web without treating it as a
+            // tracker field or a canonical relationship record.
+            npcRelationshipGraph: safeJsonClone(snapshot.envelope?.npcRelationshipGraph || null),
             // This lives beside the source tracker, never inside it. The
             // native panel remains a ScenePulse rendering; Inspect can show
             // whether a settled scene candidate has a parallel Horde review.
@@ -19301,6 +19358,7 @@ function scenePulseAcceptedHandoff(world, sess) {
         deltaScenePulse: safeJsonClone(deltaScenePulse),
         clearFields: Array.isArray(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) ? safeJsonClone(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) : [],
         replaceCollections: Array.isArray(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) ? safeJsonClone(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) : [],
+        npcRelationshipGraph: safeJsonClone(envelope.npcRelationshipGraph || null),
         history: safeJsonClone(history),
         readerPreset: safeJsonClone(readerPreset),
         candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
@@ -19405,6 +19463,7 @@ function exportScenePulseReaderHistory(world, sess) {
                 id: snapshot.id, createdAt: snapshot.createdAt, turnId: snapshot.turnId, mode: snapshot.envelope?.snapshotMode || 'delta',
                 changedFields: safeJsonClone(snapshot.envelope?.changedFields || []), compactScenePulseDelta: safeJsonClone(rawDelta),
                 scenePulse: safeJsonClone(snapshot.envelope?.scenePulse || {}), preset: safeJsonClone(snapshot.envelope?.metadata?.scenePulsePreset || null),
+                npcRelationshipGraph: safeJsonClone(snapshot.envelope?.npcRelationshipGraph || null),
                 usage: safeJsonClone(snapshot.envelope?.metadata?.usage || {})
             };
         })

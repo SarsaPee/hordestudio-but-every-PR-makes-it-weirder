@@ -53,6 +53,7 @@ const candidateStage = lastFunction('stageScenePulseCandidateForWorldReview', 'a
 const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async function');
 const impliedPromotion = lastFunction('promoteImpliedWorldRecord', 'async function');
 const promotionAppearance = lastFunction('applyScenePulsePromotionAppearance');
+const graphNormalizer = lastFunction('normalizeSidecarNpcRelationshipGraph');
 
 assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain semantic supplied-field provenance');
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
@@ -68,6 +69,11 @@ assert.match(app, /function scenePulseActiveSourceProfile\(/, 'the selected sour
 assert.match(app, /function scenePulseSourceProfilePromptContext\(/, 'the selected source Profile needs a constrained Reader prompt context');
 assert.match(readerPass, /sourceProfileContext\.instruction/, 'source Profile instructions must reach the Sidecar Reader');
 assert.match(readerPass, /scenePulseSourceProfile/, 'accepted Reader metadata must retain source Profile provenance');
+assert.match(readerPass, /SCENEPULSE NPC RELATIONSHIP WEB/, 'the one Sidecar Reader pass must own the source NPC graph interpretation');
+assert.match(readerPass, /Do not make a second graph-generation call/, 'the Reader contract must forbid an independent ScenePulse graph inference');
+assert.match(normalizer, /npcRelationshipGraph/, 'Reader normalization must retain the compact NPC graph beside ScenePulse fields');
+assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache updates must honor nested delta-field provenance');
+assert.match(acceptedHandoff, /npcRelationshipGraph/, 'accepted handoffs must retain Reader graph data beside the source tracker');
 
 assert.match(html, /scenepulse-source-runtime\.js/, 'native source runtime must be loaded before app.js');
 assert.match(panelMount, /HordeScenePulseSourceRuntime\.mount\(host, handoff\)/, 'World HUD must mount native source runtime');
@@ -118,6 +124,10 @@ assert.doesNotMatch(runtime, /generateTracker/, 'native source commands must not
 assert.match(runtime, /sourceProfiles: clone\(settings\?\.profiles \|\| \[\]\)/, 'source Profile edits must return through the settings bridge');
 assert.match(runtime, /refresh-scene-pulse/, 'source refresh controls must dispatch to Sidecar');
 assert.match(runtime, /#sp-thought-panel \.sp-tp-regen/, 'the body-level source Thoughts refresh must also cross the Reader boundary');
+assert.match(runtime, /sourceRelationshipGraphCache/, 'the source relationship web needs a roster-checked Sidecar cache seam');
+assert.match(runtime, /requestScenePulseRelationshipGraph/, 'native source graph generation must cross a named Reader boundary');
+assert.match(runtime, /npcRelationshipGraph: true/, 'the source relationship-web affordance must remain available in Worlds');
+assert.match(runtime, /Return ScenePulse history to the current accepted beat/, 'historical source views must not refresh or relabel the newest NPC graph');
 assert.match(runtime, /stage-story-idea/, 'source Story Idea controls must dispatch to Horde actions');
 assert.match(runtime, /commit-scenepulse-source-edit/, 'source edit saves must cross an auditable host boundary');
 assert.match(runtime, /persist-scenepulse-source-settings/, 'source preference saves must use a separate host boundary');
@@ -131,6 +141,13 @@ assert.match(sourceTimeline, /export function renderTimeline\(\)/, 'source timel
 assert.match(sourceWiki, /export function openCharacterWiki\(\)/, 'source Wiki must remain a full focused source view');
 assert.match(sourceWiki, /document\.body\.appendChild\(overlay\)/, 'source Wiki must retain viewport takeover behavior');
 assert.match(sourceWeb, /export function openRelationshipWeb\(entries\)/, 'source relationship graph must remain callable');
+assert.match(sourceWeb, /Reader-derived scene graph/, 'the source web must disclose a Sidecar Reader-derived cache');
+assert.match(sourceWeb, /Refresh NPC graph through Reader/, 'the source web must label its bridged generation route');
+assert.match(sourceWeb, /npcGraphSource = fresh\.source/, 'a refreshed source graph must retain its provenance');
+const sourceRelationshipGraph = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-graph.js');
+assert.match(sourceRelationshipGraph, /requestScenePulseRelationshipGraph/, 'vendored graph generation must prefer the Worlds Reader hook before provider dispatch');
+assert.match(sourceRelationshipGraph, /if \(typeof worldsReaderGraph === 'function'\) \{[\s\S]*?return \{ edges: cache\.edges, organizations: cache\.organizations, source: cache\.source \};[\s\S]*?\}\n\n    let userName/s,
+    'the Worlds Reader hook must return before the source quiet-prompt provider path begins');
 assert.match(sourceSlots, /ONLY return fields whose values CHANGED/, 'source delta contract must remain compact');
 assert.match(sourceSlots, /ALWAYS include: time, date, elapsed/, 'source delta contract must retain temporal continuity');
 assert.match(sourceMacros, /sp_relationships/, 'vendored macro vocabulary must retain relationship context');
@@ -205,6 +222,26 @@ const repeatedCandidate = vm.runInNewContext(`${candidateEligibilitySource}\nsce
 assert.equal(repeatedCandidate.ready, true, 'the same candidate recurring across settled turns should become ready for explicit promotion');
 const closedSceneCandidate = vm.runInNewContext(`${candidateEligibilitySource}\nscenePulseCandidatePromotionEligibility(${JSON.stringify({ scenes: [{ id: 'scene_1', status: 'closed' }] })}, ${JSON.stringify({ candidateType: 'location', label: 'Lantern Court', settlementStatus: 'settled', sourceTurnIds: ['turn_1'], sourceSceneId: 'scene_1' })})`, candidateEligibilityContext);
 assert.equal(closedSceneCandidate.ready, true, 'a closed source scene should be a valid review boundary for a local place');
+
+const graphContext = {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+};
+const normalizedGraph = vm.runInNewContext(`${graphNormalizer}\nnormalizeSidecarNpcRelationshipGraph(${JSON.stringify({
+    roster: ['Mira', 'Oren'],
+    edges: [
+        { from: 'mira', to: 'OREN', type: 'ally', label: 'shared escape plan', direction: 'reciprocal' },
+        { from: 'Mira', to: 'Unknown', type: 'friend', label: 'must be rejected' }
+    ],
+    organizations: [{ name: 'Lantern Crew', kind: 'crew', members: ['Mira', 'Oren', 'Unknown'] }]
+})})`, graphContext);
+assert.deepEqual(JSON.parse(JSON.stringify(normalizedGraph)), {
+    version: 1,
+    roster: ['Mira', 'Oren'],
+    edges: [{ from: 'Mira', to: 'Oren', type: 'ally', label: 'shared escape plan', direction: 'reciprocal', evidence: '' }],
+    organizations: [{ name: 'Lantern Crew', kind: 'crew', members: ['Mira', 'Oren'] }]
+}, 'NPC graph normalization must keep only declared roster names and compact source-safe fields');
+assert.equal(vm.runInNewContext(`${graphNormalizer}\nnormalizeSidecarNpcRelationshipGraph(${JSON.stringify({ roster: ['Mira'], edges: [] })})`, graphContext), null,
+    'a graph with fewer than two declared scene characters must remain absent rather than becoming a misleading cache');
 
 const sourceRuntimeContext = {
     window: {},

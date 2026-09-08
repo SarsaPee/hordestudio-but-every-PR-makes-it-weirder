@@ -813,11 +813,13 @@ export function openRelationshipWeb(entries) {
     let layoutMode = 'force';
     let npcEdges = [];
     let npcOrganizations = [];
+    let npcGraphSource = '';
     if (isGraphEnabled()) {
         const cached = getCachedGraph();
         if (cached) {
             npcEdges = cached.edges || [];
             npcOrganizations = cached.organizations || [];
+            npcGraphSource = cached.source || '';
         }
     }
     let focusedIdx = null;
@@ -1141,7 +1143,8 @@ export function openRelationshipWeb(entries) {
     overlay.className = 'sp-web-overlay';
     const graphEnabled = isGraphEnabled();
     const hasCache = graphEnabled && getCachedGraph() !== null;
-    const generateBtnLabel = hasCache ? t('Regenerate NPC graph') : t('Generate NPC graph');
+    const readerDerived = npcGraphSource === 'sidecar_reader';
+    const generateBtnLabel = readerDerived ? t('Refresh NPC graph through Reader') : (hasCache ? t('Regenerate NPC graph') : t('Generate NPC graph'));
     overlay.innerHTML = `<div class="sp-web-container">
         <div class="sp-web-header">
             <div class="sp-web-title">${t('Relationship Web')}</div>
@@ -1149,7 +1152,7 @@ export function openRelationshipWeb(entries) {
                 <button class="sp-web-labels-toggle sp-web-tb-active" title="${t('Toggle edge labels')}">${t('Labels')}</button>
                 <button class="sp-web-reset-btn" title="${t('Reset view (zoom + positions)')}">\u2921</button>
                 <button class="sp-web-layout-toggle" title="${t('Toggle layout (force/circular)')}">\u26B2</button>
-                ${graphEnabled ? `<button class="sp-web-generate-btn" title="${esc(generateBtnLabel)}">\u21BB ${t('NPC')}</button>` : ''}
+                ${graphEnabled ? `<button class="sp-web-generate-btn" title="${esc(generateBtnLabel)}">\u21BB ${readerDerived ? t('Reader') : t('NPC')}</button>` : ''}
                 <button class="sp-web-close">\u2715</button>
             </div>
         </div>
@@ -1157,7 +1160,7 @@ export function openRelationshipWeb(entries) {
             <div class="sp-web-svg-wrap"></div>
             ${_buildLegendHtml()}
         </div>
-        <div class="sp-web-footer"></div>
+        <div class="sp-web-footer">${readerDerived ? `<span class="sp-web-source-note">${t('Reader-derived scene graph')}</span>` : ''}</div>
     </div>`;
 
     // Close handlers
@@ -1236,13 +1239,16 @@ export function openRelationshipWeb(entries) {
                 if (fresh && Array.isArray(fresh.edges)) {
                     npcEdges = fresh.edges;
                     npcOrganizations = Array.isArray(fresh.organizations) ? fresh.organizations : [];
+                    npcGraphSource = fresh.source || '';
                 } else if (Array.isArray(fresh)) {
                     // Legacy shape — bare edge array
                     npcEdges = fresh;
                     npcOrganizations = [];
+                    npcGraphSource = '';
                 } else {
                     npcEdges = [];
                     npcOrganizations = [];
+                    npcGraphSource = '';
                 }
                 // Drop any stale org filter since the org list may have changed
                 activeOrgFilter = null;

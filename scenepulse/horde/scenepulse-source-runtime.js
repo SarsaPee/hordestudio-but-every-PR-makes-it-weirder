@@ -158,6 +158,11 @@
             deltaMode: true,
             deltaRefreshInterval: 15,
             promptMode: 'json',
+            // Keep the actual vendored Relationship Web affordance visible.
+            // In Worlds its generate action is intercepted by the narrow
+            // Sidecar Reader hook below; it never starts the source's own
+            // autonomous provider path.
+            npcRelationshipGraph: true,
             panels: {
                 dashboard: panels.dashboard !== false,
                 scene: panels.scene !== false,
@@ -302,6 +307,69 @@
         target[String(key)] = snapshot;
     }
 
+    // Mirror the vendored relationship-graph cache key exactly.  The source
+    // overlay will reject a cache whose roster does not describe the tracker
+    // it is showing, which is the desired scaffold behaviour: keep the
+    // graph absent until the source character field is genuinely supported.
+    function sourceRelationshipGraphFingerprint(tracker) {
+        const parts = [];
+        (Array.isArray(tracker?.characters) ? tracker.characters : []).forEach(character => {
+            const name = String(character?.name || '').trim();
+            if (!name) return;
+            const archetype = String(character?.archetype || '').trim().toLowerCase();
+            const role = String(character?.role || '').trim().toLowerCase().slice(0, 40);
+            parts.push(`${name.toLowerCase()}|${archetype}|${role}`);
+        });
+        parts.sort();
+        const joined = parts.join(';');
+        let hash = 5381;
+        for (let index = 0; index < joined.length; index += 1) hash = ((hash << 5) + hash + joined.charCodeAt(index)) | 0;
+        return (hash >>> 0).toString(36);
+    }
+
+    function sourceRelationshipGraphCache(handoff, tracker) {
+        const graph = plain(handoff?.npcRelationshipGraph) ? handoff.npcRelationshipGraph : null;
+        if (!graph) return null;
+        const normalizeName = value => String(value || '').trim().replace(/\s+/g, ' ').slice(0, 180);
+        const sourceRoster = [...new Set((Array.isArray(tracker?.characters) ? tracker.characters : [])
+            .map(character => normalizeName(character?.name)).filter(Boolean))];
+        const readerRoster = [...new Set((Array.isArray(graph.roster) ? graph.roster : [])
+            .map(normalizeName).filter(Boolean))];
+        const sourceByLower = new Map(sourceRoster.map(name => [name.toLowerCase(), name]));
+        if (sourceRoster.length < 2 || readerRoster.length !== sourceRoster.length
+            || readerRoster.some(name => !sourceByLower.has(name.toLowerCase()))) return null;
+        const edgeTypes = new Set(['family', 'friend', 'ally', 'rival', 'antagonist', 'mentor', 'authority', 'lover', 'lust', 'acquaintance', 'unknown']);
+        const edges = (Array.isArray(graph.edges) ? graph.edges : []).map(raw => {
+            if (!plain(raw)) return null;
+            const from = sourceByLower.get(normalizeName(raw.from).toLowerCase()) || '';
+            const to = sourceByLower.get(normalizeName(raw.to).toLowerCase()) || '';
+            const type = String(raw.type || '').trim().toLowerCase();
+            if (!from || !to || from.toLowerCase() === to.toLowerCase() || !edgeTypes.has(type)) return null;
+            return {
+                from, to, type,
+                label: normalizeName(raw.label || type).slice(0, 180),
+                direction: String(raw.direction || '').toLowerCase() === 'reciprocal' ? 'reciprocal' : 'from-to'
+            };
+        }).filter(Boolean).slice(0, 30);
+        const organizations = (Array.isArray(graph.organizations) ? graph.organizations : []).map(raw => {
+            if (!plain(raw)) return null;
+            const members = [...new Set((Array.isArray(raw.members) ? raw.members : [])
+                .map(member => sourceByLower.get(normalizeName(member).toLowerCase()) || '').filter(Boolean))].slice(0, 48);
+            const name = normalizeName(raw.name).slice(0, 120);
+            if (!name || members.length < 2) return null;
+            return { name, kind: normalizeName(raw.kind || 'group').slice(0, 48) || 'group', members };
+        }).filter(Boolean).slice(0, 24);
+        return {
+            fingerprint: sourceRelationshipGraphFingerprint(tracker), generatedAt: Date.now(),
+            // The source overlay displays this cache, but it remains visibly
+            // attributed to the Sidecar Reader and never writes Horde state.
+            source: 'sidecar_reader',
+            sourceSnapshotId: String(handoff?.provenance?.snapshotId || handoff?.id || ''),
+            sourceTurnId: String(handoff?.provenance?.turnId || ''),
+            edges, organizations
+        };
+    }
+
     function sourceMetadata(handoff) {
         const snapshots = {};
         const history = Array.isArray(handoff?.history) ? handoff.history : [];
@@ -336,6 +404,14 @@
         }
         const currentKey = Object.keys(snapshots).map(Number).sort((a, b) => a - b).at(-1);
         const current = snapshots[String(currentKey)] || {};
+        const latestHistory = history.at(-1) || null;
+        const graphCache = sourceRelationshipGraphCache({
+            ...handoff,
+            npcRelationshipGraph: latestHistory?.npcRelationshipGraph || handoff?.npcRelationshipGraph || null,
+            provenance: latestHistory?.turnId || latestHistory?.id
+                ? { ...(handoff?.provenance || {}), snapshotId: latestHistory?.id || handoff?.provenance?.snapshotId || '', turnId: latestHistory?.turnId || handoff?.provenance?.turnId || '' }
+                : handoff?.provenance
+        }, current);
         return {
             scenepulse: {
                 snapshots,
@@ -349,7 +425,8 @@
                 _spAliasesInitMigrated: true,
                 _spCharTrimMigrated: true,
                 _spNameCanonMigrated: true,
-                chatPanels: clone((handoff?.uiPreferences?.customPanels || []))
+                chatPanels: clone((handoff?.uiPreferences?.customPanels || [])),
+                ...(graphCache ? { relationshipGraph: graphCache } : {})
             },
             __hordeCurrentKey: currentKey,
             __hordeCurrentSnapshot: clone(current)
@@ -394,6 +471,31 @@
             saveChat: async () => {},
             setChatMessage: () => {},
             sendMessage: () => {},
+            // Vendored relationship-graph.js checks this narrow capability
+            // before its ordinary quiet-prompt path.  A click in the source
+            // Relationship Web therefore rereads the exact settled authored
+            // beat through Sidecar, then consumes the accepted graph cache.
+            // It is not a second ScenePulse model loop.
+            requestScenePulseRelationshipGraph: async () => {
+                const before = active();
+                if (!before || before.handoff?.status === 'accepted_fixture') {
+                    throw new Error('The sealed tutorial has no authored Reader graph. Open a settled ScenePulse handoff first.');
+                }
+                if (before.selectedHandoff?.provenance?.snapshotId
+                    && before.handoff?.provenance?.snapshotId
+                    && before.selectedHandoff.provenance.snapshotId !== before.handoff.provenance.snapshotId) {
+                    throw new Error('Return ScenePulse history to the current accepted beat before refreshing its NPC graph.');
+                }
+                await dispatch('refresh-scene-pulse', {
+                    section: 'relationships', forceFull: false, sourceCommand: 'relationship-web'
+                });
+                const refreshed = active();
+                const graph = refreshed?.context?.chatMetadata?.scenepulse?.relationshipGraph;
+                if (!plain(graph) || graph.source !== 'sidecar_reader') {
+                    throw new Error('The accepted Reader packet did not yet support a graph for the source character roster. ScenePulse remains visibly scaffolded.');
+                }
+                return clone(graph);
+            },
             eventSource: { on: () => {}, once: () => {}, emit: () => {} }
         };
         return {
@@ -595,6 +697,7 @@
             deltaScenePulse: clone(entry.deltaScenePulse || {}),
             clearFields: clone(entry.clearFields || []),
             replaceCollections: clone(entry.replaceCollections || []),
+            npcRelationshipGraph: clone(entry.npcRelationshipGraph || current.handoff?.npcRelationshipGraph || null),
             candidateReview: clone(entry.candidateReview || current.handoff?.candidateReview || []),
             provenance: {
                 ...(current.handoff?.provenance || {}),
@@ -615,6 +718,16 @@
         current.sidecarTracker = clone(current.selectedHandoff?.status === 'accepted_human'
             ? (current.handoff?.sidecarScenePulse || {})
             : (current.selectedHandoff?.scenePulse || {}));
+        // Source relationship-graph.js always keys its cache to the newest
+        // raw source snapshot. Do not let it accidentally show that current
+        // graph while the user is inspecting a historical ScenePulse beat.
+        // The graph returns when they return to current; no stale data is
+        // relabelled as history in the meantime.
+        const latestKey = snapshotKeys(current).at(-1);
+        const graphCache = Number(current.currentKey) === Number(latestKey)
+            ? sourceRelationshipGraphCache(current.selectedHandoff, current.nativeTracker) : null;
+        if (graphCache) current.context.chatMetadata.scenepulse.relationshipGraph = graphCache;
+        else delete current.context.chatMetadata.scenepulse.relationshipGraph;
         const panel = document.getElementById('sp-panel');
         if (panel?.dataset.hordeSourceRuntime) {
             injectComparisonStrip(panel);
@@ -801,6 +914,18 @@
         return cards ? `<section class="sp-horde-candidate-review"><header><strong>Scene identity handoffs</strong><small>These are the settled Reader candidates beside the visible ScenePulse scene. Review actions are explicit: a candidate stays visible here until a Horde record is actually linked or created.</small></header><div>${cards}</div></section>` : '';
     }
 
+    function relationshipGraphReviewMarkup(handoff, native) {
+        const graph = plain(handoff?.npcRelationshipGraph) ? handoff.npcRelationshipGraph : null;
+        if (!graph) {
+            return `<section class="sp-horde-graph-review is-scaffolded"><header><strong>NPC relationship web</strong><span>Source control retained</span></header><p>ScenePulse keeps its native relationship-web surface available. Sidecar has not supplied a settled graph for this visible character roster, so no canonical relationship state has been inferred or substituted.</p></section>`;
+        }
+        const cache = sourceRelationshipGraphCache(handoff, native);
+        const edgeCount = Array.isArray(graph.edges) ? graph.edges.length : 0;
+        const organizationCount = Array.isArray(graph.organizations) ? graph.organizations.length : 0;
+        const rosterCount = Array.isArray(graph.roster) ? graph.roster.length : 0;
+        return `<section class="sp-horde-graph-review ${cache ? 'is-ready' : 'is-scaffolded'}"><header><strong>NPC relationship web</strong><span>${cache ? 'Reader graph mounted' : 'Roster mapping held'}</span></header><p>${cache ? `The source web is displaying ${edgeCount} Reader-derived edge${edgeCount === 1 ? '' : 's'} across ${rosterCount} scene character${rosterCount === 1 ? '' : 's'}${organizationCount ? ` and ${organizationCount} organization${organizationCount === 1 ? '' : 's'}` : ''}. It remains a scene interpretation beside Horde, not a canonical relationship mutation.` : 'Sidecar supplied a graph packet, but ScenePulse is still showing a different or incomplete character roster. The graph stays withheld until that source field is supported; neither system is silently rewritten.'}</p><details><summary>Reader graph packet</summary><pre>${escapeHtml(JSON.stringify(compactValue(graph), null, 2))}</pre></details></section>`;
+    }
+
     function showComparison() {
         const current = active();
         if (!current) return;
@@ -827,12 +952,13 @@
         const replaceCollections = Array.isArray(handoff?.replaceCollections) ? handoff.replaceCollections : [];
         const candidateReview = Array.isArray(handoff?.candidateReview) ? handoff.candidateReview : [];
         const candidateMarkup = candidateReviewMarkup(candidateReview);
+        const graphMarkup = relationshipGraphReviewMarkup(handoff, native);
         const deltaSummary = Object.keys(rawDelta).length || clearFields.length || replaceCollections.length
             ? `<details class="sp-horde-compare-delta"><summary>Accepted compact delta for this selection</summary><pre>${escapeHtml(JSON.stringify({ scenePulse: rawDelta, clearFields, replaceCollections }, null, 2))}</pre></details>`
             : '<p class="sp-horde-compare-delta-empty">No accepted compact Reader delta is attached to this selection.</p>';
         const overlay = document.createElement('div');
         overlay.className = 'sp-horde-compare-overlay';
-        overlay.innerHTML = `<section class="sp-horde-compare-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse and Sidecar handoff review"><header><span><strong>ScenePulse handoff review</strong><small>ScenePulse remains complete in the foreground while Sidecar’s accepted state is retained beside it. A difference is evidence to review, not a cue to erase either system. Open a value to see the exact handoff that produced the difference; this view makes no authority change by itself.</small></span><button type="button" aria-label="Close comparison">×</button></header><div class="sp-horde-compare-provenance"><span>ScenePulse: ${escapeHtml(handoff?.status === 'accepted_fixture' ? 'sealed TOUR_EXAMPLE_DATA' : handoff?.status === 'accepted_human' ? 'direct authored scene state' : 'source materialization')}</span><span>Sidecar: ${escapeHtml(handoff?.provenance?.snapshotId ? `settled ${handoff.provenance.snapshotId}` : 'no settled Reader packet')}</span><span>Tutorial-supported fields: ${fixtureCount}</span><span>Needs mapping review: ${reviewCount}</span>${candidateReview.length ? `<span>Identity handoffs: ${candidateReview.length}</span>` : ''}</div>${candidateMarkup}<div class="sp-horde-compare-table-wrap"><table><thead><tr><th>Field</th><th>ScenePulse showing</th><th>Sidecar state</th><th>Scaffold status</th><th>Comparison</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No tracker fields.</td></tr>'}</tbody></table></div><footer>${deltaSummary}</footer></section>`;
+        overlay.innerHTML = `<section class="sp-horde-compare-dialog" role="dialog" aria-modal="true" aria-label="ScenePulse and Sidecar handoff review"><header><span><strong>ScenePulse handoff review</strong><small>ScenePulse remains complete in the foreground while Sidecar’s accepted state is retained beside it. A difference is evidence to review, not a cue to erase either system. Open a value to see the exact handoff that produced the difference; this view makes no authority change by itself.</small></span><button type="button" aria-label="Close comparison">×</button></header><div class="sp-horde-compare-provenance"><span>ScenePulse: ${escapeHtml(handoff?.status === 'accepted_fixture' ? 'sealed TOUR_EXAMPLE_DATA' : handoff?.status === 'accepted_human' ? 'direct authored scene state' : 'source materialization')}</span><span>Sidecar: ${escapeHtml(handoff?.provenance?.snapshotId ? `settled ${handoff.provenance.snapshotId}` : 'no settled Reader packet')}</span><span>Tutorial-supported fields: ${fixtureCount}</span><span>Needs mapping review: ${reviewCount}</span>${candidateReview.length ? `<span>Identity handoffs: ${candidateReview.length}</span>` : ''}</div>${candidateMarkup}${graphMarkup}<div class="sp-horde-compare-table-wrap"><table><thead><tr><th>Field</th><th>ScenePulse showing</th><th>Sidecar state</th><th>Scaffold status</th><th>Comparison</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No tracker fields.</td></tr>'}</tbody></table></div><footer>${deltaSummary}</footer></section>`;
         overlay.querySelector('button').addEventListener('click', () => overlay.remove());
         overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
         const bindCandidateAction = (selector, action, successMessage, extra = {}) => {
