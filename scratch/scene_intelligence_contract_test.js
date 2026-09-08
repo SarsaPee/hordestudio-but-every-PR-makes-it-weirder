@@ -47,6 +47,18 @@ function lastFunction(name, prefix = 'function') {
     throw new Error(`unclosed ${name}`);
 }
 
+function lastRuntimeFunction(name, prefix = 'function') {
+    const start = runtime.lastIndexOf(`${prefix} ${name}(`);
+    assert(start >= 0, `missing runtime ${name}`);
+    const open = runtime.indexOf('{', runtime.indexOf(') {', start));
+    let depth = 0;
+    for (let index = open; index < runtime.length; index += 1) {
+        if (runtime[index] === '{') depth += 1;
+        if (runtime[index] === '}' && --depth === 0) return runtime.slice(start, index + 1);
+    }
+    throw new Error(`unclosed runtime ${name}`);
+}
+
 function objectLiteralAfter(source, marker) {
     const markerIndex = source.indexOf(marker);
     assert(markerIndex >= 0, `missing ${marker}`);
@@ -98,6 +110,11 @@ const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async 
 const impliedPromotion = lastFunction('promoteImpliedWorldRecord', 'async function');
 const promotionAppearance = lastFunction('applyScenePulsePromotionAppearance');
 const graphNormalizer = lastFunction('normalizeSidecarNpcRelationshipGraph');
+const sourceMacroOrigin = lastRuntimeFunction('sourceMacroOrigin');
+const sourceCommandStatus = lastRuntimeFunction('sourceCommandStatus');
+const sourceCommand = lastRuntimeFunction('runSourceCommand', 'async function');
+const sourceRefresh = lastRuntimeFunction('beginReaderRefresh');
+const sourceSetup = lastRuntimeFunction('showWorldsSetupGuide');
 
 assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain semantic supplied-field provenance');
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
@@ -227,6 +244,12 @@ assert.match(runtime, /עברית — Hebrew/, 'the source language picker must 
 assert.match(runtime, /showSourceLanguagePicker/, 'language selection must be a real ScenePulse configuration action');
 assert.match(runtime, /modules\.i18n\?\.initI18n/, 'the source locale loader must initialize before source render');
 assert.match(sourceI18n, /export async function initI18n/, 'vendored source locale files must remain the locale authority');
+const normalSceneCopy = [sourceMacroOrigin, sourceCommandStatus, sourceCommand, sourceRefresh, sourceSetup].join('\n');
+assert.match(normalSceneCopy, /Reviewing the current scene/, 'normal ScenePulse refresh UI must describe the current scene rather than a backend acceptance state');
+assert.match(normalSceneCopy, /ScenePulse presets/, 'normal setup controls must use ScenePulse configuration language');
+assert.doesNotMatch(normalSceneCopy, /accepted turn|selected reader preset|Reader-focused source template|Reader presets|no Reader call/i, 'normal ScenePulse controls must keep Reader/acceptance jargon inside Inspect');
+assert.doesNotMatch(app, /Cleared \$\{count\} ScenePulse Reader snapshot/, 'history clear feedback must describe a scene, not backend Reader storage');
+assert.doesNotMatch(app, /No accepted authored turn is available to refresh/, 'refresh feedback must describe the missing authored scene without settlement jargon');
 
 assert.match(sourcePanel, /export function createPanel\(\)/, 'vendored source panel must remain the actual panel creator');
 assert.match(sourcePanel, /sp-tb-wiki/, 'source toolbar must retain Character Wiki');

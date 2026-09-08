@@ -414,7 +414,7 @@
                     replaceCollections: entry?.replaceCollections || []
                 });
                 addSnapshot(snapshots, 1000 + index, historical, snapshotMeta('sidecar-materialization', handoff, index, {
-                    label: entry?.label || `Reader turn ${index + 1}`,
+                    label: entry?.label || `Scene update ${index + 1}`,
                     snapshotId: entry?.id, analytics: entry?.analytics,
                     turnId: entry?.turnId,
                     createdAt: entry?.createdAt
@@ -1154,9 +1154,9 @@
 
     function sourceMacroOrigin(current) {
         const handoff = current?.selectedHandoff || current?.handoff || {};
-        if (handoff.status === 'accepted_fixture') return 'sealed tutorial scene';
-        if (handoff.status === 'accepted_human') return 'last accepted scene (direct edit kept separate)';
-        return 'accepted scene projection';
+        if (handoff.status === 'accepted_fixture') return 'tutorial scene';
+        if (handoff.status === 'accepted_human') return 'authored scene edit';
+        return 'current scene';
     }
 
     function sourceReaderSnapshotCount(current) {
@@ -1209,7 +1209,7 @@
             `Relationships (${relationships.length}): ${values.sp_relationships || 'none'}`,
             `Quests: ${values.sp_quest_count || '0'} active`,
             `North Star: ${values.sp_northstar || 'Not revealed'}`,
-            handoff.status === 'accepted_fixture' ? '\nExample tutorial only — no Reader call has been made.' : ''
+            handoff.status === 'accepted_fixture' ? '\nExample tutorial only — play an authored scene to see live updates.' : ''
         ].filter(Boolean).join('\n');
     }
 
@@ -1296,7 +1296,7 @@
         await persistSourceCommandSettings(current);
         runtime.modules?.settings?.invalidateSettingsCache?.();
         await renderActive();
-        return `Switched to profile: ${next.name}. The next Reader pass will use this ScenePulse prompt and field configuration.`;
+        return `Switched to profile: ${next.name}. The next scene update will use this ScenePulse prompt and field configuration.`;
     }
 
     async function runSourceCommand(current, input, options = {}) {
@@ -1323,14 +1323,14 @@
             if (!options.confirmed) return { confirmClear: true, text: `Clear ${sourceReaderSnapshotCount(current)} ScenePulse scene snapshot${sourceReaderSnapshotCount(current) === 1 ? '' : 's'}? The story stays intact.` };
             {
                 const result = await dispatch('clear-scenepulse-history');
-                return { text: result?.message || 'ScenePulse Reader history cleared.' };
+                return { text: result?.message || 'ScenePulse scene history cleared.' };
             }
         case 'toggle': return { text: await sourceCommandToggle(current, parsed.argument) };
         case 'export':
-            if (!live) return { text: 'The sealed tutorial is not exportable World Reader history. Send an authored World turn first.' };
+            if (!live) return { text: 'The tutorial has no World scene history to export. Play an authored scene first.' };
             {
                 const result = await dispatch('export-scenepulse-history');
-                return { text: result?.message || 'ScenePulse Reader history exported.' };
+                return { text: result?.message || 'ScenePulse scene history exported.' };
             }
         case 'debug':
             await loadOptionalSourceModule('debugInspector').then(module => module.openDebugInspector?.('activity'));
@@ -1434,7 +1434,7 @@
         const overlay = document.createElement('div');
         overlay.id = 'sp-setup-overlay';
         overlay.className = 'sp-setup-overlay';
-        overlay.innerHTML = `<div class="sp-setup-dialog"><div class="sp-setup-header"><div class="sp-setup-icon">✦</div><div class="sp-setup-title">Scene<span style="color:var(--sp-accent)">Pulse</span> Setup</div><button class="sp-setup-close" title="Close">✕</button></div><div class="sp-setup-body" id="sp-setup-body"><div class="sp-setup-step sp-setup-active" data-step="1"><div class="sp-setup-step-num">1</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">How ScenePulse Works Here</div><p>ScenePulse is the scene surface for this World. After a story response, it receives one complete reading of the current moment: people, thoughts, relationships, environment, quests and story directions.</p><p>The source panel stays intact. Refresh checks the current scene again; it does not rerun the story response or move the scene forward.</p><div class="sp-setup-nav"><button class="sp-setup-btn sp-setup-btn-primary" data-goto="2">Next →</button><button class="sp-setup-btn sp-setup-btn-skip" data-dismiss="true">Skip setup</button></div></div></div><div class="sp-setup-step" data-step="2"><div class="sp-setup-step-num">2</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">Choose ScenePulse Fields</div><p>Profiles define the ScenePulse prompt, the compact scene fields and any custom panels. The active profile is <strong>${escapeHtml(activeProfile?.name || 'World default')}</strong>${preset ? `, using ${escapeHtml(preset)} as its selected reader preset.` : '.'}</p><div class="sp-setup-instructions"><div class="sp-setup-inst">1. Open <strong>Profiles</strong> to create, import or select a ScenePulse profile.</div><div class="sp-setup-inst">2. Use <strong>Prompt editor</strong> to inspect or shape the source field instructions.</div><div class="sp-setup-inst">3. Use <strong>Presets</strong> to choose a Reader-focused source template.</div></div><div class="sp-setup-nav"><button class="sp-setup-btn" data-goto="1">← Back</button><button class="sp-setup-btn" data-horde-worlds-setup-tool="profiles">Profiles</button><button class="sp-setup-btn" data-horde-worlds-setup-tool="prompt">Prompt editor</button><button class="sp-setup-btn sp-setup-btn-primary" data-goto="3">Next →</button></div></div></div><div class="sp-setup-step" data-step="3"><div class="sp-setup-step-num">3</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">Refresh and Recovery</div><p>Use the source ⟳ controls or <strong>/sp regen</strong> when a current field needs another look. Use <strong>/sp refresh</strong> for one complete scene frame.</p><p>These controls work on the current scene only. Historical scenes remain read-only, so their history stays trustworthy.</p><div class="sp-setup-nav"><button class="sp-setup-btn" data-goto="2">← Back</button><button class="sp-setup-btn" data-horde-worlds-setup-tool="presets">Reader presets</button><button class="sp-setup-btn sp-setup-btn-primary" data-goto="4">Next →</button></div></div></div><div class="sp-setup-step" data-step="4"><div class="sp-setup-step-num">4</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">Ready to Play</div><div class="sp-setup-tips"><div class="sp-setup-tips-title">Useful ScenePulse controls</div><div class="sp-setup-tip">Open <strong>Character Wiki</strong> for full dossiers and encounter history.</div><div class="sp-setup-tip">Open <strong>Panel Manager</strong> to tailor visibility, themes and custom panels.</div><div class="sp-setup-tip">Use <strong>/sp help</strong> for ScenePulse commands and macros.</div><div class="sp-setup-tip">The <strong>Inspect</strong> control is available when you need to compare development state; it stays out of normal play.</div></div><div class="sp-setup-nav"><button class="sp-setup-btn" data-goto="3">← Back</button><button class="sp-setup-btn sp-setup-btn-primary" data-finish="true">✓ Finish Setup</button></div><div style="text-align:center;margin-top:8px"><button class="sp-setup-btn sp-setup-btn-tour" data-tour="true">✦ Take a Guided Tour</button></div></div></div></div><div class="sp-setup-progress"><div class="sp-setup-dots"><span class="sp-setup-dot sp-dot-active" data-dot="1"></span><span class="sp-setup-dot" data-dot="2"></span><span class="sp-setup-dot" data-dot="3"></span><span class="sp-setup-dot" data-dot="4"></span></div></div></div>`;
+        overlay.innerHTML = `<div class="sp-setup-dialog"><div class="sp-setup-header"><div class="sp-setup-icon">✦</div><div class="sp-setup-title">Scene<span style="color:var(--sp-accent)">Pulse</span> Setup</div><button class="sp-setup-close" title="Close">✕</button></div><div class="sp-setup-body" id="sp-setup-body"><div class="sp-setup-step sp-setup-active" data-step="1"><div class="sp-setup-step-num">1</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">How ScenePulse Works Here</div><p>ScenePulse is the scene surface for this World. After a story response, it receives one complete reading of the current moment: people, thoughts, relationships, environment, quests and story directions.</p><p>The source panel stays intact. Refresh checks the current scene again; it does not rerun the story response or move the scene forward.</p><div class="sp-setup-nav"><button class="sp-setup-btn sp-setup-btn-primary" data-goto="2">Next →</button><button class="sp-setup-btn sp-setup-btn-skip" data-dismiss="true">Skip setup</button></div></div></div><div class="sp-setup-step" data-step="2"><div class="sp-setup-step-num">2</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">Choose ScenePulse Fields</div><p>Profiles define the ScenePulse prompt, the compact scene fields and any custom panels. The active profile is <strong>${escapeHtml(activeProfile?.name || 'World default')}</strong>${preset ? `, using ${escapeHtml(preset)} as its selected ScenePulse preset.` : '.'}</p><div class="sp-setup-instructions"><div class="sp-setup-inst">1. Open <strong>Profiles</strong> to create, import or select a ScenePulse profile.</div><div class="sp-setup-inst">2. Use <strong>Prompt editor</strong> to inspect or shape the source field instructions.</div><div class="sp-setup-inst">3. Use <strong>Presets</strong> to choose a ScenePulse source template.</div></div><div class="sp-setup-nav"><button class="sp-setup-btn" data-goto="1">← Back</button><button class="sp-setup-btn" data-horde-worlds-setup-tool="profiles">Profiles</button><button class="sp-setup-btn" data-horde-worlds-setup-tool="prompt">Prompt editor</button><button class="sp-setup-btn sp-setup-btn-primary" data-goto="3">Next →</button></div></div></div><div class="sp-setup-step" data-step="3"><div class="sp-setup-step-num">3</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">Refresh and Recovery</div><p>Use the source ⟳ controls or <strong>/sp regen</strong> when a current field needs another look. Use <strong>/sp refresh</strong> for one complete scene frame.</p><p>These controls work on the current scene only. Historical scenes remain read-only, so their history stays trustworthy.</p><div class="sp-setup-nav"><button class="sp-setup-btn" data-goto="2">← Back</button><button class="sp-setup-btn" data-horde-worlds-setup-tool="presets">ScenePulse presets</button><button class="sp-setup-btn sp-setup-btn-primary" data-goto="4">Next →</button></div></div></div><div class="sp-setup-step" data-step="4"><div class="sp-setup-step-num">4</div><div class="sp-setup-step-content"><div class="sp-setup-step-title">Ready to Play</div><div class="sp-setup-tips"><div class="sp-setup-tips-title">Useful ScenePulse controls</div><div class="sp-setup-tip">Open <strong>Character Wiki</strong> for full dossiers and encounter history.</div><div class="sp-setup-tip">Open <strong>Panel Manager</strong> to tailor visibility, themes and custom panels.</div><div class="sp-setup-tip">Use <strong>/sp help</strong> for ScenePulse commands and macros.</div><div class="sp-setup-tip">The <strong>Inspect</strong> control is available when you need to compare development state; it stays out of normal play.</div></div><div class="sp-setup-nav"><button class="sp-setup-btn" data-goto="3">← Back</button><button class="sp-setup-btn sp-setup-btn-primary" data-finish="true">✓ Finish Setup</button></div><div style="text-align:center;margin-top:8px"><button class="sp-setup-btn sp-setup-btn-tour" data-tour="true">✦ Take a Guided Tour</button></div></div></div></div><div class="sp-setup-progress"><div class="sp-setup-dots"><span class="sp-setup-dot sp-dot-active" data-dot="1"></span><span class="sp-setup-dot" data-dot="2"></span><span class="sp-setup-dot" data-dot="3"></span><span class="sp-setup-dot" data-dot="4"></span></div></div></div>`;
         const close = () => overlay.remove();
         const persistDismissal = async () => {
             settings.setupDismissed = true;
@@ -1730,8 +1730,8 @@
         runtime.readerRefresh = flight;
         const loading = runtime.modules?.loading;
         const title = readerSectionTitle(section);
-        if (thoughtRefresh) loading?.showThoughtLoading?.('Updating Inner Thoughts', 'Reading the accepted turn');
-        else loading?.showLoadingOverlay?.(container, `Updating ${title}`, 'Reading the accepted turn', !!section);
+        if (thoughtRefresh) loading?.showThoughtLoading?.('Updating Inner Thoughts', 'Reviewing the current scene');
+        else loading?.showLoadingOverlay?.(container, `Updating ${title}`, 'Reviewing the current scene', !!section);
         if (!thoughtRefresh && !section) loading?.startElapsedTimer?.();
         if (section && !thoughtRefresh) {
             const sourceSection = [...document.querySelectorAll('#sp-panel .sp-section')]

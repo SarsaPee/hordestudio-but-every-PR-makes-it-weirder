@@ -19544,7 +19544,7 @@ function scenePulseAcceptedHandoff(world, sess) {
 async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
     const protocol = protocolForSidecarTimeline(world, sess);
     const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
-    if (!latestTurn) throw new Error('No accepted authored turn is available to refresh.');
+    if (!latestTurn) throw new Error('No authored scene is available to refresh.');
     if (scenePulseReaderRefreshController) throw new Error('ScenePulse is already updating this scene.');
     const section = String(options?.section || '');
     const controller = new AbortController();
@@ -19645,7 +19645,7 @@ function exportScenePulseReaderHistory(world, sess) {
     const protocol = protocolForSidecarTimeline(world, sess);
     const snapshots = (protocol?.readerSnapshots || []).filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
         && snapshot?.settlementStatus === 'settled');
-    if (!snapshots.length) return { count: 0, message: 'No ScenePulse snapshots to export.' };
+    if (!snapshots.length) return { count: 0, message: 'No ScenePulse scene snapshots to export.' };
     const profile = effectiveSidecarReaderProfile(world, sess);
     const exportData = {
         extension: 'ScenePulse', version: '6.27.20', exportedAt: new Date().toISOString(),
@@ -19665,7 +19665,7 @@ function exportScenePulseReaderHistory(world, sess) {
     const url = URL.createObjectURL(new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `scenepulse-reader-history-${Date.now()}.json`; anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
-    return { count: snapshots.length, message: `Exported ${snapshots.length} ScenePulse snapshot${snapshots.length === 1 ? '' : 's'}.` };
+    return { count: snapshots.length, message: `Exported ${snapshots.length} ScenePulse scene snapshot${snapshots.length === 1 ? '' : 's'}.` };
 }
 
 // Source /sp clear clears tracker data, not the chat.  Keep that destructive
@@ -19674,10 +19674,10 @@ function exportScenePulseReaderHistory(world, sess) {
 // canonical state, entities, receipts and the composer are all left intact.
 async function clearScenePulseReaderHistory(world, sess) {
     const protocol = protocolForSidecarTimeline(world, sess);
-    if (!protocol) throw new Error('No World ScenePulse tracker is available.');
+    if (!protocol) throw new Error('No World ScenePulse history is available.');
     const count = (protocol.readerSnapshots || []).filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
         && snapshot?.settlementStatus === 'settled').length;
-    if (!count) return { count: 0, message: 'No ScenePulse snapshots to clear.' };
+    if (!count) return { count: 0, message: 'No ScenePulse scene snapshots to clear.' };
     protocol.readerSnapshots = [];
     protocol.readerRefreshes = [];
     protocol.sceneProjections = [];
@@ -19690,7 +19690,7 @@ async function clearScenePulseReaderHistory(world, sess) {
     protocol.packet = buildSidecarScenePacket(world, sess, '');
     await saveState();
     renderWorldPlayState();
-    return { count, message: `Cleared ${count} ScenePulse Reader snapshot${count === 1 ? '' : 's'}; narration and canonical World state were preserved.` };
+    return { count, message: `Cleared ${count} ScenePulse scene snapshot${count === 1 ? '' : 's'}; the story and World state were preserved.` };
 }
 
 // These are presentation preferences, not ScenePulse evidence.  Persist only
