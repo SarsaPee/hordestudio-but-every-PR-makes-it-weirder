@@ -16498,15 +16498,28 @@ function scenePulseActiveSourceProfile(protocol = null) {
     return profiles.find(profile => String(profile?.id || '') === activeId) || null;
 }
 
+// Source custom panels are a part of the foreground product, so resolve the
+// same effective schema for the native panel, its declared replacement keys,
+// and the one Reader prompt. The tour's panel is deliberately a schema only:
+// upstream creates it during the tour, but TOUR_EXAMPLE_DATA has no invented
+// health/mana/reputation values to put in its fields.
+function scenePulseEffectiveSourceCustomPanels(preferences = {}) {
+    const localPanels = Array.isArray(preferences?.customPanels) ? preferences.customPanels : [];
+    if (localPanels.length) return localPanels;
+    const profiles = Array.isArray(preferences?.sourceProfiles) ? preferences.sourceProfiles : [];
+    const activeId = String(preferences?.sourceActiveProfileId || '');
+    const activeProfile = profiles.find(profile => String(profile?.id || '') === activeId) || null;
+    const profilePanels = Array.isArray(activeProfile?.customPanels) ? activeProfile.customPanels : [];
+    return profilePanels.length ? profilePanels : SCENEPULSE_TOUR_CUSTOM_PANELS;
+}
+
 function scenePulseReaderCustomPanelSchema(world, sess, protocol = null) {
     const workspace = protocol || protocolForSidecarTimeline(world, sess);
     const preferences = normalizeScenePulseWorldsPreferences(workspace?.workspaceUi?.scenePulseWorlds || {});
-    const activeProfile = scenePulseActiveSourceProfile(workspace);
     // A timeline-local custom schema takes precedence once a user has edited
     // it. Before then, the selected source Profile supplies its own native
     // schema; only if neither exists do we seed the sealed tour schema.
-    const sourcePanels = preferences.customPanels.length ? preferences.customPanels
-        : (Array.isArray(activeProfile?.customPanels) && activeProfile.customPanels.length ? activeProfile.customPanels : SCENEPULSE_TOUR_CUSTOM_PANELS);
+    const sourcePanels = scenePulseEffectiveSourceCustomPanels(preferences);
     return sourcePanels.slice(0, 12).map(panel => ({
         name: String(panel?.name || 'Custom Panel').slice(0, 120),
         enabled: panel?.enabled !== false,
@@ -19008,7 +19021,7 @@ const SCENEPULSE_NATIVE_PRESENTATION_FIELDS = Object.freeze([
 ]);
 
 function scenePulseDeclaredNativeFieldAuthority(uiPreferences = {}) {
-    const customKeys = (Array.isArray(uiPreferences?.customPanels) ? uiPreferences.customPanels : [])
+    const customKeys = scenePulseEffectiveSourceCustomPanels(uiPreferences)
         .flatMap(panel => Array.isArray(panel?.fields) ? panel.fields : [])
         .map(field => String(field?.key || '').trim())
         .filter(key => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(key));
@@ -19752,7 +19765,10 @@ function scenePulseWorldsHandoffPreferences(world, rawPreferences = {}) {
         const source = worldMediaSource(world, assetId);
         if (source) portraitSources[identity] = source;
     });
-    return { ...preferences, portraitSources };
+    // The source runtime receives the resolved schema, not a separate Horde
+    // fallback. This makes the upstream tour panel a real mounted surface and
+    // lets a compact Reader delta replace one of its keys when evidence exists.
+    return { ...preferences, customPanels: safeJsonClone(scenePulseEffectiveSourceCustomPanels(preferences)), portraitSources };
 }
 
 async function persistScenePulseWorldsPreferences(world, sess, rawPreferences = {}) {

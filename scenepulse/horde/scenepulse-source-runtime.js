@@ -143,13 +143,11 @@
         const prefs = handoff?.uiPreferences || {};
         const panels = prefs.panels || {};
         const features = prefs.features || {};
-        const customPanels = Array.isArray(prefs.customPanels) && prefs.customPanels.length ? clone(prefs.customPanels) : [
-            { name: 'RPG Stats (Tour Example)', enabled: true, fields: [
-                { key: 'health', label: 'Health', type: 'meter', desc: "{{user}}'s health 0-100", enabled: true },
-                { key: 'mana', label: 'Mana', type: 'meter', desc: 'Mana remaining after spellcasting', enabled: true },
-                { key: 'reputation', label: 'Reputation', type: 'text', desc: 'Standing with the local guild', enabled: true }
-            ] }
-        ];
+        // The host has already resolved the exact active ScenePulse schema
+        // (including the upstream tour panel when no profile overrides it).
+        // Do not recreate a Horde-local copy here: a schema is foreground
+        // source configuration, while any values remain tracker evidence.
+        const customPanels = Array.isArray(prefs.customPanels) ? clone(prefs.customPanels) : [];
         const tracker = materializeNativeTracker(handoff);
         const portraitSources = plain(prefs.portraitSources) ? prefs.portraitSources : {};
         const charPortraits = {};

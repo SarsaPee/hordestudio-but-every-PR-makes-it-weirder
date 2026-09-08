@@ -85,6 +85,9 @@ assert.match(acceptedHandoff, /nativeFieldAuthority/, 'each accepted handoff mus
 assert.match(acceptedHandoff, /candidateReview/, 'settled identity handoffs must remain beside the ScenePulse tracker rather than inside it');
 assert.match(acceptedHandoff, /relationshipReview/, 'saved ScenePulse relationship translations must remain Inspect-only beside the source tracker');
 assert.match(app, /function scenePulseActiveSourceProfile\(/, 'the selected source Profile must be resolvable at the Reader boundary');
+assert.match(app, /function scenePulseEffectiveSourceCustomPanels\(/, 'the native panel and Reader must share one effective source custom-panel schema');
+assert.match(nativePresentationAuthority, /scenePulseEffectiveSourceCustomPanels\(uiPreferences\)/, 'tour custom-panel keys must be declared for field-by-field Reader adoption');
+assert.match(acceptedHandoff, /scenePulseWorldsHandoffPreferences/, 'the accepted handoff must carry source-resolved custom panels to the native runtime');
 assert.match(app, /function scenePulseSourceProfilePromptContext\(/, 'the selected source Profile needs a constrained Reader prompt context');
 assert.match(readerPass, /sourceProfileContext\.instruction/, 'source Profile instructions must reach the Sidecar Reader');
 assert.match(readerPass, /scenePulseSourceProfile/, 'accepted Reader metadata must retain source Profile provenance');
@@ -112,6 +115,8 @@ assert.match(runtime, /modules\.updatePanel\.updatePanel\(normalized, true\)/, '
 assert.match(runtime, /modules\.timeline\.renderTimeline\(\)/, 'source must render its own history UI');
 assert.match(runtime, /modules\.thoughts\.updateThoughts\(normalized\)/, 'source thought module must render its own panel');
 assert.match(runtime, /materializeNativeTracker/, 'fixture-backed fields must be materialized before source render');
+assert.match(runtime, /const customPanels = Array\.isArray\(prefs\.customPanels\) \? clone\(prefs\.customPanels\) : \[\];/, 'native runtime must render the handoff source schema rather than recreate a Horde-local tour panel');
+assert.doesNotMatch(runtime, /RPG Stats \(Tour Example\)/, 'the upstream tour panel schema must enter through the source handoff, not a duplicate runtime fallback');
 assert.match(runtime, /if \(!authority\.size\) return fixture/, 'an older handoff with no declared field path must remain fixture-backed');
 assert.match(runtime, /nativeFieldAuthority/, 'field-by-field authority must be explicit rather than inferred from live mode');
 assert.match(runtime, /nativeFieldHasAcceptedValue/, 'a declared field must still prove an accepted value before replacing the tutorial support');
@@ -554,6 +559,14 @@ assert.deepEqual(
     JSON.parse(JSON.stringify(materializeSourceTracker({ ...scaffoldBase, scenePulse: { time: '3:18 PM' } }).characters)),
     fixtureTracker.characters,
     'an omitted Sidecar field must keep its complete source fixture support'
+);
+assert.equal(
+    materializeSourceTracker({
+        status: 'accepted_live', fixtureScenePulse: fixtureTracker,
+        nativeFieldAuthority: ['health'], scenePulse: { health: 64 }
+    }).health,
+    64,
+    'a declared upstream custom-panel key must be able to replace its blank fixture field from an accepted compact Reader delta'
 );
 
 const scenePulseMergeContext = {
