@@ -439,6 +439,8 @@
 #sp-panel[data-horde-source-runtime="true"] .sp-horde-runtime-sidecar { color: #93aee8; }
 #sp-panel[data-horde-source-runtime="true"] .sp-horde-runtime-divider { color: var(--sp-text-dim); opacity: .72; }
 #sp-panel[data-horde-source-runtime="true"] .sp-horde-runtime-strip button { margin-left: auto; border: 1px solid var(--sp-border-strong); border-radius: 4px; padding: 3px 7px; background: var(--sp-surface); color: var(--sp-text); cursor: pointer; font: inherit; font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+#sp-panel[data-horde-source-runtime="true"] .sp-horde-runtime-strip button + button { margin-left: 0; }
+#sp-panel[data-horde-source-runtime="true"] .sp-horde-runtime-strip [data-horde-source-return-live] { margin-left: auto; }
 #sp-panel[data-horde-source-runtime="true"] .sp-horde-runtime-strip button:hover { border-color: var(--sp-accent); color: var(--sp-accent); }
 #sp-panel[data-horde-source-runtime="true"] .sp-horde-example-badge { display: inline-flex; align-items: center; margin-left: 7px; border: 1px solid color-mix(in srgb,var(--sp-warning,#d4a855) 52%,transparent); border-radius: 999px; padding: 1px 5px; color: var(--sp-warning,#d4a855); background: color-mix(in srgb,var(--sp-warning,#d4a855) 10%,transparent); font: 700 8px/1.25 var(--sp-font-mono,monospace); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 #sp-panel[data-horde-source-runtime="true"] .sp-horde-dashboard-example-badge { position: absolute; z-index: 2; right: 10px; bottom: 8px; }

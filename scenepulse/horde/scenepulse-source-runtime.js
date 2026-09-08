@@ -126,6 +126,9 @@
         historySelectionTimer: null,
         resizeObserver: null,
         commandOverlayCleanup: null,
+        // A guided tour is a display-only remount of the sealed source
+        // example. Its saved live handoff provides an explicit return route.
+        fixturePreview: null,
         // One active UI flight represents one Reader reread of an existing
         // authored beat.  It is intentionally distinct from source tracker
         // generation and from the World's narrator generation controller.
@@ -409,12 +412,17 @@
         if (handoff?.status === 'accepted_fixture' || !history.length
             || (handoff?.status !== 'accepted_human' && !nativeFieldAuthority(handoff).size)) {
             const fixture = materializeNativeTracker(handoff);
-            // Native ScenePulse's guided tour has a populated history. The
-            // tutorial therefore exercises its own timeline from the first
-            // fixture-only mount without borrowing a Horde message index.
-            for (let index = 0; index < 12; index += 1) {
-                addSnapshot(snapshots, 15 + index, fixture, snapshotMeta('fixture', handoff, index, {
-                    label: `Tutorial ${index + 1} of 12`, snapshotId: `tour-${15 + index}`
+            // The upstream guided tour paints its own illustrative 12-node
+            // timeline. Do not fabricate twelve identical compatibility
+            // snapshots underneath it: source stagnation/history code would
+            // mistake them for a real, unchanged scene. Its sealed preview
+            // is one accepted example packet at the source tour's #26 slot.
+            const fixtureSnapshotCount = handoff?.fixturePreview ? 1 : 12;
+            const fixtureFirstKey = handoff?.fixturePreview ? 26 : 15;
+            for (let index = 0; index < fixtureSnapshotCount; index += 1) {
+                const key = fixtureFirstKey + index;
+                addSnapshot(snapshots, key, fixture, snapshotMeta('fixture', handoff, index, {
+                    label: fixtureSnapshotCount === 1 ? 'Tutorial example' : `Tutorial ${index + 1} of 12`, snapshotId: `tour-${key}`
                 }));
             }
         } else {
@@ -500,7 +508,10 @@
             groups: [],
             groupId: null,
             saveMetadata: () => markMetadataDirty(),
-            saveSettingsDebounced: () => persistSettings(),
+            // The vendored tour temporarily creates a schema-only panel.
+            // That tour-local setup must never persist into the World whose
+            // scene is being inspected.
+            saveSettingsDebounced: () => handoff?.fixturePreview ? undefined : persistSettings(),
             saveChat: async () => {},
             setChatMessage: () => {},
             sendMessage: () => {},
@@ -1543,9 +1554,8 @@
             }
             if (event.target.closest('[data-tour]')) {
                 try {
-                    await persistDismissal();
                     close();
-                    (await loadOptionalSourceModule('guidedTour')).startGuidedTour?.();
+                    await openFixtureGuidedTour();
                 } catch (error) { makeToast('error', error?.message || error, 'ScenePulse setup'); }
                 return;
             }
@@ -1605,8 +1615,14 @@
         // The comparison is deliberately available, but its implementation
         // vocabulary stays inside the on-demand development overlay.  Normal
         // roleplay UI should read as ScenePulse, not as a backend dashboard.
-        strip.innerHTML = `<span class="sp-horde-runtime-native">${escapeHtml(sourceText)}</span><button type="button" data-horde-source-compare>Inspect</button>`;
+        const returnControl = runtime.fixturePreview
+            ? '<button type="button" data-horde-source-return-live>Return to current scene</button>'
+            : '';
+        strip.innerHTML = `<span class="sp-horde-runtime-native">${escapeHtml(sourceText)}</span>${returnControl}<button type="button" data-horde-source-compare>Inspect</button>`;
         strip.querySelector('[data-horde-source-compare]').addEventListener('click', showComparison);
+        strip.querySelector('[data-horde-source-return-live]')?.addEventListener('click', () => {
+            returnFromFixtureGuidedTour().catch(error => makeToast('error', error?.message || error, 'ScenePulse tour'));
+        });
     }
 
     function injectSourceUtilities(panel) {
@@ -1650,7 +1666,7 @@
                 if (tool === 'prompt') module.openPromptEditor?.();
                 if (tool === 'presets') module.openPresetBrowser?.();
                 if (tool === 'debug') module.openDebugInspector?.('activity');
-                if (tool === 'tour') module.startGuidedTour?.();
+                if (tool === 'tour') return openFixtureGuidedTour();
             }).catch(error => makeToast('error', error?.message || error, 'ScenePulse tools'));
         }));
     }
@@ -2057,6 +2073,10 @@
     }
 
     async function mount(host, handoff) {
+        // A normal World rerender supersedes an open tutorial. Only the
+        // explicit fixture-preview handoff below retains a return target,
+        // preventing an old World from leaking through a later mount.
+        if (!handoff?.fixturePreview) runtime.fixturePreview = null;
         runtime.epoch += 1;
         const epoch = runtime.epoch;
         runtime.current = makeContext(host, handoff);
@@ -2077,6 +2097,81 @@
             anchor.innerHTML = `<div class="sp-empty-state"><strong class="sp-empty-title">Native ScenePulse runtime could not mount</strong><span>${escapeHtml(error?.message || error)}</span></div>`;
             throw error;
         }
+    }
+
+    function closeVendoredGuidedTour() {
+        // Let the actual source module take its ordinary Skip path first:
+        // that removes its temporary custom panel before we change context.
+        const skip = document.querySelector('.sp-tour-card [data-end]');
+        if (skip instanceof HTMLElement) skip.click();
+        document.querySelector('.sp-tour-spotlight')?.remove();
+        document.querySelector('.sp-tour-card')?.remove();
+        document.getElementById('sp-panel-mgr')?.remove();
+    }
+
+    function fixturePreviewHandoff(current) {
+        const fixtureScenePulse = clone(current?.handoff?.fixtureScenePulse || current?.handoff?.scenePulse || {});
+        if (!Object.keys(fixtureScenePulse).length) throw new Error('The ScenePulse example scene is unavailable.');
+        // Preserve source configuration (theme, profile, schema) while
+        // stripping every live reading, history, review and graph. The
+        // source’s history module will now see the twelve fixture snapshots
+        // produced by sourceMetadata(), never the active World timeline.
+        return {
+            ...clone(current.handoff || {}),
+            id: 'scenepulse-tour-example-data-accepted',
+            status: 'accepted_fixture',
+            source: 'ScenePulse TOUR_EXAMPLE_DATA (v6.27.20)',
+            scenePulse: fixtureScenePulse,
+            fixtureScenePulse,
+            sidecarScenePulse: {},
+            previousScenePulse: null,
+            deltaScenePulse: {},
+            clearFields: [],
+            replaceCollections: [],
+            history: [],
+            readerPreset: null,
+            npcRelationshipGraph: null,
+            candidateReview: [],
+            questReview: [],
+            relationshipReview: [],
+            provenance: { snapshotId: 'tour-example', turnId: '', readerMode: 'fixture' },
+            fixturePreview: true
+        };
+    }
+
+    async function openFixtureGuidedTour() {
+        let current = active();
+        if (!current) throw new Error('ScenePulse is not mounted.');
+        let preview = runtime.fixturePreview;
+        if (!preview) {
+            preview = { host: current.host, handoff: clone(current.handoff || {}) };
+            runtime.fixturePreview = preview;
+            try {
+                await mount(current.host, fixturePreviewHandoff(current));
+                current = active();
+            } catch (error) {
+                runtime.fixturePreview = null;
+                await mount(preview.host, preview.handoff).catch(() => {});
+                throw error;
+            }
+        }
+        try {
+            (await loadOptionalSourceModule('guidedTour')).startGuidedTour?.();
+        } catch (error) {
+            if (runtime.fixturePreview === preview) {
+                runtime.fixturePreview = null;
+                await mount(preview.host, preview.handoff).catch(() => {});
+            }
+            throw error;
+        }
+    }
+
+    async function returnFromFixtureGuidedTour() {
+        const preview = runtime.fixturePreview;
+        if (!preview?.host || !preview?.handoff) return;
+        closeVendoredGuidedTour();
+        runtime.fixturePreview = null;
+        await mount(preview.host, preview.handoff);
     }
 
     function unmount(host) {

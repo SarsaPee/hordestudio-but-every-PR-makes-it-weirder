@@ -214,7 +214,9 @@ assert.match(css, /#world-sidecar-workspace \.sp-meter-bar-prev \{ position: abs
 assert.doesNotMatch(css, /#world-sidecar-workspace \.sp-meter-bar-fill \{[^}]*?(?:writing-mode|flex-direction:\s*column)/, 'the native bridge must not reorient source relationship fills vertically');
 assert.match(sourceGuidedTour, /s\.customPanels\.push\(\{name:'RPG Stats \(Tour Example\)'/, 'the tour custom-panel schema must remain defined by upstream guided-tour behavior');
 assert.doesNotMatch(sourceConstants, /\bhealth\s*:/, 'TOUR_EXAMPLE_DATA must not fabricate a health value for its schema-only custom panel');
-assert.match(runtime, /for \(let index = 0; index < 12; index \+= 1\)/, 'fixture-only source mount must exercise the populated tutorial timeline');
+assert.match(runtime, /const fixtureSnapshotCount = handoff\?\.fixturePreview \? 1 : 12/, 'fixture-only source mount must retain the populated tutorial timeline outside the guided preview');
+assert.match(runtime, /const fixtureSnapshotCount = handoff\?\.fixturePreview \? 1 : 12/, 'the guided-tour preview may not fabricate a repeated fixture history');
+assert.match(runtime, /The upstream guided tour paints its own illustrative 12-node[\s\S]*?stagnation\/history code would/, 'the tour’s visible history must not become false scene history');
 assert.match(runtime, /ScenePulse handoff review/, 'the native and Sidecar readings need a visible comparison surface');
 assert.match(runtime, /A difference is evidence to review, not a cue to erase either system/i, 'conflicts must remain inspectable');
 assert.match(runtime, /Tutorial support retained/, 'unsupported fields must remain visibly scaffolded instead of disappearing');
@@ -223,6 +225,11 @@ assert.match(runtime, /installHistorySelectionCapture/, 'source timeline and Bro
 assert.match(runtime, /loadOptionalSourceModule/, 'an optional source utility may not prevent the foreground ScenePulse panel from mounting');
 assert.match(runtime, /profileManager: 'settings-ui\/profiles-manager\.js'/, 'source Profiles must remain a real vendored surface');
 assert.match(runtime, /guidedTour: 'settings-ui\/guided-tour\.js'/, 'source Guided Tour must remain a real vendored surface');
+assert.match(runtime, /async function openFixtureGuidedTour\(\)/, 'Guided Tour must explicitly enter its sealed fixture context');
+assert.match(runtime, /function fixturePreviewHandoff\(current\)[\s\S]*?status: 'accepted_fixture'/, 'the tour preview must be an accepted fixture handoff, not a live adapter state');
+assert.match(runtime, /history: \[\],[\s\S]*?candidateReview: \[\],[\s\S]*?relationshipReview: \[\]/, 'the tour preview must remove live history and review surfaces before source rendering');
+assert.match(runtime, /await mount\(current\.host, fixturePreviewHandoff\(current\)\)/, 'the source tour must remount fixture metadata before its upstream renderer runs');
+assert.match(runtime, /data-horde-source-return-live/, 'fixture tour must expose a return path to the saved live scene');
 assert.match(runtime, /promptEditor: 'ui\/prompt-editor\.js'/, 'source Prompt Editor must remain a real vendored surface');
 assert.match(runtime, /presetBrowser: 'ui\/preset-browser\.js'/, 'source Preset Browser must remain a real vendored surface');
 assert.match(runtime, /presetCatalogue: 'presets\/built-in\.js'/, 'source preset application must resolve the actual vendored preset catalogue');
