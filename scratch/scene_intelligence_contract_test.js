@@ -47,6 +47,29 @@ function lastFunction(name, prefix = 'function') {
     throw new Error(`unclosed ${name}`);
 }
 
+function objectLiteralAfter(source, marker) {
+    const markerIndex = source.indexOf(marker);
+    assert(markerIndex >= 0, `missing ${marker}`);
+    const open = source.indexOf('{', markerIndex + marker.length);
+    assert(open >= 0, `missing object literal after ${marker}`);
+    let quote = '';
+    let escaped = false;
+    let depth = 0;
+    for (let index = open; index < source.length; index += 1) {
+        const char = source[index];
+        if (quote) {
+            if (escaped) { escaped = false; continue; }
+            if (char === '\\') { escaped = true; continue; }
+            if (char === quote) quote = '';
+            continue;
+        }
+        if (char === "'" || char === '"' || char === '`') { quote = char; continue; }
+        if (char === '{') depth += 1;
+        if (char === '}' && --depth === 0) return source.slice(open, index + 1);
+    }
+    throw new Error(`unclosed object literal after ${marker}`);
+}
+
 const normalizer = lastFunction('normalizeSidecarReaderEnvelope');
 const merger = lastFunction('mergeSidecarReaderEnvelope');
 const currentTurn = lastFunction('currentSidecarAuthoredTurn');
@@ -80,6 +103,10 @@ assert.match(normalizer, /semanticSuppliedFields/, 'normalizer must retain seman
 assert.match(merger, /semanticProvided/, 'delta merger must retain nested semantic field provenance');
 assert.match(currentTurn, /sess\.history.*\.reverse\(\)/s, 'current authored turn must follow visible history');
 assert.match(app, /const SCENEPULSE_TOUR_EXAMPLE_DATA = Object\.freeze/, 'the actual source tutorial fixture must remain present');
+const vendoredTourFixture = vm.runInNewContext(`(${objectLiteralAfter(sourceConstants, 'export const TOUR_EXAMPLE_DATA=')})`);
+const hordeTourFixture = vm.runInNewContext(`(${objectLiteralAfter(app, 'const SCENEPULSE_TOUR_EXAMPLE_DATA = Object.freeze(')})`);
+assert.deepEqual(JSON.parse(JSON.stringify(hordeTourFixture)), JSON.parse(JSON.stringify(vendoredTourFixture)),
+    'Horde must mount the vendored TOUR_EXAMPLE_DATA verbatim, field for field, as the sealed Golden fixture');
 assert.match(acceptedHandoff, /scenePulseHumanOverlay\(protocol, fixtureWithPreferences\)/, 'fixture state must accept an explicit human edit overlay without registry backfill');
 assert.match(acceptedHandoff, /settlementStatus === 'settled'[\s\S]*snapshot\?\.turnId/, 'live handoff must be exact-turn settled');
 assert.doesNotMatch(acceptedHandoff, /world\.entities|world\.quests|sess\.quests/, 'accepted ScenePulse handoff must not borrow Horde registry fields');
