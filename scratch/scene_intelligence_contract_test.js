@@ -158,6 +158,13 @@ assert.match(runtime, /!clear\.has\(key\).*?!replace\.has\(key\).*?!hasValue\(va
 assert.match(sourceRelationshipsCss, /\.sp-meter-row \{ display: grid; grid-template-columns: auto 1fr minmax\(0, 70px\) 44px;/, 'source relationship meters must retain horizontal grid tracks');
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-fill \{ height: 100%;[\s\S]*?transition: width/, 'the coloured relationship fill must encode current horizontal width');
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-prev \{ position: absolute; top: 0; bottom: 0; width: 2px;/, 'the previous-value delta marker must remain a vertical line on the horizontal track');
+assert.ok(html.indexOf('scenepulse/vendor/ScenePulse/style.css') < html.indexOf('scenepulse/horde/scene-pulse-worlds.css'), 'the native Horde bridge stylesheet must load after the vendored source CSS');
+assert.match(css, /#world-sidecar-workspace \.sp-meter-row \{ grid-template-columns: auto minmax\(0,1fr\) minmax\(0,70px\) 44px; \}/, 'the final native bridge cascade must preserve a horizontal relationship-meter row');
+assert.match(css, /#world-sidecar-workspace \.sp-meter-bar-wrap \{ position: relative; display: block; min-width: 0; height: 8px; overflow: visible; border-radius: 5px; \}/, 'the native bridge must retain a horizontal meter track box');
+assert.match(css, /#world-sidecar-workspace \.sp-meter-bar-track \{ position: absolute; inset: 0; overflow: hidden; border-radius: 5px; \}/, 'the native bridge must clip the current fill inside its horizontal track');
+assert.match(css, /#world-sidecar-workspace \.sp-meter-bar-fill \{ display: block; height: 100%; border-radius: 5px; transition: width/, 'the final native bridge fill must remain width-driven rather than height-driven');
+assert.match(css, /#world-sidecar-workspace \.sp-meter-bar-prev \{ position: absolute; top: 0; bottom: 0; width: 2px; z-index: 2; \}/, 'the final native bridge must retain the prior-turn vertical delta marker');
+assert.doesNotMatch(css, /#world-sidecar-workspace \.sp-meter-bar-fill \{[^}]*?(?:writing-mode|flex-direction:\s*column)/, 'the native bridge must not reorient source relationship fills vertically');
 assert.match(sourceGuidedTour, /s\.customPanels\.push\(\{name:'RPG Stats \(Tour Example\)'/, 'the tour custom-panel schema must remain defined by upstream guided-tour behavior');
 assert.doesNotMatch(sourceConstants, /\bhealth\s*:/, 'TOUR_EXAMPLE_DATA must not fabricate a health value for its schema-only custom panel');
 assert.match(runtime, /for \(let index = 0; index < 12; index \+= 1\)/, 'fixture-only source mount must exercise the populated tutorial timeline');

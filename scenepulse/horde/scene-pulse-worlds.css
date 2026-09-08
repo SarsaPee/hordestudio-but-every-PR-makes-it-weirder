@@ -165,6 +165,15 @@
 #world-sidecar-workspace .sp-tl-label { position: absolute; top: 13px; color: var(--sp-accent); font: 700 var(--sp-fs-xs) var(--sp-font-mono); white-space: nowrap; }
 #world-sidecar-workspace .sp-tour-history-note { margin: 2px 0 7px; color: var(--sp-text-dim); font-size: var(--sp-fs-xs); line-height: 1.45; }
 #world-sidecar-workspace .sp-meter-row { grid-template-columns: auto minmax(0,1fr) minmax(0,70px) 44px; }
+/* The legacy workspace stylesheet once styled an earlier ScenePulse-shaped
+   adapter with a more specific selector than the vendored source CSS. Keep
+   the actual source meter geometry explicit at the final native boundary:
+   colour tracks current value through width, while the slim vertical marker
+   is the preceding accepted turn's value. */
+#world-sidecar-workspace .sp-meter-bar-wrap { position: relative; display: block; min-width: 0; height: 8px; overflow: visible; border-radius: 5px; }
+#world-sidecar-workspace .sp-meter-bar-track { position: absolute; inset: 0; overflow: hidden; border-radius: 5px; }
+#world-sidecar-workspace .sp-meter-bar-fill { display: block; height: 100%; border-radius: 5px; transition: width .6s cubic-bezier(.4,0,.2,1); }
+#world-sidecar-workspace .sp-meter-bar-prev { position: absolute; top: 0; bottom: 0; width: 2px; z-index: 2; }
 #world-sidecar-workspace .sp-sparkline { width: 40px; height: 16px; padding: 0; border: 0; border-radius: 2px; background: rgba(0,0,0,.35); color: var(--sp-text-dim); cursor: pointer; }
 #world-sidecar-workspace .sp-sparkline svg { display: block; width: 40px; height: 16px; }
 #world-sidecar-workspace .sp-sparkline path { fill: none; stroke: rgba(255,255,255,.12); stroke-width: .7; stroke-dasharray: 2 2; }
