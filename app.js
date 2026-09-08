@@ -16573,6 +16573,29 @@ function scenePulseSourceProfilePromptContext(sourceProfile, priorScenePulse, re
     };
 }
 
+// ScenePulse Profiles also carry the source dynamic field builder's panel,
+// card and sub-field choices.  In Worlds they scope what the one Reader is
+// asked to refresh; they never make a sparse packet erase the foreground
+// source fixture or authorize arbitrary new field keys.
+function scenePulseSourceProfileFieldConfiguration(sourceProfile) {
+    const source = isPlainObject(sourceProfile) ? sourceProfile : {};
+    const booleanEntries = (value, allowed, limit = allowed.length) => Object.fromEntries(Object.entries(isPlainObject(value) ? value : {})
+        .filter(([key, enabled]) => allowed.includes(String(key)) && typeof enabled === 'boolean')
+        .slice(0, limit)
+        .map(([key, enabled]) => [String(key), enabled]));
+    const panelKeys = ['dashboard', 'scene', 'quests', 'relationships', 'characters', 'storyIdeas'];
+    const dashCardKeys = ['date', 'time', 'weather', 'temperature', 'location'];
+    const fieldToggles = Object.fromEntries(Object.entries(isPlainObject(source.fieldToggles) ? source.fieldToggles : {})
+        .filter(([key, enabled]) => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(String(key)) && typeof enabled === 'boolean')
+        .slice(0, 240)
+        .map(([key, enabled]) => [String(key), enabled]));
+    return {
+        panels: booleanEntries(source.panels, panelKeys),
+        dashCards: booleanEntries(source.dashCards, dashCardKeys),
+        fieldToggles
+    };
+}
+
 // Resolve the source's named prompt slots independently from bundled presets.
 // The preset is advisory source configuration; the active Profile is the
 // explicit authoring surface and therefore wins for a shared slot key.
@@ -16696,7 +16719,15 @@ ${sourcePreset?.id
     ? `Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}).`
     : `Profile: ${sourceProfileContext.provenance?.name || activeSourceProfile?.name || activeSourceProfile?.id || 'ScenePulse Profile'}.`}
 These are ScenePulse source prompt-slot overrides. They refine the Reader's presentation projection only; they do not change Narrator selection, provider routing, World state, or authority. ScenePulse {{sp_*}} macros in these slots resolve only from the prior accepted ScenePulse projection; no tutorial fallback or Horde registry value is eligible. Apply the following overrides where compatible with the evidence, read-only, and compact-delta contracts below:\n${sourcePromptSlotEntries.map(([slot, text]) => `[${slot}]\n${String(text)}`).join('\n\n')}` : '';
-    const readerPrompt = prompt + humanSceneStateContext + sourceProfileContext.instruction + sourcePromptSlotInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + scenePulseSectionFocusInstruction + readerCoverageInstruction;
+    const sourceProfileFieldConfiguration = scenePulseSourceProfileFieldConfiguration(activeSourceProfile);
+    const sourceProfileFieldConfigurationPresent = Object.values(sourceProfileFieldConfiguration)
+        .some(value => isPlainObject(value) && Object.keys(value).length);
+    const sourceProfileFieldInstruction = sourceProfileFieldConfigurationPresent ? `
+
+[SCENEPULSE SOURCE FIELD CONFIGURATION]
+${JSON.stringify(sourceProfileFieldConfiguration)}
+This is the active source Profile's dynamic panel, dashboard-card, and sub-field configuration. Use it to focus optional ScenePulse field updates for this reading. A disabled optional field must not be padded merely because the source tutorial displays it; an enabled field still needs narration or established accepted-scene support. This configuration cannot erase a populated foreground source field by omission, add an undeclared field, change World authority, or relax the required time/date/elapsed/current-presence continuity contract.` : '';
+    const readerPrompt = prompt + humanSceneStateContext + sourceProfileContext.instruction + sourcePromptSlotInstruction + sourceProfileFieldInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + scenePulseSectionFocusInstruction + readerCoverageInstruction;
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);

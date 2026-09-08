@@ -155,6 +155,9 @@ assert.match(app, /function scenePulseSourceProfilePromptContext\(/, 'the select
 assert.match(readerPass, /sourceProfileContext\.instruction/, 'source Profile instructions must reach the Sidecar Reader');
 assert.match(app, /function scenePulseResolvedPromptSlotEntries\(/, 'source Profile slot resolution must have a direct, testable Reader boundary');
 assert.match(readerPass, /scenePulseResolvedPromptSlotEntries\(/, 'source Profile slot overrides must be resolved at the Reader boundary');
+assert.match(app, /function scenePulseSourceProfileFieldConfiguration\(/, 'source Profile dynamic field configuration must have a constrained Reader boundary');
+assert.match(readerPass, /sourceProfileFieldInstruction/, 'source Profile panel and field choices must reach the Sidecar Reader');
+assert.match(readerPass, /SCENEPULSE SOURCE FIELD CONFIGURATION/, 'source Profile dynamic field guidance must stay explicit in the Reader prompt');
 assert.match(readerPass, /sourcePromptSlotInstruction/, 'source Profile slot overrides must become an explicit Reader prompt block');
 assert.match(readerPass, /sourcePromptSlotEntries\.length \?/, 'a source Profile slot edit must work even when no bundled preset is selected');
 assert.match(app, /\{ \.\.\.presetOverrides, \.\.\.profileOverrides \}/, 'source Profile slot edits must override advisory preset slots');
@@ -667,6 +670,16 @@ assert.deepEqual(JSON.parse(JSON.stringify(sourceProfileSlotEntries)), [
     ['role', 'profile role for the ferry crossing'],
     ['criticalRules', 'preset critical rules']
 ], 'a selected source Profile must send its prompt slots without a preset and override only its matching preset slots');
+const sourceProfileFieldConfiguration = vm.runInNewContext(`${lastFunction('scenePulseSourceProfileFieldConfiguration')}\nscenePulseSourceProfileFieldConfiguration(${JSON.stringify({
+    panels: { dashboard: false, characters: true, unknown: false },
+    dashCards: { time: false, location: true, unexpected: true },
+    fieldToggles: { char_innerThought: false, rel_trust: true, 'not-a-key': true, invalid: 'yes' }
+})})`, sourceProfileSlotContext);
+assert.deepEqual(JSON.parse(JSON.stringify(sourceProfileFieldConfiguration)), {
+    panels: { dashboard: false, characters: true },
+    dashCards: { time: false, location: true },
+    fieldToggles: { char_innerThought: false, rel_trust: true }
+}, 'a source Profile must carry only its declared dynamic panel/card/field choices into the Reader');
 const fixtureTracker = {
     time: '3:08 PM',
     relationships: [{ relationshipId: 'yvette', name: 'Yvette', trust: 25 }],
