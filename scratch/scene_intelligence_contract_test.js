@@ -255,8 +255,10 @@ assert.match(sourceWiki, /const _sourceIdentityFor = item => kind === 'relations
 assert.match(sourceWiki, /_findLatest\('characters', aliasesLow, m\.sourceIdentity \|\| ''\)/, 'source Wiki must choose the latest character dossier by stable source identity');
 assert.match(sourceWiki, /const prevRel = _previousRelationship\(rel\)/, 'source Wiki relationship delta must use stable predecessor identity');
 assert.match(sourceWeb, /export function openRelationshipWeb\(entries\)/, 'source relationship graph must remain callable');
-assert.match(sourceWeb, /Reader-derived scene graph/, 'the source web must disclose a Sidecar Reader-derived cache');
-assert.match(sourceWeb, /Refresh NPC graph through Reader/, 'the source web must label its bridged generation route');
+assert.match(sourceWeb, /Scene-only graph/, 'the normal source web must label a non-World graph without backend jargon');
+assert.match(sourceWeb, /Refresh NPC graph/, 'the normal source web must retain NPC graph refresh');
+assert.doesNotMatch(sourceWeb, /Reader-derived scene graph/, 'Reader provenance belongs in Inspect rather than the normal source web');
+assert.doesNotMatch(sourceWeb, /Refresh NPC graph through Reader/, 'normal source actions must not expose the bridge implementation');
 assert.match(sourceWeb, /npcGraphSource = fresh\.source/, 'a refreshed source graph must retain its provenance');
 const sourceRelationshipGraph = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-graph.js');
 assert.match(sourceRelationshipGraph, /requestScenePulseRelationshipGraph/, 'vendored graph generation must prefer the Worlds Reader hook before provider dispatch');

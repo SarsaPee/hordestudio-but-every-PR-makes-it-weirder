@@ -1144,7 +1144,10 @@ export function openRelationshipWeb(entries) {
     const graphEnabled = isGraphEnabled();
     const hasCache = graphEnabled && getCachedGraph() !== null;
     const readerDerived = npcGraphSource === 'sidecar_reader';
-    const generateBtnLabel = readerDerived ? t('Refresh NPC graph through Reader') : (hasCache ? t('Regenerate NPC graph') : t('Generate NPC graph'));
+    // Worlds routes this through its one semantic pass, but that is an
+    // implementation detail. Keep the foreground ScenePulse Web in story
+    // language; its on-demand Inspect view holds provenance/comparison data.
+    const generateBtnLabel = readerDerived ? t('Refresh NPC graph') : (hasCache ? t('Regenerate NPC graph') : t('Generate NPC graph'));
     overlay.innerHTML = `<div class="sp-web-container">
         <div class="sp-web-header">
             <div class="sp-web-title">${t('Relationship Web')}</div>
@@ -1152,7 +1155,7 @@ export function openRelationshipWeb(entries) {
                 <button class="sp-web-labels-toggle sp-web-tb-active" title="${t('Toggle edge labels')}">${t('Labels')}</button>
                 <button class="sp-web-reset-btn" title="${t('Reset view (zoom + positions)')}">\u2921</button>
                 <button class="sp-web-layout-toggle" title="${t('Toggle layout (force/circular)')}">\u26B2</button>
-                ${graphEnabled ? `<button class="sp-web-generate-btn" title="${esc(generateBtnLabel)}">\u21BB ${readerDerived ? t('Reader') : t('NPC')}</button>` : ''}
+                ${graphEnabled ? `<button class="sp-web-generate-btn" title="${esc(generateBtnLabel)}">\u21BB ${t('NPC')}</button>` : ''}
                 <button class="sp-web-close">\u2715</button>
             </div>
         </div>
@@ -1160,7 +1163,7 @@ export function openRelationshipWeb(entries) {
             <div class="sp-web-svg-wrap"></div>
             ${_buildLegendHtml()}
         </div>
-        <div class="sp-web-footer">${readerDerived ? `<span class="sp-web-source-note">${t('Reader-derived scene graph')}</span>` : ''}</div>
+        <div class="sp-web-footer">${readerDerived ? `<span class="sp-web-source-note">${t('Scene-only graph')}</span>` : ''}</div>
     </div>`;
 
     // Close handlers
