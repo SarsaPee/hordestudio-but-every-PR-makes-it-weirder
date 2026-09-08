@@ -1208,8 +1208,7 @@
                 || ['promoted', 'resolved'].includes(String(staged?.status || '').toLowerCase());
             const source = [
                 candidate?.candidateType || 'candidate',
-                candidate?.sourceTurnIds?.length ? `${candidate.sourceTurnIds.length} settled turn${candidate.sourceTurnIds.length === 1 ? '' : 's'}` : '',
-                Number.isFinite(Number(candidate?.confidence)) ? `${Math.round(Number(candidate.confidence) * 100)}% Reader confidence` : ''
+                candidate?.sourceTurnIds?.length ? `${candidate.sourceTurnIds.length} settled turn${candidate.sourceTurnIds.length === 1 ? '' : 's'}` : ''
             ].filter(Boolean).join(' · ');
             const standing = canonical
                 ? (promoted ? `Linked to Horde ${canonical.kind || 'record'} “${canonical.name || canonical.id}”.`

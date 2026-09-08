@@ -526,6 +526,7 @@ assert.match(runtime, /portraitIdentityForCharacter/, 'portrait associations mus
 assert.match(runtime, /Accepted compact delta for this selection/, 'comparison must show the compact handoff that explains a disagreement');
 assert.match(runtime, /this view makes no authority change by itself/i, 'comparison must expose conflicts without silently choosing an authority');
 assert.match(runtime, /Scene identity handoffs/, 'Inspect must expose the ScenePulse-to-Horde identity scaffold alongside field comparison');
+assert.doesNotMatch(runtime, /Reader confidence/, 'visible ScenePulse identity handoffs must not display a provider-style confidence score');
 assert.match(runtime, /stage-scenepulse-candidate-review/, 'candidate review must use an explicit narrow host action');
 assert.match(runtime, /promote-scenepulse-candidate/, 'a staged candidate must be able to request explicit durable promotion');
 assert.match(runtime, /Create with author decision/, 'an early durable decision must be visibly distinct from ordinary promotion readiness');
