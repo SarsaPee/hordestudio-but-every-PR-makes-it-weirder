@@ -25,6 +25,9 @@ const sourceWiki = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'char
 const sourceCharacterHistory = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-history.js');
 const sourceWeb = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-web.js');
 const sourceSparklines = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'sparklines.js');
+const sourceRelationshipsCss = read('scenepulse', 'vendor', 'ScenePulse', 'css', 'relationships.css');
+const sourceConstants = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'constants.js');
+const sourceGuidedTour = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'guided-tour.js');
 const sourceLoading = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'loading.js');
 const sourceSetupGuide = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'setup-guide.js');
 const sourceI18n = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'i18n.js');
@@ -121,6 +124,11 @@ assert.match(runtime, /if \(!authority\.size\) return fixture/, 'an older handof
 assert.match(runtime, /nativeFieldAuthority/, 'field-by-field authority must be explicit rather than inferred from live mode');
 assert.match(runtime, /nativeFieldHasAcceptedValue/, 'a declared field must still prove an accepted value before replacing the tutorial support');
 assert.match(runtime, /!clear\.has\(key\).*?!replace\.has\(key\).*?!hasValue\(value\)/s, 'implicit empty live values must not shrink source fixture data');
+assert.match(sourceRelationshipsCss, /\.sp-meter-row \{ display: grid; grid-template-columns: auto 1fr minmax\(0, 70px\) 44px;/, 'source relationship meters must retain horizontal grid tracks');
+assert.match(sourceRelationshipsCss, /\.sp-meter-bar-fill \{ height: 100%;[\s\S]*?transition: width/, 'the coloured relationship fill must encode current horizontal width');
+assert.match(sourceRelationshipsCss, /\.sp-meter-bar-prev \{ position: absolute; top: 0; bottom: 0; width: 2px;/, 'the previous-value delta marker must remain a vertical line on the horizontal track');
+assert.match(sourceGuidedTour, /s\.customPanels\.push\(\{name:'RPG Stats \(Tour Example\)'/, 'the tour custom-panel schema must remain defined by upstream guided-tour behavior');
+assert.doesNotMatch(sourceConstants, /\bhealth\s*:/, 'TOUR_EXAMPLE_DATA must not fabricate a health value for its schema-only custom panel');
 assert.match(runtime, /for \(let index = 0; index < 12; index \+= 1\)/, 'fixture-only source mount must exercise the populated tutorial timeline');
 assert.match(runtime, /ScenePulse handoff review/, 'the native and Sidecar readings need a visible comparison surface');
 assert.match(runtime, /A difference is evidence to review, not a cue to erase either system/i, 'conflicts must remain inspectable');
@@ -530,6 +538,19 @@ sourceRuntimeContext.window.setTimeout = sourceRuntimeContext.setTimeout;
 sourceRuntimeContext.window.clearTimeout = sourceRuntimeContext.clearTimeout;
 vm.runInNewContext(runtime, sourceRuntimeContext);
 const materializeSourceTracker = sourceRuntimeContext.window.HordeScenePulseSourceRuntime.materializeNativeTracker;
+const customPanelAuthoritySource = [
+    "const SCENEPULSE_TOUR_CUSTOM_PANELS = [{ name: 'RPG Stats (Tour Example)', fields: [{ key: 'health' }, { key: 'mana' }, { key: 'reputation' }] }];",
+    "const SCENEPULSE_NATIVE_PRESENTATION_FIELDS = ['time'];",
+    lastFunction('scenePulseEffectiveSourceCustomPanels'),
+    lastFunction('scenePulseDeclaredNativeFieldAuthority')
+].join('\n');
+const effectiveCustomPanelAuthority = vm.runInNewContext(`${customPanelAuthoritySource}\n({ tour: scenePulseEffectiveSourceCustomPanels({}), profile: scenePulseEffectiveSourceCustomPanels({ sourceProfiles: [{ id: 'profile_1', customPanels: [{ name: 'Profile fields', fields: [{ key: 'morale' }] }] }], sourceActiveProfileId: 'profile_1' }), direct: scenePulseEffectiveSourceCustomPanels({ customPanels: [{ name: 'World fields', fields: [{ key: 'focus' }] }] }), authority: scenePulseDeclaredNativeFieldAuthority({}) })`);
+assert.deepEqual(JSON.parse(JSON.stringify(effectiveCustomPanelAuthority)), {
+    tour: [{ name: 'RPG Stats (Tour Example)', fields: [{ key: 'health' }, { key: 'mana' }, { key: 'reputation' }] }],
+    profile: [{ name: 'Profile fields', fields: [{ key: 'morale' }] }],
+    direct: [{ name: 'World fields', fields: [{ key: 'focus' }] }],
+    authority: ['time', 'health', 'mana', 'reputation']
+}, 'one source schema resolver must preserve precedence and declare exactly the resulting Reader-adoptable keys');
 const fixtureTracker = {
     time: '3:08 PM',
     relationships: [{ relationshipId: 'yvette', name: 'Yvette', trust: 25 }],
