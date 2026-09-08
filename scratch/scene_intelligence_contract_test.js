@@ -295,6 +295,8 @@ assert.match(normalSceneCopy, /ScenePulse presets/, 'normal setup controls must 
 assert.doesNotMatch(normalSceneCopy, /accepted turn|selected reader preset|Reader-focused source template|Reader presets|no Reader call/i, 'normal ScenePulse controls must keep Reader/acceptance jargon inside Inspect');
 assert.doesNotMatch(app, /Cleared \$\{count\} ScenePulse Reader snapshot/, 'history clear feedback must describe a scene, not backend Reader storage');
 assert.doesNotMatch(app, /No accepted authored turn is available to refresh/, 'refresh feedback must describe the missing authored scene without settlement jargon');
+assert.doesNotMatch(app, /Committed continuity/, 'normal World messages may not expose internal commitment terminology');
+assert.match(app, /\$\{failed \? 'Scene needs attention' : 'Scene ready'\}/, 'normal backstage summaries must use player-facing scene status');
 
 assert.match(sourcePanel, /export function createPanel\(\)/, 'vendored source panel must remain the actual panel creator');
 assert.match(sourcePanel, /sp-tb-wiki/, 'source toolbar must retain Character Wiki');
