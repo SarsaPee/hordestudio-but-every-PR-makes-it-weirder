@@ -158,7 +158,9 @@
         originalSillyTavern: Object.getOwnPropertyDescriptor(global, 'SillyTavern'),
         originalToastr: Object.getOwnPropertyDescriptor(global, 'toastr'),
         facadeInstalled: false,
-        panelCaptureInstalled: false,
+        // `createPanel()` may replace the source DOM during a normal Horde remount.
+        // Keep this panel-scoped so the bridge is installed on the replacement.
+        panelCapturePanel: null,
         portraitCaptureInstalled: false,
         thoughtRefreshCaptureInstalled: false,
         historySelectionCaptureInstalled: false,
@@ -1979,7 +1981,7 @@
     }
 
     function installPanelCapture(panel) {
-        if (runtime.panelCaptureInstalled) return;
+        if (runtime.panelCapturePanel === panel) return;
         panel.addEventListener('click', event => {
             const target = event.target instanceof Element ? event.target : null;
             if (!target) return;
@@ -1998,7 +2000,7 @@
                 if (direction) dispatch('stage-story-idea', { direction, inject: !!inject }).catch(error => makeToast('error', error?.message || error, 'Story idea'));
             }
         }, true);
-        runtime.panelCaptureInstalled = true;
+        runtime.panelCapturePanel = panel;
     }
 
     function installThoughtRefreshCapture() {
@@ -2293,6 +2295,7 @@
         global.clearTimeout(runtime.historySelectionTimer);
         runtime.historySelectionTimer = null;
         runtime.current = null;
+        runtime.panelCapturePanel = null;
         const panel = document.getElementById('sp-panel');
         if (panel?.dataset.hordeSourceRuntime) panel.classList.remove('sp-visible');
         document.querySelector('.sp-wiki-overlay')?.remove();
