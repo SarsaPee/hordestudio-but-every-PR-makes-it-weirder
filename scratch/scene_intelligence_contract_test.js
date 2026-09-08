@@ -127,6 +127,9 @@ assert.match(readerPass, /sourceProfileContext\.instruction/, 'source Profile in
 assert.match(readerPass, /scenePulseSourceProfile/, 'accepted Reader metadata must retain source Profile provenance');
 assert.match(readerPass, /SCENEPULSE NPC RELATIONSHIP WEB/, 'the one Sidecar Reader pass must own the source NPC graph interpretation');
 assert.match(readerPass, /Do not make a second graph-generation call/, 'the Reader contract must forbid an independent ScenePulse graph inference');
+assert.match(readerPass, /SCENEPULSE STABLE RECORD IDENTITIES/, 'the first rich ScenePulse projection must require stable source record identities');
+assert.match(readerPass, /Do not derive an ID from a display name/, 'Reader identity must never be inferred from a mutable source label');
+assert.match(readerPass, /Each relationship record MUST include relationshipId and its characterId/, 'relationship dimensions need stable identity from their first source projection');
 assert.match(normalizer, /npcRelationshipGraph/, 'Reader normalization must retain the compact NPC graph beside ScenePulse fields');
 assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache updates must honor nested delta-field provenance');
 assert.match(acceptedHandoff, /npcRelationshipGraph/, 'accepted handoffs must retain Reader graph data beside the source tracker');
