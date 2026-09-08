@@ -89,11 +89,16 @@ function _buildEntries() {
     const meta = getCharacterHistory();
 
     const prevSnap = getPrevSnapshot(currentSnapshotMesIdx || latestKey || 0);
+    const _characterStableId = entry => String(entry?.characterId || entry?.character_id || entry?.id || entry?.candidateId || entry?.candidate_id || entry?.subjectRef || entry?.subject_ref || '').trim();
+    const _relationshipStableKey = entry => { const relationshipId = String(entry?.relationshipId || entry?.relationship_id || entry?.id || '').trim(); if (relationshipId) return `r:${relationshipId}`; const characterId = _characterStableId(entry); return characterId ? `c:${characterId}` : ''; };
     const prevRelMap = {};
-    if (prevSnap?.relationships) {
-        for (const pr of (Array.isArray(prevSnap.relationships) ? prevSnap.relationships : []))
-            prevRelMap[(pr.name || '').toLowerCase()] = pr;
+    if (prevSnap?.relationships) for (const pr of (Array.isArray(prevSnap.relationships) ? prevSnap.relationships : [])) {
+        const stable = _relationshipStableKey(pr);
+        if (stable && !prevRelMap[stable]) prevRelMap[stable] = pr;
+        const named = (pr.name || '').toLowerCase();
+        if (named && !prevRelMap[`n:${named}`]) prevRelMap[`n:${named}`] = pr;
     }
+    const _previousRelationship = rel => { const stable = _relationshipStableKey(rel); const named = prevRelMap[`n:${(rel?.name || '').toLowerCase()}`]; if (!stable) return named || null; return prevRelMap[stable] || (!_relationshipStableKey(named) ? named : null); };
 
     // v6.8.20: alias-aware + override-aware portrait resolution.
     // resolvePortraitUrl walks user overrides → ST avatar → alias matches.
@@ -110,12 +115,30 @@ function _buildEntries() {
     // who appeared as "Stranger" in snap 0 and "Jenna" in snap 5 with
     // aliases=["Stranger"] resolves to the snap 5 Jenna entry when looked
     // up by either name).
-    const _findLatest = (kind, aliasesLow) => {
+    const _findLatest = (kind, aliasesLow, sourceIdentity = '') => {
+        const _sourceIdentityFor = item => kind === 'relationships'
+            ? String(item?.characterId || item?.character_id || item?.candidateId || item?.candidate_id || item?.subjectRef || item?.subject_ref || '').trim()
+            : _characterStableId(item);
+        // Prefer the retained Reader identity across the full source history.
+        // Only snapshots without an identity can use exact aliases as legacy
+        // fallback, which prevents a same-named person from replacing a Wiki
+        // dossier after a reveal.
+        if (sourceIdentity) {
+            for (let i = snapKeys.length - 1; i >= 0; i--) {
+                const snap = data.snapshots[String(snapKeys[i])];
+                const arr = snap && Array.isArray(snap[kind]) ? snap[kind] : null;
+                if (!arr) continue;
+                const exact = arr.filter(item => _sourceIdentityFor(item) === sourceIdentity);
+                if (exact.length === 1) return exact[0];
+                if (exact.length > 1) return null;
+            }
+        }
         for (let i = snapKeys.length - 1; i >= 0; i--) {
             const snap = data.snapshots[String(snapKeys[i])];
             const arr = snap && Array.isArray(snap[kind]) ? snap[kind] : null;
             if (!arr) continue;
             for (const item of arr) {
+                if (sourceIdentity && _sourceIdentityFor(item)) continue;
                 const nm = (item?.name || '').toLowerCase().trim();
                 if (!nm) continue;
                 if (aliasesLow.has(nm)) return item;
@@ -165,7 +188,7 @@ function _buildEntries() {
     for (const [canonLow, m] of meta.entries()) {
         if (!canonLow || canonLow === '?' || seen.has(canonLow)) continue;
         const aliasesLow = m.aliasesLow || new Set([canonLow]);
-        let ch = _findLatest('characters', aliasesLow);
+        let ch = _findLatest('characters', aliasesLow, m.sourceIdentity || '');
         if (!ch) ch = _findArchived('characters', aliasesLow);
         if (!ch) {
             // Final safety net: synthesize a minimal stub. The wiki entry
@@ -177,6 +200,7 @@ function _buildEntries() {
                 role: '',
                 _spStub: true,
             };
+            if (m.sourceIdentity) ch.characterId = m.sourceIdentity;
         }
         seen.add(canonLow);
         // Mark every alias as seen so the relationships fallback below
@@ -188,7 +212,7 @@ function _buildEntries() {
         // archive → stub). Pets / brief NPCs have always fallen through
         // to the stub case, but pruning could now silently lose a real
         // relationship record without the archive layer.
-        let rel = _findLatest('relationships', aliasesLow);
+        let rel = _findLatest('relationships', aliasesLow, m.sourceIdentity || '');
         if (!rel) rel = _findArchived('relationships', aliasesLow);
         // v6.8.29: synthesize zero-meter stub when no relationships entry
         // exists (common for pets). Same shape filterForView provides.
@@ -206,6 +230,7 @@ function _buildEntries() {
                 compatibility: 0, compatibilityLabel: 'unknown',
                 _spStub: true,
             };
+            if (m.sourceIdentity) rel.characterId = m.sourceIdentity;
         }
 
         // In-scene check matches against canonical OR any historical alias.
@@ -215,7 +240,7 @@ function _buildEntries() {
         }
         if (!inScene) inScene = cp.some(p => aliasesLow.has(p) || _nameMatch(p, displayName));
 
-        const prevRel = prevRelMap[canonLow] || prevRelMap[(rel.name || '').toLowerCase()] || null;
+        const prevRel = _previousRelationship(rel);
         const cc = charColor(displayName);
         // Use the canonical display name on the entry so the wiki shows
         // the latest known identity even if the freshest character record
@@ -240,8 +265,10 @@ function _buildEntries() {
         seen.add(rn);
         const inScene = presentSet.has(rn) || cp.some(p => _nameMatch(p, rn));
         const m = meta.get(rn) || {};
-        const prevRel = prevRelMap[rn] || null;
+        const prevRel = _previousRelationship(rel);
         const stub = { name: rel.name, role: rel.relType || '', aliases: [] };
+        const characterId = _characterStableId(rel);
+        if (characterId) stub.characterId = characterId;
         const cc2 = charColor(rel.name);
         entries.push({
             name: rel.name, character: stub,

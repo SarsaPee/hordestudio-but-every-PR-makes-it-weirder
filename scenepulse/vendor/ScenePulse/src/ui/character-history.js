@@ -24,6 +24,12 @@ import { getTrackerData } from '../settings.js';
 let _cache = null;
 let _cacheKey = null;
 
+// Worlds V2 Reader packets retain an opaque identity through a name reveal.
+// History remains name-addressable for the native Wiki UI, but records this
+// value so consumers can choose an exact current dossier before looking at
+// alias-only legacy snapshots.
+const _characterStableId = entry => String(entry?.characterId || entry?.character_id || entry?.id || entry?.candidateId || entry?.candidate_id || entry?.subjectRef || entry?.subject_ref || '').trim();
+
 // Rebuild the history map for the current chat's snapshots.
 // Returns Map<lowerCanonicalName, HistoryMeta> where HistoryMeta is:
 //   {
@@ -40,6 +46,16 @@ function _buildHistory() {
     const snaps = data?.snapshots || {};
     const snapKeys = Object.keys(snaps).map(Number).sort((a, b) => a - b);
     const out = new Map();
+    const stableMeta = new Map();
+    const _metaKey = (canonLow, sourceIdentity, meta) => {
+        const sameName = out.get(canonLow);
+        if (!sameName || sameName === meta) return canonLow;
+        return sourceIdentity ? `id:${sourceIdentity.toLowerCase()}` : canonLow;
+    };
+    const _currentMetaKey = meta => {
+        for (const [key, value] of out) if (value === meta) return key;
+        return '';
+    };
 
     // ── Pass 1: build alias → canonical resolver ────────────────────
     // Walk all snapshots, find any character with a non-empty aliases
@@ -100,7 +116,13 @@ function _buildHistory() {
             const canon = resolve(ch?.name);
             const canonLow = canon.toLowerCase();
             if (!canonLow || canonLow === '?') continue;
-            let meta = out.get(canonLow);
+            const sourceIdentity = _characterStableId(ch);
+            const stableKey = sourceIdentity.toLowerCase();
+            let meta = stableKey ? stableMeta.get(stableKey) : null;
+            if (!meta) {
+                const sameName = out.get(canonLow);
+                if (!sameName || !stableKey || !sameName.sourceIdentity || sameName.sourceIdentity.toLowerCase() === stableKey) meta = sameName;
+            }
             if (!meta) {
                 meta = {
                     firstSeen: key,
@@ -109,14 +131,20 @@ function _buildHistory() {
                     lastLocation: '',
                     canonical: canon,
                     aliasesLow: new Set([canonLow]),
+                    sourceIdentity,
                 };
-                out.set(canonLow, meta);
+                out.set(_metaKey(canonLow, sourceIdentity, meta), meta);
+                if (stableKey) stableMeta.set(stableKey, meta);
             } else {
                 // Canonical-name promotion: the most recent turn's canonical
                 // name wins. Snapshots are iterated in order so each pass
                 // overwrites the previous canonical.
                 meta.canonical = canon;
                 if (key < meta.firstSeen) meta.firstSeen = key;
+                if (sourceIdentity) { meta.sourceIdentity = sourceIdentity; stableMeta.set(stableKey, meta); }
+                const oldKey = _currentMetaKey(meta);
+                const nextKey = _metaKey(canonLow, sourceIdentity, meta);
+                if (oldKey && oldKey !== nextKey) { out.delete(oldKey); out.set(nextKey, meta); }
             }
             // Record the raw name and aliases the character was seen under
             // this turn so alias lookups in either direction work.
@@ -223,7 +251,8 @@ function _buildHistory() {
             // "these are the same character under different recorded
             // names."
             const overlap = metaA.aliasesLow.has(keyB) || metaB.aliasesLow.has(keyA);
-            if (!overlap) continue;
+            const incompatibleIdentity = metaA.sourceIdentity && metaB.sourceIdentity && metaA.sourceIdentity.toLowerCase() !== metaB.sourceIdentity.toLowerCase();
+            if (!overlap || incompatibleIdentity) continue;
             // Winner = most recent lastSeen. Tie → entry A.
             const winner = metaA.lastSeen >= metaB.lastSeen ? metaA : metaB;
             const loser = winner === metaA ? metaB : metaA;
@@ -232,6 +261,7 @@ function _buildHistory() {
             if (loser.firstSeen < winner.firstSeen) winner.firstSeen = loser.firstSeen;
             for (const al of loser.aliasesLow) winner.aliasesLow.add(al);
             if (!winner.lastLocation && loser.lastLocation) winner.lastLocation = loser.lastLocation;
+            if (!winner.sourceIdentity && loser.sourceIdentity) winner.sourceIdentity = loser.sourceIdentity;
             out.delete(loserKey);
             removed.add(loserKey);
         }
@@ -269,10 +299,11 @@ export function getCharacterHistory() {
             const parts = [];
             for (const c of latest.characters) {
                 const n = (c?.name || '').toLowerCase().trim();
+                const id = _characterStableId(c).toLowerCase();
                 const al = Array.isArray(c?.aliases)
                     ? c.aliases.map(a => (a || '').toLowerCase().trim()).sort().join(',')
                     : '';
-                parts.push(n + '|' + al);
+                parts.push(id + '|' + n + '|' + al);
             }
             latestFingerprint = parts.sort().join(';');
         }

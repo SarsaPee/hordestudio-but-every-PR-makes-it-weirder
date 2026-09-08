@@ -22,6 +22,7 @@ const sourceUpdate = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'up
 const sourceNormalize = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'normalize.js');
 const sourceTimeline = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'timeline.js');
 const sourceWiki = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-wiki.js');
+const sourceCharacterHistory = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-history.js');
 const sourceWeb = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-web.js');
 const sourceSparklines = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'sparklines.js');
 const sourceLoading = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'loading.js');
@@ -194,6 +195,11 @@ assert.doesNotMatch(sourceSparklines, /nameFirst/, 'source history must not fall
 assert.match(sourceTimeline, /export function renderTimeline\(\)/, 'source timeline must remain callable');
 assert.match(sourceWiki, /export function openCharacterWiki\(\)/, 'source Wiki must remain a full focused source view');
 assert.match(sourceWiki, /document\.body\.appendChild\(overlay\)/, 'source Wiki must retain viewport takeover behavior');
+assert.match(sourceCharacterHistory, /const stableMeta = new Map\(\)/, 'source dossier history must retain stable character identity beside display labels');
+assert.match(sourceCharacterHistory, /const incompatibleIdentity =/, 'source dossier history must not merge distinct stable identities through aliases');
+assert.match(sourceWiki, /const _sourceIdentityFor = item => kind === 'relationships'/, 'source Wiki must use the subject identity for relationship dossier lookup');
+assert.match(sourceWiki, /_findLatest\('characters', aliasesLow, m\.sourceIdentity \|\| ''\)/, 'source Wiki must choose the latest character dossier by stable source identity');
+assert.match(sourceWiki, /const prevRel = _previousRelationship\(rel\)/, 'source Wiki relationship delta must use stable predecessor identity');
 assert.match(sourceWeb, /export function openRelationshipWeb\(entries\)/, 'source relationship graph must remain callable');
 assert.match(sourceWeb, /Reader-derived scene graph/, 'the source web must disclose a Sidecar Reader-derived cache');
 assert.match(sourceWeb, /Refresh NPC graph through Reader/, 'the source web must label its bridged generation route');
@@ -253,6 +259,23 @@ assert.match(sourcePrefs, /dashCards: incoming\.dashCards/, 'source dashboard-ca
 assert.match(sourcePrefs, /fieldToggles: incoming\.fieldToggles/, 'source field-visibility choices must persist through the scoped World preference boundary');
 assert.match(sourcePrefs, /setupDismissed: incoming\.setupDismissed === true/, 'source setup completion must persist as a scoped UI preference');
 assert.match(sourcePrefs, /thoughtPanelFit|thoughtFit: incoming\.thoughtFit/, 'source thought-panel behavior must persist through the scoped World preference boundary');
+
+const characterHistoryStart = sourceCharacterHistory.indexOf('const _characterStableId = entry =>');
+const characterHistoryEnd = sourceCharacterHistory.indexOf('/**\n * Get the cached history map', characterHistoryStart);
+assert(characterHistoryStart >= 0 && characterHistoryEnd > characterHistoryStart,
+    'source character identity history must remain extractable for the reveal-continuity contract');
+const sourceCharacterHistoryResult = vm.runInNewContext(`
+const getTrackerData = () => ({ snapshots: {
+    1: { location: 'Wharf', charactersPresent: ['Hooded Stranger'], characters: [{ characterId: 'cand_yvette', name: 'Hooded Stranger', outfit: 'cloak' }] },
+    2: { location: 'Wharf', charactersPresent: ['Yvette'], characters: [{ characterId: 'cand_yvette', name: 'Yvette', outfit: 'leather coat' }] }
+} });
+${sourceCharacterHistory.slice(characterHistoryStart, characterHistoryEnd)}
+Array.from(_buildHistory().values()).map(meta => ({ canonical: meta.canonical, sourceIdentity: meta.sourceIdentity, firstSeen: meta.firstSeen, lastSeen: meta.lastSeen, appearances: meta.appearances, aliases: [...meta.aliasesLow].sort() }));
+`);
+assert.deepEqual(JSON.parse(JSON.stringify(sourceCharacterHistoryResult)), [{
+    canonical: 'Yvette', sourceIdentity: 'cand_yvette', firstSeen: 1, lastSeen: 2, appearances: 2,
+    aliases: ['hooded stranger', 'yvette']
+}], 'source Wiki history must retain one dossier across a stable-ID reveal even before a legacy alias is available');
 
 const sparkIdentityStart = sourceSparklines.indexOf('function _relationshipStableKey(entry)');
 const sparkHistoryStart = sourceSparklines.indexOf('export function getMeterHistory(relationship)');
