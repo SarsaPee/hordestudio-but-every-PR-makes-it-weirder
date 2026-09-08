@@ -19682,24 +19682,35 @@ function scenePulseAcceptedHandoff(world, sess) {
     // they can survive a fixture/live switch, but never supply a source field.
     const fixtureWithPreferences = Object.freeze({ ...fixture, uiPreferences, nativeFieldAuthority });
     const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
-    if (!protocol || !latestTurn || sidecarTurnNeedsDownstreamRecovery(latestTurn)) return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
-    if (!['active', 'committed'].includes(String(latestTurn.status || '').toLowerCase())
-        && String(latestTurn.reconciliationStatus || '').toLowerCase() !== 'committed') return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
-
-    const settled = (protocol.readerSnapshots || [])
+    if (!protocol || !latestTurn) return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
+    const latestTurnAccepted = !sidecarTurnNeedsDownstreamRecovery(latestTurn)
+        && (['active', 'committed'].includes(String(latestTurn.status || '').toLowerCase())
+            || String(latestTurn.reconciliationStatus || '').toLowerCase() === 'committed');
+    const historySnapshots = (protocol.readerSnapshots || [])
         .filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status)
-            && snapshot?.settlementStatus === 'settled'
-            && String(snapshot?.turnId || '') === String(latestTurn.id || ''))
-        .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')))
-        .at(-1);
+            && snapshot?.settlementStatus === 'settled')
+        .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')));
+    // A failed or still-incomplete newest beat has no authority to replace a
+    // fully accepted foreground scene with the tutorial.  Retain the exact
+    // last settled packet in ScenePulse, while Backstage continues to expose
+    // the newer handoff/question for inspection and recovery.  The fixture is
+    // only the first-scene scaffold when no accepted packet exists at all.
+    const settledForLatestTurn = latestTurnAccepted ? historySnapshots
+        .filter(snapshot => String(snapshot?.turnId || '') === String(latestTurn.id || ''))
+        .at(-1) : null;
+    const settled = settledForLatestTurn || historySnapshots.at(-1) || null;
+    const sourceTurn = settled && (protocol.turns || [])
+        .find(turn => String(turn?.id || '') === String(settled.turnId || '')) || null;
+    const retainingLastKnownScene = !!settled && (!settledForLatestTurn
+        || String(settled.turnId || '') !== String(latestTurn.id || ''));
     const envelope = settled?.envelope || null;
-    const sourceTurnMatches = String(envelope?.sourceTurnId || settled?.turnId || '') === String(latestTurn.id || '');
+    const sourceTurnMatches = String(envelope?.sourceTurnId || settled?.turnId || '') === String(sourceTurn?.id || '');
     // Reader stores the unmerged packet on the authored Turn.  Keep it for
     // the source Diff Inspector. Reapply the exact current compact patch to
     // the settled projection at this presentation boundary: it is idempotent
     // for a valid envelope and repairs already-stored keyed record maps from
     // before the reducer learned that compact wire form.
-    const deltaScenePulse = isPlainObject(latestTurn.reader?.scenePulse) ? latestTurn.reader.scenePulse : {};
+    const deltaScenePulse = isPlainObject(sourceTurn?.reader?.scenePulse) ? sourceTurn.reader.scenePulse : {};
     const settledScenePulse = isPlainObject(envelope?.scenePulse) ? envelope.scenePulse : null;
     const acceptedScenePulse = settledScenePulse && Object.keys(deltaScenePulse).length
         ? sidecarMergeScenePulse(settledScenePulse, deltaScenePulse)
@@ -19707,9 +19718,6 @@ function scenePulseAcceptedHandoff(world, sess) {
     if (!settled || !sourceTurnMatches || !acceptedScenePulse || !Object.keys(acceptedScenePulse).length) return scenePulseHumanOverlay(protocol, fixtureWithPreferences);
 
     const readerPreset = effectiveSidecarReaderProfile(world, sess)?.scenePulsePreset || null;
-    const historySnapshots = (protocol.readerSnapshots || [])
-        .filter(snapshot => ['active', 'accepted_historical'].includes(snapshot?.status) && snapshot?.settlementStatus === 'settled')
-        .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')));
     const currentIndex = historySnapshots.findIndex(snapshot => snapshot.id === settled.id);
     const predecessor = currentIndex > 0 ? historySnapshots[currentIndex - 1] : null;
     const history = historySnapshots.slice(0, currentIndex + 1).map((snapshot, index, snapshots) => {
@@ -19778,7 +19786,8 @@ function scenePulseAcceptedHandoff(world, sess) {
     return scenePulseHumanOverlay(protocol, Object.freeze({
         id: `scenepulse-live-${settled.id}`,
         status: 'accepted_live',
-        source: `Accepted Horde Reader handoff · ${settled.id}`,
+        source: `${retainingLastKnownScene ? 'Last known accepted' : 'Accepted'} Horde Reader handoff · ${settled.id}`,
+        lastKnown: retainingLastKnownScene,
         fixtureScenePulse: fixture.scenePulse,
         scenePulse: safeJsonClone(acceptedScenePulse),
         previousScenePulse: predecessor?.envelope?.scenePulse ? safeJsonClone(predecessor.envelope.scenePulse) : null,
@@ -19789,17 +19798,20 @@ function scenePulseAcceptedHandoff(world, sess) {
         history: safeJsonClone(history),
         readerPreset: safeJsonClone(readerPreset),
         candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
-            snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
+            snapshotId: String(settled.id || ''), turnId: String(sourceTurn?.id || '')
         })),
         questReview: safeJsonClone(scenePulseQuestReviewProjection(protocol, {
-            snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
+            snapshotId: String(settled.id || ''), turnId: String(sourceTurn?.id || '')
         })),
         relationshipReview: safeJsonClone(scenePulseRelationshipReviewProjection(protocol, {
-            snapshotId: String(settled.id || ''), turnId: String(latestTurn.id || '')
+            snapshotId: String(settled.id || ''), turnId: String(sourceTurn?.id || '')
         })),
         uiPreferences,
         nativeFieldAuthority,
-        provenance: Object.freeze({ turnId: String(latestTurn.id || ''), snapshotId: String(settled.id || ''), readerMode: String(envelope.snapshotMode || 'delta') })
+        provenance: Object.freeze({
+            turnId: String(sourceTurn?.id || ''), snapshotId: String(settled.id || ''), readerMode: String(envelope.snapshotMode || 'delta'),
+            currentTurnId: String(latestTurn.id || ''), presentation: retainingLastKnownScene ? 'last_known_after_incomplete_turn' : 'current'
+        })
     }));
 }
 

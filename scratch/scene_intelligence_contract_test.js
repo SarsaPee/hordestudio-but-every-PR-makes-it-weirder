@@ -150,6 +150,8 @@ assert.deepEqual(JSON.parse(JSON.stringify(hordeTourFixture)), JSON.parse(JSON.s
     'Horde must mount the vendored TOUR_EXAMPLE_DATA verbatim, field for field, as the sealed Golden fixture');
 assert.match(acceptedHandoff, /scenePulseHumanOverlay\(protocol, fixtureWithPreferences\)/, 'fixture state must accept an explicit human edit overlay without registry backfill');
 assert.match(acceptedHandoff, /settlementStatus === 'settled'[\s\S]*snapshot\?\.turnId/, 'live handoff must be exact-turn settled');
+assert.match(acceptedHandoff, /const settledForLatestTurn = latestTurnAccepted[\s\S]*?const settled = settledForLatestTurn \|\| historySnapshots\.at\(-1\) \|\| null/, 'an incomplete newest turn must retain the last settled ScenePulse packet rather than substitute the tutorial');
+assert.match(acceptedHandoff, /lastKnown: retainingLastKnownScene/, 'last-known presentation must be explicit provenance, not a disguised current handoff');
 assert.doesNotMatch(acceptedHandoff, /world\.entities|world\.quests|sess\.quests/, 'accepted ScenePulse handoff must not borrow Horde registry fields');
 assert.match(nativePresentationAuthority, /SCENEPULSE_NATIVE_PRESENTATION_FIELDS/, 'the ScenePulse-facing ownership family must be explicit');
 assert.match(acceptedHandoff, /nativeFieldAuthority/, 'each accepted handoff must carry the declared source-field authority');
@@ -226,6 +228,7 @@ assert.match(runtime, /ScenePulse handoff review/, 'the native and Sidecar readi
 assert.match(runtime, /A difference is evidence to review, not a cue to erase either system/i, 'conflicts must remain inspectable');
 assert.match(runtime, /Tutorial support retained/, 'unsupported fields must remain visibly scaffolded instead of disappearing');
 assert.match(runtime, /Settled handoff adopted/, 'the comparison must distinguish a real accepted replacement from fixture support');
+assert.match(runtime, /current\.handoff\?\.lastKnown \? 'Last known scene'/, 'an incomplete latest handoff must leave the source panel visibly anchored to its last known scene');
 assert.match(runtime, /installHistorySelectionCapture/, 'source timeline and Browse All selections must keep the comparison aligned with the selected source snapshot');
 assert.match(runtime, /loadOptionalSourceModule/, 'an optional source utility may not prevent the foreground ScenePulse panel from mounting');
 assert.match(runtime, /profileManager: 'settings-ui\/profiles-manager\.js'/, 'source Profiles must remain a real vendored surface');

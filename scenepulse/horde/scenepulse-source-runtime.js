@@ -1611,7 +1611,8 @@
             panel.insertBefore(strip, body || null);
         }
         const fixture = current.handoff?.status === 'accepted_fixture';
-        const sourceText = fixture ? 'Example scene' : current.handoff?.status === 'accepted_human' ? 'Authored scene state' : 'Current scene';
+        const sourceText = fixture ? 'Example scene' : current.handoff?.status === 'accepted_human' ? 'Authored scene state'
+            : current.handoff?.lastKnown ? 'Last known scene' : 'Current scene';
         // The comparison is deliberately available, but its implementation
         // vocabulary stays inside the on-demand development overlay.  Normal
         // roleplay UI should read as ScenePulse, not as a backend dashboard.
