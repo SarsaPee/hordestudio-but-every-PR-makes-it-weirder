@@ -16573,6 +16573,17 @@ function scenePulseSourceProfilePromptContext(sourceProfile, priorScenePulse, re
     };
 }
 
+// Resolve the source's named prompt slots independently from bundled presets.
+// The preset is advisory source configuration; the active Profile is the
+// explicit authoring surface and therefore wins for a shared slot key.
+function scenePulseResolvedPromptSlotEntries(sourcePreset, sourceProfileContext, priorScenePulse, readerProfile) {
+    const presetOverrides = isPlainObject(sourcePreset?.promptOverrides) ? sourcePreset.promptOverrides : {};
+    const profileOverrides = isPlainObject(sourceProfileContext?.overrides) ? sourceProfileContext.overrides : {};
+    return Object.entries({ ...presetOverrides, ...profileOverrides })
+        .filter(([slot, text]) => typeof slot === 'string' && typeof text === 'string' && text.trim())
+        .map(([slot, text]) => [slot, expandScenePulseSourceMacros(text, priorScenePulse, readerProfile)]);
+}
+
 async function runSidecarSemanticReading(world, sess, options = {}) {
     const tracker = options.tracker || {};
     const profile = options.readerProfile || effectiveSidecarReaderProfile(world, sess);
@@ -16665,19 +16676,27 @@ The user explicitly requested a fresh check of ${scenePulseSectionFocus} for thi
 ${JSON.stringify(requiredSubjects)}
 Return one concise characterIntelligence record for every listed subject BEFORE candidates, relationship details, or threads. A merely mentioned person may receive a terse coverage record, but a speaker, caller, active, nearby, audible, or remote interlocutor must receive the appropriate character-scoped reading. Put characterIntelligence near the start of semantic_interpretation. Do not enumerate unrelated absent registry characters. Keep every claim compact (normally one sentence, under 240 characters): a response that runs out of space before a relevant person is invalid.`;
     const sourcePreset = profile.scenePulsePreset || null;
-    const presetOverrides = sourcePreset?.promptOverrides && typeof sourcePreset.promptOverrides === 'object' ? sourcePreset.promptOverrides : {};
     const priorScenePulseForMacros = isPlainObject(options.priorReaderEnvelope?.scenePulse) ? options.priorReaderEnvelope.scenePulse : {};
     const sourceProfileContext = scenePulseSourceProfilePromptContext(activeSourceProfile, priorScenePulseForMacros, profile);
     // A selected source Profile is the user's ScenePulse authoring choice.
     // Its slot edits override an advisory preset, but neither can displace
     // the Sidecar evidence, delta, or canonical-boundary contracts below.
-    const resolvedPresetOverrides = Object.fromEntries(Object.entries({ ...presetOverrides, ...sourceProfileContext.overrides })
-        .map(([slot, text]) => [slot, expandScenePulseSourceMacros(text, priorScenePulseForMacros, profile)]));
-    const presetInstruction = sourcePreset?.id ? `
+    // A ScenePulse Profile can edit the source's named prompt slots without
+    // selecting a bundled preset.  Those edits are source authoring, not a
+    // cosmetic local setting: the next Sidecar read needs to receive them.
+    // Previously this block was conditional on `sourcePreset.id`, which made
+    // a perfectly valid Profile Manager / Prompt Editor edit disappear until
+    // the user also chose a preset.  The profile wins when both define the
+    // same slot, just as the vendored source profile system intends.
+    const sourcePromptSlotEntries = scenePulseResolvedPromptSlotEntries(sourcePreset, sourceProfileContext, priorScenePulseForMacros, profile);
+    const sourcePromptSlotInstruction = sourcePromptSlotEntries.length ? `
 
-[APPLIED SCENEPULSE SOURCE PRESET]
-Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}). This is a Reader-only source preset; it does not change Narrator or canonical authority. ScenePulse {{sp_*}} macros in these source slots resolve only from the prior accepted Reader ScenePulse projection; no fixture fallback or Horde registry value is eligible. Apply the following source prompt-slot overrides where compatible with the evidence, read-only, and compact-delta contracts below:\n${Object.entries(resolvedPresetOverrides).map(([slot, text]) => `[${slot}]\n${String(text)}`).join('\n\n') || '(no source prompt-slot override; use the built-in ScenePulse contract)'}` : '';
-    const readerPrompt = prompt + humanSceneStateContext + sourceProfileContext.instruction + presetInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + scenePulseSectionFocusInstruction + readerCoverageInstruction;
+[SCENEPULSE SOURCE PROMPT SLOTS]
+${sourcePreset?.id
+    ? `Preset: ${sourcePreset.displayName || sourcePreset.id} (${sourcePreset.id}).`
+    : `Profile: ${sourceProfileContext.provenance?.name || activeSourceProfile?.name || activeSourceProfile?.id || 'ScenePulse Profile'}.`}
+These are ScenePulse source prompt-slot overrides. They refine the Reader's presentation projection only; they do not change Narrator selection, provider routing, World state, or authority. ScenePulse {{sp_*}} macros in these slots resolve only from the prior accepted ScenePulse projection; no tutorial fallback or Horde registry value is eligible. Apply the following overrides where compatible with the evidence, read-only, and compact-delta contracts below:\n${sourcePromptSlotEntries.map(([slot, text]) => `[${slot}]\n${String(text)}`).join('\n\n')}` : '';
+    const readerPrompt = prompt + humanSceneStateContext + sourceProfileContext.instruction + sourcePromptSlotInstruction + sceneIntelligenceThoughtInstruction + scenePulseInstruction + scenePulseFocusInstruction + scenePulseSectionFocusInstruction + readerCoverageInstruction;
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);

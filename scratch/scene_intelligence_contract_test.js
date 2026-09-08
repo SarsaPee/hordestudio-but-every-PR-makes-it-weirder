@@ -153,6 +153,12 @@ assert.match(nativePresentationAuthority, /scenePulseEffectiveSourceCustomPanels
 assert.match(acceptedHandoff, /scenePulseWorldsHandoffPreferences/, 'the accepted handoff must carry source-resolved custom panels to the native runtime');
 assert.match(app, /function scenePulseSourceProfilePromptContext\(/, 'the selected source Profile needs a constrained Reader prompt context');
 assert.match(readerPass, /sourceProfileContext\.instruction/, 'source Profile instructions must reach the Sidecar Reader');
+assert.match(app, /function scenePulseResolvedPromptSlotEntries\(/, 'source Profile slot resolution must have a direct, testable Reader boundary');
+assert.match(readerPass, /scenePulseResolvedPromptSlotEntries\(/, 'source Profile slot overrides must be resolved at the Reader boundary');
+assert.match(readerPass, /sourcePromptSlotInstruction/, 'source Profile slot overrides must become an explicit Reader prompt block');
+assert.match(readerPass, /sourcePromptSlotEntries\.length \?/, 'a source Profile slot edit must work even when no bundled preset is selected');
+assert.match(app, /\{ \.\.\.presetOverrides, \.\.\.profileOverrides \}/, 'source Profile slot edits must override advisory preset slots');
+assert.doesNotMatch(readerPass, /const presetInstruction = sourcePreset\?\.id/, 'source Profile slot edits must not be hidden behind a preset-only prompt branch');
 assert.match(readerPass, /scenePulseSourceProfile/, 'accepted Reader metadata must retain source Profile provenance');
 assert.match(readerPass, /SCENEPULSE NPC RELATIONSHIP WEB/, 'the one Sidecar Reader pass must own the source NPC graph interpretation');
 assert.match(readerPass, /Do not make a second graph-generation call/, 'the Reader contract must forbid an independent ScenePulse graph inference');
@@ -652,6 +658,15 @@ assert.deepEqual(JSON.parse(JSON.stringify(effectiveCustomPanelAuthority)), {
     direct: [{ name: 'World fields', fields: [{ key: 'focus' }] }],
     authority: ['time', 'health', 'mana', 'reputation']
 }, 'one source schema resolver must preserve precedence and declare exactly the resulting Reader-adoptable keys');
+const sourceProfileSlotContext = {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    expandScenePulseSourceMacros: (template, prior) => String(template).replace(/\{\{sp_topic\}\}/g, String(prior?.sceneTopic || ''))
+};
+const sourceProfileSlotEntries = vm.runInNewContext(`${lastFunction('scenePulseResolvedPromptSlotEntries')}\nscenePulseResolvedPromptSlotEntries(${JSON.stringify({ promptOverrides: { role: 'preset role', criticalRules: 'preset critical rules' } })}, ${JSON.stringify({ overrides: { role: 'profile role for {{sp_topic}}' } })}, ${JSON.stringify({ sceneTopic: 'the ferry crossing' })}, {})`, sourceProfileSlotContext);
+assert.deepEqual(JSON.parse(JSON.stringify(sourceProfileSlotEntries)), [
+    ['role', 'profile role for the ferry crossing'],
+    ['criticalRules', 'preset critical rules']
+], 'a selected source Profile must send its prompt slots without a preset and override only its matching preset slots');
 const fixtureTracker = {
     time: '3:08 PM',
     relationships: [{ relationshipId: 'yvette', name: 'Yvette', trust: 25 }],
