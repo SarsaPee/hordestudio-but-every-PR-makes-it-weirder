@@ -755,6 +755,12 @@ export function normalizeTracker(d){
             }
         }
     }
+    // A character may receive a real name after first appearing as an alias.
+    // Stable source identity prevents that reveal from discarding card fields,
+    // portraits, or the historical dossier.  Exact display names are legacy
+    // fallback only when one of the snapshots predates compact IDs.
+    const _characterStableKey=entry=>String(entry?.characterId||entry?.character_id||entry?.id||entry?.candidateId||entry?.candidate_id||entry?.subjectRef||entry?.subject_ref||'').trim();
+    const _sameCharacter=(left,right)=>{const leftKey=_characterStableKey(left);const rightKey=_characterStableKey(right);return leftKey&&rightKey?leftKey===rightKey:String(left?.name||'').toLowerCase()===String(right?.name||'').toLowerCase()};
     // ── Comprehensive carry-forward: fill ALL empty fields from previous snapshot ──
     try{const _prev=getLatestSnapshot();if(_prev){
         // Scalar fields: carry forward if current is empty string
@@ -771,7 +777,7 @@ export function normalizeTracker(d){
         // Characters: fill empty sub-fields from matching previous character
         if(o.characters?.length&&_prev.characters?.length){
             for(const _ch of o.characters){
-                const _pch=_prev.characters.find(pc=>pc.name&&_ch.name&&pc.name.toLowerCase()===_ch.name.toLowerCase());
+                const _pch=_prev.characters.find(pc=>_sameCharacter(pc,_ch));
                 if(!_pch)continue;
                 for(const _fk of['role','archetype','innerThought','immediateNeed','shortTermGoal','longTermGoal','hair','face','outfit','posture','proximity','notableDetails','fertStatus','fertNotes']){
                     if(!_ch[_fk]&&_pch[_fk]){_ch[_fk]=_pch[_fk];if(_verbose)log('Char carry-forward:',_ch.name,_fk)}
@@ -883,6 +889,12 @@ export function normalizeChar(ch){
     }
     if(!_isTimelineScrub)log('normalizeChar flat keys for',name,':',Object.keys(flat).join(', '));
     const o={name};
+    // Worlds V2's compact character patches use an opaque source identity.
+    // Keep it in the source-normalized card so an alias/reveal cannot detach
+    // portraits, dossier history, or carry-forward fields from the person
+    // the Reader actually observed.
+    const _spCharacterId=String(ch.characterId||ch.character_id||ch.id||ch.candidateId||ch.candidate_id||ch.subjectRef||ch.subject_ref||'').trim();
+    if(_spCharacterId)o.characterId=_spCharacterId.slice(0,180);
     // v6.8.18: aliases array. Former names (usually descriptive placeholders
     // like "Stranger", "Hooded Figure") the character was previously known by
     // before their real name was revealed. Parsed defensively: tolerates a
@@ -1090,6 +1102,10 @@ function _capQuestTier(arr, limit) {
 export function filterForView(snap){
     if(!snap||typeof snap!=='object')return snap;
     const out={...snap};
+    // Preserve Reader-issued character identity in source-only view stubs.
+    // Display labels remain for source layout and legacy data, never as the
+    // identity key when a compact source id exists.
+    const _characterStableId=entry=>String(entry?.characterId||entry?.character_id||entry?.id||entry?.candidateId||entry?.candidate_id||entry?.subjectRef||entry?.subject_ref||'').trim().slice(0,180);
 
     // ── Drop legacy activeTasks from view (v6.8.9: tier removed) ──
     // Defensive belt-and-braces strip — the normalize/merge paths already
@@ -1166,7 +1182,8 @@ export function filterForView(snap){
             if (!rel || typeof rel !== 'object') { merged.push(rel); continue; }
             const canonName = _resolveName(rel.name);
             const finalRel = canonName !== rel.name ? { ...rel, name: canonName } : rel;
-            const key = (canonName || '').toLowerCase().trim();
+            const stableId=String(rel.relationshipId||rel.relationship_id||rel.id||rel.characterId||rel.character_id||'').trim().toLowerCase();
+            const key = stableId?`id:${stableId}`:`name:${(canonName || '').toLowerCase().trim()}`;
             if (key && byCanon.has(key)) {
                 const existing = merged[byCanon.get(key)];
                 for (const [fk, fv] of Object.entries(finalRel)) {
@@ -1247,17 +1264,23 @@ export function filterForView(snap){
     for(const r of out.relationships){
         const rn=(r.name||'').toLowerCase().trim();
         if(rn&&!charNames.has(rn)){
-            out.characters.push({name:r.name,role:r.relType||''});
+            const characterId=_characterStableId(r);
+            const stub={name:r.name,role:r.relType||''};
+            if(characterId)stub.characterId=characterId;
+            out.characters.push(stub);
             charNames.add(rn);
         }
     }
     for(const c of out.characters){
         const cn=(c.name||'').toLowerCase().trim();
         if(cn&&cn!=='?'&&!relNames.has(cn)){
-            out.relationships.push({name:c.name,relType:'',relPhase:'',timeTogether:'',milestone:'',
+            const characterId=_characterStableId(c);
+            const stub={name:c.name,relType:'',relPhase:'',timeTogether:'',milestone:'',
                 affection:0,affectionLabel:'unknown',trust:0,trustLabel:'unknown',
                 desire:0,desireLabel:'unknown',stress:0,stressLabel:'unknown',
-                compatibility:0,compatibilityLabel:'unknown'});
+                compatibility:0,compatibilityLabel:'unknown'};
+            if(characterId)stub.characterId=characterId;
+            out.relationships.push(stub);
             relNames.add(cn);
         }
     }

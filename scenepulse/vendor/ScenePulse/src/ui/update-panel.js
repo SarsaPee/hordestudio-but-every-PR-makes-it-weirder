@@ -777,6 +777,7 @@ function _updatePanelInner(d,_force=false){
         const _prevRelMap={};if(_prevSnap?.relationships)for(const pr of(Array.isArray(_prevSnap.relationships)?_prevSnap.relationships:[])){const stable=_relStableKey(pr);if(stable&&!_prevRelMap[stable])_prevRelMap[stable]=pr;const named=(pr.name||'').toLowerCase();if(named&&!_prevRelMap[`n:${named}`])_prevRelMap[`n:${named}`]=pr}
         const _previousRelationship=rel=>{const stable=_relStableKey(rel);const named=_prevRelMap[`n:${(rel.name||'').toLowerCase()}`];if(!stable)return named;return _prevRelMap[stable]||(!(_relStableKey(named))?named:null)};
         const _sameStoredRelationship=(left,right)=>{const leftKey=_relStableKey(left);const rightKey=_relStableKey(right);return leftKey&&rightKey?leftKey===rightKey:String(left?.name||'').toLowerCase()===String(right?.name||'').toLowerCase()};
+        const _characterStableKey=entry=>String(entry?.characterId||entry?.character_id||entry?.id||entry?.candidateId||entry?.candidate_id||entry?.subjectRef||entry?.subject_ref||'').trim().toLowerCase();
         // v6.8.38: build the ST avatar index once for this render loop
         // so relationship blocks can show portraits alongside names.
         const _relPortraitIdx=buildPortraitIndex();
@@ -793,7 +794,8 @@ function _updatePanelInner(d,_force=false){
         // names via the alias map, so the fuzzy fallback is no longer
         // needed for any real use case. Exact match + substring alias
         // ("Jenna" ↔ "Jenna Smith") is sufficient.
-        for(const ch of chars){const chLow=(ch.name||'').toLowerCase();if(chLow===relLow||chLow.startsWith(relLow+' ')||relLow.startsWith(chLow+' ')){displayName=ch.name;matchedChar=ch;break}}
+        const relCharacterKey=_characterStableKey(rel);
+        for(const ch of chars){const chLow=(ch.name||'').toLowerCase();const charKey=_characterStableKey(ch);const sameCharacter=relCharacterKey&&charKey?relCharacterKey===charKey:(chLow===relLow||chLow.startsWith(relLow+' ')||relLow.startsWith(chLow+' '));if(sameCharacter){displayName=ch.name;matchedChar=ch;break}}
         const cc=charColor(displayName);const bl=document.createElement('div');bl.className='sp-rel-block';if(sortedRels.length<=1||_ri===0)bl.classList.add('sp-card-open');bl.style.setProperty('--char-bg',cc.bg);bl.style.setProperty('--char-border',cc.border);bl.style.setProperty('--char-accent',cc.accent);if(cc.pattern)bl.style.setProperty('--char-pattern',cc.pattern);
         // v6.8.38: portrait thumbnail in relationship header. Passes the
         // matched character object (with aliases) so the resolver can
