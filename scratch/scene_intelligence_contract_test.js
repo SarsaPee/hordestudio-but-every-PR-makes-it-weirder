@@ -363,6 +363,8 @@ assert.match(runtime, /relationshipTranslationMarkup/, 'Inspect must expose expl
 assert.match(runtime, /only changed values as deltas/i, 'relationship Inspect cards must surface compact meter deltas');
 assert.match(runtime, /resolve-scenepulse-quest-translation/, 'only an identical-title collision may request an Inspect-only World decision');
 assert.match(runtime, /persist-scenepulse-source-settings/, 'source preference saves must use a separate host boundary');
+assert.match(runtime, /function sourceChatPanelsForPersistence\(current\)/, 'the native source editor must preserve its chat-local custom-panel schema at the Horde boundary');
+assert.match(runtime, /hasChatPanels: sourcePanels\.hasChatPanels/, 'the source boundary must distinguish an empty schema from an absent chat override');
 assert.match(runtime, /setupGuide: 'settings-ui\/setup-guide\.js'/, 'source Setup Guide must remain an imported utility');
 assert.match(runtime, /showWorldsSetupGuide/, 'Worlds must provide a truthful source-styled setup mapping');
 assert.match(runtime, /showScenePulseWorldsSetup/, 'the source guide must receive its Worlds-specific setup capability narrowly');
@@ -471,6 +473,7 @@ assert.match(app, /do not describe them as editing/, 'model context must preserv
 assert.match(humanOverlay, /sidecarScenePulse/, 'human overlay must preserve unmodified Sidecar reading for comparison');
 assert.match(humanOverlay, /Human ScenePulse edit/, 'human edit must appear in source history');
 assert.match(sourcePrefs, /customPanels: schema/, 'source custom-panel definition must persist as World schema');
+assert.match(sourcePrefs, /hasChatPanels === true/, 'an explicitly empty native custom-panel schema must survive rather than falling back to stale defaults');
 assert.match(sourcePrefs, /sourceProfiles: incoming\.sourceProfiles/, 'source Profiles must persist through the scoped World preference boundary');
 assert.match(sourcePrefs, /sourceActiveProfileId: incoming\.sourceActiveProfileId/, 'the active source Profile must persist through the scoped World preference boundary');
 assert.match(sourcePrefs, /dashCards: incoming\.dashCards/, 'source dashboard-card choices must persist through the scoped World preference boundary');
@@ -516,6 +519,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(sparkHistory.affection)), [12, 30, nu
 assert.match(app, /nativeFieldAuthority/, 'Horde preference storage must preserve the explicit source-to-Sidecar field authority ledger');
 assert.match(app, /detail\.action === 'commit-scenepulse-source-edit'/, 'Horde must claim source edit commits');
 assert.match(app, /detail\.action === 'persist-scenepulse-source-settings'/, 'Horde must claim source preference saves');
+assert.match(app, /detail\.hasChatPanels === true/, 'the host must forward native custom-panel override presence to the persistence boundary');
 assert.match(app, /detail\.action === 'stage-story-idea'/, 'Horde must claim source Story Idea actions');
 assert.match(app, /detail\.action === 'refresh-scene-pulse'/, 'Horde must claim source Reader refresh actions');
 assert.match(app, /detail\.action === 'stop-scene-pulse-refresh'/, 'Horde must claim source Reader stop actions');

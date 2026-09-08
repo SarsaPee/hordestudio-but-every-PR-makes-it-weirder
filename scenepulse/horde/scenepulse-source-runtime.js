@@ -876,10 +876,28 @@
         return dispatch('apply-scenepulse-preset', { preset: preset ? clone(preset) : null });
     }
 
+    // Custom panels are source-owned, chat-local schema. Preserve the exact
+    // upstream distinction between “this chat has no override yet” and “this
+    // chat deliberately has an empty schema”; collapsing both into [] makes
+    // a source edit disappear when Worlds remounts. Mirror the native
+    // chat-local editor state into the settings patch as a defensive second
+    // copy, but retain the declared flag so Horde can honour an intentional
+    // all-panel removal.
+    function sourceChatPanelsForPersistence(current) {
+        const panels = current?.context?.chatMetadata?.scenepulse?.chatPanels;
+        const hasChatPanels = Array.isArray(panels);
+        const schema = hasChatPanels ? clone(panels) : undefined;
+        if (hasChatPanels && current?.context?.extensionSettings?.scenepulse) {
+            current.context.extensionSettings.scenepulse.customPanels = clone(schema);
+        }
+        return { hasChatPanels, schema };
+    }
+
     function persistSettings() {
         const current = active();
         if (!current) return;
         const previousSettings = clone(current.baseSettings);
+        const sourcePanels = sourceChatPanelsForPersistence(current);
         runtime.modules?.i18n?.resetI18nCache?.();
         current.dirtySettings = true;
         updateBridgeControls();
@@ -887,7 +905,8 @@
         // distinct host action so they cannot masquerade as a Reader update.
         return dispatch('persist-scenepulse-source-settings', {
             preferences: sourcePreferencePatch(current.context.extensionSettings.scenepulse),
-            chatPanels: clone(current.context.chatMetadata?.scenepulse?.chatPanels || [])
+            chatPanels: sourcePanels.schema,
+            hasChatPanels: sourcePanels.hasChatPanels
         }).then(async result => {
             await syncSourceReaderPreset(current, previousSettings);
             if (active() === current) {
@@ -1561,12 +1580,14 @@
     async function persistSourceCommandSettings(current) {
         if (!current) return;
         const previousSettings = clone(current.baseSettings);
+        const sourcePanels = sourceChatPanelsForPersistence(current);
         current.dirtySettings = true;
         current.dirtyMetadata = true;
         updateBridgeControls();
         await dispatch('persist-scenepulse-source-settings', {
             preferences: sourcePreferencePatch(current.context.extensionSettings.scenepulse),
-            chatPanels: clone(current.context.chatMetadata?.scenepulse?.chatPanels || [])
+            chatPanels: sourcePanels.schema,
+            hasChatPanels: sourcePanels.hasChatPanels
         });
         await syncSourceReaderPreset(current, previousSettings);
         current.baseSettings = clone(current.context.extensionSettings.scenepulse);

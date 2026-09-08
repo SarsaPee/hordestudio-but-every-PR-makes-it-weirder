@@ -20348,13 +20348,20 @@ async function persistScenePulseWorldsPreferences(world, sess, rawPreferences = 
 // only persists their explicitly scoped preferences. Source custom-panel
 // definitions are promoted to the World schema here, while their values stay
 // inside the source tracker snapshot for the active timeline.
-async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePreferences = {}, chatPanels = []) {
+async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePreferences = {}, chatPanels = undefined, hasChatPanels = false) {
     const protocol = protocolForSidecarTimeline(world, sess);
     if (!protocol) throw new Error('No World timeline is available for ScenePulse source preferences.');
     protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const previous = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
     const incoming = isPlainObject(sourcePreferences) ? sourcePreferences : {};
-    const schema = Array.isArray(chatPanels) && chatPanels.length ? chatPanels : incoming.customPanels;
+    // Upstream ScenePulse uses the *presence* of chatPanels as the authority
+    // signal: an empty array means the author deliberately removed every
+    // chat-local panel. Older runtime payloads did not carry that signal, so
+    // retain their non-empty-array fallback while the native bridge supplies
+    // an explicit flag for all new saves.
+    const schema = hasChatPanels === true
+        ? (Array.isArray(chatPanels) ? chatPanels : [])
+        : (Array.isArray(chatPanels) && chatPanels.length ? chatPanels : incoming.customPanels);
     protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences({
         ...previous,
         panels: incoming.panels,
@@ -21345,7 +21352,7 @@ function bindScenePulseWorldsHostActions(host, world, sess) {
         }
         if (detail.action === 'persist-scenepulse-source-settings') {
             event.preventDefault();
-            detail.promise = Promise.resolve().then(() => persistScenePulseSourceRuntimePreferences(world, sess, detail.preferences || {}, detail.chatPanels || []));
+            detail.promise = Promise.resolve().then(() => persistScenePulseSourceRuntimePreferences(world, sess, detail.preferences || {}, detail.chatPanels, detail.hasChatPanels === true));
             return;
         }
         if (detail.action === 'commit-scenepulse-source-edit') {
