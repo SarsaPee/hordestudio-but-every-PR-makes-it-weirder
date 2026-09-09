@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import errno
 import hashlib
+import importlib.util
 import ipaddress
 import json
 import math
@@ -40,6 +41,50 @@ APP_DIR = Path(__file__).resolve().parent
 ENV_FILE = APP_DIR / ".env"
 EXPERIMENTAL_WORLDS_ID = "experimental-worlds"
 EXPERIMENTAL_RUNTIME_DIR = APP_DIR / "experiences" / EXPERIMENTAL_WORLDS_ID / "runtime"
+EXPERIMENTAL_COMPAT_BRIDGE = EXPERIMENTAL_RUNTIME_DIR / "horde_mcp_bridge.py"
+
+
+_experimental_compat_bridge: Any | None = None
+_experimental_compat_bridge_lock = threading.Lock()
+
+
+def experimental_fibo_generate(body: dict[str, Any]) -> dict[str, Any]:
+    """Use the preserved FIBO contract for Experimental Worlds only.
+
+    Upstream 17.4 deliberately has a smaller Fal image contract. Loading its
+    handler for a FIBO request would drop the authored structured fields, so
+    this compatibility seam calls the pinned runtime helper instead. It is
+    lazy to keep stock startup independent from experimental dependencies.
+    """
+    global _experimental_compat_bridge
+    with _experimental_compat_bridge_lock:
+        if _experimental_compat_bridge is None:
+            spec = importlib.util.spec_from_file_location(
+                "horde_studio_experimental_fibo_compat", EXPERIMENTAL_COMPAT_BRIDGE)
+            if not spec or not spec.loader:
+                raise RuntimeError("Experimental Worlds FIBO compatibility source is unavailable.")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _experimental_compat_bridge = module
+    return _experimental_compat_bridge.generate_fal_image(body)
+
+
+def experimental_always_on_status() -> dict[str, Any]:
+    """A deliberately inert scheduler contract for the preserved runtime.
+
+    Experimental Worlds owns no active background scheduler in this combined
+    build. Returning its own disabled state prevents a legacy bootstrap from
+    stopping, pausing, or receiving jobs from the upstream scheduler.
+    """
+    return {
+        "enabled": False, "paused": False, "pauseReason": "",
+        "armed": False, "humanCount": 0, "queuedEvents": 0,
+        "browserLeaseActive": False, "dailyLimit": 0, "usedToday": 0,
+        "lastError": "Experimental Worlds background agency is isolated from stock.",
+        "consecutiveFailures": 0, "queuePersistent": False,
+        "credentialsPersistent": False, "sharedSimulation": False,
+        "simulationError": "Experimental Worlds background agency is disabled in this build.",
+    }
 
 
 def _load_env(path: Path) -> None:
@@ -2620,6 +2665,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed.path == "/always-on/status":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Always-on control is loopback-only."})
+                if self.is_experimental_worlds_host():
+                    return self.respond(200, experimental_always_on_status())
                 return self.respond(200, always_on_runtime.status())
             job_match = re.fullmatch(r"/fal/video/jobs/([a-f0-9]{32})", parsed.path)
             if job_match:
@@ -2710,6 +2757,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return self.respond(200, result)
             if parsed_path.startswith("/always-on/") and not self.client_is_loopback():
                 return self.respond(403, {"error": "Always-on control is loopback-only."})
+            if self.is_experimental_worlds_host() and parsed_path.startswith("/always-on/"):
+                # The preserved runtime still performs its legacy lifecycle
+                # calls. A localhost request must never mutate the root
+                # 17.4 scheduler or consume its queued events.
+                body = self.read_json()
+                if parsed_path == "/always-on/events":
+                    return self.respond(200, {"events": []})
+                if parsed_path == "/always-on/ack":
+                    return self.respond(200, experimental_always_on_status())
+                return self.respond(200, experimental_always_on_status())
             if parsed_path == "/always-on/sync":
                 return self.respond(200, always_on_runtime.sync(self.read_json()))
             if parsed_path == "/always-on/events":
@@ -2737,7 +2794,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed_path == "/fal/image/generate":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Fal image generation is loopback-only."})
-                return self.respond(200, generate_fal_image(self.read_json()))
+                body = self.read_json()
+                model = str(body.get("model") or "").lower()
+                if self.is_experimental_worlds_host() and model.startswith("bria/fibo-"):
+                    return self.respond(200, experimental_fibo_generate(body))
+                return self.respond(200, generate_fal_image(body))
             if parsed_path == "/fal/video/jobs":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Video Adventure generation is loopback-only."})
