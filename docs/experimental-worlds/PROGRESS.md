@@ -8,7 +8,7 @@
 - [x] Copy the live Experimental Worlds dependency closure into its private package.
 - [x] Add the narrow host router, storage/bridge namespace, and first-class navigation.
 - [x] Add a copy-verify-idempotent bridge-mirror migration tool; production cutover remains pending.
-- [~] Browser-prove dual 17.0 and tag the checkpoint. F16 now has clean-browser, provider-independent save/reload/clear/reload evidence; mocked-provider and cross-mode gates still remain.
+- [~] Browser-prove dual 17.0 and tag the checkpoint. F16 now has clean-browser, provider-independent save/reload/clear/reload evidence; draft-send → in-place-confirm rewind → resend → reload now has mocked-provider evidence. Cross-mode deletion and the remaining named graduation/relationship proofs still remain.
 
 ## Next phase: Milestone B — complete upstream 17.4 integration
 
