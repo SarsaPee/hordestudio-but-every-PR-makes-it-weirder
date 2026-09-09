@@ -68,7 +68,12 @@ def completion(body: dict[str, object]) -> dict[str, object]:
                     "sceneInteraction": "conversation", "sceneTension": "low",
                     "sceneSummary": "Mira offers a sealed letter in Acceptance Square.",
                     "soundEnvironment": "quiet street", "witnesses": [],
-                    "charactersPresent": ["candidate_mira"], "northStar": "Exercise the durable-review seam.",
+                    # ScenePulse's source renderer uses human display names
+                    # for its active roster. The opaque candidate ID remains
+                    # in the character/relationship records for the Horde
+                    # translation boundary; using it here would make the
+                    # upstream display filter correctly hide Mira.
+                    "charactersPresent": ["Mira"], "northStar": "Exercise the durable-review seam.",
                     "mainQuests": [], "sideQuests": [], "plotBranches": [],
                     "relationships": [{
                         "relationshipId": "rel_mira", "characterId": "candidate_mira", "name": "Mira",
