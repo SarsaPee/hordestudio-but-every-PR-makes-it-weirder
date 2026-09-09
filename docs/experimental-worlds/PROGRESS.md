@@ -18,3 +18,16 @@
 - [x] Run upstream engine gates and test a fresh portable extraction.
 - [ ] Repeat the full browser proof after the Milestone A checkpoint.
 - [ ] Perform guarded live mirror cutover/deployment only after the remaining browser acceptance items pass.
+
+## Recorded blockers before live cutover
+
+- The production Experimental Worlds mirror namespace contains a valid but
+  different snapshot from the legacy mirror. The migration tool refused to
+  overwrite it; both originals remain in place pending a deliberate readback
+  and reconciliation decision.
+- No authorized disposable provider context was available in the isolated
+  browser profile. Therefore draft-send/inspect/rewind/resend, late response,
+  F16 portrait upload/clear, F18 graduation, F19 zero-value relationship save,
+  F20 metadata save, and F09 Location graduation remain unproven browser work.
+- Cross-mode deletion was not exercised: it would require a destructive UI
+  action. No live or staging user world was deleted for this split.
