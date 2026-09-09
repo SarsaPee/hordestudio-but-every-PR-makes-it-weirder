@@ -42,7 +42,6 @@ for file in \
   ashlyn-reynolds-human.js \
   jane-harlow-human.js \
   policy-panic-world.js \
-  experimental-worlds-navigation.js \
   favicon.svg \
   horde_mcp_bridge.py \
   README.md \
@@ -69,20 +68,21 @@ if [ -d "$ROOT_DIR/assets/bundled" ]; then
   cp -R "$ROOT_DIR/assets/bundled" "$APP_DIR/assets/"
 fi
 
-# Experimental Worlds is a private, executable runtime, not an implicit source
-# tree. Keep this explicit copy in the portable manifest so a fresh archive
-# never resolves its document, ScenePulse assets, or styles from a developer
-# checkout.
+# Experimental Worlds is a native mode. Its preserved full application is a
+# reference/rollback artifact and must never enter a portable release.
 if [ ! -f "$ROOT_DIR/experiences/experimental-worlds/manifest.json" ]; then
   echo "Experimental Worlds manifest is missing." >&2
   exit 1
 fi
 mkdir -p "$APP_DIR/experiences"
 cp -R "$ROOT_DIR/experiences/experimental-worlds" "$APP_DIR/experiences/"
-# The runtime copy is executable source, but it must not smuggle local Finder
-# metadata, bytecode caches, credentials, or user-created import/export files
-# into a portable release. None of these are runtime dependencies; application
-# state remains in the owning browser/bridge namespace.
+rm -rf "$APP_DIR/experiences/experimental-worlds/runtime"
+mkdir -p "$APP_DIR/shared" "$APP_DIR/host-adapters"
+cp -R "$ROOT_DIR/shared/." "$APP_DIR/shared/"
+cp -R "$ROOT_DIR/host-adapters/." "$APP_DIR/host-adapters/"
+# Never smuggle Finder metadata, bytecode, credentials, or user-created
+# import/export files into a portable release. Application state belongs to a
+# browser profile and enters through explicit backup/import workflows.
 find "$APP_DIR/experiences/experimental-worlds" \
   \( -name '.DS_Store' -o -name '__pycache__' -o -name '*.pyc' -o -name '.env' -o -name '.env.*' -o -name '*.horde_world' -o -name '*.horde_human' \) \
   -exec rm -rf {} +
@@ -93,9 +93,8 @@ find "$APP_DIR/experiences/experimental-worlds" \
 mkdir -p "$APP_DIR/docs"
 cp "$ROOT_DIR/docs/multiplayer.md" "$APP_DIR/docs/"
 mkdir -p "$APP_DIR/docs/experimental-worlds" "$APP_DIR/scripts"
-cp "$ROOT_DIR/docs/experimental-worlds/CODEX_EXPERIMENTAL_WORLDS_SPLIT.md" "$APP_DIR/docs/experimental-worlds/"
+cp "$ROOT_DIR/docs/experimental-worlds/CODEX_ONE_APP_EXPERIMENTAL_WORLDS.md" "$APP_DIR/docs/experimental-worlds/"
 cp "$ROOT_DIR/docs/experimental-worlds/OWNERSHIP.md" "$ROOT_DIR/docs/experimental-worlds/UPSTREAM_UPDATE.md" "$APP_DIR/docs/experimental-worlds/"
-cp "$ROOT_DIR/scripts/migrate-experimental-worlds-mirror.py" "$APP_DIR/scripts/"
 cp -R "$ROOT_DIR/multiplayer-relay" "$APP_DIR/"
 
 chmod +x "$APP_DIR/Start Horde Studio.command" "$APP_DIR/start-horde-studio.sh"

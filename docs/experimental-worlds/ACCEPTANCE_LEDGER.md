@@ -1,4 +1,10 @@
-# Experimental Worlds acceptance ledger
+# Superseded: dual-origin acceptance ledger
+
+This records useful historical browser observations for the retired preserved
+runtime. Current same-document results are in
+[`ONE_APP_ACCEPTANCE_LEDGER.md`](ONE_APP_ACCEPTANCE_LEDGER.md).
+
+# Historical Experimental Worlds acceptance ledger
 
 This is a browser-evidence ledger. It records only observed results; source
 checks and the portable package do not substitute for an unchecked row.

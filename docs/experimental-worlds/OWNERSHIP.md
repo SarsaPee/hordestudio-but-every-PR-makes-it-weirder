@@ -1,4 +1,12 @@
-# Experimental Worlds ownership map
+# Superseded: dual-origin ownership map
+
+This document describes the retired two-document workaround. It is retained as
+historical evidence only. The controlling architecture is
+[`CODEX_ONE_APP_EXPERIMENTAL_WORLDS.md`](CODEX_ONE_APP_EXPERIMENTAL_WORLDS.md):
+one current host, shared global services, separate stock/experimental World
+repositories, and a native same-document Experimental Worlds mode.
+
+# Historical Experimental Worlds ownership map
 
 This map records the extraction boundary used for Milestone A. It is intentionally
 small: stock files remain at their upstream paths, while the preserved runtime

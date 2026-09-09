@@ -1,4 +1,10 @@
-# Experimental Worlds upstream update contract
+# Superseded: dual-origin update contract
+
+This historical contract permitted a private full application and host-based
+origin dispatch. Do not use it for future updates. The controlling replacement
+is [`CODEX_ONE_APP_EXPERIMENTAL_WORLDS.md`](CODEX_ONE_APP_EXPERIMENTAL_WORLDS.md).
+
+# Historical Experimental Worlds upstream update contract
 
 ## Pinned integration
 

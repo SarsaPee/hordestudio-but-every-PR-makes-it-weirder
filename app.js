@@ -1,11 +1,10 @@
 window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 
 // --- Horde Persistence (IndexedDB) ---
-// Stock must not open or migrate the legacy custom application's state merely
-// because an older build previously occupied this browser origin. Experimental
-// Worlds keeps its preserved runtime and `HordeStudioDB` under localhost;
-// stock starts with an explicit, stock-owned envelope on 127.0.0.1.
-const DB_NAME = 'HordeStudioStockDB';
+// The current host never opens either legacy application's database. Stock
+// records live here; Experimental Worlds has a separately owned repository on
+// this same origin and reaches global recovery only through an explicit API.
+const DB_NAME = 'HordeStudioHostDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
@@ -1640,7 +1639,7 @@ function validateWorldData(value, label = 'World') {
 function validateBackupData(value) {
     requirePlainObject(value, 'Backup');
     if (value._format !== 'horde-studio-backup') throw new Error('Not a Horde Studio backup file');
-    if (value._version !== 1) throw new Error(`Unsupported backup version: ${value._version ?? 'missing'}`);
+    if (![1, 2].includes(value._version)) throw new Error(`Unsupported backup version: ${value._version ?? 'missing'}`);
     requireArray(value.characters, 'Backup characters', { optional: true, max: 5000 });
     requireArray(value.personas, 'Backup personas', { optional: true, max: 1000 });
     requireArray(value.rooms, 'Backup rooms', { optional: true, max: 1000 });
@@ -3641,6 +3640,7 @@ const views = {
     chat: document.getElementById('chat-view'),
     studio: document.getElementById('studio-view'),
     worlds: document.getElementById('worlds-view'),
+    experimentalWorlds: document.getElementById('experimental-worlds-view'),
     worldStudio: document.getElementById('world-studio-view'),
     worldPlay: document.getElementById('world-play-view'),
     videoWorlds: document.getElementById('video-worlds-view'),
@@ -5124,6 +5124,10 @@ function setupNavigation() {
 }
 
 function switchView(viewName) {
+    const previousView = state.view;
+    if (previousView === 'experimentalWorlds' && viewName !== 'experimentalWorlds') {
+        window.HordeExperimentalWorlds?.deactivate?.();
+    }
     state.view = viewName;
     
     // Update Nav Buttons
@@ -5178,6 +5182,18 @@ function switchView(viewName) {
     if (viewName === 'worlds') {
         renderWorlds();
     }
+    if (viewName === 'experimentalWorlds') {
+        if (!window.HordeExperimentalWorlds?.activate) {
+            showToast('Experimental Worlds is still loading. Please try again in a moment.', 'info');
+            switchView('worlds');
+            return;
+        }
+        window.HordeExperimentalWorlds.activate().catch(error => {
+            console.error('Experimental Worlds failed to activate:', error);
+            showToast(`Experimental Worlds could not open: ${error.message}`, 'error');
+            switchView('worlds');
+        });
+    }
     window.HordeVideoWorlds?.onView?.(viewName);
 
     if (viewName === 'worldStudio') {
@@ -5224,6 +5240,47 @@ function switchView(viewName) {
         if (transcript) transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'instant' });
     }));
 }
+
+// Keep the classic host internal, but expose a deliberately small capability
+// object to the native Experimental Worlds module. The module cannot reach the
+// host's mutable `state`, full-state writer, or view globals directly.
+const experimentalWorldsOperations = new Map();
+window.HordeExperimentalWorldsHost = {
+    getSettings: () => safeJsonClone(state.globalSettings),
+    async updateSettings(patch) {
+        const update = isPlainObject(patch) ? patch : {};
+        const experiment = isPlainObject(update.experimentalWorlds) ? update.experimentalWorlds : {};
+        state.globalSettings = {
+            ...state.globalSettings,
+            ...update,
+            experimentalWorlds: { ...(state.globalSettings.experimentalWorlds || {}), ...experiment }
+        };
+        await saveState();
+    },
+    notify: (message, type = 'info') => showToast(message, type),
+    getHostRevision: () => ({ database: DB_NAME, revision: HordeDB.revision, appVersion: HORDE_STUDIO_VERSION }),
+    get backupCoordinator() { return window.HordeGlobalBackupCoordinator; },
+    async requestText(request, owner) {
+        const operationId = `experimental-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+        const capturedOwner = safeJsonClone(owner || {});
+        const capturedSettings = safeJsonClone(state.globalSettings);
+        const controller = new AbortController();
+        experimentalWorldsOperations.set(operationId, { controller, owner: capturedOwner, settings: capturedSettings });
+        try {
+            const response = await fetch(`${apiBase().replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                signal: controller.signal,
+                headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
+                body: JSON.stringify({ ...safeJsonClone(request || {}), stream: false })
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body?.error?.message || body?.error || `Text request failed (${response.status})`);
+            return { operationId, owner: capturedOwner, settings: capturedSettings, response: body };
+        } finally {
+            experimentalWorldsOperations.delete(operationId);
+        }
+    }
+};
 
 // --- Library View ---
 function renderLibrary() {
@@ -11772,7 +11829,7 @@ async function exportFullBackup() {
     }
     const payload = {
         _format: 'horde-studio-backup',
-        _version: 1,
+        _version: 2,
         _exportedAt: new Date().toISOString(),
         // API keys are credentials, not application data. They are intentionally
         // excluded so a shared backup cannot leak account access.
@@ -11800,6 +11857,7 @@ async function exportFullBackup() {
         companionVideoAssets,
         chatAssets
     };
+    if (window.HordeGlobalBackupCoordinator) await window.HordeGlobalBackupCoordinator.attach(payload);
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -11821,6 +11879,8 @@ function importFullBackup(file) {
     reader.onload = async (e) => {
         try {
             const data = validateBackupData(JSON.parse(e.target.result));
+            const stagedExperimentalRestore = window.HordeGlobalBackupCoordinator
+                ? await window.HordeGlobalBackupCoordinator.stageRestore(data) : [];
             showConfirmModal('Restore Backup',
                 `This will REPLACE all current data with the backup from ${data._exportedAt ? data._exportedAt.slice(0, 10) : 'unknown date'} (${(data.characters || []).length} chat characters, ${(data.companions || []).length} virtual humans, ${(data.worlds || []).length} worlds). Continue?`,
                 async () => {
@@ -11851,6 +11911,9 @@ function importFullBackup(file) {
                     }
                     worldMediaDirty = true;
                     await saveState();
+                    if (window.HordeGlobalBackupCoordinator) {
+                        await window.HordeGlobalBackupCoordinator.applyStagedRestore(stagedExperimentalRestore);
+                    }
                     showToast('Backup restored! Reloading...', 'success');
                     setTimeout(() => window.location.reload(), 800);
                 }, 'Restore & Reload', 'Cancel');
@@ -11883,6 +11946,7 @@ function purgeAllData() {
 function showGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) {
+        mountExperimentalWorldsSettingsControl();
         modal.classList.remove('hidden');
         const settingsSearch = document.getElementById('settings-search-input');
         if (settingsSearch) settingsSearch.value = '';
@@ -11979,6 +12043,27 @@ function showGlobalSettings() {
         document.getElementById('global-consolidation-model').value = state.globalSettings.consolidationModel || 'google/gemini-flash-1.5-8b';
         refreshMcpSettingsStatus();
     }
+}
+
+function mountExperimentalWorldsSettingsControl() {
+    const modal = document.getElementById('modal-overlay');
+    const heading = modal?.querySelector('.settings-modal-head');
+    if (!heading) return;
+    let control = document.getElementById('experimental-worlds-settings-control');
+    if (!control) {
+        control = document.createElement('section');
+        control.id = 'experimental-worlds-settings-control';
+        control.className = 'experimental-worlds-settings-control';
+        heading.insertAdjacentElement('afterend', control);
+        control.addEventListener('click', event => {
+            if (!event.target.closest('[data-open-experimental-worlds]')) return;
+            hideGlobalSettings();
+            switchView('experimentalWorlds');
+        });
+    }
+    const experimental = state.globalSettings?.experimentalWorlds || {};
+    const enabled = experimental.enabled === true && Number(experimental.acknowledgementVersion || 0) >= 1;
+    control.innerHTML = `<div><strong>Experimental Worlds</strong><small>${enabled ? 'Enabled for this browser profile.' : 'Off by default. Your saved Experimental Worlds remain preserved.'}</small></div><button class="btn btn-ghost btn-small" type="button" data-open-experimental-worlds>${enabled ? 'Open mode' : 'Review acknowledgement'}</button>`;
 }
 
 function hideGlobalSettings() {

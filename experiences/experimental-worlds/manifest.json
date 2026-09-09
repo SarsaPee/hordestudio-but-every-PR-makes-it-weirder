@@ -1,24 +1,24 @@
 {
   "product": "experimental-worlds",
   "label": "Experimental Worlds",
-  "entry": "/",
-  "servedHost": "localhost",
+  "entry": "/experiences/experimental-worlds/entry.js",
   "source": {
-    "kind": "private-preserved-runtime",
-    "tree": "../hordestudio live instance v2",
-    "committedBase": "71d00353c4f728c7a743daa4cdae032ada426fe7",
-    "preservationTag": "preservation/live-20260909-01",
-    "note": "The source tree had required uncommitted ScenePulse, bridge, styling, and fixture work when copied. The private runtime is intentionally source-shaped rather than reconstructed from the sanitized fork."
+    "kind": "native-extraction",
+    "referenceRuntime": "runtime/",
+    "referenceOnly": true,
+    "preservedBase": "71d00353c4f728c7a743daa4cdae032ada426fe7"
   },
   "storage": {
     "browserOrigin": "http://localhost:<port>",
-    "indexedDb": "HordeStudioDB",
-    "bridgeNamespace": "experimental-worlds"
+    "indexedDb": "HordeStudioExperimentalWorldsDB",
+    "hostDatabase": "HordeStudioHostDB",
+    "legacyImportSources": ["HordeStudioDB", "HordeStudioStockDB"]
   },
   "lifecycle": {
-    "boot": "host-routed private document only",
-    "stockBootsExperimental": false,
-    "experimentalBootsStock": false,
-    "lateResults": "remain within the origin and bridge namespace that created them"
+    "boot": "registered from the current host document",
+    "sameDocument": true,
+    "defaultEnabled": false,
+    "hostContractVersion": 1,
+    "lateResults": "owned by captured experimental operation context"
   }
 }

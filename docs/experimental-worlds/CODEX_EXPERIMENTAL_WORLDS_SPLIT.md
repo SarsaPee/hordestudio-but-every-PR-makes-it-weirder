@@ -1,3 +1,9 @@
+# Superseded by `CODEX_ONE_APP_EXPERIMENTAL_WORLDS.md`
+
+This historical brief permitted a separate document and private full runtime.
+It is retained only for provenance and must not drive implementation of the
+current one-app 17.4 integration.
+
 # Horde Studio: preserve Experimental Worlds, restore stock 17.0, then integrate upstream 17.4
 
 Prepared 9 September 2026. Implementation handoff for Codex.

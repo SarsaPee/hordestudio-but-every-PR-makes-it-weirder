@@ -11,6 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="style.css?v=20260908-reply-cleanup">
+    <link rel="stylesheet" href="experiences/experimental-worlds/experimental-worlds.css?v=20260909-one-app">
 </head>
 <body>
 <div id="app">
@@ -31,9 +32,9 @@
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                 Worlds
             </button>
-            <button class="nav-item" id="nav-experimental-worlds-btn" type="button" title="Open the preserved Experimental Worlds runtime">
+            <button class="nav-item experimental-worlds-nav-item" data-view="experimentalWorlds" id="nav-experimental-worlds-btn" type="button" title="Open Experimental Worlds in this Horde Studio window">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5-9-5ZM3 16l9 5 9-5M3 12l9 5 9-5"/></svg>
-                Experimental Worlds
+                <span>Experimental Worlds</span><span class="experimental-worlds-nav-badge">EXPERIMENTAL</span>
             </button>
             <button class="nav-item video-world-nav-item" data-view="videoWorlds" id="nav-video-worlds-btn" type="button" title="Create and play persistent generated films">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9z"/></svg>
@@ -3681,6 +3682,7 @@
             <span class="companion-call-end-label">End call</span>
         </div>
 
+        <section id="experimental-worlds-view" class="view hidden landing-view" aria-label="Experimental Worlds"></section>
     </main>
 </div>
 
@@ -5215,7 +5217,7 @@
     <script src="vh-activity-engine.js?v=20260908-reply-cleanup"></script>
     <script src="vh-world-engine.js?v=20260908-reply-cleanup"></script>
     <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
-    <script src="app.js?v=20260908-reply-cleanup"></script>
-    <script src="experimental-worlds-navigation.js"></script>
+    <script src="app.js?v=20260909-one-app-experimental-worlds"></script>
+    <script type="module" src="experiences/experimental-worlds/bootstrap.js?v=20260909-one-app"></script>
 </body>
 </html>

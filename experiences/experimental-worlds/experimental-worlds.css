@@ -1,0 +1,21 @@
+.experimental-worlds-shell { max-width: 1240px; margin: 0 auto; padding: 32px; color: var(--text, #f3f4f6); }
+.experimental-worlds-header, .experimental-worlds-library-head { display: flex; gap: 20px; justify-content: space-between; align-items: flex-start; }
+.experimental-worlds-header h1, .experimental-worlds-onboarding h2 { margin: 8px 0; font-family: Outfit, sans-serif; font-size: clamp(1.6rem, 3vw, 2.5rem); }
+.experimental-worlds-header p, .experimental-worlds-onboarding p, .experimental-worlds-note, .experimental-world-card p { color: var(--text-2, #aeb7c6); max-width: 760px; }
+.experimental-worlds-badge, .experimental-worlds-nav-badge { display: inline-block; padding: 3px 7px; border-radius: 999px; background: #8b3dff; color: white; font-size: .62rem; font-weight: 800; letter-spacing: .08em; }
+.experimental-worlds-nav-item { position: relative; }
+.experimental-worlds-nav-badge { margin-left: auto; font-size: .5rem; background: #6f37d6; }
+.experimental-worlds-library, .experimental-worlds-onboarding { margin-top: 28px; padding: 28px; border: 1px solid color-mix(in srgb, #8b3dff 45%, var(--border, #273142)); border-radius: 18px; background: linear-gradient(145deg, color-mix(in srgb, #8b3dff 9%, var(--surface, #111722)), var(--surface, #111722)); }
+.experimental-worlds-library-head > div { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.experimental-worlds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-top: 20px; }
+.experimental-world-card { padding: 18px; border: 1px solid var(--border, #273142); border-radius: 12px; background: var(--surface2, #18202d); }
+.experimental-world-card span { color: #bb98ff; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.experimental-world-card h3 { margin: 10px 0 4px; }
+.experimental-world-card small { color: var(--text-3, #8691a1); }
+.experimental-worlds-empty { grid-column: 1 / -1; padding: 20px; color: var(--text-2, #aeb7c6); border: 1px dashed var(--border, #273142); border-radius: 10px; }
+.experimental-worlds-ack { display: flex; gap: 10px; align-items: flex-start; margin: 22px 0; color: var(--text-2, #aeb7c6); }
+.experimental-worlds-onboarding > div:last-child { display: flex; gap: 10px; flex-wrap: wrap; }
+.experimental-worlds-settings-control { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin: 0 24px 14px; padding: 12px 14px; border: 1px solid color-mix(in srgb, #8b3dff 45%, var(--border, #273142)); border-radius: 10px; background: color-mix(in srgb, #8b3dff 8%, var(--surface, #111722)); }
+.experimental-worlds-settings-control strong, .experimental-worlds-settings-control small { display: block; }
+.experimental-worlds-settings-control small { margin-top: 3px; color: var(--text-2, #aeb7c6); }
+@media (max-width: 700px) { .experimental-worlds-shell { padding: 20px; } .experimental-worlds-header, .experimental-worlds-library-head { flex-direction: column; } .experimental-worlds-library-head > div { justify-content: flex-start; } }

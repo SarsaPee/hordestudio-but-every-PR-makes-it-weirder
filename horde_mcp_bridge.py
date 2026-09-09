@@ -16,7 +16,6 @@ from __future__ import annotations
 import base64
 import errno
 import hashlib
-import importlib.util
 import ipaddress
 import json
 import math
@@ -42,53 +41,6 @@ from typing import Any
 # ── Load .env if present ────────────────────────────────────
 APP_DIR = Path(__file__).resolve().parent
 ENV_FILE = APP_DIR / ".env"
-EXPERIMENTAL_WORLDS_ID = "experimental-worlds"
-EXPERIMENTAL_RUNTIME_DIR = APP_DIR / "experiences" / EXPERIMENTAL_WORLDS_ID / "runtime"
-EXPERIMENTAL_COMPAT_BRIDGE = EXPERIMENTAL_RUNTIME_DIR / "horde_mcp_bridge.py"
-
-
-_experimental_compat_bridge: Any | None = None
-_experimental_compat_bridge_lock = threading.Lock()
-
-
-def experimental_fibo_generate(body: dict[str, Any]) -> dict[str, Any]:
-    """Use the preserved FIBO contract for Experimental Worlds only.
-
-    Upstream 17.4 deliberately has a smaller Fal image contract. Loading its
-    handler for a FIBO request would drop the authored structured fields, so
-    this compatibility seam calls the pinned runtime helper instead. It is
-    lazy to keep stock startup independent from experimental dependencies.
-    """
-    global _experimental_compat_bridge
-    with _experimental_compat_bridge_lock:
-        if _experimental_compat_bridge is None:
-            spec = importlib.util.spec_from_file_location(
-                "horde_studio_experimental_fibo_compat", EXPERIMENTAL_COMPAT_BRIDGE)
-            if not spec or not spec.loader:
-                raise RuntimeError("Experimental Worlds FIBO compatibility source is unavailable.")
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            _experimental_compat_bridge = module
-    return _experimental_compat_bridge.generate_fal_image(body)
-
-
-def experimental_always_on_status() -> dict[str, Any]:
-    """A deliberately inert scheduler contract for the preserved runtime.
-
-    Experimental Worlds owns no active background scheduler in this combined
-    build. Returning its own disabled state prevents a legacy bootstrap from
-    stopping, pausing, or receiving jobs from the upstream scheduler.
-    """
-    return {
-        "enabled": False, "paused": False, "pauseReason": "",
-        "armed": False, "humanCount": 0, "queuedEvents": 0,
-        "browserLeaseActive": False, "dailyLimit": 0, "usedToday": 0,
-        "lastError": "Experimental Worlds background agency is isolated from stock.",
-        "consecutiveFailures": 0, "queuePersistent": False,
-        "credentialsPersistent": False, "sharedSimulation": False,
-        "simulationError": "Experimental Worlds background agency is disabled in this build.",
-    }
-
 
 def _load_env(path: Path) -> None:
     if not path.exists():
@@ -164,7 +116,12 @@ STATIC_FILES = {
     "/index.html": ("index.html", "text/html"),
     "/style.css": ("style.css", "text/css"),
     "/app.js": ("app.js", "text/javascript"),
-    "/experimental-worlds-navigation.js": ("experimental-worlds-navigation.js", "text/javascript"),
+    "/experiences/experimental-worlds/entry.js": ("experiences/experimental-worlds/entry.js", "text/javascript"),
+    "/experiences/experimental-worlds/bootstrap.js": ("experiences/experimental-worlds/bootstrap.js", "text/javascript"),
+    "/experiences/experimental-worlds/experimental-worlds.css": ("experiences/experimental-worlds/experimental-worlds.css", "text/css"),
+    "/experiences/experimental-worlds/persistence/repository.js": ("experiences/experimental-worlds/persistence/repository.js", "text/javascript"),
+    "/host-adapters/experimental-worlds.js": ("host-adapters/experimental-worlds.js", "text/javascript"),
+    "/shared/global-backup-coordinator.js": ("shared/global-backup-coordinator.js", "text/javascript"),
     "/video-worlds.js": ("video-worlds.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
     "/boot-diagnostics.js": ("boot-diagnostics.js", "text/javascript"),
@@ -214,12 +171,11 @@ else:
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
 ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
-# Acceptance runs can select an isolated recovery mirror without changing the
-# production Experimental Worlds namespace. The default remains the installed
-# location so normal launch behavior and existing data stay unchanged.
+# Legacy recovery snapshots remain readable for a controlled importer; they
+# are not a live browser mirror or a second application route.
 EXPERIMENTAL_SHARED_LIBRARY_FILE = Path(os.environ.get(
     "HORDE_EXPERIMENTAL_SHARED_LIBRARY_FILE",
-    str(CONFIG_DIR / EXPERIMENTAL_WORLDS_ID / "shared-library.json"),
+    str(CONFIG_DIR / "experimental-worlds" / "shared-library.json"),
 ))
 
 store_lock = threading.RLock()
@@ -3259,20 +3215,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[bridge] {self.address_string()} {fmt % args}")
 
-    def is_experimental_worlds_host(self) -> bool:
-        """`localhost` is the preserved experimental origin; stock is 127.0.0.1.
-
-        The distinction is intentionally at the browser-origin boundary. A path
-        or a tab alone would share IndexedDB and localStorage and allow stock
-        migration code to observe the experimental library.
-        """
-        host = self.headers.get("Host", "").strip().lower()
-        if host.startswith("["):
-            host = host[1:].split("]", 1)[0]
-        else:
-            host = host.split(":", 1)[0]
-        return host == "localhost"
-
     def origin_allowed(self) -> bool:
         origin = self.headers.get("Origin", "")
         if not origin:
@@ -3406,48 +3348,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.respond_bytes(200, raw, content_type)
         return True
 
-    def serve_experimental_worlds_file(self, path: str) -> bool:
-        """Serve only the preserved runtime's declared document and assets."""
-        static_files = {
-            "/": "index.html", "/index.html": "index.html", "/style.css": "style.css", "/app.js": "app.js",
-            "/video-worlds.js": "video-worlds.js", "/presets.js": "presets.js", "/boot-diagnostics.js": "boot-diagnostics.js",
-            "/policy-panic-world.js": "policy-panic-world.js", "/ashlyn-reynolds-human.js": "ashlyn-reynolds-human.js",
-            "/jane-harlow-human.js": "jane-harlow-human.js", "/labs-embedded.js": "labs-embedded.js",
-            "/labs-embedded-worker.js": "labs-embedded-worker.js", "/labs-needle.js": "labs-needle.js",
-            "/labs-needle-worker.js": "labs-needle-worker.js", "/labs-core.js": "labs-core.js",
-            "/labs-tasks.js": "labs-tasks.js", "/labs-ui.js": "labs-ui.js", "/labs-guide.js": "labs-guide.js",
-            "/help-system.js": "help-system.js", "/multiplayer.js": "multiplayer.js",
-            "/multiplayer-engine.js": "multiplayer-engine.js", "/rpg-mechanics.js": "rpg-mechanics.js",
-            "/dossier-claims.js": "dossier-claims.js", "/world-mechanics.js": "world-mechanics.js",
-            "/world-portrait-prompt.js": "world-portrait-prompt.js", "/experimental-worlds-navigation.js": "experimental-worlds-navigation.js",
-            "/favicon.svg": "favicon.svg", "/worlds/policy-panic.horde_world": "Policy Panic at Bramble and Pike.horde_world",
-        }
-        decoded = urllib.parse.unquote(path)
-        filename = static_files.get(decoded)
-        if filename:
-            target = EXPERIMENTAL_RUNTIME_DIR / filename
-        else:
-            target = None
-            for prefix in ("/assets/bundled/", "/assets/worlds/", "/scenepulse/"):
-                if decoded.startswith(prefix):
-                    candidate = (EXPERIMENTAL_RUNTIME_DIR / decoded.lstrip("/")).resolve()
-                    try:
-                        candidate.relative_to(EXPERIMENTAL_RUNTIME_DIR.resolve())
-                    except ValueError:
-                        self.respond(403, {"error": "Experimental Worlds asset path is invalid."})
-                        return True
-                    target = candidate
-                    break
-            if target is None:
-                return False
-        try:
-            raw = target.read_bytes()
-        except OSError:
-            self.respond(404, {"error": "Experimental Worlds asset not found."})
-            return True
-        self.respond_bytes(200, raw, mimetypes.guess_type(target.name)[0] or "application/octet-stream")
-        return True
-
     def read_json(self) -> dict[str, Any]:
         declared = int(self.headers.get("Content-Length", "0") or 0)
         if declared > 30 * 1024 * 1024:
@@ -3475,18 +3375,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         parsed = urllib.parse.urlparse(self.path)
         try:
-            if self.is_experimental_worlds_host() and self.serve_experimental_worlds_file(parsed.path):
-                return
             if self.serve_app_file(parsed.path):
                 return
-            if self.is_experimental_worlds_host() and parsed.path in {"/sync/status", "/sync/snapshot", "/sync/history"}:
-                query = urllib.parse.parse_qs(parsed.query)
-                value = lambda key: (query.get(key) or [""])[0]
-                return self.respond(200, experimental_shared_library_store.status(
-                    value("deviceId"), value("label"), include_snapshot=parsed.path == "/sync/snapshot",
-                    include_history=parsed.path == "/sync/history"))
-            if parsed.path.startswith("/scenepulse/"):
-                return self.respond(404, {"error": "ScenePulse assets belong to Experimental Worlds."})
             if parsed.path == "/maps/settings":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Maps settings are loopback-only."})
@@ -3506,8 +3396,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if parsed.path == "/always-on/status":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Always-on control is loopback-only."})
-                if self.is_experimental_worlds_host():
-                    return self.respond(200, experimental_always_on_status())
                 return self.respond(200, always_on_runtime.status())
             job_match = re.fullmatch(r"/fal/video/jobs/([a-f0-9]{32})", parsed.path)
             if job_match:
@@ -3548,14 +3436,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         try:
             parsed_path = urllib.parse.urlparse(self.path).path
-            if self.is_experimental_worlds_host() and parsed_path == "/sync/push":
-                status, payload = experimental_shared_library_store.push(self.read_json())
-                return self.respond(status, payload)
-            if self.is_experimental_worlds_host() and parsed_path == "/sync/restore":
-                status, payload = experimental_shared_library_store.restore(self.read_json())
-                return self.respond(status, payload)
-            if self.is_experimental_worlds_host() and parsed_path == "/sync/compact":
-                return self.respond(200, experimental_shared_library_store.compact())
             if parsed_path == "/maps/settings":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Maps settings are loopback-only."})
@@ -3611,16 +3491,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return self.respond(200, result)
             if parsed_path.startswith("/always-on/") and not self.client_is_loopback():
                 return self.respond(403, {"error": "Always-on control is loopback-only."})
-            if self.is_experimental_worlds_host() and parsed_path.startswith("/always-on/"):
-                # The preserved runtime still performs its legacy lifecycle
-                # calls. A localhost request must never mutate the root
-                # 17.4 scheduler or consume its queued events.
-                body = self.read_json()
-                if parsed_path == "/always-on/events":
-                    return self.respond(200, {"events": []})
-                if parsed_path == "/always-on/ack":
-                    return self.respond(200, experimental_always_on_status())
-                return self.respond(200, experimental_always_on_status())
             if parsed_path == "/always-on/sync":
                 return self.respond(200, always_on_runtime.sync(self.read_json()))
             if parsed_path == "/always-on/events":
@@ -3649,9 +3519,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Fal image generation is loopback-only."})
                 body = self.read_json()
-                model = str(body.get("model") or "").lower()
-                if self.is_experimental_worlds_host() and model.startswith("bria/fibo-"):
-                    return self.respond(200, experimental_fibo_generate(body))
                 return self.respond(200, generate_fal_image(body))
             if parsed_path == "/fal/video/jobs":
                 if not self.client_is_loopback():
