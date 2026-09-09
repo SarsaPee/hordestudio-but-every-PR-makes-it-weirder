@@ -25,9 +25,12 @@
   different snapshot from the legacy mirror. The migration tool refused to
   overwrite it; both originals remain in place pending a deliberate readback
   and reconciliation decision.
-- No authorized disposable provider context was available in the isolated
-  browser profile. Therefore draft-send/inspect/rewind/resend, late response,
-  F16 portrait upload/clear, F18 graduation, F19 zero-value relationship save,
-  F20 metadata save, and F09 Location graduation remain unproven browser work.
-- Cross-mode deletion was not exercised: it would require a destructive UI
-  action. No live or staging user world was deleted for this split.
+- The 17.0 isolated-browser ledger now separates observed mocked-provider and
+  provider-independent work from outstanding proof. A mocked turn persisted
+  through reload; its in-place rewind confirmation rendered, but confirmation
+  dispatch did not complete in the in-app browser dialog session. F16, F18,
+  F19, F20, F09, and late-response assertions remain unproven browser work.
+- Cross-mode deletion reached the confirmation for a disposable Experimental
+  World only, but the isolated browser's JavaScript-dialog bridge stalled
+  before accept/cancel. No user, backup, production, or staging-copy world was
+  deleted.
