@@ -79,6 +79,13 @@ if [ ! -f "$ROOT_DIR/experiences/experimental-worlds/manifest.json" ]; then
 fi
 mkdir -p "$APP_DIR/experiences"
 cp -R "$ROOT_DIR/experiences/experimental-worlds" "$APP_DIR/experiences/"
+# The runtime copy is executable source, but it must not smuggle local Finder
+# metadata, bytecode caches, credentials, or user-created import/export files
+# into a portable release. None of these are runtime dependencies; application
+# state remains in the owning browser/bridge namespace.
+find "$APP_DIR/experiences/experimental-worlds" \
+  \( -name '.DS_Store' -o -name '__pycache__' -o -name '*.pyc' -o -name '.env' -o -name '.env.*' -o -name '*.horde_world' -o -name '*.horde_human' \) \
+  -exec rm -rf {} +
 
 # Internet multiplayer is bring-your-own relay. Ship the small auditable Worker
 # source and setup guide so portable users are not dependent on this repository.
