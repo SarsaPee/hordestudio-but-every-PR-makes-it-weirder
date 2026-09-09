@@ -33,7 +33,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const additionalSourceFiles = String(process.env.HORDE_TEST_SOURCE_FILES || '')
+    .split(path.delimiter)
+    .map(value => value.trim())
+    .filter(Boolean)
+    .map(value => path.join(__dirname, '..', value));
+const app = [path.join(__dirname, '..', 'app.js'), ...additionalSourceFiles]
+    .map(file => fs.readFileSync(file, 'utf8'))
+    .join('\n');
 
 /**
  * Find the span from startIndex to the close of the first openChar at or after

@@ -1,0 +1,36 @@
+const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+
+const sourceRevision = 'checkpoint/experimental-worlds-dual-inplace-17.0';
+const acceptedApp = execFileSync('git', ['show', `${sourceRevision}:app.js`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+const start = acceptedApp.indexOf('// --- Portable World Presentation Media ------------------------------------');
+const end = acceptedApp.indexOf('// --- DOM References ---', start);
+assert(start >= 0 && end > start, 'Pass-0 visual-media source unit is present');
+const acceptedUnit = acceptedApp.slice(start, end);
+
+const relocatedPath = 'experiences/experimental-worlds/visuals/world-visual-media-core.js';
+const relocated = fs.readFileSync(relocatedPath, 'utf8');
+const restored = relocated
+    .replace('normalizeImageGuidePresets(ExperimentalWorldsVisualMediaHost.globalSettings().imageGuidePresets)', 'normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)')
+    .replace('ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if ((state.worlds || []).includes(world)) worldMediaDirty = true;')
+    .replace('if (removed) ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if (removed && (state.worlds || []).includes(world)) worldMediaDirty = true;');
+
+assert.equal(restored.trimEnd(), acceptedUnit.trimEnd(),
+    'visual/media core differs from the Pass-0 oracle only at the three explicit host seams');
+assert(!relocated.includes('state.globalSettings') && !relocated.includes('state.worlds') && !relocated.includes('worldMediaDirty'),
+    'relocated visual core has no direct host-state or host-writer access');
+
+const adapter = fs.readFileSync('host-adapters/experimental-worlds/visual-media-host-adapter.js', 'utf8');
+assert(adapter.includes('getGlobalSettings') && adapter.includes('markExperimentalWorldMediaChanged'),
+    'adapter exports only the explicit visual settings and media-dirty bindings');
+assert(!adapter.includes('state.'), 'adapter source does not reach into host state itself');
+
+const html = fs.readFileSync('index.html', 'utf8');
+const adapterIndex = html.indexOf('host-adapters/experimental-worlds/visual-media-host-adapter.js');
+const coreIndex = html.indexOf(relocatedPath);
+const appIndex = html.indexOf('src="app.js');
+assert(adapterIndex >= 0 && adapterIndex < coreIndex && coreIndex < appIndex,
+    'adapter and relocated core load before the single host bootstrap');
+
+console.log('Pass-1 visual/media relocation audit passed.');

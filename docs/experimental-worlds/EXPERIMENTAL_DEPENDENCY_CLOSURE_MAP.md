@@ -12,12 +12,16 @@ and browser-proved in the same application.
 | Evidence-backed dossier claims | `experiences/experimental-worlds/runtime/dossier-claims.js` | Experimental Worlds | No host state, provider, document, or storage access; World/session arguments only | Persists under the owning Experimental timeline as `dossierClaims` | Relocated intact |
 | Mechanics, relationship axes, cognition, inventory, altered state, World GM proposals | `experiences/experimental-worlds/mechanics/world-mechanics.js` | Experimental Worlds | `HordeDossierClaims`, `getWorldTimeData`, `replaceMacros` | Persists under `session.worldMechanics`; no own listeners/timers/DB | Relocated intact |
 | World portrait prompt compiler | `experiences/experimental-worlds/visuals/world-portrait-prompt.js` | Experimental Worlds | Optional current-host `HordeCanonicalImageComposer` contract | Produces request data only; actual media write remains host-owned | Relocated intact |
+| World presentation, portable media assets, image briefs, structured visual documents, portrait/outfit state, Fibo request composition | `experiences/experimental-worlds/visuals/world-visual-media-core.js` | Experimental Worlds | Generic host image read/resize remains in `app.js`; `isPlainObject`, `safeJsonClone`, `cssColor`, `livingClamp`; the explicit visual-media adapter exposes only shared `imageGuidePresets` and Experimental media-dirty notification. `worldNpcPortraitSource` remains an Experimental renderer relocation dependency. | Mutates only the supplied World record, its visual projects and embedded media; a per-button outfit confirmation timer remains subject to the later full lifecycle pass. Global settings retain/persist brief values but do not own World visual semantics. | Relocated mechanically from the Pass-0 source block (62,264 original bytes; three narrow host seams). Browser reloaded and opened the real Visuals tab with 13 embedded assets, presentation controls, image pipelines and saved-brief controls intact. |
 
 ## Current host-owned services
 
 - One navigation/document/bootstrap and shared modal/toast UI.
 - Provider routing, current Settings, model catalog, media transport, files,
   maps, Labs, and the global backup coordinator.
+- `host-adapters/experimental-worlds/visual-media-host-adapter.js` is the
+  current narrow bridge for the relocated visual core. It exposes no host
+  state object, stock World records, provider credentials, or stock writer.
 - Pinned ScenePulse vendor import tree. It is a licensed runtime dependency,
   not a second Horde application; the portable build must include it.
 - Normal host persistence remains `HordeStudioDB` during relocation. The
@@ -26,8 +30,8 @@ and browser-proved in the same application.
 
 ## Pending closure units
 
-The in-place World library/studio/play engine, World editor/renderers, World
-media helpers, narration/receipt pipeline, and World-only job lifecycle still
-reside in `app.js`. They remain Pass-1 work, not an implicit claim that the
-boundary is complete. Each will be relocated with its complete dependency
-closure, then compared against the Pass-0 browser oracle.
+The in-place World library/studio/play engine, World editor/renderers (such as
+`worldNpcPortraitSource`), narration/receipt pipeline, and World-only job
+lifecycle still reside in `app.js`. They remain Pass-1 work, not an implicit
+claim that the boundary is complete. Each will be relocated with its complete
+dependency closure, then compared against the Pass-0 browser oracle.

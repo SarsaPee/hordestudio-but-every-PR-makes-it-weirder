@@ -58,7 +58,8 @@ cp "$ROOT_DIR/experiences/stock-worlds-17-pass0/runtime.js" \
 
 # Pass 1 begins the mechanical relocation of the accepted Experimental Worlds
 # implementation. Ship the relocated runtime, never the old reference tree.
-mkdir -p "$APP_DIR/experiences/experimental-worlds/runtime"
+mkdir -p "$APP_DIR/experiences/experimental-worlds/runtime" \
+  "$APP_DIR/host-adapters/experimental-worlds"
 cp "$ROOT_DIR/experiences/experimental-worlds/runtime/sidecar-core.js" \
   "$ROOT_DIR/experiences/experimental-worlds/runtime/dossier-claims.js" \
   "$APP_DIR/experiences/experimental-worlds/runtime/"
@@ -69,7 +70,10 @@ mkdir -p "$APP_DIR/experiences/experimental-worlds/mechanics" \
 cp "$ROOT_DIR/experiences/experimental-worlds/mechanics/world-mechanics.js" \
   "$APP_DIR/experiences/experimental-worlds/mechanics/"
 cp "$ROOT_DIR/experiences/experimental-worlds/visuals/world-portrait-prompt.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-media-core.js" \
   "$APP_DIR/experiences/experimental-worlds/visuals/"
+cp "$ROOT_DIR/host-adapters/experimental-worlds/visual-media-host-adapter.js" \
+  "$APP_DIR/host-adapters/experimental-worlds/"
 cp "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js" \
   "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js" \
   "$APP_DIR/experiences/experimental-worlds/scenepulse/"
