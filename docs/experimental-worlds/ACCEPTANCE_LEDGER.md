@@ -19,7 +19,7 @@ checks and the portable package do not substitute for an unchecked row.
 | Stock persistence | Created `Stock Acceptance Disposable`, saved, exited to stock Worlds list. | Card remained in the stock list. | Passed (synthetic) |
 | Experimental persistence | Created `Experimental Acceptance Disposable`, saved and entered its default timeline. | Reload retained the world, timeline, Sidecar and mocked turn. | Passed (synthetic) |
 | Mocked turn | Selected the local mock through the real Experimental Worlds Settings UI, then sent `Mocked acceptance turn two`. | The UI showed the authored user turn, a mock response, provenance controls, and `Rewind to draft`. | Passed (mocked provider) |
-| Rewind to draft | In both preserved dual-17.0 `Experimental Acceptance Disposable` and staged-17.4 `Experimental 17.4 F09 Location Disposable`, used the visible in-place `Rewind to draft` control on a settled synthetic turn. A fresh staged-17.4 reload against the exact served runtime then attempted keyboard activation on `Experimental 17.4 F18 Disposable`. | In-app browser click activation left the control at `Rewind to draft`; the fresh keyboard attempt returned to the Experimental Worlds library rather than exposing `Confirm?`. No rewind, draft readback, or resend was attempted. | Incomplete; browser-adapter failure, no product pass claimed |
+| Rewind to draft / resend | The dual-17.0 evidence used the visible native control and is retained in its Milestone-A ledger. The staged-17.4 rerun at `60ab9b4` used a fresh headless Chrome profile at `localhost:43153`, a disposable bridge mirror, and the real preserved Experimental Worlds UI against a local OpenAI-compatible mock. It created `Rewind Resend 17.0 Disposable`, sent `Mocked rewind resend acceptance beat.`, clicked the visible control, observed its in-place `Confirm?`, confirmed, and resent the restored draft. | After the asynchronous UI settlement, the composer contained the exact authored text and no submitted copy remained. The resent turn and reply survived a full reload with exactly one authored turn. | Passed as mocked-provider staged browser/save/readback evidence; not live-model proof |
 | Late response | Cross-origin: in `Experimental 17.4 F09 Location Disposable`, the disposable mock held a Reader request for `ACCEPTANCE_DELAY`; before `/release`, a first-class Stock 17.4 document at `127.0.0.1:43136` became active. Same-tab: in a fresh profile, armed the mock to hold the source World’s first narrator stream, sent `ACCEPTANCE_DELAY same-tab-world-switch`, entered a separate synthetic Experimental World before `/release`, then released it. | Cross-origin settlement remained only in the original Experimental timeline. In the same-tab run, the destination’s real message count stayed `0 → 0`; it contained neither the source turn nor held reply after a full reload. | Passed as mocked-provider staged browser ownership proof on the post-`6495bce` worktree; real model behavior is not implied. |
 | Cross-mode deletion — staged 17.4 | In a fresh Chrome profile on the staged server, created two pairs of synthetic worlds in the separately-owned `127.0.0.1` Stock and `localhost` Experimental origins. Used each real World Studio delete control and accepted the native browser confirmation only for the disposable named fixture. | After deleting Stock’s fixture, reload retained its Experimental counterpart. After deleting Experimental’s fixture, reload retained its Stock counterpart. Each deleted fixture disappeared only from its owning active library. | Passed as synthetic-only staged browser/deletion/reload isolation evidence on `4604948`; no user, backup, production, or staging-copy world was opened or deleted. |
 | F16 portrait upload/clear | In dual-17.0 `Experimental Acceptance Disposable`, opened synthetic Person `Mira`'s native Visuals inspector; native `Upload` and disabled `Clear` were visible. | Available browser adapter has no file-attachment capability and did not surface a native chooser; no image was written, saved/reloaded, or cleared. | Blocked by browser-automation capability; not provider-related and no pass claimed |
@@ -50,3 +50,24 @@ canonical writer. The engine smoke audit exercised the real 17.4 application
 in an isolated origin and passed its persistence, job-ownership, map, VH,
 photo, gallery and asset checks. These are regression evidence only: they do
 not substitute for the unchecked Experimental Worlds browser rows above.
+
+## Fresh portable-package browser check
+
+At `60ab9b4`, `sh scripts/build-portable.sh 17.4.0` produced
+`dist/Horde-Studio-v17.4.0-portable.zip`. The archive was extracted into a
+new temporary directory and launched only from that extraction at
+`127.0.0.1:43152` / `localhost:43152`; it did not use a checkout, existing
+developer server, or `node_modules`.
+
+- The fresh Stock document opened its normal `Worlds` view and showed the
+  bundled upstream World cards.
+- Its first-class `Experimental Worlds` navigation crossed to the package's
+  private localhost document. That document displayed `Experimental Worlds`
+  and its preserved runtime World library; its `Worlds` navigation returned to
+  the package's stock `127.0.0.1` document.
+- The package contains the private runtime entry, app, styles and ScenePulse
+  source. Its explicit archive audit found no `.env`, `.horde_world`,
+  `.horde_human`, `.DS_Store`, `__pycache__`, or `.pyc` entries.
+
+This is fresh-package navigation/load evidence. It does not substitute for
+the per-feature Experimental Worlds acceptance rows above.
