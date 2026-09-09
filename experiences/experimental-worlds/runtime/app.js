@@ -13383,6 +13383,12 @@ function extractFF54SceneHeader(narration) {
     return header.timeText || header.locationText ? header : null;
 }
 
+function sidecarHeaderDayNumber(header) {
+    const match = String(header?.dayText || '').match(/\bDay\s*(\d+)\b/i);
+    const day = Number(match?.[1]);
+    return Number.isInteger(day) && day > 0 ? day : null;
+}
+
 // Two-phase temporal model (FF 5.4 scene header as the narrative start-anchor):
 //   previous committed end --(inter-turn jump)--> narrator header start
 //   header start --(in-turn elapsed)--> end of the narrated response
@@ -13412,7 +13418,16 @@ function deriveSidecarTwoPhaseTemporal(clockEvidence, header, handoff) {
     const headerEndpoint = header ? parseSidecarClockEndpoint(header.timeText) : null;
     const headerMinuteOfDay = headerEndpoint ? sidecarEndpointMinuteOfDay(headerEndpoint, meridiem) : null;
     if (Number.isFinite(previousMinuteOfDay) && headerMinuteOfDay !== null) {
-        const interMinutes = (headerMinuteOfDay - previousMinuteOfDay + 1440) % 1440;
+        const headerDay = sidecarHeaderDayNumber(header);
+        const previousDay = Number(clockEvidence?.day) || 0;
+        const rawDelta = headerMinuteOfDay - previousMinuteOfDay;
+        // A header clock may legitimately wrap only when its authored day
+        // advances as well. Modular arithmetic alone turns a one-minute
+        // provider regression (6:33 PM -> 6:32 PM on Day 1) into a false
+        // 1,439-minute canonical jump during a reroll.
+        const interMinutes = rawDelta >= 0
+            ? rawDelta
+            : (headerDay === previousDay + 1 ? rawDelta + 1440 : null);
         if (interMinutes === 0) {
             breakdown.interTurnJump = { minutes: 0, status: 'none', basis: 'header start matches the committed clock' };
             breakdown.currentTurnStart = { display: header.timeText, minuteOfDay: headerMinuteOfDay, basis: 'header' };
@@ -13427,7 +13442,7 @@ function deriveSidecarTwoPhaseTemporal(clockEvidence, header, handoff) {
             };
             breakdown.currentTurnStart = { display: header.timeText, minuteOfDay: headerMinuteOfDay, basis: 'header' };
         } else {
-            breakdown.interTurnJump = { minutes: 0, status: 'ambiguous', basis: 'header time does not resolve to a plausible forward jump' };
+            breakdown.interTurnJump = { minutes: 0, status: 'ambiguous', basis: 'header time moves backward without an explicit next numbered day' };
         }
     }
     // In-turn elapsed: exact paired endpoints in the handoff temporal statement.

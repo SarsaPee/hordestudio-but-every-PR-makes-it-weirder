@@ -28,9 +28,12 @@ vm.runInContext([
     sourceOf('sidecarTemporalStatement'),
     sourceOf('parseSidecarClockEndpoint'),
     sourceOf('sidecarEndpointMinuteOfDay'),
+    sourceOf('sidecarHeaderDayNumber'),
     sourceOf('deriveSidecarExplicitTimeSkip'),
+    sourceOf('deriveSidecarTwoPhaseTemporal'),
+    sourceOf('deriveSidecarReaderTemporalResolution'),
     sourceOf('applySidecarTemporalAuthority'),
-    'this.derive = deriveSidecarExplicitTimeSkip; this.apply = applySidecarTemporalAuthority;'
+    'this.derive = deriveSidecarExplicitTimeSkip; this.deriveTwoPhase = deriveSidecarTwoPhaseTemporal; this.apply = applySidecarTemporalAuthority;'
 ].join('\n'), context);
 
 const handoff = text => `ANSWER core.time:\n- ${text}\nANSWER core.location:\n- Same place.`;
@@ -50,6 +53,23 @@ assert.equal(context.derive(handoff('8:57 → 8:56'), clock(8 * 60 + 57)), null,
     'an unmarked backwards pair must be rejected');
 assert.equal(context.derive(handoff('11:59 PM → 12:01'), clock(23 * 60 + 59)), null,
     'an endpoint that crosses midnight without an explicit target meridiem must be rejected');
+
+const backwardSameDay = context.deriveTwoPhase(
+    { canonicalTotalMinutes: 18 * 60 + 33, display: '6:33 PM', day: 1 },
+    { timeText: '6:32 PM', dayText: 'Day 1 - Friday, August 14, 2026', raw: '[header]' },
+    handoff('A moment passes.')
+);
+assert.equal(backwardSameDay.interTurnJump.status, 'ambiguous',
+    'a same-day backward provider header must not become a near-day clock advance');
+assert.equal(backwardSameDay.interTurnJump.minutes, 0);
+
+const explicitNextDay = context.deriveTwoPhase(
+    { canonicalTotalMinutes: 23 * 60 + 58, display: '11:58 PM', day: 1 },
+    { timeText: '12:02 AM', dayText: 'Day 2 - Saturday, August 15, 2026', raw: '[header]' },
+    handoff('The scene resumes after midnight.')
+);
+assert.equal(explicitNextDay.interTurnJump.minutes, 4,
+    'an explicit next numbered day may author a genuine midnight rollover');
 
 const receipt = { events: [{ type: 'time', minutes_elapsed: 45 }, { type: 'activity' }], state_updates: { time_skip_minutes: 45, ledger_update: 'A beat passed.' } };
 const evidence = context.apply(receipt, handoff('8:57 → 8:58'), clock(8 * 60 + 57));

@@ -18,6 +18,7 @@
 - [x] Run upstream engine gates and test a fresh portable extraction.
 - [x] Run the available isolated 17.4 storage-transaction and browser-engine smoke gates with a clean Playwright profile; their results are recorded separately from Experimental Worlds acceptance.
 - [~] Repeat the full browser proof after the Milestone A checkpoint. The staged 17.4 F16 portrait save/reload/clear/reload, F18 graduation/save/readback, F19/F20 relationship save/readback, and F09 Location graduation passed with a mocked provider or provider-independent browser run as applicable. Cross-origin late-response isolation passed with the mock, but same-tab switching and cross-mode deletion remain unproven; the complete dual-17.0 acceptance checkpoint is still required before promotion.
+- [~] Live provider evidence on the user-authorized disposable legacy Melbourne timeline exercised a real send, rewind-to-draft and reroll. It exposed a persisted ScenePulse date contradiction and a same-Day backward-header clock bug. The private runtime now rejects that rollback unless the header explicitly advances the numbered day; both semantic-time audits pass, but the repaired staged browser proof remains required.
 - [ ] Perform guarded live mirror cutover/deployment only after the remaining browser acceptance items pass.
 
 ## Recorded blockers before live cutover
