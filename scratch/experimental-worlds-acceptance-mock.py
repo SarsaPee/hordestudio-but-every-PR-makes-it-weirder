@@ -17,9 +17,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 release = threading.Event()
 audit: list[dict[str, object]] = []
+temporal_fixture_calls = 0
+temporal_fixture_enabled = False
 
 
 def completion(body: dict[str, object]) -> dict[str, object]:
+    global temporal_fixture_calls
     messages = body.get("messages") if isinstance(body.get("messages"), list) else []
     text = " ".join(str(item.get("content") or "") for item in messages if isinstance(item, dict))
     tool_names = [str(item.get("function", {}).get("name") or "") for item in body.get("tools", []) if isinstance(item, dict)]
@@ -154,6 +157,14 @@ def completion(body: dict[str, object]) -> dict[str, object]:
             "unresolved": [], "proposed_questions": [], "time_evidence": {},
             "controlled_character_evidence": []
         })
+    elif temporal_fixture_enabled and "[SIDECAR READER]" not in text:
+        # Reproduce the exact live-provider failure safely: after one accepted
+        # narrator header at 6:33 PM on Day 1, a reroll returns 6:32 PM still
+        # on Day 1. The browser acceptance test proves the runtime declines
+        # to convert that provider regression into a 1,439-minute clock jump.
+        temporal_fixture_calls += 1
+        time = "6:33 PM" if temporal_fixture_calls == 1 else "6:32 PM"
+        content = f"[ 🕰️ Time {time} | 🗓️ Day 1 - Friday, August 14, 2026 AD | 📍 Acceptance Square | ☁️ Clear, 54 °F ]\n\nCharlotte keeps the acceptance fixture at the bar while the same authored scene continues."
     else:
     # Valid compact JSON is useful for UI paths that request a structured
     # translation; ordinary narrator paths receive plain, labelled fixture
@@ -235,6 +246,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
+        global temporal_fixture_calls, temporal_fixture_enabled
+        if self.path == "/temporal-reset":
+            temporal_fixture_calls = 0
+            temporal_fixture_enabled = True
+            return self.send_json(200, {"temporal_fixture": "armed"})
         if self.path == "/release":
             release.set()
             return self.send_json(200, {"released": True})
@@ -259,6 +275,7 @@ class Handler(BaseHTTPRequestHandler):
             # real Narrator and Reader calls without retaining their prompts.
             "reader": "[SIDECAR READER]" in " ".join(str(item.get("content") or "") for item in messages if isinstance(item, dict)),
             "candidate_marker": "ACCEPTANCE_SCENEPULSE_CANDIDATE" in " ".join(str(item.get("content") or "") for item in messages if isinstance(item, dict)),
+            "temporal_marker": "ACCEPTANCE_TEMPORAL_SAME_DAY_ROLLBACK" in request_text,
         })
         if delayed:
             release.wait(30)

@@ -28,14 +28,16 @@ checks and the portable package do not substitute for an unchecked row.
 | F19 five-meter save, including zero | In staged 17.4 `Experimental 17.4 Relationship Rerun`, used the real Experimental Worlds UI and local mocked transport to produce Mira's relationship, then saved the World and manually published the isolated mirror. | Mirror revision 3 retained the directed relationship projection `affection: 5`, `desire: 0`, `trust: 38`, `stress: 55`, `compatibility: 30`. A fresh browser document reopened the same timeline and native ScenePulse panel, visibly showing the five values and labels, including Desire `0`. | Passed as mocked-provider browser/save/readback evidence on `28d6832`; not live-model proof |
 | F20 relationship metadata save | In that same staged 17.4 fixture, used native ScenePulse edit mode to change Time Known to `five weeks` and Milestone to `Accepted five-meter metadata fixture`, saved the source panel, saved the World, and manually published. | Mirror revision 3 retained both values in the human-edit, translation, and directed-relationship provenance; the fresh browser document visibly showed both values while the five meters remained unchanged. | Passed as mocked-provider browser/save/readback evidence on `28d6832`; not live-model proof |
 | F09 Location graduation | In staged 17.4 `Experimental 17.4 F09 Location Disposable`, sent `ACCEPTANCE_SCENEPULSE_LOCATION` through the real UI and local mocked transport, opened native ScenePulse Inspect, staged the accepted `Acceptance Archive` location for World review, created the durable record, confirmed the explicit modal, saved, and manually published the isolated mirror. | Browser showed `New location discovered: Acceptance Archive`; mirror revision 5 retained canonical `loc_mttmdwkh_zki36`, `Acceptance District`, `building`, `Ground floor`, the exact Reader snapshot and source-turn IDs, reader evidence, and the promoted candidate's `canonicalMatchId`. | Passed as mocked-provider browser/save/readback evidence on `dcbe687`; not live-model proof |
+| Same-Day reroll temporal guard — staged 17.4 | In a fresh Chrome profile, configured the real Experimental Worlds Settings UI to a disposable local OpenAI-compatible mock, created `Temporal Reroll Disposable`, armed the mock only after setup, sent `ACCEPTANCE_TEMPORAL_SAME_DAY_ROLLBACK`, then used the visible native Reroll control. The mock returned Day 1 `6:33 PM` for the authored turn and Day 1 `6:32 PM` for reroll. | The actual second response visibly contained `Time 6:32 PM`. The world clock stayed `8:00 AM`; after a full browser reload it remained exactly `8:00 AM`. Mock audit confirmed the authored send and reroll reached the narrator transport. | Passed as a mocked-provider staged browser/save/reload regression proof on `717fcbc`; this proves the safe rejection path, not live-model acceptance. |
 
 Real-provider live-17.0 evidence is recorded in the dual-17.0 ledger. It
 proved draft restoration but exposed a reroll regression: a same-Day-1
 one-minute-backward header was treated as a 1,439-minute clock advance and
 the accepted ScenePulse projection retained a contradictory calendar date
 after reload. The private temporal guard was patched in both integration
-worktrees and covered by the semantic-time audit; it still needs an isolated
-browser rerun before it is counted as acceptance evidence.
+worktrees, covered by the semantic-time audit, and now passed the staged
+isolated browser rerun above. The preserved dual-17.0 Milestone-A rerun
+remains outstanding.
 
 ## Separate staged 17.4 automation gates
 
