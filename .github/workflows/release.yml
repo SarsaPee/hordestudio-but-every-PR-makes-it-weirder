@@ -9,7 +9,10 @@ permissions:
   contents: write
 
 jobs:
+  engine-checks:
+    uses: ./.github/workflows/engine-checks.yml
   release:
+    needs: engine-checks
     runs-on: ubuntu-latest
     steps:
       - name: Check out tagged release

@@ -430,6 +430,9 @@ test('a schedule before the first block of the day uses the previous block', () 
 test('a narrative pin outranks the timetable until it expires', () => {
     setModules();
     const world = makeWorld();
+    // This movement fixture has real routes; disconnected travel is tested separately.
+    world.locations[0].exits.push('to Deep Wood');
+    world.locations[2].exits.push('to Town Square');
     world.entities[0].schedule = [{ time: '00:00', locationId: 'loc_a', activity: 'working' }];
     const sess = makeSession(world);
     context.normalizeLivingWorldState(world, sess);
@@ -446,6 +449,9 @@ test('a narrative pin outranks the timetable until it expires', () => {
 test('schedule arrivals and departures across the player scene are narrated', () => {
     setModules();
     const world = makeWorld();
+    // This movement fixture has real routes; disconnected travel is tested separately.
+    world.locations[0].exits.push('to Deep Wood');
+    world.locations[2].exits.push('to Town Square');
     world.entities[0].schedule = [{ time: '00:00', locationId: 'loc_a', activity: 'sweeping' }];
     const sess = makeSession(world);
     sess.entityStates.npc_1.location = 'loc_c';
@@ -461,9 +467,32 @@ test('schedule arrivals and departures across the player scene are narrated', ()
         'an NPC leaving the scene was not narrated');
 });
 
+test('turns freeze scheduled presence before simulation and never resync after prose', () => {
+    const turnSource = functionSource('executeWorldTurn');
+    const freezeIndex = turnSource.indexOf('syncNPCSchedules(world, sess);',
+        turnSource.indexOf('// Freeze scheduled presence'));
+    const tickIndex = turnSource.indexOf('runLivingWorldTick(world, sess);');
+    assert(freezeIndex >= 0 && freezeIndex < tickIndex,
+        'living-world witnesses were computed before the scheduled cast was frozen');
+    const postNarrative = turnSource.slice(turnSource.indexOf('// Successful turn: Increment'),
+        turnSource.indexOf('// Save the DM\'s narrative response'));
+    assert(!postNarrative.includes('syncNPCSchedules'),
+        'the scheduler still mutates cast after the narrative has already been generated');
+});
+
+test('message observations prefer an explicit committed witness set', () => {
+    const source = functionSource('addWorldMessage');
+    assert(source.includes('Array.isArray(metadata.witnesses)'));
+    assert(source.includes('explicitWitnesses.has(ent.id)'));
+    assert(source.includes('sessionNpcs(world, sess)'));
+});
+
 test('a timeline schedule override wins over the world template', () => {
     setModules();
     const world = makeWorld({ hudConfig: { timeStep: 10, startTimeHours: 8, enableSchedules: false } });
+    // This movement fixture has real routes; disconnected travel is tested separately.
+    world.locations[0].exits.push('to Deep Wood');
+    world.locations[2].exits.push('to Town Square');
     world.entities[0].schedule = [{ time: '00:00', locationId: 'loc_a', activity: 'template' }];
     const sess = makeSession(world, {
         npcScheduleOverrides: { npc_1: [{ time: '00:00', locationId: 'loc_c', activity: 'timeline' }] }

@@ -1,0 +1,233 @@
+{
+  "tool": {
+    "name": "images_generate",
+    "title": "Generate Image",
+    "description": "Generate images, or rework one via references. NOT pixel-preserving: an edit that must keep the rest intact routes to a dedicated tool first \u2014 sharpness/quality: `images_upscale`; free space/extend canvas/new ratio keeping content: `images_expand`; one region: `images_retouch`; crop/exact pixels: `images_crop`/`images_resize`. No refs=TTI. references[] (max 12; see field docs). Output is opaque (no alpha); for transparent/cutout background, chain `images_remove_background` after. Defaults: mode=auto, ratio=1:1, count<=8. resolution/quality per images_models_list. UI clients: after generating, MUST call `creations_show` with all identifiers; never stop at links.",
+    "inputSchema": {
+      "properties": {
+        "prompt": {
+          "description": "Prompt. With brandKitId, keep it SHORT: topic plus the user's hard constraints only (`no text`, `logo top right`). Kit and template own look \u2014 do not invent lighting, composition, typography, or a cinematic centerpiece, and do not restate brand identity. A library reference (character/product/locations) may be mentioned as `@<name>` (its library_list `name`) where it appears in the scene; the server rewrites the token into the reference description.",
+          "type": "string"
+        },
+        "brandKitId": {
+          "description": "Brand kit sqid (the `id` from brand_kit_list/brand_kit_get). When set, the image is generated on-brand: brand palette, logo, typography and reference imagery are applied automatically. Do not restate identity in the prompt.",
+          "type": "string"
+        },
+        "templateSlug": {
+          "description": "Content template `slug` from the kit (brand_kit_get.templates); requires brandKitId. Pass only if they asked for that format. Applies that content type's recipe; the prompt stays short.",
+          "type": "string"
+        },
+        "logoVariant": {
+          "description": "Logo mark `sqid` from brand_kit_get.logo_marks; requires brandKitId. Pins that mark for this generation only. Omit to use the kit primary logo.",
+          "type": "string"
+        },
+        "validationRunId": {
+          "description": "Brand Kit validation run id; pair with validationScenarioKey. The persisted scenario overrides generation args.",
+          "type": "string"
+        },
+        "validationScenarioKey": {
+          "description": "recommendedScenarios[].key; requires validationRunId.",
+          "type": "string"
+        },
+        "mode": {
+          "description": "Use `auto` unless the user named a model; then take its `slug` from images_models_list. Naming trap: Nano Banana 2 = `imagen-nano-banana-2-flash`; `imagen-nano-banana-2` is Nano Banana Pro. With brandKitId, do not pick `gpt-2` for logo/press-kit wording \u2014 leave auto or a photography/flagship model unless they named one.",
+          "default": "auto",
+          "type": "string"
+        },
+        "aspectRatio": {
+          "description": "Default 1:1; edits may snap.",
+          "enum": [
+            "1:1",
+            "21:9",
+            "16:9",
+            "9:16",
+            "2:3",
+            "3:4",
+            "1:2",
+            "2:1",
+            "5:4",
+            "4:5",
+            "3:2",
+            "4:3"
+          ],
+          "type": "string"
+        },
+        "references": {
+          "description": "Max 12.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "description": "image = any photo you have, incl. of a person/product to keep consistent. character/product/locations = pre-built library asset, never a creation. style = library LoRA, or a creation as style photo.",
+                "enum": [
+                  "image",
+                  "style",
+                  "character",
+                  "product",
+                  "locations"
+                ],
+                "type": "string"
+              },
+              "identifier": {
+                "description": "creation identifier for image/style-photo; numeric `id` from library_list for character/product/locations/style-LoRA. Upload URLs first.",
+                "type": "string"
+              }
+            },
+            "type": "object",
+            "required": [
+              "type",
+              "identifier"
+            ]
+          },
+          "type": "array"
+        },
+        "count": {
+          "description": "1..8. N variants of ONE prompt = one call with count=N, never N separate calls.",
+          "minimum": 1,
+          "maximum": 8,
+          "type": "integer"
+        },
+        "resolution": {
+          "description": "Supported values per model \u2014 see `images_models_list.resolutions`. Omitted values use the model default.",
+          "type": "string"
+        },
+        "quality": {
+          "description": "Supported values per model \u2014 see `images_models_list.qualities`. Omitted values use the model default.",
+          "type": "string"
+        },
+        "extraSettings": {
+          "description": "Model-specific. Keys/values via images_models_settings. Needs explicit mode.",
+          "type": "object"
+        },
+        "folderReference": {
+          "description": "From `folders_list`. Omit \u2192 the user's Personal project. Does NOT persist: once the user names a target, pass it on EVERY later generation/edit call.",
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "prompt"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "properties": {
+        "creation": {
+          "properties": {
+            "identifier": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "expectTime": {
+              "description": "Seconds left; 0 once terminal.",
+              "type": "integer"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "credits": {
+              "type": "integer"
+            },
+            "creditsNote": {
+              "type": "string"
+            },
+            "webUrl": {
+              "type": "string"
+            },
+            "designerUrl": {
+              "type": "string"
+            }
+          },
+          "type": "object",
+          "required": [
+            "identifier",
+            "status"
+          ]
+        },
+        "creations": {
+          "items": {
+            "properties": {
+              "identifier": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "expectTime": {
+                "description": "Seconds left; 0 once terminal.",
+                "type": "integer"
+              },
+              "tool": {
+                "type": "string"
+              },
+              "credits": {
+                "type": "integer"
+              },
+              "creditsNote": {
+                "type": "string"
+              },
+              "webUrl": {
+                "type": "string"
+              },
+              "designerUrl": {
+                "type": "string"
+              }
+            },
+            "type": "object",
+            "required": [
+              "identifier",
+              "status"
+            ]
+          },
+          "type": "array"
+        },
+        "partialFailure": {
+          "description": "Some outputs queued, the rest stopped here.",
+          "type": "string"
+        },
+        "instruction": {
+          "type": "string"
+        },
+        "adjustments": {
+          "items": {
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "instruction"
+      ]
+    }
+  },
+  "catalog": {
+    "content": [
+      {
+        "type": "text",
+        "text": "models[48]:\n  - slug: auto\n    name: Auto\n    family: auto\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 5\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"4:5\",\"3:2\",\"4:3\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n  - slug: cinematic\n    name: Cinematic\n    family: imagen\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 97\n    aspectRatios[10]: \"1:1\",\"21:9\",\"16:9\",\"9:16\",\"4:3\",\"4:5\",\"5:4\",\"3:4\",\"3:2\",\"2:3\"\n    resolutions[3]: 1k,2k,4k\n    supportsReferences: true\n    referenceTypes[3]: character,product,image\n    requiredInputs[1]: prompt\n    extraSettings[1]: cinematicControls\n    requiresPremium: true\n  - slug: classic\n    name: Classic\n    family: classic\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 3\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: fast\n    name: Classic Fast\n    family: classic\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 2\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-dev\n    name: Flux.1\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 9\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[3]: style,character,product\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux\n    name: Flux.1 Fast\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 4\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-kontext-high\n    name: Flux.1 Kontext Max\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 19\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"4:5\",\"3:2\",\"4:3\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-kontext\n    name: Flux.1 Kontext Pro\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 10\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"4:5\",\"3:2\",\"4:3\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-realism\n    name: Flux.1 Realism\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 13\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: false\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-pro-plus\n    name: Flux.1.1\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 6\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-2-flex\n    name: Flux.2 Flex\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 28\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    resolutions[2]: 1k,2k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-2-klein\n    name: Flux.2 Klein\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 6\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    resolutions[2]: 1k,2k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-2-max\n    name: Flux.2 Max\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 41\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    resolutions[2]: 1k,2k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: flux-2\n    name: Flux.2 Pro\n    family: flux\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 21\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    resolutions[2]: 1k,2k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: gpt-medium\n    name: GPT\n    family: gpt\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 31\n    aspectRatios[4]: \"1:1\",\"2:3\",\"3:4\",\"3:2\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: gpt-high\n    name: GPT 1 - HQ\n    family: gpt\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 57\n    aspectRatios[4]: \"1:1\",\"2:3\",\"3:4\",\"3:2\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: gpt-1-5-medium\n    name: GPT 1.5\n    family: gpt\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 33\n    aspectRatios[3]: \"1:1\",\"2:3\",\"3:2\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: gpt-1-5-high\n    name: GPT 1.5 - High\n    family: gpt\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 66\n    aspectRatios[3]: \"1:1\",\"2:3\",\"3:2\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: gpt-2\n    name: GPT 2\n    family: gpt\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 59\n    aspectRatios[11]: auto,\"1:1\",\"2:1\",\"3:1\",\"2:3\",\"3:2\",\"3:4\",\"4:3\",\"16:9\",\"9:16\",\"21:9\"\n    resolutions[3]: 1k,2k,4k\n    qualities[3]: low,medium,high\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n    agentRecommendation:\n      tier: sota\n      rank: 1\n      useFor[6]: text_layout,infographic,ui_design,diagram,typography,non_photorealistic_design\n      summary: \"Best for infographics, readable text, diagrams, UI mockups, and layout-heavy design when the target is not photorealistic photography.\"\n  - slug: imagen-nano-banana\n    name: Google Nano Banana\n    family: imagen\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 12\n    aspectRatios[11]: auto,\"1:1\",\"21:9\",\"16:9\",\"9:16\",\"4:3\",\"4:5\",\"5:4\",\"3:4\",\"3:2\",\"2:3\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: imagen-nano-banana-2-flash\n    name: Google Nano Banana 2\n    family: imagen\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 37\n    aspectRatios[15]: auto,\"1:1\",\"21:9\",\"8:1\",\"4:1\",\"16:9\",\"9:16\",\"1:4\",\"1:8\",\"4:3\",\"4:5\",\"5:4\",\"3:4\",\"3:2\",\"2:3\"\n    resolutions[3]: 1k,2k,4k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: imagen-nano-banana-2-lite\n    name: Google Nano Banana 2 Lite\n    family: imagen\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 9\n    aspectRatios[10]: \"1:1\",\"2:3\",\"3:2\",\"4:3\",\"3:4\",\"5:4\",\"4:5\",\"16:9\",\"9:16\",\"21:9\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n    agentRecommendation:\n      tier: recommended\n      rank: 2\n      useFor[6]: fast_generation,lower_cost,cheap,draft,high_volume,iteration\n      summary: \"Cheap/fast image model. Prefer for quick drafts, high-volume iteration, and cost-sensitive generation.\"\n  - slug: imagen-nano-banana-2\n    name: Google Nano Banana Pro\n    family: imagen\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 43\n    aspectRatios[11]: auto,\"1:1\",\"21:9\",\"16:9\",\"9:16\",\"4:3\",\"4:5\",\"5:4\",\"3:4\",\"3:2\",\"2:3\"\n    resolutions[3]: 1k,2k,4k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n    agentRecommendation:\n      tier: recommended\n      rank: 3\n      useFor[7]: image_edit,composition,reference_guided,character_consistency,product_visual,brand_fidelity,high_quality\n      summary: Use over Nano Banana 2 only when the user explicitly asks for maximum fidelity or brand accuracy on a final asset.\n  - slug: grok\n    name: Grok\n    family: grok\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 11\n    aspectRatios[10]: auto,\"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"3:2\",\"4:3\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: grok-imagine-2\n    name: Grok Imagine 2.0\n    family: grok\n    tool: text-to-image\n    beta: true\n    expectedGenerationTime: 13\n    aspectRatios[10]: auto,\"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"3:2\",\"4:3\"\n    qualities[2]: low,medium\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: ideogram\n    name: Ideogram\n    family: ideogram\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 13\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[2]: style,character\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: ideogram-4\n    name: Ideogram 4\n    family: ideogram\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 25\n    aspectRatios[15]: \"1:1\",\"16:9\",\"9:16\",\"10:16\",\"16:10\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"4:5\",\"5:4\",\"2:1\",\"1:2\",\"3:1\",\"1:3\"\n    qualities[3]: turbo,mid,high\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: krea-2\n    name: Krea 2\n    family: krea\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 20\n    aspectRatios[8]: \"1:1\",\"4:3\",\"3:2\",\"16:9\",\"2.35:1\",\"4:5\",\"2:3\",\"9:16\"\n    qualities[2]: medium,high\n    supportsReferences: true\n    referenceTypes[2]: style,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: luma-uni-1\n    name: Luma Uni-1.1\n    family: luma\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 192\n    aspectRatios[9]: \"1:1\",\"1:2\",\"1:3\",\"2:1\",\"2:3\",\"3:1\",\"3:2\",\"9:16\",\"16:9\"\n    qualities[2]: mid,max\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: mai-image-2-5\n    name: MAI Image 2.5\n    family: microsoft\n    tool: text-to-image\n    beta: true\n    expectedGenerationTime: 67\n    aspectRatios[8]: auto,\"1:1\",\"4:3\",\"3:4\",\"16:9\",\"9:16\",\"3:2\",\"2:3\"\n    supportsReferences: true\n    referenceTypes[5]: style,image,character,product,locations\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: mystic\n    name: Mystic 1.0\n    family: mystic\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 20\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"4:5\",\"3:2\",\"4:3\"\n    supportsReferences: true\n    referenceTypes[3]: style,character,product\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: mystic-2-5\n    name: Mystic 2.5\n    family: mystic\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 25\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"4:5\",\"3:2\",\"4:3\"\n    supportsReferences: true\n    referenceTypes[3]: style,character,product\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: mystic-2-5-flexible\n    name: Mystic 2.5 Flexible\n    family: mystic\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 24\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"2:3\",\"3:4\",\"1:2\",\"2:1\",\"4:5\",\"3:2\",\"4:3\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: mystic-2-5-fluid\n    name: Mystic 2.5 Fluid\n    family: mystic\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 32\n    aspectRatios[4]: \"1:1\",\"16:9\",\"9:16\",\"3:4\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: p-image-ideogram\n    name: P-Image Ideogram\n    family: ideogram\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 11\n    aspectRatios[13]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"16:10\",\"10:16\",\"5:4\",\"4:5\",\"2:1\",\"1:2\"\n    resolutions[2]: 1k,2k\n    qualities[4]: very-low,low,medium,high\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: qwen\n    name: Qwen\n    family: qwen\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 10\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: qwen-image-3-0\n    name: Qwen Image 3.0\n    family: qwen\n    tool: text-to-image\n    beta: true\n    expectedGenerationTime: 28\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: qwen-image-3-0-pro\n    name: Qwen Image 3.0 Pro\n    family: qwen\n    tool: text-to-image\n    beta: true\n    expectedGenerationTime: 82\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    resolutions[2]: 1k,2k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: recraft-v4\n    name: Recraft V4\n    family: recraft\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 14\n    aspectRatios[11]: \"1:1\",\"2:1\",\"1:2\",\"3:2\",\"2:3\",\"4:3\",\"3:4\",\"5:4\",\"4:5\",\"16:9\",\"9:16\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: recraft-v4-pro\n    name: Recraft V4 Pro\n    family: recraft\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 18\n    aspectRatios[11]: \"1:1\",\"2:1\",\"1:2\",\"3:2\",\"2:3\",\"4:3\",\"3:4\",\"5:4\",\"4:5\",\"16:9\",\"9:16\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: recraft-v4-1\n    name: Recraft V4.1\n    family: recraft\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 39\n    aspectRatios[11]: \"1:1\",\"2:1\",\"1:2\",\"3:2\",\"2:3\",\"4:3\",\"3:4\",\"5:4\",\"4:5\",\"16:9\",\"9:16\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\n    agentRecommendation:\n      tier: sota\n      rank: 1\n      useFor[8]: text_to_image,first_generation,no_references,fast_generation,creative_generation,photorealistic,illustration,typography\n      summary: \"Best model for pure text-to-image generation. Prefer when there are no references, for first drafts, creative exploration, and fast iteration.\"\n  - slug: runway-gen4\n    name: Runway\n    family: runway\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 19\n    aspectRatios[5]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: seedream-4\n    name: Seedream 4\n    family: seedream\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 49\n    aspectRatios[11]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\",\"21:9\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: seedream-4-4k\n    name: Seedream 4 4K\n    family: seedream\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 45\n    aspectRatios[11]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\",\"21:9\"\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: seedream-4-5\n    name: Seedream 4.5\n    family: seedream\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 62\n    aspectRatios[11]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\",\"21:9\"\n    resolutions[2]: 2k,4k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: seedream-5-lite\n    name: Seedream 5 Lite\n    family: seedream\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 60\n    aspectRatios[11]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\",\"21:9\"\n    resolutions[3]: 2k,3k,4k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n  - slug: seedream-5-pro\n    name: Seedream 5 Pro\n    family: seedream\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 47\n    aspectRatios[8]: \"1:1\",\"4:3\",\"3:4\",\"16:9\",\"9:16\",\"3:2\",\"2:3\",\"21:9\"\n    resolutions[2]: 1.5k,2k\n    supportsReferences: true\n    referenceTypes[4]: style,character,product,image\n    requiredInputs[1]: prompt\n    requiresPremium: true\n    agentRecommendation:\n      tier: sota\n      rank: 1\n      useFor[10]: text_to_image,first_generation,image_edit,composition,reference_guided,character_consistency,product_visual,photorealistic,creative_generation,high_quality\n      summary: \"Default image model. Prefer for text-to-image, reference-guided edits, product, character, and general-purpose generation.\"\n  - slug: z-image\n    name: Z-Image\n    family: z-image\n    tool: text-to-image\n    beta: false\n    expectedGenerationTime: 5\n    aspectRatios[10]: \"1:1\",\"16:9\",\"9:16\",\"4:3\",\"3:4\",\"3:2\",\"2:3\",\"1:2\",\"2:1\",\"4:5\"\n    supportsReferences: true\n    referenceTypes[1]: style\n    requiredInputs[1]: prompt\n    requiresPremium: true\ninstruction: \"Prefer models with `agentRecommendation.tier: sota`, then lower `agentRecommendation.rank`. Entries without `agentRecommendation` are valid but not preferred. Use optional `search` to narrow by name or slug before reading the full catalog.\""
+      }
+    ],
+    "isError": false
+  }
+}

@@ -33,7 +33,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const app = fs.readFileSync(path.join(__dirname, '..', 'vh-simulation-core.js'), 'utf8') + '\n'
+    + fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 
 /**
  * Find the span from startIndex to the close of the first openChar at or after
@@ -315,6 +316,9 @@ function resolveDependencies(seeds, options = {}) {
  * so a test can reach a helper it never named without the suite listing it.
  */
 function buildContext(vm, seeds, context = {}, options = {}) {
+    context.VHWorldEngine ||= require('../vh-world-engine.js');
+    context.VHActivityEngine ||= require('../vh-activity-engine.js');
+    context.VHConversationEngine ||= require('../vh-conversation-engine.js');
     const resolved = resolveDependencies(seeds, {
         provided: Object.keys(context),
         exclude: options.exclude || []

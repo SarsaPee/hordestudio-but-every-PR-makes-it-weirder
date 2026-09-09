@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260902-fal-media-alpha8">
+    <link rel="stylesheet" href="style.css?v=20260908-reply-cleanup">
 </head>
 <body>
 <div id="app">
@@ -206,13 +206,13 @@
                     <div class="landing-hero-copy">
                         <span class="vh-eyebrow">Playable generated film</span>
                         <h1 class="page-title">Video Adventures</h1>
-                        <p class="page-subtitle">Create a cinematic setting, take an action, and let each generated shot become the starting frame for the next.</p>
+                        <p class="page-subtitle">Create a cinematic story, preplan its decision tree as text, then film only the path you choose.</p>
                     </div>
                     <div class="header-actions landing-actions">
                         <button id="create-video-world-btn" class="btn btn-primary">+ Create Video Adventure</button>
                     </div>
                 </header>
-                <div class="video-world-alpha-note"><strong>First draft</strong><span>Video Adventures have their own library and timelines. They do not read or modify regular World saves.</span></div>
+                <div class="video-world-alpha-note"><strong>Story-first play</strong><span>The Director preplans coherent choices as inexpensive text. The opening and each selected branch are rendered on demand; unused branches cost nothing. Video Adventures remain separate from regular World saves.</span></div>
                 <div id="video-world-grid" class="char-grid"></div>
             </div>
         </section>
@@ -262,19 +262,38 @@
                         <button id="video-world-test-director" class="btn btn-ghost" type="button">Test Director</button>
                         <div id="video-world-director-status" class="video-world-director-status" aria-live="polite">Not tested.</div>
                         <button id="video-world-open-ai-settings" class="btn btn-ghost btn-small" type="button">Configure text provider</button>
+                        <span class="vh-eyebrow video-world-section-label">STORY BLOCK</span>
+                        <label class="form-field"><span>Preplanned story size</span><select id="video-world-story-depth" class="form-select"><option value="1">Short · 4 planned beats</option><option value="2">Standard · 13 planned beats</option></select></label>
+                        <p class="video-world-helper">The Director writes this complete decision tree as inexpensive text before play. Horde renders only the opening and each branch you actually choose—unused branches never become paid videos.</p>
+                        <div id="video-world-block-cost-preview" class="video-world-cost-preview"></div>
                         <span class="vh-eyebrow video-world-section-label">PRODUCTION</span>
-                        <label class="form-field"><span>Primary video renderer</span><select id="video-world-renderer-primary" class="form-select"><option value="minimax/h3-max">MiniMax H3 Max · dialogue · fast</option><option value="alibaba/wan-3.0">Wan 3.0 · audio · resilient</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast · native audio</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime · higher fidelity</option></select></label>
-                        <label class="form-field"><span>Fallback renderer</span><select id="video-world-renderer-fallback" class="form-select"><option value="alibaba/wan-3.0">Wan 3.0 · recommended after H3</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option><option value="">No automatic fallback</option></select></label>
-                        <label class="form-field"><span>Second fallback <small>optional</small></span><select id="video-world-renderer-fallback-2" class="form-select"><option value="">None</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0">Wan 3.0</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option></select></label>
-                        <p class="video-world-helper">The fallback retries the same Director beat and continuity frame when the primary renderer rejects or fails. Fal may bill upstream work accepted before a fallback begins.</p>
+                        <label class="form-field"><span>Character reference handling</span><select id="video-world-reference-strategy" class="form-select"><option value="auto">Smart auto · recommended</option><option value="direct">Direct H3 / Wan references · fastest</option><option value="keyframe">Build identity anchor frame · most compatible</option></select></label>
+                        <p class="video-world-helper">Smart auto uses native multi-reference video for H3 or Wan, and creates one composed anchor image only when the selected route needs it. Anchor images are made for openings or new cast entrances—not every shot—and currently add about $0.08.</p>
+                        <label class="form-field"><span>Content route</span><select id="video-world-content-route" class="form-select"><option value="standard">Standard · Fal only</option><option value="standard_then_spicy">Smart spicy fallback · Fal, then HotAPI</option><option value="spicy_first">Spicy from the start · HotAPI only</option></select></label>
+                        <div id="video-world-content-route-note" class="video-world-helper video-world-route-note"></div>
+                        <div id="video-world-standard-renderers" class="video-world-renderer-group">
+                            <strong>Standard path · Fal</strong>
+                            <label class="form-field"><span>Primary renderer</span><select id="video-world-renderer-primary" class="form-select"><option value="minimax/h3-max">MiniMax H3 Max · dialogue · fast</option><option value="alibaba/wan-3.0">Wan 3.0 · audio · resilient</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast · native audio</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime · higher fidelity</option></select></label>
+                            <label class="form-field"><span>Fallback renderer</span><select id="video-world-renderer-fallback" class="form-select"><option value="alibaba/wan-3.0">Wan 3.0 · recommended after H3</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option><option value="">No automatic fallback</option></select></label>
+                            <label class="form-field"><span>Second fallback <small>optional</small></span><select id="video-world-renderer-fallback-2" class="form-select"><option value="">None</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0">Wan 3.0</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option></select></label>
+                        </div>
+                        <div id="video-world-spicy-renderers" class="video-world-renderer-group hidden">
+                            <strong>Spicy path · HotAPI</strong>
+                            <label class="form-field"><span>Primary spicy renderer</span><select id="video-world-spicy-primary" class="form-select"><option value="minimax-h3-spicy">MiniMax H3 Spicy · best value · $0.08/s</option><option value="seedance-2.0-fast-spicy">Seedance 2.0 Fast Spicy · slower · $0.112/s</option><option value="seedance-2.0-spicy">Seedance 2.0 Spicy · premium · $0.14/s</option><option value="seedance-2.5-spicy">Seedance 2.5 Spicy · slowest/premium · $0.206/s</option></select></label>
+                            <label class="form-field"><span>Spicy fallback</span><select id="video-world-spicy-fallback" class="form-select"><option value="seedance-2.0-fast-spicy">Seedance 2.0 Fast Spicy · $0.112/s</option><option value="minimax-h3-spicy">MiniMax H3 Spicy · $0.08/s</option><option value="seedance-2.0-spicy">Seedance 2.0 Spicy · $0.14/s</option><option value="seedance-2.5-spicy">Seedance 2.5 Spicy · $0.206/s</option><option value="">None</option></select></label>
+                            <label class="form-field"><span>Second spicy fallback</span><select id="video-world-spicy-fallback-2" class="form-select"><option value="">None</option><option value="minimax-h3-spicy">MiniMax H3 Spicy · $0.08/s</option><option value="seedance-2.0-fast-spicy">Seedance 2.0 Fast Spicy · $0.112/s</option><option value="seedance-2.0-spicy">Seedance 2.0 Spicy · $0.14/s</option><option value="seedance-2.5-spicy">Seedance 2.5 Spicy · $0.206/s</option></select></label>
+                            <p class="video-world-helper">HotAPI adds no platform refusal layer, but upstream behavior can still vary. Seedance 2.0 and 2.5 generate synchronized audio and preserve continuity; they cost more and commonly take longer. Spicy routes are for stories involving consenting adults.</p>
+                        </div>
                         <label class="form-field"><span>Resolution</span><select id="video-world-resolution" class="form-select"><option value="480P">480p · economical</option><option value="768P">768p / 720p · higher fidelity</option></select></label>
                         <label class="form-field"><span>Shot duration</span><select id="video-world-duration" class="form-select"><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option></select></label>
                         <label class="form-field"><span>Aspect ratio</span><select id="video-world-aspect" class="form-select"><option value="16:9">16:9 · cinematic</option><option value="21:9">21:9 · ultrawide</option><option value="4:3">4:3 · classic</option><option value="1:1">1:1 · square</option><option value="9:16">9:16 · vertical</option></select></label>
-                        <label class="vh-test-check video-world-safety-toggle"><input id="video-world-safety-checker" type="checkbox" checked><span>Fal safety checker</span></label>
-                        <p class="video-world-helper">On by default. Both this adventure switch and the global Fal switch must be on to request optional checking. When either is off, Horde sends <code>enable_safety_checker: false</code> to supported endpoints. LTX Fast does not expose this option, and mandatory provider or model-level filters can still reject a request.</p>
+                        <div id="video-world-fal-safety-controls" class="video-world-fal-safety-controls">
+                            <label class="vh-test-check video-world-safety-toggle"><input id="video-world-safety-checker" type="checkbox" checked><span>Fal safety checker</span></label>
+                            <p class="video-world-helper">Applies only to the standard Fal path. When either this or the global switch is off, Horde sends <code>enable_safety_checker: false</code> where supported. Mandatory provider/model checks can still reject a request.</p>
+                        </div>
                         <label class="form-field"><span>Session spending limit</span><div class="video-world-money-input"><span>$</span><input id="video-world-budget" class="form-input" type="number" min="0.10" max="10000" step="0.25" value="5.00"></div></label>
                         <div id="video-world-cost-preview" class="video-world-cost-preview"></div>
-                        <div class="video-world-provider-note"><strong id="video-world-renderer-note">Renderers: Fal · H3 Max → Wan 3.0</strong><span>The Fal key stays in this browser session and is sent only to Horde's loopback bridge, which downloads completed clips locally.</span></div>
+                        <div class="video-world-provider-note"><strong id="video-world-renderer-note">Standard: Fal · H3 Max → Wan 3.0</strong><span>Fal and HotAPI keys stay in this browser session unless you opt into device storage. Horde sends them only through its loopback bridge and downloads completed clips locally.</span></div>
                     </aside>
                 </div>
             </div>
@@ -289,7 +308,7 @@
                 <div class="video-world-play-grid">
                     <main class="video-world-stage-panel">
                         <div id="video-world-stage" class="video-world-stage">
-                            <div id="video-world-stage-empty" class="video-world-stage-empty"><button id="video-world-stage-generate" type="button" aria-label="Film opening shot">▶</button><strong>Your opening shot is ready to film</strong><small>Select Film opening to generate picture and ambient sound.</small></div>
+                            <div id="video-world-stage-empty" class="video-world-stage-empty"><button id="video-world-stage-generate" type="button" aria-label="Plan story and film opening">▶</button><strong>Your adventure is ready to begin</strong><small>The Director will preplan the story tree, then Horde will film only the opening scene.</small></div>
                             <video id="video-world-player" class="hidden" controls playsinline preload="metadata"></video>
                             <video id="video-world-preloader" class="hidden" muted playsinline preload="auto" aria-hidden="true"></video>
                             <div id="video-world-generating" class="video-world-generating hidden"><span class="video-world-spinner"></span><strong id="video-world-generating-title">Filming shot…</strong><small id="video-world-generating-detail">Submitting to Fal</small><button id="video-world-cancel-generation" type="button">Cancel</button></div>
@@ -297,8 +316,8 @@
                         <div class="video-world-composer">
                             <label for="video-world-action" id="video-world-action-label">Opening shot</label>
                             <div id="video-world-choices" class="video-world-choices hidden" role="group" aria-label="Choose the next action"></div>
-                            <textarea id="video-world-action" class="form-textarea" rows="3" maxlength="3000" placeholder="Describe what you attempt or what should happen next..."></textarea>
-                            <div><span id="video-world-next-cost">Estimated shot: $0.00</span><button id="video-world-generate" class="btn btn-primary" type="button">Film opening</button></div>
+                            <textarea id="video-world-action" class="form-textarea" rows="3" maxlength="3000" placeholder="Describe the new direction for the next story block..."></textarea>
+                            <div><span id="video-world-next-cost">Estimated block: $0.00</span><button id="video-world-generate" class="btn btn-primary" type="button">Plan &amp; prepare</button></div>
                         </div>
                     </main>
                     <aside class="video-world-timeline-panel">
@@ -463,6 +482,24 @@
                     <div class="chat-routing-bar" id="chat-routing-bar" style="display:none; padding-bottom: 8px; gap: 8px; flex-wrap: wrap;">
                         <!-- Dynamic buttons injected here -->
                     </div>
+
+                    <div id="chat-attachment-tray" class="chat-attachment-tray hidden" aria-live="polite"></div>
+                    <div id="chat-capability-bar" class="chat-capability-bar hidden" aria-label="Chat capabilities">
+                        <button id="chat-attach-btn" class="chat-capability-btn hidden" type="button" aria-haspopup="menu" aria-expanded="false">＋ Attach</button>
+                        <div id="chat-attach-menu" class="chat-attach-menu hidden" role="menu">
+                            <button type="button" data-chat-attachment="image" role="menuitem">🖼️ Image</button>
+                            <button type="button" data-chat-attachment="pdf" role="menuitem">📄 PDF</button>
+                            <button type="button" data-chat-attachment="audio" role="menuitem">🎙️ Audio</button>
+                            <button type="button" data-chat-attachment="video" role="menuitem">🎬 Video</button>
+                        </div>
+                        <button id="chat-web-btn" class="chat-capability-btn hidden" type="button" aria-pressed="false">⌕ Web</button>
+                        <button id="chat-image-mode-btn" class="chat-capability-btn hidden" type="button" aria-pressed="false">✦ Create image</button>
+                        <span id="chat-capability-note" class="chat-capability-note"></span>
+                    </div>
+                    <input id="chat-image-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>
+                    <input id="chat-pdf-input" type="file" accept="application/pdf" multiple hidden>
+                    <input id="chat-audio-input" type="file" accept="audio/mpeg,audio/mp4,audio/wav,audio/webm,audio/ogg" multiple hidden>
+                    <input id="chat-video-input" type="file" accept="video/mp4,video/mpeg,video/quicktime,video/webm" multiple hidden>
 
                     <div class="input-row">
                         <textarea id="user-input" class="msg-input" placeholder="Type your message..." rows="1"></textarea>
@@ -721,6 +758,7 @@
                         <button class="world-studio-tab" data-tab="w-ai">AI Config</button>
                         <button class="world-studio-tab" data-tab="w-hud">HUD & Stats</button>
                         <button class="world-studio-tab" data-tab="w-visual-map">World Architect</button>
+                        <button class="world-studio-tab" data-tab="w-architect-agent" style="color:var(--accent); font-weight:700;">✦ Architect Agent</button>
                         <button class="world-studio-tab" data-tab="w-builder" style="color:var(--accent); font-weight:700;">✨ AI Builder</button>
                     </div>
                     <div class="studio-nav-actions">
@@ -744,9 +782,10 @@
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-sandbox"><span>04</span><strong>Starting lives</strong><small>Define who players can begin as, including world-specific skills and perks.</small></button>
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-ai"><span>05</span><strong>Rules &amp; models</strong><small>Choose narrative-only play or optional RPG rules, checks and model behavior.</small></button>
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-visuals"><span>06</span><strong>Presentation</strong><small>Add optional banners, room art, portraits and visual styling.</small></button>
+                            <button type="button" class="creator-overview-card" data-companion-studio-target="cs-chat-style"><span>05</span><strong>Chat style</strong><small>Fine-tune voice, conversational habits and example exchanges.</small></button>
                             <details class="creator-advanced-card">
                                 <summary>Advanced world systems</summary>
-                                <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
+                                <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-architect-agent">Architect Agent</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
                             </details>
                         </div>
                     </div>
@@ -1463,6 +1502,43 @@
                         </div>
                     </div>
 
+                    <!-- Existing-world authoring agent -->
+                    <div id="tab-w-architect-agent" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>✦ World Architect Agent</h2>
+                            <p>Expand or refine this world conversationally. The agent stages typed changes for review; it never rewrites the live world behind your back.</p>
+                        </div>
+                        <div class="form-body world-architect-agent-layout">
+                            <section class="world-architect-request-card">
+                                <div class="world-architect-quick-actions" aria-label="Common World Architect requests">
+                                    <button type="button" data-world-architect-quick="Add playable locations with sensible containment and connections.">Add places</button>
+                                    <button type="button" data-world-architect-quick="Add new characters with homes, personalities, schedules and private goals.">Add characters</button>
+                                    <button type="button" data-world-architect-quick="Find thin records and add missing useful detail without replacing authored writing.">Flesh things out</button>
+                                    <button type="button" data-world-architect-quick="Connect inaccessible locations and repair the travel graph without changing intentional one-way routes.">Connect the map</button>
+                                    <button type="button" data-world-architect-quick="Add factions, memberships and meaningful relationships supported by the setting.">Build society</button>
+                                </div>
+                                <label class="form-label" for="w-architect-request">What should change?</label>
+                                <textarea id="w-architect-request" class="form-textarea" rows="7" placeholder="For example: Add 100 rooms across the existing city. Distribute them sensibly inside current buildings, make every room reachable, and add recurring staff where the fiction needs them."></textarea>
+                                <div class="world-architect-controls">
+                                    <label><span>Scope</span><select id="w-architect-scope" class="form-select"><option value="whole">Whole world</option><option value="locations">Places &amp; map</option><option value="people">People &amp; society</option><option value="lore">Lore &amp; setting</option></select></label>
+                                    <label><span>Change policy</span><select id="w-architect-policy" class="form-select"><option value="add_only">Add only</option><option value="fill_gaps" selected>Fill gaps</option><option value="allow_edits">Allow safe edits</option></select></label>
+                                    <label><span>Detail</span><select id="w-architect-detail" class="form-select"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="deep">Deep</option></select></label>
+                                    <label><span>Batch size</span><select id="w-architect-batch-size" class="form-select"><option value="8">8 records</option><option value="12" selected>12 records</option><option value="20">20 records</option></select></label>
+                                </div>
+                                <div class="world-architect-model-row">
+                                    <label><span>Structured model <small>optional</small></span><input id="w-architect-model" class="form-input" list="w-architect-model-options" placeholder="Use audits &amp; calibration model"></label>
+                                    <datalist id="w-architect-model-options"></datalist>
+                                    <button id="w-architect-refresh-models" class="btn btn-ghost" type="button">↻ Models</button>
+                                </div>
+                                <p id="w-architect-model-status" class="form-hint">Uses the same structured-model fallback as calibration. No generation starts until you approve a plan.</p>
+                                <button id="w-architect-plan-btn" class="btn btn-primary btn-full" type="button">Plan changes</button>
+                            </section>
+                            <section id="w-architect-job" class="world-architect-job" aria-live="polite">
+                                <div class="world-architect-empty"><strong>No staged job</strong><p>Describe an expansion or repair. Horde will show assumptions, batches and expected calls before generating anything.</p></div>
+                            </section>
+                        </div>
+                    </div>
+
                     <!-- World AI Builder -->
                     <div id="tab-w-builder" class="studio-panel hidden">
                         <div class="panel-header">
@@ -1755,6 +1831,42 @@
                                     <span class="model-info-params-label" style="font-size:0.75rem; color:var(--text-2); font-weight:500; display:block; margin-bottom:8px;">Supported Fine-Tuning Parameters:</span>
                                     <div class="model-info-params-list" id="model-info-params-list" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
                                 </div>
+                            </div>
+
+                            <div class="form-section chat-creator-capabilities">
+                                <div class="chat-creator-capabilities-head">
+                                    <div>
+                                        <h3>Player capabilities</h3>
+                                        <p class="form-hint">Optional. Enable only the media and tools that belong in this character experience. Horde still checks the active provider and model before showing them to players.</p>
+                                    </div>
+                                    <span id="studio-chat-capability-status" class="mini-tag">Text only</span>
+                                </div>
+                                <div class="chat-creator-capability-grid">
+                                    <label class="vh-test-check"><input id="studio-chat-image-upload" type="checkbox"><span><strong>Image upload</strong><small>Let players show the character photos and images.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-pdf-upload" type="checkbox"><span><strong>PDF upload</strong><small>Let players attach documents for the character to read.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-audio-upload" type="checkbox"><span><strong>Audio upload</strong><small>Let compatible models hear a voice note or recording.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-video-upload" type="checkbox"><span><strong>Video upload</strong><small>Let compatible models inspect a short video clip.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-web-search" type="checkbox"><span><strong>Web search</strong><small>Allow optional live, cited search when the provider supports it.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-image-generation" type="checkbox"><span><strong>Image generation</strong><small>Add an explicit Create image mode to the composer.</small></span></label>
+                                </div>
+                                <div id="studio-chat-image-generation-settings" class="chat-image-generation-settings hidden">
+                                    <div>
+                                        <label class="form-label" for="studio-chat-image-provider">Image provider</label>
+                                        <select id="studio-chat-image-provider" class="form-select">
+                                            <option value="inherit">Use text provider</option>
+                                            <option value="openrouter">OpenRouter</option>
+                                            <option value="gptproto">GPTProto</option>
+                                            <option value="nanogpt">NanoGPT</option>
+                                            <option value="fal">Fal</option>
+                                            <option value="local">Local / self-hosted</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label" for="studio-chat-image-model">Image model</label>
+                                        <input id="studio-chat-image-model" class="form-input" type="text" placeholder="Blank uses the provider default">
+                                    </div>
+                                </div>
+                                <p id="studio-chat-capability-hint" class="form-hint">Fetch model data above to verify which uploads the selected model accepts.</p>
                             </div>
 
                             <!-- Reasoning Section -->
@@ -2140,6 +2252,7 @@
                     <div class="studio-tabs">
                         <button class="companion-studio-tab active" data-tab="cs-overview">Overview</button>
                         <button class="companion-studio-tab" data-tab="cs-identity">Identity</button>
+                        <button class="companion-studio-tab" data-tab="cs-chat-style">Chat style</button>
                         <button class="companion-studio-tab" data-tab="cs-mind">Inner Life</button>
                         <button class="companion-studio-tab" data-tab="cs-life">Active Life</button>
                         <button class="companion-studio-tab" data-tab="cs-social">Social Media</button>
@@ -2165,6 +2278,22 @@
                             <button type="button" class="creator-overview-card" data-companion-studio-target="cs-life"><span>03</span><strong>Active life</strong><small>Build routines, commitments, friends and autonomous life events.</small></button>
                             <button type="button" class="creator-overview-card" data-companion-studio-target="cs-models"><span>04</span><strong>Conversation brain</strong><small>Choose text models and reasoning independently from media providers.</small></button>
                             <details class="creator-advanced-card"><summary>Optional media &amp; voice</summary><div><button type="button" data-companion-studio-target="cs-social">Social Media</button><button type="button" data-companion-studio-target="cs-video">Video &amp; Clips</button><button type="button" data-companion-studio-target="cs-voice">Photos &amp; Voice</button></div></details>
+                        </div>
+                    </div>
+                    <div id="tab-cs-chat-style" class="studio-panel hidden"><div id="cs-voice-builder" class="form-section"></div>
+                        <div class="panel-header"><h2>Chat style</h2><p>Shape how this person participates in a conversation. Their feelings and situation still influence how they speak.</p></div>
+                        <div class="form-body">
+                            <div class="form-section"><label class="form-label" for="cs-texting-style">Writing voice</label>
+                                <textarea id="cs-texting-style" class="form-textarea" rows="3" placeholder="Mostly lowercase, dry humour, occasional fragments; more careful punctuation when upset."></textarea></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-length">Usual reply length</label>
+                                <select id="cs-chat-length" class="form-select"><option value="adaptive">Adapt to the conversation</option><option value="brief">Usually brief</option><option value="expansive">More expressive</option></select></div>
+                            <div class="form-section"><label class="form-label" for="cs-conversation-style">Conversational habits</label>
+                                <textarea id="cs-conversation-style" class="form-textarea" rows="4" placeholder="Offers her own opinions. Follows up on plans. Teases when comfortable. Shares small details from established activities; doesn't just comment on everything I say."></textarea></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-examples">Example exchanges</label>
+                                <textarea id="cs-chat-examples" class="form-textarea" rows="6" placeholder="Player: cafe or park?&#10;Her: cafe. i need caffeine before i pretend to be outdoorsy&#10;&#10;Player: long day?&#10;Her: yeah. tell me something completely unrelated to work"></textarea>
+                                <p class="form-hint">Examples teach rhythm and voice. They are not added as memories or copied as scripted replies.</p></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-avoid">Habits to avoid</label>
+                                <textarea id="cs-chat-avoid" class="form-textarea" rows="3" placeholder="Repeating my message back, therapy language, a question at the end of every reply, constant compliments."></textarea></div>
                         </div>
                     </div>
                     <!-- Identity -->
@@ -2223,6 +2352,9 @@
                             <div class="form-section">
                                 <label class="form-label">Personality</label>
                                 <textarea id="cs-personality" class="form-textarea" rows="5" placeholder="Warm but guarded until she trusts you. Sarcastic when nervous. Loves late-night conversations, hates being kept waiting."></textarea>
+                                <label class="form-label" for="cs-behavior-examples">Behavior examples <span class="optional">optional</span></label>
+                                <textarea id="cs-behavior-examples" class="form-textarea" rows="4" placeholder="When busy: leaves messages unread, then returns with context.&#10;When hurt: gets brief instead of explaining immediately.&#10;When wrong: cools off, then apologizes directly.&#10;When excited: sends two short messages and a link."></textarea>
+                                <p class="form-hint">Concrete reactions teach the human more reliably than a long list of adjectives.</p>
                             </div>
                             <div class="form-section">
                                 <label class="form-label">Backstory</label>
@@ -2238,10 +2370,7 @@
                                     <textarea id="cs-social-world" class="form-textarea" rows="3" placeholder="Where they live, family, friends, coworkers, pets, recurring tensions..."></textarea>
                                 </div>
                             </div>
-                            <div class="form-section">
-                                <label class="form-label">Texting Style</label>
-                                <textarea id="cs-texting-style" class="form-textarea" rows="3" placeholder="lowercase, double-texts when excited, uses 'lol' and 'omg' unironically, rarely uses full stops"></textarea>
-                            </div>
+
                         </div>
                     </div>
 
@@ -2629,6 +2758,12 @@
                                 <p id="cs-life-generator-status" class="form-hint" aria-live="polite">Generate with the selected model, or start manually with a local editable template. The simulator uses a simple fallback routine until either path is saved.</p>
                                 <div id="cs-life-editor" class="vh-life-editor hidden"></div>
                                 <div id="cs-life-overview" class="vh-life-overview hidden"></div>
+                                <details class="form-section"><summary>Recurring place references</summary>
+                                    <p class="form-hint">References belong to saved recurring locations. Add or rename locations in Places; use fixed room roles and the linked location selector here. Removing a card keeps the location and its routes. Photos combine the base identity, previous photo and matching room images. Generating a reference uses image-provider credits.</p>
+                                    <div id="cs-photo-locations"></div><button type="button" id="cs-photo-location-add" class="btn btn-ghost">Add place reference</button>
+                                </details>
+
+<div id="cs-world-systems"></div>
                             </section>
                         </div>
                     </div>
@@ -2868,7 +3003,7 @@
                             <div>
                                 <span class="vh-eyebrow">Runtime</span>
                                 <h2>AI &amp; Models</h2>
-                                <p>Choose the brain behind this virtual human. This model writes messages, makes social decisions, updates mood, and decides when photos or voice notes feel natural.</p>
+                                <p>Choose how this virtual human thinks. The conversation model expresses and records immediate feelings. A private observer adds evidence-backed memory and understanding after the reply.</p>
                             </div>
                             <div class="vh-model-header-actions">
                                 <button id="cs-unlock-all-params" class="btn btn-ghost" type="button" title="Show every control even when the provider catalog does not advertise it.">🔓 Unlock all parameters</button>
@@ -2926,6 +3061,30 @@
                                     <p class="form-hint">For models the provider catalog does not list yet. The ID is sent exactly as entered.</p>
                                 </div>
                                 <input id="cs-text-model-custom" class="form-input" type="text" placeholder="provider/model-id">
+                            </section>
+
+                            <section class="vh-ai-config-section">
+                                <div class="vh-ai-config-heading">
+                                    <div>
+                                        <span class="vh-model-kicker">Cognition architecture</span>
+                                        <h3>Separate voice from memory</h3>
+                                        <p class="form-hint">Recommended. Immediate feelings accompany the reply; a private observer then enriches memory and understanding without counting the same emotional reaction twice.</p>
+                                    </div>
+                                </div>
+                                <label class="toggle-row vh-config-toggle">
+                                    <input type="checkbox" id="cs-separated-cognition" class="toggle-checkbox" checked>
+                                    <span class="toggle-switch"></span>
+                                    <span>
+                                        <strong>Use a separate State Observer</strong>
+                                        <small>Turn this off only for compatibility with an older single-call setup.</small>
+                                    </span>
+                                </label>
+                                <div id="cs-observer-model-row" class="vh-config-field">
+                                    <label class="form-label" for="cs-observer-model">Observer model ID <span class="optional">optional</span></label>
+                                    <input id="cs-observer-model" class="form-input" type="text" list="cs-observer-model-options" placeholder="Blank = Life Architect or conversation model">
+                                    <datalist id="cs-observer-model-options"></datalist>
+                                    <p id="cs-observer-model-hint" class="form-hint">Use a small, fast model with reliable tool/JSON output. It never writes dialogue. The Life Architect remains responsible for schedules and off-screen life.</p>
+                                </div>
                             </section>
 
                             <section class="vh-ai-config-section">
@@ -3107,6 +3266,9 @@
                                             <option value="anime">Cinematic Anime</option>
                                         </select>
                                     </div>
+                                    <label class="form-label">Personal photo direction<textarea id="cs-photo-direction" class="form-textarea" rows="4" placeholder="e.g. Playful expressions, tilted framing, candid movement, subtle bloom and motion softness. Rarely poses with a straight face."></textarea></label><label class="form-label">Keep follow-up photo continuity within (minutes; 0 disables)<input id="cs-photo-continuity-minutes" class="form-input" type="number" min="0" max="360" value="90"></label>
+                                    <label class="form-label"><input type="checkbox" id="cs-photo-large-breasts"> Large breasts</label>
+                                    <p class="form-hint">Reinforce bust size in character photos, including when using an identity reference.</p>
                                     <p class="form-hint" id="cs-photo-style-description">Believable phone-camera realism with the small flaws real snapshots keep.</p>
                                 </div>
                                 <div class="vh-photo-style-control">
@@ -3370,6 +3532,7 @@
 
         <!-- ────────── COMPANION CHAT (the actual texting thread) ────────── -->
         <section id="companion-chat-view" class="view hidden">
+            <dialog id="cc-gift-dialog" class="companion-gift-dialog"><button type="button" id="cc-gift-close" class="btn btn-ghost" aria-label="Close gifts">Close</button><div id="cc-life-actions"></div></dialog>
             <div class="companion-chat-header">
                 <button id="companion-chat-back-btn" class="companion-header-btn" title="Back to Virtual Human" aria-label="Back to Virtual Human">‹</button>
                 <div class="companion-chat-avatar-wrap">
@@ -3445,6 +3608,10 @@
                 </details>
             </div>
             <div class="companion-chat-context">
+                <label class="companion-persona-picker" for="cc-persona-select">Your profile
+                    <select id="cc-persona-select" aria-label="Your active persona for this chat"></select>
+                </label>
+                <details id="cc-profile-details"></details>
                 <span id="cc-mood-badge">mood: —</span>
                 <span class="companion-context-separator">•</span>
                 <span id="cc-agency-status">responds when messaged</span>
@@ -3472,6 +3639,7 @@
                 <small id="companion-typing-label">typing…</small>
             </div>
             <div class="companion-composer">
+                <button id="cc-gift-open" class="companion-icon-btn" type="button" title="Gifts and simulated cash" aria-label="Gifts and simulated cash">🎁</button>
                 <button id="companion-emoji-btn" class="companion-icon-btn" title="Emoji">＋</button>
                 <button id="companion-photo-request-btn" class="companion-icon-btn" title="Send your photo to this virtual human" aria-label="Send your photo to this virtual human">▧</button>
                 <button id="companion-voice-request-btn" class="companion-icon-btn" title="Send a voice note" aria-label="Send a voice note">🎙</button>
@@ -3589,7 +3757,7 @@
                 </div>
             </section>
 
-            <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember">
+            <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember maps google places geography">
                 <div class="settings-section-head"><span class="settings-section-kicker">Cloud access</span><h3>Connections</h3><p>Connect only what you use. Your active text provider opens first; image providers stay independent.</p></div>
                 <div class="settings-provider-grid">
             <details id="openrouter-key-block" class="settings-provider-card" data-provider="openrouter">
@@ -3634,6 +3802,15 @@
                 <label class="vh-test-check" style="margin-top:10px;"><input id="global-fal-safety-checker" type="checkbox" checked><span>Request Fal safety checking by default</span></label>
                 <p class="form-hint">Turning this off sends a model’s documented safety flag only where that endpoint supports one. Fal account authorization and mandatory provider/model checks still apply.</p>
                 <p class="form-hint">The rate fields estimate spending and enforce each Video Adventure's session limit; Fal remains the billing authority. Your key is sent only to Horde Studio's local bridge, never embedded in a Video Adventure or backup.</p>
+            </details>
+            <details class="settings-provider-card settings-provider-card-wide" data-provider="hotapi">
+                <summary><span class="settings-provider-mark">HOT</span><span><strong>HotAPI</strong><small>Opt-in spicy video · Video Adventures</small></span><span class="settings-provider-state">Configure</span></summary>
+                <label class="form-label" for="global-hotapi-key">API key</label>
+                <input type="password" id="global-hotapi-key" class="form-input" placeholder="hk_live_..." autocomplete="off">
+                <button id="test-hotapi-conn-btn" class="btn btn-ghost" type="button">Test HotAPI connection</button>
+                <div id="hotapi-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite">Not tested yet.</div>
+                <p class="form-hint">Used only when a Video Adventure selects Smart spicy fallback or Spicy from the start. Horde sends the key through its local bridge, downloads finished clips locally, and never places it in an adventure or backup.</p>
+                <p class="form-hint">HotAPI is pay-as-you-go. MiniMax H3 Spicy starts at $0.08/second; Seedance 2.0 Fast at $0.112, Seedance 2.0 at $0.14, and Seedance 2.5 at $0.206 for 480p. Provider pricing remains authoritative.</p>
             </details>
             <details id="nanogpt-key-block" class="settings-provider-card" data-provider="nanogpt">
                 <summary><span class="settings-provider-mark">NG</span><span><strong>NanoGPT</strong><small>Text · images · speech</small></span><span class="settings-provider-state">Configure</span></summary>
@@ -3682,6 +3859,28 @@
                 <p class="form-hint">Horde Studio calls <code>BASE_URL/models</code> and <code>BASE_URL/chat/completions</code>. HTTPS endpoints and localhost HTTP are allowed. Select or type the exact model in <strong>Default Model</strong> below; per-character and per-world selectors use this catalog too.</p>
                 <button id="test-custom-conn-btn" class="btn btn-ghost" type="button">Test connection</button>
                 <div id="custom-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
+            </details>
+            <details class="settings-disclosure-card" id="maps-settings-card">
+                <summary class="settings-disclosure-summary"><span><small>Real locations</small><strong>Maps &amp; places</strong></span></summary>
+                <div class="settings-disclosure-body">
+                    <label class="form-label" for="global-maps-provider">Place search &amp; routing provider</label>
+                    <select class="form-select" id="global-maps-provider"><option value="google">Google Maps</option><option value="openrouteservice">openrouteservice (free key)</option></select>
+                    <p class="form-hint">Provider selection applies to search, previews and automatic journey estimates. There is no automatic fallback to another provider.</p>
+                    <label class="form-label" for="global-openroute-key">openrouteservice API key</label>
+                    <input id="global-openroute-key" type="password" class="form-input" autocomplete="off" spellcheck="false" placeholder="Paste your HeiGIT / openrouteservice key">
+                    <button id="save-openroute-key" type="button" class="btn btn-primary">Save openrouteservice key</button>
+                    <button id="remove-openroute-key" type="button" class="btn btn-ghost">Remove openrouteservice key</button>
+                    <p id="openroute-key-status" class="form-hint" aria-live="polite">Open this panel to check configuration.</p>
+                    <p class="form-hint">Walking, cycling and driving routes; transit uses your authored times unless you explicitly select Google. <a href="https://account.heigit.org/" target="_blank" rel="noopener noreferrer">Get a free API key</a> · <a href="https://account.heigit.org/info/plans" target="_blank" rel="noopener noreferrer">Usage limits</a></p>
+                    <label class="form-label" for="global-google-maps-key">Google Maps API key</label>
+                    <input id="global-google-maps-key" type="password" class="form-input" autocomplete="off" spellcheck="false" placeholder="Paste a new key to save or replace it">
+                    <p class="form-hint">Enable Places API (New) and Routes API in your Google project. Billing is required. This key is saved by your local launcher, outside browser backups. Saving does not call Google.</p>
+                    <button id="save-google-maps-key" class="btn btn-primary" type="button">Save Maps key</button>
+                    <button id="remove-google-maps-key" class="btn btn-ghost" type="button">Remove saved key</button>
+                    <button id="refresh-google-maps-key" class="btn btn-ghost" type="button">Check setup</button>
+                    <p id="google-maps-key-status" class="form-hint" aria-live="polite">Check setup to see whether a key is configured.</p>
+                    <p class="form-hint">Use this under VH Studio → Active Life → Recurring places. <a href="https://developers.google.com/maps/documentation/routes/get-api-key" target="_blank" rel="noopener noreferrer">Google setup instructions</a></p>
+                </div>
             </details>
             <div id="cloud-key-storage-block" class="settings-security-row">
                 <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.8rem; color:var(--text-2); cursor:pointer;">
@@ -5006,13 +5205,17 @@
 <script src="labs-core.js?v=20260822-v161"></script>
 <script src="labs-tasks.js?v=20260822-v161"></script>
 <script src="labs-guide.js?v=20260822-v161"></script>
-<script src="help-system.js?v=20260902-fal-media-alpha8"></script>
+    <script src="help-system.js?v=20260908-reply-cleanup"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
-<script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
-<script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
-<script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-    <script src="app.js?v=20260902-fal-media-alpha8"></script>
+<script src="multiplayer-engine.js?v=20260902-v171"></script>
+<script src="multiplayer.js?v=20260902-v171"></script>
+<script src="video-worlds.js?v=20260902-v171"></script>
+    <script src="vh-conversation-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-activity-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-world-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
+    <script src="app.js?v=20260908-reply-cleanup"></script>
     <script src="experimental-worlds-navigation.js"></script>
 </body>
 </html>

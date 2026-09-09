@@ -1,4 +1,4 @@
-![Horde Studio 16.6 — Any World. Any Party. Your Rules.](assets/marketing/v16.6.0/horde-studio-v16.6.0-launch-poster.png)
+![Horde Studio 17 — Your Story. Your Choices. Now in Motion.](assets/marketing/v17.0.0/horde-studio-v17.0.0-launch-poster.png)
 
 <div align="center">
 
@@ -73,9 +73,9 @@ Virtual Humans maintain their own clock, routine, mood, relationship state, memo
 
 ### Video Adventures — new in 17
 
-Video Adventures are a separate, story-first roleplay mode built around short generated scenes and contextual player choices. A fast World Director preserves canon, writes concise dialogue, prepares meaningful branches, and hands each beat to a configurable Fal renderer chain.
+Video Adventures are a separate, story-first roleplay mode built around short generated scenes and contextual player choices. A fast World Director plans the complete bounded decision tree as inexpensive text in advance; Horde validates it, then renders only the opening and the path the player actually chooses so unused branches never incur video costs.
 
-- Multiple-choice play with an optional custom action
+- Context-aware choices across preplanned 4- or 13-scene blocks, plus a go-off-script action that prepares a new block
 - Persistent characters, reference images, visual styles, player viewpoint, canon and timelines
 - First-person and visible-player presentation modes
 - MiniMax H3 Max, Wan 3.0, Wan 3.0 Prime and LTX-2.3 Fast renderer selection

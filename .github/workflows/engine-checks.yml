@@ -1,0 +1,28 @@
+name: Engine Checks
+
+on:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify Worlds and Virtual Humans
+        run: node scripts/check-engine.js
+      - name: Install isolated browser test runtime
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
+          npx playwright install --with-deps chromium
+      - name: Verify browser transactions and gameplay wiring
+        run: |
+          node scratch/browser_storage_transaction_audit.js
+          node scratch/browser_engine_smoke_audit.js

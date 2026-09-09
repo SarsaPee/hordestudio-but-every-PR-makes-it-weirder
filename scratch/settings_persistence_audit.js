@@ -25,11 +25,12 @@ test('saved settings are timestamped and restored from the newest store', () => 
     assert.match(app, /Recovered Settings from the local fallback snapshot/);
 });
 
-test('recovery storage is written before the database transaction', () => {
+test('recovery storage cannot overwrite a newer tab after a revision conflict', () => {
     const fn = app.match(/async function persistGlobalSettingsOnly\(\) \{([\s\S]*?)\n\}/);
     assert.ok(fn, 'dedicated Settings persistence function should exist');
-    assert.ok(fn[1].indexOf('writeGlobalSettingsMirror(persistedSettings)') < fn[1].indexOf('await HordeDB.setMultiple'),
-        'recovery snapshot must precede IndexedDB so it survives a failed transaction');
+    assert.ok(fn[1].indexOf('writeGlobalSettingsMirror(persistedSettings)') > fn[1].indexOf('await HordeDB.setMultiple'));
+    assert.match(fn[1], /error\?\.code !== 'STATE_CONFLICT'/,
+        'only non-conflict failures may publish a fallback mirror');
 });
 
 test('recovery storage excludes credentials and heavyweight workflows', () => {

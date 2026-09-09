@@ -242,6 +242,11 @@ test('"I went to the Grand Bazaar" (past tense) works from the northgate', () =>
     assert.equal(resolvePhrase('loc_northgate', 'I went to the Grand Bazaar').dest, 'loc_bazaar');
 });
 
+test('compound transition phrasing still resolves the player destination', () => {
+    assert.equal(resolvePhrase('loc_square', 'I shrug as I turn to head out to the Mine Road').dest, 'loc_mine_road');
+    assert.equal(resolvePhrase('loc_square', "I'm walking to the Mine Road").dest, 'loc_mine_road');
+});
+
 test('"I enter the Gilded Griffin" from the square finds the taproom', () => {
     assert.equal(resolvePhrase('loc_square', 'I enter the Gilded Griffin').dest, 'loc_griffin_tap');
 });

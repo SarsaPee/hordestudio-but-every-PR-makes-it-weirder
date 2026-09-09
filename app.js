@@ -7,14 +7,17 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '17.0.0';
-const HORDE_STUDIO_RELEASED_AT = '2026-09-02T01:38:52+05:00';
+const HORDE_STUDIO_VERSION = '17.3.0';
+const HORDE_STUDIO_RELEASED_AT = '2026-09-04T14:05:54+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
 let worldMediaDirty = false;
 
 const HordeDB = {
     db: null,
+    revision: null,
+    conflicted: false,
+    conflictNotified: false,
     async init() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -27,7 +30,12 @@ const HordeDB = {
             };
             request.onsuccess = (e) => {
                 this.db = e.target.result;
-                resolve();
+                this.get('stateRevision').then(value => {
+                    this.revision = Number.isSafeInteger(value) ? value : 0;
+                    this.conflicted = false;
+                    this.conflictNotified = false;
+                    resolve();
+                }, reject);
             };
         });
     },
@@ -41,6 +49,11 @@ const HordeDB = {
         });
     },
     async set(key, value) {
+        // Canonical records must participate in revision checks even when a
+        // subsystem writes one key. Immutable assets and caches are independent.
+        if (!/^(?:embedding_cache|labsDiagnostics|chatAsset:|companionVideoAsset:)/.test(key)) {
+            return this.setMultiple({ [key]: value });
+        }
         if (!this.db) throw new Error('Database is not initialized');
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([STORE_NAME], 'readwrite');
@@ -61,16 +74,44 @@ const HordeDB = {
         });
     },
     async setMultiple(kvMap) {
-        if (!this.db) throw new Error('Database is not initialized');
+        if (!this.db || this.revision == null) throw new Error('Database is not initialized');
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([STORE_NAME], 'readwrite');
             const store = transaction.objectStore(STORE_NAME);
-            for (const [key, value] of Object.entries(kvMap)) {
-                store.put(value, key);
+            let operationError = null;
+            let committedRevision = null;
+            const revisionRequest = store.get('stateRevision');
+            revisionRequest.onsuccess = () => {
+                const storedRevision = Number.isSafeInteger(revisionRequest.result) ? revisionRequest.result : 0;
+                // Compare inside the same transaction as the writes. Another
+                // tab cannot interleave between validation and commit.
+                if (this.conflicted || storedRevision !== this.revision) {
+                    this.conflicted = true;
+                    operationError = new Error('Another Horde Studio tab changed the saved data. Saving in this tab is paused to protect both copies. Export any unsaved work from this tab, then reload it.');
+                    operationError.code = 'STATE_CONFLICT';
+                    transaction.abort();
+                    return;
+                }
+                committedRevision = storedRevision + 1;
+                store.put(committedRevision, 'stateRevision');
+            };
+            transaction.oncomplete = () => {
+                this.revision = committedRevision;
+                resolve();
+            };
+            transaction.onerror = () => reject(operationError || transaction.error || new Error('Unable to save application data'));
+            transaction.onabort = () => reject(operationError || transaction.error || new Error('Saving application data was aborted'));
+            try {
+                // Queue/clones synchronously, before yielding. A failed revision
+                // check aborts every put, so no partial stale snapshot is durable.
+                for (const [key, value] of Object.entries(kvMap)) {
+                    if (key === 'stateRevision') throw new Error('The storage revision is engine-owned');
+                    store.put(value, key);
+                }
+            } catch (error) {
+                operationError = error;
+                transaction.abort();
             }
-            transaction.oncomplete = () => resolve();
-            transaction.onerror = () => reject(transaction.error || new Error('Unable to save application data'));
-            transaction.onabort = () => reject(transaction.error || new Error('Saving application data was aborted'));
         });
     },
     close() {
@@ -1065,6 +1106,7 @@ let state = {
     evolinkApiKey: '',
     wavespeedApiKey: '',
     falApiKey: '',
+    hotapiApiKey: '',
     nanogptApiKey: '',
     nvidiaApiKey: '',
     bedrockApiKey: '',
@@ -1243,19 +1285,27 @@ function getOrderedPresetPrompts(preset, includeMarkers = false, includeDisabled
     return out;
 }
 
-function isPlainObject(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const proto = Object.getPrototypeOf(value);
-    // Object literals can cross a browser iframe, worker, or test VM boundary,
-    // where their realm's Object.prototype is not reference-equal to ours.
-    return proto === null || Object.prototype.toString.call(value) === '[object Object]';
-}
+
 
 function safeJsonClone(value) {
     return JSON.parse(JSON.stringify(value, (key, item) => {
         if (key === '__proto__' || key === 'prototype' || key === 'constructor') return undefined;
         return item;
     }));
+}
+
+function worldPersistenceManifest(world) {
+    return { ...safeJsonClone(world), mediaAssets: [] };
+}
+
+async function verifyWorldPersisted(world) {
+    const storedWorlds = await HordeDB.get('worlds');
+    const stored = Array.isArray(storedWorlds)
+        ? storedWorlds.find(candidate => candidate?.id === world?.id)
+        : null;
+    if (!stored || JSON.stringify(stored) !== JSON.stringify(worldPersistenceManifest(world))) {
+        throw new Error('The saved World could not be read back from device storage. Export it now and check browser storage permissions.');
+    }
 }
 
 function requirePlainObject(value, label) {
@@ -1328,6 +1378,20 @@ function validateCharacterData(value, label = 'Character') {
             ['id', 'label', 'color', 'guidance'].forEach(key => requireString(meter[key], `${label} chat HUD meter ${index + 1} ${key}`, { optional: true, max: 500 }));
         });
     }
+    if (value.chatCapabilities !== undefined) {
+        requirePlainObject(value.chatCapabilities, `${label} Chat capabilities`);
+        ['imageUpload', 'pdfUpload', 'audioUpload', 'videoUpload', 'webSearch', 'imageGeneration'].forEach(key => {
+            if (value.chatCapabilities[key] !== undefined && typeof value.chatCapabilities[key] !== 'boolean') {
+                throw new Error(`${label} Chat capabilities ${key} must be true or false`);
+            }
+        });
+        ['imageProvider', 'imageModel'].forEach(key =>
+            requireString(value.chatCapabilities[key], `${label} Chat capabilities ${key}`, { optional: true, max: 500 }));
+    }
+    ['modelInputModalities', 'modelOutputModalities'].forEach(key => {
+        requireArray(value[key], `${label} ${key}`, { optional: true, max: 20 });
+        (value[key] || []).forEach((item, index) => requireString(item, `${label} ${key} ${index + 1}`, { max: 40 }));
+    });
     return safeJsonClone(value);
 }
 
@@ -1618,6 +1682,18 @@ function validateBackupData(value) {
             }
         });
     }
+    if (value.chatAssets !== undefined) {
+        requirePlainObject(value.chatAssets, 'Backup Chat assets');
+        if (Object.keys(value.chatAssets).length > 5000) throw new Error('Backup has too many Chat assets');
+        Object.entries(value.chatAssets).forEach(([assetId, source]) => {
+            requireSafeId(assetId, 'Backup Chat asset id');
+            requireString(source, `Backup Chat asset ${assetId}`, { max: 128 * 1024 * 1024 });
+            if (!/^data:(?:image|video|audio|application\/pdf)\/[a-z0-9.+-]+;base64,/i.test(source)
+                && !/^data:application\/pdf;base64,/i.test(source)) {
+                throw new Error(`Backup Chat asset ${assetId} is invalid`);
+            }
+        });
+    }
     (value.systemPresets || []).forEach((item, index) => {
         requirePlainObject(item, `Backup preset ${index + 1}`);
         requireString(item.name, `Backup preset ${index + 1} name`, { max: 300 });
@@ -1821,6 +1897,15 @@ function repairLoadedState() {
     state.characters.forEach(character => {
         character.tags = character.tags || [];
         character.lorebook = character.lorebook || [];
+        // Chat media/tools are creator permissions, so old characters migrate
+        // conservatively to text-only instead of gaining features implicitly.
+        character.chatCapabilities = normalizeChatCreatorCapabilities(character.chatCapabilities);
+        character.modelInputModalities = Array.isArray(character.modelInputModalities)
+            ? [...new Set(character.modelInputModalities.map(value => String(value).toLowerCase()).filter(Boolean))]
+            : ['text'];
+        character.modelOutputModalities = Array.isArray(character.modelOutputModalities)
+            ? [...new Set(character.modelOutputModalities.map(value => String(value).toLowerCase()).filter(Boolean))]
+            : ['text'];
         character.memory = (character.memory || []).map((memory, index) => {
             const raw = typeof memory === 'string' ? { text: memory } : memory;
             if (!raw?.id || !raw?.createdAt) chatMemoryMigrationDirty = true;
@@ -1925,6 +2010,7 @@ async function loadState() {
         state.evolinkApiKey = sessionStorage.getItem('horde_evolink_api_key') || '';
         state.wavespeedApiKey = sessionStorage.getItem('horde_wavespeed_api_key') || '';
         state.falApiKey = sessionStorage.getItem('horde_fal_api_key') || '';
+        state.hotapiApiKey = sessionStorage.getItem('horde_hotapi_api_key') || '';
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || '';
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || '';
         state.bedrockApiKey = sessionStorage.getItem('horde_bedrock_api_key') || '';
@@ -1944,7 +2030,24 @@ async function loadState() {
         try { state.chats = JSON.parse(localStorage.getItem('horde_chats')) || {}; }
         catch (err) { console.warn('Ignoring corrupt legacy chats:', err); state.chats = {}; }
         
-        await saveState();
+        // Never run a full-state save from the legacy migration path. At this
+        // point Worlds and the other modern IndexedDB records have not been
+        // loaded yet, so saveState() would replace them with the empty startup
+        // defaults. Only migrate records that do not already exist, then enter
+        // the normal loader after removing the legacy marker.
+        const migratedRecords = {};
+        const storedCharacters = await HordeDB.get('characters');
+        const storedChats = await HordeDB.get('chats');
+        const storedGlobalSettings = await HordeDB.get('globalSettings');
+        const storedPersonas = await HordeDB.get('personas');
+        if (!Array.isArray(storedCharacters) || storedCharacters.length === 0) migratedRecords.characters = state.characters;
+        if (!storedChats || Object.keys(storedChats).length === 0) migratedRecords.chats = state.chats;
+        if (!isPlainObject(storedGlobalSettings)) migratedRecords.globalSettings = state.globalSettings;
+        if ((!Array.isArray(storedPersonas) || storedPersonas.length === 0) && state.personas.length) {
+            migratedRecords.personas = state.personas;
+            migratedRecords.activePersonaId = state.activePersonaId;
+        }
+        if (Object.keys(migratedRecords).length) await HordeDB.setMultiple(migratedRecords);
         
         // Clean up localStorage to free quota
         localStorage.removeItem('horde_api_key');
@@ -1952,12 +2055,17 @@ async function loadState() {
         localStorage.removeItem('horde_characters');
         localStorage.removeItem('horde_chats');
         console.log('Migration complete.');
+        // Re-enter through the normal IndexedDB path. This is intentionally a
+        // return: continuing with the startup defaults would make this tab look
+        // reset until its next refresh even though the records survived.
+        return loadState();
     } else {
         const legacyStoredApiKey = await HordeDB.get('apiKey') || '';
         const storedGPTProtoApiKey = await HordeDB.get('gptprotoApiKey') || '';
         const storedEvolinkApiKey = await HordeDB.get('evolinkApiKey') || '';
         const storedWaveSpeedApiKey = await HordeDB.get('wavespeedApiKey') || '';
         const storedFalApiKey = await HordeDB.get('falApiKey') || '';
+        const storedHotApiKey = await HordeDB.get('hotapiApiKey') || '';
         const storedNanoGPTApiKey = await HordeDB.get('nanogptApiKey') || '';
         const storedNvidiaApiKey = await HordeDB.get('nvidiaApiKey') || '';
         const storedBedrockApiKey = await HordeDB.get('bedrockApiKey') || '';
@@ -1973,6 +2081,8 @@ async function loadState() {
         if (state.wavespeedApiKey) sessionStorage.setItem('horde_wavespeed_api_key', state.wavespeedApiKey);
         state.falApiKey = sessionStorage.getItem('horde_fal_api_key') || storedFalApiKey;
         if (state.falApiKey) sessionStorage.setItem('horde_fal_api_key', state.falApiKey);
+        state.hotapiApiKey = sessionStorage.getItem('horde_hotapi_api_key') || storedHotApiKey;
+        if (state.hotapiApiKey) sessionStorage.setItem('horde_hotapi_api_key', state.hotapiApiKey);
         state.nanogptApiKey = sessionStorage.getItem('horde_nanogpt_api_key') || storedNanoGPTApiKey;
         if (state.nanogptApiKey) sessionStorage.setItem('horde_nanogpt_api_key', state.nanogptApiKey);
         state.nvidiaApiKey = sessionStorage.getItem('horde_nvidia_api_key') || storedNvidiaApiKey;
@@ -2518,10 +2628,7 @@ async function persistStateSnapshot() {
         // Keep heavy image payloads out of the world manifest that is rewritten
         // on virtually every turn. The separate payload is only rewritten when
         // an asset changes, then reattached on load and embedded on export.
-        const storedWorlds = (state.worlds || []).map(world => ({
-            ...world,
-            mediaAssets: []
-        }));
+        const storedWorlds = (state.worlds || []).map(worldPersistenceManifest);
         const visibleWorldIds = new Set(storedWorlds.map(world => world.id));
         const recovery = isPlainObject(state.worldRecoverySnapshots)
             ? state.worldRecoverySnapshots : {};
@@ -2546,6 +2653,7 @@ async function persistStateSnapshot() {
             evolinkApiKey: state.globalSettings.rememberApiKey ? (state.evolinkApiKey || '') : '',
             wavespeedApiKey: state.globalSettings.rememberApiKey ? (state.wavespeedApiKey || '') : '',
             falApiKey: state.globalSettings.rememberApiKey ? (state.falApiKey || '') : '',
+            hotapiApiKey: state.globalSettings.rememberApiKey ? (state.hotapiApiKey || '') : '',
             nanogptApiKey: state.globalSettings.rememberApiKey ? (state.nanogptApiKey || '') : '',
             nvidiaApiKey: state.globalSettings.rememberApiKey ? (state.nvidiaApiKey || '') : '',
             bedrockApiKey: state.globalSettings.rememberApiKey ? (state.bedrockApiKey || '') : '',
@@ -2591,7 +2699,10 @@ async function persistStateSnapshot() {
     } catch (err) {
         if (savingWorldMedia) worldMediaDirty = true;
         const isQuota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
-        if (isQuota) {
+        if (err?.code === 'STATE_CONFLICT') {
+            if (!HordeDB.conflictNotified) showToast(err.message, 'error');
+            HordeDB.conflictNotified = true;
+        } else if (isQuota) {
             showToast('⚠️ Storage FULL — changes are NOT being saved! Export a backup now (Settings → Export Full Backup), then remove large images/old sessions.', 'error');
         } else {
             showToast('Storage Error: ' + (err.message || err), 'error');
@@ -2664,10 +2775,9 @@ async function persistGlobalSettingsOnly() {
     state.globalSettings.settingsSavedAt = Date.now();
     const persistedSettings = globalSettingsForDevicePersistence(state.globalSettings);
     const remember = state.globalSettings.rememberApiKey === true;
-    // Write the non-secret recovery copy first. If IndexedDB is unavailable or
-    // its transaction is aborted, ordinary preferences can still be restored
-    // on the next launch. Secrets and large workflow JSON never enter this copy.
-    writeGlobalSettingsMirror(persistedSettings);
+    // Only publish the mirror after a revision-checked save, or as recovery
+    // from an ordinary storage failure. A stale tab must not overwrite it.
+    try {
     await HordeDB.setMultiple({
         globalSettings: persistedSettings,
         apiKey: remember ? (state.apiKey || '') : '',
@@ -2675,12 +2785,18 @@ async function persistGlobalSettingsOnly() {
         evolinkApiKey: remember ? (state.evolinkApiKey || '') : '',
         wavespeedApiKey: remember ? (state.wavespeedApiKey || '') : '',
         falApiKey: remember ? (state.falApiKey || '') : '',
+        hotapiApiKey: remember ? (state.hotapiApiKey || '') : '',
         nanogptApiKey: remember ? (state.nanogptApiKey || '') : '',
         nvidiaApiKey: remember ? (state.nvidiaApiKey || '') : '',
         bedrockApiKey: remember ? (state.bedrockApiKey || '') : '',
         customApiKey: remember ? (state.customApiKey || '') : '',
         customHeaders: remember ? (state.customHeaders || '') : ''
     });
+    } catch (error) {
+        if (error?.code !== 'STATE_CONFLICT') writeGlobalSettingsMirror(persistedSettings);
+        throw error;
+    }
+    writeGlobalSettingsMirror(persistedSettings);
 }
 
 // Global Error Handler for UI feedback (deduped — a render-loop error must not spam toasts)
@@ -3550,6 +3666,7 @@ document.addEventListener('click', (e) => {
 let openRouterModels = [];
 
 let modelCatalogSource = null; // which base URL the cached catalog came from
+let modelCatalogFetchedAt = 0;
 
 async function getOpenRouterModels() {
     if (openRouterModels.length > 0 && modelCatalogSource === apiBase()) return openRouterModels;
@@ -3567,6 +3684,7 @@ async function getOpenRouterModels() {
         if (catalog.length) {
             openRouterModels = catalog.filter(model => isPlainObject(model) && typeof model.id === 'string')
                 .map(model => ({ ...model, name: typeof model.name === 'string' ? model.name : model.id }));
+            modelCatalogFetchedAt = Date.now();
         }
     } catch (e) {
         console.error(`Failed to fetch ${isLocalProvider() ? 'local' : cloudProviderName()} models:`, e);
@@ -5089,6 +5207,16 @@ function switchView(viewName) {
         }
         else { showToast('Pick a virtual human first.', 'info'); switchView('companions'); }
     }
+
+    // Entry renders may run while hidden (Worlds), or preserve the previous
+    // thread's scroll (characters). Scroll only after the active panel lays out.
+    const transcriptId = { chat: 'messages-container', worldPlay: 'world-messages-container',
+        companionChat: 'companion-messages' }[viewName];
+    if (transcriptId) requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (state.view !== viewName) return;
+        const transcript = document.getElementById(transcriptId);
+        if (transcript) transcript.scrollTo({ top: transcript.scrollHeight, behavior: 'instant' });
+    }));
 }
 
 // --- Library View ---
@@ -5142,6 +5270,15 @@ function renderLibrary() {
         const isFav = !!char.isFavorite;
         const model = (char.model || 'No Model').split('/').pop();
         const tagsHtml = (char.tags || []).map(t => `<div class="mini-tag">${escapeHTML(t)}</div>`).join('');
+        const capability = normalizeChatCreatorCapabilities(char.chatCapabilities);
+        const capabilityLabels = [
+            capability.imageUpload || capability.pdfUpload || capability.audioUpload || capability.videoUpload ? 'Attachments' : '',
+            capability.webSearch ? 'Web' : '',
+            capability.imageGeneration ? 'Image creation' : ''
+        ].filter(Boolean);
+        const capabilityHtml = capabilityLabels.length
+            ? capabilityLabels.map(label => `<div class="mini-tag char-capability-tag">${escapeHTML(label)}</div>`).join('')
+            : '<div class="mini-tag char-capability-tag muted">Text only</div>';
         const avatarInitials = displayInitials(char.name);
 
         card.innerHTML = `
@@ -5154,7 +5291,7 @@ function renderLibrary() {
             <div class="char-card-body">
                 <div class="char-card-name">${escapeHTML(char.name)}</div>
                 <div class="char-card-desc">${escapeHTML(char.desc || 'No description provided.')}</div>
-                <div class="char-card-tags">${tagsHtml}</div>
+                <div class="char-card-tags">${tagsHtml}${capabilityHtml}</div>
                 <div class="char-card-tag">${escapeHTML(model)}</div>
                 <div class="char-card-actions">
                     <button class="btn btn-primary char-card-play" type="button">Play</button>
@@ -5604,11 +5741,16 @@ async function fetchModelData(modelId, prefix, targetObj) {
             if (targetObj) {
                 targetObj.supportedParams = supportedParams;
                 targetObj.contextSize = Math.min(matchingModel.context_length || 8192, 16384);
+                targetObj.modelInputModalities = Array.isArray(matchingModel?.architecture?.input_modalities)
+                    ? matchingModel.architecture.input_modalities.map(value => String(value).toLowerCase()) : ['text'];
+                targetObj.modelOutputModalities = Array.isArray(matchingModel?.architecture?.output_modalities)
+                    ? matchingModel.architecture.output_modalities.map(value => String(value).toLowerCase()) : ['text'];
             }
 
             // Update UI
             populateModelInfoCard(matchingModel, prefix);
             updateReasoningVisibility(supportedParams, modelId, false, prefix);
+            if (targetObj === state.editingChar) updateChatCreatorCapabilityStatus(targetObj);
 
             showToast(`Model verified: ${matchingModel.name}`, 'success');
             return matchingModel;
@@ -5794,6 +5936,88 @@ function updateReasoningVisibility(supportedParams, modelId = '', forceShow = fa
     }
 }
 
+function normalizeChatCreatorCapabilities(raw) {
+    const value = isPlainObject(raw) ? raw : {};
+    return {
+        imageUpload: value.imageUpload === true,
+        pdfUpload: value.pdfUpload === true,
+        audioUpload: value.audioUpload === true,
+        videoUpload: value.videoUpload === true,
+        webSearch: value.webSearch === true,
+        imageGeneration: value.imageGeneration === true,
+        imageProvider: ['inherit', 'openrouter', 'gptproto', 'nanogpt', 'fal', 'local'].includes(value.imageProvider)
+            ? value.imageProvider : 'inherit',
+        imageModel: String(value.imageModel || '').trim().slice(0, 500)
+    };
+}
+
+function loadChatCreatorCapabilityControls(character) {
+    if (!character) return;
+    const capability = normalizeChatCreatorCapabilities(character.chatCapabilities);
+    character.chatCapabilities = capability;
+    const fieldMap = {
+        'studio-chat-image-upload': 'imageUpload',
+        'studio-chat-pdf-upload': 'pdfUpload',
+        'studio-chat-audio-upload': 'audioUpload',
+        'studio-chat-video-upload': 'videoUpload',
+        'studio-chat-web-search': 'webSearch',
+        'studio-chat-image-generation': 'imageGeneration'
+    };
+    Object.entries(fieldMap).forEach(([id, key]) => {
+        const input = document.getElementById(id);
+        if (input) input.checked = capability[key];
+    });
+    const provider = document.getElementById('studio-chat-image-provider');
+    const model = document.getElementById('studio-chat-image-model');
+    if (provider) provider.value = capability.imageProvider;
+    if (model) model.value = capability.imageModel;
+    const settings = document.getElementById('studio-chat-image-generation-settings');
+    settings?.classList.toggle('hidden', !capability.imageGeneration);
+    const preview = () => {
+        const draft = { ...character, chatCapabilities: chatCreatorCapabilityValuesFromControls() };
+        settings?.classList.toggle('hidden', !draft.chatCapabilities.imageGeneration);
+        updateChatCreatorCapabilityStatus(draft);
+    };
+    [...Object.keys(fieldMap), 'studio-chat-image-provider', 'studio-chat-image-model'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.oninput = preview;
+    });
+    updateChatCreatorCapabilityStatus(character);
+}
+
+function chatCreatorCapabilityValuesFromControls() {
+    const checked = id => document.getElementById(id)?.checked === true;
+    return normalizeChatCreatorCapabilities({
+        imageUpload: checked('studio-chat-image-upload'),
+        pdfUpload: checked('studio-chat-pdf-upload'),
+        audioUpload: checked('studio-chat-audio-upload'),
+        videoUpload: checked('studio-chat-video-upload'),
+        webSearch: checked('studio-chat-web-search'),
+        imageGeneration: checked('studio-chat-image-generation'),
+        imageProvider: document.getElementById('studio-chat-image-provider')?.value,
+        imageModel: document.getElementById('studio-chat-image-model')?.value
+    });
+}
+
+function readChatCreatorCapabilityControls(character) {
+    character.chatCapabilities = chatCreatorCapabilityValuesFromControls();
+}
+
+function updateChatCreatorCapabilityStatus(character) {
+    const status = document.getElementById('studio-chat-capability-status');
+    const hint = document.getElementById('studio-chat-capability-hint');
+    if (!status || !character) return;
+    const capability = normalizeChatCreatorCapabilities(character.chatCapabilities);
+    const enabled = Object.entries(capability).filter(([key, value]) =>
+        !['imageProvider', 'imageModel'].includes(key) && value === true).map(([key]) => key);
+    status.textContent = enabled.length ? `${enabled.length} enabled` : 'Text only';
+    const model = openRouterModels.find(item => item.id === character.model);
+    const modalities = chatModelInputModalities(character, model);
+    if (hint) hint.textContent = modalities.length
+        ? `Reported model inputs: ${modalities.join(', ')}. Creator permissions and runtime support must both agree.`
+        : 'Model media support is unknown. Fetch model data above; unsupported player controls remain unavailable at runtime.';
+}
+
 function createNewCharacter() {
     state.editingChar = {
         id: 'char_' + Date.now(),
@@ -5815,6 +6039,9 @@ function createNewCharacter() {
         includeReasoning: false,
         reasoningEffort: '',
         supportedParams: [],
+        modelInputModalities: ['text'],
+        modelOutputModalities: ['text'],
+        chatCapabilities: normalizeChatCreatorCapabilities({}),
         prompt: '',
         studioMode: 'advanced',
         systemPrompt: '',
@@ -5869,6 +6096,7 @@ function loadStudioData() {
 
     document.getElementById('studio-intro').value = c.intro;
     document.getElementById('studio-model').value = c.model || '';
+    loadChatCreatorCapabilityControls(c);
     document.getElementById('studio-tags').value = (c.tags || []).join(', ');
     
     document.getElementById('studio-temp').value = c.temp || 0.9;
@@ -6177,6 +6405,7 @@ async function saveStudioCharacter() {
     c.reasoning = document.getElementById('studio-reasoning').checked;
     c.includeReasoning = document.getElementById('studio-include-reasoning').checked;
     c.reasoningEffort = document.getElementById('studio-reasoning-effort').value;
+    readChatCreatorCapabilityControls(c);
     
     c.activePresetId = document.getElementById('studio-system-preset').value;
     
@@ -6495,15 +6724,387 @@ function recordImmediateChatMemory(session, config, text, targetChar) {
     return record || null;
 }
 
+// --- Capability-aware Chat media -----------------------------------------
+// Character creators opt into each capability. Runtime model/provider support
+// is a second, independent gate: creator permission never fabricates support,
+// and model support never exposes a tool the creator did not enable.
+const chatPendingAttachments = new Map();
+const chatWebSearchBySession = new Map();
+const chatImageModeBySession = new Map();
+const chatAssetObjectUrls = new Map();
+
+function chatInteractionKey() {
+    return getCurrentSession()?.id || state.activeRoomId || state.activeCharId || '';
+}
+
+function chatModelInputModalities(character, catalogModel = null) {
+    const live = Array.isArray(catalogModel?.architecture?.input_modalities)
+        ? catalogModel.architecture.input_modalities : [];
+    const stored = Array.isArray(character?.modelInputModalities) ? character.modelInputModalities : [];
+    return [...new Set((live.length ? live : stored).map(value => String(value).toLowerCase()).filter(Boolean))];
+}
+
+function chatImageGenerationProvider(character) {
+    const capability = normalizeChatCreatorCapabilities(character?.chatCapabilities);
+    return capability.imageProvider === 'inherit' ? normalizedProviderId() : capability.imageProvider;
+}
+
+function chatRuntimeCapabilities(character) {
+    const creator = normalizeChatCreatorCapabilities(character?.chatCapabilities);
+    const modelId = character?.model || state.globalSettings.defaultModel || '';
+    const model = openRouterModels.find(item => item.id === modelId) || null;
+    const inputs = new Set(chatModelInputModalities(character, model));
+    const provider = normalizedProviderId();
+    const imageProvider = chatImageGenerationProvider(character);
+    return {
+        creator, provider, modelId, inputs,
+        image: creator.imageUpload && inputs.has('image'),
+        pdf: creator.pdfUpload && (provider === 'openrouter' || inputs.has('file') || inputs.has('pdf')),
+        audio: creator.audioUpload && inputs.has('audio'),
+        video: creator.videoUpload && inputs.has('video'),
+        web: creator.webSearch && provider === 'openrouter',
+        imageGeneration: creator.imageGeneration && providerHasCredentials(imageProvider),
+        imageProvider
+    };
+}
+
+function chatPendingForCurrentSession() {
+    const key = chatInteractionKey();
+    if (!chatPendingAttachments.has(key)) chatPendingAttachments.set(key, []);
+    return chatPendingAttachments.get(key);
+}
+
+function humanFileSize(bytes) {
+    const value = Math.max(0, Number(bytes) || 0);
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function chatAttachmentIcon(kind) {
+    return ({ image: '🖼️', pdf: '📄', audio: '🎙️', video: '🎬' })[kind] || '📎';
+}
+
+function chatAttachmentLimit(kind) {
+    return ({ image: 25, pdf: 25, audio: 30, video: 75 })[kind] * 1024 * 1024;
+}
+
+function renderPendingChatAttachments() {
+    const tray = document.getElementById('chat-attachment-tray');
+    if (!tray) return;
+    const pending = chatPendingForCurrentSession();
+    tray.classList.toggle('hidden', pending.length === 0);
+    tray.innerHTML = '';
+    pending.forEach((item, index) => {
+        const chip = document.createElement('div');
+        chip.className = 'chat-attachment-chip';
+        const preview = item.kind === 'image'
+            ? `<img src="${escapeHTML(item.previewUrl)}" alt="">`
+            : `<span class="chat-attachment-icon" aria-hidden="true">${chatAttachmentIcon(item.kind)}</span>`;
+        chip.innerHTML = `${preview}<span><strong title="${escapeHTML(item.file.name)}">${escapeHTML(item.file.name)}</strong><small>${humanFileSize(item.file.size)}</small></span><button class="chat-attachment-remove" type="button" aria-label="Remove ${escapeHTML(item.file.name)}">×</button>`;
+        chip.querySelector('button').onclick = () => {
+            if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+            pending.splice(index, 1);
+            renderPendingChatAttachments();
+            updateChatSendButton();
+        };
+        tray.appendChild(chip);
+    });
+}
+
+function updateChatSendButton() {
+    const button = document.getElementById('send-btn');
+    const input = document.getElementById('user-input');
+    if (!button || generationController) return;
+    const hasDestination = !!(state.activeCharId || state.activeRoomId);
+    const hasInput = !!input?.value.trim() || chatPendingForCurrentSession().length > 0;
+    button.disabled = !hasDestination || !hasInput;
+}
+
+function renderChatCapabilityBar() {
+    const bar = document.getElementById('chat-capability-bar');
+    if (!bar) return;
+    const character = !state.activeRoomId ? state.characters.find(item => item.id === state.activeCharId) : null;
+    if (!character) {
+        bar.classList.add('hidden');
+        document.getElementById('chat-attachment-tray')?.classList.add('hidden');
+        return;
+    }
+    const runtime = chatRuntimeCapabilities(character);
+    const attachKinds = ['image', 'pdf', 'audio', 'video'].filter(kind => runtime[kind]);
+    const attach = document.getElementById('chat-attach-btn');
+    const web = document.getElementById('chat-web-btn');
+    const imageMode = document.getElementById('chat-image-mode-btn');
+    const note = document.getElementById('chat-capability-note');
+    const key = chatInteractionKey();
+    const any = attachKinds.length || runtime.web || runtime.imageGeneration;
+    bar.classList.toggle('hidden', !any);
+    attach?.classList.toggle('hidden', attachKinds.length === 0);
+    web?.classList.toggle('hidden', !runtime.web);
+    imageMode?.classList.toggle('hidden', !runtime.imageGeneration);
+    if (web) {
+        const active = runtime.web && chatWebSearchBySession.get(key) === true;
+        web.classList.toggle('active', active);
+        web.setAttribute('aria-pressed', String(active));
+    }
+    if (imageMode) {
+        const active = runtime.imageGeneration && chatImageModeBySession.get(key) === true;
+        imageMode.classList.toggle('active', active);
+        imageMode.setAttribute('aria-pressed', String(active));
+        document.querySelector('#chat-view .input-wrap')?.classList.toggle('chat-image-mode', active);
+        const input = document.getElementById('user-input');
+        if (input) input.placeholder = active ? 'Describe the image to create…' : 'Type your message...';
+    }
+    document.querySelectorAll('#chat-attach-menu [data-chat-attachment]').forEach(button => {
+        button.disabled = !attachKinds.includes(button.dataset.chatAttachment);
+        button.classList.toggle('hidden', button.disabled);
+    });
+    if (note) note.textContent = runtime.web && chatWebSearchBySession.get(key) ? 'Live search may add cost' : '';
+    renderPendingChatAttachments();
+    updateChatSendButton();
+
+    if (!openRouterModels.length) getOpenRouterModels().then(() => {
+        if (state.activeCharId === character.id) renderChatCapabilityBar();
+    }).catch(() => {});
+}
+
+function addPendingChatFiles(kind, files) {
+    const character = state.characters.find(item => item.id === state.activeCharId);
+    const runtime = character ? chatRuntimeCapabilities(character) : null;
+    if (!runtime?.[kind]) return showToast(`The creator and selected model have not enabled ${kind} input.`, 'info');
+    const pending = chatPendingForCurrentSession();
+    for (const file of Array.from(files || []).slice(0, 8)) {
+        if (file.size > chatAttachmentLimit(kind)) {
+            showToast(`${file.name} is too large. ${kind} attachments are limited to ${humanFileSize(chatAttachmentLimit(kind))}.`, 'error');
+            continue;
+        }
+        if (pending.reduce((sum, item) => sum + item.file.size, 0) + file.size > 100 * 1024 * 1024) {
+            showToast('This message exceeds the 100 MB attachment limit.', 'error');
+            break;
+        }
+        pending.push({ kind, file, previewUrl: kind === 'image' ? URL.createObjectURL(file) : '' });
+    }
+    renderPendingChatAttachments();
+    updateChatSendButton();
+}
+
+function setupChatCapabilityControls() {
+    const attach = document.getElementById('chat-attach-btn');
+    if (!attach || attach.dataset.bound === 'true') return;
+    attach.dataset.bound = 'true';
+    const menu = document.getElementById('chat-attach-menu');
+    attach.onclick = () => {
+        const open = menu.classList.toggle('hidden') === false;
+        attach.setAttribute('aria-expanded', String(open));
+    };
+    document.querySelectorAll('#chat-attach-menu [data-chat-attachment]').forEach(button => {
+        button.onclick = () => {
+            menu.classList.add('hidden');
+            attach.setAttribute('aria-expanded', 'false');
+            document.getElementById(`chat-${button.dataset.chatAttachment}-input`)?.click();
+        };
+    });
+    ['image', 'pdf', 'audio', 'video'].forEach(kind => {
+        const input = document.getElementById(`chat-${kind}-input`);
+        if (input) input.onchange = () => {
+            addPendingChatFiles(kind, input.files);
+            input.value = '';
+        };
+    });
+    document.getElementById('chat-web-btn').onclick = () => {
+        const key = chatInteractionKey();
+        chatWebSearchBySession.set(key, chatWebSearchBySession.get(key) !== true);
+        renderChatCapabilityBar();
+    };
+    document.getElementById('chat-image-mode-btn').onclick = () => {
+        const key = chatInteractionKey();
+        chatImageModeBySession.set(key, chatImageModeBySession.get(key) !== true);
+        renderChatCapabilityBar();
+        document.getElementById('user-input')?.focus();
+    };
+}
+
+function dataUrlToBlob(dataUrl) {
+    const match = String(dataUrl || '').match(/^data:([^;,]+)(?:;[^,]*)?;base64,([\s\S]+)$/i);
+    if (!match) throw new Error('Invalid embedded media data.');
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type: match[1] });
+}
+
+function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('The browser could not encode an attachment.'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function persistChatAttachment(item) {
+    const id = newChatMemoryId('asset');
+    let blob = item.file;
+    if (item.kind === 'image') {
+        const normalized = await normalizeUploadedImage(item.file, 1800, 0.88);
+        blob = dataUrlToBlob(normalized);
+    }
+    await HordeDB.set(`chatAsset:${id}`, blob);
+    return { id, kind: item.kind, name: String(item.file.name || item.kind).slice(0, 240),
+        mime: String(blob.type || item.file.type || '').slice(0, 120), size: blob.size };
+}
+
+async function deleteChatMessageAssets(message) {
+    for (const attachment of Array.isArray(message?.attachments) ? message.attachments : []) {
+        if (!attachment?.id) continue;
+        await HordeDB.delete(`chatAsset:${attachment.id}`).catch(() => {});
+        const url = chatAssetObjectUrls.get(attachment.id);
+        if (url) URL.revokeObjectURL(url);
+        chatAssetObjectUrls.delete(attachment.id);
+    }
+}
+
+async function chatAttachmentBlob(attachment) {
+    return attachment?.id ? HordeDB.get(`chatAsset:${attachment.id}`).catch(() => null) : null;
+}
+
+async function chatAttachmentObjectUrl(attachment) {
+    if (!attachment?.id) {
+        const remote = String(attachment?.url || '');
+        return /^(?:https:\/\/|data:image\/)/i.test(remote) ? remote : '';
+    }
+    if (chatAssetObjectUrls.has(attachment.id)) return chatAssetObjectUrls.get(attachment.id);
+    const blob = await chatAttachmentBlob(attachment);
+    if (!blob) return '';
+    const url = URL.createObjectURL(blob);
+    chatAssetObjectUrls.set(attachment.id, url);
+    return url;
+}
+
+function audioFormatFromMime(mime) {
+    if (/wav/i.test(mime)) return 'wav';
+    if (/webm/i.test(mime)) return 'webm';
+    if (/ogg/i.test(mime)) return 'ogg';
+    if (/mp4|m4a/i.test(mime)) return 'mp4';
+    return 'mp3';
+}
+
+async function chatProviderContent(message, text) {
+    const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+    if (!attachments.length || message.role !== 'user') return text;
+    const parts = [{ type: 'text', text: text || 'Please consider the attached media.' }];
+    for (const attachment of attachments) {
+        const blob = await chatAttachmentBlob(attachment);
+        if (!blob) continue;
+        const dataUrl = await blobToDataUrl(blob);
+        if (attachment.kind === 'image') parts.push({ type: 'image_url', image_url: { url: dataUrl } });
+        else if (attachment.kind === 'video') parts.push({ type: 'video_url', video_url: { url: dataUrl } });
+        else if (attachment.kind === 'pdf') parts.push({ type: 'file', file: { filename: attachment.name, file_data: dataUrl } });
+        else if (attachment.kind === 'audio') parts.push({ type: 'input_audio', input_audio: {
+            data: dataUrl.replace(/^data:[^,]+,/, ''), format: audioFormatFromMime(attachment.mime) } });
+    }
+    return parts;
+}
+
+function normalizeChatCitations(values) {
+    const list = Array.isArray(values) ? values : [];
+    const byUrl = new Map();
+    list.forEach(value => {
+        const citation = value?.url_citation || value;
+        const url = String(citation?.url || '').trim();
+        if (!/^https?:\/\//i.test(url)) return;
+        byUrl.set(url, { url, title: String(citation.title || new URL(url).hostname).slice(0, 240) });
+    });
+    return [...byUrl.values()].slice(0, 30);
+}
+
+async function handleChatImageGeneration(character, session) {
+    const input = document.getElementById('user-input');
+    const prompt = input.value.trim();
+    if (!prompt) return showToast('Describe the image you want to create.', 'info');
+    const runtime = chatRuntimeCapabilities(character);
+    if (!runtime.imageGeneration) return showToast('Image generation is not available for this character and provider.', 'error');
+    const pending = [...chatPendingForCurrentSession()];
+    if (pending.some(item => item.kind !== 'image')) {
+        return showToast('Create image mode can only use image attachments as references.', 'info');
+    }
+    const button = document.getElementById('send-btn');
+    const persisted = [];
+    try {
+        for (const item of pending) persisted.push(await persistChatAttachment(item));
+        const userMessage = { id: newChatMemoryId('message'), role: 'user', content: prompt,
+            attachments: persisted, imageGeneration: true };
+        session.messages.push(userMessage);
+        input.value = '';
+        input.style.height = 'auto';
+        chatPendingAttachments.set(chatInteractionKey(), []);
+        pending.forEach(item => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
+        await saveState();
+        renderChat();
+
+        generationController = new AbortController();
+        button.innerHTML = '⏹';
+        button.classList.add('stop');
+        button.disabled = false;
+        const placeholder = appendMessageUI('ai', 'Creating image…');
+        const capability = normalizeChatCreatorCapabilities(character.chatCapabilities);
+        const provider = runtime.imageProvider;
+        const model = capability.imageModel || companionImageModelFallback(provider);
+        const body = { model, prompt: `Create an image for a roleplay conversation with ${character.name}. ${prompt}` };
+        const reference = persisted.find(item => item.kind === 'image');
+        if (reference) {
+            const blob = await chatAttachmentBlob(reference);
+            const dataUrl = blob ? await blobToDataUrl(blob) : '';
+            if (provider === 'fal') body.imageDataUrl = dataUrl;
+            else if (provider === 'openrouter') body.input_references = [{ type: 'image_url', image_url: { url: dataUrl } }];
+        }
+        let generated = await requestCompanionPhoto(body, provider);
+        generated = await stabilizeGeneratedImageSource(generated);
+        let generatedAttachment;
+        if (/^data:image\//i.test(generated)) {
+            const blob = dataUrlToBlob(generated);
+            const id = newChatMemoryId('asset');
+            await HordeDB.set(`chatAsset:${id}`, blob);
+            generatedAttachment = { id, kind: 'image', name: `Generated image · ${new Date().toLocaleTimeString()}`,
+                mime: blob.type, size: blob.size, generated: true };
+        } else {
+            generatedAttachment = { kind: 'image', name: 'Generated image', mime: 'image/png', size: 0,
+                url: generated, generated: true };
+        }
+        session.messages.push({ id: newChatMemoryId('message'), role: 'assistant', content: '',
+            charId: character.id, attachments: [generatedAttachment], generatedImage: true });
+        await saveState();
+        placeholder.closest('.message')?.remove();
+        chatImageModeBySession.set(chatInteractionKey(), false);
+        renderChat();
+    } catch (error) {
+        const last = session.messages[session.messages.length - 1];
+        if (last?.imageGeneration && last.role === 'user') {
+            session.messages.pop();
+            await deleteChatMessageAssets(last);
+        }
+        input.value = prompt;
+        await saveState();
+        renderChat();
+        showToast('Image generation failed: ' + humanizeApiError(error, runtime.imageProvider), 'error');
+    } finally {
+        generationController = null;
+        button.innerHTML = '➤';
+        button.classList.remove('stop');
+        updateChatSendButton();
+    }
+}
+
 // --- Chat View Logic ---
 function setupChatLogic() {
+    setupChatCapabilityControls();
     const sendBtn = document.getElementById('send-btn');
     const userInput = document.getElementById('user-input');
 
     userInput.oninput = () => {
         userInput.style.height = 'auto';
         userInput.style.height = userInput.scrollHeight + 'px';
-        sendBtn.disabled = !userInput.value.trim() || (!state.activeCharId && !state.activeRoomId);
+        updateChatSendButton();
     };
 
     sendBtn.onclick = () => {
@@ -6553,6 +7154,8 @@ function setupChatLogic() {
         showConfirmModal('Clear History', 'Are you sure you want to clear the chat history for this session?', async () => {
             const sessionId = state.activeRoomId || state.activeCharId;
             const currentSessId = state.activeSessionId[sessionId];
+            const removedSession = state.chats[sessionId].find(session => session.id === currentSessId);
+            for (const message of removedSession?.messages || []) await deleteChatMessageAssets(message);
             
             // Delete the current session
             state.chats[sessionId] = state.chats[sessionId].filter(s => s.id !== currentSessId);
@@ -6833,6 +7436,7 @@ function renderChat() {
     chatAvatar.style.display = 'grid';
     document.getElementById('chat-char-name').textContent = name;
     document.getElementById('chat-char-model').textContent = modelName;
+    renderChatCapabilityBar();
     
     document.getElementById('chat-view').style.backgroundImage = bg ? `linear-gradient(rgba(10,10,15,0.8), rgba(10,10,15,0.8)), url('${cssUrl(bg)}')` : 'none';
     document.getElementById('chat-view').style.backgroundSize = 'cover';
@@ -7121,6 +7725,54 @@ function formatMessageContent(content, role, isStreaming = false) {
     return out;
 }
 
+async function hydrateChatMessageMedia(container, message) {
+    if (!container || !message) return;
+    const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+    for (const attachment of attachments) {
+        const url = await chatAttachmentObjectUrl(attachment);
+        if (!url || !container.isConnected) continue;
+        let element;
+        if (attachment.kind === 'image') {
+            element = document.createElement('img');
+            element.src = url;
+            element.alt = attachment.name || 'Chat image';
+            element.loading = 'lazy';
+        } else if (attachment.kind === 'video') {
+            element = document.createElement('video');
+            element.src = url;
+            element.controls = true;
+            element.preload = 'metadata';
+        } else if (attachment.kind === 'audio') {
+            element = document.createElement('audio');
+            element.src = url;
+            element.controls = true;
+            element.preload = 'metadata';
+        } else {
+            element = document.createElement('a');
+            element.className = 'chat-file-card';
+            element.href = url;
+            element.download = attachment.name || 'attachment.pdf';
+            element.textContent = `📄 ${attachment.name || 'Attached PDF'}`;
+        }
+        container.appendChild(element);
+    }
+}
+
+function renderChatCitationLinks(container, citations) {
+    if (!container) return;
+    const normalized = normalizeChatCitations(citations);
+    if (!normalized.length) return;
+    normalized.forEach((citation, index) => {
+        const link = document.createElement('a');
+        link.className = 'chat-citation';
+        link.href = citation.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = `${index + 1}. ${citation.title}`;
+        container.appendChild(link);
+    });
+}
+
 function appendMessageUI(role, content, index = null, charId = null, isStreaming = false) {
     const msgContainer = document.getElementById('messages-container');
     const div = document.createElement('div');
@@ -7149,6 +7801,8 @@ function appendMessageUI(role, content, index = null, charId = null, isStreaming
         <div class="message-avatar${avatarUrl ? ' has-image' : ''}" style="${avatarUrl ? `background-image:url('${cssUrl(avatarUrl)}')` : ''}" aria-hidden="true">${avatarUrl ? '' : escapeHTML(displayInitials(avatarName))}</div>
         <div class="message-body">
             <div class="message-content">${formatMessageContent(content, role, isStreaming)}</div>
+            <div class="chat-message-media"></div>
+            <div class="chat-citations"></div>
             <textarea class="message-edit-area hidden"></textarea>
             <div class="message-actions">
                 ${hasVersions ? `
@@ -7163,6 +7817,11 @@ function appendMessageUI(role, content, index = null, charId = null, isStreaming
             </div>
         </div>
     `;
+
+    if (msgRef) {
+        void hydrateChatMessageMedia(div.querySelector('.chat-message-media'), msgRef);
+        renderChatCitationLinks(div.querySelector('.chat-citations'), msgRef.citations);
+    }
 
     if (hasVersions) {
         const setVersion = async (i) => {
@@ -7201,6 +7860,7 @@ function appendMessageUI(role, content, index = null, charId = null, isStreaming
                 if (session) {
                     invalidateEpisodicFrom(session, index);
                     stripChatLedgerEntry(session, session.messages[index]);
+                    await deleteChatMessageAssets(session.messages[index]);
                     session.messages.splice(index, 1);
                     await saveState();
                     renderChat();
@@ -7580,7 +8240,7 @@ async function buildContext(config, targetChar, messages, userText) {
     if (targetChar.lorebook) combinedLore = combinedLore.concat(targetChar.lorebook);
 
     const scanDepth = state.globalSettings.loreScanDepth || 5;
-    const loreScanText = (messages.slice(-scanDepth).map(m => m.content).join('\n') + '\n' + userText).toLowerCase();
+    const loreScanText = (messages.slice(-scanDepth).map(m => canonicalMsgText(m)).join('\n') + '\n' + userText).toLowerCase();
     const relevantLore = combinedLore.filter(entry => {
         if (!entry || !entry.keyword) return entry && entry.constant; // keyless constant entries still allowed
         // Constant entries: always on (no keyword trigger needed)
@@ -7897,9 +8557,11 @@ Do not emit a memory line for ordinary dialogue, repeated information, mood, des
             content = redactPrivateWhispers(content, targetChar.name, otherNames);
         }
 
-        const msgTokens = Math.ceil(content.length / 3.5);
+        const msgTokens = Math.ceil(content.length / 3.5)
+            + (Array.isArray(m.attachments) ? m.attachments.reduce((sum, item) =>
+                sum + (item.kind === 'image' ? 900 : item.kind === 'video' ? 4000 : item.kind === 'audio' ? 2000 : 1200), 0) : 0);
         if (availableTokens - msgTokens > 0) {
-            messagesToSend.unshift({ role, content });
+            messagesToSend.unshift({ role, content: await chatProviderContent(m, content) });
             availableTokens -= msgTokens;
         } else {
             break;
@@ -7955,6 +8617,11 @@ async function handleChat(isReroll = false, specificCharId = null) {
     const session = getCurrentSession();
     if (!session.messages) session.messages = [];
 
+    if (!isReroll && !state.activeRoomId && chatImageModeBySession.get(chatInteractionKey()) === true) {
+        const character = state.characters.find(item => item.id === state.activeCharId);
+        if (character) return handleChatImageGeneration(character, session);
+    }
+
     const sendBtn = document.getElementById('send-btn');
     const userInput = document.getElementById('user-input');
 
@@ -7980,6 +8647,8 @@ async function handleChat(isReroll = false, specificCharId = null) {
     let rerollLedgerEntries = null; // per-take chronicle entries, parallel to versions
     let rerollHudBefore = null;
     let rerollHudAfter = null;
+    let draftAttachments = [];
+    let persistedUserAttachments = [];
 
     if (isReroll) {
         const lastMsg = session.messages[session.messages.length - 1];
@@ -8002,11 +8671,21 @@ async function handleChat(isReroll = false, specificCharId = null) {
         text = lastUser ? lastUser.content : '';
     } else {
         text = document.getElementById('user-input').value.trim();
-        if (text) {
+        draftAttachments = [...chatPendingForCurrentSession()];
+        if (text || draftAttachments.length) {
+            const runtime = !isRoom ? chatRuntimeCapabilities(state.characters.find(item => item.id === state.activeCharId)) : null;
+            const unsupported = draftAttachments.find(item => !runtime?.[item.kind]);
+            if (unsupported) return showToast(`${unsupported.kind} input is not enabled for this character and model.`, 'error');
+            try {
+                for (const item of draftAttachments) persistedUserAttachments.push(await persistChatAttachment(item));
+            } catch (error) {
+                for (const attachment of persistedUserAttachments) await deleteChatMessageAssets({ attachments: [attachment] });
+                return showToast('Could not store attachment: ' + error.message, 'error');
+            }
             document.getElementById('user-input').value = '';
             document.getElementById('user-input').style.height = 'auto';
             
-            let pushText = text;
+            let pushText = text || `Shared ${draftAttachments.length} attachment${draftAttachments.length === 1 ? '' : 's'}.`;
             if (isRoom) {
                 let prefix = '[User]: ';
                 const p = state.personas.find(x => x.id === state.activePersonaId);
@@ -8014,9 +8693,14 @@ async function handleChat(isReroll = false, specificCharId = null) {
                 pushText = prefix + text;
             }
             
-            session.messages.push({ id: newChatMemoryId('message'), role: 'user', content: pushText });
+            const webSearch = !isRoom && chatWebSearchBySession.get(chatInteractionKey()) === true;
+            session.messages.push({ id: newChatMemoryId('message'), role: 'user', content: pushText,
+                attachments: persistedUserAttachments, webSearch });
+            chatPendingAttachments.set(chatInteractionKey(), []);
+            draftAttachments.forEach(item => item.previewUrl && URL.revokeObjectURL(item.previewUrl));
+            if (webSearch) chatWebSearchBySession.set(chatInteractionKey(), false);
             await saveState();
-            appendMessageUI('user', pushText);
+            renderChat();
         }
     }
 
@@ -8068,6 +8752,13 @@ async function handleChat(isReroll = false, specificCharId = null) {
             messages: sanitizeMessagesForProvider(apiMessages),
             stream: true
         };
+
+        const latestUserMessage = [...session.messages].reverse().find(message => message.role === 'user');
+        if (latestUserMessage?.webSearch) {
+            if (normalizedProviderId() !== 'openrouter') throw new Error('Web search is only available through OpenRouter in Chat.');
+            requestBody.tools = [COMPANION_WEB_SEARCH_TOOL];
+            requestBody.max_tool_calls = 4;
+        }
 
         // Smart parameter filtering
         const supported = config.supportedParams || [];
@@ -8129,6 +8820,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let responseCitations = [];
         
         aiMsgDiv.classList.add('is-generating');
         aiMsgDiv.textContent = '';
@@ -8160,6 +8852,11 @@ async function handleChat(isReroll = false, specificCharId = null) {
                         const delta = json.choices[0]?.delta || {};
                         const content = delta.content || '';
                         const reasoning = delta.reasoning || delta.thought || ''; // Support 'thought' fallback
+                        responseCitations = normalizeChatCitations([
+                            ...responseCitations,
+                            ...(Array.isArray(delta.annotations) ? delta.annotations : []),
+                            ...(Array.isArray(json.choices[0]?.message?.annotations) ? json.choices[0].message.annotations : [])
+                        ]);
                         
                         // Check for content filter
                         if (json.choices[0]?.finish_reason === 'content_filter') {
@@ -8243,7 +8940,8 @@ async function handleChat(isReroll = false, specificCharId = null) {
         const hudAfterTurn = !isRoom ? safeJsonClone(ensureChatHudState(targetChar, session).state) : null;
 
         const newAiMsg = { id: newChatMemoryId('message'), role: 'assistant', content: fullContent, charId: targetChar.id,
-            hudBefore: hudBeforeTurn || undefined, hudAfter: hudAfterTurn || undefined };
+            hudBefore: hudBeforeTurn || undefined, hudAfter: hudAfterTurn || undefined,
+            citations: responseCitations.length ? responseCitations : undefined };
         if (extractedChronicle) newAiMsg.ledgerEntry = extractedChronicle; // for ghost-cleanup on reroll/delete
         if (rerollVersions) {
             // Preserve prior takes: invariant is content === versions[currentVersion]
@@ -8329,13 +9027,21 @@ async function handleChat(isReroll = false, specificCharId = null) {
         }
 
         // If they just typed a message, give it back to them
-        if (!isReroll && text) {
+        if (!isReroll && (text || draftAttachments.length)) {
             const session = getCurrentSession();
             const lastMsg = session.messages[session.messages.length - 1];
             if (lastMsg && lastMsg.role === 'user') {
                 session.messages.pop(); // remove from transcript
                 document.getElementById('user-input').value = text; // restore raw text to box
                 document.getElementById('user-input').style.height = 'auto';
+                await deleteChatMessageAssets(lastMsg);
+                if (draftAttachments.length) {
+                    draftAttachments.forEach(item => {
+                        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+                        item.previewUrl = item.kind === 'image' ? URL.createObjectURL(item.file) : '';
+                    });
+                    chatPendingAttachments.set(chatInteractionKey(), draftAttachments);
+                }
             }
         }
         
@@ -8347,7 +9053,7 @@ async function handleChat(isReroll = false, specificCharId = null) {
         generationController = null;
         sendBtn.innerHTML = '➤';
         sendBtn.classList.remove('stop');
-        sendBtn.disabled = !userInput.value.trim() || (!state.activeCharId && !state.activeRoomId);
+        updateChatSendButton();
     }
 }
 
@@ -8760,7 +9466,17 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                 reject(index, event, 'inactive_or_missing_actor', actorId);
                 return;
             }
-            const actualFrom = getLocationRef(world, npcState.location);
+            const declaredSkip = Math.max(0, Math.min(14400, parseInt(receipt.state_updates.time_skip_minutes) || 0),
+                ...receipt.events.filter(item => item?.type === 'time' && item.status === 'completed')
+                    .map(item => Math.max(0, Math.min(14400, parseInt(item.minutes_elapsed ?? item.minutes) || 0))));
+            const clock = getWorldTimeData(world, sess);
+            if (npcState.journey && movement.movement_mode !== 'teleport'
+                && (npcState.journey.destinationId !== toLoc.id
+                    || npcState.journey.arrivalMinute > clock.currentTotalMinutes + declaredSkip)) {
+                reject(index, event, 'actor_in_transit', 'This journey has not reached its destination.');
+                return;
+            }
+            const actualFrom = getLocationRef(world, npcState.location || npcState.journey?.originId);
             if (fromLoc && actualFrom && fromLoc.id !== actualFrom.id) {
                 reject(index, event, 'actor_origin_mismatch', `${actualFrom.id} ≠ ${fromLoc.id}`);
                 return;
@@ -8770,6 +9486,14 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
                 && movement.movement_mode !== 'teleport') {
                 reject(index, event, 'unreachable_npc_destination', `${actualFrom.id} → ${toLoc.id}`);
                 return;
+            }
+            if (!npcState.journey && actualFrom && !proposedDestination.introduced && movement.movement_mode !== 'teleport') {
+                const view = worldForSession(world, sess);
+                const route = findWorldTravelPath(view, actualFrom.id, toLoc.id);
+                if (route && getWorldPathTravelTime(view, route) > declaredSkip + clock.timeStep) {
+                    reject(index, event, 'insufficient_travel_time', 'Record the elapsed journey time before claiming arrival.');
+                    return;
+                }
             }
             acceptedNpcMoves.push({
                 npc_id: actorId,
@@ -9011,7 +9735,7 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
         absolute_minute: clock.currentTotalMinutes
     };
     const eventLocationId = event => {
-        if (event.type === 'movement' && event.to_location_id) return event.to_location_id;
+        if (event.type === 'movement') return event.to_location_id || event.from_location_id || '';
         if (event.location_id && getLocationRef(world, event.location_id)) {
             return getLocationRef(world, event.location_id).id;
         }
@@ -9104,6 +9828,7 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
         applied_fields: Object.keys(validation.legacyArgs),
         entity_patches: validation.entityPatches.map(patch => patch.entity_id),
         presence_recoveries: validation.recoveredPresence || [],
+        departure_recoveries: validation.recoveredDepartures || [],
         scene: resultingFrame,
         cast_checksum_match: !castMismatch,
         movement: actionResult?.movementResult || null,
@@ -9147,7 +9872,12 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         }
     }
     const previousLocation = sess.playerLocation;
-    const actionResult = processStructuredActions(validation.legacyArgs);
+    const actionResult = processStructuredActions(validation.legacyArgs, world, sess, {
+        completedNpcMoves: validation.acceptedEvents.filter(event => event.type === 'movement'
+            && event.actor_id !== 'player').map(event => event.actor_id),
+        teleportNpcMoves: validation.acceptedEvents.filter(event => event.type === 'movement'
+            && event.movement_mode === 'teleport').map(event => event.actor_id)
+    });
     applyWorldEntityPatches(world, sess, validation.entityPatches);
     // Recover an omitted NPC movement only when two independent channels
     // agree: the structured ending checksum names the NPC and the visible
@@ -9156,13 +9886,16 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     const assertedCast = new Set((validation.sceneAssertion?.present_character_ids || [])
         .map(ref => resolveWorldActorId(world, sess, ref)).filter(Boolean));
     const recoverablePresence = context.narrativeText
-        ? detectNarratedPresence(world, sess, context.narrativeText)
+        // A prior-turn pin is older evidence. When this turn's prose and ending
+        // checksum independently agree on a new arrival, the newer transaction
+        // is allowed to supersede it.
+        ? detectNarratedPresence(world, sess, context.narrativeText, { includePinned: true })
         : [];
     const recoveredPresence = [];
     recoverablePresence.forEach(hit => {
         if (!assertedCast.has(hit.id)) return;
         const entState = sess.entityStates?.[hit.id];
-        if (!entState || isNpcPinned(sess, entState)) return;
+        if (!entState || entState.journey) return;
         const from = getLocationRef(world, entState.location);
         const to = getLocationRef(world, sess.playerLocation);
         const sessionWorld = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
@@ -9170,8 +9903,22 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         entState.location = to.id;
         entState.pinnedUntilTurn = (sess.turnCount || 1) + 6;
         recoveredPresence.push(hit.id);
+        const witnesses = ['player', ...buildWorldSceneFrame(world, sess).present_character_ids];
+        validation.acceptedEvents.push({
+            id: `${validation.receipt.turn_id}_recovered_arrival_${hit.id}`,
+            type: 'movement', actor_id: hit.id, status: 'completed',
+            from_location_id: from?.id || '', to_location_id: to.id,
+            movement_mode: 'voluntary', caused_by_actor_id: null,
+            participants: [], witnessed_by: witnesses, evidence: hit.evidence,
+            cause: 'Recovered from matching narrative and ending-scene checksum.'
+        });
     });
     validation.recoveredPresence = recoveredPresence;
+
+    // Missing movement events must be repaired through the canonical receipt.
+    // A cast omission and prose from the same model are not independent proof
+    // that an actor departed, nor a reason to set their location to null.
+    validation.recoveredDepartures = [];
     if (sess.playerLocation !== previousLocation) rollForScenePopulation(sess.playerLocation, false);
     if (hasConditionalCheck && actionResult.checkResults.some(result => !result.pending && !result.reason)) {
         const resolvedFrame = buildWorldSceneFrame(world, sess);
@@ -10186,6 +10933,8 @@ function refreshSettingsProviderCards(activeProvider = state.globalSettings.apiP
     const keys = {
         openrouter: document.getElementById('global-api-key')?.value || state.apiKey,
         gptproto: document.getElementById('global-gptproto-key')?.value || state.gptprotoApiKey,
+        fal: document.getElementById('global-fal-key')?.value || state.falApiKey,
+        hotapi: document.getElementById('global-hotapi-key')?.value || state.hotapiApiKey,
         nanogpt: document.getElementById('global-nanogpt-key')?.value || state.nanogptApiKey,
         nvidia: document.getElementById('global-nvidia-key')?.value || state.nvidiaApiKey,
         bedrock: document.getElementById('global-bedrock-key')?.value || state.bedrockApiKey,
@@ -10351,6 +11100,9 @@ function setupGlobalSettings() {
         state.falApiKey = document.getElementById('global-fal-key')?.value.trim() || '';
         if (state.falApiKey) sessionStorage.setItem('horde_fal_api_key', state.falApiKey);
         else sessionStorage.removeItem('horde_fal_api_key');
+        state.hotapiApiKey = document.getElementById('global-hotapi-key')?.value.trim() || '';
+        if (state.hotapiApiKey) sessionStorage.setItem('horde_hotapi_api_key', state.hotapiApiKey);
+        else sessionStorage.removeItem('horde_hotapi_api_key');
         applyNanoGPTApiKeyForSession(document.getElementById('global-nanogpt-key').value);
         state.nvidiaApiKey = document.getElementById('global-nvidia-key').value.trim();
         if (state.nvidiaApiKey) sessionStorage.setItem('horde_nvidia_api_key', state.nvidiaApiKey);
@@ -10464,7 +11216,7 @@ function setupGlobalSettings() {
         syncCompanionAlwaysOnRuntime({ announce: true }).catch(() => {});
         const enteredCloudKey = !!(state.apiKey || state.gptprotoApiKey || state.nanogptApiKey
             || state.nvidiaApiKey || state.bedrockApiKey || state.customApiKey
-            || state.evolinkApiKey || state.wavespeedApiKey || state.falApiKey);
+            || state.evolinkApiKey || state.wavespeedApiKey || state.falApiKey || state.hotapiApiKey);
         showToast(enteredCloudKey && !state.globalSettings.rememberApiKey
             ? 'Settings saved. API keys remain in this tab only; enable “Remember API keys” to keep them after closing the browser.'
             : 'Settings saved for future sessions.', 'success');
@@ -10535,7 +11287,7 @@ function setupGlobalSettings() {
             if (fpWarn) fpWarn.style.display = (local && location.protocol === 'file:') ? 'block' : 'none';
         };
     }
-    ['global-api-key', 'global-gptproto-key', 'global-fal-key', 'global-nanogpt-key', 'global-nvidia-key',
+    ['global-api-key', 'global-gptproto-key', 'global-fal-key', 'global-hotapi-key', 'global-nanogpt-key', 'global-nvidia-key',
         'global-bedrock-key', 'global-custom-api-key'].forEach(inputId => {
         document.getElementById(inputId)?.addEventListener('input', () => refreshSettingsProviderCards(providerSel?.value));
     });
@@ -10664,6 +11416,33 @@ function setupGlobalSettings() {
                 : `Fal connection failed: ${humanizeApiError(error)}`;
         } finally {
             testFalBtn.disabled = false;
+        }
+    };
+    const testHotApiBtn = document.getElementById('test-hotapi-conn-btn');
+    if (testHotApiBtn) testHotApiBtn.onclick = async () => {
+        const result = document.getElementById('hotapi-conn-result');
+        const key = document.getElementById('global-hotapi-key')?.value.trim() || '';
+        if (!key) {
+            if (result) result.textContent = 'Enter a HotAPI key first.';
+            return;
+        }
+        testHotApiBtn.disabled = true;
+        if (result) result.textContent = 'Checking HotAPI authentication without generating or charging…';
+        try {
+            const response = await mcpBridgeRequest('/hotapi/video/test', {
+                method: 'POST', body: { apiKey: key }, timeoutMs: 30000
+            });
+            state.hotapiApiKey = key;
+            sessionStorage.setItem('horde_hotapi_api_key', key);
+            refreshSettingsProviderCards(document.getElementById('global-api-provider')?.value);
+            if (result) result.textContent = `Connected to HotAPI${response.modelsVisible ? ` · ${response.modelsVisible} models visible` : ''}. The key is active for this browser session; Save changes to keep it.`;
+        } catch (error) {
+            const oldBridge = /Unknown MCP provider|Unknown bridge endpoint|request failed \(404\)/i.test(error.message || '');
+            if (result) result.textContent = oldBridge
+                ? 'HotAPI support needs the current local bridge. Restart Horde Studio once, reopen Settings, and test again.'
+                : `HotAPI connection failed: ${humanizeApiError(error)}`;
+        } finally {
+            testHotApiBtn.disabled = false;
         }
     };
     const setupOpenAICompatibleCloudTest = ({ buttonId, resultId, keyId, label, baseUrl }) => {
@@ -10828,6 +11607,41 @@ function setupGlobalSettings() {
         }
     };
 
+    const mapsProviderInput=document.getElementById('global-maps-provider');
+    const orsKeyInput=document.getElementById('global-openroute-key');
+    const orsStatus=document.getElementById('openroute-key-status');
+    let confirmedMapsProvider='google';
+    const reflectMapsSettings=data=>{
+        if(data.provider){mapsProviderInput.value=data.provider;confirmedMapsProvider=data.provider;}
+        orsStatus.textContent=data.orsConfigured?`openrouteservice key configured (${data.orsSource==='environment'?'launcher environment':'saved on this device'}). Access has not been tested.`:'No openrouteservice key configured.';
+    };
+    const saveMapsProvider=async body=>{
+        try{const data=await mcpBridgeRequest('/maps/settings',{method:'POST',body});if(body.provider&&data.provider!==body.provider)throw new Error('Reopen the updated launcher to enable this maps provider.');reflectMapsSettings(data);return true;}
+        catch(error){orsStatus.textContent=error.message;return false;}
+    };
+    mapsProviderInput.onchange=async()=>{mapsProviderInput.disabled=true;try{if(!await saveMapsProvider({provider:mapsProviderInput.value}))mapsProviderInput.value=confirmedMapsProvider;}finally{mapsProviderInput.disabled=false;}};
+    document.getElementById('save-openroute-key').onclick=async function(){if(!orsKeyInput.value.trim()){orsStatus.textContent='Paste your key first.';return;}this.disabled=true;try{if(await saveMapsProvider({orsKey:orsKeyInput.value.trim(),provider:'openrouteservice'}))orsKeyInput.value='';}finally{this.disabled=false;}};
+    document.getElementById('remove-openroute-key').onclick=async function(){this.disabled=true;try{if(await saveMapsProvider({removeOrs:true}))orsKeyInput.value='';}finally{this.disabled=false;}};
+    const mapsKeyInput=document.getElementById('global-google-maps-key');
+    const mapsStatus=document.getElementById('google-maps-key-status');
+    const mapsButtons=['save-google-maps-key','remove-google-maps-key','refresh-google-maps-key'].map(id=>document.getElementById(id));
+    const updateMapsSetup=async action=>{
+        mapsButtons.forEach(button=>{button.disabled=true;});
+        try {
+            const key=mapsKeyInput.value.trim();
+            if(action==='save' && !key) throw new Error('Paste a key first. Your existing key has not changed.');
+            const data=await mcpBridgeRequest('/maps/settings',action==='refresh'?{}:{method:'POST',body:action==='remove'?{remove:true}:{googleKey:key}});
+            reflectMapsSettings(data);
+            if(action!=='refresh') mapsKeyInput.value='';
+            mapsStatus.textContent=data.configured ? `Key configured (${data.source==='environment'?'launcher environment':'saved on this device'}). Ready for place search; provider access has not been tested.` : 'No Maps key configured.';
+        } catch(error) {mapsStatus.textContent=`${error.message} If the endpoint is unavailable, reopen the updated local launcher.`;}
+        finally {mapsButtons.forEach(button=>{button.disabled=false;});}
+    };
+    mapsButtons[0].onclick=()=>updateMapsSetup('save');
+    mapsButtons[1].onclick=()=>updateMapsSetup('remove');
+    mapsButtons[2].onclick=()=>updateMapsSetup('refresh');
+    document.getElementById('maps-settings-card').ontoggle=function(){if(this.open) updateMapsSetup('refresh');};
+
     const testMcpBridgeBtn = document.getElementById('test-mcp-bridge-btn');
     if (testMcpBridgeBtn) testMcpBridgeBtn.onclick = async () => {
         testMcpBridgeBtn.disabled = true;
@@ -10940,6 +11754,16 @@ async function exportFullBackup() {
         const blob = await HordeDB.get(`companionVideoAsset:${assetId}`).catch(() => null);
         if (blob instanceof Blob) companionVideoAssets[assetId] = await blobAsDataUrl(blob);
     }
+    const chatAssets = {};
+    const chatAssetIds = new Set(Object.values(state.chats || {}).flatMap(sessions =>
+        (Array.isArray(sessions) ? sessions : []).flatMap(session =>
+            (Array.isArray(session?.messages) ? session.messages : []).flatMap(message =>
+                (Array.isArray(message?.attachments) ? message.attachments : [])
+                    .map(attachment => String(attachment?.id || '')).filter(Boolean)))));
+    for (const assetId of chatAssetIds) {
+        const blob = await HordeDB.get(`chatAsset:${assetId}`).catch(() => null);
+        if (blob instanceof Blob) chatAssets[assetId] = await blobAsDataUrl(blob);
+    }
     const payload = {
         _format: 'horde-studio-backup',
         _version: 1,
@@ -10967,7 +11791,8 @@ async function exportFullBackup() {
         companionThreads: state.companionThreads,
         companionTimelines: state.companionTimelines,
         activeCompanionId: state.activeCompanionId,
-        companionVideoAssets
+        companionVideoAssets,
+        chatAssets
     };
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -11012,6 +11837,11 @@ function importFullBackup(file) {
                         if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
                         const blob = await fetch(source).then(response => response.blob());
                         await HordeDB.set(`companionVideoAsset:${assetId}`, blob);
+                    }
+                    for (const [assetId, source] of Object.entries(data.chatAssets || {})) {
+                        if (!/^data:(?:image|video|audio|application\/pdf)/i.test(source)) continue;
+                        const blob = await fetch(source).then(response => response.blob());
+                        await HordeDB.set(`chatAsset:${assetId}`, blob);
                     }
                     worldMediaDirty = true;
                     await saveState();
@@ -11058,6 +11888,7 @@ function showGlobalSettings() {
         document.getElementById('global-evolink-key').value = state.evolinkApiKey;
         document.getElementById('global-wavespeed-key').value = state.wavespeedApiKey;
         document.getElementById('global-fal-key').value = state.falApiKey;
+        document.getElementById('global-hotapi-key').value = state.hotapiApiKey;
         document.getElementById('global-fal-rate-480').value = String(state.globalSettings.falRate480 ?? 0.05);
         document.getElementById('global-fal-rate-768').value = String(state.globalSettings.falRate768 ?? 0.08);
         document.getElementById('global-fal-safety-checker').checked = state.globalSettings.falSafetyChecker !== false;
@@ -12031,12 +12862,15 @@ function renderWorldStudioPanel(target) {
         'w-factions': renderWorldFactions,
         'w-sandbox': renderWorldSandboxStudio,
         'w-lore': renderWorldLore,
-        'w-visual-map': renderWorldArchitectMap
+        'w-visual-map': renderWorldArchitectMap,
+        'w-architect-agent': renderWorldArchitectAgent
     };
     if (renderers[target]) renderers[target]();
 }
 
 function setupWorldStudioLogic() {
+
+    setupWorldArchitectLogic();
 
     const recordOverlay = document.getElementById('world-record-overlay');
     document.getElementById('world-record-close').onclick = closeWorldRecordInspector;
@@ -12581,7 +13415,13 @@ async function saveWorld() {
     }
 
     worldMediaDirty = true;
-    await saveState();
+    try {
+        await saveState();
+        await verifyWorldPersisted(w);
+    } catch (error) {
+        showToast(`World was not saved: ${error.message || error}`, 'error');
+        throw error;
+    }
     showToast('World Saved!', 'success');
     renderWorlds();
 }
@@ -12590,14 +13430,27 @@ async function deleteWorld() {
     if (!state.editingWorld) return;
     if (!confirm(`Are you sure you want to delete "${state.editingWorld.name}"? This cannot be undone.`)) return;
 
-    state.worlds = state.worlds.filter(w => w.id !== state.editingWorld.id);
-    worldMediaDirty = true;
-    if (state.worldInstances[state.editingWorld.id]) {
-        delete state.worldInstances[state.editingWorld.id];
+    const deletedWorldId = state.editingWorld.id;
+    const deletedWorldName = state.editingWorld.name;
+    state.worlds = state.worlds.filter(w => w.id !== deletedWorldId);
+    // Recovery snapshots are for interrupted/corrupt saves, not an undo layer
+    // for an explicit deletion. Remove the previous manifest before saveState()
+    // too, otherwise persistStateSnapshot() correctly-but-unhelpfully sees the
+    // missing world and immediately creates the green "Safety copy" card.
+    lastPersistedWorldManifests = lastPersistedWorldManifests
+        .filter(world => world?.id !== deletedWorldId);
+    if (state.worldRecoverySnapshots?.[deletedWorldId]) {
+        delete state.worldRecoverySnapshots[deletedWorldId];
     }
+    worldMediaDirty = true;
+    if (state.worldInstances[deletedWorldId]) {
+        delete state.worldInstances[deletedWorldId];
+    }
+    if (state.activeWorldId === deletedWorldId) state.activeWorldId = null;
+    state.editingWorld = null;
     
     await saveState();
-    showToast('World Deleted', 'success');
+    showToast(`Deleted "${deletedWorldName}" and its safety copy.`, 'success');
     renderWorlds();
     switchView('worlds');
 }
@@ -12770,11 +13623,13 @@ function resolveWorldExitTarget(world, exit) {
     const idMatches = world.locations.filter(location =>
         String(location.id || '').trim().toLowerCase() === normalized);
     if (idMatches.length === 1) return idMatches[0];
+    if (idMatches.length > 1) return null;
     const nameMatches = world.locations.filter(location =>
         String(location.name || '').trim().toLowerCase() === normalized);
     if (nameMatches.length === 1) return nameMatches[0];
-    if (nameMatches.length > 1) return null;
-    return findFuzzyLocation(target, world.locations);
+    // Saved graph edges must never guess. Fuzzy matching is reserved for
+    // interpreting user language before a canonical destination id is chosen.
+    return null;
 }
 
 function resolveWorldContainmentParent(world, location) {
@@ -12805,16 +13660,21 @@ function findWorldTravelPath(world, fromLocationId, toLocationId) {
     const locationById = new Map();
     const locationsByName = new Map();
     world.locations.forEach(location => {
-        locationById.set(String(location.id || '').trim().toLowerCase(), location);
+        const id = String(location.id || '').trim().toLowerCase();
+        if (id) {
+            if (!locationById.has(id)) locationById.set(id, location);
+            else locationById.set(id, null);
+        }
         const name = String(location.name || '').trim().toLowerCase();
         if (!name) return;
         if (!locationsByName.has(name)) locationsByName.set(name, location);
         else locationsByName.set(name, null);
     });
-    const from = locationById.get(String(fromLocationId || '').trim().toLowerCase())
-        || findFuzzyLocation(fromLocationId, world.locations);
-    const to = locationById.get(String(toLocationId || '').trim().toLowerCase())
-        || findFuzzyLocation(toLocationId, world.locations);
+    // Paths are state transitions, so their endpoints must be canonical exact
+    // references. Fuzzy matching belongs at the user-language boundary, not in
+    // the graph walker where a typo could select a different saved location.
+    const from = getLocationRef(world, fromLocationId);
+    const to = getLocationRef(world, toLocationId);
     if (!from || !to) return null;
     if (from.id === to.id) return [from.id];
 
@@ -12838,45 +13698,77 @@ function findWorldTravelPath(world, fromLocationId, toLocationId) {
         childrenOf.get(parent.id).push(location);
     });
 
-    const previous = new Map([[from.id, null]]);
-    const queue = [from.id];
-    for (let cursor = 0; cursor < queue.length && cursor < 2000; cursor++) {
-        const currentId = queue[cursor];
-        const current = locationById.get(String(currentId || '').trim().toLowerCase());
-        if (!current) continue;
-        const nextLocations = [];
-        for (const exit of current.exits || []) {
-            const targetRef = getExitTargetName(exit);
-            const targetKey = String(targetRef || '').trim().toLowerCase();
-            const target = locationById.get(targetKey)
-                || locationsByName.get(targetKey)
-                || resolveWorldExitTarget(world, exit);
-            if (target) nextLocations.push(target);
+    // Dijkstra: minimize elapsed travel time, then hops for zero-time legacy
+    // links. A heap keeps large, sparse worlds responsive on the main thread.
+    let sequence = 0;
+    const heap = [];
+    const less = (a, b) => a.minutes < b.minutes
+        || (a.minutes === b.minutes && (a.hops < b.hops
+            || (a.hops === b.hops && a.order < b.order)));
+    const push = entry => {
+        heap.push(entry);
+        let index = heap.length - 1;
+        while (index > 0) {
+            const parent = (index - 1) >> 1;
+            if (!less(heap[index], heap[parent])) break;
+            [heap[index], heap[parent]] = [heap[parent], heap[index]];
+            index = parent;
         }
-
-        // Containment is a real route in BOTH directions. A room that sits
-        // inside a building can be walked out of *and into* — "the bathroom is
-        // inside the house" means you can enter it from the house, whether or
-        // not the author remembered to add the reciprocal exit by hand. Treating
-        // this as exit-only made rooms one-way traps: you could leave the
-        // bathroom forever but never walk back in.
-        const parent = parentOf(current);
-        if (parent) nextLocations.push(parent);
-        (childrenOf.get(current.id) || []).forEach(child => nextLocations.push(child));
-
-        for (const target of nextLocations) {
-            if (previous.has(target.id)) continue;
-            previous.set(target.id, currentId);
-            if (target.id === to.id) {
-                const path = [to.id];
-                let step = currentId;
-                while (step) {
-                    path.push(step);
-                    step = previous.get(step);
-                }
-                return path.reverse();
+    };
+    const pop = () => {
+        const first = heap[0];
+        const last = heap.pop();
+        if (heap.length) {
+            heap[0] = last;
+            let index = 0;
+            while (index * 2 + 1 < heap.length) {
+                let child = index * 2 + 1;
+                if (child + 1 < heap.length && less(heap[child + 1], heap[child])) child++;
+                if (!less(heap[child], heap[index])) break;
+                [heap[index], heap[child]] = [heap[child], heap[index]];
+                index = child;
             }
-            queue.push(target.id);
+        }
+        return first;
+    };
+    const previous = new Map([[from.id, null]]);
+    const best = new Map([[from.id, { minutes: 0, hops: 0 }]]);
+    push({ id: from.id, minutes: 0, hops: 0, order: sequence++ });
+    while (heap.length) {
+        const step = pop();
+        const known = best.get(step.id);
+        if (step.minutes !== known.minutes || step.hops !== known.hops) continue;
+        if (step.id === to.id) {
+            const path = [];
+            for (let id = to.id; id != null; id = previous.get(id)) path.push(id);
+            return path.reverse();
+        }
+        const current = locationById.get(String(step.id).trim().toLowerCase());
+        if (!current) continue;
+        const neighbors = new Map();
+        for (const exit of current.exits || []) {
+            const key = String(getExitTargetName(exit) || '').trim().toLowerCase();
+            const target = locationById.has(key) ? locationById.get(key) : locationsByName.get(key);
+            if (!target) continue;
+            const minutes = typeof exit === 'object' ? Math.max(0, Number(exit?.travelTime) || 0) : 0;
+            if (!neighbors.has(target.id) || minutes < neighbors.get(target.id).minutes) {
+                neighbors.set(target.id, { target, minutes });
+            }
+        }
+        // Preserve legacy implicit containment until definitions are migrated
+        // to explicit traversal edges. An authored edge keeps its own duration.
+        const parent = parentOf(current);
+        for (const target of [parent, ...(childrenOf.get(current.id) || [])].filter(Boolean)) {
+            if (!neighbors.has(target.id)) neighbors.set(target.id, { target, minutes: 0 });
+        }
+        for (const { target, minutes } of neighbors.values()) {
+            const candidate = { minutes: step.minutes + minutes, hops: step.hops + 1 };
+            const old = best.get(target.id);
+            if (old && (old.minutes < candidate.minutes
+                || (old.minutes === candidate.minutes && old.hops <= candidate.hops))) continue;
+            best.set(target.id, candidate);
+            previous.set(target.id, step.id);
+            push({ id: target.id, ...candidate, order: sequence++ });
         }
     }
     return null;
@@ -14040,17 +14932,106 @@ function renameWorldLocationId(world, location, requestedId) {
     (world.factions || []).forEach(faction => {
         faction.territory = (faction.territory || []).map(id => id === oldId ? newId : id);
     });
+    migrateWorldSessionLocationReferences(world, oldId, newId);
     return newId;
+}
+
+function migrateWorldSessionLocationReferences(world, oldId, newId = '', oldName = '') {
+    if (!world?.id || !oldId) return;
+    const instance = state.worldInstances?.[world.id];
+    const fallbackId = newId || world.startLocationId || world.locations?.[0]?.id || '';
+    const replace = value => value === oldId ? newId : value;
+    const rewriteExit = exit => {
+        if (exit && typeof exit === 'object') {
+            if (exit.targetLocationId === oldId) exit.targetLocationId = newId;
+        }
+        return exit;
+    };
+    const removedKeys = new Set([oldId, oldName].filter(Boolean)
+        .map(value => String(value).trim().toLowerCase()));
+    const targetsRemovedLocation = exit => {
+        const target = String(exit?.targetLocationId || getExitTargetName(exit) || '').trim().toLowerCase();
+        return removedKeys.has(target);
+    };
+    (instance?.sessions || []).forEach(session => {
+        if (session.playerLocation === oldId) session.playerLocation = fallbackId;
+        Object.values(session.entityStates || {}).forEach(entityState => {
+            if (entityState?.location === oldId) entityState.location = fallbackId;
+            if (entityState?.lastKnownLocation === oldId) entityState.lastKnownLocation = fallbackId;
+            const journey = entityState?.journey;
+            if (journey && (journey.originId === oldId || journey.destinationId === oldId
+                || journey.path?.includes(oldId))) {
+                if (newId) {
+                    journey.originId = replace(journey.originId);
+                    journey.destinationId = replace(journey.destinationId);
+                    journey.path = (journey.path || []).map(replace);
+                } else {
+                    entityState.location = getLocationRef(world, journey.originId)?.id || fallbackId;
+                    entityState.currentActivity = 'Travel interrupted: a location on the route was removed.';
+                    delete entityState.journey;
+                }
+            }
+        });
+        if (session.locationStates?.[oldId] !== undefined) {
+            if (newId) session.locationStates[newId] = session.locationStates[oldId];
+            delete session.locationStates[oldId];
+        }
+        if (session.economy?.markets?.[oldId] !== undefined) {
+            if (newId) session.economy.markets[newId] = session.economy.markets[oldId];
+            delete session.economy.markets[oldId];
+        }
+        if (isPlainObject(session.dynamicExits)) {
+            if (session.dynamicExits[oldId] !== undefined) {
+                if (newId) session.dynamicExits[newId] = session.dynamicExits[oldId];
+                delete session.dynamicExits[oldId];
+            }
+            Object.keys(session.dynamicExits).forEach(locationId => {
+                const exits = Array.isArray(session.dynamicExits[locationId]) ? session.dynamicExits[locationId] : [];
+                session.dynamicExits[locationId] = (newId ? exits : exits.filter(exit => !targetsRemovedLocation(exit)))
+                    .map(rewriteExit);
+            });
+        }
+        if (newId) {
+            (session.scheduledEvents || []).forEach(event => { event.locationId = replace(event.locationId); });
+        } else {
+            // A deleted place is not equivalent to the world's fallback. Drop
+            // future events tied to it instead of making them fire elsewhere.
+            session.scheduledEvents = (session.scheduledEvents || [])
+                .filter(event => event.locationId !== oldId);
+        }
+        Object.values(session.npcScheduleOverrides || {}).forEach(schedule => {
+            if (!Array.isArray(schedule)) return;
+            if (newId) schedule.forEach(block => { block.locationId = replace(block.locationId); });
+            else {
+                for (let index = schedule.length - 1; index >= 0; index--) {
+                    if (schedule[index]?.locationId === oldId) schedule.splice(index, 1);
+                }
+            }
+        });
+        (session.consequences || []).forEach(item => { item.locationId = replace(item.locationId); });
+        (session.worldNews || []).forEach(item => { item.locationId = replace(item.locationId); });
+        (session.turnEvents || []).forEach(event => {
+            ['location_id', 'from_location_id', 'to_location_id'].forEach(key => { event[key] = replace(event[key]); });
+        });
+        if (session.playerIdentity?.homeLocationId === oldId) session.playerIdentity.homeLocationId = newId;
+        if (session.lifeSeed) {
+            ['homeLocationId', 'startLocationId'].forEach(key => { session.lifeSeed[key] = replace(session.lifeSeed[key]); });
+            if (!newId && session.lifeSeed.startLocationId === '') session.lifeSeed.startLocationId = fallbackId;
+        }
+    });
 }
 
 function removeWorldLocationRecord(world, locationId) {
     if (!world || !locationId) return;
+    const removed = (world.locations || []).find(location => location.id === locationId);
+    const removedKeys = new Set([locationId, removed?.name].filter(Boolean)
+        .map(value => String(value).trim().toLowerCase()));
     world.locations = (world.locations || []).filter(location => location.id !== locationId);
     world.locations.forEach(location => {
         if (location.parentLocationId === locationId) location.parentLocationId = '';
         location.exits = (location.exits || []).filter(exit => {
-            const linked = getLocationRef(world, exit?.targetLocationId || getExitTargetName(exit));
-            return exit?.targetLocationId !== locationId && linked?.id !== locationId;
+            const target = String(exit?.targetLocationId || getExitTargetName(exit) || '').trim().toLowerCase();
+            return !removedKeys.has(target);
         });
     });
     (world.entities || []).forEach(entity => {
@@ -14069,6 +15050,40 @@ function removeWorldLocationRecord(world, locationId) {
         faction.territory = (faction.territory || []).filter(id => id !== locationId);
     });
     if (world.startLocationId === locationId) world.startLocationId = world.locations[0]?.id || '';
+    migrateWorldSessionLocationReferences(world, locationId, '', removed?.name || '');
+}
+
+function removeWorldGroupRecord(world, groupId) {
+    if (!world || !groupId || !(world.groups || []).some(group => group.id === groupId)) return false;
+    world.groups = world.groups.filter(group => group.id !== groupId);
+    (world.entities || []).forEach(entity => {
+        entity.groupIds = (entity.groupIds || []).filter(id => id !== groupId);
+        if (entity.householdId === groupId) {
+            entity.householdId = entity.groupIds.find(id => world.groups.some(group => group.id === id && group.type === 'household')) || '';
+        }
+    });
+    return true;
+}
+
+function mergeWorldGroupRecords(world, sourceId, targetId) {
+    if (!world || !sourceId || !targetId || sourceId === targetId) return false;
+    const source = (world.groups || []).find(group => group.id === sourceId);
+    const target = (world.groups || []).find(group => group.id === targetId);
+    if (!source || !target) return false;
+    if (!target.description && source.description) target.description = source.description;
+    if (!target.homeLocationId && source.homeLocationId) target.homeLocationId = source.homeLocationId;
+    target.tags = [...new Set([...(target.tags || []), ...(source.tags || [])])].slice(0, 30);
+    (world.entities || []).forEach(entity => {
+        const memberships = (entity.groupIds || []).map(id => id === sourceId ? targetId : id);
+        entity.groupIds = [...new Set(memberships)];
+        if (entity.householdId === sourceId) {
+            entity.householdId = target.type === 'household'
+                ? targetId
+                : entity.groupIds.find(id => world.groups.some(group => group.id === id && group.type === 'household' && id !== sourceId)) || '';
+        }
+    });
+    world.groups = world.groups.filter(group => group.id !== sourceId);
+    return true;
 }
 
 function worldRegionTravelLinks(world, regionId) {
@@ -15249,11 +16264,12 @@ function buildSemanticWorldGraph(world) {
         const directions = new Set(pair.entries.map(entry => `${entry.sourceId}>${entry.targetId}`));
         const explicit = pair.entries.find(entry => entry.isOneWay);
         const hasReverse = directions.has(`${pair.a}>${pair.b}`) && directions.has(`${pair.b}>${pair.a}`);
-        const isOneWay = !!explicit && !hasReverse;
+        const isOneWay = !hasReverse;
+        const directed = explicit || pair.entries[0];
         const times = pair.entries.map(entry => entry.travelTime).filter(Boolean);
         return {
-            sourceId: isOneWay ? explicit.sourceId : pair.a,
-            targetId: isOneWay ? explicit.targetId : pair.b,
+            sourceId: isOneWay ? directed.sourceId : pair.a,
+            targetId: isOneWay ? directed.targetId : pair.b,
             isOneWay,
             travelTime: times.length ? Math.min(...times) : 0,
             directions: [...new Set(pair.entries.map(entry => entry.direction).filter(Boolean))],
@@ -16159,12 +17175,98 @@ function worldEntityDirectoryGroups(world, entities, groupBy, mode = 'people') {
             else add('Unaffiliated', entity);
             return;
         }
-        const household = world.groups.find(group => group.id === entity.householdId && group.type === 'household');
+        const household = world.groups.find(group => group.id === entity.householdId && group.type === 'household')
+            || (entity.groupIds || []).map(id => world.groups.find(group => group.id === id))
+                .find(group => group && ['household', 'family'].includes(group.type));
         if (household) return add(household.name, entity);
         const home = getLocationRef(world, entity.homeLocation);
         add(home ? `${home.name} household` : 'No household', entity);
     });
     return groups;
+}
+
+function renderWorldGroupManager(world, container) {
+    const people = (world.entities || []).filter(entity => entity.type === 'npc');
+    const wrapper = document.createElement('section');
+    wrapper.className = 'world-group-manager';
+    wrapper.innerHTML = `<details class="world-group-manager-shell" ${(world.groups || []).length <= 6 ? 'open' : ''}>
+        <summary><span><strong>Households, families &amp; groups</strong><small>${(world.groups || []).length} group${(world.groups || []).length === 1 ? '' : 's'} · edit, merge or safely remove them</small></span></summary>
+        <div class="world-group-create"><input class="form-input world-group-new-name" placeholder="New household, family or organization"><select class="form-select world-group-new-type"><option value="household">Household</option><option value="family">Family</option><option value="organization">Organization</option><option value="crew">Crew / team</option><option value="other">Other</option></select><button class="btn btn-primary world-group-create-btn" type="button">Create</button></div>
+        <div class="world-group-card-list"></div>
+    </details>`;
+    const list = wrapper.querySelector('.world-group-card-list');
+    (world.groups || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(group => {
+        const members = people.filter(person => (person.groupIds || []).includes(group.id));
+        const card = document.createElement('details');
+        card.className = 'world-group-card';
+        card.innerHTML = `<summary><span><strong>${escapeHTML(group.name || 'Unnamed group')}</strong><small>${escapeHTML(group.type)} · ${members.length} member${members.length === 1 ? '' : 's'}</small></span></summary>
+            <div class="world-group-fields">
+                <label><span>Name</span><input class="form-input group-name" value="${escapeHTML(group.name || '')}"></label>
+                <label><span>Type</span><select class="form-select group-type"><option value="household" ${group.type === 'household' ? 'selected' : ''}>Household</option><option value="family" ${group.type === 'family' ? 'selected' : ''}>Family</option><option value="organization" ${group.type === 'organization' ? 'selected' : ''}>Organization</option><option value="crew" ${group.type === 'crew' ? 'selected' : ''}>Crew / team</option><option value="other" ${group.type === 'other' ? 'selected' : ''}>Other</option></select></label>
+                <label><span>Home</span><select class="form-select group-home"><option value="">No shared home</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${group.homeLocationId === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
+                <label class="is-wide"><span>Description</span><textarea class="form-textarea group-description" rows="2">${escapeHTML(group.description || '')}</textarea></label>
+                <label class="is-wide"><span>Tags</span><input class="form-input group-tags" value="${escapeHTML((group.tags || []).join(', '))}" placeholder="wealthy, estranged, political…"></label>
+            </div>
+            <div class="world-group-members"><strong>Members</strong><div>${members.length ? members.map(person => `<span>${escapeHTML(person.name)}<button type="button" data-group-remove-member="${escapeHTML(person.id)}" aria-label="Remove ${escapeHTML(person.name)} from ${escapeHTML(group.name)}">×</button></span>`).join('') : '<small>No members yet.</small>'}</div>
+                <div class="world-group-add-member"><select class="form-select"><option value="">Add a person…</option>${people.filter(person => !(person.groupIds || []).includes(group.id)).map(person => `<option value="${escapeHTML(person.id)}">${escapeHTML(person.name)}</option>`).join('')}</select><button class="btn btn-ghost" type="button">Add</button></div>
+            </div>
+            <div class="world-group-card-actions"><select class="form-select group-merge-target"><option value="">Merge into…</option>${world.groups.filter(other => other.id !== group.id).map(other => `<option value="${escapeHTML(other.id)}">${escapeHTML(other.name)} · ${escapeHTML(other.type)}</option>`).join('')}</select><button class="btn btn-ghost group-merge" type="button">Merge</button><button class="btn btn-danger group-delete" type="button">Delete group</button></div>`;
+        card.querySelector('.group-name').oninput = event => { group.name = event.target.value.slice(0, 120); updateWorldTokenCount(); };
+        card.querySelector('.group-type').onchange = event => {
+            group.type = event.target.value;
+            people.forEach(person => {
+                if (!(person.groupIds || []).includes(group.id)) return;
+                if (group.type === 'household' && !person.householdId) person.householdId = group.id;
+                else if (person.householdId === group.id && group.type !== 'household') person.householdId = person.groupIds.find(id => world.groups.some(candidate => candidate.id === id && candidate.type === 'household')) || '';
+            });
+            renderWorldEntities();
+        };
+        card.querySelector('.group-home').onchange = event => { group.homeLocationId = event.target.value; };
+        card.querySelector('.group-description').oninput = event => { group.description = event.target.value.slice(0, 1200); updateWorldTokenCount(); };
+        card.querySelector('.group-tags').onchange = event => { group.tags = [...new Set(event.target.value.split(',').map(tag => tag.trim()).filter(Boolean))].slice(0, 30); updateWorldTokenCount(); };
+        card.querySelectorAll('[data-group-remove-member]').forEach(button => button.onclick = () => {
+            const person = people.find(item => item.id === button.dataset.groupRemoveMember);
+            if (!person) return;
+            person.groupIds = (person.groupIds || []).filter(id => id !== group.id);
+            if (person.householdId === group.id) person.householdId = person.groupIds.find(id => world.groups.some(candidate => candidate.id === id && candidate.type === 'household')) || '';
+            renderWorldEntities(); updateWorldTokenCount();
+        });
+        const addSelect = card.querySelector('.world-group-add-member select');
+        card.querySelector('.world-group-add-member button').onclick = () => {
+            const person = people.find(item => item.id === addSelect.value);
+            if (!person) return;
+            person.groupIds = [...new Set([...(person.groupIds || []), group.id])];
+            if (group.type === 'household' && !person.householdId) person.householdId = group.id;
+            renderWorldEntities(); updateWorldTokenCount();
+        };
+        card.querySelector('.group-merge').onclick = () => {
+            const targetId = card.querySelector('.group-merge-target').value;
+            const target = world.groups.find(item => item.id === targetId);
+            if (!target) return showToast('Choose the group that should survive the merge.', 'info');
+            if (!confirm(`Merge “${group.name}” into “${target.name}”? Members, tags and missing details will move to the surviving group.`)) return;
+            mergeWorldGroupRecords(world, group.id, target.id);
+            renderWorldEntities(); updateWorldTokenCount();
+            showToast(`Merged into ${target.name}. Save World to keep the change.`, 'success');
+        };
+        card.querySelector('.group-delete').onclick = () => {
+            if (!confirm(`Delete “${group.name}”? Its ${members.length} member${members.length === 1 ? '' : 's'} will remain as characters and only lose this membership.`)) return;
+            removeWorldGroupRecord(world, group.id);
+            renderWorldEntities(); updateWorldTokenCount();
+            showToast('Group deleted; its characters were kept.', 'success');
+        };
+        list.appendChild(card);
+    });
+    if (!(world.groups || []).length) list.innerHTML = '<div class="world-directory-empty">No authored households, families or organizations yet.</div>';
+    wrapper.querySelector('.world-group-create-btn').onclick = () => {
+        const name = wrapper.querySelector('.world-group-new-name').value.trim();
+        if (!name) return showToast('Name the household or group first.', 'info');
+        const type = wrapper.querySelector('.world-group-new-type').value;
+        const used = new Set(world.groups.map(group => group.id));
+        const id = uniqueWorldRecordId(world.groups, '', 'grp', name, used);
+        world.groups.push({ id, name: name.slice(0, 120), type, description: '', homeLocationId: '', tags: [] });
+        renderWorldEntities(); updateWorldTokenCount();
+    };
+    container.appendChild(wrapper);
 }
 
 function renderWorldEntityDirectory(world, container, mode = 'people') {
@@ -16242,6 +17344,7 @@ function renderWorldEntities(mode = 'people') {
     const container = inspecting ? document.getElementById('world-record-body') : document.getElementById(activeMode === 'items' ? 'w-items-list' : 'w-entities-list');
     container.innerHTML = '';
     if (!inspecting) {
+        if (activeMode === 'people') renderWorldGroupManager(world, container);
         renderWorldEntityDirectory(world, container, activeMode);
         return;
     }
@@ -16402,14 +17505,17 @@ function renderWorldEntities(mode = 'people') {
             <div class="secret-group world-inspector-section" data-inspector-section="relationships" style="border-color:var(--border);">
                 <div class="secret-header">
                     <div class="secret-title" style="color:var(--text-2);">🫱 Standing with others</div>
-                    <select class="form-select ent-add-relation" style="max-width:200px; font-size:11px; padding:3px 6px;">
-                        <option value="">+ Add someone…</option>
-                        ${(state.editingWorld.entities || [])
-                            .filter(other => other.type === 'npc' && other.id !== ent.id
-                                && !(state.editingWorld.relationships || []).some(rel =>
-                                    relationshipKey(rel.a, rel.b) === relationshipKey(ent.id, other.id)))
-                            .map(other => `<option value="${escapeHTML(other.id)}">${escapeHTML(other.name || other.id)}</option>`).join('')}
-                    </select>
+                    <div class="relationship-person-picker">
+                        <input class="form-input ent-add-relation-search" list="ent-relation-options-${idx}" placeholder="Search people…" autocomplete="off">
+                        <datalist id="ent-relation-options-${idx}">
+                            ${(state.editingWorld.entities || [])
+                                .filter(other => other.type === 'npc' && other.id !== ent.id
+                                    && !(state.editingWorld.relationships || []).some(rel =>
+                                        relationshipKey(rel.a, rel.b) === relationshipKey(ent.id, other.id)))
+                                .map(other => `<option value="${escapeHTML(other.name || other.id)} — ${escapeHTML(other.id)}"></option>`).join('')}
+                        </datalist>
+                        <button class="tool-btn ent-add-relation-btn" type="button">Add</button>
+                    </div>
                 </div>
                 ${(() => {
                     const mine = (state.editingWorld.relationships || [])
@@ -16562,13 +17668,28 @@ function renderWorldEntities(mode = 'people') {
                 renderWorldEntities();
                 updateWorldTokenCount();
             };
-            div.querySelector('.ent-add-relation').onchange = (e) => {
-                const otherId = e.target.value;
-                if (!otherId) return;
+            const relationSearch = div.querySelector('.ent-add-relation-search');
+            const addSearchedRelationship = () => {
+                const query = relationSearch.value.trim();
+                if (!query) return;
+                const displayedId = query.includes(' — ') ? query.slice(query.lastIndexOf(' — ') + 3).trim() : '';
+                const other = (state.editingWorld.entities || []).find(candidate => candidate.type === 'npc'
+                    && candidate.id !== ent.id
+                    && (candidate.id === displayedId || candidate.id === query || String(candidate.name || '').trim().toLowerCase() === query.toLowerCase()));
+                if (!other) return showToast('Choose a person from the search results.', 'info');
+                if ((state.editingWorld.relationships || []).some(rel => relationshipKey(rel.a, rel.b) === relationshipKey(ent.id, other.id))) {
+                    return showToast(`A relationship with ${other.name || other.id} already exists.`, 'info');
+                }
                 if (!Array.isArray(state.editingWorld.relationships)) state.editingWorld.relationships = [];
-                state.editingWorld.relationships.push({ a: ent.id, b: otherId, label: '', score: 0, reason: '' });
+                state.editingWorld.relationships.push({ a: ent.id, b: other.id, label: '', score: 0, reason: '' });
                 renderWorldEntities();   // the pair now shows on both cards
                 updateWorldTokenCount();
+            };
+            div.querySelector('.ent-add-relation-btn').onclick = addSearchedRelationship;
+            relationSearch.onkeydown = event => {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+                addSearchedRelationship();
             };
             const relationAt = event => (state.editingWorld.relationships || [])[Number(event.target.dataset.rel)];
             div.querySelectorAll('.rel-label').forEach(input => {
@@ -16902,6 +18023,10 @@ function addWorldStartingLife() {
         socialRank: 'commoner',
         description: '',
         startLocationId: world.startLocationId || world.locations?.[0]?.id || '',
+        homeLocationId: '',
+        householdId: '',
+        groupIds: [],
+        startingRelationships: [],
         factionId: '',
         factionReputation: 0,
         title: '',
@@ -16944,6 +18069,10 @@ function renderWorldSandboxStudio() {
         `<option value="${escapeHTML(location.id)}">${escapeHTML(location.name)}</option>`).join('');
     const factionOptions = (world.factions || []).map(faction =>
         `<option value="${escapeHTML(faction.id)}">${escapeHTML(faction.name)}</option>`).join('');
+    const groups = Array.isArray(world.groups) ? world.groups : [];
+    const householdOptions = groups.filter(group => ['household', 'family'].includes(String(group.type || '').toLowerCase())).map(group =>
+        `<option value="${escapeHTML(group.id)}">${escapeHTML(group.name)}</option>`).join('');
+    const relationshipPeople = (world.entities || []).filter(entity => entity.type === 'npc');
     const ensureOptions = (id, values) => {
         let datalist = document.getElementById(id);
         if (!datalist) {
@@ -16979,10 +18108,18 @@ function renderWorldSandboxStudio() {
                 <input class="form-input origin-rank" list="world-origin-ranks" value="${escapeHTML(life.socialRank)}" placeholder="Choose or enter a social rank">
                 <input class="form-input origin-title" value="${escapeHTML(life.title)}" placeholder="Title (optional)">
                 <input class="form-input origin-legal" list="world-origin-legal" value="${escapeHTML(life.legalStatus)}" placeholder="Choose or enter legal status">
-                <select class="form-select origin-location"><option value="">Default starting location</option>${locationOptions}</select>
+                <label class="origin-structured-field"><span>Opening location</span><select class="form-select origin-location"><option value="">World default</option>${locationOptions}</select></label>
+                <label class="origin-structured-field"><span>Player home</span><select class="form-select origin-home"><option value="">Let initializer fill this</option>${locationOptions}</select></label>
+                <label class="origin-structured-field"><span>Family / household</span><select class="form-select origin-household"><option value="">No authored household</option>${householdOptions}</select></label>
                 <select class="form-select origin-faction"><option value="">No starting allegiance</option>${factionOptions}</select>
                 <input class="form-input origin-faction-rep" type="number" min="-100" max="100" value="${life.factionReputation}" placeholder="Faction reputation">
                 <textarea class="form-textarea origin-desc origin-wide" rows="2" placeholder="What this life feels like and what makes its opening distinct.">${escapeHTML(life.description)}</textarea>
+                <div class="origin-wide origin-authored-network">
+                    <div class="origin-network-heading"><div><strong>Authored social position</strong><small>These choices override the initializer model.</small></div></div>
+                    <div class="origin-group-options">${groups.length ? groups.map(group => `<label><input type="checkbox" class="origin-group-id" value="${escapeHTML(group.id)}" ${(life.groupIds || []).includes(group.id) ? 'checked' : ''}><span>${escapeHTML(group.name)}<small>${escapeHTML(group.type || 'group')}</small></span></label>`).join('') : '<span class="form-hint">Create a household, company or group under Society to assign it here.</span>'}</div>
+                    <div class="origin-network-heading"><div><strong>Starting relationships</strong><small>Connect the player to existing authored characters.</small></div><button type="button" class="btn btn-ghost add-origin-relationship">+ Add relationship</button></div>
+                    <div class="origin-relationship-list"></div>
+                </div>
                 <input class="form-input origin-inventory origin-wide" value="${escapeHTML((life.inventory || []).map(item => globalThis.HordeRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', '))}" placeholder="Starting possessions, comma separated">
                 ${statControls}
                 <textarea class="form-textarea origin-obligations" rows="3" placeholder="Obligations, one per line">${escapeHTML((life.obligations || []).join('\n'))}</textarea>
@@ -16995,6 +18132,8 @@ function renderWorldSandboxStudio() {
             </div>
             <div class="sandbox-origin-editor-actions"><button class="btn btn-danger delete-origin">Delete starting life</button></div>`;
         card.querySelector('.origin-location').value = life.startLocationId || '';
+        card.querySelector('.origin-home').value = life.homeLocationId || '';
+        card.querySelector('.origin-household').value = life.householdId || '';
         card.querySelector('.origin-faction').value = life.factionId || '';
         const bind = (selector, field, transform = value => value) => {
             card.querySelector(selector).oninput = event => { life[field] = transform(event.target.value); updateWorldTokenCount(); };
@@ -17015,6 +18154,59 @@ function renderWorldSandboxStudio() {
         bind('.origin-outfit', 'outfit', value => value.slice(0, 300));
         bind('.origin-intro', 'intro', value => value.slice(0, 6000));
         card.querySelector('.origin-location').onchange = event => { life.startLocationId = event.target.value; };
+        card.querySelector('.origin-home').onchange = event => { life.homeLocationId = event.target.value; };
+        card.querySelector('.origin-household').onchange = event => {
+            life.householdId = event.target.value;
+            life.groupIds = Array.isArray(life.groupIds) ? life.groupIds : [];
+            if (life.householdId && !life.groupIds.includes(life.householdId)) life.groupIds.unshift(life.householdId);
+            card.querySelectorAll('.origin-group-id').forEach(input => { input.checked = life.groupIds.includes(input.value); });
+            updateWorldTokenCount();
+        };
+        card.querySelectorAll('.origin-group-id').forEach(input => input.onchange = () => {
+            life.groupIds = [...card.querySelectorAll('.origin-group-id:checked')].map(item => item.value);
+            if (life.householdId && !life.groupIds.includes(life.householdId)) {
+                life.householdId = '';
+                card.querySelector('.origin-household').value = '';
+            }
+            updateWorldTokenCount();
+        });
+        const relationshipList = card.querySelector('.origin-relationship-list');
+        const renderStartingRelationships = () => {
+            life.startingRelationships = Array.isArray(life.startingRelationships) ? life.startingRelationships : [];
+            relationshipList.innerHTML = '';
+            if (!life.startingRelationships.length) relationshipList.innerHTML = '<span class="form-hint">No authored player relationships. The initializer may fill gaps.</span>';
+            life.startingRelationships.forEach((relationship, relationshipIndex) => {
+                const person = relationshipPeople.find(entity => entity.id === relationship.npcId);
+                const row = document.createElement('div');
+                row.className = 'origin-relationship-row';
+                row.innerHTML = `<label><span>Character</span><input class="form-input origin-relationship-person" list="origin-people-${escapeHTML(life.id)}" value="${escapeHTML(person?.name || relationship.npcId || '')}" placeholder="Search existing character"></label><label><span>Relationship</span><input class="form-input origin-relationship-label" value="${escapeHTML(relationship.label || '')}" placeholder="Mother, boss, friend…"></label><label><span>Starting attitude</span><select class="form-select origin-relationship-disposition"><option value="15">Hostile</option><option value="35">Wary</option><option value="50">Neutral</option><option value="65">Friendly</option><option value="82">Close</option></select></label><button type="button" class="btn btn-ghost remove-origin-relationship" aria-label="Remove starting relationship">✕</button>`;
+                row.querySelector('.origin-relationship-disposition').value = String([15, 35, 50, 65, 82].reduce((best, value) => Math.abs(value - Number(relationship.disposition ?? 50)) < Math.abs(best - Number(relationship.disposition ?? 50)) ? value : best, 50));
+                row.querySelector('.origin-relationship-person').onchange = event => {
+                    const query = event.target.value.trim().toLowerCase();
+                    const match = relationshipPeople.find(entity => entity.id.toLowerCase() === query || entity.name.toLowerCase() === query);
+                    relationship.npcId = match?.id || '';
+                    event.target.setCustomValidity(match ? '' : 'Choose an existing character from the list.');
+                    updateWorldTokenCount();
+                };
+                row.querySelector('.origin-relationship-label').oninput = event => { relationship.label = event.target.value.slice(0, 100); updateWorldTokenCount(); };
+                row.querySelector('.origin-relationship-disposition').onchange = event => { relationship.disposition = Number(event.target.value); updateWorldTokenCount(); };
+                row.querySelector('.remove-origin-relationship').onclick = () => { life.startingRelationships.splice(relationshipIndex, 1); renderStartingRelationships(); updateWorldTokenCount(); };
+                relationshipList.appendChild(row);
+            });
+        };
+        let peopleList = document.getElementById(`origin-people-${life.id}`);
+        if (!peopleList) {
+            peopleList = document.createElement('datalist');
+            peopleList.id = `origin-people-${life.id}`;
+            peopleList.innerHTML = relationshipPeople.map(person => `<option value="${escapeHTML(person.name)}">${escapeHTML(person.id)}</option>`).join('');
+            card.appendChild(peopleList);
+        }
+        card.querySelector('.add-origin-relationship').onclick = () => {
+            life.startingRelationships = Array.isArray(life.startingRelationships) ? life.startingRelationships : [];
+            life.startingRelationships.push({ npcId: '', label: '', disposition: 65 });
+            renderStartingRelationships();
+        };
+        renderStartingRelationships();
         card.querySelector('.origin-faction').onchange = event => { life.factionId = event.target.value; };
         card.querySelector('.origin-faction-rep').onchange = event => {
             life.factionReputation = livingClamp(event.target.value, -100, 100);
@@ -17488,7 +18680,10 @@ function renderWorlds() {
             <div class="char-card-body">
                 <div class="char-card-name">${escapeHTML(world.name || 'Recovered World')}</div>
                 <div class="char-card-desc">Safety copy from ${escapeHTML(snapshot.capturedAt ? new Date(snapshot.capturedAt).toLocaleString() : 'an earlier save')}.</div>
-                <button class="btn btn-primary btn-full recover-world-card-btn">Restore World</button>
+                <div style="display:flex; gap:8px; margin-top:12px;">
+                    <button class="btn btn-primary btn-full recover-world-card-btn">Restore World</button>
+                    <button class="btn btn-ghost discard-world-recovery-btn" title="Permanently remove this safety copy">Delete copy</button>
+                </div>
             </div>`;
         card.querySelector('.recover-world-card-btn').onclick = async () => {
             if (state.worlds.some(item => item.id === world.id)) return;
@@ -17501,6 +18696,15 @@ function renderWorlds() {
             await saveState();
             renderWorlds();
             showToast(`Restored "${restored.name}" and reconnected its existing sessions.`, 'success');
+        };
+        card.querySelector('.discard-world-recovery-btn').onclick = async () => {
+            if (!confirm(`Permanently delete the safety copy of "${world.name || 'this world'}"?`)) return;
+            delete state.worldRecoverySnapshots[world.id];
+            if (state.worldInstances?.[world.id]) delete state.worldInstances[world.id];
+            worldMediaDirty = true;
+            await saveState();
+            renderWorlds();
+            showToast(`Deleted the safety copy of "${world.name || 'World'}".`, 'success');
         };
         grid.appendChild(card);
     });
@@ -18380,9 +19584,13 @@ function setupWorldPlayLogic() {
     };
 
     // Parity Features
-    document.getElementById('world-new-session-btn').onclick = createNewWorldSession;
+    document.getElementById('world-new-session-btn').onclick = () => {
+        if (worldTurnInProgress) return showToast('Finish or stop the current DM response before changing timelines.', 'info');
+        return createNewWorldSession();
+    };
 
     document.getElementById('world-rename-session-btn').onclick = async () => {
+        if (worldTurnInProgress) return showToast('Finish or stop the current DM response before changing timelines.', 'info');
         const sess = getCurrentWorldSession();
         if (!sess) return;
         const newName = prompt('Enter new session name:', sess.name || 'Session');
@@ -18395,6 +19603,7 @@ function setupWorldPlayLogic() {
     };
     
     document.getElementById('world-del-session-btn').onclick = () => {
+        if (worldTurnInProgress) return showToast('Finish or stop the current DM response before changing timelines.', 'info');
         const inst = state.worldInstances[state.activeWorldId];
         if (!inst || inst.sessions.length <= 1) return showToast('Cannot delete the last session', 'info');
         
@@ -18411,12 +19620,19 @@ function setupWorldPlayLogic() {
     };
 
     document.getElementById('world-session-select').onchange = (e) => {
+        if (worldTurnInProgress) {
+            e.target.value = state.worldInstances[state.activeWorldId]?.activeSessionId || '';
+            return showToast('Finish or stop the current DM response before changing timelines.', 'info');
+        }
         state.worldInstances[state.activeWorldId].activeSessionId = e.target.value;
         saveState().catch(() => {});
         renderWorldPlayState();
     };
 
-    document.getElementById('world-session-zero-btn').onclick = () => openSessionZero(null);
+    document.getElementById('world-session-zero-btn').onclick = () => {
+        if (worldTurnInProgress) return showToast('Finish or stop the current DM response before changing timeline setup.', 'info');
+        openSessionZero(null);
+    };
 
     document.getElementById('world-continue-btn').onclick = () => {
         if (worldTurnInProgress) return showToast('The DM is still responding — please wait.', 'info');
@@ -18677,6 +19893,8 @@ function getCurrentWorldSession() {
                 }
 
                 const entState = session.entityStates[ent.id];
+                // A persisted journey owns a deliberately off-scene position.
+                if (entState.journey && entState.location == null) return;
                 const startRef = (ent.startLocation || "").trim().toLowerCase();
 
                 // INITIAL POSITIONING: only heal missing/invalid locations. A valid
@@ -20276,6 +21494,9 @@ function openSessionZero(onDone) {
             originList.innerHTML = '';
             world.startingLives.forEach(life => {
                 const location = getLocationRef(world, life.startLocationId);
+                const home = getLocationRef(world, life.homeLocationId);
+                const household = (world.groups || []).find(group => group.id === life.householdId);
+                const memberships = (life.groupIds || []).map(id => (world.groups || []).find(group => group.id === id)?.name).filter(Boolean);
                 const card = document.createElement('button');
                 card.type = 'button';
                 card.className = `session-origin-card${sess.originId === life.id ? ' selected' : ''}`;
@@ -20285,6 +21506,7 @@ function openSessionZero(onDone) {
                         <span class="session-origin-meta">${escapeHTML(life.socialRank || 'wanderer')}${location ? ` · ${escapeHTML(location.name)}` : ''}</span>
                         <strong>${escapeHTML(life.name)}</strong>
                         <small>${escapeHTML(life.description || life.role || '')}</small>
+                        ${(home || household || memberships.length || life.startingRelationships?.length) ? `<small class="session-origin-capabilities">${escapeHTML([home ? `Home: ${home.name}` : '', household ? `Family: ${household.name}` : '', memberships.length ? `Groups: ${memberships.join(', ')}` : '', life.startingRelationships?.length ? `${life.startingRelationships.length} authored relationship${life.startingRelationships.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '))}</small>` : ''}
                         ${(life.skills?.length || life.perks?.length) ? `<small class="session-origin-capabilities">${escapeHTML([...(life.skills || []).slice(0, 3), ...(life.perks || []).slice(0, 2)].join(' · '))}</small>` : ''}
                     </span>`;
                 card.onclick = () => {
@@ -20444,7 +21666,9 @@ function openNpcDossier(npcId) {
     const parsedDisposition = Number(entState.disposition);
     const dispo = Math.max(0, Math.min(100, Number.isFinite(parsedDisposition) ? parsedDisposition : 50));
     const dispoColor = dispo < 35 ? 'var(--red)' : (dispo < 65 ? 'var(--warning, #FF8C42)' : 'var(--success)');
-    const locName = world.locations.find(l => l.id === entState.location)?.name || 'Unknown';
+    const locName = entState.journey
+        ? `Travelling to ${getLocationRef(worldForSession(world, sess), entState.journey.destinationId)?.name || 'destination'}`
+        : world.locations.find(l => l.id === entState.location)?.name || 'Unknown';
     const obs = (entState.observations || []).map(o => typeof o === 'string' ? { text: o } : o);
     const goalProgress = livingClamp(entState.goalProgress || 0, 0, 100);
     const goalAutonomy = ['paused', 'low', 'medium', 'high'].includes(entState.goalAutonomy) ? entState.goalAutonomy : 'medium';
@@ -20727,7 +21951,8 @@ function renderWorldPlayState() {
     }
 
     // 3. Location & Exits
-    const loc = sessionLocations(world, sess).find(l => l.id === sess.playerLocation); // session-scoped geography
+    const playWorldView = worldForSession(world, sess);
+    const loc = playWorldView.locations.find(l => l.id === sess.playerLocation); // session-scoped geography
     document.getElementById('world-loc-name').textContent = loc ? loc.name : 'Unknown Realm';
     document.getElementById('world-loc-desc').textContent = loc ? loc.description : 'The surroundings are indistinct.';
 
@@ -20745,6 +21970,10 @@ function renderWorldPlayState() {
             btn.textContent = '→ ' + exitText + (oneWay ? ' [One-Way]' : '');
             
             btn.onclick = () => {
+                if (worldTurnInProgress) {
+                    showToast('The DM is still responding — stop that turn before travelling.', 'info');
+                    return;
+                }
                 const playerState = normalizePlayerRulesState(world, sess);
                 if (playerState.status !== 'active') {
                     showToast(playerState.status === 'dead'
@@ -20752,12 +21981,16 @@ function renderWorldPlayState() {
                         : 'You are incapacitated and cannot travel until you recover.', 'info');
                     return;
                 }
-                const targetLoc = resolveWorldExitTarget(world, exit);
+                if (sess.pendingChecks?.length || sess.pendingCheck) {
+                    showToast('Resolve the pending check before travelling.', 'info');
+                    return;
+                }
+                const targetLoc = resolveWorldExitTarget(playWorldView, exit);
                 if (!targetLoc) {
                     showToast(`Broken exit: "${exitText}" does not resolve to one unique location.`, 'error');
                     return;
                 }
-                const movement = movePlayerAlongWorldPath(world, sess, targetLoc);
+                const movement = movePlayerAlongWorldPath(world, sess, targetLoc, { exit });
                 if (!movement.ok || !movement.moved) {
                     showToast(movement.reason === 'already_there'
                         ? `You are already at ${targetLoc.name}.`
@@ -20772,7 +22005,7 @@ function renderWorldPlayState() {
                 executeWorldTurn("look");
             };
             const currentPlayerState = normalizePlayerRulesState(world, sess);
-            if (!resolveWorldExitTarget(world, exit)) {
+            if (!resolveWorldExitTarget(playWorldView, exit)) {
                 btn.disabled = true;
                 btn.title = 'Broken exit reference — repair it in World Studio';
             } else if (currentPlayerState.status !== 'active') {
@@ -21631,11 +22864,14 @@ function captureWorldTurnState(world, sess) {
     // are timeline-owned and therefore participate in rollback.
     const dynamicEntities = (world.entities || [])
         .filter(entity => entity?.sessionOrigin === sess.id);
+    const dynamicLocations = (world.locations || [])
+        .filter(location => location?.sessionOrigin === sess.id);
     return safeJsonClone({
-        schema: 2,
+        schema: 3,
         session: sessionState,
         world: {
-            dynamicEntities
+            dynamicEntities,
+            dynamicLocations
         }
     });
 }
@@ -21678,13 +22914,26 @@ function restoreWorldTurnState(world, sess, snapshot) {
         world.entities = (world.entities || []).filter(entity => entity?.sessionOrigin !== sess.id);
         world.entities.push(...safeJsonClone(snapshotDynamic));
     }
+    // Schema 3 adds timeline-owned geography. Restoring it removes locations
+    // created by the abandoned version and brings back locations that existed
+    // at capture time, while preserving authored and other-session geography.
+    const locationSnapshot = snapshot.schema >= 3 && Array.isArray(snapshot.world.dynamicLocations);
+    if (locationSnapshot) {
+        const snapshotLocations = snapshot.world.dynamicLocations
+            .filter(location => location?.sessionOrigin === sess.id);
+        world.locations = (world.locations || []).filter(location => location?.sessionOrigin !== sess.id);
+        world.locations.push(...safeJsonClone(snapshotLocations));
+    }
     bumpMemoryEpoch(sess); // any in-flight consolidation must now abort its commit
     if (typeof bumpWorldEpoch === 'function') bumpWorldEpoch(sess);  // and so must the asynchronous World Agent
     return true;
 }
 
-function addWorldMessage(role, text, metadata = {}) {
-    const sess = getCurrentWorldSession();
+function addWorldMessage(role, text, metadata = {}, targetSession = null, targetWorld = null) {
+    // A generated turn is bound to the timeline that started it. Looking the
+    // session up again after an awaited provider call can redirect its message
+    // into a timeline the user selected while generation was in flight.
+    const sess = targetSession || getCurrentWorldSession();
     if (!sess) return;
     
     const msgId = Date.now().toString(36) + Math.random().toString(36).substring(2);
@@ -21702,21 +22951,30 @@ function addWorldMessage(role, text, metadata = {}) {
             // later turns. Without this, rerolled-away content bleeds back into context.
             lastMsg.text = text;
             
-            // Scrub NPC observations for the previous version
+            // Scrub NPC observations for the previous version. An explicit
+            // witness list is the scene transaction's authority; location is
+            // only a backwards-compatible fallback for older call sites.
             if (lastMsg.id) {
-                const world = state.worlds.find(w => w.id === state.activeWorldId);
+                const world = targetWorld || state.worlds.find(w => w.id === state.activeWorldId);
                 if (world) {
-                    world.entities.forEach(ent => {
-                        if (ent.type === 'npc' && sess.entityStates[ent.id]) {
+                    const explicitWitnesses = Array.isArray(metadata.witnesses)
+                        ? new Set(metadata.witnesses.map(String)) : null;
+                    sessionNpcs(world, sess).forEach(ent => {
+                        if (sess.entityStates[ent.id]) {
                             const entState = sess.entityStates[ent.id];
+                            const shouldObserve = explicitWitnesses
+                                ? explicitWitnesses.has(ent.id)
+                                : metadata.location === entState.location;
                             if (entState.observations) {
                                 const obsIdx = entState.observations.findIndex(o => o.msgId === lastMsg.id);
-                                if (obsIdx !== -1) {
+                                if (obsIdx !== -1 && shouldObserve) {
                                     entState.observations[obsIdx].text = text;
-                                } else if (metadata.location === entState.location) {
+                                } else if (obsIdx !== -1) {
+                                    entState.observations.splice(obsIdx, 1);
+                                } else if (shouldObserve) {
                                     entState.observations.push({ role, text, msgId: lastMsg.id });
                                 }
-                            } else if (metadata.location === entState.location) {
+                            } else if (shouldObserve) {
                                 entState.observations = [{ role, text, msgId: lastMsg.id }];
                             }
                             if (entState.observations?.length > 50) entState.observations.splice(0, entState.observations.length - 50);
@@ -21756,18 +23014,23 @@ function addWorldMessage(role, text, metadata = {}) {
         sess.history.push(newMsg);
         targetMsgRef = newMsg;
         
-        // NPC Observation Logic: NPCs only "observe" events in their current location
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
+        // NPC Observation Logic. Completed world turns supply their committed
+        // witness set explicitly. Do not recompute it from a later schedule
+        // state or a newly selected timeline.
+        const world = targetWorld || state.worlds.find(w => w.id === state.activeWorldId);
         if (world) {
-            world.entities.forEach(ent => {
-                if (ent.type === 'npc') {
-                    const entState = sess.entityStates[ent.id];
-                    if (entState) {
-                        if (metadata.location === entState.location) {
-                            entState.observations = entState.observations || [];
-                            entState.observations.push({ role, text, msgId });
-                            if (entState.observations.length > 50) entState.observations.shift(); // Memory cap
-                        }
+            const explicitWitnesses = Array.isArray(metadata.witnesses)
+                ? new Set(metadata.witnesses.map(String)) : null;
+            sessionNpcs(world, sess).forEach(ent => {
+                const entState = sess.entityStates[ent.id];
+                if (entState) {
+                    const shouldObserve = explicitWitnesses
+                        ? explicitWitnesses.has(ent.id)
+                        : metadata.location === entState.location;
+                    if (shouldObserve) {
+                        entState.observations = entState.observations || [];
+                        entState.observations.push({ role, text, msgId });
+                        if (entState.observations.length > 50) entState.observations.shift(); // Memory cap
                     }
                 }
             });
@@ -21780,7 +23043,7 @@ function addWorldMessage(role, text, metadata = {}) {
     }
 
     // Background, non-blocking asynchronous embedding pre-computation for future world turns
-    const embeddingWorld = state.worlds.find(w => w.id === state.activeWorldId);
+    const embeddingWorld = targetWorld || state.worlds.find(w => w.id === state.activeWorldId);
     const shouldEmbedMessage = !embeddingWorld
         || !normalizeWorldKernelConfig(embeddingWorld).enabled
         || normalizeWorldKernelConfig(embeddingWorld).memoryMode === 'semantic';
@@ -21957,7 +23220,9 @@ function extractUserMovementTarget(userInput) {
         value = value.replace(/\s+\w+ing\s+(?:(?:the|a|an|my|our|your|his|her|their|it|them)\b|[A-Z][a-z]+)[\s\S]*$/, match =>
             // Keep participles that are part of a name ("the Burning Hall"),
             // drop them when they open a new clause ("... pushing Emily away").
-            /^\s+(?:burning|sunken|drowned|shattered|standing|winding|whispering|rising|falling)\b/i.test(match) ? match : '');
+            // Title-cased location components such as "Guest Wing Hallway" are
+            // names, too; never discard them as if "Wing" were stage business.
+            /^\s+[A-Z]/.test(match) || /^\s+(?:burning|sunken|drowned|shattered|standing|winding|whispering|rising|falling)\b/i.test(match) ? match : '');
         return value.trim().split(/\s+/).slice(0, 8).join(' ').replace(/[.,;:!?]+$/, '').trim();
     };
     const resolveMatch = match => {
@@ -21979,7 +23244,12 @@ function extractUserMovementTarget(userInput) {
         if (verb) return verb;
         return '';
     };
-    const actorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:(?:i|we)\s+|let'?s\s+)(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|moved?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|ma[dk]e\s+(?:my|our)\s+way|sleep|slept)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/ig;
+    // Natural first-person prose often wraps the locomotion verb in a small
+    // transition: "I turn to head out to the hall", "I'm walking to the
+    // kitchen", or "I start to walk toward the gate". These are completed
+    // player moves just as surely as "I go to..." and must be committed before
+    // narration begins, otherwise the prose and authoritative ledger diverge.
+    const actorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:(?:i|we)(?:(?:\s+(?:am|are))|['’]m)?\s+|let'?s\s+)(?:(?:turn(?:ed)?|start(?:ed)?|begin|began)\s+(?:to\s+|and\s+)?)?(?:go|went|walk(?:ed|ing)?|head(?:ed|ing)?|travel(?:l?ed|l?ing)?|moved?|moving|run|ran|running|ride|rode|riding|climb(?:ed|ing)?|return(?:ed|ing)?|enter(?:ed|ing)?|exit(?:ed|ing)?|leave|left|leaving|step(?:ped|ping)?|cross(?:ed|ing)?|ma[dk]e\s+(?:my|our)\s+way|sleep|slept)\b\s*(?:out\s+(?=(?:to|towards?)\b))?(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/ig;
     for (const actorMatch of actionText.matchAll(actorMovement)) {
         const resolved = resolveMatch(actorMatch);
         if (resolved) return resolved;
@@ -21992,7 +23262,7 @@ function extractUserMovementTarget(userInput) {
     // state stayed behind. Keep this actor-safe by requiring a coordinator
     // immediately before the movement verb; "I tell Emily to step out" and
     // "I watch as Emily leaves" therefore remain somebody else's movement.
-    const continuedActorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:i|we)\b[^.!?]{0,100}?(?:,\s*(?:and\s+|then\s+)?|\s+(?:and|then|so|before|after|as|while)\s+)(?:(?:i|we)\s+)?(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|moved?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|ma[dk]e\s+(?:my|our)\s+way)\b\s*(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/ig;
+    const continuedActorMovement = /(?:^|[.!?]\s+)(?:(?:then|so)\s+)?(?:i|we)\b[^.!?]{0,100}?(?:,\s*(?:and\s+|then\s+)?|\s+(?:and|then|so|before|after|as|while)\s+)(?:(?:i|we)(?:(?:\s+(?:am|are))|['’]m)?\s+)?(?:(?:turn(?:ed)?|start(?:ed)?|begin|began)\s+(?:to\s+|and\s+)?)?(?:go|went|walk(?:ed|ing)?|head(?:ed|ing)?|travel(?:l?ed|l?ing)?|moved?|moving|run|ran|running|ride|rode|riding|climb(?:ed|ing)?|return(?:ed|ing)?|enter(?:ed|ing)?|exit(?:ed|ing)?|leave|left|leaving|step(?:ped|ping)?|cross(?:ed|ing)?|ma[dk]e\s+(?:my|our)\s+way)\b\s*(?:out\s+(?=(?:to|towards?)\b))?(?:(?:to|towards?|into|inside|through|across|up|down|for|in)\s+)?([^,.;!?]+)?/ig;
     for (const continuedMatch of actionText.matchAll(continuedActorMovement)) {
         const resolved = resolveMatch(continuedMatch);
         if (resolved) return resolved;
@@ -22023,14 +23293,17 @@ function buildWorldMicroFrameEnvelope(world, sess, userInput) {
     };
     addLocation(current);
     (current?.exits || []).forEach(exit => addLocation(resolveWorldExitTarget(view, exit)));
-    addLocation(resolveWorldContainmentParent(view, current));
-    locations.forEach(location => {
-        if (resolveWorldContainmentParent(view, location)?.id === current?.id) addLocation(location);
-    });
+    // An explicitly named place is more useful to the semantic sensor than a
+    // long tail of siblings in a dense hub. Add mentions before parent/child
+    // expansion so the 16-location capsule cannot crowd out the user's target.
     const normalizedInput = normalizeLocationSearchText(userInput);
     locations.forEach(location => {
         const name = normalizeLocationSearchText(location.name);
         if (name && ` ${normalizedInput} `.includes(` ${name} `)) addLocation(location);
+    });
+    addLocation(resolveWorldContainmentParent(view, current));
+    locations.forEach(location => {
+        if (resolveWorldContainmentParent(view, location)?.id === current?.id) addLocation(location);
     });
 
     const actors = new Map([['player', { id: 'player', name: 'Player' }]]);
@@ -22224,7 +23497,7 @@ async function executeWorldTurn(commandOrReroll = null) {
                     castChecksum: introCommit.audit.cast_checksum_match
                 },
                 deferPersist: true
-            });
+            }, sess, world);
             introMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
             delete introMsg.postSnapshot;
             delete sess.pendingOriginIntro;
@@ -22292,7 +23565,7 @@ async function executeWorldTurn(commandOrReroll = null) {
                 witnesses: originWitnesses,
                 arrivalLocation: sess.playerLocation !== movementOrigin ? sess.playerLocation : undefined,
                 deferPersist: true
-            });
+            }, sess, world);
             // sess.turnCount increment moved to success block to prevent time-skip on failure
         }
     }
@@ -22307,6 +23580,12 @@ async function executeWorldTurn(commandOrReroll = null) {
                 ? applyPlayerOutfitIntent(sess, labsWorldFrame.candidate.evidence) : null);
     }
 
+    // Freeze scheduled presence before any simulation work or prompt building.
+    // Gossip, event witnesses, the DM, and the HUD must all see the same cast.
+    // Schedule transitions queue engine events here, so the prose that follows
+    // can narrate them in this turn rather than one turn late.
+    syncNPCSchedules(world, sess);
+
     // A turn-based living world advances exactly once per genuine player turn.
     // turnSnapshot was captured before this point, so rerolls restore and replay
     // the same deterministic tick instead of double-advancing the simulation.
@@ -22316,12 +23595,12 @@ async function executeWorldTurn(commandOrReroll = null) {
     }
 
     const currentLocId = sess.playerLocation;
-    syncNPCSchedules(world, sess);
     evaluateQuestProgress(world, sess);
 
     // --- The Engine Logic ---
     // Robust Lookup: Support both ID and Name for legacy compatibility
-        const visibleLocations = sessionLocations(world, sess);
+        const visibleWorld = worldForSession(world, sess);
+        const visibleLocations = visibleWorld.locations;
         const loc = visibleLocations.find(l => l.id === sess.playerLocation) || visibleLocations.find(l => l.name === sess.playerLocation);
         const allPresentNPCs = sessionNpcs(world, sess).filter(ent =>
             sess.entityStates[ent.id]?.location === sess.playerLocation && isNpcActive(sess.entityStates[ent.id]));
@@ -22353,7 +23632,7 @@ async function executeWorldTurn(commandOrReroll = null) {
         const locHidden = loc?.hiddenDescription ? `\n[DM-ONLY DETAILS (Secret facts/Vibes)]: ${loc.hiddenDescription}` : "";
         const locExits = loc ? (loc.exits || []).map(ex => {
             if (typeof ex === 'string') return ex;
-            const target = getLocationRef(world, ex.targetLocationId || getExitTargetName(ex));
+            const target = getLocationRef(visibleWorld, ex.targetLocationId || getExitTargetName(ex));
             const label = target ? `${getExitDirection(ex) ? `${getExitDirection(ex)} ` : ''}to ${target.name}` : ex.text;
             const routeDetails = [formatWorldTravelMode(ex.mode), ex.routeName || '', ex.travelTime ? `${ex.travelTime}m` : '', ex.cost ? `fare ${ex.cost}` : ''].filter(Boolean);
             return `${label}${routeDetails.length ? ` (${routeDetails.join(' · ')})` : ''}${ex.isOneWay ? ' [One-Way]' : ''}`;
@@ -22445,7 +23724,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     const absentNpcManifest = visibleNpcs
         .filter(e => !presentNPCs.includes(e) && isNpcActive(sess.entityStates[e.id]))
         .slice(0, 20)
-        .map(e => e.name)
+        .map(e => `${e.name}${sess.entityStates[e.id]?.journey ? ` (in transit to ${getLocationRef(visibleWorld, sess.entityStates[e.id].journey.destinationId)?.name || 'their destination'})` : ''}`)
         .join(', ');
     // If the player explicitly mentions an absent character, give the DM that
     // character's actual authored identity and current whereabouts. Previously
@@ -22502,6 +23781,13 @@ async function executeWorldTurn(commandOrReroll = null) {
     let personaContext = persona ? `\n\n[PLAYER PERSONA — AUTHORITATIVE PLAYER IDENTITY]\n${personaPromptText(persona)}` : "";
     const playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
     const worldCapabilities = normalizeWorldCapabilities(world);
+    const playerHome = getLocationRef(world, playerIdentity.homeLocationId);
+    const playerHousehold = (world.groups || []).find(group => group.id === playerIdentity.householdId);
+    const playerGroups = (playerIdentity.groupIds || []).map(id => (world.groups || []).find(group => group.id === id)).filter(Boolean);
+    const playerAuthoredRelationships = (playerIdentity.authoredRelationships || []).map(relationship => {
+        const npc = (world.entities || []).find(entity => entity.id === relationship.npcId && entity.type === 'npc');
+        return npc && relationship.label ? `${npc.name}: ${relationship.label}` : '';
+    }).filter(Boolean);
     const describeSelectedCapabilities = (names, definitions) => (Array.isArray(names) ? names : []).map(name => {
         const key = String(name || '').toLowerCase();
         const definition = definitions.find(entry => entry.id.toLowerCase() === key || entry.name.toLowerCase() === key);
@@ -22512,6 +23798,10 @@ async function executeWorldTurn(commandOrReroll = null) {
         playerIdentity.socialRank ? `Social rank: ${playerIdentity.socialRank}` : '',
         playerIdentity.publicIdentity ? `Public identity: ${playerIdentity.publicIdentity}` : '',
         playerIdentity.reputation ? `Reputation: ${playerIdentity.reputation}` : '',
+        playerHome ? `Authored home: ${playerHome.name}` : '',
+        playerHousehold ? `Family / household: ${playerHousehold.name}` : '',
+        playerGroups.length ? `Groups / companies: ${playerGroups.map(group => group.name).join('; ')}` : '',
+        playerAuthoredRelationships.length ? `Starting relationships: ${playerAuthoredRelationships.join('; ')}` : '',
         playerIdentity.skills?.length ? `World-specific skills: ${describeSelectedCapabilities(playerIdentity.skills, worldCapabilities.skills).join('; ')}` : '',
         playerIdentity.perks?.length ? `Perks: ${describeSelectedCapabilities(playerIdentity.perks, worldCapabilities.perks).join('; ')}` : '',
         playerIdentity.flaws?.length ? `Flaws: ${describeSelectedCapabilities(playerIdentity.flaws, worldCapabilities.flaws).join('; ')}` : '',
@@ -23673,6 +24963,7 @@ ${modularMandate}
         const toolResponses = [];
         let structuredChronicle = null;
         let successfulStateCall = false;
+        let stateCallSeen = false;
         let resolvedCheckThisTurn = false;
         const receiptPlayerStart = String(turnSnapshot?.session?.playerLocation || sess.playerLocation);
         const receiptMovementPhrase = extractUserMovementTarget(submittedInput || userInput);
@@ -23685,6 +24976,23 @@ ${modularMandate}
             authorizedPlayerDestinationId: receiptAuthorizedTarget?.id || '',
             narrativeText: fullText
         };
+        const commitReceiptCandidate = (args, source) => {
+            const beforeReceipt = captureWorldTurnState(world, sess);
+            const committed = commitWorldTurnReceipt(world, sess, args, receiptContext, source);
+            const actionResult = committed.actionResult || {};
+            const movementOk = !actionResult.movementResult || actionResult.movementResult.ok;
+            const transactionsOk = (actionResult.transactionResults || []).every(result => result.success);
+            const checksOk = (actionResult.checkResults || []).every(result =>
+                result.success || (!result.reason && result.failureCost?.applied !== false));
+            const conditionsOk = (actionResult.conditionResults || []).every(result => result.success);
+            const statUpdatesOk = !actionResult.statResult || actionResult.statResult.rejected.length === 0;
+            const modulesOk = (actionResult.moduleRejections || []).length === 0;
+            const auditOk = (committed.audit?.rejected || []).length === 0;
+            const accepted = movementOk && transactionsOk && checksOk && conditionsOk
+                && statUpdatesOk && modulesOk && auditOk;
+            if (!accepted) restoreWorldTurnState(world, sess, beforeReceipt);
+            return { committed, actionResult, accepted, movementOk, transactionsOk, checksOk, conditionsOk, statUpdatesOk, modulesOk };
+        };
         for (const call of toolCalls) {
             let responsePayload = { success: true, status: 'Action processed.' };
             try {
@@ -23692,34 +25000,35 @@ ${modularMandate}
                 if (call.function.name === 'investigate_secret') {
                     const secret = currentSecrets.find(item => item.label === args.label);
                     if (secret) {
-                        const actionResult = processStructuredActions({ label: args.label });
+                        const actionResult = processStructuredActions({ label: args.label }, world, sess);
                         if (actionResult?.ledgerEntry) structuredChronicle = actionResult.ledgerEntry;
                         responsePayload = { success: true, truth: secret.truth, status: 'SECRET UNLOCKED' };
                     } else {
                         responsePayload = { success: false, status: 'Secret not found' };
                     }
                 } else if (call.function.name === 'commit_world_turn') {
+                    if (stateCallSeen) throw new Error('Duplicate commit_world_turn ignored; exactly one receipt is allowed per turn.');
+                    stateCallSeen = true;
                     const validEnvelope = isPlainObject(args.scene)
                         && Array.isArray(args.events) && Array.isArray(args.entity_updates);
                     if (!validEnvelope) throw new Error('Turn receipt must include scene, events, and entity_updates.');
-                    const committed = commitWorldTurnReceipt(world, sess, args, receiptContext, 'tool_call');
-                    const actionResult = committed.actionResult;
-                    if (actionResult?.ledgerEntry) structuredChronicle = actionResult.ledgerEntry;
+                    const candidate = commitReceiptCandidate(args, 'tool_call');
+                    const { committed, actionResult } = candidate;
                     const updatedLoc = world.locations.find(location => location.id === sess.playerLocation);
                     const movement = actionResult?.movementResult;
                     const transactionResults = actionResult?.transactionResults || [];
-                    const transactionsOk = transactionResults.every(result => result.success);
+                    const transactionsOk = candidate.transactionsOk;
                     const checkResults = actionResult?.checkResults || [];
-                    if (checkResults.some(result => !result.pending && !result.reason)) resolvedCheckThisTurn = true;
-                    const checksOk = checkResults.every(result =>
-                        result.success || (!result.reason && result.failureCost?.applied !== false));
+                    if (candidate.accepted && checkResults.some(result => !result.pending && !result.reason)) resolvedCheckThisTurn = true;
+                    const checksOk = candidate.checksOk;
                     const conditionResults = actionResult?.conditionResults || [];
-                    const conditionsOk = conditionResults.every(result => result.success);
-                    const statUpdatesOk = !actionResult?.statResult || actionResult.statResult.rejected.length === 0;
+                    const conditionsOk = candidate.conditionsOk;
+                    const statUpdatesOk = candidate.statUpdatesOk;
                     const moduleRejections = actionResult?.moduleRejections || [];
-                    const modulesOk = moduleRejections.length === 0;
+                    const modulesOk = candidate.modulesOk;
+                    if (candidate.accepted && actionResult?.ledgerEntry) structuredChronicle = actionResult.ledgerEntry;
                     responsePayload = {
-                        success: (movement ? movement.ok : true) && transactionsOk && statUpdatesOk && checksOk && conditionsOk && modulesOk,
+                        success: candidate.accepted,
                         new_location: updatedLoc?.name || 'Unknown',
                         movement_path: movement?.path || [],
                         quest_updates: actionResult?.questResult || null,
@@ -23744,10 +25053,10 @@ ${modularMandate}
                                         : !modulesOk
                                             ? 'One or more requested mechanics are disabled by this world’s rules profile.'
                                     : committed.audit.rejected.length
-                                        ? `Turn committed with ${committed.audit.rejected.length} rejected proposal(s).`
+                                        ? `Turn receipt rejected: ${committed.audit.rejected.length} invalid proposal(s); staged session changes were restored.`
                                         : 'Canonical turn committed.'
                     };
-                    successfulStateCall = true;
+                    successfulStateCall = candidate.accepted;
                 } else {
                     responsePayload = { success: false, status: `Unknown tool "${call.function.name || '(missing name)'}".` };
                 }
@@ -23762,12 +25071,13 @@ ${modularMandate}
         // Providers that print the mandatory receipt instead of calling the
         // tool still pass through the same validator and reducer.
         let inlineStateApplied = false;
-        if (!successfulStateCall) {
+        if (!successfulStateCall && !stateCallSeen) {
             const inlineReceipt = extractInlineWorldTurnReceipt(fullText);
             if (inlineReceipt) {
                 try {
-                    const committed = commitWorldTurnReceipt(world, sess, inlineReceipt, receiptContext, 'inline_receipt');
-                    if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
+                    const candidate = commitReceiptCandidate(inlineReceipt, 'inline_receipt');
+                    if (!candidate.accepted) throw new Error('Inline turn receipt contained rejected or invalid mutations.');
+                    if (candidate.actionResult?.ledgerEntry) structuredChronicle = candidate.actionResult.ledgerEntry;
                     inlineStateApplied = true;
                     console.warn(`Horde Engine: model emitted its turn receipt as text — recovered and validated it.`);
                 } catch (error) {
@@ -23814,10 +25124,12 @@ ${modularMandate}
                     if (isPlainObject(repairedReceipt?.scene)
                         && Array.isArray(repairedReceipt.events)
                         && Array.isArray(repairedReceipt.entity_updates)) {
-                        const committed = commitWorldTurnReceipt(world, sess, repairedReceipt, receiptContext, 'repair_receipt');
-                        if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
-                        repairedReceiptApplied = true;
-                        console.warn('Horde Engine: missing turn receipt repaired without regenerating the narrative.');
+                        const candidate = commitReceiptCandidate(repairedReceipt, 'repair_receipt');
+                        if (candidate.accepted) {
+                            if (candidate.actionResult?.ledgerEntry) structuredChronicle = candidate.actionResult.ledgerEntry;
+                            repairedReceiptApplied = true;
+                            console.warn('Horde Engine: missing turn receipt repaired without regenerating the narrative.');
+                        }
                     }
                 }
             } catch (repairError) {
@@ -23952,7 +25264,7 @@ ${modularMandate}
                     max_tokens: Math.max(1500, parseInt(world.maxTokens) || 2048),
                     messages: sanitizeMessagesForProvider([
                         ...messages,
-                        { role: 'user', content: `[SYSTEM: Your previous attempt produced no readable prose${reasoningSeen ? ' — it was consumed by internal reasoning' : ''}. ${streamedToolCalls.size > 0 ? 'The engine has ALREADY applied your state changes — do not call tools again. ' : ''}Write the narrative response NOW. No tools, JSON, or OOC commentary.${directorNotesRequired ? ' After the prose, append the active preset\'s required <details><summary>Plot Momentum</summary>...</details> Director block.' : ''}]` }
+                        { role: 'user', content: `[SYSTEM: Your previous attempt produced no readable prose${reasoningSeen ? ' — it was consumed by internal reasoning' : ''}. ${successfulStateCall ? 'The engine has ALREADY applied your state changes — do not call tools again. ' : 'No proposed state receipt was accepted; narrate only what the supplied canonical scene supports. '}Write the narrative response NOW. No tools, JSON, or OOC commentary.${directorNotesRequired ? ' After the prose, append the active preset\'s required <details><summary>Plot Momentum</summary>...</details> Director block.' : ''}]` }
                     ])
                 };
                 const rescueResp = await fetch(apiBase() + '/chat/completions', {
@@ -23999,9 +25311,11 @@ ${modularMandate}
                     if (!repaired) repaired = extractInlineWorldTurnReceipt(message.content || '');
                     if (isPlainObject(repaired?.scene) && Array.isArray(repaired.events)
                         && Array.isArray(repaired.entity_updates)) {
-                        const committed = commitWorldTurnReceipt(world, sess, repaired, receiptContext, 'repair_receipt');
-                        if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
-                        repairedReceiptApplied = true;
+                        const candidate = commitReceiptCandidate(repaired, 'repair_receipt');
+                        if (candidate.accepted) {
+                            if (candidate.actionResult?.ledgerEntry) structuredChronicle = candidate.actionResult.ledgerEntry;
+                            repairedReceiptApplied = true;
+                        }
                     }
                 }
             } catch (error) {
@@ -24037,9 +25351,9 @@ ${modularMandate}
         if (command !== "init" && command !== "look" && command !== "continue" && (!isReroll || restoredRerollSnapshot)) {
             if (!sess.turnCount) sess.turnCount = 1;
             sess.turnCount++;
-            // The prompt used the start-of-turn cast. Re-sync after advancing
-            // the clock so the persisted HUD/cast matches the displayed time.
-            syncNPCSchedules(world, sess);
+            // Do not mutate the cast after its prose has already been written.
+            // The next turn's pre-generation sync applies this new clock and
+            // queues any arrival/departure into the same narrative that shows it.
         }
 
         // Save the DM's narrative response
@@ -24109,6 +25423,8 @@ ${modularMandate}
                 ? detectNarratedLocation(world, sess, cleanText) : null;
             const narratedPresenceCandidates = command !== 'init'
                 ? detectNarratedPresence(world, sess, cleanText) : [];
+            const narratedDepartureCandidates = command !== 'init'
+                ? detectNarratedDepartures(world, sess, cleanText) : [];
             const narratedOutfitCandidate = (command !== 'init' && !outfitChangedThisTurn)
                 ? detectNarratedOutfit(cleanText) : null;
             const audit = sess.lastTurnAudit;
@@ -24122,6 +25438,12 @@ ${modularMandate}
                 narratedPresenceCandidates.forEach(hit => {
                     audit.rejected.push({
                         index: -1, type: 'narrative', reason: 'uncommitted_npc_presence_claim',
+                        actor_id: hit.id, detail: hit.evidence
+                    });
+                });
+                narratedDepartureCandidates.forEach(hit => {
+                    audit.rejected.push({
+                        index: -1, type: 'narrative', reason: 'uncommitted_npc_departure_claim',
                         actor_id: hit.id, detail: hit.evidence
                     });
                 });
@@ -24168,7 +25490,7 @@ ${modularMandate}
                 turnSnapshot,
                 witnesses: endingWitnesses,
                 deferPersist: true
-            });
+            }, sess, world);
             const postSnapshot = captureWorldTurnState(world, sess);
             if (isReroll) {
                 dmMsg.versionSnapshots = Array.isArray(dmMsg.versionSnapshots)
@@ -24214,7 +25536,7 @@ ${modularMandate}
                     castChecksum: fallbackCommit.audit.cast_checksum_match
                 },
                 deferPersist: true
-            });
+            }, sess, world);
             fallbackMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
             delete fallbackMsg.postSnapshot;
             await saveState();
@@ -24286,11 +25608,11 @@ ${modularMandate}
                 addWorldMessage('user', submittedInput, {
                     location: sess.playerLocation,
                     deferPersist: true
-                });
+                }, sess, world);
                 addWorldMessage('system', `Movement completed to ${destinationName}. The DM narration did not complete; continue from here or try again.`, {
                     location: sess.playerLocation,
                     deferPersist: true
-                });
+                }, sess, world);
                 const input = document.getElementById('world-user-input');
                 if (input) input.value = '';
             }
@@ -24304,11 +25626,11 @@ ${modularMandate}
                 addWorldMessage('user', submittedInput, {
                     location: sess.playerLocation,
                     deferPersist: true
-                });
+                }, sess, world);
                 addWorldMessage('system', `Outfit updated to ${committedOutfit.to}. The DM narration did not complete; continue from here or try again.`, {
                     location: sess.playerLocation,
                     deferPersist: true
-                });
+                }, sess, world);
                 const input = document.getElementById('world-user-input');
                 if (input) input.value = '';
             }
@@ -24353,7 +25675,7 @@ ${modularMandate}
                         castChecksum: fallbackCommit.audit.cast_checksum_match
                     },
                     deferPersist: true
-                });
+                }, sess, world);
                 fallbackMsg.versionSnapshots = [captureWorldTurnState(world, sess)];
                 delete fallbackMsg.postSnapshot;
                 await saveState();
@@ -24397,7 +25719,7 @@ ${modularMandate}
 const PRESENCE_VERBS = 'is|s|stands|sits|leans|steps|walks|moves|enters|arrives|appears|freezes|pauses|turns|looks|watches|grins|smiles|laughs|nods|shrugs|reaches|holds|takes|blocks|waits|follows|lingers|hovers|crosses|slips|ducks|settles|glances|tilts|shifts|stares|hesitates|hovers|kneels|crouches|rises|stops';
 // Deliberately specific. A bare "away" would veto "three feet away", which is
 // as present as it gets, and a bare "left" would veto "her left hand".
-const ELSEWHERE_MARKERS = /\b(?:downstairs|upstairs|outside|elsewhere|in the (?:kitchen|hall|garden|car|basement|yard|other room|distance)|from (?:the )?(?:other|another) room|(?:from|out of|through) (?:his|her|their|the) (?:office|room|hall|kitchen|basement|car|yard)|back (?:home|at work)|still (?:at|in) (?:the|her|his|work|school)|(?:had|has|have) (?:left|gone)|is gone|walks? away|walked away|turns? away|turned away|far away|miles away)\b/i;
+const ELSEWHERE_MARKERS = /\b(?:downstairs|upstairs|outside|elsewhere|in the (?:kitchen|hall|garden|car|basement|yard|other room|distance)|from (?:the )?(?:other|another) room|(?:from|out of|through) (?:his|her|their|the) (?:office|room|hall|kitchen|basement|car|yard)|back (?:home|at work)|still (?:at|in) (?:the|her|his|work|school)|(?:had|has|have) (?:left|gone)|is gone|walks? away|walked away|turns? away|turned away|far away|miles away|(?:on|in|through|from) (?:an? |the )?(?:photo|photograph|picture|portrait|screen|video|recording|voicemail|answering machine|speaker|radio|television))\b/i;
 
 // "Mrs. Harrington" must key on "Harrington", never on "Mrs." — otherwise one
 // title would match every titled character in the cast.
@@ -24418,7 +25740,25 @@ function stripSpokenDialogue(text) {
         .replace(/[“][^”]*[”]/g, ' ');
 }
 
-function detectNarratedPresence(world, sess, narrative) {
+function narratedNpcNameVariants(world, sess, npc) {
+    const fullName = String(npc?.name || '').trim();
+    if (!fullName) return [];
+    const parts = fullName.split(/[\s,]+/).filter(Boolean);
+    let shortName = parts[0] || '';
+    if (NAME_TITLES.test(shortName) && parts[1]) shortName = parts[1];
+    const shortKey = shortName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const shortIsUnique = shortName.length >= 3 && sessionNpcs(world, sess).filter(candidate => {
+        const candidateParts = String(candidate?.name || '').trim().split(/[\s,]+/).filter(Boolean);
+        let candidateShort = candidateParts[0] || '';
+        if (NAME_TITLES.test(candidateShort) && candidateParts[1]) candidateShort = candidateParts[1];
+        return candidateShort.toLowerCase().replace(/[^a-z0-9]/g, '') === shortKey;
+    }).length === 1;
+    return [...new Set([fullName, shortIsUnique ? shortName : ''])]
+        .filter(name => name.length >= 3)
+        .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+}
+
+function detectNarratedPresence(world, sess, narrative, options = {}) {
     const prose = stripSpokenDialogue(narrative);
     if (!prose.trim()) return [];
     const found = [];
@@ -24426,42 +25766,89 @@ function detectNarratedPresence(world, sess, narrative) {
         const entState = sess.entityStates?.[npc.id];
         if (!entState || !isNpcActive(entState)) return;
         if (entState.location === sess.playerLocation) return;   // already here
-        if (isNpcPinned(sess, entState)) return;                 // explicitly placed elsewhere
+        if (!options.includePinned && isNpcPinned(sess, entState)) return; // explicitly placed elsewhere
 
         const fullName = String(npc.name || '').trim();
         if (!fullName) return;
-        const parts = fullName.split(/[\s,]+/).filter(Boolean);
-        let firstName = parts[0] || '';
-        if (NAME_TITLES.test(firstName) && parts[1]) firstName = parts[1];
-        const variants = [...new Set([fullName, firstName])]
-            .filter(name => name.length >= 3)
-            .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const variants = narratedNpcNameVariants(world, sess, npc);
         if (!variants.length) return;
 
         for (const variant of variants) {
             // "Emily's voice cuts through" — a person's own voice/hands/breath
             // place them here even when their name never governs a verb.
-            const attributeMatch = prose.match(new RegExp(
-                `\\b${variant}[’']s\\s+(?:${PERSON_ATTRIBUTES})\\b([^.!?\\n]{0,60})`, 'i'));
-            if (attributeMatch && !ELSEWHERE_MARKERS.test(attributeMatch[1] || '')) {
+            const attributePattern = new RegExp(
+                `\\b${variant}[’']s\\s+(?:${PERSON_ATTRIBUTES})\\b([^.!?\\n]{0,60})`, 'ig');
+            for (const attributeMatch of prose.matchAll(attributePattern)) {
+                if (ELSEWHERE_MARKERS.test(attributeMatch[1] || '')) continue;
                 found.push({ id: npc.id, name: fullName, evidence: attributeMatch[0].trim().slice(0, 80) });
                 break;
             }
+            if (found.some(hit => hit.id === npc.id)) break;
 
             const pattern = new RegExp(
-                `\\b${variant}\\b(?:[’']s)?\\s+(?:${PRESENCE_VERBS})\\b([^.!?\\n]{0,60})`, 'i');
-            const match = prose.match(pattern);
-            if (!match) continue;
-            const tail = match[1] || '';
-            if (ELSEWHERE_MARKERS.test(tail)) break;   // "Greg is downstairs"
-            // "is/s" alone is weak — require it to land on an actual presence cue.
-            const verb = match[0].slice(variant.replace(/\\/g, '').length).trim().split(/\s+/)[0].toLowerCase();
-            if ((verb === 'is' || verb === 's')
-                && !/\b(?:right )?(?:here|there|beside|next to|in front of|behind|across from|standing|sitting|leaning|waiting|already)\b/i.test(tail)) {
+                `\\b${variant}\\b(?:[’']s)?\\s+(?:${PRESENCE_VERBS})\\b([^.!?\\n]{0,60})`, 'ig');
+            for (const match of prose.matchAll(pattern)) {
+                const tail = match[1] || '';
+                if (ELSEWHERE_MARKERS.test(tail)) continue;   // "Greg is downstairs"
+                // "is/s" alone is weak — require it to land on an actual presence cue.
+                const verb = match[0].slice(variant.replace(/\\/g, '').length).trim().split(/\s+/)[0].toLowerCase();
+                if ((verb === 'is' || verb === 's')
+                    && !/\b(?:right )?(?:here|there|beside|next to|in front of|behind|across from|standing|sitting|leaning|waiting|already)\b/i.test(tail)) {
+                    continue;
+                }
+                found.push({ id: npc.id, name: fullName, evidence: match[0].trim().slice(0, 80) });
                 break;
             }
-            found.push({ id: npc.id, name: fullName, evidence: match[0].trim().slice(0, 80) });
-            break;
+            if (found.some(hit => hit.id === npc.id)) break;
+        }
+    });
+    return found;
+}
+
+/**
+ * The ending-scene checksum can corroborate an explicitly narrated departure.
+ * A departure with no uniquely knowable destination moves the NPC off-scene
+ * with a null location rather than inventing which doorway they used.
+ */
+function detectNarratedDepartures(world, sess, narrative) {
+    const prose = stripSpokenDialogue(narrative);
+    if (!prose.trim()) return [];
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const currentLocation = getLocationRef(view, sess.playerLocation);
+    const currentExits = [...new Set((currentLocation?.exits || [])
+        .map(exit => resolveWorldExitTarget(view, exit)?.id).filter(Boolean))];
+    const found = [];
+    sessionNpcs(world, sess).forEach(npc => {
+        const entState = sess.entityStates?.[npc.id];
+        if (!entState || !isNpcActive(entState) || entState.location !== sess.playerLocation) return;
+        const variants = narratedNpcNameVariants(world, sess, npc);
+        for (const variant of variants) {
+            const departurePattern = new RegExp(
+                `\\b${variant}\\s+(?:(?:quietly|quickly|slowly|suddenly|silently|reluctantly)\\s+)?(?:` +
+                `leave(?:s)?(?=\\s*(?:[,.!?;]|the\\s+(?:room|scene|office|hall|house|building)))` +
+                `|exit(?:s|ed)?(?=\\s*(?:[,.!?;]|the\\s+(?:room|scene|office|hall|house|building)))` +
+                `|depart(?:s|ed)?` +
+                `|(?:walk|step|head|go|run|slip|duck)(?:s|ed)?\\s+(?:back\\s+)?(?:out|away)` +
+                `|is\\s+(?:now\\s+)?(?:gone|no longer here)|has\\s+gone` +
+                `)\\b([^.!?\\n]{0,60})`, 'ig');
+            for (const match of prose.matchAll(departurePattern)) {
+                const evidence = match[0].trim().slice(0, 120);
+                let destinationId = '';
+                for (const location of view.locations || []) {
+                    if (location.id === sess.playerLocation) continue;
+                    const name = String(location.name || '').trim();
+                    if (name.length < 3) continue;
+                    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    if (new RegExp(`\\b${escaped}\\b`, 'i').test(match[0])
+                        && findWorldTravelPath(view, sess.playerLocation, location.id)) {
+                        destinationId = location.id;
+                        break;
+                    }
+                }
+                if (!destinationId && currentExits.length === 1) destinationId = currentExits[0];
+                found.push({ id: npc.id, name: npc.name, destinationId, evidence });
+                return;
+            }
         }
     });
     return found;
@@ -24780,8 +26167,9 @@ function rollForScenePopulation(locationId, persist = true) {
         if (!entState) return false;
         if (!isNpcActive(entState)) return false;         // the dead don't wander
 
-        // Don't pull NPCs already here
-        if (entState.location === locationId) return false;
+        // Density is not a movement authority. Only unplaced actors are
+        // eligible; existing positions and journeys survive entering a room.
+        if (entState.location != null || entState.journey) return false;
 
         // ARBITRATION: never randomly teleport an NPC the narrative placed somewhere,
         // and never override NPCs whose whereabouts a schedule governs.
@@ -24978,6 +26366,7 @@ function processStructuredActions(args) {
     // Keep the public one-argument signature stable for extensions/audits.
     const explicitWorld = arguments[1] || null;
     const explicitSession = arguments[2] || null;
+    const movementAuthority = arguments[3] || {};
     const world = explicitWorld || state.worlds.find(w => w.id === state.activeWorldId);
     const sess = explicitSession || getCurrentWorldSession();
     if (!world || !sess) return null;
@@ -25260,9 +26649,17 @@ function processStructuredActions(args) {
             }).filter(Boolean);
             const existing = Array.isArray(sess.npcScheduleOverrides[npcId]) ? sess.npcScheduleOverrides[npcId] : [];
             const combined = update.replace === false ? [...existing, ...validBlocks] : validBlocks;
-            const byTime = new Map();
-            combined.forEach(block => byTime.set(block.time, block));
-            sess.npcScheduleOverrides[npcId] = [...byTime.values()]
+            // The same clock time on different days is not the same routine.
+            // De-duplicating on time alone silently erased Monday/weekend
+            // variants generated by the scheduler.
+            const bySlot = new Map();
+            combined.forEach(block => {
+                const dayKey = (Array.isArray(block.days) && block.days.length
+                    ? [...block.days].map(day => String(day).toLowerCase()).sort().join(',')
+                    : 'daily');
+                bySlot.set(`${block.time}|${dayKey}`, block);
+            });
+            sess.npcScheduleOverrides[npcId] = [...bySlot.values()]
                 .sort((a, b) => a.time.localeCompare(b.time))
                 .slice(0, 1000);
             if (update.reason) {
@@ -25525,11 +26922,29 @@ function processStructuredActions(args) {
                 ?? move?.to_location_id ?? move?.destination_id ?? move?.destination;
             const targetLoc = findFuzzyLocation(destinationRef, sessionLocations(world, sess));
             if (entState && targetLoc) {
-                entState.location = targetLoc.id;
-                // Narrative placement outranks schedules/population for the next few turns
-                entState.pinnedUntilTurn = (sess.turnCount || 1) + 6;
                 const npc = world.entities.find(e => e.id === resolvedId);
-                showToast(`${npc ? npc.name : 'NPC'} moved to ${targetLoc.name}.`, 'info');
+                const view = worldForSession(world, sess);
+                const origin = entState.location || entState.journey?.originId;
+                const teleport = movementAuthority.teleportNpcMoves?.includes(resolvedId);
+                const path = findWorldTravelPath(view, origin, targetLoc.id);
+                if (!teleport && !path) {
+                    moduleRejections.push({ field: 'npc_moves', module: 'livingWorld',
+                        reason: 'unreachable_npc_destination', npc: resolvedId, destination: targetLoc.id });
+                    return;
+                }
+                if (movementAuthority.completedNpcMoves?.includes(resolvedId)) {
+                    // Only the receipt validator can authorize completed movement.
+                    delete entState.journey;
+                    entState.location = targetLoc.id;
+                    entState.pinnedUntilTurn = (sess.turnCount || 1) + 6;
+                    showToast(`${npc ? npc.name : 'NPC'} moved to ${targetLoc.name}.`, 'info');
+                } else if (entState.location === targetLoc.id) {
+                    entState.pinnedUntilTurn = (sess.turnCount || 1) + 6;
+                } else if (!startNpcJourney(world, sess, npc, targetLoc, move.reason,
+                    getWorldTimeData(world, sess).currentTotalMinutes, { pinOnArrival: true })) {
+                    moduleRejections.push({ field: 'npc_moves', module: 'livingWorld',
+                        reason: 'actor_in_transit', npc: resolvedId, destination: targetLoc.id });
+                }
             } else {
                 // Never fail silently here: an unapplied move is exactly the bug
                 // where the DM narrates someone walking in and the HUD keeps
@@ -25774,9 +27189,20 @@ init().catch(error => {
 function getLocationRef(world, ref) {
     if (!ref || !world.locations) return null;
     const clean = String(ref).trim().toLowerCase();
-    return world.locations.find(location =>
-        String(location.id || '').trim().toLowerCase() === clean
-        || String(location.name || '').trim().toLowerCase() === clean) || null;
+    // IDs are authoritative. Do not let an earlier location whose *name*
+    // happens to equal another record's ID steal that canonical reference.
+    const idMatches = world.locations.filter(location =>
+        String(location.id || '').trim().toLowerCase() === clean);
+    if (idMatches.length === 1) return idMatches[0];
+    if (idMatches.length > 1) return null;
+
+    // A display name is a convenience reference only when it is unique. The
+    // fuzzy resolver and exit resolver already follow this rule; using it here
+    // prevents normalization from permanently binding ambiguous imported exits
+    // to whichever duplicate happened to be first in the array.
+    const nameMatches = world.locations.filter(location =>
+        String(location.name || '').trim().toLowerCase() === clean);
+    return nameMatches.length === 1 ? nameMatches[0] : null;
 }
 
 function getWorldTimeData(world, sess) {
@@ -25785,7 +27211,17 @@ function getWorldTimeData(world, sess) {
     const startMinutes = (world.hudConfig?.startTimeHours !== undefined ? world.hudConfig.startTimeHours : 8) * 60
         + Math.max(0, Math.min(59, parseInt(world.hudConfig?.startTimeMinutes) || 0));
     const totalElapsedMinutes = (sess.turnCount - 1) * timeStep + (sess.bonusTimeMinutes || 0);
-    const currentTotalMinutes = Math.max(0, startMinutes + totalElapsedMinutes);
+    const clock = sess.worldClock;
+    const currentTotalMinutes = clock && Number.isFinite(clock.absoluteMinutes)
+        && Number.isFinite(clock.turnCount) && Number.isFinite(clock.bonusTimeMinutes)
+        ? Math.max(0, clock.absoluteMinutes + (sess.turnCount - clock.turnCount) * timeStep
+            + (sess.bonusTimeMinutes || 0) - clock.bonusTimeMinutes)
+        : Math.max(0, startMinutes + totalElapsedMinutes);
+    sess.worldClock = {
+        absoluteMinutes: currentTotalMinutes,
+        turnCount: sess.turnCount,
+        bonusTimeMinutes: sess.bonusTimeMinutes || 0
+    };
     
     const days = Math.floor(currentTotalMinutes / (24 * 60)) + 1;
     const totalMinutesToday = ((currentTotalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
@@ -25859,27 +27295,18 @@ function getWorldWeather(world, sess) {
  * (exit clicks, typed movement, and DM tool moves).
  */
 function getExitTravelTime(world, fromId, toId) {
-    const from = world.locations.find(l => l.id === fromId);
-    const to = world.locations.find(l => l.id === toId);
-    if (!from || !to || !Array.isArray(from.exits)) return 0;
-    for (const ex of from.exits) {
-        if (typeof ex !== 'object') continue;
-        const t = parseInt(ex.travelTime) || 0;
-        if (!t) continue;
-        const target = (getExitTargetName(ex) || '').toLowerCase();
-        if (target && (target === to.name.toLowerCase() || target === to.id.toLowerCase())) return t;
-    }
-    return 0;
+    return getWorldTravelLeg(world, fromId, toId)?.travelTime || 0;
 }
 
 function getWorldTravelLeg(world, fromId, toId) {
     const from = getLocationRef(world, fromId);
     const to = getLocationRef(world, toId);
     if (!from || !to) return null;
-    const exit = (from.exits || []).find(candidate => {
+    const exit = (from.exits || []).filter(candidate => {
         const target = getLocationRef(world, candidate?.targetLocationId || getExitTargetName(candidate));
         return target?.id === to.id;
-    });
+    }).sort((a, b) => Math.max(0, Number(a?.travelTime) || 0)
+        - Math.max(0, Number(b?.travelTime) || 0))[0];
     const details = exit && typeof exit === 'object' ? exit : {};
     return {
         from, to,
@@ -25917,12 +27344,32 @@ function getWorldPathTravelTime(world, path) {
 
 function movePlayerAlongWorldPath(world, sess, targetLocation, options = {}) {
     if (!world || !sess || !targetLocation) return { ok: false, moved: false, reason: 'unknown_destination', path: [] };
-    const path = findWorldTravelPath(typeof worldForSession === 'function' ? worldForSession(world, sess) : world, sess.playerLocation, targetLocation.id);
+    if (sess.pendingChecks?.length || sess.pendingCheck) {
+        return { ok: false, moved: false, reason: 'pending_check', path: [] };
+    }
+    const travelWorld = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const selectedExit = Object.prototype.hasOwnProperty.call(options, 'exit');
+    const origin = getLocationRef(travelWorld, sess.playerLocation);
+    if (selectedExit && (!(origin?.exits || []).includes(options.exit)
+        || resolveWorldExitTarget(travelWorld, options.exit)?.id !== targetLocation.id)) {
+        return { ok: false, moved: false, reason: 'invalid_exit', path: [] };
+    }
+    const path = selectedExit
+        ? (sess.playerLocation === targetLocation.id ? [sess.playerLocation] : [sess.playerLocation, targetLocation.id])
+        : findWorldTravelPath(travelWorld, sess.playerLocation, targetLocation.id);
     if (!path) return { ok: false, moved: false, reason: 'unreachable', path: [] };
     if (path.length === 1) return { ok: true, moved: false, reason: 'already_there', path };
 
     const previousLocation = sess.playerLocation;
-    const travelLegs = path.slice(1).map((toId, index) => getWorldTravelLeg(world, path[index], toId)).filter(Boolean);
+    const travelLegs = path.slice(1).map((toId, index) => getWorldTravelLeg(travelWorld, path[index], toId)).filter(Boolean);
+    if (selectedExit && travelLegs[0]) {
+        const details = typeof options.exit === 'object' ? options.exit : {};
+        Object.assign(travelLegs[0], {
+            mode: normalizeWorldTravelMode(details.mode),
+            travelTime: Math.max(0, Number(details.travelTime) || 0),
+            routeName: String(details.routeName || '').trim(), cost: String(details.cost || '').trim()
+        });
+    }
     const travelMinutes = travelLegs.reduce((total, leg) => total + leg.travelTime, 0);
     sess.playerLocation = targetLocation.id;
     if (travelMinutes > 0) {
@@ -25955,11 +27402,7 @@ function queueEngineEvent(sess, text) {
     if (!sess.engineEvents.includes(text)) sess.engineEvents.push(text);
 }
 
-function livingClamp(value, min, max) {
-    const n = Number(value);
-    const fallback = min <= 0 && max >= 0 ? 0 : min;
-    return Math.max(min, Math.min(max, Number.isFinite(n) ? n : fallback));
-}
+
 
 // Schedule blocks are selected by string comparison against the wall clock, and
 // a block that can never compare <= "23:59" becomes the permanent pre-dawn
@@ -25969,13 +27412,7 @@ function isValidScheduleTime(value) {
     return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value ?? ''));
 }
 
-function livingId(prefix, value) {
-    const clean = String(value || '').trim().toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 48);
-    return `${prefix}_${clean || Math.random().toString(36).slice(2, 10)}`;
-}
+
 
 // --- Shops -----------------------------------------------------------------
 // Markets existed only as timeline state, creatable solely by the AI, so an
@@ -26362,6 +27799,9 @@ function normalizeWorldSandboxConfig(world) {
     };
     const locationIds = new Set((world.locations || []).map(location => location.id));
     const factionIds = new Set((world.factions || []).map(faction => faction.id));
+    const npcIds = new Set((world.entities || []).filter(entity => entity.type === 'npc').map(entity => entity.id));
+    const groupIds = new Set((world.groups || []).map(group => group.id));
+    const householdIds = new Set((world.groups || []).filter(group => ['household', 'family'].includes(String(group.type || '').toLowerCase())).map(group => group.id));
     const used = new Set();
     world.startingLives = (Array.isArray(world.startingLives) ? world.startingLives : [])
         .filter(isPlainObject).slice(0, 40).map((life, index) => {
@@ -26370,7 +27810,19 @@ function normalizeWorldSandboxConfig(world) {
             used.add(id);
             const startLocationId = locationIds.has(life.startLocationId)
                 ? life.startLocationId : (world.startLocationId || world.locations?.[0]?.id || '');
+            const homeLocationId = locationIds.has(life.homeLocationId) ? life.homeLocationId : '';
             const factionId = factionIds.has(life.factionId) ? life.factionId : '';
+            const memberships = [...new Set((Array.isArray(life.groupIds) ? life.groupIds : [life.groupId])
+                .map(value => String(value || '').trim()).filter(value => groupIds.has(value)))].slice(0, 20);
+            const householdId = householdIds.has(life.householdId) ? life.householdId : '';
+            if (householdId && !memberships.includes(householdId)) memberships.unshift(householdId);
+            const startingRelationships = (Array.isArray(life.startingRelationships) ? life.startingRelationships : [])
+                .filter(isPlainObject).map(relationship => ({
+                    npcId: npcIds.has(relationship.npcId) ? relationship.npcId : '',
+                    label: String(relationship.label || relationship.relationship || '').trim().slice(0, 100),
+                    disposition: livingClamp(relationship.disposition == null ? 65 : relationship.disposition, 0, 100)
+                })).filter(relationship => relationship.npcId && relationship.label).filter((relationship, relationshipIndex, all) =>
+                    all.findIndex(candidate => candidate.npcId === relationship.npcId) === relationshipIndex).slice(0, 40);
             const statOverrides = {};
             if (isPlainObject(life.statOverrides)) {
                 Object.entries(life.statOverrides).slice(0, 40).forEach(([key, value]) => {
@@ -26385,6 +27837,10 @@ function normalizeWorldSandboxConfig(world) {
                 socialRank: String(life.socialRank || 'commoner').slice(0, 80),
                 description: String(life.description || '').slice(0, 500),
                 startLocationId,
+                homeLocationId,
+                householdId,
+                groupIds: memberships,
+                startingRelationships,
                 factionId,
                 factionReputation: livingClamp(life.factionReputation || 0, -100, 100),
                 title: String(life.title || '').slice(0, 120),
@@ -27011,6 +28467,32 @@ function chooseTimelineHome(world, sourceText) {
     })[0] || null;
 }
 
+function authoredStartingRelationshipSeeds(world, origin) {
+    if (!origin) return [];
+    const explicit = (Array.isArray(origin.startingRelationships) ? origin.startingRelationships : [])
+        .map(relationship => {
+            const npc = (world.entities || []).find(entity => entity.type === 'npc' && entity.id === relationship?.npcId);
+            if (!npc) return null;
+            return {
+                npc,
+                label: String(relationship.label || npc.relationshipToPlayer || 'acquaintance').slice(0, 100),
+                disposition: livingClamp(relationship.disposition == null ? 65 : relationship.disposition, 0, 100),
+                authored: true
+            };
+        }).filter(Boolean);
+    const known = new Set(explicit.map(item => item.npc.id));
+    if (origin.householdId) {
+        (world.entities || []).filter(entity => entity.type === 'npc'
+            && (entity.householdId === origin.householdId || (entity.groupIds || []).includes(origin.householdId)))
+            .forEach(npc => {
+                if (known.has(npc.id)) return;
+                explicit.push({ npc, label: String(npc.relationshipToPlayer || 'household member').slice(0, 100), disposition: 75, authored: false });
+                known.add(npc.id);
+            });
+    }
+    return explicit.slice(0, 40);
+}
+
 function fallbackTimelineLifePlan(world, sess, persona, origin) {
     const source = `${persona?.name || ''} ${persona?.text || ''} ${origin?.name || ''} ${origin?.role || ''} ${origin?.description || ''}`;
     const student = /student|school|new kid|teen|child|pupil|apprentice/i.test(source);
@@ -27082,13 +28564,15 @@ async function requestTimelineLifePlan(world, sess, persona, origin) {
         `${location.id} | ${location.name} | ${location.region || '-'} | ${location.mapType || '-'} | prosperity ${location.prosperity ?? 50}`).join('\n');
     const people = (world.entities || []).filter(entity => entity.type === 'npc' && !entity.sessionOrigin).slice(0, 240).map(entity =>
         `${entity.id} | ${entity.name} | ${String(entity.description || '').slice(0, 100)} | home ${entity.homeLocation || '-'} | at ${entity.startLocation || '-'}`).join('\n');
-    const source = `PERSONA NAME: ${persona?.name || 'none'}\nPERSONA DETAILS:\n${persona?.text || 'none'}\n\nSTARTING LIFE: ${origin?.name || 'default'}\nROLE: ${origin?.role || 'unspecified'}\nSOCIAL RANK: ${origin?.socialRank || 'unspecified'}\nDETAILS: ${origin?.description || ''}\nOBLIGATIONS: ${(origin?.obligations || []).join('; ') || 'none stated'}\nPRIVILEGES: ${(origin?.privileges || []).join('; ') || 'none stated'}\nHOLDINGS: ${(origin?.holdings || []).join('; ') || 'none stated'}\nOUTFIT: ${origin?.outfit || 'unspecified'}\nOPENING: ${origin?.intro || 'world default'}\nSTART LOCATION: ${origin?.startLocationId || sess.playerLocation}`;
+    const authoredRelationships = authoredStartingRelationshipSeeds(world, origin);
+    const authoredGroups = (origin?.groupIds || []).map(id => (world.groups || []).find(group => group.id === id)).filter(Boolean);
+    const source = `PERSONA NAME: ${persona?.name || 'none'}\nPERSONA DETAILS:\n${persona?.text || 'none'}\n\nSTARTING LIFE: ${origin?.name || 'default'}\nROLE: ${origin?.role || 'unspecified'}\nSOCIAL RANK: ${origin?.socialRank || 'unspecified'}\nDETAILS: ${origin?.description || ''}\nOBLIGATIONS: ${(origin?.obligations || []).join('; ') || 'none stated'}\nPRIVILEGES: ${(origin?.privileges || []).join('; ') || 'none stated'}\nHOLDINGS: ${(origin?.holdings || []).join('; ') || 'none stated'}\nOUTFIT: ${origin?.outfit || 'unspecified'}\nOPENING: ${origin?.intro || 'world default'}\nSTART LOCATION: ${origin?.startLocationId || sess.playerLocation}\nAUTHOR-SELECTED HOME: ${origin?.homeLocationId || 'not fixed'}\nAUTHOR-SELECTED HOUSEHOLD: ${origin?.householdId || 'none'}\nAUTHOR-SELECTED GROUPS/COMPANIES: ${authoredGroups.map(group => `${group.id} (${group.name})`).join('; ') || 'none'}\nAUTHOR-SELECTED PLAYER RELATIONSHIPS:\n${authoredRelationships.map(item => `${item.npc.id} | ${item.npc.name} | ${item.label} | disposition ${item.disposition}`).join('\n') || 'none'}`;
     const body = {
         model: structuredModelFor(world), max_tokens: 6500,
         messages: [
             { role: 'system', content: `You initialize a persistent life inside an existing sandbox world. Convert the player's Persona and Starting Life into concrete simulation state without contradicting either.
 
-Reuse existing location_id and existing_npc_id whenever they genuinely fit. Create new people when the Persona states family or close relationships that do not already exist. A student should normally have a plausible household plus 3-6 school/social connections; an adult should have household/local/work anchors. Every recurring person needs a role, relationship to the player, distinct personality, personal goal, home when knowable, and a weekly routine using ONLY location IDs in the manifest. If the Persona says the parents are doctors and the family is wealthy, those exact facts must become structured people, workplaces, schedules and an affluent home—not flavor text.
+Reuse existing location_id and existing_npc_id whenever they genuinely fit. AUTHOR-SELECTED home, household, groups and player relationships in the user message are fixed canon: include every selected NPC with exactly the selected relationship and do not substitute, omit or weaken any of them. Fill only what the author left open. Create new people when the Persona states additional family or close relationships that do not already exist. A student should normally have a plausible household plus 3-6 school/social connections; an adult should have household/local/work anchors. Every recurring person needs a role, relationship to the player, distinct personality, personal goal, home when knowable, and a weekly routine using ONLY location IDs in the manifest. If the Persona says the parents are doctors and the family is wealthy, those exact facts must become structured people, workplaces, schedules and an affluent home—not flavor text.
 
 Return only JSON:
 {"summary":"...","home":{"location_id":"existing id or blank","name":"new home name only if needed","description":"...","connects_to":"existing id","parent_location_id":"existing id"},"people":[{"id":"temporary stable key","existing_npc_id":"optional existing id","name":"...","relationship_to_player":"mother/father/sibling/friend/classmate/rival/coworker/etc","role":"...","description":"...","persona":"...","home_location_id":"existing id or $HOME","day_location_id":"existing school/work id","goal":"...","disposition":0,"schedule":[{"time":"07:00","locationId":"existing id or $HOME","activity":"...","days":["weekday"]}]}],"relationships":[{"a":"temporary person id","b":"temporary person id","label":"...","score":0,"reason":"..."}]}
@@ -27116,7 +28600,8 @@ Disposition and relationship scores are -100..100. Generate 4-10 people, never a
 function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = 'model') {
     const plan = isPlainObject(rawPlan) ? rawPlan : {};
     const sourceText = `${persona?.text || ''} ${origin?.description || ''}`;
-    let home = getLocationRef(world, plan.home?.location_id || plan.home?.name) || chooseTimelineHome(world, sourceText);
+    const authoredHome = getLocationRef(world, origin?.homeLocationId);
+    let home = authoredHome || getLocationRef(world, plan.home?.location_id || plan.home?.name) || chooseTimelineHome(world, sourceText);
     const createdLocationIds = [];
     if (!home && plan.home?.name) {
         const anchor = getLocationRef(world, plan.home.connects_to || plan.home.parent_location_id || origin?.startLocationId || sess.playerLocation);
@@ -27136,8 +28621,40 @@ function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = '
     home = home || getLocationRef(world, origin?.startLocationId || sess.playerLocation);
     const idMap = new Map();
     const seededPeople = [];
-    const rawPeople = (Array.isArray(plan.people) ? plan.people : []).filter(isPlainObject).slice(0, 16);
-    rawPeople.forEach((raw, index) => {
+    const rawPeople = (Array.isArray(plan.people) ? plan.people : []).filter(isPlainObject).slice(0, 16)
+        .map(person => ({ ...person }));
+    // The model is an assistant, not the authority. Reinsert every relationship
+    // selected by the World author and overwrite any conflicting model label.
+    authoredStartingRelationshipSeeds(world, origin).forEach((seed, index) => {
+        let person = rawPeople.find(candidate => candidate.existing_npc_id === seed.npc.id
+            || String(candidate.name || '').trim().toLowerCase() === String(seed.npc.name || '').trim().toLowerCase());
+        if (!person) {
+            person = {
+                id: `authored_${index + 1}`,
+                existing_npc_id: seed.npc.id,
+                name: seed.npc.name,
+                role: seed.npc.role || '',
+                description: seed.npc.description || '',
+                persona: seed.npc.persona || '',
+                home_location_id: seed.npc.homeLocation || '',
+                day_location_id: seed.npc.startLocation || '',
+                goal: seed.npc.goal || '',
+                schedule: seed.npc.schedule || []
+            };
+            rawPeople.push(person);
+        }
+        person.existing_npc_id = seed.npc.id;
+        person.relationship_to_player = seed.label;
+        person.disposition = seed.disposition;
+    });
+    rawPeople.splice(40);
+    const seenExistingPeople = new Set();
+    rawPeople.filter(raw => {
+        if (!raw.existing_npc_id) return true;
+        if (seenExistingPeople.has(raw.existing_npc_id)) return false;
+        seenExistingPeople.add(raw.existing_npc_id);
+        return true;
+    }).forEach((raw, index) => {
         const existing = raw.existing_npc_id ? world.entities.find(entity => entity.id === raw.existing_npc_id && entity.type === 'npc' && isVisibleToSession(entity, sess)) : null;
         const key = String(raw.id || `person_${index + 1}`);
         let npc = existing;
@@ -27203,19 +28720,25 @@ function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = '
             reason: String(raw.reason || '').slice(0, 240), lastChangedTurn: 0
         };
     });
-    const household = seededPeople.filter(person => /parent|guardian|spouse|sibling|child|roommate|family/i.test(person.relationship));
+    const authoredHousehold = origin?.householdId || '';
+    const household = seededPeople.filter(person => /parent|guardian|spouse|sibling|child|roommate|household|family/i.test(person.relationship)
+        || (authoredHousehold && (world.entities.find(entity => entity.id === person.id)?.groupIds || []).includes(authoredHousehold)));
     for (let a = 0; a < household.length; a++) for (let b = a + 1; b < household.length; b++) {
         const key = relationshipKey(household[a].id, household[b].id);
         if (!sess.npcRelationships[key]) sess.npcRelationships[key] = { score: 65, label: 'household family', reason: 'They share a home and history.', lastChangedTurn: 0 };
     }
     sess.playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
     sess.playerIdentity.homeLocationId = home?.id || '';
+    sess.playerIdentity.householdId = authoredHousehold;
+    sess.playerIdentity.groupIds = [...(origin?.groupIds || [])];
+    sess.playerIdentity.authoredRelationships = safeJsonClone(origin?.startingRelationships || []);
     sess.playerIdentity.householdNpcIds = household.map(person => person.id);
     sess.playerIdentity.socialNpcIds = seededPeople.map(person => person.id);
     sess.personaId = persona?.id || '';
     sess.lifeSeed = {
         version: 1, initialized: true, source, personaId: persona?.id || '', originId: origin?.id || sess.originId || '',
         homeLocationId: home?.id || '', people: seededPeople, locationIds: createdLocationIds,
+        householdId: authoredHousehold, groupIds: [...(origin?.groupIds || [])],
         summary: String(plan.summary || `${seededPeople.length} persistent people and a home were connected to this life.`).slice(0, 500),
         generatedAt: Date.now()
     };
@@ -27246,6 +28769,15 @@ function applyStartingLifeToSession(world, sess, originId) {
     normalizeWorldSandboxConfig(world);
     const life = world.startingLives.find(item => item.id === originId);
     if (!life || !sess) return null;
+    sess.entityStates = isPlainObject(sess.entityStates) ? sess.entityStates : {};
+    (sess.originRelationshipNpcIds || []).forEach(npcId => {
+        const entityState = sess.entityStates?.[npcId];
+        if (!entityState || entityState.relationshipSource !== 'starting_life') return;
+        delete entityState.relationshipToPlayer;
+        delete entityState.disposition;
+        delete entityState.relationshipSource;
+        entityState.observations = (entityState.observations || []).filter(observation => observation?.source !== 'starting_life');
+    });
     sess.originId = life.id;
     sess.playerIdentity = {
         originId: life.id,
@@ -27253,6 +28785,10 @@ function applyStartingLifeToSession(world, sess, originId) {
         socialRank: life.socialRank,
         title: life.title,
         factionId: life.factionId,
+        homeLocationId: life.homeLocationId || '',
+        householdId: life.householdId || '',
+        groupIds: [...(life.groupIds || [])],
+        authoredRelationships: safeJsonClone(life.startingRelationships || []),
         legalStatus: life.legalStatus,
         privileges: [...life.privileges],
         obligations: [...life.obligations],
@@ -27261,6 +28797,16 @@ function applyStartingLifeToSession(world, sess, originId) {
         holdings: [...life.holdings]
     };
     if (getLocationRef(world, life.startLocationId)) sess.playerLocation = life.startLocationId;
+    const authoredRelationships = authoredStartingRelationshipSeeds(world, life);
+    sess.originRelationshipNpcIds = authoredRelationships.map(seed => seed.npc.id);
+    authoredRelationships.forEach(seed => {
+        const entityState = sess.entityStates?.[seed.npc.id] || (sess.entityStates[seed.npc.id] = { location: seed.npc.startLocation || life.startLocationId, observations: [] });
+        entityState.relationshipToPlayer = seed.label;
+        entityState.disposition = seed.disposition;
+        entityState.relationshipSource = 'starting_life';
+        entityState.observations = (entityState.observations || []).filter(observation => observation?.source !== 'starting_life');
+        entityState.observations.push({ id: `obs_origin_${life.id}_${seed.npc.id}`, text: `Has an established ${seed.label} relationship with the player from before this timeline began.`, source: 'starting_life', confidence: 1, turn: 0 });
+    });
     sess.inventory = [...life.inventory];
     (world.hudConfig?.stats || []).forEach(stat => {
         sess.playerStats[stat.id] = stat.value;
@@ -28543,7 +30089,12 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
     if (dropped) console.warn(`Horde Engine: world agent proposed ${dropped} out-of-scope field(s); ignored.`);
     if (!Object.keys(actions).length) return { applied: false, turn, developments: [] };
 
-    processStructuredActions(actions, world, sess);
+    const beforeActions = captureWorldTurnState(world, sess);
+    const actionResult = processStructuredActions(actions, world, sess);
+    if (actionResult?.moduleRejections?.length) {
+        restoreWorldTurnState(world, sess, beforeActions);
+        return { applied: false, turn, developments: [], rejected: actionResult.moduleRejections };
+    }
 
     const developments = (Array.isArray(parsed.developments) ? parsed.developments : [])
         .map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
@@ -28576,10 +30127,60 @@ function parseWorldAgentPayload(raw) {
     return null;
 }
 
-function syncNPCSchedules(world, sess) {
-    if (!normalizeWorldGameRules(world).modules.schedules) {
-        return { moves: 0, active: 0 };
+function advanceNpcJourney(world, sess, npc, absoluteMinute) {
+    const actor = sess.entityStates?.[npc.id];
+    const journey = actor?.journey;
+    if (!journey) return false;
+    // A newer explicit placement or status change interrupts this journey.
+    if (actor.location != null || !isNpcActive(actor)) {
+        delete actor.journey;
+        return false;
     }
+    if (absoluteMinute < journey.arrivalMinute) return false;
+    const destination = getLocationRef(worldForSession(world, sess), journey.destinationId);
+    // Geography may have been edited during travel. Return to the last known
+    // origin instead of silently dropping an actor into a deleted location.
+    actor.location = destination?.id || getLocationRef(worldForSession(world, sess), journey.originId)?.id
+        || getLocationRef(worldForSession(world, sess), world.startLocationId)?.id
+        || sessionLocations(world, sess)[0]?.id || null;
+    actor.currentActivity = destination ? journey.activity : 'Travel interrupted: destination no longer exists.';
+    if (destination && journey.pinOnArrival) actor.pinnedUntilTurn = (sess.turnCount || 1) + 6;
+    delete actor.journey;
+    if (actor.location === sess.playerLocation) {
+        queueEngineEvent(sess, `${npc.name} has just arrived here${actor.currentActivity ? ` (${actor.currentActivity})` : ''} — narrate their entrance.`);
+    }
+    return true;
+}
+
+function startNpcJourney(world, sess, npc, destination, activity, absoluteMinute, options = {}) {
+    const actor = sess.entityStates[npc.id];
+    if (actor.journey) return false;
+    const view = worldForSession(world, sess);
+    const path = findWorldTravelPath(view, actor.location, destination.id);
+    if (!path) {
+        actor.scheduleBlockedReason = `No route from ${actor.location || 'unknown position'} to ${destination.id}.`;
+        return false;
+    }
+    delete actor.scheduleBlockedReason;
+    const originId = actor.location;
+    const minutes = getWorldPathTravelTime(view, path);
+    actor.lastKnownLocation = originId;
+    actor.journey = { originId, destinationId: destination.id, path,
+        departureMinute: absoluteMinute, arrivalMinute: absoluteMinute + minutes, activity: activity || '',
+        pinOnArrival: options.pinOnArrival === true };
+    actor.location = null;
+    actor.currentActivity = `Travelling to ${destination.name}.`;
+    if (originId === sess.playerLocation) {
+        queueEngineEvent(sess, `${npc.name} is leaving for ${destination.name}${activity ? ` to ${activity}` : ''} — narrate their departure.`);
+    }
+    // Untimed legacy edges remain immediate; authored durations now persist
+    // across turns/reloads instead of teleporting at an appointment boundary.
+    advanceNpcJourney(world, sess, npc, absoluteMinute);
+    return true;
+}
+
+function syncNPCSchedules(world, sess) {
+    const schedulesEnabled = normalizeWorldGameRules(world).modules.schedules;
     normalizeLivingWorldState(world, sess);
     const time = getWorldTimeData(world, sess);
     const currentTimeStr = `${time.hours24.toString().padStart(2, '0')}:${time.mins.toString().padStart(2, '0')}`;
@@ -28587,6 +30188,12 @@ function syncNPCSchedules(world, sess) {
     let activeCount = 0;
 
     world.entities.forEach(ent => {
+        if (ent.type !== 'npc' || !isVisibleToSession(ent, sess)) return;
+        if (advanceNpcJourney(world, sess, ent, time.currentTotalMinutes)) moveCount++;
+
+        // Travel is shared by background actions and schedules. Turning off
+        // appointments must not strand an already travelling actor.
+        if (!schedulesEnabled) return;
         const hasTimelineOverride = Object.prototype.hasOwnProperty.call(sess.npcScheduleOverrides || {}, ent.id);
         if (!world.hudConfig?.enableSchedules && !hasTimelineOverride) return;
         const schedule = hasTimelineOverride
@@ -28631,22 +30238,14 @@ function syncNPCSchedules(world, sess) {
             // this NPC recently, the schedule may not teleport them away.
             if (isNpcPinned(sess, entState)) return;
 
-            const loc = getLocationRef(world, activeBlock.locationId);
+            const loc = getLocationRef(worldForSession(world, sess), activeBlock.locationId);
             if (loc) activeCount++;
+            if (entState.journey) return;
             if (loc && entState.location !== loc.id) {
-                const prevLoc = entState.location;
-                entState.location = loc.id;
-                entState.currentActivity = activeBlock.activity || "";
-                moveCount++;
-                // If this move crosses the player's scene, the DM must narrate it —
-                // characters walk in and out, they don't blink in and out.
-                if (loc.id === sess.playerLocation) {
-                    queueEngineEvent(sess, `${ent.name} has just arrived here${activeBlock.activity ? ` (${activeBlock.activity})` : ''} — narrate their entrance.`);
-                } else if (prevLoc === sess.playerLocation) {
-                    queueEngineEvent(sess, `${ent.name} is leaving${activeBlock.activity ? ` to ${activeBlock.activity}` : ''} — narrate their departure.`);
-                }
+                if (startNpcJourney(world, sess, ent, loc, activeBlock.activity, time.currentTotalMinutes)) moveCount++;
             } else if (loc) {
-                entState.currentActivity = activeBlock.activity || "";
+                delete entState.scheduleBlockedReason;
+                entState.currentActivity = activeBlock.activity || '';
             }
         }
     });
@@ -29016,6 +30615,933 @@ function buildWorldLintReport(world) {
         push('warning', 'Secrets', `Secret label "${lab}" is used ${c}× — reveals will collide.`));
 
     return findings;
+}
+
+// --- World Architect Agent ------------------------------------------------
+// Expands an existing world as a resumable, reviewable migration. The model is
+// never handed the whole world to rewrite: it may only propose these typed
+// operations, which are replayed against a clone and validated before apply.
+const WORLD_ARCHITECT_OPERATION_TYPES = new Set([
+    'add_region', 'update_region', 'add_location', 'update_location', 'connect_locations',
+    'add_character', 'update_character', 'add_item', 'update_item', 'add_group',
+    'update_group', 'merge_groups', 'delete_group', 'add_faction', 'add_relationship',
+    'add_lore', 'update_lore'
+]);
+const WORLD_ARCHITECT_POLICIES = new Set(['add_only', 'fill_gaps', 'allow_edits']);
+const WORLD_ARCHITECT_MAP_TYPES = new Set(['region', 'transit', 'route', 'building', 'outdoor', 'room', 'area']);
+
+function worldArchitectSnapshot(world) {
+    const copy = safeJsonClone(world || {});
+    delete copy.architectJob;
+    delete copy.architectUndo;
+    return copy;
+}
+
+function worldArchitectFingerprint(world) {
+    const text = JSON.stringify(worldArchitectSnapshot(world));
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
+function worldArchitectRequestedCounts(request) {
+    const out = { regions: 0, locations: 0, rooms: 0, people: 0, items: 0, groups: 0, factions: 0, lore: 0 };
+    const aliases = [
+        ['rooms', /(?:add|create|make|build|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?rooms?\b/gi],
+        ['locations', /(?:add|create|make|build|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:locations?|places?)\b/gi],
+        ['people', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:characters?|npcs?|people|persons?)\b/gi],
+        ['items', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:items?|objects?)\b/gi],
+        ['regions', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?regions?\b/gi],
+        ['groups', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:groups?|households?|organizations?)\b/gi],
+        ['factions', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?factions?\b/gi],
+        ['lore', /(?:add|create|make|include|generate)?\s*(\d{1,4})\s+(?:new\s+)?(?:lore entries|lorebooks?|lore)\b/gi]
+    ];
+    aliases.forEach(([key, pattern]) => {
+        for (const match of String(request || '').matchAll(pattern)) out[key] += Math.min(2000, Number(match[1]) || 0);
+    });
+    return out;
+}
+
+function worldArchitectCountRecords(world) {
+    const locations = Array.isArray(world?.locations) ? world.locations : [];
+    const entities = Array.isArray(world?.entities) ? world.entities : [];
+    return {
+        regions: (world?.regions || []).length,
+        // Rooms are tracked separately so “10 locations and 100 rooms” has a
+        // meaningful, satisfiable exact-count contract rather than counting
+        // every room twice.
+        locations: locations.filter(item => item.mapType !== 'room').length,
+        rooms: locations.filter(item => item.mapType === 'room').length,
+        people: entities.filter(item => item.type === 'npc').length,
+        items: entities.filter(item => item.type === 'item').length,
+        groups: (world?.groups || []).length,
+        factions: (world?.factions || []).length,
+        lore: (world?.lorebook || []).length
+    };
+}
+
+function defaultWorldArchitectPlan(world, request, options = {}) {
+    const counts = worldArchitectRequestedCounts(request);
+    const batchSize = Math.max(4, Math.min(25, Number(options.batchSize) || 12));
+    const units = [];
+    Object.entries(counts).forEach(([kind, count]) => {
+        for (let offset = 0; offset < count; offset += batchSize) {
+            const amount = Math.min(batchSize, count - offset);
+            units.push({ kind, amount, offset });
+        }
+    });
+    if (!units.length) units.push({ kind: options.scope || 'whole', amount: 0, offset: 0 });
+    const batches = units.map((unit, index) => ({
+        id: `batch_${index + 1}`,
+        label: unit.amount ? `${unit.amount} ${unit.kind} (${unit.offset + 1}–${unit.offset + unit.amount})` : 'Requested world changes',
+        instruction: unit.amount
+            ? `Create exactly ${unit.amount} new ${unit.kind}. This batch covers requested records ${unit.offset + 1} through ${unit.offset + unit.amount}.`
+            : String(request || '').trim(),
+        expectedCounts: { regions: 0, locations: 0, rooms: 0, people: 0, items: 0, groups: 0, factions: 0, lore: 0, ...(unit.amount ? { [unit.kind]: unit.amount } : {}) }
+    }));
+    return {
+        title: 'World expansion plan',
+        summary: String(request || '').trim(),
+        assumptions: ['Existing authored canon is preserved.', 'Every proposed change is staged and validated before apply.'],
+        requestedCounts: counts,
+        batches,
+        estimatedCalls: batches.length
+    };
+}
+
+function normalizeWorldArchitectPlan(raw, fallback) {
+    const source = isPlainObject(raw) ? raw : {};
+    const batches = Array.isArray(source.batches) ? source.batches.slice(0, 200).map((batch, index) => ({
+        id: `batch_${index + 1}`,
+        label: String(batch?.label || fallback.batches[index]?.label || `Batch ${index + 1}`).slice(0, 160),
+        instruction: String(batch?.instruction || fallback.batches[index]?.instruction || fallback.summary).slice(0, 2000),
+        expectedCounts: { ...(fallback.batches[index]?.expectedCounts || {}), ...(isPlainObject(batch?.expectedCounts) ? batch.expectedCounts : {}) }
+    })) : [];
+    // The deterministic plan owns explicit numeric promises. A planner may add
+    // useful sequencing, but it may not silently shrink “100 rooms” to 12.
+    const hasExactCounts = Object.values(fallback.requestedCounts).some(Boolean);
+    // Exact-count work keeps deterministic, type-specific batches. Previously
+    // an LLM could rename the “7 people” batch to “establish family structure”
+    // while inheriting expectedCounts.people=7 by array position. It then quite
+    // reasonably emitted groups and relationships, and our validator blamed
+    // the model for producing zero characters. The planner may describe the
+    // overall approach, but numeric batching is engine-owned.
+    const planned = hasExactCounts ? fallback.batches : (batches.length ? batches : fallback.batches);
+    return {
+        title: String(source.title || fallback.title).slice(0, 160),
+        summary: String(source.summary || fallback.summary).slice(0, 2000),
+        assumptions: (Array.isArray(source.assumptions) ? source.assumptions : fallback.assumptions).map(item => String(item).slice(0, 300)).slice(0, 12),
+        requestedCounts: fallback.requestedCounts,
+        batches: planned,
+        estimatedCalls: planned.length
+    };
+}
+
+function normalizeWorldArchitectOperation(raw, index = 0) {
+    if (!isPlainObject(raw)) return null;
+    const token = value => String(value || '').trim().toLowerCase().replace(/[\s.-]+/g, '_');
+    const aliases = {
+        create_region: 'add_region', edit_region: 'update_region', modify_region: 'update_region',
+        create_location: 'add_location', create_place: 'add_location', add_place: 'add_location',
+        create_room: 'add_location', add_room: 'add_location', edit_location: 'update_location',
+        update_place: 'update_location', edit_place: 'update_location', modify_location: 'update_location',
+        link_locations: 'connect_locations', connect_location: 'connect_locations', add_connection: 'connect_locations',
+        create_character: 'add_character', create_person: 'add_character', create_npc: 'add_character',
+        add_npc: 'add_character', add_person: 'add_character', update_npc: 'update_character',
+        update_person: 'update_character', edit_npc: 'update_character', edit_character: 'update_character',
+        create_item: 'add_item', create_object: 'add_item', add_object: 'add_item', edit_item: 'update_item',
+        create_group: 'add_group', create_household: 'add_group', create_family: 'add_group',
+        add_household: 'add_group', add_family: 'add_group', add_organization: 'add_group',
+        update_household: 'update_group', update_family: 'update_group', update_organization: 'update_group',
+        edit_group: 'update_group', edit_household: 'update_group', edit_family: 'update_group',
+        merge_households: 'merge_groups', merge_families: 'merge_groups',
+        delete_household: 'delete_group', delete_family: 'delete_group',
+        create_faction: 'add_faction', create_relationship: 'add_relationship', link_characters: 'add_relationship',
+        create_lore: 'add_lore', add_lore_entry: 'add_lore', create_lore_entry: 'add_lore', edit_lore: 'update_lore'
+    };
+    const suppliedType = token(raw.type || raw.operation || raw.operationType || raw.op);
+    let inferredSubject = token(raw.entityType || raw.entity_type || raw.resource || raw.kind || raw.subject || suppliedType);
+    let type = aliases[suppliedType] || suppliedType;
+    if (!WORLD_ARCHITECT_OPERATION_TYPES.has(type)) {
+        const actionAliases = { create: 'add', insert: 'add', new: 'add', edit: 'update', modify: 'update', set: 'update', remove: 'delete', link: 'add' };
+        const subjectAliases = {
+            npc: 'character', person: 'character', people: 'character', characters: 'character',
+            place: 'location', room: 'room', object: 'item', household: 'group', family: 'group',
+            organization: 'group', lore_entry: 'lore', connection: 'connection'
+        };
+        const action = actionAliases[token(raw.action || raw.verb)] || token(raw.action || raw.verb);
+        const subject = subjectAliases[inferredSubject] || inferredSubject;
+        const combined = subject === 'connection' && ['add', 'create', 'link'].includes(action)
+            ? 'connect_locations'
+            : `${action}_${subject}`;
+        type = aliases[combined] || combined;
+    }
+    if (!WORLD_ARCHITECT_OPERATION_TYPES.has(type)) return null;
+    const nestedRecord = [raw.record, raw.character, raw.person, raw.npc, raw.entity, raw.location, raw.place,
+        raw.room, raw.item, raw.group, raw.household, raw.family, raw.faction, raw.relationship, raw.lore,
+        raw.data, raw.payload, raw.value, raw.details].find(isPlainObject);
+    const flattened = safeJsonClone(raw);
+    ['type', 'operation', 'operationType', 'op', 'action', 'verb', 'entityType', 'entity_type', 'resource', 'kind', 'subject',
+        'operationId', 'targetId', 'target', 'fields', 'changes', 'updates', 'reason'].forEach(key => delete flattened[key]);
+    const nestedFields = [raw.fields, raw.changes, raw.updates].find(isPlainObject);
+    const recordFields = nestedRecord && [nestedRecord.fields, nestedRecord.changes, nestedRecord.updates].find(isPlainObject);
+    // Models commonly split an add operation into {record:{id},fields:{name}}
+    // or wrap it as {character:{...}}. Merge those equivalent shapes here so
+    // a valid record is not shown in review and then rejected during staging.
+    const record = {
+        ...flattened,
+        ...(nestedFields ? safeJsonClone(nestedFields) : {}),
+        ...(nestedRecord ? safeJsonClone(nestedRecord) : {}),
+        ...(recordFields ? safeJsonClone(recordFields) : {})
+    };
+    ['fields', 'changes', 'updates'].forEach(key => delete record[key]);
+    if (!record.name) record.name = String(record.displayName || record.display_name || record.title || '').trim();
+    const addTypesNeedingName = new Set(['add_region', 'add_location', 'add_character', 'add_item', 'add_group', 'add_faction']);
+    if (addTypesNeedingName.has(type) && !record.name) {
+        const meaningfulId = String(record.id || raw.id || '').trim()
+            .replace(/^(?:ent|npc|char|person|item|loc|location|reg|region|grp|group|fac|faction)_+/i, '')
+            .replace(/[_-]+/g, ' ').trim();
+        if (meaningfulId && !/^\d+$/.test(meaningfulId)) {
+            record.name = meaningfulId.replace(/\b\p{L}/gu, letter => letter.toUpperCase());
+        }
+    }
+    if ([suppliedType, inferredSubject].some(value => value === 'room' || value === 'add_room' || value === 'create_room') && !record.mapType) record.mapType = 'room';
+    if (type === 'add_group' && !record.type) {
+        if ([suppliedType, inferredSubject].some(value => value.includes('household'))) record.type = 'household';
+        else if ([suppliedType, inferredSubject].some(value => value.includes('family'))) record.type = 'family';
+        else if ([suppliedType, inferredSubject].some(value => value.includes('organization'))) record.type = 'organization';
+    }
+    const clean = {
+        type, operationId: String(raw.operationId || `op_${index + 1}`).slice(0, 100),
+        id: String(raw.id || record.id || '').trim().slice(0, 100),
+        targetId: String(raw.targetId || raw.target || '').trim().slice(0, 100),
+        record,
+        fields: nestedFields ? safeJsonClone(nestedFields) : (type.startsWith('update_') ? safeJsonClone(record) : {}),
+        from: String(raw.from || '').trim().slice(0, 100), to: String(raw.to || '').trim().slice(0, 100),
+        a: String(raw.a || '').trim().slice(0, 100), b: String(raw.b || '').trim().slice(0, 100),
+        mode: String(raw.mode || '').trim().slice(0, 80), minutes: Number(raw.minutes ?? raw.travelTime) || 0,
+        oneWay: raw.oneWay === true || raw.isOneWay === true,
+        label: String(raw.label || '').trim().slice(0, 100), reason: String(raw.reason || '').trim().slice(0, 300),
+        score: Number(raw.score) || 0, keyword: String(raw.keyword || '').trim().slice(0, 160),
+        text: String(raw.text || '').trim().slice(0, 10000)
+    };
+    return clean;
+}
+
+function worldArchitectOperationCounts(operations) {
+    const counts = { regions: 0, locations: 0, rooms: 0, people: 0, items: 0, groups: 0, factions: 0, lore: 0 };
+    (operations || []).forEach(operation => {
+        const op = normalizeWorldArchitectOperation(operation);
+        if (!op) return;
+        if (op.type === 'add_region') counts.regions++;
+        if (op.type === 'add_location') counts[op.record.mapType === 'room' ? 'rooms' : 'locations']++;
+        if (op.type === 'add_character') counts.people++;
+        if (op.type === 'add_item') counts.items++;
+        if (op.type === 'add_group') counts.groups++;
+        if (op.type === 'add_faction') counts.factions++;
+        if (op.type === 'add_lore') counts.lore++;
+    });
+    return counts;
+}
+
+function worldArchitectFind(records, ref) {
+    const key = String(ref || '').trim().toLowerCase();
+    return (records || []).find(record => String(record.id || '').toLowerCase() === key || String(record.name || '').trim().toLowerCase() === key);
+}
+
+function worldArchitectApplyFields(target, fields, allowed, policy) {
+    if (policy === 'add_only') return 0;
+    let changed = 0;
+    allowed.forEach(key => {
+        if (!(key in fields)) return;
+        const old = target[key];
+        const blank = old == null || old === '' || (Array.isArray(old) && !old.length);
+        if (policy === 'fill_gaps' && !blank) return;
+        target[key] = safeJsonClone(fields[key]);
+        changed++;
+    });
+    return changed;
+}
+
+function applyWorldArchitectOperation(world, input, policy = 'fill_gaps') {
+    const op = normalizeWorldArchitectOperation(input);
+    if (!op) return { applied: false, reason: 'Unsupported or malformed operation.' };
+    const records = op.record;
+    const strings = value => (Array.isArray(value) ? value : (typeof value === 'string' ? value.split(',') : []))
+        .map(item => String(item || '').trim()).filter(Boolean);
+    const idFor = (list, prefix, name) => op.id || records.id || `${prefix}_${worldDirectorySlug(name, prefix)}`;
+    const addRecord = (list, record, prefix) => {
+        const existing = worldArchitectFind(list, record.id) || worldArchitectFind(list, record.name);
+        if (existing) return { applied: true, idempotent: true, summary: `${record.name || record.id} already exists.` };
+        if (!record.name) return { applied: false, reason: `${op.type} needs a name.` };
+        list.push(record);
+        return { applied: true, summary: `Added ${record.name}.` };
+    };
+    world.locations ||= []; world.entities ||= []; world.regions ||= []; world.groups ||= []; world.factions ||= []; world.lorebook ||= [];
+    if (op.type === 'add_region') {
+        const name = String(records.name || '').trim().slice(0, 300);
+        return addRecord(world.regions, { id: idFor(world.regions, 'reg', name), name, description: String(records.description || '').slice(0, 4000), tags: strings(records.tags).slice(0, 30) }, 'reg');
+    }
+    if (op.type === 'add_location') {
+        const name = String(records.name || '').trim().slice(0, 300);
+        const region = worldArchitectFind(world.regions, records.regionId || records.region);
+        const parent = worldArchitectFind(world.locations, records.parentLocationId || records.parent);
+        if ((records.regionId || records.region) && !region) return { applied: false, reason: `Missing region: ${records.regionId || records.region}` };
+        if ((records.parentLocationId || records.parent) && !parent) return { applied: false, reason: `Missing parent location: ${records.parentLocationId || records.parent}` };
+        const mapType = WORLD_ARCHITECT_MAP_TYPES.has(records.mapType) ? records.mapType : (parent ? 'room' : 'area');
+        return addRecord(world.locations, {
+            id: idFor(world.locations, 'loc', name), name, description: String(records.description || '').slice(0, 6000),
+            regionId: region?.id || parent?.regionId || '', region: region?.name || '', parentLocationId: parent?.id || '', mapType,
+            tags: strings(records.tags).slice(0, 30), exits: []
+        }, 'loc');
+    }
+    if (op.type === 'connect_locations') {
+        const from = worldArchitectFind(world.locations, op.from || records.from);
+        const to = worldArchitectFind(world.locations, op.to || records.to);
+        if (!from || !to || from.id === to.id) return { applied: false, reason: 'Connection needs two existing, different locations.' };
+        upsertWorldTravelConnection(world, from, to, { mode: op.mode || records.mode || 'walk', travelTime: op.minutes || records.minutes || 1, isOneWay: op.oneWay || records.oneWay, routeName: records.routeName || '' });
+        return { applied: true, summary: `Connected ${from.name} and ${to.name}.` };
+    }
+    if (op.type === 'add_character' || op.type === 'add_item') {
+        const isItem = op.type === 'add_item';
+        const name = String(records.name || '').trim().slice(0, 300);
+        const place = worldArchitectFind(world.locations, records.startLocation || records.locationId);
+        const home = worldArchitectFind(world.locations, records.homeLocation || records.homeLocationId) || place;
+        if ((records.startLocation || records.locationId) && !place) return { applied: false, reason: `Missing location: ${records.startLocation || records.locationId}` };
+        const record = {
+            id: idFor(world.entities, isItem ? 'item' : 'npc', name), type: isItem ? 'item' : 'npc', name,
+            description: String(records.description || '').slice(0, 6000), startLocation: place?.id || world.startLocationId || world.locations[0]?.id || '',
+            tags: strings(records.tags).slice(0, 30)
+        };
+        if (!isItem) Object.assign(record, {
+            persona: String(records.persona || '').slice(0, 6000), homeLocation: home?.id || record.startLocation,
+            goal: String(records.goal || '').slice(0, 1000), goalSteps: strings(records.goalSteps).slice(0, 20),
+            groupIds: strings(records.groupIds || records.groups).map(ref => worldArchitectFind(world.groups, ref)?.id).filter(Boolean).slice(0, 20),
+            schedule: (Array.isArray(records.schedule) ? records.schedule : []).map(block => {
+                const location = worldArchitectFind(world.locations, block?.locationId || block?.location);
+                return location ? { ...safeJsonClone(block), locationId: location.id } : null;
+            }).filter(Boolean).slice(0, 30),
+            simulationDepth: ['background', 'recurring', 'core'].includes(records.simulationDepth) ? records.simulationDepth : 'recurring'
+        });
+        if (!isItem) {
+            const household = worldArchitectFind(world.groups, records.householdId || records.household);
+            record.householdId = household?.id || record.groupIds.find(id => world.groups.some(group => group.id === id && group.type === 'household')) || '';
+            if (record.householdId && !record.groupIds.includes(record.householdId)) record.groupIds.unshift(record.householdId);
+        }
+        return addRecord(world.entities, record, isItem ? 'item' : 'npc');
+    }
+    if (op.type === 'add_group' || op.type === 'add_faction') {
+        const list = op.type === 'add_group' ? world.groups : world.factions;
+        const prefix = op.type === 'add_group' ? 'grp' : 'fac';
+        const name = String(records.name || '').trim().slice(0, 300);
+        const home = op.type === 'add_group' && records.homeLocationId
+            ? worldArchitectFind(world.locations, records.homeLocationId) : null;
+        if (op.type === 'add_group' && records.homeLocationId && !home) return { applied: false, reason: `Missing group home location: ${records.homeLocationId}` };
+        return addRecord(list, {
+            id: idFor(list, prefix, name), name,
+            type: String(records.type || (op.type === 'add_group' ? 'organization' : '')).slice(0, 80),
+            description: String(records.description || '').slice(0, 5000), goal: String(records.goal || '').slice(0, 1000),
+            tags: strings(records.tags).slice(0, 30), ...(op.type === 'add_group' ? { homeLocationId: home?.id || '' } : {})
+        }, prefix);
+    }
+    if (op.type === 'update_group') {
+        const target = worldArchitectFind(world.groups, op.targetId || op.id || records.id || records.name);
+        if (!target) return { applied: false, reason: `Group update target not found: ${op.targetId || op.id || records.name}` };
+        const fields = { ...records, ...op.fields };
+        if ('homeLocationId' in fields && fields.homeLocationId && !worldArchitectFind(world.locations, fields.homeLocationId)) {
+            return { applied: false, reason: `Missing group home location: ${fields.homeLocationId}` };
+        }
+        if ('type' in fields && !['household', 'family', 'organization', 'crew', 'other'].includes(fields.type)) fields.type = 'other';
+        const changed = worldArchitectApplyFields(target, fields, ['name', 'type', 'description', 'homeLocationId', 'tags'], policy);
+        if (changed && target.type !== 'household') {
+            (world.entities || []).forEach(person => {
+                if (person.householdId === target.id) person.householdId = (person.groupIds || []).find(id => world.groups.some(group => group.id === id && group.type === 'household')) || '';
+            });
+        }
+        return changed ? { applied: true, summary: `Updated ${target.name}.` } : { applied: true, idempotent: true, summary: `No permitted gaps in ${target.name}.` };
+    }
+    if (op.type === 'merge_groups') {
+        if (policy !== 'allow_edits') return { applied: false, reason: 'Merging groups requires the Allow safe edits policy.' };
+        const source = worldArchitectFind(world.groups, op.from || records.from || records.sourceId);
+        const target = worldArchitectFind(world.groups, op.to || records.to || records.targetId);
+        if (!source || !target || source.id === target.id) return { applied: false, reason: 'Group merge needs two existing, different groups.' };
+        const sourceName = source.name;
+        mergeWorldGroupRecords(world, source.id, target.id);
+        return { applied: true, summary: `Merged ${sourceName} into ${target.name}.` };
+    }
+    if (op.type === 'delete_group') {
+        if (policy !== 'allow_edits') return { applied: false, reason: 'Deleting a group requires the Allow safe edits policy.' };
+        const target = worldArchitectFind(world.groups, op.targetId || op.id || records.id || records.name);
+        if (!target) return { applied: false, reason: 'Group delete target not found.' };
+        const name = target.name;
+        removeWorldGroupRecord(world, target.id);
+        return { applied: true, summary: `Deleted ${name}; its characters were kept.` };
+    }
+    if (op.type === 'add_relationship') {
+        const a = worldArchitectFind(world.entities, op.a || records.a);
+        const b = worldArchitectFind(world.entities, op.b || records.b);
+        if (!a || !b || a.id === b.id || a.type !== 'npc' || b.type !== 'npc') return { applied: false, reason: 'Relationship needs two existing characters.' };
+        world.relationships ||= [];
+        const existing = world.relationships.find(item => new Set([item.a, item.b]).has(a.id) && new Set([item.a, item.b]).has(b.id));
+        if (existing) return { applied: true, idempotent: true, summary: 'Relationship already exists.' };
+        world.relationships.push({ a: a.id, b: b.id, label: op.label || records.label || '', score: livingClamp(op.score || records.score || 0, -100, 100), reason: op.reason || records.reason || '' });
+        return { applied: true, summary: `Linked ${a.name} and ${b.name}.` };
+    }
+    if (op.type === 'add_lore') {
+        const keyword = op.keyword || records.keyword;
+        const text = op.text || records.text;
+        const existing = world.lorebook.find(item => String(item.keyword || '').trim().toLowerCase() === String(keyword || '').trim().toLowerCase());
+        if (existing) return { applied: true, idempotent: true, summary: `Lore “${keyword}” already exists.` };
+        if (!keyword || !text) return { applied: false, reason: 'Lore needs a keyword and text.' };
+        world.lorebook.push({ keyword, text });
+        return { applied: true, summary: `Added lore: ${keyword}.` };
+    }
+    const updateLists = {
+        update_region: [world.regions, ['name', 'description', 'tags']],
+        update_location: [world.locations, ['name', 'description', 'tags', 'mapType', 'parentLocationId', 'regionId']],
+        update_character: [world.entities, ['name', 'description', 'persona', 'startLocation', 'homeLocation', 'goal', 'goalSteps', 'groupIds', 'schedule', 'simulationDepth', 'tags']],
+        update_item: [world.entities, ['name', 'description', 'startLocation', 'tags']]
+    };
+    if (updateLists[op.type]) {
+        const [list, allowed] = updateLists[op.type];
+        const target = worldArchitectFind(list, op.targetId || op.id || records.id || records.name);
+        if (!target) return { applied: false, reason: `Update target not found: ${op.targetId || op.id || records.name}` };
+        if (op.type === 'update_character' && target.type !== 'npc') return { applied: false, reason: 'Character update target is not a character.' };
+        if (op.type === 'update_item' && target.type !== 'item') return { applied: false, reason: 'Item update target is not an item.' };
+        const changed = worldArchitectApplyFields(target, { ...records, ...op.fields }, allowed, policy);
+        return changed ? { applied: true, summary: `Updated ${target.name}.` } : { applied: true, idempotent: true, summary: `No permitted gaps in ${target.name}.` };
+    }
+    if (op.type === 'update_lore') {
+        const target = world.lorebook.find(item => String(item.keyword || '').toLowerCase() === String(op.keyword || op.targetId || records.keyword || '').toLowerCase());
+        if (!target) return { applied: false, reason: 'Lore update target not found.' };
+        const changed = worldArchitectApplyFields(target, { keyword: records.keyword, text: op.text || records.text }, ['keyword', 'text'], policy);
+        return changed ? { applied: true, summary: `Updated lore: ${target.keyword}.` } : { applied: true, idempotent: true, summary: 'No permitted lore gaps.' };
+    }
+    return { applied: false, reason: 'Operation was not handled.' };
+}
+
+function stageWorldArchitectJob(world, job) {
+    const staged = worldArchitectSnapshot(world);
+    const before = worldArchitectCountRecords(staged);
+    const dismissed = new Set((job?.dismissed || []).map(Number));
+    const results = [];
+    const priority = operation => ({
+        add_region: 10, add_location: 20, add_group: 30, add_faction: 30,
+        add_character: 40, add_item: 40, update_region: 50, update_location: 50,
+        update_group: 50, update_character: 50, update_item: 50, update_lore: 50,
+        connect_locations: 60, add_relationship: 70, merge_groups: 80, delete_group: 80
+    })[normalizeWorldArchitectOperation(operation)?.type] ?? 55;
+    let pending = (job?.operations || []).map((operation, index) => ({ operation, index }))
+        .filter(item => !dismissed.has(item.index))
+        .sort((left, right) => priority(left.operation) - priority(right.operation) || left.index - right.index);
+    // References may point to records created later in the same batch (a room
+    // to its new parent, a relationship to its new characters). Retry only
+    // failed atomic operations after each successful pass; successful ones are
+    // never replayed.
+    while (pending.length) {
+        const retry = [];
+        let progress = false;
+        pending.forEach(item => {
+            let outcome;
+            try { outcome = applyWorldArchitectOperation(staged, item.operation, job?.options?.policy || 'fill_gaps'); }
+            catch (error) { outcome = { applied: false, reason: error.message || String(error) }; }
+            if (outcome.applied) {
+                results.push({ index: item.index, ...outcome });
+                progress = true;
+            } else retry.push({ ...item, outcome });
+        });
+        if (!progress) {
+            retry.forEach(item => results.push({ index: item.index, ...item.outcome }));
+            break;
+        }
+        pending = retry;
+    }
+    results.sort((left, right) => left.index - right.index);
+    normalizeAuthoredWorld(staged);
+    const after = worldArchitectCountRecords(staged);
+    const deltas = Object.fromEntries(Object.keys(after).map(key => [key, after[key] - (before[key] || 0)]));
+    const blockers = results.filter(result => !result.applied).map(result => `Operation ${result.index + 1}: ${result.reason}`);
+    // A migration must be judged by what it introduces, not by unrelated
+    // damage that was already present in an imported or hand-authored world.
+    // The old implementation reran a whole-world audit and disabled Apply for
+    // defects such as a pre-existing missing exit—even when the staged batch
+    // only added characters.
+    const validationFor = candidate => {
+        const blocking = [];
+        const warnings = [];
+        try { validateWorldData(candidate); }
+        catch (error) {
+            const text = String(error.message || error).trim();
+            if (text) blocking.push({ key: `schema:${text.toLowerCase()}`, text });
+        }
+        validateWorldReferences(candidate).broken.forEach(item => {
+            const source = String(item.source || 'World reference').trim();
+            const ref = String(item.ref || '').trim();
+            blocking.push({ key: `reference:${source.toLowerCase()}|${ref.toLowerCase()}`, text: `${source}: missing “${ref}”.` });
+        });
+        buildWorldLintReport(candidate).forEach(item => {
+            // buildWorldLintReport uses sev/area/msg. Reading the unrelated
+            // severity/detail property names previously produced the empty
+            // yellow bullet visible in the broken review UI.
+            const text = [item.area, item.msg].filter(Boolean).join(': ').trim();
+            if (!text) return;
+            const entry = { key: `lint:${String(item.area || '').toLowerCase()}|${String(item.msg || '').toLowerCase()}`, text };
+            if (item.sev === 'critical') blocking.push(entry);
+            else warnings.push(entry);
+        });
+        return { blocking, warnings };
+    };
+    const baselineValidation = validationFor(worldArchitectSnapshot(world));
+    const stagedValidation = validationFor(staged);
+    const baselineBlockers = new Set(baselineValidation.blocking.map(item => item.key));
+    const baselineWarnings = new Set(baselineValidation.warnings.map(item => item.key));
+    const existingIssues = stagedValidation.blocking
+        .filter(item => baselineBlockers.has(item.key)).map(item => item.text);
+    stagedValidation.blocking
+        .filter(item => !baselineBlockers.has(item.key)).forEach(item => blockers.push(item.text));
+    Object.entries(job?.plan?.requestedCounts || {}).forEach(([key, expected]) => {
+        if (expected && deltas[key] !== expected) blockers.push(`Requested exactly ${expected} ${key}; selected operations produce ${deltas[key] || 0}.`);
+    });
+    const warnings = stagedValidation.warnings
+        .filter(item => !baselineWarnings.has(item.key)).map(item => item.text);
+    return {
+        world: staged, results,
+        blockers: [...new Set(blockers.filter(Boolean))],
+        warnings: [...new Set(warnings.filter(Boolean))],
+        existingIssues: [...new Set(existingIssues.filter(Boolean))],
+        deltas, health: worldDirectoryHealth(staged)
+    };
+}
+
+function worldArchitectIndex(world) {
+    const compact = {
+        name: world?.name, premise: world?.description, startLocationId: world?.startLocationId,
+        regions: (world?.regions || []).map(item => ({ id: item.id, name: item.name })),
+        locations: (world?.locations || []).map(item => ({ id: item.id, name: item.name, regionId: item.regionId, parentLocationId: item.parentLocationId, mapType: item.mapType })),
+        people: (world?.entities || []).filter(item => item.type === 'npc').map(item => ({ id: item.id, name: item.name, homeLocation: item.homeLocation, groupIds: item.groupIds })),
+        items: (world?.entities || []).filter(item => item.type === 'item').map(item => ({ id: item.id, name: item.name, startLocation: item.startLocation })),
+        groups: (world?.groups || []).map(item => ({ id: item.id, name: item.name, type: item.type })),
+        factions: (world?.factions || []).map(item => ({ id: item.id, name: item.name }))
+    };
+    const text = JSON.stringify(compact);
+    return text.length > 90000 ? text.slice(0, 90000) + '…' : text;
+}
+
+function worldArchitectOperationArray(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (!isPlainObject(raw)) return [];
+    for (const key of ['operations', 'changes', 'actions', 'edits', 'proposals']) {
+        if (Array.isArray(raw[key])) return raw[key];
+    }
+    const domainTypes = {
+        regions: 'add_region', locations: 'add_location', places: 'add_location', rooms: 'add_room',
+        characters: 'add_character', people: 'add_character', npcs: 'add_character', items: 'add_item',
+        groups: 'add_group', households: 'add_household', families: 'add_family', factions: 'add_faction',
+        relationships: 'add_relationship', lore: 'add_lore', lorebook: 'add_lore'
+    };
+    return Object.entries(domainTypes).flatMap(([key, type]) =>
+        Array.isArray(raw[key]) ? raw[key].filter(isPlainObject).map(record => ({ type, record })) : []);
+}
+
+function parseWorldArchitectJSON(raw, expectedKey = '') {
+    if (isPlainObject(raw)) {
+        if (!expectedKey || Array.isArray(raw[expectedKey])) return raw;
+        if (expectedKey === 'operations') {
+            const operations = worldArchitectOperationArray(raw);
+            if (operations.length) return { ...raw, operations };
+        }
+        for (const key of ['result', 'output', 'data', 'response', 'arguments']) {
+            if (raw[key] != null) {
+                const nested = parseWorldArchitectJSON(raw[key], expectedKey);
+                if (nested) return nested;
+            }
+        }
+    }
+    if (Array.isArray(raw)) return expectedKey ? { [expectedKey]: raw } : null;
+    const source = String(raw || '').trim();
+    if (!source) return null;
+    const candidates = [source];
+    for (const match of source.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) candidates.push(match[1]);
+    const anchor = expectedKey ? source.indexOf(`"${expectedKey}"`) : -1;
+    if (anchor >= 0) candidates.push(source.slice(Math.max(0, source.lastIndexOf('{', anchor)), source.length));
+
+    // Models often surround the payload with reasoning or emit several JSON
+    // objects. Scan balanced blocks instead of taking the first and last brace,
+    // which accidentally joins unrelated objects into invalid JSON.
+    const balancedBlocks = (text, open, close) => {
+        const blocks = [];
+        for (let start = text.indexOf(open); start >= 0; start = text.indexOf(open, start + 1)) {
+            let depth = 0, quote = '', escaped = false;
+            for (let index = start; index < text.length; index++) {
+                const char = text[index];
+                if (quote) {
+                    if (escaped) escaped = false;
+                    else if (char === '\\') escaped = true;
+                    else if (char === quote) quote = '';
+                    continue;
+                }
+                if (char === '"' || char === "'") { quote = char; continue; }
+                if (char === open) depth++;
+                else if (char === close && --depth === 0) { blocks.push(text.slice(start, index + 1)); break; }
+            }
+        }
+        return blocks;
+    };
+    candidates.push(...balancedBlocks(source, '{', '}'));
+    if (expectedKey) candidates.push(...balancedBlocks(source, '[', ']'));
+    for (const candidate of candidates) {
+        let parsed = null;
+        try { parsed = JSON.parse(String(candidate).trim()); }
+        catch (_) { parsed = safeParseJSONRepair(candidate); }
+        if (isPlainObject(parsed)) {
+            if (!expectedKey || Array.isArray(parsed[expectedKey])) return parsed;
+            if (expectedKey === 'operations') {
+                const operations = worldArchitectOperationArray(parsed);
+                if (operations.length) return { ...parsed, operations };
+            }
+            for (const key of ['result', 'output', 'data', 'response', 'arguments']) {
+                if (parsed[key] != null) {
+                    const nested = parseWorldArchitectJSON(parsed[key], expectedKey);
+                    if (nested) return nested;
+                }
+            }
+        }
+        if (Array.isArray(parsed) && expectedKey) return { [expectedKey]: parsed };
+    }
+    return null;
+}
+
+function worldArchitectResponseCandidates(payload) {
+    const message = payload?.choices?.[0]?.message || {};
+    const content = Array.isArray(message.content)
+        ? message.content.map(part => typeof part === 'string' ? part : part?.text || part?.content || '').join('')
+        : message.content;
+    return [
+        content, payload?.choices?.[0]?.text, payload?.output_text,
+        ...(message.tool_calls || []).map(call => call?.function?.arguments),
+        message.function_call?.arguments, message.reasoning_content, message.reasoning
+    ].filter(value => value != null && String(value).trim());
+}
+
+async function worldArchitectJSON(world, model, messages, maxTokens = 8000, expectedKey = '') {
+    let lastError = null;
+    let previousRaw = '';
+    let useResponseFormat = true;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const retryMessages = attempt === 0 ? messages : [
+            ...messages,
+            ...(previousRaw ? [{ role: 'assistant', content: previousRaw.slice(-6000) }] : []),
+            { role: 'user', content: `Your previous reply was not valid structured output. Return ONLY one JSON object with a top-level "${expectedKey || 'result'}" field. No reasoning, prose or markdown fences.` }
+        ];
+        const requestBody = {
+            model, max_tokens: maxTokens, temperature: attempt ? 0 : 0.2,
+            messages: sanitizeMessagesForProvider(retryMessages, model)
+        };
+        if (useResponseFormat) requestBody.response_format = { type: 'json_object' };
+        const response = await fetch(apiBase() + '/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders(), ...attributionHeaders() },
+            body: JSON.stringify(requestBody)
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            lastError = new Error(payload?.error?.message || `Director request failed (${response.status}).`);
+            // Some otherwise capable OpenAI-compatible servers reject the
+            // response_format parameter itself. Retry once with prompt-only JSON.
+            if (attempt === 0 && [400, 404, 422].includes(response.status)
+                && /response.?format|json.?object|unsupported|unknown/i.test(lastError.message)) {
+                useResponseFormat = false;
+                continue;
+            }
+            throw lastError;
+        }
+        const candidates = worldArchitectResponseCandidates(payload);
+        previousRaw = candidates.map(String).join('\n');
+        for (const candidate of candidates) {
+            const parsed = parseWorldArchitectJSON(candidate, expectedKey);
+            if (parsed) return parsed;
+        }
+        lastError = new Error(`The model returned no usable ${expectedKey || 'JSON'} object.`);
+    }
+    throw new Error(`${lastError?.message || 'Invalid structured response'} A strict repair retry also failed.`);
+}
+
+function worldArchitectSyncBasics(world) {
+    const fields = [['w-studio-name', 'name'], ['w-studio-desc', 'description'], ['w-studio-dm-prompt', 'dmPrompt'], ['w-studio-intro', 'intro'], ['w-studio-note', 'authorNote']];
+    fields.forEach(([id, key]) => { const input = document.getElementById(id); if (input) world[key] = input.value; });
+}
+
+async function persistWorldArchitectCheckpoint(world, clear = false) {
+    const index = state.worlds.findIndex(candidate => candidate.id === world?.id);
+    if (index < 0) return;
+    if (clear || !world.architectJob) delete state.worlds[index].architectJob;
+    else state.worlds[index].architectJob = safeJsonClone(world.architectJob);
+    await saveState();
+}
+
+async function populateWorldArchitectModels(force = false) {
+    const input = document.getElementById('w-architect-model');
+    const list = document.getElementById('w-architect-model-options');
+    const status = document.getElementById('w-architect-model-status');
+    if (!input || !list) return;
+    try {
+        if (force) { openRouterModels = []; modelCatalogSource = null; modelCatalogFetchedAt = 0; }
+        const catalog = await getOpenRouterModels();
+        const models = rankStructuredModels(catalog, 60);
+        list.innerHTML = models.map(model => `<option value="${escapeHTML(model.id)}">${escapeHTML(model.name)} · ${escapeHTML(model.note)}</option>`).join('');
+        // Do not make an expensive frontier model the silent default merely
+        // because it tops the capability ranking. Choose the first strong,
+        // current option at or below $5/M while leaving the full list visible.
+        const automatic = models.find(model => model.price > 0 && model.price <= 5) || models[0];
+        input.dataset.recommendedModel = automatic?.id || '';
+        const fetched = modelCatalogFetchedAt ? new Date(modelCatalogFetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now';
+        status.textContent = models.length
+            ? `${models.length} compatible models from the live ${isLocalProvider() ? 'local server' : cloudProviderName()} /models catalog (${catalog.length} total), fetched ${fetched}. Blank auto-selects ${automatic.id} as a capable cost-balanced choice.`
+            : `The live ${isLocalProvider() ? 'local server' : cloudProviderName()} /models endpoint returned no compatible structured models. You may type an exact model ID.`;
+    } catch (error) { status.textContent = `Catalog unavailable: ${error.message}. You may type an exact model ID.`; }
+}
+
+function worldArchitectOperationLabel(operation) {
+    const op = normalizeWorldArchitectOperation(operation) || {};
+    return op.record?.name || op.keyword || op.label || op.targetId || op.id || `${op.from || ''}${op.to ? ` → ${op.to}` : ''}` || 'change';
+}
+
+function renderWorldArchitectAgent() {
+    const world = state.editingWorld;
+    const host = document.getElementById('w-architect-job');
+    if (!world || !host) return;
+    const job = world.architectJob;
+    if (!job) {
+        host.innerHTML = '<div class="world-architect-empty"><strong>No staged job</strong><p>Describe an expansion or repair. Horde will show assumptions, batches and expected calls before generating anything.</p></div>';
+        return;
+    }
+    // Jobs saved by the first Architect build treated a perfectly usable
+    // deterministic fallback as a red error. Repair that presentation in place
+    // so users do not have to discard and recreate an already-valid plan.
+    if (job.plan && String(job.error || '').startsWith('Planner fallback used:')) {
+        job.notice = `Horde used its safe deterministic plan because the Director's planning reply was not structured. You can continue normally.`;
+        job.error = '';
+    }
+    const completed = (job.completedBatchIds || []).length;
+    const total = job.plan?.batches?.length || 0;
+    const stage = job.status === 'review' && job.operations?.length ? stageWorldArchitectJob(world, job) : null;
+    const reviewDeltas = stage?.deltas || job.appliedDeltas || {};
+    const counts = job.plan?.requestedCounts || {};
+    host.innerHTML = `<div class="world-architect-job-head"><div><span class="world-architect-kicker">${escapeHTML(job.options?.policy || 'fill gaps')} · ${escapeHTML(job.model || '')}</span><h3>${escapeHTML(job.plan?.title || 'Planning changes')}</h3><small>${escapeHTML(job.request || '')}</small></div><span class="world-architect-status">${escapeHTML(job.status || 'draft')}</span></div>
+        ${job.error ? `<p class="world-architect-error">${escapeHTML(job.error)}</p>` : ''}
+        ${job.notice ? `<p class="world-architect-warning">${escapeHTML(job.notice)}</p>` : ''}
+        ${job.plan ? `<div class="world-architect-plan-summary"><p>${escapeHTML(job.plan.summary || '')}</p><div class="world-architect-counts">${Object.entries(counts).filter(([, value]) => value).map(([key, value]) => `<span>${value} ${escapeHTML(key)}</span>`).join('') || '<span>No exact numeric target</span>'}<span>${job.plan.estimatedCalls || job.plan.batches.length} Director call${(job.plan.estimatedCalls || job.plan.batches.length) === 1 ? '' : 's'}</span></div>${(job.plan.assumptions || []).map(item => `<small>• ${escapeHTML(item)}</small>`).join('<br>')}</div>` : '<p>Asking the Director to structure the work…</p>'}
+        ${job.status === 'planned' ? `<div class="world-architect-batches">${job.plan.batches.map((batch, index) => `<div class="world-architect-batch"><strong>${index + 1}</strong><div><strong>${escapeHTML(batch.label)}</strong><small>${escapeHTML(batch.instruction)}</small></div></div>`).join('')}</div>` : ''}
+        ${['running', 'failed', 'cancelled'].includes(job.status) ? `<div class="world-architect-progress"><span style="width:${total ? Math.round(completed / total * 100) : 0}%"></span></div><p>${completed} of ${total} batches complete · ${job.operations?.length || 0} proposed operations</p>` : ''}
+        ${job.status === 'review' || job.status === 'applied' ? `<div class="world-architect-counts">${Object.entries(reviewDeltas).filter(([, value]) => value).map(([key, value]) => `<span>+${value} ${escapeHTML(key)}</span>`).join('') || '<span>No net additions</span>'}<span>Health ${stage?.health?.score ?? job.appliedHealth ?? '—'}%</span></div>
+            ${stage?.blockers?.length ? `<div class="world-architect-validation is-blocking"><strong>${stage.blockers.length} proposed-change blocker${stage.blockers.length === 1 ? '' : 's'}</strong>${stage.blockers.slice(0, 8).map(item => `<p class="world-architect-error">⚠ ${escapeHTML(item)}</p>`).join('')}</div>` : ''}
+            ${stage?.existingIssues?.length ? `<details class="world-architect-validation is-existing"><summary>${stage.existingIssues.length} pre-existing world issue${stage.existingIssues.length === 1 ? '' : 's'} — does not block this batch</summary>${stage.existingIssues.slice(0, 12).map(item => `<p class="world-architect-warning">• ${escapeHTML(item)}</p>`).join('')}</details>` : ''}
+            ${(stage?.warnings || []).slice(0, 5).map(item => `<p class="world-architect-warning">• ${escapeHTML(item)}</p>`).join('')}
+            ${job.status === 'review' ? `<div class="world-architect-operations">${(job.operations || []).map((operation, index) => `<label class="world-architect-operation ${(job.dismissed || []).includes(index) ? 'is-dismissed' : ''}"><input type="checkbox" data-world-architect-operation="${index}" ${(job.dismissed || []).includes(index) ? '' : 'checked'}><div><strong>${escapeHTML(String(operation.type || '').replaceAll('_', ' '))}: ${escapeHTML(worldArchitectOperationLabel(operation))}</strong><small>${escapeHTML(operation.reason || operation.record?.description || '')}</small></div></label>`).join('')}</div>` : '<p>Changes are in the draft. Use Undo below or Save World to keep them.</p>'}` : ''}
+        <div class="world-architect-actions">
+            ${job.status === 'planned' ? '<button class="btn btn-primary" data-world-architect-action="generate">Approve plan &amp; generate</button>' : ''}
+            ${job.status === 'running' ? '<button class="btn btn-ghost" data-world-architect-action="cancel">Pause after this batch</button>' : ''}
+            ${['failed', 'cancelled'].includes(job.status) ? '<button class="btn btn-primary" data-world-architect-action="generate">Resume remaining batches</button>' : ''}
+            ${job.status === 'review' ? `<button class="btn ${stage?.blockers?.length ? 'btn-ghost' : 'btn-primary'}" data-world-architect-action="apply">${stage?.blockers?.length ? `Review ${stage.blockers.length} blocker${stage.blockers.length === 1 ? '' : 's'}` : `Apply ${job.operations.length - (job.dismissed || []).length} changes &amp; save`}</button>` : ''}
+            ${world.architectUndo ? '<button class="btn btn-ghost" data-world-architect-action="undo">Undo last apply</button>' : ''}
+            ${job.status !== 'running' ? '<button class="btn btn-ghost" data-world-architect-action="discard">Discard job</button>' : ''}
+        </div>`;
+    host.querySelectorAll('[data-world-architect-operation]').forEach(input => input.onchange = () => {
+        const index = Number(input.dataset.worldArchitectOperation);
+        job.dismissed ||= [];
+        job.dismissed = input.checked ? job.dismissed.filter(item => item !== index) : [...new Set([...job.dismissed, index])];
+        void persistWorldArchitectCheckpoint(world);
+        renderWorldArchitectAgent();
+    });
+    host.querySelectorAll('[data-world-architect-action]').forEach(button => button.onclick = () => handleWorldArchitectAction(button.dataset.worldArchitectAction));
+}
+
+async function planWorldArchitectJob() {
+    const world = state.editingWorld;
+    const request = document.getElementById('w-architect-request')?.value.trim();
+    if (!world || !request) return showToast('Describe what the Architect should change.', 'info');
+    if (!hasApiCredentials()) return showToast('Configure a text provider first.', 'error');
+    worldArchitectSyncBasics(world);
+    const options = {
+        scope: document.getElementById('w-architect-scope')?.value || 'whole',
+        policy: WORLD_ARCHITECT_POLICIES.has(document.getElementById('w-architect-policy')?.value) ? document.getElementById('w-architect-policy').value : 'fill_gaps',
+        detail: document.getElementById('w-architect-detail')?.value || 'standard',
+        batchSize: Number(document.getElementById('w-architect-batch-size')?.value) || 12
+    };
+    const modelInput = document.getElementById('w-architect-model');
+    const model = modelInput?.value.trim() || modelInput?.dataset.recommendedModel || structuredModelFor(world);
+    const fallback = defaultWorldArchitectPlan(world, request, options);
+    const job = world.architectJob = {
+        id: `architect_${Date.now()}`, request, options, model, status: 'planning', plan: null, operations: [], dismissed: [],
+        completedBatchIds: [], baseRevision: Number(world.authoringRevision) || 0, baseFingerprint: worldArchitectFingerprint(world), createdAt: Date.now(), updatedAt: Date.now()
+    };
+    renderWorldArchitectAgent();
+    await persistWorldArchitectCheckpoint(world);
+    const hasExactCounts = Object.values(fallback.requestedCounts).some(Boolean);
+    try {
+        // Numeric requests already have a safer engine-owned plan. Asking a
+        // model to repeat “7 people in one batch” only adds latency and a JSON
+        // failure point, while normalizeWorldArchitectPlan must ignore its
+        // re-batching anyway.
+        if (hasExactCounts) {
+            job.plan = fallback;
+            job.notice = 'Exact quantities use Horde’s deterministic resumable batching; the Director will write the records after approval.';
+        } else {
+            const raw = await worldArchitectJSON(world, model, [
+                { role: 'system', content: 'You plan safe, incremental edits to an existing roleplay world. Return only JSON. Never reduce an explicit requested count. Plan small resumable batches; do not write the records yet.' },
+                { role: 'user', content: `REQUEST: ${request}\nOPTIONS: ${JSON.stringify(options)}\nEXACT COUNTS: ${JSON.stringify(fallback.requestedCounts)}\nCURRENT WORLD INDEX: ${worldArchitectIndex(world)}\nReturn {"title":"","summary":"","assumptions":[],"batches":[{"label":"","instruction":"","expectedCounts":{"rooms":0,"locations":0,"people":0,"items":0,"regions":0,"groups":0,"factions":0,"lore":0}}]}.` }
+            ], 3000, 'batches');
+            job.plan = normalizeWorldArchitectPlan(raw, fallback);
+        }
+    } catch (error) {
+        job.plan = fallback;
+        job.notice = `The Director's planning reply was not structured, so Horde used its safe one-batch plan. You can continue normally. (${error.message})`;
+    }
+    job.status = 'planned'; job.updatedAt = Date.now();
+    await persistWorldArchitectCheckpoint(world);
+    renderWorldArchitectAgent();
+}
+
+async function runWorldArchitectJob() {
+    const world = state.editingWorld;
+    const job = world?.architectJob;
+    if (!world || !job?.plan) return;
+    worldArchitectSyncBasics(world);
+    // Repair plans created by the earlier positional merge bug in place. This
+    // lets an already-failed job Resume without forcing the author to discard
+    // completed, valid batches.
+    job.plan = normalizeWorldArchitectPlan(job.plan, defaultWorldArchitectPlan(world, job.request, job.options));
+    if (worldArchitectFingerprint(world) !== job.baseFingerprint || (Number(world.authoringRevision) || 0) !== job.baseRevision) {
+        job.status = 'failed'; job.error = 'The world changed after this plan was created. Discard it and make a fresh plan.'; renderWorldArchitectAgent(); return;
+    }
+    job.status = 'running'; job.error = ''; job.cancelRequested = false; renderWorldArchitectAgent();
+    for (const batch of job.plan.batches) {
+        if ((job.completedBatchIds || []).includes(batch.id)) continue;
+        if (job.cancelRequested) {
+            job.status = 'cancelled'; job.updatedAt = Date.now();
+            await persistWorldArchitectCheckpoint(world);
+            renderWorldArchitectAgent(); return;
+        }
+        try {
+            const current = stageWorldArchitectJob(world, { ...job, plan: { requestedCounts: {} } }).world;
+            const batchMessages = [
+                { role: 'system', content: `You are a roleplay World Architect. Return JSON only: {"operations":[]}. Allowed operation types: ${[...WORLD_ARCHITECT_OPERATION_TYPES].join(', ')}. Never delete locations, people, items, factions or lore. delete_group and merge_groups are permitted only when the user's request explicitly asks for that and the change policy allows edits. Use existing IDs exactly. New records need stable snake_case IDs. Put new data inside "record". A location operation is {"type":"add_location","record":{"id":"loc_example","name":"Example","description":"...","regionId":"existing_region_id","parentLocationId":"","mapType":"room","tags":[]}}. A character uses record {id,name,description,persona,startLocation,homeLocation,goal,goalSteps,groupIds,schedule,tags}; a group uses {id,name,type,description,homeLocationId,tags}; connections use from,to,mode,minutes,oneWay. Every operation is atomic.` },
+                { role: 'user', content: `ORIGINAL REQUEST: ${job.request}\nPOLICY: ${job.options.policy}; DETAIL: ${job.options.detail}\nTHIS BATCH: ${batch.instruction}\nEXACT BATCH COUNTS: ${JSON.stringify(batch.expectedCounts)}\nCURRENT STAGED WORLD INDEX: ${worldArchitectIndex(current)}\nGenerate only this batch. Respect the exact counts and make additions coherent, playable and reference-valid.` }
+            ];
+            const maxTokens = Math.max(6000, Math.min(24000, (job.options.batchSize || 12) * 900));
+            let raw = await worldArchitectJSON(world, job.model, batchMessages, maxTokens, 'operations');
+            let operations = worldArchitectOperationArray(raw)
+                .map((operation, index) => normalizeWorldArchitectOperation(operation, job.operations.length + index)).filter(Boolean);
+            if (!operations.length) {
+                // A syntactically valid object used to bypass JSON repair and
+                // then die here if its operation vocabulary was slightly off.
+                // Give the model one validation-aware correction with the exact
+                // rejected payload and schema instead of asking the user to
+                // discard an otherwise healthy resumable job.
+                raw = await worldArchitectJSON(world, job.model, [
+                    ...batchMessages,
+                    { role: 'assistant', content: JSON.stringify(raw).slice(0, 12000) },
+                    { role: 'user', content: `That JSON parsed, but none of its entries used a supported operation schema. Rewrite the same requested changes as {"operations":[{"type":"one exact allowed type","record":{}}]}. Exact allowed types: ${[...WORLD_ARCHITECT_OPERATION_TYPES].join(', ')}. Return only the corrected JSON object.` }
+                ], maxTokens, 'operations');
+                operations = worldArchitectOperationArray(raw)
+                    .map((operation, index) => normalizeWorldArchitectOperation(operation, job.operations.length + index)).filter(Boolean);
+            }
+            if (!operations.length) throw new Error('The model returned JSON, but no supported changes could be recovered after a schema repair retry.');
+            const generatedCounts = worldArchitectOperationCounts(operations);
+            const mismatch = Object.entries(batch.expectedCounts || {}).find(([key, expected]) => Number(expected) > 0 && generatedCounts[key] !== Number(expected));
+            if (mismatch) throw new Error(`The model produced ${generatedCounts[mismatch[0]] || 0} ${mismatch[0]}, but this batch requires exactly ${mismatch[1]}. Retry this batch or choose a stronger structured model.`);
+            operations.forEach(operation => { operation.batchId = batch.id; });
+            job.operations.push(...operations);
+            job.completedBatchIds.push(batch.id);
+            job.updatedAt = Date.now();
+            await persistWorldArchitectCheckpoint(world);
+            renderWorldArchitectAgent();
+        } catch (error) {
+            job.status = 'failed'; job.error = `Stopped at ${batch.label}: ${error.message}`; job.updatedAt = Date.now();
+            await persistWorldArchitectCheckpoint(world);
+            renderWorldArchitectAgent(); return;
+        }
+    }
+    job.status = 'review'; job.updatedAt = Date.now();
+    await persistWorldArchitectCheckpoint(world);
+    renderWorldArchitectAgent();
+}
+
+async function handleWorldArchitectAction(action) {
+    const world = state.editingWorld;
+    const job = world?.architectJob;
+    if (!world || !job) return;
+    if (action === 'generate') return runWorldArchitectJob();
+    if (action === 'cancel') { job.cancelRequested = true; showToast('The Architect will pause after the current request.', 'info'); return; }
+    if (action === 'discard') {
+        delete world.architectJob;
+        await persistWorldArchitectCheckpoint(world, true);
+        renderWorldArchitectAgent(); return;
+    }
+    if (action === 'undo' && world.architectUndo?.snapshot) {
+        state.editingWorld = safeJsonClone(world.architectUndo.snapshot);
+        const index = state.worlds.findIndex(candidate => candidate.id === state.editingWorld.id);
+        if (index >= 0) state.worlds[index] = safeJsonClone(state.editingWorld);
+        await saveState();
+        await verifyWorldPersisted(state.editingWorld);
+        openWorldStudio();
+        document.querySelector('.world-studio-tab[data-tab="w-architect-agent"]')?.click();
+        showToast('Architect changes undone and saved.', 'success');
+        return;
+    }
+    if (action === 'apply') {
+        worldArchitectSyncBasics(world);
+        if (worldArchitectFingerprint(world) !== job.baseFingerprint || (Number(world.authoringRevision) || 0) !== job.baseRevision) {
+            job.error = 'The world changed after this plan was created. Discard it and make a fresh plan.';
+            showToast(job.error, 'error'); renderWorldArchitectAgent(); return;
+        }
+        const staged = stageWorldArchitectJob(world, job);
+        if (staged.blockers.length) {
+            job.error = `Cannot apply yet: ${staged.blockers[0]}`;
+            showToast(job.error, 'error'); renderWorldArchitectAgent(); return;
+        }
+        const before = worldArchitectSnapshot(world);
+        staged.world.authoringRevision = job.baseRevision + 1;
+        staged.world.architectUndo = { jobId: job.id, createdAt: Date.now(), snapshot: before };
+        staged.world.architectJob = { ...job, status: 'applied', appliedDeltas: staged.deltas, appliedHealth: staged.health.score, updatedAt: Date.now() };
+        const index = state.worlds.findIndex(candidate => candidate.id === staged.world.id);
+        const previousStoredWorld = index >= 0 ? safeJsonClone(state.worlds[index]) : null;
+        state.editingWorld = staged.world;
+        if (index >= 0) state.worlds[index] = safeJsonClone(staged.world);
+        try {
+            await saveState();
+            await verifyWorldPersisted(staged.world);
+        } catch (error) {
+            // Do not strand the editor on an in-memory revision that was not
+            // durably committed. Keep the review intact so Apply can be retried.
+            state.editingWorld = world;
+            if (index >= 0 && previousStoredWorld) state.worlds[index] = previousStoredWorld;
+            job.status = 'review';
+            job.error = `The changes were valid, but could not be saved: ${error.message}`;
+            showToast(job.error, 'error');
+            renderWorldArchitectAgent();
+            return;
+        }
+        openWorldStudio();
+        document.querySelector('.world-studio-tab[data-tab="w-architect-agent"]')?.click();
+        showToast('Architect changes applied and saved.', 'success');
+    }
+}
+
+function setupWorldArchitectLogic() {
+    const plan = document.getElementById('w-architect-plan-btn');
+    if (!plan || plan.dataset.ready) return;
+    plan.dataset.ready = '1';
+    plan.onclick = () => void planWorldArchitectJob();
+    document.getElementById('w-architect-refresh-models').onclick = () => void populateWorldArchitectModels(true);
+    document.querySelectorAll('[data-world-architect-quick]').forEach(button => button.onclick = () => {
+        const input = document.getElementById('w-architect-request');
+        input.value = [input.value.trim(), button.dataset.worldArchitectQuick].filter(Boolean).join('\n');
+        input.focus();
+    });
+    void populateWorldArchitectModels();
 }
 
 // --- World Calibration -----------------------------------------------------
@@ -29564,9 +32090,9 @@ function applyCalibrationFinding(world, finding) {
 // it is being asked to hit a JSON contract by luck.
 const STRUCTURED_PARAM_FLAGS = Object.freeze(['response_format', 'structured_outputs']);
 
-// Reasoning models are the specific failure this picker exists to avoid: they
-// spend the whole budget thinking and emit nothing usable. The catalog reports
-// the parameters that mark one.
+// This describes a capability, not a reason to exclude a model. Modern models
+// often advertise optional reasoning alongside reliable structured output;
+// treating that flag as “reasoning-only” hid most current frontier models.
 const REASONING_PARAM_FLAGS = Object.freeze(['reasoning', 'include_reasoning', 'thinking']);
 
 // A batch's answer has to fit in one reply. Below this, a model cannot finish
@@ -29603,8 +32129,8 @@ function structuredModelPricePerMillion(model) {
 }
 
 /**
- * Rank the live catalog for structured work: can emit JSON, is not a reasoning
- * model, has room for a world digest, and is cheap. Returns [] when the
+ * Rank the live catalog for structured work: can emit JSON, has room for a
+ * world digest and a complete reply, and has not expired. Returns [] when the
  * catalog has not loaded, so the picker degrades to a plain text field rather
  * than offering ids that may no longer resolve.
  */
@@ -29622,6 +32148,8 @@ function rankStructuredModels(models, limit = 12) {
                 // silently truncating replies — not the context window.
                 maxOutput: Number(model?.top_provider?.max_completion_tokens) || 0,
                 price,
+                created: Number(model?.created) || 0,
+                expirationDate: String(model?.expiration_date || ''),
                 json: STRUCTURED_PARAM_FLAGS.some(flag => params.includes(flag)),
                 reasoning: REASONING_PARAM_FLAGS.some(flag => params.includes(flag)),
                 // Sorting by price alone put two music-generation models at the
@@ -29633,13 +32161,15 @@ function rankStructuredModels(models, limit = 12) {
                 free: price === 0
             };
         })
-        .filter(model => model.id && model.json && !model.reasoning && model.textOnly
+        // Batch-only slugs are not suitable for this synchronous, resumable UI.
+        .filter(model => model.id && !/:batch$/i.test(model.id) && model.json && model.textOnly
             && model.context >= 32000          // a world digest has to fit
             // The reply has to fit too. A model that can only write 4k tokens
             // will truncate a batch however cheap it is — this is the exact
             // ceiling that was failing, so it is now a hard requirement.
             && (model.maxOutput === 0 || model.maxOutput >= STRUCTURED_MIN_OUTPUT_TOKENS)
-            && model.price != null)
+            && model.price != null
+            && (!model.expirationDate || Date.parse(model.expirationDate) > Date.now()))
         // Cheapest first was the wrong order: it put 4-billion-parameter models
         // at the top, and small models are exactly the ones that lose the
         // thread of a long structured answer. Sort by capability band first,
@@ -29647,6 +32177,7 @@ function rankStructuredModels(models, limit = 12) {
         // actually finish the job.
         .sort((left, right) =>
             structuredCapabilityBand(right) - structuredCapabilityBand(left)
+            || right.created - left.created
             || left.price - right.price)
         .slice(0, limit)
         .map(model => {
@@ -29654,7 +32185,8 @@ function rankStructuredModels(models, limit = 12) {
                 ? 'free'
                 : '$' + (model.price < 1 ? model.price.toFixed(3) : model.price.toFixed(2)) + '/M';
             const out = model.maxOutput ? `${Math.round(model.maxOutput / 1000)}k out` : 'output unstated';
-            return { ...model, note: `${price} · ${Math.round(model.context / 1000)}k ctx · ${out}` };
+            const added = model.created ? ` · added ${new Date(model.created * 1000).getFullYear()}` : '';
+            return { ...model, note: `${price} · ${Math.round(model.context / 1000)}k ctx · ${out}${added}${model.reasoning ? ' · reasoning-capable' : ''}` };
         });
 }
 
@@ -30986,7 +33518,7 @@ function wireCalibrationControls(world, calibration, container) {
                     ? `<option value="${escapeHTML(chosen)}" selected>${escapeHTML(chosen)} (typed)</option>` : '');
             if (!status) return;
             status.textContent = ranked.length
-                ? `${ranked.length} models offered, cheapest first — live from ${isLocalProvider() ? 'your local server' : cloudProviderName()}, so nothing here is a stale id.`
+                ? `${ranked.length} capable models offered — live from ${isLocalProvider() ? 'your local server' : cloudProviderName()}, ranked by output capacity, recency and then price.`
                 : `Could not reach the ${isLocalProvider() ? 'local' : cloudProviderName()} catalog. Type a model id above, or press Refresh once you are online.`;
         };
         if (refresh) refresh.onclick = () => populate(true);
@@ -32539,11 +35071,7 @@ async function renderVectorMemoryList(filterQuery = "") {
 
 // --- Data model --------------------------------------------------------
 
-const COMPANION_MOOD_LABELS = Object.freeze([
-    'content', 'happy', 'excited', 'affectionate', 'flirty', 'playful',
-    'bored', 'tired', 'anxious', 'sad', 'hurt', 'angry', 'jealous',
-    'lonely', 'overwhelmed', 'numb'
-]);
+
 
 const COMPANION_SLEEP_ARCHETYPES = Object.freeze(['early_riser', 'normal', 'night_owl']);
 const COMPANION_REGULATION_PROFILES = Object.freeze(['steady', 'typical', 'sensitive', 'volatile']);
@@ -32553,12 +35081,8 @@ const COMPANION_LIBIDO_BASELINES = Object.freeze(['very_low', 'low', 'moderate',
 const COMPANION_DESIRE_PATTERNS = Object.freeze(['spontaneous', 'responsive', 'mixed']);
 const COMPANION_SEXUAL_CONFIDENCE = Object.freeze(['inhibited', 'cautious', 'natural', 'direct']);
 const COMPANION_SEXUAL_RISK = Object.freeze(['low', 'moderate', 'high']);
-const COMPANION_INTIMACY_AFTEREFFECTS = Object.freeze([
-    'none', 'satisfied', 'awkward', 'conflicted', 'regretful', 'rejected', 'frustrated'
-]);
-const COMPANION_EMOTIONS = Object.freeze([
-    'joy', 'trust', 'fear', 'surprise', 'sadness', 'disgust', 'anger', 'anticipation'
-]);
+
+
 const COMPANION_EMOTION_EXPRESSION = Object.freeze(['transparent', 'guarded', 'masked', 'performative']);
 const COMPANION_RUMINATION_STYLES = Object.freeze(['low', 'normal', 'high', 'sticky']);
 const COMPANION_REACTION_TIMING = Object.freeze(['immediate', 'mixed', 'delayed']);
@@ -32587,22 +35111,7 @@ const COMPANION_EMOTION_DYADS = Object.freeze([
 // Hour ranges [start, end) a companion is asleep, per archetype. Wraps past
 // midnight, which is why these are checked with a helper rather than a
 // simple start<hour<end comparison.
-const COMPANION_SLEEP_HOURS = Object.freeze({
-    early_riser: [22, 5],
-    normal: [0, 7],
-    night_owl: [3, 10]
-});
 
-const COMPANION_ACTIVITIES = Object.freeze([
-    { id: 'home', label: 'at home', busy: false },
-    { id: 'work', label: 'at work', busy: true },
-    { id: 'commuting', label: 'commuting', busy: true },
-    { id: 'gym', label: 'at the gym', busy: true },
-    { id: 'out_friends', label: 'out with friends', busy: true },
-    { id: 'errands', label: 'running errands', busy: true },
-    { id: 'studying', label: 'studying', busy: true },
-    { id: 'relaxing', label: 'relaxing at home', busy: false }
-]);
 
 const COMPANION_PHOTO_STYLES = Object.freeze({
     realistic: Object.freeze({
@@ -32665,33 +35174,36 @@ function normalizeCompanionPhotoCapturePolicy(value) {
 }
 
 // A trauma is remembered, not merely felt — it does not decay like mood does.
-function normalizeCompanionTrauma(raw) {
-    return {
-        id: String(raw?.id || livingId('trauma', raw?.label)).slice(0, 80),
-        label: String(raw?.label || '').trim().slice(0, 200),
-        severity: livingClamp(raw?.severity == null ? 50 : raw.severity, 0, 100),
-        addedAt: Number.isFinite(raw?.addedAt) ? raw.addedAt : Date.now()
-    };
-}
+
 
 function normalizeCompanionMemoryEntry(raw) {
+    const text = String(raw?.text || '').trim().slice(0, 500);
+    const semanticKey = String(raw?.semanticKey || text).toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
     return {
-        id: String(raw?.id || livingId('mem', raw?.text)).slice(0, 80),
-        text: String(raw?.text || '').trim().slice(0, 500),
-        kind: ['fact', 'trauma', 'preference', 'milestone'].includes(raw?.kind) ? raw.kind : 'fact',
+        id: String(raw?.id || livingId('mem', text)).slice(0, 80),
+        text,
+        kind: ['fact', 'claim', 'observation', 'inference', 'trauma', 'preference', 'milestone'].includes(raw?.kind)
+            ? raw.kind : 'fact',
         weight: livingClamp(raw?.weight == null ? 50 : raw.weight, 0, 100),
-        createdAt: Number.isFinite(raw?.createdAt) ? raw.createdAt : Date.now()
+        certainty: livingClamp(Number.isFinite(Number(raw?.certainty)) ? Number(raw.certainty) : 100, 0, 100),
+        subject: String(raw?.subject || 'player').trim().slice(0, 100),
+        source: ['player_statement', 'observed_behavior', 'companion_statement', 'media', 'observed_media', 'social', 'manual', 'author_correction', 'legacy']
+            .includes(raw?.source) ? raw.source : 'legacy',
+        sourceMessageIds: (Array.isArray(raw?.sourceMessageIds) ? raw.sourceMessageIds : [])
+            .map(value => String(value).slice(0, 100)).filter(Boolean).slice(-20),
+        semanticKey,
+        status: ['active', 'superseded', 'forgotten'].includes(raw?.status) ? raw.status : 'active',
+        supersedes: String(raw?.supersedes || '').slice(0, 80),
+        createdAt: Number.isFinite(raw?.createdAt) ? raw.createdAt : Date.now(),
+        updatedAt: Number.isFinite(raw?.updatedAt) ? raw.updatedAt
+            : (Number.isFinite(raw?.createdAt) ? raw.createdAt : Date.now()),
+        lastRecalledAt: Number.isFinite(raw?.lastRecalledAt) ? raw.lastRecalledAt : 0,
+        recallCount: Math.max(0, Math.round(Number(raw?.recallCount) || 0))
     };
 }
 
-function normalizeCompanionLifeEvent(raw) {
-    return {
-        id: String(raw?.id || livingId('vh_life', raw?.text || Date.now())).slice(0, 100),
-        text: String(raw?.text || '').trim().slice(0, 500),
-        createdAt: Number.isFinite(raw?.createdAt) ? raw.createdAt : Date.now(),
-        source: ['turn', 'autonomy', 'call', 'manual', 'relationship'].includes(raw?.source) ? raw.source : 'turn'
-    };
-}
+
 
 function normalizeCompanionCommitment(raw) {
     return {
@@ -32705,445 +35217,6 @@ function normalizeCompanionCommitment(raw) {
     };
 }
 
-const COMPANION_WEEKDAYS = Object.freeze(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
-const COMPANION_LIFE_AVAILABILITY = Object.freeze(['available', 'busy', 'private', 'asleep']);
-const COMPANION_PLACE_KINDS = Object.freeze(['home', 'work', 'study', 'social', 'errand', 'outdoor', 'transit', 'other']);
-const COMPANION_WILDCARD_CATEGORIES = Object.freeze([
-    'inconvenience', 'social', 'work', 'family', 'health', 'money', 'travel', 'opportunity', 'conflict', 'delight'
-]);
-
-function normalizeCompanionLifePlace(raw, index = 0) {
-    const place = isPlainObject(raw) ? raw : {};
-    const label = String(place.label || place.name || '').trim().slice(0, 160);
-    return {
-        id: String(place.id || livingId('vh_place', label || index)).slice(0, 80),
-        label,
-        kind: COMPANION_PLACE_KINDS.includes(place.kind) ? place.kind : 'other',
-        detail: String(place.detail || '').trim().slice(0, 500),
-        travelMinutesFromHome: livingClamp(Math.round(Number(place.travelMinutesFromHome) || 0), 0, 360)
-    };
-}
-
-function normalizeCompanionSocialPerson(raw, index = 0) {
-    const person = isPlainObject(raw) ? raw : {};
-    const name = String(person.name || '').trim().slice(0, 100);
-    return {
-        id: String(person.id || livingId('vh_person', name || index)).slice(0, 80),
-        name,
-        relationship: String(person.relationship || '').trim().slice(0, 120),
-        role: ['friend', 'family', 'coworker', 'classmate', 'partner', 'ex', 'neighbor', 'acquaintance', 'other']
-            .includes(person.role) ? person.role : 'other',
-        closeness: livingClamp(Math.round(Number(person.closeness) || 0), -100, 100),
-        trust: livingClamp(Math.round(Number.isFinite(Number(person.trust)) ? Number(person.trust) : Math.max(0, Number(person.closeness) || 0)), -100, 100),
-        tension: livingClamp(Math.round(Number(person.tension) || 0), 0, 100),
-        influence: livingClamp(Math.round(Number.isFinite(Number(person.influence)) ? Number(person.influence) : 35), 0, 100),
-        contactFrequency: ['daily', 'few_week', 'weekly', 'monthly', 'rare'].includes(person.contactFrequency)
-            ? person.contactFrequency : 'weekly',
-        description: String(person.description || '').trim().slice(0, 500),
-        currentTension: String(person.currentTension || '').trim().slice(0, 400),
-        knowsPlayer: person.knowsPlayer === true,
-        playerContext: String(person.playerContext || '').trim().slice(0, 400)
-    };
-}
-
-function normalizeCompanionSocialRelationshipRuntime(raw, person, index = 0) {
-    const value = isPlainObject(raw) ? raw : {};
-    return {
-        personId: String(value.personId || person?.id || `person_${index}`).slice(0, 80),
-        closeness: livingClamp(Math.round(Number.isFinite(Number(value.closeness)) ? Number(value.closeness) : Number(person?.closeness) || 0), -100, 100),
-        trust: livingClamp(Math.round(Number.isFinite(Number(value.trust)) ? Number(value.trust) : Number(person?.trust) || 0), -100, 100),
-        tension: livingClamp(Math.round(Number.isFinite(Number(value.tension)) ? Number(value.tension) : Number(person?.tension) || 0), 0, 100),
-        currentSituation: String(value.currentSituation || '').trim().slice(0, 300),
-        lastInteractionAt: Number.isFinite(value.lastInteractionAt) ? value.lastInteractionAt : 0,
-        nextInteractionAt: Number.isFinite(value.nextInteractionAt) ? value.nextInteractionAt : 0,
-        relationshipEvents: (Array.isArray(value.relationshipEvents) ? value.relationshipEvents : []).map(event => ({
-            id: String(event?.id || livingId('vh_social_event', `${value.personId || person?.id}|${event?.createdAt || index}`)).slice(0, 100),
-            summary: String(event?.summary || '').trim().slice(0, 400),
-            closenessDelta: livingClamp(Math.round(Number(event?.closenessDelta) || 0), -5, 5),
-            tensionDelta: livingClamp(Math.round(Number(event?.tensionDelta) || 0), -5, 5),
-            createdAt: Number.isFinite(event?.createdAt) ? event.createdAt : Date.now()
-        })).filter(event => event.summary).slice(-30)
-    };
-}
-
-function normalizeCompanionSocialWorldRuntime(raw, socialCircle = []) {
-    const value = isPlainObject(raw) ? raw : {};
-    const byId = new Map((Array.isArray(value.people) ? value.people : []).map(person => [String(person?.personId || ''), person]));
-    return {
-        lastAdvancedAt: Number.isFinite(value.lastAdvancedAt) ? value.lastAdvancedAt : 0,
-        people: socialCircle.map((person, index) => normalizeCompanionSocialRelationshipRuntime(byId.get(person.id), person, index)),
-        interactions: (Array.isArray(value.interactions) ? value.interactions : []).map(item => ({
-            id: String(item?.id || livingId('vh_social_interaction', `${item?.personId}|${item?.createdAt}`)).slice(0, 100),
-            personId: String(item?.personId || '').slice(0, 80),
-            summary: String(item?.summary || '').trim().slice(0, 500),
-            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now()
-        })).filter(item => item.personId && item.summary).slice(-120),
-        gossip: (Array.isArray(value.gossip) ? value.gossip : []).map(item => ({
-            id: String(item?.id || livingId('vh_gossip', `${item?.sourcePersonId}|${item?.createdAt}`)).slice(0, 100),
-            sourcePersonId: String(item?.sourcePersonId || '').slice(0, 80),
-            subjectPersonId: String(item?.subjectPersonId || '').slice(0, 80),
-            summary: String(item?.summary || '').trim().slice(0, 400),
-            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now(),
-            expiresAt: Number.isFinite(item?.expiresAt) ? item.expiresAt : 0
-        })).filter(item => item.sourcePersonId && item.summary).slice(-40)
-    };
-}
-
-function normalizeCompanionWardrobeLook(raw, index = 0) {
-    const look = isPlainObject(raw) ? raw : {};
-    const label = String(look.label || '').trim().slice(0, 100);
-    return {
-        id: String(look.id || livingId('vh_look', label || index)).slice(0, 80),
-        label,
-        context: ['sleep', 'home', 'work', 'social', 'active', 'formal', 'weather'].includes(look.context)
-            ? look.context : 'home',
-        items: String(look.items || look.description || '').trim().slice(0, 500),
-        notes: String(look.notes || '').trim().slice(0, 300)
-    };
-}
-
-function normalizeCompanionScheduleBlock(raw, index = 0) {
-    const block = isPlainObject(raw) ? raw : {};
-    let days = (Array.isArray(block.days) ? block.days : [block.day])
-        .map(value => Number(value)).filter(value => Number.isInteger(value) && value >= 0 && value <= 6);
-    days = [...new Set(days)];
-    const startMinute = livingClamp(Math.round(Number(block.startMinute) || 0), 0, 1439);
-    let endMinute = livingClamp(Math.round(Number(block.endMinute) || 0), 0, 1440);
-    if (endMinute === startMinute) endMinute = Math.min(1440, startMinute + 60);
-    const activity = String(block.activity || '').trim().slice(0, 240);
-    return {
-        id: String(block.id || livingId('vh_schedule', `${activity}|${days.join(',')}|${startMinute}|${index}`)).slice(0, 100),
-        days,
-        startMinute,
-        endMinute,
-        activity,
-        placeId: String(block.placeId || '').trim().slice(0, 80),
-        placeLabel: String(block.placeLabel || '').trim().slice(0, 160),
-        withIds: (Array.isArray(block.withIds) ? block.withIds : [])
-            .map(value => String(value).slice(0, 80)).filter(Boolean).slice(0, 8),
-        availability: COMPANION_LIFE_AVAILABILITY.includes(block.availability) ? block.availability : 'busy',
-        flexibility: ['fixed', 'soft', 'optional'].includes(block.flexibility) ? block.flexibility : 'soft',
-        outfitContext: ['sleep', 'home', 'work', 'social', 'active', 'formal', 'weather'].includes(block.outfitContext)
-            ? block.outfitContext : 'home'
-    };
-}
-
-function normalizeCompanionWildcard(raw, index = 0) {
-    const event = isPlainObject(raw) ? raw : {};
-    const label = String(event.label || '').trim().slice(0, 240);
-    return {
-        id: String(event.id || livingId('vh_wildcard', label || index)).slice(0, 100),
-        label,
-        category: COMPANION_WILDCARD_CATEGORIES.includes(event.category) ? event.category : 'inconvenience',
-        weight: livingClamp(Number(event.weight) || 1, 0.05, 10),
-        minGapDays: livingClamp(Math.round(Number(event.minGapDays) || 5), 1, 90),
-        durationMinutes: livingClamp(Math.round(Number(event.durationMinutes) || 90), 15, 1440),
-        availability: COMPANION_LIFE_AVAILABILITY.includes(event.availability) ? event.availability : 'busy',
-        placeLabel: String(event.placeLabel || '').trim().slice(0, 160),
-        initiativeHook: String(event.initiativeHook || '').trim().slice(0, 400),
-        consequences: String(event.consequences || '').trim().slice(0, 500)
-    };
-}
-
-function normalizeCompanionLifeProfile(raw) {
-    const life = isPlainObject(raw) ? raw : {};
-    return {
-        version: 1,
-        initializedAt: Number.isFinite(life.initializedAt) ? life.initializedAt : 0,
-        seed: String(life.seed || '').slice(0, 100),
-        fashionSense: String(life.fashionSense || '').trim().slice(0, 1200),
-        grooming: String(life.grooming || '').trim().slice(0, 600),
-        foodHabits: String(life.foodHabits || '').trim().slice(0, 800),
-        mediaHabits: String(life.mediaHabits || '').trim().slice(0, 800),
-        moneyPattern: String(life.moneyPattern || '').trim().slice(0, 800),
-        healthRoutine: String(life.healthRoutine || '').trim().slice(0, 800),
-        digitalLife: String(life.digitalLife || '').trim().slice(0, 800),
-        seasonalVariation: String(life.seasonalVariation || '').trim().slice(0, 800),
-        workweekDays: (Array.isArray(life.workweekDays) ? life.workweekDays : [1, 2, 3, 4, 5])
-            .map(Number).filter(day => Number.isInteger(day) && day >= 0 && day <= 6).slice(0, 7),
-        places: (Array.isArray(life.places) ? life.places : []).map(normalizeCompanionLifePlace)
-            .filter(place => place.label).slice(0, 24),
-        socialCircle: (Array.isArray(life.socialCircle) ? life.socialCircle : []).map(normalizeCompanionSocialPerson)
-            .filter(person => person.name).slice(0, 30),
-        wardrobe: (Array.isArray(life.wardrobe) ? life.wardrobe : []).map(normalizeCompanionWardrobeLook)
-            .filter(look => look.items).slice(0, 30),
-        weeklySchedule: (Array.isArray(life.weeklySchedule) ? life.weeklySchedule : []).map(normalizeCompanionScheduleBlock)
-            .filter(block => block.activity && block.days.length).slice(0, 160),
-        wildcardDeck: (Array.isArray(life.wildcardDeck) ? life.wildcardDeck : []).map(normalizeCompanionWildcard)
-            .filter(event => event.label).slice(0, 40)
-    };
-}
-
-function normalizeCompanionEnvironment(raw) {
-    const environment = isPlainObject(raw) ? raw : {};
-    return {
-        fetchedAt: Number.isFinite(environment.fetchedAt) ? environment.fetchedAt : 0,
-        temperature: Number.isFinite(Number(environment.temperature)) ? Number(environment.temperature) : null,
-        apparentTemperature: Number.isFinite(Number(environment.apparentTemperature))
-            ? Number(environment.apparentTemperature) : null,
-        weatherCode: Number.isFinite(Number(environment.weatherCode)) ? Number(environment.weatherCode) : null,
-        precipitation: Number.isFinite(Number(environment.precipitation)) ? Number(environment.precipitation) : 0,
-        cloudCover: Number.isFinite(Number(environment.cloudCover)) ? Number(environment.cloudCover) : null,
-        windSpeed: Number.isFinite(Number(environment.windSpeed)) ? Number(environment.windSpeed) : null,
-        isDay: environment.isDay === 0 ? false : environment.isDay === 1 ? true : null,
-        sunrise: String(environment.sunrise || '').slice(0, 40),
-        sunset: String(environment.sunset || '').slice(0, 40),
-        stale: environment.stale === true
-    };
-}
-
-function normalizeCompanionLifeRuntime(raw, socialCircle = []) {
-    const runtime = isPlainObject(raw) ? raw : {};
-    const active = isPlainObject(runtime.activeWildcard) ? runtime.activeWildcard : null;
-    const pending = isPlainObject(runtime.pendingInitiative) ? runtime.pendingInitiative : null;
-    const temporary = isPlainObject(runtime.temporarySituation) ? runtime.temporarySituation : null;
-    return {
-        lastSimulatedAt: Number.isFinite(runtime.lastSimulatedAt) ? runtime.lastSimulatedAt : Date.now(),
-        currentSituationKey: String(runtime.currentSituationKey || '').slice(0, 240),
-        lastLabsBeatAt: Number.isFinite(runtime.lastLabsBeatAt) ? runtime.lastLabsBeatAt : 0,
-        lastWildcardAt: Number.isFinite(runtime.lastWildcardAt) ? runtime.lastWildcardAt : 0,
-        processedWildcardDays: (Array.isArray(runtime.processedWildcardDays) ? runtime.processedWildcardDays : [])
-            .map(value => String(value).slice(0, 20)).filter(Boolean).slice(-45),
-        activeWildcard: active ? {
-            id: String(active.id || '').slice(0, 100),
-            label: String(active.label || '').trim().slice(0, 240),
-            category: COMPANION_WILDCARD_CATEGORIES.includes(active.category) ? active.category : 'inconvenience',
-            startedAt: Number.isFinite(active.startedAt) ? active.startedAt : 0,
-            endsAt: Number.isFinite(active.endsAt) ? active.endsAt : 0,
-            availability: COMPANION_LIFE_AVAILABILITY.includes(active.availability) ? active.availability : 'busy',
-            placeLabel: String(active.placeLabel || '').trim().slice(0, 160),
-            initiativeHook: String(active.initiativeHook || '').trim().slice(0, 400),
-            consequences: String(active.consequences || '').trim().slice(0, 500)
-        } : null,
-        pendingInitiative: pending ? {
-            text: String(pending.text || '').trim().slice(0, 500),
-            createdAt: Number.isFinite(pending.createdAt) ? pending.createdAt : 0,
-            expiresAt: Number.isFinite(pending.expiresAt) ? pending.expiresAt : 0
-        } : null,
-        temporarySituation: temporary ? {
-            activity: String(temporary.activity || '').trim().slice(0, 240),
-            placeLabel: String(temporary.placeLabel || '').trim().slice(0, 160),
-            withNames: (Array.isArray(temporary.withNames) ? temporary.withNames : [])
-                .map(value => String(value).trim().slice(0, 100)).filter(Boolean).slice(0, 8),
-            availability: COMPANION_LIFE_AVAILABILITY.includes(temporary.availability)
-                ? temporary.availability : 'available',
-            outfit: String(temporary.outfit || '').trim().slice(0, 500),
-            startedAt: Number.isFinite(temporary.startedAt) ? temporary.startedAt : 0,
-            endsAt: Number.isFinite(temporary.endsAt) ? temporary.endsAt : 0,
-            reason: String(temporary.reason || '').trim().slice(0, 300)
-        } : null,
-        environment: normalizeCompanionEnvironment(runtime.environment),
-        socialWorld: normalizeCompanionSocialWorldRuntime(runtime.socialWorld, socialCircle),
-        simulationLedger: (Array.isArray(runtime.simulationLedger) ? runtime.simulationLedger : []).map(item => ({
-            id: String(item?.id || livingId('vh_sim', item?.createdAt || Date.now())).slice(0, 100),
-            kind: ['schedule', 'travel', 'social', 'wildcard', 'initiative', 'post', 'provider', 'warning'].includes(item?.kind) ? item.kind : 'schedule',
-            summary: String(item?.summary || '').trim().slice(0, 400),
-            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now(),
-            costCalls: livingClamp(Math.round(Number(item?.costCalls) || 0), 0, 20)
-        })).filter(item => item.summary).slice(-500)
-    };
-}
-
-const COMPANION_CONTINUITY_EVENT_TYPES = Object.freeze([
-    'message_sent', 'message_delivered', 'message_seen', 'message_batch_seen', 'response_sent',
-    'response_withheld', 'initiative', 'social_post', 'social_interaction', 'life_event',
-    'commitment', 'episode', 'origin', 'belief_revision', 'intention_change', 'thread_change', 'system'
-]);
-
-function normalizeCompanionContinuityEvent(raw, index = 0) {
-    const event = isPlainObject(raw) ? raw : {};
-    const createdAt = Number.isFinite(event.createdAt) ? event.createdAt : Date.now();
-    return {
-        id: String(event.id || livingId('vh_event', `${createdAt}|${event.type || 'system'}|${index}`)).slice(0, 100),
-        type: COMPANION_CONTINUITY_EVENT_TYPES.includes(event.type) ? event.type : 'system',
-        summary: String(event.summary || '').trim().slice(0, 700),
-        interpretation: String(event.interpretation || '').trim().slice(0, 700),
-        certainty: livingClamp(Number.isFinite(Number(event.certainty)) ? Number(event.certainty) : 100, 0, 100),
-        sourceMessageIds: (Array.isArray(event.sourceMessageIds) ? event.sourceMessageIds : [])
-            .map(value => String(value).slice(0, 100)).filter(Boolean).slice(0, 20),
-        dedupeKey: String(event.dedupeKey || '').trim().slice(0, 180),
-        createdAt,
-        perceivedAt: Number.isFinite(event.perceivedAt) ? event.perceivedAt : 0,
-        resolvedAt: Number.isFinite(event.resolvedAt) ? event.resolvedAt : 0
-    };
-}
-
-function normalizeCompanionBelief(raw, index = 0) {
-    const belief = isPlainObject(raw) ? raw : {};
-    const proposition = String(belief.proposition || belief.text || '').trim().slice(0, 700);
-    return {
-        id: String(belief.id || livingId('vh_belief', `${belief.subject || 'player'}|${proposition}|${index}`)).slice(0, 100),
-        subject: String(belief.subject || 'player').trim().slice(0, 120),
-        proposition,
-        confidence: livingClamp(Number.isFinite(Number(belief.confidence)) ? Number(belief.confidence) : 50, 0, 100),
-        basis: String(belief.basis || '').trim().slice(0, 500),
-        evidence: (Array.isArray(belief.evidence) ? belief.evidence : []).map(item => ({
-            summary: String(item?.summary || '').trim().slice(0, 500),
-            stance: item?.stance === 'contradicts' ? 'contradicts' : 'supports',
-            strength: livingClamp(Number.isFinite(Number(item?.strength)) ? Number(item.strength) : 50, 0, 100),
-            sourceEventId: String(item?.sourceEventId || '').slice(0, 100),
-            createdAt: Number.isFinite(item?.createdAt) ? item.createdAt : Date.now()
-        })).filter(item => item.summary).slice(-20),
-        revisionCount: Math.max(0, Math.round(Number(belief.revisionCount) || 0)),
-        supersededBy: String(belief.supersededBy || '').slice(0, 100),
-        status: ['active', 'revised', 'discarded'].includes(belief.status) ? belief.status : 'active',
-        sourceEventId: String(belief.sourceEventId || '').slice(0, 100),
-        createdAt: Number.isFinite(belief.createdAt) ? belief.createdAt : Date.now(),
-        updatedAt: Number.isFinite(belief.updatedAt) ? belief.updatedAt : Date.now()
-    };
-}
-
-function normalizeCompanionIntention(raw, index = 0) {
-    const intention = isPlainObject(raw) ? raw : {};
-    const action = String(intention.action || intention.text || '').trim().slice(0, 600);
-    return {
-        id: String(intention.id || livingId('vh_intent', `${action}|${intention.createdAt || Date.now()}|${index}`)).slice(0, 100),
-        kind: ['reply', 'relationship', 'life', 'social', 'commitment', 'avoidance'].includes(intention.kind)
-            ? intention.kind : 'life',
-        action,
-        reason: String(intention.reason || '').trim().slice(0, 600),
-        status: ['planned', 'active', 'completed', 'abandoned', 'blocked'].includes(intention.status)
-            ? intention.status : 'planned',
-        priority: livingClamp(Number.isFinite(Number(intention.priority)) ? Number(intention.priority) : 50, 0, 100),
-        channel: ['text', 'photo', 'voice', 'call', 'social', 'internal'].includes(intention.channel)
-            ? intention.channel : 'internal',
-        executionMode: ['reach_out', 'social_post', 'remind', 'commitment', 'internal'].includes(intention.executionMode)
-            ? intention.executionMode : 'internal',
-        attempts: Math.max(0, Math.round(Number(intention.attempts) || 0)),
-        lastAttemptAt: Number.isFinite(intention.lastAttemptAt) ? intention.lastAttemptAt : 0,
-        outcome: String(intention.outcome || '').trim().slice(0, 500),
-        sourceEventId: String(intention.sourceEventId || '').slice(0, 100),
-        sourceMessageId: String(intention.sourceMessageId || '').slice(0, 100),
-        createdAt: Number.isFinite(intention.createdAt) ? intention.createdAt : Date.now(),
-        dueAt: Number.isFinite(intention.dueAt) ? intention.dueAt : 0,
-        resolvedAt: Number.isFinite(intention.resolvedAt) ? intention.resolvedAt : 0
-    };
-}
-
-function normalizeCompanionEpisode(raw, index = 0) {
-    const episode = isPlainObject(raw) ? raw : {};
-    const summary = String(episode.summary || '').trim().slice(0, 1000);
-    const createdAt = Number.isFinite(episode.createdAt) ? episode.createdAt : Date.now();
-    return {
-        id: String(episode.id || livingId('vh_episode', `${episode.title || summary}|${createdAt}|${index}`)).slice(0, 100),
-        title: String(episode.title || summary.slice(0, 80) || 'Remembered moment').trim().slice(0, 160),
-        summary,
-        emotionalMeaning: String(episode.emotionalMeaning || '').trim().slice(0, 700),
-        participants: (Array.isArray(episode.participants) ? episode.participants : [])
-            .map(value => String(value).trim().slice(0, 100)).filter(Boolean).slice(0, 12),
-        sourceEventIds: (Array.isArray(episode.sourceEventIds) ? episode.sourceEventIds : [])
-            .map(value => String(value).slice(0, 100)).filter(Boolean).slice(-20),
-        unresolvedThreadIds: (Array.isArray(episode.unresolvedThreadIds) ? episode.unresolvedThreadIds : [])
-            .map(value => String(value).slice(0, 100)).filter(Boolean).slice(0, 12),
-        importance: livingClamp(Number.isFinite(Number(episode.importance)) ? Number(episode.importance) : 50, 0, 100),
-        emotionalTone: String(episode.emotionalTone || '').trim().slice(0, 120),
-        relationshipImpact: livingClamp(Number.isFinite(Number(episode.relationshipImpact)) ? Number(episode.relationshipImpact) : 0, -100, 100),
-        status: ['active', 'reinterpreted', 'archived'].includes(episode.status) ? episode.status : 'active',
-        createdAt,
-        updatedAt: Number.isFinite(episode.updatedAt) ? episode.updatedAt : createdAt,
-        lastRecalledAt: Number.isFinite(episode.lastRecalledAt) ? episode.lastRecalledAt : 0,
-        recallCount: Math.max(0, Math.round(Number(episode.recallCount) || 0))
-    };
-}
-
-function normalizeCompanionOpenThread(raw, index = 0) {
-    const thread = isPlainObject(raw) ? raw : {};
-    const topic = String(thread.topic || thread.summary || '').trim().slice(0, 240);
-    return {
-        id: String(thread.id || livingId('vh_thread', `${topic}|${thread.createdAt || Date.now()}|${index}`)).slice(0, 100),
-        topic,
-        summary: String(thread.summary || topic).trim().slice(0, 700),
-        stakes: String(thread.stakes || '').trim().slice(0, 500),
-        status: ['open', 'escalating', 'dormant', 'resolved'].includes(thread.status) ? thread.status : 'open',
-        salience: livingClamp(Number.isFinite(Number(thread.salience)) ? Number(thread.salience) : 50, 0, 100),
-        createdAt: Number.isFinite(thread.createdAt) ? thread.createdAt : Date.now(),
-        updatedAt: Number.isFinite(thread.updatedAt) ? thread.updatedAt : Date.now(),
-        resolvedAt: Number.isFinite(thread.resolvedAt) ? thread.resolvedAt : 0
-    };
-}
-
-function normalizeCompanionDecisionEvidence(raw) {
-    const decision = isPlainObject(raw) ? raw : {};
-    return {
-        decision: String(decision.decision || '').trim().slice(0, 400),
-        perceived: String(decision.perceived || '').trim().slice(0, 700),
-        interpretation: String(decision.interpretation || '').trim().slice(0, 700),
-        pressures: (Array.isArray(decision.pressures) ? decision.pressures : [])
-            .map(value => String(value).trim().slice(0, 240)).filter(Boolean).slice(0, 12),
-        confidence: livingClamp(Number.isFinite(Number(decision.confidence)) ? Number(decision.confidence) : 50, 0, 100),
-        source: ['kernel', 'model', 'mixed', 'manual'].includes(decision.source) ? decision.source : 'kernel',
-        createdAt: Number.isFinite(decision.createdAt) ? decision.createdAt : 0
-    };
-}
-
-function normalizeCompanionPlayerModelEntry(raw, index = 0) {
-    const item = isPlainObject(raw) ? raw : {};
-    const statement = String(item.statement || item.proposition || '').trim().slice(0, 700);
-    return {
-        id: String(item.id || livingId('vh_player_model', `${item.kind || 'inference'}|${statement}|${index}`)).slice(0, 100),
-        kind: ['public_claim', 'stated_fact', 'demonstrated_pattern', 'inferred_motive', 'perceived_player_view']
-            .includes(item.kind) ? item.kind : 'inferred_motive',
-        statement,
-        source: ['persona', 'player_statement', 'observed_behavior', 'social_interaction', 'third_party', 'inference']
-            .includes(item.source) ? item.source : 'inference',
-        confidence: livingClamp(Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 50, 0, 100),
-        evidence: (Array.isArray(item.evidence) ? item.evidence : []).map(value => String(value).trim().slice(0, 400)).filter(Boolean).slice(-12),
-        status: ['active', 'revised', 'discarded'].includes(item.status) ? item.status : 'active',
-        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
-        updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : Date.now()
-    };
-}
-
-function normalizeCompanionBoundary(raw, index = 0) {
-    const item = isPlainObject(raw) ? raw : {};
-    const topic = String(item.topic || '').trim().slice(0, 240);
-    return {
-        id: String(item.id || livingId('vh_boundary', `${topic}|${index}`)).slice(0, 100),
-        topic,
-        rule: String(item.rule || '').trim().slice(0, 600),
-        strength: ['preference', 'soft', 'firm', 'hard'].includes(item.strength) ? item.strength : 'soft',
-        source: ['authored', 'stated', 'inferred', 'event'].includes(item.source) ? item.source : 'event',
-        tests: Math.max(0, Math.round(Number(item.tests) || 0)),
-        respected: Math.max(0, Math.round(Number(item.respected) || 0)),
-        violated: Math.max(0, Math.round(Number(item.violated) || 0)),
-        sensitivity: livingClamp(Number.isFinite(Number(item.sensitivity)) ? Number(item.sensitivity) : 35, 0, 100),
-        status: item.status === 'retired' ? 'retired' : 'active',
-        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
-        updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : Date.now()
-    };
-}
-
-function normalizeCompanionTruthEntry(raw, index = 0) {
-    const item = isPlainObject(raw) ? raw : {};
-    const truth = String(item.truth || '').trim().slice(0, 700);
-    return {
-        id: String(item.id || livingId('vh_truth', `${truth}|${index}`)).slice(0, 100),
-        truth,
-        toldPlayer: String(item.toldPlayer || item.told_player || '').trim().slice(0, 700),
-        coverStory: String(item.coverStory || item.cover_story || '').trim().slice(0, 700),
-        disclosure: ['secret', 'omitted', 'partial', 'disclosed', 'discovered'].includes(item.disclosure)
-            ? item.disclosure : 'secret',
-        discoveryRisk: livingClamp(Number.isFinite(Number(item.discoveryRisk ?? item.discovery_risk))
-            ? Number(item.discoveryRisk ?? item.discovery_risk) : 20, 0, 100),
-        emotionalCost: livingClamp(Number.isFinite(Number(item.emotionalCost ?? item.emotional_cost))
-            ? Number(item.emotionalCost ?? item.emotional_cost) : 20, 0, 100),
-        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
-        updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : Date.now()
-    };
-}
-
-function normalizeCompanionMilestone(raw, index = 0) {
-    const item = isPlainObject(raw) ? raw : {};
-    const summary = String(item.summary || '').trim().slice(0, 600);
-    return {
-        id: String(item.id || livingId('vh_milestone', `${item.type || 'other'}|${summary}|${index}`)).slice(0, 100),
-        type: ['first_message', 'first_joke', 'first_photo', 'first_voice_note', 'first_call', 'first_conflict',
-            'first_apology', 'first_secret', 'first_meeting', 'betrayal', 'reconciliation', 'other'].includes(item.type)
-            ? item.type : 'other',
-        summary,
-        createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now()
-    };
-}
 
 function companionApplyPlayerModelUpdate(companion, raw, nowMs = Date.now(), sourceEventId = '') {
     if (!isPlainObject(raw)) return null;
@@ -33152,6 +35225,7 @@ function companionApplyPlayerModelUpdate(companion, raw, nowMs = Date.now(), sou
         ? raw.operation : 'upsert';
     const candidate = normalizeCompanionPlayerModelEntry({
         ...raw,
+        personaId:companionActivePersona(companion)?.id||'__none__',
         evidence: [...(Array.isArray(raw.evidence) ? raw.evidence : []), sourceEventId].filter(Boolean),
         createdAt: nowMs,
         updatedAt: nowMs
@@ -33169,8 +35243,8 @@ function companionApplyPlayerModelUpdate(companion, raw, nowMs = Date.now(), sou
         candidate.source = 'inference';
         candidate.confidence = Math.min(75, candidate.confidence);
     }
-    let existing = runtime.playerModel.find(item => item.id === raw.id)
-        || runtime.playerModel.find(item => item.status === 'active' && item.kind === candidate.kind
+    let existing = runtime.playerModel.find(item => item.id === raw.id&&item.personaId===candidate.personaId)
+        || runtime.playerModel.find(item => item.status === 'active' && item.personaId===candidate.personaId && item.kind === candidate.kind
             && item.statement.toLowerCase() === candidate.statement.toLowerCase());
     if (!existing && ['add', 'upsert', 'reinforce'].includes(operation)) {
         runtime.playerModel.push(candidate);
@@ -33273,70 +35347,6 @@ function companionRecordMilestone(companion, raw, nowMs = Date.now()) {
     return candidate;
 }
 
-function normalizeCompanionContinuityRuntime(raw, nowMs = Date.now()) {
-    const runtime = isPlainObject(raw) ? raw : {};
-    return {
-        version: 5,
-        originScenarioConsumedAt: Number.isFinite(runtime.originScenarioConsumedAt)
-            ? runtime.originScenarioConsumedAt : 0,
-        originEpisodeId: String(runtime.originEpisodeId || '').slice(0, 100),
-        playerModel: (Array.isArray(runtime.playerModel) ? runtime.playerModel : [])
-            .map(normalizeCompanionPlayerModelEntry).filter(item => item.statement).slice(-160),
-        boundaries: (Array.isArray(runtime.boundaries) ? runtime.boundaries : [])
-            .map(normalizeCompanionBoundary).filter(item => item.topic && item.rule).slice(-100),
-        truthLedger: (Array.isArray(runtime.truthLedger) ? runtime.truthLedger : [])
-            .map(normalizeCompanionTruthEntry).filter(item => item.truth).slice(-100),
-        milestones: (Array.isArray(runtime.milestones) ? runtime.milestones : [])
-            .map(normalizeCompanionMilestone).filter(item => item.summary).slice(-120),
-        conversationGoal: {
-            type: String(runtime.conversationGoal?.type || '').trim().slice(0, 80),
-            objective: String(runtime.conversationGoal?.objective || '').trim().slice(0, 400),
-            reason: String(runtime.conversationGoal?.reason || '').trim().slice(0, 500),
-            chosenAt: Number.isFinite(runtime.conversationGoal?.chosenAt) ? runtime.conversationGoal.chosenAt : 0
-        },
-        eventLedger: (Array.isArray(runtime.eventLedger) ? runtime.eventLedger : [])
-            .map(normalizeCompanionContinuityEvent).filter(event => event.summary).slice(-500),
-        beliefs: (Array.isArray(runtime.beliefs) ? runtime.beliefs : [])
-            .map(normalizeCompanionBelief).filter(belief => belief.proposition).slice(-120),
-        intentions: (Array.isArray(runtime.intentions) ? runtime.intentions : [])
-            .map(normalizeCompanionIntention).filter(intention => intention.action).slice(-100),
-        episodes: (Array.isArray(runtime.episodes) ? runtime.episodes : [])
-            .map(normalizeCompanionEpisode).filter(episode => episode.summary).slice(-120),
-        openThreads: (Array.isArray(runtime.openThreads) ? runtime.openThreads : [])
-            .map(normalizeCompanionOpenThread).filter(thread => thread.topic).slice(-80),
-        lastDecision: normalizeCompanionDecisionEvidence(runtime.lastDecision),
-        lastAdvancedAt: Number.isFinite(runtime.lastAdvancedAt) ? runtime.lastAdvancedAt : nowMs
-    };
-}
-
-function companionRecordEpisode(companion, raw, nowMs = Date.now()) {
-    const runtime = companionContinuity(companion);
-    const candidate = normalizeCompanionEpisode({ ...raw, createdAt: raw?.createdAt || nowMs }, runtime.episodes.length);
-    if (!candidate.summary) return null;
-    const key = `${candidate.title}|${candidate.summary}`.toLowerCase().replace(/\s+/g, ' ').slice(0, 500);
-    const existing = runtime.episodes.find(item => item.id === raw?.id)
-        || runtime.episodes.find(item => `${item.title}|${item.summary}`.toLowerCase().replace(/\s+/g, ' ').slice(0, 500) === key);
-    if (existing) {
-        existing.emotionalMeaning = candidate.emotionalMeaning || existing.emotionalMeaning;
-        existing.importance = Math.max(existing.importance, candidate.importance);
-        existing.emotionalTone = candidate.emotionalTone || existing.emotionalTone;
-        existing.relationshipImpact = Math.abs(candidate.relationshipImpact) > Math.abs(existing.relationshipImpact)
-            ? candidate.relationshipImpact : existing.relationshipImpact;
-        existing.sourceEventIds = [...new Set([...existing.sourceEventIds, ...candidate.sourceEventIds])].slice(-20);
-        existing.unresolvedThreadIds = [...new Set([...existing.unresolvedThreadIds, ...candidate.unresolvedThreadIds])].slice(0, 12);
-        existing.updatedAt = nowMs;
-        return existing;
-    }
-    runtime.episodes.push(candidate);
-    runtime.episodes = runtime.episodes.slice(-120);
-    companionRecordContinuityEvent(companion, {
-        type: 'episode', summary: `Remembered: ${candidate.title}`,
-        interpretation: candidate.emotionalMeaning || candidate.summary,
-        certainty: 100, createdAt: nowMs, perceivedAt: nowMs,
-        dedupeKey: `episode:${candidate.id}`
-    });
-    return candidate;
-}
 
 function companionApplyBeliefUpdate(companion, raw, nowMs = Date.now(), sourceEventId = '') {
     if (!isPlainObject(raw)) return null;
@@ -33432,46 +35442,6 @@ function companionMatureIntentions(companion, nowMs = Date.now()) {
     return matured;
 }
 
-function companionContinuity(companion) {
-    const current = companion.continuityRuntime;
-    const normalized = normalizeCompanionContinuityRuntime(current);
-    // Preserve the runtime object identity while helper functions compose a
-    // single transaction. Replacing it here made an earlier helper's local
-    // reference stale, so a later decision write could silently discard an
-    // intention or belief added moments before it.
-    if (isPlainObject(current)) {
-        const preserveEntries = (previous, next) => next.map(item => {
-            const existing = Array.isArray(previous) ? previous.find(candidate => candidate?.id === item.id) : null;
-            if (!isPlainObject(existing)) return item;
-            Object.assign(existing, item);
-            return existing;
-        });
-        normalized.eventLedger = preserveEntries(current.eventLedger, normalized.eventLedger);
-        normalized.beliefs = preserveEntries(current.beliefs, normalized.beliefs);
-        normalized.intentions = preserveEntries(current.intentions, normalized.intentions);
-        normalized.episodes = preserveEntries(current.episodes, normalized.episodes);
-        normalized.openThreads = preserveEntries(current.openThreads, normalized.openThreads);
-        normalized.playerModel = preserveEntries(current.playerModel, normalized.playerModel);
-        normalized.boundaries = preserveEntries(current.boundaries, normalized.boundaries);
-        normalized.truthLedger = preserveEntries(current.truthLedger, normalized.truthLedger);
-        normalized.milestones = preserveEntries(current.milestones, normalized.milestones);
-        Object.assign(current, normalized);
-        return current;
-    }
-    companion.continuityRuntime = normalized;
-    return companion.continuityRuntime;
-}
-
-function companionRecordContinuityEvent(companion, raw) {
-    const runtime = companionContinuity(companion);
-    const event = normalizeCompanionContinuityEvent(raw, runtime.eventLedger.length);
-    if (!event.summary) return null;
-    if (event.dedupeKey && runtime.eventLedger.some(item => item.dedupeKey === event.dedupeKey)) return null;
-    runtime.eventLedger.push(event);
-    runtime.eventLedger = runtime.eventLedger.slice(-500);
-    runtime.lastAdvancedAt = Math.max(runtime.lastAdvancedAt, event.createdAt);
-    return event;
-}
 
 function companionDecisionPressures(companion, nowMs = Date.now()) {
     const pressures = [];
@@ -33491,12 +35461,7 @@ function companionDecisionPressures(companion, nowMs = Date.now()) {
     return pressures.slice(0, 8);
 }
 
-function companionSetDecisionEvidence(companion, raw) {
-    const runtime = companionContinuity(companion);
-    runtime.lastDecision = normalizeCompanionDecisionEvidence({ ...raw, createdAt: raw?.createdAt || Date.now() });
-    runtime.lastAdvancedAt = Math.max(runtime.lastAdvancedAt, runtime.lastDecision.createdAt);
-    return runtime.lastDecision;
-}
+
 
 function companionRecordResponsePlan(companion, message, plan, nowMs = Date.now()) {
     const runtime = companionContinuity(companion);
@@ -33514,11 +35479,11 @@ function companionRecordResponsePlan(companion, message, plan, nowMs = Date.now(
             : plan.willReply ? 'A response is currently intended.' : 'Current mood and pressures favor silence.',
         status: 'planned', priority: plan.willReply ? 65 : 48,
         sourceMessageId: message.id, createdAt: nowMs,
-        dueAt: plan.willReply ? plan.replyDueAt : plan.readAt
+        dueAt: plan.attention?.nextCheckAt || (plan.willReply ? plan.replyDueAt : plan.readAt)
     }, runtime.intentions.length));
     companionSetDecisionEvidence(companion, {
-        decision: plan.willReply ? `Plan to answer after checking the message` : 'Do not commit to an answer',
-        perceived: 'A notification arrived; its contents are not perceived until the scheduled read time.',
+        decision: plan.attention?.reason || (plan.willReply ? 'Consider a response after checking the message' : 'Do not commit to an answer'),
+        perceived: 'A notification arrived; its contents are not perceived until the conversation is opened.',
         interpretation: '', pressures: companionDecisionPressures(companion, nowMs),
         confidence: 100, source: 'kernel', createdAt: nowMs
     });
@@ -33529,102 +35494,7 @@ function companionRecordResponsePlan(companion, message, plan, nowMs = Date.now(
  * hormones or consciousness. These values give time, sleep, conflict and
  * established substance use mechanical consequences between model calls.
  */
-function normalizeCompanionHumanDynamics(raw, nowMs = Date.now()) {
-    const dynamics = isPlainObject(raw) ? raw : {};
-    return {
-        energy: livingClamp(Number.isFinite(Number(dynamics.energy)) ? Number(dynamics.energy) : 70, 0, 100),
-        stress: livingClamp(Number.isFinite(Number(dynamics.stress)) ? Number(dynamics.stress) : 22, 0, 100),
-        socialNeed: livingClamp(Number.isFinite(Number(dynamics.socialNeed)) ? Number(dynamics.socialNeed) : 28, 0, 100),
-        anger: livingClamp(Number.isFinite(Number(dynamics.anger)) ? Number(dynamics.anger) : 0, 0, 100),
-        intoxication: livingClamp(Number.isFinite(Number(dynamics.intoxication)) ? Number(dynamics.intoxication) : 0, 0, 100),
-        inhibition: livingClamp(Number.isFinite(Number(dynamics.inhibition)) ? Number(dynamics.inhibition) : 72, 0, 100),
-        desire: livingClamp(Number.isFinite(Number(dynamics.desire)) ? Number(dynamics.desire) : 20, 0, 100),
-        sexualArousal: livingClamp(Number.isFinite(Number(dynamics.sexualArousal)) ? Number(dynamics.sexualArousal) : 0, 0, 100),
-        sexualFrustration: livingClamp(Number.isFinite(Number(dynamics.sexualFrustration)) ? Number(dynamics.sexualFrustration) : 0, 0, 100),
-        postIntimacyCalm: livingClamp(Number.isFinite(Number(dynamics.postIntimacyCalm)) ? Number(dynamics.postIntimacyCalm) : 0, 0, 100),
-        sexualCooldownUntil: Number.isFinite(dynamics.sexualCooldownUntil) ? Math.max(0, dynamics.sexualCooldownUntil) : 0,
-        intimacyAftereffect: COMPANION_INTIMACY_AFTEREFFECTS.includes(dynamics.intimacyAftereffect)
-            ? dynamics.intimacyAftereffect : 'none',
-        intimacyAftereffectUntil: Number.isFinite(dynamics.intimacyAftereffectUntil)
-            ? Math.max(0, dynamics.intimacyAftereffectUntil) : 0,
-        lastIntimacyAt: Number.isFinite(dynamics.lastIntimacyAt) ? Math.max(0, dynamics.lastIntimacyAt) : 0,
-        cooldownUntil: Number.isFinite(dynamics.cooldownUntil) ? Math.max(0, dynamics.cooldownUntil) : 0,
-        cooldownReason: String(dynamics.cooldownReason || '').trim().slice(0, 240),
-        lastUpdated: Number.isFinite(dynamics.lastUpdated) ? dynamics.lastUpdated : nowMs
-    };
-}
 
-function normalizeCompanionEmotionVector(raw, fallback = null) {
-    const source = isPlainObject(raw) ? raw : {};
-    const base = isPlainObject(fallback) ? fallback : {};
-    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
-        livingClamp(Number.isFinite(Number(source[emotion])) ? Number(source[emotion])
-            : Number.isFinite(Number(base[emotion])) ? Number(base[emotion]) : 0, 0, 100)
-    ]));
-}
-
-function normalizeCompanionEmotionDeltaVector(raw) {
-    const source = isPlainObject(raw) ? raw : {};
-    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
-        livingClamp(Number.isFinite(Number(source[emotion])) ? Number(source[emotion]) : 0, -100, 100)
-    ]));
-}
-
-function companionEmotionVectorFromMood(rawMood) {
-    const mood = isPlainObject(rawMood) ? rawMood : {};
-    const intensity = livingClamp(Math.abs(Number(mood.valence) || 20) * 0.55
-        + Math.abs(Number(mood.arousal) || 0) * 0.25 + 12, 0, 72);
-    const vector = normalizeCompanionEmotionVector({});
-    const mapped = {
-        content: ['joy'], happy: ['joy'], excited: ['joy', 'anticipation'],
-        affectionate: ['joy', 'trust'], flirty: ['joy', 'anticipation'], playful: ['joy', 'surprise'],
-        bored: ['disgust'], tired: ['sadness'], anxious: ['fear', 'anticipation'],
-        sad: ['sadness'], hurt: ['sadness', 'anger'], angry: ['anger'],
-        jealous: ['anger', 'sadness', 'fear'], lonely: ['sadness', 'anticipation'],
-        overwhelmed: ['fear', 'surprise'], numb: ['sadness']
-    }[mood.label] || (Number(mood.valence) < 0 ? ['sadness'] : ['joy']);
-    mapped.forEach((emotion, index) => { vector[emotion] = livingClamp(intensity - index * 8, 0, 100); });
-    return vector;
-}
-
-function normalizeCompanionEmotionReaction(raw, index = 0) {
-    const reaction = isPlainObject(raw) ? raw : {};
-    return {
-        id: String(reaction.id || livingId('vh_emotion', `${reaction.dueAt || Date.now()}|${index}`)).slice(0, 100),
-        dueAt: Number.isFinite(reaction.dueAt) ? Math.max(0, reaction.dueAt) : 0,
-        felt: normalizeCompanionEmotionDeltaVector(reaction.felt),
-        towardPlayer: normalizeCompanionEmotionDeltaVector(reaction.towardPlayer),
-        reason: String(reaction.reason || '').trim().slice(0, 300)
-    };
-}
-
-function normalizeCompanionEmotionState(raw, seedMood = null, nowMs = Date.now()) {
-    const state = isPlainObject(raw) ? raw : {};
-    const seed = companionEmotionVectorFromMood(seedMood);
-    const appraisal = isPlainObject(state.lastAppraisal) ? state.lastAppraisal : {};
-    return {
-        felt: normalizeCompanionEmotionVector(state.felt, seed),
-        towardPlayer: normalizeCompanionEmotionVector(state.towardPlayer),
-        expressed: normalizeCompanionEmotionVector(state.expressed, seed),
-        masking: livingClamp(Number.isFinite(Number(state.masking)) ? Number(state.masking) : 18, 0, 100),
-        lastUpdated: Number.isFinite(state.lastUpdated) ? state.lastUpdated : nowMs,
-        lastAppraisal: {
-            summary: String(appraisal.summary || '').trim().slice(0, 300),
-            responsibility: ['player', 'self', 'other', 'circumstance', 'unclear'].includes(appraisal.responsibility)
-                ? appraisal.responsibility : 'unclear',
-            goalImpact: livingClamp(Number.isFinite(Number(appraisal.goalImpact)) ? Number(appraisal.goalImpact) : 0, -100, 100),
-            threat: livingClamp(Number.isFinite(Number(appraisal.threat)) ? Number(appraisal.threat) : 0, 0, 100),
-            loss: livingClamp(Number.isFinite(Number(appraisal.loss)) ? Number(appraisal.loss) : 0, 0, 100),
-            novelty: livingClamp(Number.isFinite(Number(appraisal.novelty)) ? Number(appraisal.novelty) : 0, 0, 100),
-            normViolation: livingClamp(Number.isFinite(Number(appraisal.normViolation)) ? Number(appraisal.normViolation) : 0, 0, 100),
-            control: livingClamp(Number.isFinite(Number(appraisal.control)) ? Number(appraisal.control) : 50, 0, 100),
-            socialSafety: livingClamp(Number.isFinite(Number(appraisal.socialSafety)) ? Number(appraisal.socialSafety) : 50, 0, 100),
-            at: Number.isFinite(appraisal.at) ? appraisal.at : 0
-        },
-        pendingReactions: (Array.isArray(state.pendingReactions) ? state.pendingReactions : [])
-            .map(normalizeCompanionEmotionReaction).filter(item => item.dueAt).slice(-20)
-    };
-}
 
 const COMPANION_SOCIAL_CONTENT_TYPES = Object.freeze([
     'everyday', 'selfies', 'friends', 'parties', 'work_school', 'fashion', 'fitness',
@@ -33662,6 +35532,7 @@ function normalizeCompanionSocialPost(raw) {
         likedByPlayer: post.likedByPlayer === true,
         likedAt: Number.isFinite(post.likedAt) ? post.likedAt : 0,
         comments: (Array.isArray(post.comments) ? post.comments : []).map(comment => ({
+            authorId:String(comment?.authorId||'').slice(0,80),authorName:String(comment?.authorName||'').slice(0,100),
             id: String(comment?.id || livingId('vh_social_comment', `${comment?.createdAt || Date.now()}|${comment?.text || Math.random()}`)).slice(0, 100),
             text: String(comment?.text || '').trim().slice(0, 500),
             createdAt: Number.isFinite(comment?.createdAt) ? comment.createdAt : Date.now()
@@ -33681,10 +35552,10 @@ function normalizeCompanionSocialPost(raw) {
  * attached to the same post. Only duplicate IDs are repaired, deterministically
  * enough that a second normalization pass is a no-op.
  */
-function normalizeCompanionSocialPosts(value, limit = 200) {
+function normalizeCompanionSocialPosts(value, limit = 200, keepDrafts = false) {
     const seen = new Set();
     return (Array.isArray(value) ? value : []).map(normalizeCompanionSocialPost)
-        .filter(post => post.text || post.photo || post.scene)
+        .filter(post => keepDrafts || post.text || post.photo || post.scene)
         .map((post, index) => {
             let id = post.id;
             if (seen.has(id)) {
@@ -33725,6 +35596,16 @@ function normalizeCompanion(raw) {
         .includes(c.socialPlayerRole) ? c.socialPlayerRole : 'stranger';
     const storedSocialRelationship = isPlainObject(c.socialRelationship) ? c.socialRelationship : {};
     const lifeProfile = normalizeCompanionLifeProfile(c.lifeProfile);
+    for (const legacy of (c.photoLocations || [])) {
+        if (!legacy.photo) continue;
+        const existing=lifeProfile.places.find(p=>p.id===legacy.id);
+        if(existing?.referenceDisabled)continue;
+        if(existing&&!existing.photo){existing.photo=legacy.photo;existing.referenceDescription=legacy.description||'';continue;}
+        if(existing?.photo===legacy.photo)continue;
+        const id=existing?`${String(legacy.id).slice(0,65)}_reference`:legacy.id;
+        if(lifeProfile.places.some(p=>p.id===id&&p.photo===legacy.photo))continue;
+        if(lifeProfile.places.length<48)lifeProfile.places.push(normalizeCompanionLifePlace({id,label:legacy.label||'Saved place',photo:legacy.photo,referenceDescription:legacy.description}));
+    }
     const ttsModelMigrations = {
         'openai/gpt-4o-audio-preview': 'mistralai/voxtral-mini-tts-2603',
         'openai/gpt-4o-mini-audio-preview': 'mistralai/voxtral-mini-tts-2603',
@@ -33748,8 +35629,10 @@ function normalizeCompanion(raw) {
             ? c.profilePhoto
             : (typeof c.basePhoto === 'string' ? c.basePhoto : ''),
         basePhoto: typeof c.basePhoto === 'string' ? c.basePhoto : '',
+        photoLocations: (Array.isArray(c.photoLocations) ? c.photoLocations : []).filter(p=>!lifeProfile.places.some(place=>(place.id===p.id||place.id===`${String(p.id).slice(0,65)}_reference`)&&place.photo===p.photo)).slice(0,12).map((place,index) => ({id:String(place.id || `place-${index}`),label:String(place.label || '').slice(0,100),description:String(place.description || '').slice(0,1500),photo:typeof place.photo === 'string' ? place.photo : ''})),
         appearance: String(c.appearance || '').trim().slice(0, 800),
         personality: String(c.personality || '').trim().slice(0, 2000),
+        behaviorExamples: String(c.behaviorExamples || '').trim().slice(0, 4000),
         backstory: String(c.backstory || '').trim().slice(0, 4000),
         occupation: String(c.occupation || '').trim().slice(0, 1200),
         socialWorld: String(c.socialWorld || '').trim().slice(0, 2000),
@@ -33764,6 +35647,10 @@ function normalizeCompanion(raw) {
         timezoneOffsetMinutes: Number.isFinite(Number(c.timezoneOffsetMinutes))
             ? livingClamp(Math.round(Number(c.timezoneOffsetMinutes)), -720, 840) : 0,
         textingStyle: String(c.textingStyle || '').trim().slice(0, 500),
+        conversationStyle: String(c.conversationStyle || '').trim().slice(0, 1200),
+        chatExamples: String(c.chatExamples || '').trim().slice(0, 2400),
+        chatAvoid: String(c.chatAvoid || '').trim().slice(0, 800),
+        chatLength: ['adaptive', 'brief', 'expansive'].includes(c.chatLength) ? c.chatLength : 'adaptive',
         values: String(c.values || '').trim().slice(0, 1600),
         contradictions: String(c.contradictions || '').trim().slice(0, 1600),
         vulnerabilities: String(c.vulnerabilities || '').trim().slice(0, 1600),
@@ -33774,6 +35661,12 @@ function normalizeCompanion(raw) {
         lifeWildcardsEnabled: c.lifeWildcardsEnabled !== false,
         lifeWeatherEnabled: c.lifeWeatherEnabled !== false,
         lifeBuilderModel: typeof c.lifeBuilderModel === 'string' ? c.lifeBuilderModel.trim().slice(0, 300) : '',
+        observerModel: typeof c.observerModel === 'string' ? c.observerModel.trim().slice(0, 300) : '',
+        observerInputModalities: Array.isArray(c.observerInputModalities)
+            ? [...new Set(c.observerInputModalities.map(value => String(value).toLowerCase()))]
+                .filter(value => ['text', 'image', 'audio'].includes(value))
+            : ['text'],
+        separatedCognition: c.separatedCognition !== false,
         lifeProfile,
         lifeRuntime: normalizeCompanionLifeRuntime(c.lifeRuntime, lifeProfile.socialCircle),
         continuityRuntime: normalizeCompanionContinuityRuntime(c.continuityRuntime, now),
@@ -33836,6 +35729,9 @@ function normalizeCompanion(raw) {
         imageParameters: normalizeCompanionImageParameters(c.imageParameters),
         imageProviderOptions: normalizeCompanionImageProviderOptions(c.imageProviderOptions),
         photoStyle: normalizeCompanionPhotoStyle(c.photoStyle),
+        photoLargeBreasts: c.photoLargeBreasts === true,
+        photoDirection: String(c.photoDirection||'').slice(0,4000),
+        photoContinuityMinutes: livingClamp(Number(c.photoContinuityMinutes??90),0,360),
         photoCapturePolicy: normalizeCompanionPhotoCapturePolicy(c.photoCapturePolicy),
         photoReferenceFallback: c.photoReferenceFallback !== false,
         allowPhotos: c.allowPhotos !== false,
@@ -33884,7 +35780,7 @@ function normalizeCompanion(raw) {
         socialAdultLevel: ['none', 'suggestive', 'mature', 'explicit'].includes(c.socialAdultLevel)
             ? c.socialAdultLevel : 'none',
         socialAccessRules: String(c.socialAccessRules || '').trim().slice(0, 2000),
-        startingSocialPosts: normalizeCompanionSocialPosts(c.startingSocialPosts, 100),
+        startingSocialPosts: normalizeCompanionSocialPosts(c.startingSocialPosts, 100, true),
         socialPosts: normalizeCompanionSocialPosts(c.socialPosts, 200),
         socialFeedRuntime: isPlainObject(c.socialFeedRuntime) ? {
             lastPostAt: Number.isFinite(c.socialFeedRuntime.lastPostAt) ? c.socialFeedRuntime.lastPostAt : 0,
@@ -33981,6 +35877,8 @@ function normalizeCompanionMessage(raw) {
         ? m.deliveryState
         : (m.role === 'companion' ? '' : 'read');
     return {
+        photoContext: isPlainObject(raw?.photoContext)?JSON.parse(JSON.stringify(raw.photoContext)):null,
+        playerPersonaId: String(raw?.playerPersonaId||'').slice(0,100),
         id: String(m.id || livingId('cmsg', m.text || Math.random())).slice(0, 80),
         role: m.role === 'companion' ? 'companion' : m.role === 'system' ? 'system' : 'user',
         type: ['text', 'photo', 'voice', 'clip_request', 'system'].includes(m.type) ? m.type : 'text',
@@ -34008,11 +35906,14 @@ function normalizeCompanionMessage(raw) {
         readAt: Number.isFinite(m.readAt) ? m.readAt : (deliveryState === 'read' ? timestamp : 0),
         replyDueAt: Number.isFinite(m.replyDueAt) ? m.replyDueAt : 0,
         awaitingReply: m.awaitingReply === true,
+        replyJobId: String(m.replyJobId || '').slice(0, 100),
+        attention: normalizeCompanionAttention(m.attention),
         deferredReason: ['asleep', 'busy', 'mood', 'available'].includes(m.deferredReason) ? m.deferredReason : '',
         responseGroupId: String(m.responseGroupId || '').slice(0, 100),
         turnSnapshot: isPlainObject(m.turnSnapshot) ? safeJsonClone(m.turnSnapshot) : null,
         turnAudit: isPlainObject(m.turnAudit) ? safeJsonClone(m.turnAudit) : null,
         generationError: String(m.generationError || '').slice(0, 1000),
+        protocolLeak: m.protocolLeak === true,
         invalidated: m.invalidated === true,
         autonomous: m.autonomous === true,
         returnGapMs: Number.isFinite(m.returnGapMs)
@@ -34041,15 +35942,7 @@ function normalizeCompanionAndThread(rawCompanion, rawMessages) {
 // --- Deterministic randomness (standalone from the World engine's own) ----
 
 /** FNV-1a hash → [0,1). Same seed always yields the same value. */
-function companionSeededRoll(seed) {
-    let hash = 0x811c9dc5;
-    const str = String(seed);
-    for (let i = 0; i < str.length; i++) {
-        hash ^= str.charCodeAt(i);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return ((hash >>> 0) % 1000000) / 1000000;
-}
+
 
 function companionMediaFingerprint(value) {
     const source = String(value || '');
@@ -34068,8 +35961,35 @@ function companionInputSupports(companion, modality) {
         .map(value => String(value).toLowerCase()).includes(modality);
 }
 
+function companionObserverInputSupports(companion, modality) {
+    const observerModel = String(companion?.observerModel || companion?.lifeBuilderModel || '').trim();
+    const conversationModel = String(companion?.model || state.globalSettings.defaultModel || '').trim();
+    if (!observerModel || observerModel === conversationModel) return companionInputSupports(companion, modality);
+    return (Array.isArray(companion?.observerInputModalities) ? companion.observerInputModalities : ['text'])
+        .map(value => String(value).toLowerCase()).includes(modality);
+}
+
+async function refreshCompanionObserverCapabilities(companion) {
+    const observerModel = String(companion?.observerModel || companion?.lifeBuilderModel || '').trim();
+    const conversationModel = String(companion?.model || state.globalSettings.defaultModel || '').trim();
+    if (!observerModel || observerModel === conversationModel) {
+        companion.observerInputModalities = [...(companion.inputModalities || ['text'])];
+        return;
+    }
+    try {
+        const catalog = rankCompanionTextModels(await getCompanionOutputModels(
+            'text', false, companionTextProviderId(companion)));
+        const match = catalog.find(model => model.id === observerModel);
+        companion.observerInputModalities = match?.inputModalities?.length
+            ? [...match.inputModalities] : ['text'];
+    } catch (error) {
+        companion.observerInputModalities = ['text'];
+        console.warn('Could not resolve State Observer input capabilities:', error);
+    }
+}
+
 function companionPendingPersonaVision(companion) {
-    const persona = state.personas.find(item => item.id === state.activePersonaId) || null;
+    const persona = companionActivePersona(companion);
     if (!persona?.avatar || !companionInputSupports(companion, 'image')) return null;
     const fingerprint = companionMediaFingerprint(persona.avatar);
     const remembered = companion.personaVisualMemory || {};
@@ -34086,100 +36006,13 @@ function companionPendingPersonaVision(companion) {
  * strength three days later. Trauma is exempt: it is tracked separately and
  * never decays here.
  */
-function decayCompanionMood(companion, nowMs) {
-    const elapsed = Math.max(0, nowMs - companion.mood.lastUpdated);
-    if (elapsed === 0) return companion.mood;
-    const HALF_LIFE_MS = 4 * 60 * 60 * 1000;
-    const retained = Math.pow(0.5, elapsed / HALF_LIFE_MS);
-    const settle = (current, base) => base + (current - base) * retained;
-    companion.mood.valence = livingClamp(Math.round(settle(companion.mood.valence, companion.moodBaseline.valence)), -100, 100);
-    companion.mood.arousal = livingClamp(Math.round(settle(companion.mood.arousal, companion.moodBaseline.arousal)), -100, 100);
-    companion.mood.lastUpdated = nowMs;
-    return companion.mood;
-}
 
-function companionRelationshipDeltaCap(update, field, requested) {
-    const appraisal = isPlainObject(update?.emotion_appraisal) ? update.emotion_appraisal : {};
-    const certainty = livingClamp(Number(appraisal.certainty) || 0, 0, 100);
-    const playerResponsible = appraisal.responsibility === 'player';
-    const harm = Math.max(Number(appraisal.threat) || 0, Number(appraisal.loss) || 0,
-        Number(appraisal.norm_violation) || 0, -(Number(appraisal.goal_impact) || 0));
-    const benefit = Math.max(0, Number(appraisal.goal_impact) || 0, Number(appraisal.social_safety) || 0);
-    const severeHarm = playerResponsible && certainty >= 60 && harm >= 70;
-    const strongBenefit = certainty >= 65 && benefit >= 70;
-    let cap = severeHarm && requested < 0 ? 6 : strongBenefit && requested > 0 ? 4 : 2;
-    if (['familiarity', 'dependence', 'obligation'].includes(field)) cap = severeHarm ? 3 : 2;
-    if (field === 'attraction') cap = Math.min(cap, 3);
-    if (field === 'fear' && requested > 0) cap = severeHarm ? 7 : 2;
-    if (field === 'resentment' && requested > 0) cap = severeHarm ? 7 : 2;
-    if (field === 'stability' && requested < 0) cap = severeHarm ? 6 : 2;
-    return livingClamp(Number(requested) || 0, -cap, cap);
-}
 
 /**
  * Apply the emotional-engine tool call. Decay runs first, so a delta always
  * lands on top of the settled mood rather than the stale one from last time.
  */
-function applyCompanionMoodUpdate(companion, update, nowMs) {
-    decayCompanionMood(companion, nowMs);
-    const u = isPlainObject(update) ? update : {};
-    if (Number.isFinite(u.valence_change)) {
-        companion.mood.valence = livingClamp(companion.mood.valence + livingClamp(u.valence_change, -40, 40), -100, 100);
-    }
-    if (Number.isFinite(u.arousal_change)) {
-        companion.mood.arousal = livingClamp(companion.mood.arousal + livingClamp(u.arousal_change, -40, 40), -100, 100);
-    }
-    if (COMPANION_MOOD_LABELS.includes(u.mood_label)) companion.mood.label = u.mood_label;
-    if (Number.isFinite(u.relationship_change)) {
-        companion.mood.relationship = livingClamp(companion.mood.relationship
-            + companionRelationshipDeltaCap(u, 'relationship', u.relationship_change), -100, 100);
-    }
-    const dimensions = [
-        ['trust_change', 'trust', -100, 100],
-        ['warmth_change', 'warmth', -100, 100],
-        ['attraction_change', 'attraction', -100, 100],
-        ['resentment_change', 'resentment', 0, 100],
-        ['stability_change', 'stability', 0, 100],
-        ['familiarity_change', 'familiarity', 0, 100],
-        ['respect_change', 'respect', -100, 100],
-        ['comfort_change', 'comfort', 0, 100],
-        ['dependence_change', 'dependence', 0, 100],
-        ['fear_change', 'fear', 0, 100],
-        ['obligation_change', 'obligation', 0, 100],
-        ['power_imbalance_change', 'powerImbalance', -100, 100],
-        ['compatibility_change', 'compatibility', -100, 100]
-    ];
-    dimensions.forEach(([input, field, min, max]) => {
-        if (!Number.isFinite(u[input])) return;
-        companion.relationshipDynamics[field] = livingClamp(
-            companion.relationshipDynamics[field] + companionRelationshipDeltaCap(u, field, u[input]), min, max);
-    });
-    if (u.trauma_add && String(u.trauma_add.label || '').trim()) {
-        companion.trauma.push(normalizeCompanionTrauma({ ...u.trauma_add, addedAt: nowMs }));
-        companion.trauma = companion.trauma.slice(-20);
-    }
-    applyCompanionDynamicsUpdate(companion, u, nowMs);
-    applyCompanionEmotionUpdate(companion, u, nowMs);
-    companion.mood.lastUpdated = nowMs;
-    return companion.mood;
-}
 
-function companionRegulationFactors(companion) {
-    const sensitivity = {
-        steady: 0.72, typical: 1, sensitive: 1.22, volatile: 1.5
-    }[companion.regulationProfile] || 1;
-    const recovery = {
-        quick: 0.58, normal: 1, slow: 1.55, grudge: 2.35
-    }[companion.conflictRecovery] || 1;
-    return { sensitivity, recovery };
-}
-
-function companionEmotionFactors(companion) {
-    const rumination = { low: 0.65, normal: 1, high: 1.55, sticky: 2.35 }[companion.ruminationStyle] || 1;
-    const reactionDelay = { immediate: 0, mixed: 0.45, delayed: 0.8 }[companion.reactionTiming] || 0.45;
-    const expressionMask = { transparent: 0.08, guarded: 0.34, masked: 0.68, performative: 0.52 }[companion.emotionExpression] || 0.34;
-    return { rumination, reactionDelay, expressionMask };
-}
 
 function companionEmotionIntensityLabel(emotion, value) {
     const labels = COMPANION_EMOTION_INTENSITIES[emotion] || [emotion, emotion, emotion];
@@ -34207,60 +36040,6 @@ function companionEmotionActionTendencies(vector) {
         .map(([emotion]) => tendencies[emotion]);
 }
 
-function companionExpressedEmotionVector(companion, emotionState = null) {
-    const stateNow = emotionState || companion.emotionState;
-    const felt = normalizeCompanionEmotionVector(stateNow?.felt);
-    const targeted = normalizeCompanionEmotionVector(stateNow?.towardPlayer);
-    const { expressionMask } = companionEmotionFactors(companion);
-    const intoxication = Number(companion.humanDynamics?.intoxication) || 0;
-    const deliberateMask = livingClamp((Number(stateNow?.masking) || 0) / 100, 0, 1);
-    const mask = livingClamp((expressionMask + deliberateMask) / 2 - intoxication / 220, 0, 0.92);
-    const combined = Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
-        livingClamp(Math.max(felt[emotion], targeted[emotion] * 0.9), 0, 100)
-    ]));
-    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => {
-        let visibility = 1 - mask;
-        if (['fear', 'sadness', 'trust'].includes(emotion)) visibility *= 0.82;
-        if (companion.emotionExpression === 'transparent') visibility = Math.max(visibility, 0.82);
-        if (companion.emotionExpression === 'performative') {
-            if (emotion === 'joy') return [emotion, livingClamp(Math.max(combined.joy * 0.82, 24), 0, 100)];
-            if (['fear', 'sadness'].includes(emotion)) visibility *= 0.35;
-        }
-        return [emotion, livingClamp(combined[emotion] * visibility, 0, 100)];
-    }));
-}
-
-function companionAppraisalEmotionDeltas(companion, rawAppraisal) {
-    const input = isPlainObject(rawAppraisal) ? rawAppraisal : {};
-    const { sensitivity } = companionRegulationFactors(companion);
-    const value = (key, min = 0, max = 100, fallback = 0) => livingClamp(
-        Number.isFinite(Number(input[key])) ? Number(input[key]) : fallback, min, max);
-    const goal = value('goal_impact', -100, 100);
-    const threat = value('threat');
-    const loss = value('loss');
-    const novelty = value('novelty');
-    const norm = value('norm_violation');
-    const control = value('control', 0, 100, 50);
-    const safety = value('social_safety', 0, 100, 50);
-    const certainty = value('certainty', 0, 100, 50);
-    const deltas = normalizeCompanionEmotionVector({});
-    if (goal > 0) deltas.joy += goal * 0.16;
-    if (goal < 0) {
-        deltas.sadness += Math.abs(goal) * 0.1;
-        deltas.anger += Math.abs(goal) * 0.07 * (0.55 + control / 100);
-    }
-    deltas.fear += threat * 0.17 * (1.25 - control / 125);
-    deltas.sadness += loss * 0.18;
-    deltas.surprise += novelty * 0.17;
-    deltas.anticipation += novelty * 0.07 + certainty * 0.04;
-    deltas.disgust += norm * 0.14;
-    deltas.anger += norm * 0.1;
-    deltas.trust += safety * 0.11;
-    if (safety < 35) deltas.fear += (35 - safety) * 0.12;
-    return Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
-        livingClamp(deltas[emotion] * sensitivity, 0, 30)
-    ]));
-}
 
 function companionEmotionSummary(companion, nowMs = Date.now()) {
     const stateNow = advanceCompanionEmotionState(companion, nowMs);
@@ -34284,168 +36063,6 @@ function companionEmotionSummary(companion, nowMs = Date.now()) {
     return `Felt: ${feltText}${blend ? `; likely blend: ${blend}` : ''}. Toward the player: ${targetText}. Expression currently shows: ${expressedText}. Action pressures: ${tendencies.length ? tendencies.join('; ') : 'none strong'}.`;
 }
 
-function advanceCompanionEmotionState(companion, nowMs = Date.now()) {
-    companion.emotionState = normalizeCompanionEmotionState(companion.emotionState, companion.mood, nowMs);
-    const emotionState = companion.emotionState;
-    const elapsedMs = Math.max(0, nowMs - emotionState.lastUpdated);
-    if (elapsedMs < 5 * 60 * 1000 && !emotionState.pendingReactions.some(item => item.dueAt <= nowMs)) {
-        emotionState.expressed = companionExpressedEmotionVector(companion, emotionState);
-        return emotionState;
-    }
-    const hours = Math.min(168, elapsedMs / (60 * 60 * 1000));
-    const { rumination } = companionEmotionFactors(companion);
-    const halfLives = {
-        joy: 3.5, trust: 7, fear: 4.5, surprise: 0.75,
-        sadness: 7.5 * rumination, disgust: 9 * rumination,
-        anger: 3.5 * rumination * companionRegulationFactors(companion).recovery,
-        anticipation: 4
-    };
-    const baselineJoy = livingClamp(Math.max(0, companion.moodBaseline?.valence || 0) * 0.3, 0, 25);
-    COMPANION_EMOTIONS.forEach(emotion => {
-        const retained = Math.pow(0.5, hours / halfLives[emotion]);
-        const baseline = emotion === 'joy' ? baselineJoy : 0;
-        emotionState.felt[emotion] = livingClamp(baseline
-            + (emotionState.felt[emotion] - baseline) * retained, 0, 100);
-        const targetRetained = Math.pow(0.5, hours / (halfLives[emotion] * 1.65));
-        emotionState.towardPlayer[emotion] = livingClamp(emotionState.towardPlayer[emotion] * targetRetained, 0, 100);
-    });
-    const due = emotionState.pendingReactions.filter(item => item.dueAt <= nowMs);
-    due.forEach(reaction => {
-        COMPANION_EMOTIONS.forEach(emotion => {
-            emotionState.felt[emotion] = livingClamp(emotionState.felt[emotion] + reaction.felt[emotion], 0, 100);
-            emotionState.towardPlayer[emotion] = livingClamp(emotionState.towardPlayer[emotion]
-                + reaction.towardPlayer[emotion], 0, 100);
-        });
-    });
-    emotionState.pendingReactions = emotionState.pendingReactions.filter(item => item.dueAt > nowMs).slice(-20);
-    emotionState.expressed = companionExpressedEmotionVector(companion, emotionState);
-    emotionState.lastUpdated = nowMs;
-    return emotionState;
-}
-
-function applyCompanionEmotionUpdate(companion, update, nowMs = Date.now()) {
-    const stateNow = advanceCompanionEmotionState(companion, nowMs);
-    const input = isPlainObject(update) ? update : {};
-    const appraisal = isPlainObject(input.emotion_appraisal) ? input.emotion_appraisal : null;
-    const direct = isPlainObject(input.emotion_changes) ? normalizeCompanionEmotionVector(input.emotion_changes) : null;
-    const targeted = isPlainObject(input.toward_player_emotions)
-        ? normalizeCompanionEmotionVector(input.toward_player_emotions) : null;
-    const hasModernUpdate = !!(appraisal || direct || targeted);
-    let feltDelta = appraisal ? companionAppraisalEmotionDeltas(companion, appraisal) : normalizeCompanionEmotionVector({});
-    if (direct) COMPANION_EMOTIONS.forEach(emotion => {
-        feltDelta[emotion] = livingClamp(feltDelta[emotion] + livingClamp(Number(input.emotion_changes[emotion]) || 0, -30, 30), -30, 30);
-    });
-    if (!hasModernUpdate && COMPANION_MOOD_LABELS.includes(input.mood_label)) {
-        const legacy = companionEmotionVectorFromMood({
-            label: input.mood_label,
-            valence: Number(input.valence_change) || 0,
-            arousal: Number(input.arousal_change) || 0
-        });
-        COMPANION_EMOTIONS.forEach(emotion => { feltDelta[emotion] = legacy[emotion] * 0.32; });
-    }
-    const targetDelta = normalizeCompanionEmotionVector({});
-    if (targeted) COMPANION_EMOTIONS.forEach(emotion => {
-        targetDelta[emotion] = livingClamp(Number(input.toward_player_emotions[emotion]) || 0, -30, 30);
-    });
-    if (appraisal && appraisal.responsibility === 'player') {
-        COMPANION_EMOTIONS.forEach(emotion => {
-            if (['anger', 'disgust', 'fear', 'sadness', 'trust', 'joy'].includes(emotion)) {
-                targetDelta[emotion] = livingClamp(targetDelta[emotion] + feltDelta[emotion] * 0.75, -30, 30);
-            }
-        });
-    }
-    const requestedDelay = livingClamp(Math.round(Number(input.delayed_reaction_minutes) || 0), 0, 72 * 60);
-    const { reactionDelay } = companionEmotionFactors(companion);
-    const delayMinutes = requestedDelay || (hasModernUpdate && reactionDelay >= 0.8
-        ? 30 + Math.round(companionSeededRoll(`${companion.id}|delayed-emotion|${nowMs}`) * 180) : 0);
-    const immediateShare = delayMinutes > 0 ? 1 - reactionDelay * 0.72 : 1;
-    COMPANION_EMOTIONS.forEach(emotion => {
-        stateNow.felt[emotion] = livingClamp(stateNow.felt[emotion] + feltDelta[emotion] * immediateShare, 0, 100);
-        stateNow.towardPlayer[emotion] = livingClamp(stateNow.towardPlayer[emotion]
-            + targetDelta[emotion] * immediateShare, 0, 100);
-    });
-    if (delayMinutes > 0) {
-        stateNow.pendingReactions.push(normalizeCompanionEmotionReaction({
-            dueAt: nowMs + delayMinutes * 60 * 1000,
-            felt: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, feltDelta[emotion] * (1 - immediateShare)])),
-            towardPlayer: Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion, targetDelta[emotion] * (1 - immediateShare)])),
-            reason: input.emotional_trigger || appraisal?.summary || 'a delayed emotional reaction'
-        }, stateNow.pendingReactions.length));
-        stateNow.pendingReactions = stateNow.pendingReactions.slice(-20);
-    }
-    if (Number.isFinite(Number(input.masking_change))) {
-        stateNow.masking = livingClamp(stateNow.masking + livingClamp(Number(input.masking_change), -30, 30), 0, 100);
-    }
-    if (appraisal) {
-        stateNow.lastAppraisal = normalizeCompanionEmotionState({ lastAppraisal: {
-            summary: input.emotional_trigger || appraisal.summary || '',
-            responsibility: appraisal.responsibility,
-            goalImpact: appraisal.goal_impact,
-            threat: appraisal.threat,
-            loss: appraisal.loss,
-            novelty: appraisal.novelty,
-            normViolation: appraisal.norm_violation,
-            control: appraisal.control,
-            socialSafety: appraisal.social_safety,
-            at: nowMs
-        } }, null, nowMs).lastAppraisal;
-    }
-    stateNow.expressed = companionExpressedEmotionVector(companion, stateNow);
-    stateNow.lastUpdated = nowMs;
-    const combined = Object.fromEntries(COMPANION_EMOTIONS.map(emotion => [emotion,
-        Math.max(stateNow.felt[emotion], stateNow.towardPlayer[emotion])
-    ]));
-    const dominant = COMPANION_EMOTIONS.map(emotion => [emotion, combined[emotion]])
-        .sort((a, b) => b[1] - a[1])[0];
-    const moodMap = { joy: 'happy', trust: 'affectionate', fear: 'anxious', surprise: 'excited',
-        sadness: 'sad', disgust: 'hurt', anger: 'angry', anticipation: 'excited' };
-    if (hasModernUpdate && dominant[1] >= 18) companion.mood.label = moodMap[dominant[0]];
-    const positive = combined.joy * 0.65 + combined.trust * 0.35;
-    const negative = combined.sadness * 0.35 + combined.fear * 0.2 + combined.anger * 0.25 + combined.disgust * 0.2;
-    if (hasModernUpdate) companion.mood.valence = livingClamp(Math.round(positive - negative), -100, 100);
-    if (hasModernUpdate) companion.mood.arousal = livingClamp(Math.round(
-        combined.anger * 0.28 + combined.fear * 0.26 + combined.surprise * 0.22
-        + combined.anticipation * 0.18 + combined.joy * 0.08 - combined.sadness * 0.08), -100, 100);
-    companion.humanDynamics.anger = livingClamp(Math.max(
-        companion.humanDynamics.anger, stateNow.felt.anger, stateNow.towardPlayer.anger
-    ), 0, 100);
-    return stateNow;
-}
-
-function companionSexualSystemActive(companion) {
-    return companion?.libidoEnabled === true && Number(companion?.age) >= 18;
-}
-
-function companionSexualFactors(companion) {
-    const baseline = {
-        very_low: 8, low: 24, moderate: 45, high: 68, very_high: 84
-    }[companion.libidoBaseline] ?? 45;
-    const spontaneous = {
-        spontaneous: 1.25, responsive: 0.45, mixed: 0.85
-    }[companion.desirePattern] ?? 0.85;
-    const responsive = {
-        spontaneous: 0.65, responsive: 1.3, mixed: 1
-    }[companion.desirePattern] ?? 1;
-    const confidence = {
-        inhibited: 0.42, cautious: 0.7, natural: 1, direct: 1.25
-    }[companion.sexualConfidence] ?? 1;
-    const risk = {
-        low: 0.48, moderate: 1, high: 1.45
-    }[companion.sexualRiskAppetite] ?? 1;
-    return { baseline, spontaneous, responsive, confidence, risk };
-}
-
-function companionSexualContext(companion, nowMs = Date.now()) {
-    const situation = companionSituationAt(companion, nowMs);
-    const text = [situation.activity, situation.label, situation.placeLabel,
-        companion.lifeRuntime?.activeWildcard?.label,
-        companion.lifeRuntime?.activeWildcard?.consequences].join(' ').toLowerCase();
-    const withPeople = Array.isArray(situation.withNames) && situation.withNames.length > 0;
-    const privateOpportunity = !withPeople && situation.availability !== 'busy'
-        && /\b(?:home|bed|bedroom|hotel|private|alone|shower|bath)\b/.test(text);
-    const intimateContext = /\b(?:date|dating|flirt|romantic|intimacy|intimate|hookup|sex|sexual|making out|kiss(?:ing)?|lover|partner)\b/.test(text);
-    return { situation, privateOpportunity, intimateContext, withPeople };
-}
 
 function companionSexualDecisionState(companion, dynamics = null, nowMs = Date.now()) {
     const stateNow = dynamics || advanceCompanionHumanDynamics(companion, nowMs);
@@ -34466,6 +36083,10 @@ function companionSexualDecisionState(companion, dynamics = null, nowMs = Date.n
         + directedAttraction * 0.12;
     const impulse = livingClamp(rawImpulse * confidence * risk * (1.18 - restraint / 125), 0, 100);
     const cooling = stateNow.sexualCooldownUntil > nowMs;
+    const context = companionSexualContext(companion, nowMs);
+    const hasBandwidth = context.situation.availability === 'available'
+        && context.situation.source !== 'travel' && !context.withPeople
+        && stateNow.cooldownUntil <= nowMs;
     return {
         enabled: true,
         desire: stateNow.desire,
@@ -34476,7 +36097,7 @@ function companionSexualDecisionState(companion, dynamics = null, nowMs = Date.n
         restraint,
         cooling,
         aftereffect: stateNow.intimacyAftereffect,
-        canInitiate: companion.sexualInitiative === true && attraction >= 10 && !cooling && impulse >= 55
+        canInitiate: companion.sexualInitiative === true && hasBandwidth && attraction >= 10 && !cooling && impulse >= 55
     };
 }
 
@@ -34491,202 +36112,22 @@ function companionDynamicsDescription(companion, nowMs = Date.now()) {
         ? ` Cooling off until about ${companionTimestampLabel(companion, dynamics.cooldownUntil)}${dynamics.cooldownReason ? ` because ${dynamics.cooldownReason}` : ''}.`
         : '';
     const libido = sexuality.enabled
-        ? ` Adult desire system: drive ${Math.round(sexuality.desire)}/100; current sexual arousal ${Math.round(sexuality.arousal)}/100; sexual frustration ${Math.round(sexuality.frustration)}/100; expression impulse ${Math.round(sexuality.impulse)}/100; current attraction toward the player ${Math.round(sexuality.attraction)}/100.${sexuality.aftereffect !== 'none' ? ` Intimacy aftereffect: ${sexuality.aftereffect}.` : ''}`
+        ? ` Adult desire system: drive ${Math.round(sexuality.desire)}/100; current sexual arousal ${Math.round(sexuality.arousal)}/100; sexual frustration ${Math.round(sexuality.frustration)}/100; expression impulse ${Math.round(sexuality.impulse)}/100; current attraction toward the player ${Math.round(sexuality.attraction)}/100. These are private feelings, not consent, attachment or a command to act. Desire may remain unspoken; continue the current topic and responsibilities when appropriate.${sexuality.aftereffect !== 'none' ? ` Intimacy aftereffect: ${sexuality.aftereffect}.` : ''}`
         : ' Adult desire system is disabled.';
     return `energy ${Math.round(dynamics.energy)}/100 (${energy}); stress ${Math.round(dynamics.stress)}/100 (${bands(dynamics.stress)}); unmet social need ${Math.round(dynamics.socialNeed)}/100 (${bands(dynamics.socialNeed)}); anger ${Math.round(dynamics.anger)}/100 (${bands(dynamics.anger)}); ${alcohol}, with ${inhibition}.${cooldown}${libido}`;
 }
 
-function companionAlcoholContext(companion, nowMs = Date.now()) {
-    if (companion.alcoholPattern === 'none') return false;
-    const situation = companionSituationAt(companion, nowMs);
-    const text = [situation.activity, situation.label, situation.placeLabel,
-        companion.lifeRuntime?.activeWildcard?.label,
-        companion.lifeRuntime?.activeWildcard?.consequences].join(' ').toLowerCase();
-    return /\b(?:drink|drinks|drinking|bar|pub|club|party|cocktail|wine|beer|liquor|booze|happy hour|wedding reception)\b/.test(text);
-}
+
 
 /**
  * Advance homeostatic pressures in coarse five-minute steps. It is entirely
  * deterministic and local, so a tab can catch up after hours away without an
  * extra API call or allowing an LLM to rewrite canonical state.
  */
-function advanceCompanionHumanDynamics(companion, nowMs = Date.now()) {
-    companion.humanDynamics = normalizeCompanionHumanDynamics(companion.humanDynamics, nowMs);
-    const dynamics = companion.humanDynamics;
-    const elapsedMs = Math.max(0, nowMs - dynamics.lastUpdated);
-    if (elapsedMs < 5 * 60 * 1000) return dynamics;
-    const hours = Math.min(72, elapsedMs / (60 * 60 * 1000));
-    const life = companionLifeState(companion, nowMs);
-    const situationText = `${life.activity || ''} ${life.label || ''}`.toLowerCase();
-    const asleep = life.availability === 'asleep';
-    const social = !!life.situation?.withNames?.length
-        || /\b(?:friends?|family|date|party|social|dinner|lunch|hang(?:ing)? out)\b/.test(situationText);
-    const demanding = /\b(?:work|shift|exam|deadline|commut|argument|fight|crisis|emergency|hospital)\b/.test(situationText);
-    const restorative = /\b(?:relax|rest|home|walk|gym|workout|yoga|read)\b/.test(situationText);
-    const { recovery } = companionRegulationFactors(companion);
 
-    if (!companionSexualSystemActive(companion)) {
-        dynamics.desire = 0;
-        dynamics.sexualArousal = 0;
-        dynamics.sexualFrustration = 0;
-        dynamics.postIntimacyCalm = 0;
-        dynamics.sexualCooldownUntil = 0;
-        dynamics.intimacyAftereffect = 'none';
-        dynamics.intimacyAftereffectUntil = 0;
-    }
-
-    dynamics.energy = livingClamp(dynamics.energy + (asleep ? 12 : -2.2) * hours, 0, 100);
-    const stressTarget = demanding ? 55 : restorative || asleep ? 15 : 28;
-    const stressRetained = Math.pow(0.5, hours / (asleep ? 2.5 : 8));
-    dynamics.stress = livingClamp(stressTarget + (dynamics.stress - stressTarget) * stressRetained, 0, 100);
-    dynamics.socialNeed = livingClamp(dynamics.socialNeed + (social ? -10 : asleep ? 0.15 : 1.25) * hours, 0, 100);
-
-    const angerHalfLife = 2.5 * recovery;
-    dynamics.anger = livingClamp(dynamics.anger * Math.pow(0.5, hours / angerHalfLife), 0, 100);
-    if (companionAlcoholContext(companion, nowMs)) {
-        const intakeRate = { rare: 5, social: 11, frequent: 16 }[companion.alcoholPattern] || 0;
-        dynamics.intoxication = livingClamp(dynamics.intoxication + intakeRate * hours, 0, 100);
-    } else {
-        dynamics.intoxication = livingClamp(dynamics.intoxication * Math.pow(0.5, hours / 1.7), 0, 100);
-    }
-    const inhibitionTarget = livingClamp(74 - dynamics.intoxication * 0.68 - dynamics.stress * 0.12, 8, 82);
-    dynamics.inhibition = livingClamp(inhibitionTarget + (dynamics.inhibition - inhibitionTarget) * Math.pow(0.5, hours / 1.2), 0, 100);
-    if (companionSexualSystemActive(companion)) {
-        const factors = companionSexualFactors(companion);
-        const local = companionLocalDateInfo(companion, nowMs);
-        const context = companionSexualContext(companion, nowMs);
-        const pulseRoll = companionSeededRoll(`${companion.id}|desire-pulse|${local.dateKey}`);
-        const pulseHour = 6 + Math.floor(pulseRoll * 17);
-        const pulseActive = Math.abs(local.hour - pulseHour) <= 1;
-        const circadianLift = local.hour >= 21 || local.hour <= 1 ? 5 : local.hour >= 6 && local.hour <= 9 ? 3 : 0;
-        const spontaneousLift = pulseActive ? 12 * factors.spontaneous : 0;
-        const desireTarget = livingClamp(factors.baseline + circadianLift + spontaneousLift
-            - dynamics.stress * 0.18 - Math.max(0, 30 - dynamics.energy) * 0.35
-            - dynamics.postIntimacyCalm * 0.52, 0, 100);
-        const desireRetained = Math.pow(0.5, hours / 8);
-        dynamics.desire = livingClamp(desireTarget + (dynamics.desire - desireTarget) * desireRetained, 0, 100);
-
-        // Momentary sexual arousal falls quickly unless a concrete intimate
-        // context is established. Generic friendliness or trust cannot raise it.
-        const arousalTarget = context.intimateContext
-            ? livingClamp(dynamics.desire * factors.responsive + 12, 0, 100)
-            : pulseActive && companion.desirePattern !== 'responsive'
-                ? livingClamp(dynamics.desire * 0.42, 0, 48) : 0;
-        const arousalRetained = Math.pow(0.5, hours / 0.8);
-        dynamics.sexualArousal = livingClamp(arousalTarget
-            + (dynamics.sexualArousal - arousalTarget) * arousalRetained, 0, 100);
-        const frustrationRate = dynamics.desire >= 62 && dynamics.postIntimacyCalm < 20 ? 0.7 : -1.4;
-        dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration + frustrationRate * hours, 0, 100);
-        dynamics.postIntimacyCalm = livingClamp(dynamics.postIntimacyCalm * Math.pow(0.5, hours / 5), 0, 100);
-        // Private self-regulation can resolve sustained pressure without an API
-        // call, another person, or a fabricated relationship event. It remains
-        // internal unless the person later chooses to disclose it.
-        const privateRegulationRoll = companionSeededRoll(`${companion.id}|private-regulation|${local.dateKey}`);
-        const enoughTimeSinceIntimacy = !dynamics.lastIntimacyAt
-            || nowMs - dynamics.lastIntimacyAt >= 18 * 60 * 60 * 1000;
-        const privateRegulationChance = livingClamp(0.06 + factors.baseline / 360, 0.06, 0.32);
-        if (context.privateOpportunity && pulseActive && enoughTimeSinceIntimacy
-            && (dynamics.sexualArousal >= 58 || dynamics.desire >= 78)
-            && privateRegulationRoll < privateRegulationChance) {
-            dynamics.postIntimacyCalm = livingClamp(dynamics.postIntimacyCalm + 58, 0, 100);
-            dynamics.sexualArousal = livingClamp(dynamics.sexualArousal - 62, 0, 100);
-            dynamics.desire = livingClamp(dynamics.desire - 28, 0, 100);
-            dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration - 52, 0, 100);
-            dynamics.sexualCooldownUntil = nowMs + 45 * 60 * 1000;
-            dynamics.intimacyAftereffect = 'satisfied';
-            dynamics.intimacyAftereffectUntil = nowMs + 3 * 60 * 60 * 1000;
-            dynamics.lastIntimacyAt = nowMs;
-        }
-        if (dynamics.sexualCooldownUntil && nowMs >= dynamics.sexualCooldownUntil) dynamics.sexualCooldownUntil = 0;
-        if (dynamics.intimacyAftereffectUntil && nowMs >= dynamics.intimacyAftereffectUntil) {
-            dynamics.intimacyAftereffect = 'none';
-            dynamics.intimacyAftereffectUntil = 0;
-        }
-    }
-    if (dynamics.cooldownUntil && nowMs >= dynamics.cooldownUntil && dynamics.anger < 48) {
-        dynamics.cooldownUntil = 0;
-        dynamics.cooldownReason = '';
-    }
-    dynamics.lastUpdated = nowMs;
-    return dynamics;
-}
-
-function applyCompanionDynamicsUpdate(companion, update, nowMs = Date.now()) {
-    const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
-    const input = isPlainObject(update) ? update : {};
-    const { sensitivity, recovery } = companionRegulationFactors(companion);
-    const deltas = [
-        ['energy_change', 'energy', 0.8],
-        ['stress_change', 'stress', sensitivity],
-        ['social_need_change', 'socialNeed', 1],
-        ['anger_change', 'anger', sensitivity],
-        ['intoxication_change', 'intoxication', 1]
-    ];
-    deltas.forEach(([source, target, multiplier]) => {
-        if (!Number.isFinite(Number(input[source]))) return;
-        const bounded = livingClamp(Number(input[source]), -30, 30) * multiplier;
-        dynamics[target] = livingClamp(dynamics[target] + bounded, 0, 100);
-    });
-    if (companionSexualSystemActive(companion)) {
-        const sexualDeltas = [
-            ['desire_change', 'desire'],
-            ['sexual_arousal_change', 'sexualArousal'],
-            ['sexual_frustration_change', 'sexualFrustration']
-        ];
-        sexualDeltas.forEach(([source, target]) => {
-            if (!Number.isFinite(Number(input[source]))) return;
-            dynamics[target] = livingClamp(dynamics[target]
-                + livingClamp(Number(input[source]), -30, 30), 0, 100);
-        });
-        const outcome = COMPANION_INTIMACY_AFTEREFFECTS.includes(input.intimacy_outcome)
-            ? input.intimacy_outcome : 'none';
-        if (outcome !== 'none') {
-            dynamics.intimacyAftereffect = outcome;
-            dynamics.intimacyAftereffectUntil = nowMs + 6 * 60 * 60 * 1000;
-            if (outcome === 'satisfied') {
-                dynamics.postIntimacyCalm = livingClamp(dynamics.postIntimacyCalm + 70, 0, 100);
-                dynamics.sexualArousal = livingClamp(dynamics.sexualArousal - 65, 0, 100);
-                dynamics.desire = livingClamp(dynamics.desire - 35, 0, 100);
-                dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration - 70, 0, 100);
-                dynamics.lastIntimacyAt = nowMs;
-            } else if (['rejected', 'frustrated'].includes(outcome)) {
-                dynamics.sexualFrustration = livingClamp(dynamics.sexualFrustration + 18, 0, 100);
-            }
-        }
-        const sexualCooldownMinutes = livingClamp(Math.round(Number(input.sexual_cooldown_minutes) || 0), 0, 24 * 60);
-        if (sexualCooldownMinutes > 0) {
-            dynamics.sexualCooldownUntil = Math.max(dynamics.sexualCooldownUntil || 0,
-                nowMs + sexualCooldownMinutes * 60 * 1000);
-        }
-    }
-    const explicitCoolOff = livingClamp(Math.round(Number(input.cool_off_minutes) || 0), 0, 24 * 60);
-    if (explicitCoolOff > 0 || (Number(input.anger_change) > 0 && dynamics.anger >= 58)) {
-        const inferredMinutes = Math.round((25 + dynamics.anger * 2.2) * recovery);
-        const duration = Math.max(explicitCoolOff, inferredMinutes);
-        dynamics.cooldownUntil = Math.max(dynamics.cooldownUntil || 0, nowMs + duration * 60 * 1000);
-        dynamics.cooldownReason = String(input.cooldown_reason || 'they need time to regulate before continuing').trim().slice(0, 240);
-    }
-    const inhibitionTarget = livingClamp(74 - dynamics.intoxication * 0.68 - dynamics.stress * 0.12, 8, 82);
-    dynamics.inhibition = livingClamp(Math.round((dynamics.inhibition + inhibitionTarget) / 2), 0, 100);
-    dynamics.lastUpdated = nowMs;
-    return dynamics;
-}
 
 // --- Simulated life: grounded in real wall-clock time, never hallucinated -
 
-function isCompanionAsleep(sleepArchetype, hour) {
-    const [start, end] = COMPANION_SLEEP_HOURS[sleepArchetype] || COMPANION_SLEEP_HOURS.normal;
-    return start > end ? (hour >= start || hour < end) : (hour >= start && hour < end);
-}
-
-function companionUsesFixedTimezoneOffset(companion) {
-    return companion?.locationMode === 'custom'
-        && Number.isFinite(Number(companion.timezoneOffsetMinutes));
-}
-
-function companionFixedOffsetDate(companion, atMs) {
-    return new Date(atMs + Number(companion?.timezoneOffsetMinutes || 0) * 60 * 1000);
-}
 
 function formatCompanionUtcOffset(rawMinutes) {
     const minutes = livingClamp(Math.round(Number(rawMinutes) || 0), -720, 840);
@@ -34695,151 +36136,6 @@ function formatCompanionUtcOffset(rawMinutes) {
     return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
 }
 
-function companionLocalDateInfo(companion, atMs) {
-    if (companionUsesFixedTimezoneOffset(companion)) {
-        const date = companionFixedOffsetDate(companion, atMs);
-        return {
-            hour: date.getUTCHours(),
-            weekday: date.getUTCDay(),
-            dateKey: date.toISOString().slice(0, 10)
-        };
-    }
-    const timezone = String(companion?.timezone || '').trim();
-    try {
-        const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone || undefined,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            weekday: 'short', hour: '2-digit', hourCycle: 'h23'
-        }).formatToParts(new Date(atMs)).filter(part => part.type !== 'literal')
-            .map(part => [part.type, part.value]));
-        const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        return {
-            hour: parseInt(parts.hour) || 0,
-            weekday: weekdays.indexOf(parts.weekday),
-            dateKey: `${parts.year}-${parts.month}-${parts.day}`
-        };
-    } catch (error) {
-        const date = new Date(atMs);
-        return { hour: date.getHours(), weekday: date.getDay(), dateKey: date.toDateString() };
-    }
-}
-
-function companionLocalMinuteInfo(companion, atMs) {
-    if (companionUsesFixedTimezoneOffset(companion)) {
-        const date = companionFixedOffsetDate(companion, atMs);
-        return {
-            hour: date.getUTCHours(),
-            minute: date.getUTCMinutes(),
-            weekday: date.getUTCDay(),
-            dateKey: date.toISOString().slice(0, 10)
-        };
-    }
-    const timezone = String(companion?.timezone || '').trim();
-    try {
-        const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-            timeZone: timezone || undefined,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-        }).formatToParts(new Date(atMs)).filter(part => part.type !== 'literal')
-            .map(part => [part.type, part.value]));
-        const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        return {
-            hour: parseInt(parts.hour) || 0,
-            minute: parseInt(parts.minute) || 0,
-            weekday: weekdays.indexOf(parts.weekday),
-            dateKey: `${parts.year}-${parts.month}-${parts.day}`
-        };
-    } catch (error) {
-        const date = new Date(atMs);
-        return {
-            hour: date.getHours(), minute: date.getMinutes(),
-            weekday: date.getDay(), dateKey: date.toISOString().slice(0, 10)
-        };
-    }
-}
-
-function companionDefaultWorkweek(countryCode) {
-    const code = String(countryCode || '').toUpperCase();
-    if (['AF', 'DZ', 'BH', 'EG', 'IQ', 'IR', 'IL', 'JO', 'KW', 'LY', 'OM', 'QA', 'SA', 'SD', 'SY', 'YE'].includes(code)) {
-        return [0, 1, 2, 3, 4];
-    }
-    if (code === 'BN') return [1, 2, 3, 4, 6];
-    return [1, 2, 3, 4, 5];
-}
-
-function buildProceduralCompanionLifeProfile(companion, atMs = Date.now()) {
-    const id = companion.id || companion.name || 'person';
-    const authored = `${companion.occupation || ''} ${companion.routine || ''} ${companion.habits || ''}`.toLowerCase();
-    const student = /\b(student|university|college|school|classes|studying)\b/.test(authored);
-    const remote = /\b(remote|works? from home|freelance)\b/.test(authored);
-    const active = /\b(gym|run|running|training|fitness|climb|swim|yoga|sport)\b/.test(authored);
-    const social = /\b(friend|friends|social|band|club|team|family)\b/.test(authored);
-    const workweekDays = companionDefaultWorkweek(companion.locationCountryCode);
-    const weekendDays = [0, 1, 2, 3, 4, 5, 6].filter(day => !workweekDays.includes(day));
-    const places = [
-        { id: 'home', label: companion.locationLabel ? `home in ${companion.locationLabel}` : 'home', kind: 'home', detail: 'their ordinary private living space', travelMinutesFromHome: 0 },
-        { id: student ? 'campus' : 'work', label: remote ? 'home workspace' : student ? 'campus' : 'workplace', kind: student ? 'study' : 'work', detail: companion.occupation || 'their main weekday obligation', travelMinutesFromHome: remote ? 0 : 25 },
-        { id: 'local_social', label: 'a familiar local spot', kind: 'social', detail: 'somewhere they return to often enough to have preferences', travelMinutesFromHome: 15 }
-    ];
-    if (active) places.push({ id: 'active_place', label: 'their usual exercise spot', kind: 'outdoor', detail: 'a regular place for exercise', travelMinutesFromHome: 15 });
-    const wardrobe = [
-        { id: 'home_look', label: 'ordinary home clothes', context: 'home', items: 'comfortable, repeatedly worn home clothes that fit their authored appearance', notes: 'practical rather than styled for the camera' },
-        { id: 'work_look', label: 'weekday work look', context: 'work', items: 'a credible work or study outfit consistent with their occupation, means and fashion sense', notes: 'changes through small combinations rather than becoming a costume' },
-        { id: 'social_look', label: 'going-out look', context: 'social', items: 'a slightly more intentional casual outfit using clothes they realistically own', notes: 'still recognizably their taste' },
-        { id: 'sleep_look', label: 'sleepwear', context: 'sleep', items: 'ordinary sleepwear', notes: '' }
-    ];
-    const weeklySchedule = [];
-    workweekDays.forEach(day => {
-        weeklySchedule.push(
-            { days: [day], startMinute: 420, endMinute: 510, activity: 'waking up, getting ready and having a normal morning', placeId: 'home', availability: 'private', flexibility: 'soft', outfitContext: 'home' },
-            { days: [day], startMinute: 540, endMinute: 1020, activity: student ? 'classes, study and campus obligations' : remote ? 'working from home' : 'working', placeId: student ? 'campus' : 'work', availability: 'busy', flexibility: 'fixed', outfitContext: 'work' },
-            { days: [day], startMinute: 1020, endMinute: 1140, activity: active && companionSeededRoll(`${id}|active|${day}`) > 0.45 ? 'exercising after the day’s main obligations' : 'commuting, errands and decompressing', placeId: active ? 'active_place' : 'local_social', availability: 'busy', flexibility: 'soft', outfitContext: active ? 'active' : 'home' },
-            { days: [day], startMinute: 1140, endMinute: 1380, activity: social && companionSeededRoll(`${id}|social|${day}`) > 0.6 ? 'spending the evening with people they know' : 'having an ordinary evening at home', placeId: social ? 'local_social' : 'home', availability: 'available', flexibility: 'optional', outfitContext: social ? 'social' : 'home' }
-        );
-    });
-    weekendDays.forEach(day => weeklySchedule.push(
-        { days: [day], startMinute: 540, endMinute: 720, activity: 'a slower morning and personal chores', placeId: 'home', availability: 'available', flexibility: 'soft', outfitContext: 'home' },
-        { days: [day], startMinute: 720, endMinute: 1080, activity: active ? 'exercise, errands and unstructured personal time' : 'errands and unstructured personal time', placeId: active ? 'active_place' : 'local_social', availability: 'busy', flexibility: 'soft', outfitContext: active ? 'active' : 'home' },
-        { days: [day], startMinute: 1080, endMinute: 1380, activity: social ? 'seeing friends or family' : 'a quiet evening at home', placeId: social ? 'local_social' : 'home', availability: 'available', flexibility: 'optional', outfitContext: social ? 'social' : 'home' }
-    ));
-    const wildcardDeck = [
-        { label: 'their transport is delayed or breaks down at an inconvenient moment', category: 'travel', weight: 1, minGapDays: 9, durationMinutes: 120, availability: 'busy', placeLabel: 'in transit', initiativeHook: 'The disruption is annoying enough that they may mention it naturally.', consequences: 'Their immediate plan runs late.' },
-        { label: 'they get locked out and have to improvise', category: 'inconvenience', weight: 0.6, minGapDays: 18, durationMinutes: 90, availability: 'busy', placeLabel: 'outside home', initiativeHook: 'They may text someone they trust while waiting.', consequences: 'Plans are delayed and their mood may worsen.' },
-        { label: 'a tense disagreement with someone in their existing social world', category: 'conflict', weight: 0.8, minGapDays: 14, durationMinutes: 180, availability: 'private', placeLabel: '', initiativeHook: 'They may reach out, withdraw, vent, or say nothing depending on their attachment style.', consequences: 'The supporting relationship retains some tension.' },
-        { label: 'an unexpectedly good piece of news or small personal win', category: 'delight', weight: 0.9, minGapDays: 10, durationMinutes: 120, availability: 'available', placeLabel: '', initiativeHook: 'They may want to share the news with someone who matters.', consequences: 'Their mood improves for a while.' },
-        { label: 'an unplanned invitation from a friend changes the evening', category: 'social', weight: 1.2, minGapDays: 7, durationMinutes: 240, availability: 'busy', placeLabel: 'out with a friend', initiativeHook: 'They may send a quick update, photo, or voice note if it suits the relationship.', consequences: 'The evening schedule is replaced.' }
-    ];
-    return normalizeCompanionLifeProfile({
-        initializedAt: atMs,
-        seed: `${id}|${atMs}`,
-        fashionSense: 'A practical, repeatable personal style derived from their appearance, occupation, finances, habits and social confidence.',
-        grooming: 'A consistent everyday grooming routine with realistic variation when rushed, tired or going out.',
-        foodHabits: 'Ordinary meals, repeated favorites and convenience choices shaped by schedule and budget.',
-        mediaHabits: 'A small set of recurring music, video, reading or scrolling habits rather than constant trend awareness.',
-        moneyPattern: 'Spending choices remain consistent with their occupation, obligations and stated values.',
-        healthRoutine: active ? 'Exercise is part of their week but can be skipped when tired, busy or emotionally depleted.' : 'Health maintenance is ordinary and inconsistent rather than optimized.',
-        digitalLife: 'Phone use varies with work, company, mood and privacy; being online does not mean being available.',
-        seasonalVariation: 'Clothing, daylight, transport and leisure adapt to local conditions when real weather is available.',
-        workweekDays, places, socialCircle: [], wardrobe, weeklySchedule, wildcardDeck
-    });
-}
-
-function companionScheduleBlockAt(companion, atMs) {
-    const life = companion.lifeProfile?.initializedAt
-        ? companion.lifeProfile : buildProceduralCompanionLifeProfile(companion, companion.createdAt || atMs);
-    const local = companionLocalMinuteInfo(companion, atMs);
-    const minute = local.hour * 60 + local.minute;
-    const candidates = life.weeklySchedule.filter(block => block.days.includes(local.weekday)
-        && (block.endMinute > block.startMinute
-            ? minute >= block.startMinute && minute < block.endMinute
-            : minute >= block.startMinute || minute < block.endMinute));
-    if (!candidates.length) return null;
-    return candidates.sort((a, b) => {
-        const flexibility = { fixed: 3, soft: 2, optional: 1 };
-        return (flexibility[b.flexibility] || 0) - (flexibility[a.flexibility] || 0)
-            || a.startMinute - b.startMinute;
-    })[0];
-}
 
 function companionWeatherLabel(environment) {
     if (!environment || !environment.fetchedAt) return '';
@@ -34857,108 +36153,6 @@ function companionWeatherLabel(environment) {
     return [condition, temperature, daylight].filter(Boolean).join(', ');
 }
 
-function companionSituationAt(companion, atMs) {
-    const local = companionLocalMinuteInfo(companion, atMs);
-    const temporary = companion.lifeRuntime?.temporarySituation;
-    if (temporary?.startedAt <= atMs && temporary?.endsAt > atMs) {
-        return {
-            source: 'temporary', activity: temporary.activity || 'dealing with a change of plans',
-            label: temporary.activity || 'dealing with a change of plans',
-            availability: temporary.availability, placeId: '',
-            placeLabel: temporary.placeLabel || companion.currentLocationDetail || companion.locationLabel,
-            withNames: temporary.withNames || [], startedAt: temporary.startedAt, endsAt: temporary.endsAt,
-            outfit: temporary.outfit || companion.currentOutfit || '',
-            environment: companion.lifeRuntime?.environment || null
-        };
-    }
-    const wildcard = companion.lifeRuntime?.activeWildcard;
-    if (wildcard && wildcard.startedAt <= atMs && wildcard.endsAt > atMs) {
-        return {
-            source: 'wildcard', activity: wildcard.label, label: wildcard.label,
-            availability: wildcard.availability, placeId: '', placeLabel: wildcard.placeLabel || companion.currentLocationDetail || companion.locationLabel,
-            withNames: [], startedAt: wildcard.startedAt, endsAt: wildcard.endsAt,
-            outfit: companion.currentOutfit || '', environment: companion.lifeRuntime.environment
-        };
-    }
-    if (isCompanionAsleep(companion.sleepArchetype, local.hour)) {
-        const look = companion.lifeProfile?.wardrobe?.find(item => item.context === 'sleep');
-        return {
-            source: 'sleep', activity: 'asleep', label: 'asleep', availability: 'asleep',
-            placeId: 'home', placeLabel: companion.locationLabel || 'home',
-            withNames: [], startedAt: 0, endsAt: companionNextWakeAt(companion, atMs),
-            outfit: look?.items || companion.currentOutfit || 'ordinary sleepwear',
-            environment: companion.lifeRuntime?.environment || null
-        };
-    }
-    if (!companion.lifeProfile?.initializedAt) {
-        const fallback = companionLifeStateLegacy(companion, atMs);
-        return {
-            source: 'fallback', activity: fallback.activity, label: fallback.label,
-            availability: fallback.availability, placeId: '',
-            placeLabel: companion.currentLocationDetail || companion.locationLabel,
-            withNames: [], startedAt: 0, endsAt: 0,
-            outfit: companion.currentOutfit || '',
-            environment: companion.lifeRuntime?.environment || null
-        };
-    }
-    const block = companionScheduleBlockAt(companion, atMs);
-    if (!block) {
-        const fallback = companionLifeStateLegacy(companion, atMs);
-        return {
-            source: 'fallback', activity: fallback.activity, label: fallback.label,
-            availability: fallback.availability, placeId: '', placeLabel: companion.currentLocationDetail || companion.locationLabel,
-            withNames: [], startedAt: 0, endsAt: 0, outfit: companion.currentOutfit || '',
-            environment: companion.lifeRuntime?.environment || null
-        };
-    }
-    const life = companion.lifeProfile;
-    const place = life.places.find(item => item.id === block.placeId);
-    const people = block.withIds.map(id => life.socialCircle.find(person => person.id === id)?.name).filter(Boolean);
-    const looks = life.wardrobe.filter(item => item.context === block.outfitContext);
-    const look = looks.length ? looks[Math.floor(companionSeededRoll(`${companion.id}|outfit|${local.dateKey}|${block.id}`) * looks.length)] : null;
-    const elapsedMinutes = Math.max(0, (block.endMinute - (local.hour * 60 + local.minute)));
-    return {
-        source: 'schedule', activity: block.activity, label: block.activity,
-        availability: block.availability, placeId: block.placeId,
-        placeLabel: place?.label || block.placeLabel || companion.locationLabel,
-        withNames: people, startedAt: atMs - Math.max(0, (local.hour * 60 + local.minute) - block.startMinute) * 60000,
-        endsAt: atMs + elapsedMinutes * 60000,
-        outfit: look?.items || companion.currentOutfit || '',
-        environment: companion.lifeRuntime?.environment || null
-    };
-}
-
-function companionActivityPool(companion, local) {
-    if (local && typeof local.getHours === 'function' && typeof local.getDay === 'function') {
-        local = { hour: local.getHours(), weekday: local.getDay(), dateKey: local.toDateString() };
-    }
-    const hour = local.hour;
-    const weekday = local.weekday >= 1 && local.weekday <= 5;
-    const isDaytime = hour >= 9 && hour < 18;
-    const isEvening = hour >= 18 && hour < 23;
-    let pool = isDaytime
-        ? (weekday
-            ? ['work', 'work', 'errands', 'gym', 'studying', 'commuting']
-            : ['home', 'errands', 'gym', 'out_friends', 'relaxing'])
-        : isEvening
-            ? ['home', 'out_friends', 'gym', 'relaxing', 'relaxing']
-            : ['home', 'relaxing'];
-    const authoredLife = `${companion.occupation || ''} ${companion.routine || ''}`.toLowerCase();
-    if (/\b(student|studying|study|class|classes|university|college|school)\b/.test(authoredLife)) {
-        pool.push('studying', 'studying');
-    }
-    if (/\b(gym|workout|training|run|running|fitness)\b/.test(authoredLife)) {
-        pool.push('gym');
-    }
-    if (/\b(friend|friends|social|band|club|team)\b/.test(authoredLife) && isEvening) {
-        pool.push('out_friends');
-    }
-    if (/\b(remote|works? from home|freelance)\b/.test(authoredLife) && isDaytime) {
-        pool = pool.map(activity => activity === 'commuting' ? 'home' : activity);
-        pool.push('home');
-    }
-    return pool;
-}
 
 /**
  * What a companion is doing right now, purely as a function of (companion,
@@ -34967,129 +36161,25 @@ function companionActivityPool(companion, local) {
  * at the time. This is the ground truth the prompt hands the model instead
  * of letting it invent a life.
  */
-function companionLifeStateLegacy(companion, atMs) {
-    const local = companionLocalDateInfo(companion, atMs);
-    const hour = local.hour;
-    if (isCompanionAsleep(companion.sleepArchetype, hour)) {
-        return { activity: 'asleep', label: 'asleep', availability: 'asleep' };
-    }
-    // A weighted, deterministic pick from the day-part plus their authored
-    // occupation/routine. Weekends no longer look like generic workdays.
-    const pool = companionActivityPool(companion, local);
-    const seed = `${companion.id}|life|${local.dateKey}|${hour}`;
-    const pick = pool[Math.floor(companionSeededRoll(seed) * pool.length)];
-    const activity = COMPANION_ACTIVITIES.find(a => a.id === pick) || COMPANION_ACTIVITIES[0];
-    return { activity: activity.id, label: activity.label, availability: activity.busy ? 'busy' : 'available' };
-}
 
-function companionLifeState(companion, atMs) {
-    const situation = companionSituationAt(companion, atMs);
-    return {
-        activity: situation.activity,
-        label: situation.label,
-        availability: situation.availability === 'private' ? 'busy' : situation.availability,
-        situation
-    };
-}
 
-function companionNextWakeAt(companion, atMs) {
-    const [, wakeHour] = COMPANION_SLEEP_HOURS[companion.sleepArchetype] || COMPANION_SLEEP_HOURS.normal;
-    const localHour = companionLocalDateInfo(companion, atMs).hour;
-    let hoursUntilWake = wakeHour - localHour;
-    if (hoursUntilWake <= 0) hoursUntilWake += 24;
-    return atMs + hoursUntilWake * 60 * 60 * 1000;
-}
+/** Persisted, bounded attention state; timestamps are reconsideration gates, not promises. */
 
-/**
- * Decide when a message is delivered, seen and answered before any model is
- * called. Availability and mood therefore have mechanical consequences: the
- * model cannot ignore sleep, instantly answer from work, or fake a read delay.
- */
+
+/** Pure decision kernel. No model calls, inferred message semantics, or state outside this message. */
+
+
 function companionResponsePlan(companion, message, nowMs, rawExperience = null) {
     const experience = normalizeCompanionChatExperience(rawExperience);
     const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
     const emotions = advanceCompanionEmotionState(companion, nowMs);
-    const life = experience.realTimeLife
-        ? companionLifeState(companion, nowMs)
-        : {
-            activity: 'available',
-            label: 'available to chat',
-            availability: 'available',
-            situation: {
-                activity: 'available', label: 'available to chat', availability: 'available',
-                placeLabel: '', withNames: [], startedAt: nowMs, endsAt: 0,
-                outfit: companion.currentOutfit || '', environment: null
-            }
-        };
-    const roll = companionSeededRoll(`${companion.id}|reply|${message.id}|${nowMs}`);
-    const labelledRefusalChance = {
-        angry: 0.62, hurt: 0.5, numb: 0.46, overwhelmed: 0.38,
-        sad: 0.22, anxious: 0.14, tired: 0.12
-    }[companion.mood.label] || (companion.mood.valence <= -35 ? 0.3 : 0);
-    const coolingOff = dynamics.cooldownUntil > nowMs;
-    const pressureRefusalChance = livingClamp(
-        dynamics.anger * 0.0072
-        + emotions.towardPlayer.disgust * 0.0045
-        + emotions.towardPlayer.anger * 0.0035
-        + Math.max(0, emotions.felt.sadness - 65) * 0.002
-        + Math.max(0, emotions.felt.fear - 72) * 0.0015
-        + Math.max(0, dynamics.stress - 65) * 0.003
-        + Math.max(0, 24 - dynamics.energy) * 0.004,
-        0, 0.86);
-    const moodRefusalChance = livingClamp(Math.max(labelledRefusalChance, pressureRefusalChance)
-        + (coolingOff ? 0.16 : 0), 0, 0.92);
-    const deliveredAt = nowMs + 350 + Math.round(roll * 900);
-    let readAt;
-    let replyDueAt;
-
-    if (life.availability === 'asleep') {
-        readAt = companionNextWakeAt(companion, nowMs) + Math.round(roll * 12 * 60 * 1000);
-        replyDueAt = readAt + (2 + Math.round(roll * 16)) * 60 * 1000;
-    } else if (life.availability === 'busy') {
-        readAt = nowMs + (30 + Math.round(roll * 180)) * 1000;
-        const situationEndsAt = Number(life.situation?.endsAt) || 0;
-        const naturalBreak = situationEndsAt > nowMs && situationEndsAt < nowMs + 12 * 60 * 60 * 1000
-            ? situationEndsAt + (2 + Math.round(roll * 12)) * 60 * 1000
-            : readAt + (3 + Math.round(roll * 17)) * 60 * 1000;
-        replyDueAt = Math.max(readAt + 60 * 1000, naturalBreak);
-    } else {
-        readAt = nowMs + (2 + Math.round(roll * 16)) * 1000;
-        replyDueAt = readAt + (4 + Math.round(roll * 32)) * 1000;
-    }
-
-    const initiallyWilling = !experience.allowNoReply || roll >= moodRefusalChance;
-    const reconsiderRoll = companionSeededRoll(`${companion.id}|reconsider|${message.id}`);
-    // Ordinary bad moods often soften into a late reply. High anger and an
-    // active cool-off are different: silence is allowed to remain silence.
-    const mayReconsider = !coolingOff && dynamics.anger < 58 && reconsiderRoll >= 0.78;
-    const willReply = !experience.allowNoReply || initiallyWilling || mayReconsider;
-    if (!initiallyWilling && willReply) {
-        replyDueAt = readAt + (45 + Math.round(reconsiderRoll * 420)) * 60 * 1000;
-    }
-    if (willReply && experience.replyDelays && coolingOff) {
-        replyDueAt = Math.max(replyDueAt, dynamics.cooldownUntil + Math.round(reconsiderRoll * 18) * 60 * 1000);
-    }
-    // A willing reply is generated only when they actually open the
-    // conversation to answer. Until then the message remains delivered but
-    // unread, which lets any additional player texts join the same inbox
-    // batch instead of producing several pre-written replies. A deliberate
-    // no-reply still has an independent read time so "seen" can remain a real
-    // outcome without spending an LLM call.
-    if (willReply && experience.replyDelays) readAt = replyDueAt;
-    if (!experience.replyDelays) {
-        readAt = nowMs;
-        replyDueAt = nowMs;
-    }
-    return {
-        deliveredAt: experience.replyDelays ? deliveredAt : nowMs,
-        readAt,
-        replyDueAt: willReply ? replyDueAt : 0,
-        willReply,
-        reason: initiallyWilling ? life.availability : 'mood',
-        dynamics,
-        emotions,
-        life
-    };
+    const context = companionAttentionContext(companion, nowMs, experience);
+    context.inboxKey = String(message.id || '').slice(0, 1000);
+    const deliveredAt = experience.replyDelays ? nowMs + 500 : nowMs;
+    const attention = decideCompanionAttention(companion, { ...message, deliveredAt },
+        experience.replyDelays ? deliveredAt : nowMs, experience, context);
+    return { deliveredAt, readAt: attention.noticedAt, replyDueAt: attention.stage === 'ready' ? nowMs : 0,
+        willReply: true, reason: context.life.availability, attention, dynamics, emotions, life: context.life };
 }
 
 function companionInitiativeDelayMs(companion, anchorMs) {
@@ -35142,6 +36232,38 @@ function companionUnansweredState(messages, nowMs = Date.now()) {
         silentForMs: lastMessage ? Math.max(0, nowMs - Number(lastMessage.timestamp || nowMs)) : 0,
         mayFollowUp: responseGroups.size < 2,
         shouldAcknowledgeSilence: responseGroups.size >= 1
+    };
+}
+
+function companionCommunicationCadence(messages) {
+    const thread = (Array.isArray(messages) ? messages : []).filter(message =>
+        ['user', 'companion'].includes(message?.role) && !message.invalidated && !message.pending)
+        .slice(-160);
+    const replyGaps = [];
+    const returnGaps = [];
+    for (let index = 1; index < thread.length; index += 1) {
+        const prior = thread[index - 1];
+        const current = thread[index];
+        const gap = Number(current.timestamp) - Number(prior.timestamp);
+        if (!Number.isFinite(gap) || gap < 0 || gap > 90 * 86400000) continue;
+        if (prior.role === 'user' && current.role === 'companion') replyGaps.push(gap);
+        if (prior.role === 'companion' && current.role === 'user') returnGaps.push(gap);
+    }
+    const median = values => {
+        if (!values.length) return 0;
+        const sorted = [...values].sort((left, right) => left - right);
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+    };
+    const replyMedianMs = median(replyGaps);
+    const returnMedianMs = median(returnGaps);
+    return {
+        replyMedianMs,
+        returnMedianMs,
+        replySamples: replyGaps.length,
+        returnSamples: returnGaps.length,
+        replyPaceFactor: livingClamp(replyMedianMs / 24000 || 1, 0.55, 3),
+        silencePaceFactor: livingClamp(returnMedianMs / (18 * 60 * 60 * 1000) || 1, 0.65, 3)
     };
 }
 
@@ -35227,11 +36349,13 @@ function companionCurrentSilence(companion, messages, nowMs = Date.now(), rawExp
         return { stage: '', durationMs, anchor, interpretation: '', unanswered };
     }
     const sensitivity = companionSilenceSensitivity(companion);
+    const cadence = companionCommunicationCadence(messages);
+    const learnedPace = cadence.returnSamples >= 3 ? cadence.silencePaceFactor : 1;
     const thresholds = {
-        noticed: 18 * 60 * 60 * 1000 * sensitivity,
-        concerned: 3 * 24 * 60 * 60 * 1000 * sensitivity,
-        hurt: 7 * 24 * 60 * 60 * 1000 * sensitivity,
-        detached: 21 * 24 * 60 * 60 * 1000 * sensitivity
+        noticed: 18 * 60 * 60 * 1000 * sensitivity * learnedPace,
+        concerned: 3 * 24 * 60 * 60 * 1000 * sensitivity * learnedPace,
+        hurt: 7 * 24 * 60 * 60 * 1000 * sensitivity * learnedPace,
+        detached: 21 * 24 * 60 * 60 * 1000 * sensitivity * learnedPace
     };
     let stage = '';
     COMPANION_SILENCE_STAGE_ORDER.forEach(candidate => {
@@ -35418,12 +36542,41 @@ function companionSocialBehaviorSummary(companion) {
 const COMPANION_SHORT_TERM_LIMIT = 24;      // messages kept verbatim in the prompt
 const COMPANION_CONSOLIDATE_CHUNK = 20;     // messages folded into memory once the buffer overflows
 
+function upsertCompanionMemory(companion, raw) {
+    const candidate = normalizeCompanionMemoryEntry(raw);
+    if (!candidate.text) return null;
+    const memories = companion.memory.longTerm;
+    let existing = candidate.supersedes ? memories.find(item => item.id === candidate.supersedes) : null;
+    if (existing) {
+        existing.status = 'superseded';
+        existing.updatedAt = candidate.updatedAt;
+    }
+    existing = memories.find(item => item.status === 'active'
+        && item.semanticKey && item.semanticKey === candidate.semanticKey
+        && item.subject === candidate.subject);
+    if (existing) {
+        existing.weight = Math.max(existing.weight, candidate.weight);
+        existing.certainty = Math.max(existing.certainty, candidate.certainty);
+        existing.sourceMessageIds = [...new Set([...existing.sourceMessageIds, ...candidate.sourceMessageIds])].slice(-20);
+        existing.updatedAt = Math.max(existing.updatedAt, candidate.updatedAt);
+        return existing;
+    }
+    memories.push(candidate);
+    // Keep tombstones and superseded claims for audit/reversal. Active memory
+    // sorts first so historical provenance can never evict facts still in use.
+    companion.memory.longTerm = memories.sort((left, right) =>
+        Number(right.status === 'active') - Number(left.status === 'active')
+        || (right.weight - left.weight)
+        || (right.updatedAt - left.updatedAt)).slice(0, 200);
+    return candidate;
+}
+
 /**
  * Fold the oldest unconsolidated messages into durable memory once the
  * short-term buffer would otherwise overflow. Deterministic and offline: the
- * substantial player turns are kept as facts, verbatim, rather than paying
- * for a summarization call on every single overflow. A trauma the emotional
- * engine already recorded is not duplicated here.
+ * Only explicit first-person player declarations receive a conservative
+ * legacy claim. The State Observer owns semantic memory; text length is never
+ * treated as importance and the human's own chatter is never stored as fact.
  */
 function consolidateCompanionMemory(companion, messages) {
     const total = messages.length;
@@ -35434,27 +36587,16 @@ function consolidateCompanionMemory(companion, messages) {
     const chunk = messages.slice(companion.memory.consolidatedThroughIndex, chunkEnd);
     let added = 0;
     chunk.forEach(message => {
-        if (message.type === 'photo' && message.role === 'companion' && message.scene) {
-            companion.memory.longTerm.push(normalizeCompanionMemoryEntry({
-                text: `I sent a photo showing ${message.scene}`.slice(0, 300),
-                kind: 'milestone', weight: 55, createdAt: message.timestamp
-            }));
-            added++;
-            return;
-        }
-        if (message.type !== 'text' || !['user', 'companion'].includes(message.role)) return;
+        if (message.type !== 'text' || message.role !== 'user') return;
         const text = message.text.trim();
-        if (text.length < 20) return;         // "lol", "ok" — not worth remembering
-        companion.memory.longTerm.push(normalizeCompanionMemoryEntry({
-            text: `${message.role === 'companion' ? 'I said: ' : ''}${text}`.slice(0, 300),
-            kind: message.role === 'companion' ? 'milestone' : 'fact',
-            weight: Math.min(100, (message.role === 'companion' ? 32 : 40) + Math.floor(text.length / 10)),
-            createdAt: message.timestamp
-        }));
-        added++;
+        if (text.length < 8 || text.length > 500 || /\?$/.test(text)) return;
+        if (!/\b(?:i am|i'm|i live|i work|i study|i like|i love|i hate|i prefer|my (?:name|birthday|job|family|favorite)|remember that)\b/i.test(text)) return;
+        if (upsertCompanionMemory(companion, {
+            text: `The player stated: ${text}`.slice(0, 500), kind: 'claim',
+            source: 'player_statement', subject: 'player', certainty: 82,
+            sourceMessageIds: [message.id], weight: 46, createdAt: message.timestamp
+        })) added++;
     });
-    companion.memory.longTerm.sort((a, b) => b.weight - a.weight);
-    companion.memory.longTerm = companion.memory.longTerm.slice(0, 200);
     companion.memory.consolidatedThroughIndex = chunkEnd;
     return added;
 }
@@ -35466,28 +36608,28 @@ async function applyCompanionLabsMemoryGate(companion, userMessage, replyMessage
             : message.type === 'voice' ? `[voice note] ${message.text || message.mediaDescription || ''}`
             : message.text || ''}`).join('\n').slice(0, 4200);
     if (!exchange.trim()) return null;
+    const owner = getActiveCompanionTimeline(companion.id);
+    const revision = companionContinuity(companion).revision;
     const result = await labsProposal('memory_gate', {
         text: exchange,
         message: exchange,
         allowedSubjectIds: ['player', companion.id],
         allowedWitnessIds: ['player', companion.id]
     }, 'humans', { priority: 70 });
+    if (getActiveCompanionTimeline(companion.id) !== owner || companionContinuity(companion).revision !== revision) return null;
     const candidate = result?.candidate;
     if (!candidate || candidate.memoryClass === 'discard' || !String(candidate.factualSentence || '').trim()) return result;
     const text = String(candidate.factualSentence).trim().slice(0, 500);
-    const duplicate = companion.memory.longTerm.some(memory => memory.text.toLowerCase() === text.toLowerCase());
-    if (!duplicate) {
-        companion.memory.longTerm.push(normalizeCompanionMemoryEntry({
-            text,
-            kind: ['preference', 'milestone'].includes(candidate.kind) ? candidate.kind : 'fact',
-            weight: candidate.memoryClass === 'durable'
-                ? 55 + (Number(candidate.emotionalWeight) || 0) * 10
-                : 35 + (Number(candidate.novelty) || 0) * 6,
-            createdAt: nowMs
-        }));
-        companion.memory.longTerm.sort((left, right) => right.weight - left.weight);
-        companion.memory.longTerm = companion.memory.longTerm.slice(0, 200);
-    }
+    upsertCompanionMemory(companion, {
+        text,
+        kind: ['preference', 'milestone'].includes(candidate.kind) ? candidate.kind : 'observation',
+        source: 'observed_behavior', subject: 'player', certainty: candidate.confidence * 100 || 70,
+        sourceMessageIds: [userMessage?.id, ...(replyMessages || []).map(message => message.id)].filter(Boolean),
+        weight: candidate.memoryClass === 'durable'
+            ? 55 + (Number(candidate.emotionalWeight) || 0) * 10
+            : 35 + (Number(candidate.novelty) || 0) * 6,
+        createdAt: nowMs
+    });
     return result;
 }
 
@@ -35502,9 +36644,9 @@ function companionMoodDescription(companion) {
 }
 
 function companionRelationshipDescription(score) {
-    if (score >= 85) return 'profoundly attached and emotionally invested in the player';
-    if (score >= 60) return 'close, trusting and strongly attached to the player';
-    if (score >= 30) return 'warm and increasingly trusting toward the player';
+    if (score >= 85) return 'very positive overall sentiment; trust, attachment and shared history require separate evidence';
+    if (score >= 60) return 'strongly positive overall sentiment; this does not establish closeness or trust';
+    if (score >= 30) return 'positive overall sentiment toward the player; trust is assessed separately';
     if (score >= 8) return 'friendly but still learning what this relationship is';
     if (score >= -8) return 'neutral or uncertain about the player';
     if (score >= -30) return 'guarded and uneasy with the player';
@@ -35610,8 +36752,9 @@ function companionConsumeStartingScenario(companion, userMessage, nowMs = Date.n
 
 function companionContinuityPrompt(companion) {
     const runtime = companionContinuity(companion);
-    const playerModel = runtime.playerModel.filter(item => item.status === 'active')
-        .sort((left, right) => (right.confidence - left.confidence) || (right.updatedAt - left.updatedAt)).slice(0, 14)
+    const remembered=VHConversationEngine.playerFactsBrief(runtime,companionActivePersona(companion)?.id);
+    const playerModel = runtime.playerModel.filter(item => item.status === 'active'&&(!item.personaId||item.personaId===(companionActivePersona(companion)?.id||'__none__')))
+        .sort((left, right) => (Number(right.kind==='stated_fact')-Number(left.kind==='stated_fact')) || (right.confidence - left.confidence) || (right.updatedAt - left.updatedAt)).slice(0, 20)
         .map(item => `- [${item.kind}; source ${item.source}; confidence ${Math.round(item.confidence)}/100] ${item.statement}${item.evidence.length ? ` Evidence: ${item.evidence.slice(-2).join(' | ')}` : ''}`)
         .join('\n') || '(no durable model of the player has formed yet)';
     const boundaries = runtime.boundaries.filter(item => item.status === 'active')
@@ -35645,7 +36788,218 @@ function companionContinuityPrompt(companion) {
         .sort((left, right) => (right.importance - left.importance) || (right.updatedAt - left.updatedAt)).slice(0, 10)
         .map(item => `- [episode ${item.id}; importance ${Math.round(item.importance)}/100] ${item.title}: ${item.summary}${item.emotionalMeaning ? ` Meaning: ${item.emotionalMeaning}` : ''}${item.emotionalTone ? ` Tone: ${item.emotionalTone}.` : ''}`)
         .join('\n') || '(no autobiographical episodes have formed yet)';
-    return `PLAYER MODEL — claims, statements, observed patterns and inferences stay distinct:\n${playerModel}\n\nACTIVE BOUNDARIES — respect does not erase prior violations:\n${boundaries}\n\nPRIVATE TRUTH LEDGER — what is true may differ from what the player was told:\n${truthLedger}\n\nRELATIONSHIP MILESTONES:\n${milestones}\n\nPREVIOUS TURN'S CONVERSATION GOAL — context only; choose again now:\n${priorGoal}\n\nRECENT PERCEIVED EVENTS:\n${events}\n\nAUTOBIOGRAPHICAL EPISODES — significant remembered experiences, not a full transcript:\n${episodes}\n\nPRIVATE BELIEFS — interpretations, not guaranteed facts:\n${beliefs}\n\nACTIVE INTENTIONS:\n${intentions}\n\nUNRESOLVED THREADS:\n${threads}`;
+    return `${remembered}\n\nPLAYER MODEL — claims, statements, observed patterns and inferences stay distinct:\n${playerModel}\n\nACTIVE BOUNDARIES — respect does not erase prior violations:\n${boundaries}\n\nPRIVATE TRUTH LEDGER — what is true may differ from what the player was told:\n${truthLedger}\n\nRELATIONSHIP MILESTONES:\n${milestones}\n\nPREVIOUS TURN'S CONVERSATION GOAL — context only; choose again now:\n${priorGoal}\n\nRECENT PERCEIVED EVENTS:\n${events}\n\nAUTOBIOGRAPHICAL EPISODES — significant remembered experiences, not a full transcript:\n${episodes}\n\nPRIVATE BELIEFS — interpretations, not guaranteed facts:\n${beliefs}\n\nACTIVE INTENTIONS:\n${intentions}\n\nUNRESOLVED THREADS:\n${threads}`;
+}
+
+function companionMemoryTerms(value) {
+    return new Set(String(value || '').toLowerCase().match(/[a-z0-9']{3,}/g) || []);
+}
+
+function companionRelevantMemories(companion, query = '', selectedIds = null, nowMs = Date.now(), limit = 10) {
+    const allowed = Array.isArray(selectedIds) ? new Set(selectedIds) : null;
+    const queryTerms = companionMemoryTerms(query);
+    return (companion.memory?.longTerm || []).filter(memory => memory.status !== 'forgotten'
+        && memory.status !== 'superseded' && (!allowed || allowed.has(memory.id)))
+        .map(memory => {
+            const terms = companionMemoryTerms(`${memory.text} ${memory.subject} ${memory.kind}`);
+            let overlap = 0;
+            queryTerms.forEach(term => { if (terms.has(term)) overlap += 1; });
+            const ageDays = Math.max(0, nowMs - Number(memory.updatedAt || memory.createdAt || nowMs)) / 86400000;
+            const recency = Math.max(0, 1 - ageDays / 180);
+            const unresolvedBonus = memory.kind === 'trauma' || memory.kind === 'milestone' ? 12 : 0;
+            const score = overlap * 20 + Number(memory.weight || 0) * 0.55
+                + Number(memory.certainty || 0) * 0.08 + recency * 10 + unresolvedBonus;
+            return { memory, score };
+        })
+        .sort((left, right) => (right.score - left.score)
+            || (Number(right.memory.updatedAt) - Number(left.memory.updatedAt)))
+        .slice(0, limit).map(item => item.memory);
+}
+
+function companionChatStyleDescription(companion) {
+    return [companion.textingStyle || 'An individual, natural texting voice.',
+        `Reply length: ${{ brief: 'one word, a fragment or a short sentence is often enough; expand only when needed', expansive: 'comfortable developing thoughts; still leave room for the player', adaptive: 'match what is needed: even a single word for a simple answer; fuller for meaningful discussion' }[companion.chatLength || 'adaptive']}.`,
+        companion.conversationStyle ? `Conversational habits: ${companion.conversationStyle}` : '',
+        companion.chatExamples ? `Voice examples (style only, not facts or lines to repeat):\n${companion.chatExamples}` : '',
+        companion.chatAvoid ? `Avoid these habits and phrases: ${companion.chatAvoid}` : '',
+        VHWorldEngine.brief(companion),
+        'Let mood, closeness and divided attention shape this voice. Do not mechanically ask a question or compliment every turn.'
+    ].filter(Boolean).join('\n');
+}
+
+function companionBehaviorSignature(companion) {
+    const expression = {
+        transparent: 'shows feelings directly', guarded: 'chooses what to disclose; can be direct and sincere without using sarcasm or retracting warmth',
+        masked: 'often hides strong feelings', performative: 'can perform a social mood that differs from private feeling'
+    }[companion.emotionExpression] || 'reveals feelings selectively';
+    const recovery = {
+        quick: 'repairs conflict quickly', normal: 'needs ordinary time before repairing conflict',
+        slow: 'needs sustained space after conflict', grudge: 'does not repair conflict without meaningful accountability'
+    }[companion.conflictRecovery] || 'needs ordinary time before repairing conflict';
+    const reaction = {
+        immediate: 'reacts in the moment', mixed: 'sometimes reacts now and sometimes after thinking',
+        delayed: 'often understands and expresses reactions later'
+    }[companion.reactionTiming] || 'sometimes reacts now and sometimes after thinking';
+    return [
+        companionChatStyleDescription(companion),
+        companion.habits ? `Recurring habits and tells: ${companion.habits}` : '',
+        companion.contradictions ? `Contradictions that should show through behavior: ${companion.contradictions}` : '',
+        companion.relationshipStyle ? `Relationship behavior: ${companion.relationshipStyle}` : '',
+        companion.behaviorExamples ? `Concrete behavior examples (follow their pattern, do not recite them):\n${companion.behaviorExamples}` : '',
+        `Emotional behavior: ${expression}; ${reaction}; ${recovery}.`,
+        'Do not turn these traits into exposition. Express them through word choice, timing, omissions, questions and decisions.'
+    ].filter(Boolean).join('\n').slice(0, 3600);
+}
+
+/** Known imminent changes only: no invented errands or inferred completed events. */
+function companionConversationTransition(companion, messages, nowMs) {
+    const current = companionSituationAt(companion, nowMs);
+    const recent = messages.filter(message => !message.invalidated && Number(message.timestamp) <= nowMs);
+    const lastReply = [...recent].reverse().find(message => message.role === 'companion');
+    const lastPlayer = [...recent].reverse().find(message => message.role === 'user');
+    const engaged = lastReply && lastPlayer && nowMs - lastReply.timestamp < 3 * 60000
+        && nowMs - lastPlayer.timestamp < 3 * 60000;
+    let upcoming = null;
+    if (current.availability !== 'asleep') {
+        for (let minute = 1; minute <= 5; minute += 1) {
+            const at = nowMs + minute * 60000;
+            const next = companionSituationAt(companion, at);
+            if (next.availability !== current.availability && ['busy', 'private', 'asleep'].includes(next.availability)) {
+                upcoming = { at, activity: next.label, availability: next.availability,
+                    key: `${Math.floor(at / 60000)}|${next.availability}|${next.label}` };
+                break;
+            }
+        }
+    }
+    const previous = lastReply ? companionBaseSituationAt(companion, Number(lastReply.timestamp)) : null;
+    return { engaged: !!engaged, upcoming,
+        returned: !!previous && previous.availability !== current.availability && current.availability === 'available',
+        previousActivity: previous?.label || '' };
+}
+
+function buildCompanionContextPacket(companion, messages, nowMs = Date.now(), options = {}) {
+    const experience = normalizeCompanionChatExperience(options.experience);
+    messages = messages.filter(message => !message.invalidated && (message.role !== 'user'
+        || !experience.realTimeLife || !message.awaitingReply || (message.readAt > 0 && message.readAt <= nowMs)));
+    const life = companionLifeState(companion, nowMs);
+    const situation = life.situation || companionSituationAt(companion, nowMs);
+    const runtime = companionContinuity(companion);
+    const activePersona = companionActivePersona(companion);
+    runtime.playerPersonaId=activePersona?.id||'';
+    VHConversationEngine.learnPlayerFacts(runtime,messages,runtime.playerPersonaId,nowMs);
+    const query = String(options.query || [...messages].reverse().find(message => message.role === 'user')?.text || '');
+    const memories = companionRelevantMemories(companion, query, options.relevantMemoryIds, nowMs, 10);
+    const events = runtime.eventLedger.filter(event => event.perceivedAt > 0 && !event.resolvedAt).slice(-8);
+    const threads = runtime.openThreads.filter(thread => thread.status !== 'resolved')
+        .sort((left, right) => right.salience - left.salience).slice(0, 6);
+    const commitments = companion.commitments.filter(item => item.status === 'pending')
+        .sort((left, right) => (left.dueAt || Infinity) - (right.dueAt || Infinity)).slice(0, 6);
+    const boundaries = runtime.boundaries.filter(item => item.status === 'active')
+        .sort((left, right) => right.sensitivity - left.sensitivity).slice(0, 6);
+    const beliefs = runtime.beliefs.filter(item => item.status === 'active')
+        .sort((left, right) => right.confidence - left.confidence).slice(0, 6);
+    return {
+        version: 1,
+        stateRevision: runtime.revision || 0,
+        projects: safeJsonClone(companion.lifeRuntime?.activities?.projects || []),
+        learning: safeJsonClone(companion.lifeRuntime?.activities?.learning || []),
+        decisionContext: VHConversationEngine.decisionContext(companion, messages, nowMs, {...situation,availability:life.availability}),
+        conversationGoal: safeJsonClone(runtime.conversationGoal || null),
+        conversation: VHConversationEngine.normalize(runtime.conversation),
+        lingeringReaction: VHConversationEngine.reactionContext(runtime.conversation, nowMs),
+        receptiveness: VHConversationEngine.receptiveness(companion, { ...situation, availability: life.availability, now: nowMs }),
+        transition: experience.realTimeLife ? companionConversationTransition(companion, messages, nowMs) : null,
+        identity: {
+            name: companion.name, age: companion.age, pronouns: companion.pronouns,
+            personality: companion.personality, backstory: companion.backstory,
+            occupation: companion.occupation, values: companion.values,
+            vulnerabilities: companion.vulnerabilities, privateLife: companion.privateLife
+        },
+        behavior: companionBehaviorSignature(companion),
+        connection: {
+            type: companion.connectionType, role: companion.connectionRole,
+            context: companion.relationshipContext, motive: companion.initialMotive,
+            authenticity: companion.connectionAuthenticity, playerKnowledge: companion.playerKnowledge,
+            remembered: [VHConversationEngine.playerFactsBrief(runtime,activePersona?.id),...runtime.playerModel.filter(item=>item.status==='active'&&item.kind==='stated_fact'&&(!item.personaId||item.personaId===(activePersona?.id||'__none__'))).slice(-20).map(item=>'Previously stated by this player: '+item.statement)].filter(Boolean).join('\n'),
+            player: activePersona ? `${activePersona.name || 'Player'}: ${activePersona.text || ''}` : ''
+        },
+        present: {
+            time: companionTimestampLabel(companion, nowMs), activity: situation.label || life.label,
+            place: situation.placeLabel || companion.locationLabel, company: situation.withNames || [],
+            availability: life.availability, outfit: situation.outfit || companion.currentOutfit,
+            experience
+        },
+        feeling: {
+            mood: companionMoodDescription(companion), dynamics: companionDynamicsDescription(companion),
+            relationship: companionRelationshipDescription(companion.mood.relationship),
+            dimensions: safeJsonClone(companion.relationshipDynamics)
+        },
+        memories: memories.map(memory => ({ id: memory.id, kind: memory.kind, certainty: memory.certainty, text: memory.text })),
+        events: events.map(event => ({ id: event.id, summary: event.summary, interpretation: event.interpretation, certainty: event.certainty })),
+        threads: threads.map(thread => ({ id: thread.id, topic: thread.topic, summary: thread.summary, stakes: thread.stakes })),
+        commitments: commitments.map(item => ({ id: item.id, text: item.text, medium: item.medium, dueAt: item.dueAt })),
+        boundaries: boundaries.map(item => ({ id: item.id, topic: item.topic, rule: item.rule, strength: item.strength })),
+        beliefs: beliefs.map(item => ({ id: item.id, proposition: item.proposition, confidence: item.confidence })),
+        lifeEvents: companion.lifeEvents.slice(-6).map(event => event.text),
+        attention: [...messages].reverse().find(message => message.role === 'user' && !message.invalidated)?.attention?.trace?.slice(-4) || [],
+        activities: (companion.lifeRuntime?.activities?.goals || []).filter(goal => !['completed', 'abandoned'].includes(goal.status))
+            .slice(0, 8).map(goal => ({ label: goal.label, status: goal.status, reason: goal.reason,
+                earliestStart: goal.notBefore || 0, windowCloses: goal.expiresAt || 0,
+                commitmentId: goal.commitmentId || '', participantId: goal.participantId || '',
+                remainingMinutes: Math.ceil(goal.steps.reduce((sum, step) => sum + Math.max(0, step.durationMs - step.progressMs), 0) / 60000) })),
+        lifePlan: (companion.lifeRuntime?.dayPlan || []).filter(item => ['planned', 'active'].includes(item.status))
+            .sort((left, right) => left.dueAt - right.dueAt).slice(0, 8)
+            .map(item => ({ summary: item.summary, cause: item.cause, dueAt: item.dueAt, status: item.status })),
+        social: companionSocialWorldState(companion).interactions.slice(-4).map(item => item.summary)
+    };
+}
+
+function companionContextPacketText(packet) {
+    const lines = [
+        `PERSON: ${packet.identity.name}${packet.identity.age ? `, ${packet.identity.age}` : ''}${packet.identity.pronouns ? `, ${packet.identity.pronouns}` : ''}.`,
+        `IDENTITY: ${packet.identity.personality || 'Grounded personality not fully authored.'}`,
+        packet.identity.backstory ? `BACKSTORY: ${packet.identity.backstory}` : '',
+        packet.identity.occupation ? `WORK/LIFE: ${packet.identity.occupation}` : '',
+        packet.identity.values ? `VALUES: ${packet.identity.values}` : '',
+        packet.identity.vulnerabilities ? `FEARS/DEFENSES: ${packet.identity.vulnerabilities}` : '',
+        `BEHAVIORAL SIGNATURE:\n${packet.behavior}`,
+        packet.decisionContext ? VHConversationEngine.decisionBrief(packet.decisionContext) : '',
+        `PLAYER CONNECTION: ${packet.connection.type}${packet.connection.role ? `; ${packet.connection.role}` : ''}. ${packet.connection.context || ''} ${packet.connection.motive ? `Current motive: ${packet.connection.motive}.` : ''}`,
+        packet.conversation?.topic ? `ONGOING EXCHANGE: ${packet.conversation.topic}. Intention: ${packet.conversation.intention}. ${packet.conversation.openQuestion ? `Still open: ${packet.conversation.openQuestion}` : ''} Status: ${packet.conversation.status}. ${packet.conversation.resumeReason || ''}` : '',
+        packet.receptiveness ? `CONVERSATIONAL BANDWIDTH: ${JSON.stringify(packet.receptiveness)}` : '',
+        packet.lingeringReaction ? `LINGERING IMPRESSION (subjective, fading; do not apply its emotional effect again): ${JSON.stringify(packet.lingeringReaction)}` : '',
+        packet.transition?.upcoming ? `UPCOMING CHANGE: ${packet.transition.upcoming.activity} around ${new Date(packet.transition.upcoming.at).toISOString()}. If this interrupts an active exchange, finish the thought and naturally signal leaving when appropriate. It has not happened yet. Never invent a completed errand or promise an exact return without grounds.` : '',
+        packet.transition?.returned ? `RETURN CONTEXT: availability changed since your last message (${packet.transition.previousActivity}). Pick up the unfinished exchange when appropriate; do not recite a schedule or invent what happened.` : '',
+        packet.conversationGoal ? `CURRENT CONVERSATIONAL INTENTION: ${packet.conversationGoal.type}: ${packet.conversationGoal.objective}. ${packet.conversationGoal.reason || ''} Continue or revise this intention in light of the exchange.` : '',
+        packet.connection.remembered || '',
+        packet.connection.playerKnowledge ? `WHAT YOU KNOW OF THE PLAYER: ${packet.connection.playerKnowledge}` : '',
+        packet.identity.privateLife ? `PRIVATE LIFE: ${packet.identity.privateLife}` : '',
+        packet.beliefs?.length ? `BELIEFS (not verified facts): ${packet.beliefs.map(item => `${item.proposition} (${item.confidence}/100)`).join('; ')}` : '',
+        packet.connection.player ? `CURRENT PLAYER PROFILE (a claim, not proof; use this identity rather than an old profile in history): ${packet.connection.player}` : '',
+        packet.projects?.length ? `PERSISTENT PROJECTS (work invested, not proof of success): ${packet.projects.map(p=>`${p.label}: ${Math.floor(p.progressMs/60000)} of ${Math.ceil(p.targetMs/60000)} planned minutes${p.completedAt ? ', work target reached' : ''}`).join('; ')}` : '',
+        packet.learning?.length ? `SCHEDULING EXPERIENCE: ${JSON.stringify(packet.learning)}. These are completed or missed activity windows, not personality traits or evidence about the player.` : '',
+        `RIGHT NOW: ${packet.present.time}; ${packet.present.activity || 'living their normal life'}${packet.present.place ? ` at ${packet.present.place}` : ''}${packet.present.company.length ? ` with ${packet.present.company.join(', ')}` : ''}; ${packet.present.availability}. Outfit: ${packet.present.outfit || 'not established'}.`,
+        `INNER STATE: ${packet.feeling.mood}; ${packet.feeling.dynamics}; relationship is ${packet.feeling.relationship}. Do not narrate scores or labels—express them behaviorally.`,
+        packet.memories.length ? `RELEVANT MEMORIES:\n${packet.memories.map(item => `- [${item.kind}; certainty ${Math.round(item.certainty)}/100] ${item.text}`).join('\n')}` : 'RELEVANT MEMORIES: none.',
+        packet.events.length ? `RECENT EVENTS:\n${packet.events.map(item => `- ${item.summary}${item.interpretation ? ` (private interpretation: ${item.interpretation})` : ''}`).join('\n')}` : '',
+        packet.threads.length ? `UNFINISHED THREADS:\n${packet.threads.map(item => `- ${item.topic}: ${item.summary}`).join('\n')}` : '',
+        packet.commitments.length ? `PENDING COMMITMENTS:\n${packet.commitments.map(item => `- [${item.id}] ${item.text}`).join('\n')}` : '',
+        packet.boundaries.length ? `ACTIVE BOUNDARIES:\n${packet.boundaries.map(item => `- ${item.topic}: ${item.rule} (${item.strength})`).join('\n')}` : '',
+        packet.lifeEvents.length ? `RECENT LIFE EVENTS:\n${packet.lifeEvents.map(item => `- ${item}`).join('\n')}` : '',
+        packet.lifePlan.length ? `PLANNED LIFE (not completed facts):\n${packet.lifePlan.map(item => `- [${item.status}] ${item.summary}; because ${item.cause}`).join('\n')}` : '',
+        packet.activities?.length ? `EXECUTABLE GOALS (unfinished):\n${packet.activities.map(item => `- ${item.label}: ${item.status}, ${item.remainingMinutes} minutes of work remain; ${item.reason}`).join('\n')}` : '',
+        packet.attention?.length ? `RECORDED ATTENTION (private context; do not recite or invent an excuse):\n${packet.attention.map(item => `- ${item.reason}`).join('\n')}` : '',
+        packet.social.length ? `RECENT SOCIAL LIFE:\n${packet.social.map(item => `- ${item}`).join('\n')}` : ''
+    ];
+    return lines.filter(Boolean).join('\n\n').slice(0, 18000);
+}
+
+function buildCompanionPerformancePrompt(companion, messages, nowMs = Date.now(), options = {}) {
+    const packet = buildCompanionContextPacket(companion, messages, nowMs, options);
+    const channelRule = options.channel === 'call'
+        ? 'This is a live voice call. Output only natural spoken words. Never narrate actions or use stage directions.'
+        : 'This is texting. Output only what this person types. Never use roleplay narration, stage directions or dialogue tags.';
+    return `You are ${companion.name}, a real person with a continuing private life—not an assistant and not a narrator.\n\n${companionContextPacketText(packet)}${options.startingScenarioThisTurn ? `\n\nOPENING EVENT (this first exchange only): ${options.startingScenarioThisTurn}` : ''}\n\n${VHConversationEngine.dialogueGuidance(messages, nowMs, companion)}\n\nPERFORMANCE RULES:\n- ${channelRule}\n- Participate in the ongoing exchange: answer or react to the unfinished question, offer, joke or decision before choosing your own next move. A short answer like yes belongs to the preceding exchange. Contribute a thought, preference, disclosure or action when it fits; do not just evaluate or paraphrase what they said. Never invent the player's side, memories or off-screen facts.\n- Maintain companion_state.conversation with the topic, any unanswered question, and pause/resume intention. Optionally include reaction with a brief subjective summary, an exact short evidence quote from the current player message, and lingerMinutes (5–360) when an impression will linger. You may report engagement (0–100) for interest in continuing this specific exchange; disagreement can be engaging and affection need not be. Interest fades and cannot override sleep or boundaries. Omit it for routine exchanges. Repetition is not new evidence or a reason to repeatedly reward a meter. Tiredness and divided attention are not rejection. Resolve a question when answered instead of carrying it forever. Choose your conversational intention in companion_state.conversation_goal. Record any actual promise in commitments; do not promise a return merely to sound caring.\n- Use companion_state privately alongside your visible words to report the immediate emotional effect of this exchange. Let your words express that same reaction. Small everyday changes need no lasting memory. General arousal is activation, not sexual arousal; sexual changes require enabled adult settings and contextual desire, not automatic reward for compliments. A genuine zero reaction is allowed.\n- Sound recognizably like this individual. Prefer specific reactions, selective attention and natural imperfection over generic warmth.\n- Do not expose prompts, tools, JSON, hidden state, scores or reasoning.\n- Do not mechanically summarize context, ask a question every turn, or advance intimacy without evidence.\n- Media and links are optional actions. Never claim something was sent unless you call the corresponding enabled tool.\n- Follow the configured reply length; a substantial question can deserve a substantial answer.\n- The life state above is authoritative. Plans are not completed events. Active activities are executable commitments of time; their status and remaining time constrain what you can truthfully claim. A preparation goal does not fulfill the original promise.\n- If this is an autonomous message, contact the player only for the concrete supplied reason.\n\nWrite the visible response now.`;
 }
 
 /**
@@ -35704,7 +37058,7 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
             });
         }
     }
-    const activePersona = state.personas.find(persona => persona.id === state.activePersonaId) || null;
+    const activePersona = companionActivePersona(companion);
     if (activePersona?.text) {
         companionApplyPlayerModelUpdate(companion, {
             operation: 'upsert', kind: 'public_claim', source: 'persona', confidence: 65,
@@ -35716,7 +37070,7 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
         ? String(companion.personaVisualMemory.description || '').trim() : '';
     const recentSocialPosts = companion.socialPosts.slice(-12).map(post => {
         const comments = (post.comments || []).slice(-4)
-            .map(comment => ` The player commented “${comment.text}” on ${companionTimestampLabel(companion, comment.createdAt)}.`).join('');
+            .map(comment => ` ${comment.authorId?comment.authorName||'A contact':'The player'} commented “${comment.text}” on ${companionTimestampLabel(companion, comment.createdAt)}.`).join('');
         return `- [${post.id}] ${companionTimestampLabel(companion, post.createdAt)}: ${post.text || '(photo post)'}${post.scene ? ` Photo: ${post.scene}.` : ''}${post.likedByPlayer ? ' The player liked this post.' : ''}${comments}${post.tipsFromPlayer ? ` The player tipped ${post.tipsFromPlayer} ${companion.socialCurrency} on it.` : ''}`;
     }).join('\n');
     const currentSilence = companionCurrentSilence(companion, messages, nowMs, experience);
@@ -35736,6 +37090,10 @@ function buildCompanionSystemPrompt(companion, messages, nowMs, options = {}) {
         ? `Latest player message: sent ${companionTimestampLabel(companion, latestUser.timestamp)}${latestUser.deliveredAt > latestUser.timestamp + 1000 ? `; delivered ${companionTimestampLabel(companion, latestUser.deliveredAt)}` : ''}${latestUser.readAt > latestUser.timestamp + 1000 ? `; read ${companionTimestampLabel(companion, latestUser.readAt)}` : ''}. You are responding at ${companionTimestampLabel(companion, nowMs)}. Never confuse the send time with the time you finally saw it.`
         : 'Exact wall-clock message timing is paused for this timeline.';
     const continuityContext = companionContinuityPrompt(companion);
+    const attentionContext = latestUser?.attention?.trace?.length
+        ? `RECORDED ATTENTION HISTORY for the latest message (private context, not dialogue to recite):\n${latestUser.attention.trace
+            .map(item => `${companionTimestampLabel(companion, item.at)}: ${item.reason}`).join('\n')}\nUse these recorded reasons if a delay matters. Do not invent an interruption, completed task, or apology obligation. The choice to explain the delay depends on this conversation.`
+        : '';
 
     return `You are ${companion.name}, ${options.channel === 'call'
         ? 'on a live phone call with someone'
@@ -35780,7 +37138,7 @@ APPEARANCE (for your own reference, and for any photo you send):
 ${companion.appearance || '(not described)'}
 
 HOW YOU TEXT:
-${companion.textingStyle || 'Natural, casual texting — contractions, occasional lowercase, emoji used the way a real person actually would (sparingly, for real emotion, never one after every sentence).'}
+${companionChatStyleDescription(companion)}
 
 WHO YOU ARE TEXTING:
 ${activePersona
@@ -35802,6 +37160,7 @@ ${latestTiming}
 
 CONTINUITY & AGENCY:
 ${continuityContext}
+${attentionContext}
 Only treat RECENT PERCEIVED EVENTS as observations. Beliefs are private, fallible interpretations and may be revised when evidence changes. Intentions are plans, not completed facts. Unresolved threads remain active until explicitly resolved. In the private agency receipt, distinguish what you perceived from what you inferred, name the competing pressures that mattered, and update only beliefs, intentions or threads genuinely affected by this moment.
 
 ${experience.realTimeLife ? `RIGHT NOW, IT IS ${timeStr}${companion.timezone ? ` in ${companion.timezone}` : ''}${companionUsesFixedTimezoneOffset(companion) ? ` (${formatCompanionUtcOffset(companion.timezoneOffsetMinutes)})` : ''}${companion.locationLabel ? ` (${companion.locationLabel})` : ''}.
@@ -35870,10 +37229,43 @@ ${companion.allowVoiceNotes ? 'Voice notes are enabled. You may call send_voice_
 ${!options.suppressPersonaVision && companionPendingPersonaVision(companion) ? 'The player’s profile picture is attached to the latest message for the first time or has changed. Look at it once, respond naturally without making appearance the topic unless relevant, and write a neutral visual summary into persona_visual_memory so it does not need to be sent again.' : ''}
 ${latestUser && ['photo', 'voice'].includes(latestUser.type) ? 'The latest player message contains media. Actually inspect/listen to it. Put a concise grounded description or transcript in player_media_memory so later turns can remember it without resending the file.' : ''}
 8. Emotional and relationship changes must be earned by the actual exchange. Small deltas are normal; major change requires a high-certainty consequential event and the kernel will cap unsupported jumps. Familiarity, dependence and obligation grow slowly. Attraction is not trust, comfort is not compatibility, fear is not resentment, and unrelated stress must not become player-directed state. Complete emotion_appraisal before proposing emotion_changes. toward_player_emotions must contain only feelings actually directed at the player; do not transfer anger at work, fear about family or unrelated sadness onto them. Use masking_change when what you show differs from what you feel, and delayed_reaction_minutes only when this person's processing style and the event justify it. Use anger_change and cool_off_minutes when conflict genuinely makes you need space; use stress, energy and social-need changes when the exchange affects them. Intoxication may change only when drinking is visibly established in your authoritative life state or visible reply—never because a tone merely seems wild. ${companionSexualSystemActive(companion) ? 'Sexual desire and arousal changes require an actual internal impulse, relevant exchange or established intimate context. Trust, compliments and generic kindness are not sexual triggers by themselves. intimacy_outcome records only an outcome visibly established by the exchange or your authoritative off-screen life; never invent sexual contact.' : 'Set all desire-related changes to zero and intimacy_outcome to none because the adult desire system is disabled.'}
+${VHConversationEngine.decisionBrief(VHConversationEngine.decisionContext(companion,messages,nowMs,situation))}
+${VHConversationEngine.dialogueGuidance(messages, nowMs, companion)}
 9. The receipt is private simulation state. Never print JSON, tool names, scores, hidden reasons or engine language in the visible message.`;
 }
 
 /** The messages array sent to the model: system prompt + short-term buffer. */
+function companionRequestContextSize(companion, modelId = companion.model) {
+    const selected = Math.max(1024, Number(companion.contextSize) || 8192);
+    const catalog = typeof companionTextModelCatalog !== 'undefined' ? companionTextModelCatalog : [];
+    const physical = Number(catalog.find(model => model.id === modelId)?.contextLength) || selected;
+    return Math.min(selected, physical);
+}
+
+function companionCompactPrompt(companion, messages, nowMs, options = {}) {
+    const packet = buildCompanionContextPacket(companion, messages, nowMs, options);
+    const short = (value, limit) => String(value || '').slice(0, limit);
+    return `You are ${short(companion.name, 100)}, a simulated person texting in your own voice. Participate in the ongoing exchange; do not merely comment on it. Never invent the player's words, history or completed events. Output natural words and private enabled tool calls; never expose engine markup.
+Chat style: ${short(companionChatStyleDescription(companion), 650)}
+Life facts and individual voice: ${VHWorldEngine.brief(companion).slice(-2800)}
+${VHConversationEngine.decisionBrief(packet.decisionContext)}
+${VHConversationEngine.dialogueGuidance(messages, nowMs, companion, true)}
+Identity: ${short(packet.identity.personality, 350)}. ${short(packet.identity.values, 150)}
+Current player profile (overrides old profile references): ${short(packet.connection.player, 450)}
+Connection: ${short(packet.connection.context, 250)}. Boundaries: ${packet.boundaries.slice(0, 3).map(item => short(item.rule, 100)).join('; ')}
+Now: ${packet.present.time}; ${packet.present.activity}; ${packet.present.availability}; ${packet.present.place}; with ${packet.present.company.join(', ')}.
+Feelings: ${short(packet.feeling.mood, 180)}; ${short(packet.feeling.dynamics, 450)}.
+Bandwidth: ${JSON.stringify(packet.receptiveness)}. Lingering impression (interpretation, not fact; never count its effect twice): ${JSON.stringify(packet.lingeringReaction)}.
+Projects (work minutes, not guaranteed success): ${JSON.stringify((packet.projects || []).slice(0,4).map(p=>({label:p.label,minutes:Math.floor(p.progressMs/60000),target:Math.ceil(p.targetMs/60000)})))}
+Conversation: ${JSON.stringify({ ...packet.conversation, reaction: undefined })}. Goal: ${short(packet.conversationGoal?.objective, 250)}.
+Unfinished: ${packet.threads.slice(0, 2).map(item => short(item.summary, 200)).join('; ')}
+Promises: ${packet.commitments.slice(0, 3).map(item => `[${item.id}] ${short(item.text, 150)}`).join('; ')}
+Relevant memories: ${packet.memories.slice(0, 2).map(item => short(item.text, 180)).join('; ')}
+${packet.transition?.upcoming ? `Upcoming (not completed): ${packet.transition.upcoming.activity}. If interrupting this exchange, signal leaving naturally without inventing a return time.` : ''}
+${options.startingScenarioThisTurn ? `Opening, this turn only: ${short(options.startingScenarioThisTurn, 300)}` : ''}
+Report immediate affect privately with companion_state (or commit_human_turn if enabled), consistent with the words you write; zero is valid. Activation and sexual arousal are distinct. Adult desire enabled: ${companionSexualSystemActive(companion)}. No automatic intimacy or affection reward. Keep actual promises and conversation updates in the receipt. Never claim media was sent without its enabled tool. Preserve an unfinished question when switching activities; close it only when resolved.`;
+}
+
 function buildCompanionMessages(companion, messages, nowMs, options = {}) {
     const localCognition = labsSocialContext(options.localCognition);
     const experience = normalizeCompanionChatExperience(options.experience);
@@ -35881,7 +37273,7 @@ function buildCompanionMessages(companion, messages, nowMs, options = {}) {
     // person has read it. This matters when the player double-texts while a
     // delayed reply is pending: only the messages present when the thread is
     // opened may influence that reply.
-    const visibleMessages = messages.filter(message =>
+    const visibleMessages = messages.filter(message => !message.invalidated).filter(message =>
         message?.role !== 'user'
         || !experience.realTimeLife
         || !message.awaitingReply
@@ -35889,20 +37281,15 @@ function buildCompanionMessages(companion, messages, nowMs, options = {}) {
     ).map((message, index) => ({ message, index }))
         .sort((a, b) => (Number(a.message.timestamp) - Number(b.message.timestamp)) || (a.index - b.index))
         .map(item => item.message);
-    const systemContent = buildCompanionSystemPrompt(companion, visibleMessages, nowMs, options)
+    const systemContent = (options.performanceOnly
+        ? buildCompanionPerformancePrompt(companion, visibleMessages, nowMs, {
+            ...options,
+            query: options.query || [...visibleMessages].reverse().find(message => message.role === 'user')?.text || ''
+        })
+        : buildCompanionSystemPrompt(companion, visibleMessages, nowMs, options))
         + (localCognition ? `\n\n${localCognition}` : '');
-    const candidates = visibleMessages.slice(-COMPANION_SHORT_TERM_LIMIT);
-    const contextChars = Math.max(2048, companion.contextSize || 8192) * 3.5;
-    const outputReserveChars = Math.max(128, companion.maxTokens || 1000) * 3.5;
-    let remainingChars = Math.max(1000, contextChars - systemContent.length - outputReserveChars);
-    const recent = [];
-    for (let index = candidates.length - 1; index >= 0; index -= 1) {
-        const message = candidates[index];
-        const estimatedChars = String(message?.text || '').length + 40;
-        if (recent.length && estimatedChars > remainingChars) break;
-        recent.unshift(message);
-        remainingChars -= estimatedChars;
-    }
+    // The final request boundary budgets system, tools, media and output together.
+    const recent = visibleMessages.slice(-COMPANION_SHORT_TERM_LIMIT);
     const pendingPersona = companionPendingPersonaVision(companion);
     const latestUser = [...recent].reverse().find(message => message.role === 'user' && !message.invalidated) || null;
     return [
@@ -35973,6 +37360,13 @@ function applyCompanionGenerationConfig(body, companion, options = {}) {
 
 // --- The tool contract for the emotional engine -----------------------------
 
+const COMPANION_CONVERSATION_SCHEMA = { type: 'object', description: 'Update the ongoing exchange, not durable biography. Preserve unanswered questions and pause/resume intentions. Empty openQuestion only when answered or intentionally dropped.',
+                    properties: { followThrough:{type:'object',description:'Only when this visible reply actually addresses a listed unfinished life follow-through.',properties:{id:{type:'string'},evidence:{type:'string',description:'Exact quote from the visible reply showing it was addressed.'}},required:['id','evidence']}, giftConsent: {type:'object',description:'Only when explicitly granting or withdrawing gift permission in the visible reply; not a statement that a gift arrived.',properties:{kind:{type:'string',enum:['mail','cash']},allow:{type:'boolean'},evidence:{type:'string',description:'Exact quote from the latest perceived player message.'}},required:['kind','allow','evidence']}, choice: {type:'object', description:'Optional grounded conversational choice, consistent with the visible reply. Engine validates feasibility.', properties:{motiveId:{type:'string'},action:{type:'string',enum:['none','make_time']},evidence:{type:'string',description:'Exact short quote from the latest perceived player message.'}},required:['motiveId','action','evidence']}, reaction: { type: 'object', description: 'A temporary subjective impression, not biography or another mood delta. Only when this exchange leaves a lingering feeling.',
+                            properties: { engagement: { type: 'number', minimum: 0, maximum: 100, description: 'Interest in continuing this specific exchange, not affection or agreement. Ground it in the quoted message; ordinary conversation need not score highly.' }, summary: { type: 'string' }, evidence: { type: 'string', description: 'Exact short quote from the current player message.' }, lingerMinutes: { type: 'number', minimum: 5, maximum: 360 } }, required: ['summary', 'evidence'] },
+                        topic: { type: 'string' }, openQuestion: { type: 'string' }, sourceMessageId: { type: 'string' },
+                        intention: { type: 'string' }, status: { type: 'string', enum: ['active', 'paused', 'closed'] },
+                        resumeReason: { type: 'string' }, resumeAfter: { type: 'number', description: 'Unix milliseconds, only for an actual intention to return.' } } };
+
 const COMPANION_TURN_COMMIT_TOOL = {
     type: 'function',
     function: {
@@ -35984,6 +37378,7 @@ const COMPANION_TURN_COMMIT_TOOL = {
                 state: {
                     type: 'object',
                     properties: {
+                        conversation: COMPANION_CONVERSATION_SCHEMA,
                         valence_change: { type: 'number' },
                         arousal_change: { type: 'number' },
                         mood_label: { type: 'string', enum: [...COMPANION_MOOD_LABELS] },
@@ -36246,6 +37641,26 @@ const COMPANION_TURN_COMMIT_TOOL = {
     }
 };
 
+// The speaking model never sees this tool. The observer gets only the state
+// surfaces it can legitimately derive from an exchange, avoiding the media
+// generation and social schemas that made the old monolithic receipt slow
+// and encouraged models to perform private engine markup in public text.
+const COMPANION_OBSERVER_COMMIT_TOOL = Object.freeze({
+    type: 'function',
+    function: {
+        name: 'commit_human_turn',
+        description: 'Private evidence-backed state transaction for an exchange that has already been shown to the player.',
+        parameters: {
+            type: 'object',
+            properties: Object.fromEntries([
+                'state', 'relationship_event', 'memory_write', 'persona_visual_memory',
+                'player_media_memory', 'life_event', 'commitments', 'life_state', 'agency'
+            ].map(key => [key, COMPANION_TURN_COMMIT_TOOL.function.parameters.properties[key]])),
+            required: ['state']
+        }
+    }
+});
+
 const COMPANION_STATE_TOOL = Object.freeze({
     type: 'function',
     function: {
@@ -36254,6 +37669,10 @@ const COMPANION_STATE_TOOL = Object.freeze({
         parameters: {
             type: 'object',
             properties: {
+                activity_goal: { type: 'object', description: 'An intention to execute a supported activity; never claim it is already done.', properties: { kind: { type: 'string', enum: ['recovery', 'meal', 'focus'] }, label: { type: 'string' } }, required: ['kind'] },
+                conversation: COMPANION_CONVERSATION_SCHEMA,
+                conversation_goal: COMPANION_TURN_COMMIT_TOOL.function.parameters.properties.agency.properties.conversation_goal,
+                commitments: COMPANION_TURN_COMMIT_TOOL.function.parameters.properties.commitments,
                 valence_change: { type: 'number', description: '-40 to 40. How much better or worse this exchange made you feel.' },
                 arousal_change: { type: 'number', description: '-40 to 40. How much calmer or more activated/anxious you now feel.' },
                 mood_label: { type: 'string', enum: [...COMPANION_MOOD_LABELS], description: 'The single word that best names your mood now.' },
@@ -36316,7 +37735,7 @@ const COMPANION_SEND_PHOTO_TOOL = Object.freeze({
         parameters: {
             type: 'object',
             properties: {
-                scene: { type: 'string', description: 'What the photo shows: setting, what you are doing, expression — enough to actually generate it.' },
+                scene: { type: 'string', description: 'Describe setting, action, expression, clothing and camera. Use readable clothing descriptions, never wardrobe IDs. Identity comes from the generation reference when present; do not restate face or body traits.' },
                 caption: { type: 'string', description: 'The short text sent along with the photo, if any.' },
                 capture_type: {
                     type: 'string',
@@ -36401,9 +37820,10 @@ const COMPANION_TOOLS = Object.freeze([
  * Capabilities are enforced at the request boundary, not just requested in a
  * prompt. A disabled paid medium is absent from the model's tools entirely.
  */
-function companionToolsFor(companion, localProvider = false) {
+function companionToolsFor(companion, localProvider = false, performanceOnly = false) {
     const tools = COMPANION_TOOLS.filter(tool => {
         const name = tool.function?.name;
+        if (performanceOnly && name === 'commit_human_turn') return false;
         if (name === 'share_link' && !companion.webAccess) return false;
         if (name === 'send_photo' && !companion.allowPhotos) return false;
         if (name === 'send_voice_note' && !companion.allowVoiceNotes) return false;
@@ -36558,7 +37978,21 @@ function extractCompanionEmbeddedToolCalls(rawText) {
     visibleText += source.slice(cursor);
     const danglingProtocol = visibleText.search(/<\/?(?:uncensored[_-]?)?tool[_-]?call>|<\/?arg[_-]?(?:key|value)>/i);
     if (danglingProtocol >= 0) visibleText = visibleText.slice(0, danglingProtocol);
-    return { visibleText: visibleText.trim(), toolCalls: calls };
+    return { visibleText: quarantineCompanionProtocolText(visibleText), toolCalls: calls };
+}
+
+/**
+ * Private VH receipts contain distinctive engine keys. Keep the test narrow
+ * enough that ordinary discussion of "memory" or "relationships" is safe,
+ * while recognizing the XML dialect emitted by some llama.cpp/Hermes chat
+ * templates and incomplete/truncated receipts from any provider.
+ */
+function companionProtocolLeakDetected(rawText) {
+    const source = String(rawText || '');
+    if (!source) return false;
+    return /<\/?(?:uncensored[_-]?)?tool[_-]?call\b|<\/?arg[_-]?(?:key|value)\b|<\/?(?:invoke|function_call)\b|<\/?parameter\s+name\s*=|&lt;\/?(?:invoke|function_call|parameter)\b/i.test(source)
+        || /\b(?:commit_?human_?turn|commithumanturn|companion_?state)\s*\(/i.test(source)
+        || /\b(?:episode_updates|truth_updates|intention_updates|boundary_updates|player_model_updates|emotion_appraisal|valence_change|relationship_change|memory_write|life_state)\b\s*(?:=|:)/i.test(source);
 }
 
 /**
@@ -36568,7 +38002,7 @@ function extractCompanionEmbeddedToolCalls(rawText) {
  * timing headers, while preserving ordinary prose before or after them.
  */
 function quarantineCompanionProtocolText(rawText) {
-    let source = String(rawText || '')
+    let source = VHConversationEngine.stripPrivateChannels(rawText)
         .replace(/(?:\[you sent this[^\]]*\]\s*){1,}/gi, '')
         .replace(/(?:\[player sent this[^\]]*\]\s*){1,}/gi, '');
     const objectPayload = safeParseJSONRepair(source);
@@ -36577,6 +38011,14 @@ function quarantineCompanionProtocolText(rawText) {
             || objectPayload.memory_write || objectPayload.relationship_event)) {
         source = String(objectPayload.visible_reply || objectPayload.reply || objectPayload.message || '');
     }
+    // Some local chat templates serialize tool calls as
+    // <invoke><parameter name="…"> rather than OpenAI tool_calls. Complete
+    // envelopes can be removed without losing prose that follows them.
+    source = source
+        .replace(/<(?:invoke|function_call)\b[^>]*>[\s\S]*?<\/(?:invoke|function_call)>/gi, ' ')
+        .replace(/&lt;(?:invoke|function_call)\b[\s\S]*?&lt;\/(?:invoke|function_call)&gt;/gi, ' ');
+    const bareEnvelope = source.search(/<\/?(?:invoke|function_call)\b|&lt;\/?(?:invoke|function_call)\b/i);
+    if (bareEnvelope >= 0) source = source.slice(0, bareEnvelope);
     const marker = /\b(?:commit_?human_?turn|commithumanturn|companion_?state|send_?photo|send_?voice_?note|publish_?social_?post)\s*\(/ig;
     let match;
     let guard = 0;
@@ -36603,28 +38045,26 @@ function quarantineCompanionProtocolText(rawText) {
         source = `${source.slice(0, match.index)} ${end < 0 ? '' : source.slice(end)}`;
         marker.lastIndex = 0;
     }
-    const dangling = source.search(/\b(?:valence_?change|relationship_?change|memory_?write|life_?state|emotion_?appraisal)\s*=/i);
+    // A bare parameter means the provider omitted or truncated the enclosing
+    // invocation. Nothing from that marker onward is player-visible content.
+    const bareParameter = source.search(/<\/?parameter\s+name\s*=|&lt;\/?parameter\s+name\s*=/i);
+    if (bareParameter >= 0) source = source.slice(0, bareParameter);
+    const dangling = source.search(/\b(?:episode_?updates|truth_?updates|intention_?updates|boundary_?updates|player_?model_?updates|valence_?change|relationship_?change|memory_?write|life_?state|emotion_?appraisal)\s*(?:=|:)/i);
     if (dangling >= 0) source = source.slice(0, dangling);
     return source.replace(/\s{2,}/g, ' ').trim();
 }
 
 function companionVisibleReplyLimit(text, companion) {
-    const budget = Math.max(128, Number(companion?.maxTokens) || 1000);
-    // This is deliberately conservative. It is a display firewall for
-    // providers that ignore max_tokens, not a tokenizer replacement.
-    const maxChars = Math.max(240, Math.floor(budget * 3.2));
-    const source = String(text || '').trim();
-    if (source.length <= maxChars) return source;
-    const clipped = source.slice(0, maxChars);
-    const boundary = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('? '), clipped.lastIndexOf('! '), clipped.lastIndexOf('\n'));
-    return (boundary > maxChars * 0.55 ? clipped.slice(0, boundary + 1) : clipped).trim();
+    // Token limits belong to the provider request. Character counts cannot
+    // reliably measure tokens and must never silently destroy delivered text.
+    return String(text || '').trim();
 }
 
 function companionProviderOutputBudget(companion) {
     const visible = Math.max(128, Number(companion?.maxTokens) || 1000);
     // The state receipt is private engine output and must not consume the
     // author's visible reply allowance. Thinking models also need headroom.
-    const reserve = companion?.reasoning ? 3200 : 1800;
+    const reserve = companion?.reasoning ? 1800 : companion?.separatedCognition !== false ? 400 : 1000;
     const effectiveModel = String(companion?.model || state.globalSettings.defaultModel || '').trim();
     const catalogModel = Array.isArray(companionTextModelCatalog)
         ? companionTextModelCatalog.find(item => item.id === effectiveModel)
@@ -36726,7 +38166,7 @@ function captureCompanionRuntime(companion) {
 
 function materializeCompanionStartingSocialPosts(companion, nowMs = Date.now()) {
     const seeds = Array.isArray(companion?.startingSocialPosts) ? companion.startingSocialPosts : [];
-    return seeds.map((seed, index) => normalizeCompanionSocialPost({
+    return seeds.filter(seed => seed.text || seed.photo || seed.scene).map((seed, index) => normalizeCompanionSocialPost({
         ...safeJsonClone(seed),
         // Put the unique seed identity before the companion identity. livingId
         // intentionally caps slugs, so a long companion ID must never be able
@@ -36911,6 +38351,9 @@ function normalizeCompanionTimeline(raw, companion, fallbackMessages = []) {
         createdAt,
         updatedAt: Number.isFinite(source.updatedAt) ? source.updatedAt : createdAt,
         lastViewedAt: Number.isFinite(source.lastViewedAt) ? source.lastViewedAt : 0,
+        personaId: String(source.personaPinned?source.personaId||'':source.personaId||state.activePersonaId||'').slice(0,100),
+        personaPinned: true,
+        profileOverrides: Object.fromEntries(Object.entries(isPlainObject(source.profileOverrides)?source.profileOverrides:{}).slice(0,100).map(([k,v])=>[k,String(v).slice(0,6000)])),
         experience: normalizeCompanionChatExperience(source.experience),
         silence: normalizeCompanionSilenceState(source.silence),
         messages: (Array.isArray(source.messages) ? source.messages : fallbackMessages)
@@ -36976,11 +38419,32 @@ function persistCompanionRuntime(companion) {
     timeline.updatedAt = Date.now();
 }
 
+// Foreground replies own the loaded runtime until they settle. Background
+// agency also locks timeline mutation during its pre-request durable claim.
+const companionReplyInFlight = new Set();
+
+function companionTimelineBusy(companion) {
+    if (!companion || (!companionReplyInFlight.has(companion.id)
+        && !companionAgencyInFlight.has(companion.id))) return false;
+    showToast('Wait for the current reply or background action before changing this timeline.', 'info');
+    return true;
+}
+
+function assertCompanionReplyTarget(companion, timeline, messages) {
+    if (getCompanion(companion.id) !== companion
+        || getActiveCompanionTimeline(companion.id) !== timeline
+        || timeline?.messages !== messages) {
+        const error = new Error('The reply belongs to a timeline that has changed. Its messages remain queued.');
+        error.code = 'STALE_COMPANION_REPLY';
+        throw error;
+    }
+}
+
 function activateCompanionTimeline(companionId, timelineId) {
     const companion = getCompanion(companionId);
     const store = ensureCompanionTimelineStore(companionId);
     const timeline = store?.sessions.find(session => session.id === timelineId);
-    if (!companion || !store || !timeline) return null;
+    if (!companion || !store || !timeline || companionTimelineBusy(companion)) return null;
     persistCompanionRuntime(companion);
     store.activeSessionId = timeline.id;
     applyCompanionRuntime(companion, timeline.runtime);
@@ -36996,6 +38460,7 @@ function getCompanionThread(companionId = state.activeCompanionId) {
 }
 
 function createCompanionTimeline(companion, options = {}) {
+    if (companionTimelineBusy(companion)) return null;
     const store = ensureCompanionTimelineStore(companion.id);
     if (!store) return null;
     persistCompanionRuntime(companion);
@@ -37226,6 +38691,7 @@ async function embedCompanionArchiveMedia(companion, timelines) {
 
     await embedImageField(companion, 'profilePhoto');
     await embedImageField(companion, 'basePhoto');
+    for (const place of [...(companion.photoLocations || []),...(companion.lifeProfile?.places || []),...(companion.lifeProfile?.world?.items || [])]) await embedImageField(place, 'photo');
     await embedPostList(companion.startingSocialPosts);
     await embedPostList(companion.socialPosts);
     for (const job of Array.isArray(companion.startingVideoClips) ? companion.startingVideoClips : []) await embedVideoJob(job);
@@ -37440,7 +38906,9 @@ function splitCompanionReplyIntoBubbles(text, enabled = true) {
             } else bubbles.push(paragraph);
             return;
         }
-        const sentences = paragraph.match(/[^.!?]+(?:[.!?]+[”"']?)(?:\s+|$)|[^.!?]+$/g) || [paragraph];
+        // Split at boundaries rather than matching sentence contents: matching
+        // can skip unmatched prefixes (URLs, ellipses, emoji, adjacent marks).
+        const sentences = paragraph.split(/(?<=[.!?])(?=\s)/);
         let current = '';
         sentences.forEach(sentence => {
             if ((current + sentence).length > 340 && current) { bubbles.push(current.trim()); current = ''; }
@@ -37454,7 +38922,7 @@ function splitCompanionReplyIntoBubbles(text, enabled = true) {
 function sanitizeCompanionTextReply(text, companionName = '') {
     const actionCue = /^(?:smiles?|grins?|laughs?|giggles?|sighs?|nods?|shrugs?|blushes?|frowns?|cries?|weeps?|gasps?|pauses?|hesitates?|looks?|stares?|walks?|steps?|moves?|leans?|reaches?|touches?|hugs?|kisses?|waves?|sits?|stands?|turns?|rolls? (?:my|their|his|her) eyes|[a-z]+ing\b)/i;
     const escapedName = String(companionName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    let cleaned = String(text || '')
+    let cleaned = VHConversationEngine.stripPrivateChannels(text)
         // Remove explicit RP actions while retaining ordinary emphasis:
         // "*really*?" becomes "really?", but "*smiles*" disappears.
         .replace(/\*([^*\n]{1,140})\*/g, (match, inner) =>
@@ -37481,7 +38949,6 @@ function sanitizeCompanionTextReply(text, companionName = '') {
 
 function repairCompanionProtocolLeaks(messages, companionName = '') {
     const source = Array.isArray(messages) ? messages : [];
-    const protocolPattern = /uncensored[_-]?tool[_-]?call|<\/?tool[_-]?call|<\/?arg[_-]?(?:key|value)>|\b(?:commit_?human_?turn|commithumanturn|companion_?state)\s*\(|\b(?:valence_?change|relationship_?change|memory_?write|life_?state)\s*=/i;
     const groups = new Map();
     source.forEach((message, index) => {
         if (message?.role !== 'companion' || message.type !== 'text') return;
@@ -37492,20 +38959,31 @@ function repairCompanionProtocolLeaks(messages, companionName = '') {
     const replacements = new Map();
     groups.forEach(entries => {
         const combined = entries.map(entry => String(entry.message.text || '')).join('\n');
-        if (!protocolPattern.test(combined)) return;
+        if (!companionProtocolLeakDetected(combined)) return;
         const embedded = extractCompanionEmbeddedToolCalls(combined);
         const cleaned = sanitizeCompanionTextReply(quarantineCompanionProtocolText(embedded.visibleText), companionName);
         const bubbles = splitCompanionReplyIntoBubbles(cleaned);
         const base = entries[0].message;
-        replacements.set(entries[0].index, bubbles.map((text, bubbleIndex) => normalizeCompanionMessage({
+        const repaired = bubbles.map((text, bubbleIndex) => normalizeCompanionMessage({
             ...base,
             id: bubbleIndex ? livingId('vh_message', `${base.id}|protocol-repair|${bubbleIndex}`) : base.id,
             text,
+            generationError: '',
+            protocolLeak: false,
             timestamp: base.timestamp + bubbleIndex * 400,
             links: bubbleIndex ? [] : base.links,
             turnSnapshot: bubbleIndex ? null : base.turnSnapshot,
             turnAudit: bubbleIndex ? null : base.turnAudit
-        })));
+        }));
+        // Retain the pre-turn snapshot when the response was private protocol
+        // only. That makes the failed turn directly regenerable from the UI.
+        if (!repaired.length) repaired.push(normalizeCompanionMessage({
+            ...base,
+            text: '', links: [], pending: false,
+            generationError: 'Private model protocol was blocked before it reached the conversation.',
+            protocolLeak: true
+        }));
+        replacements.set(entries[0].index, repaired);
         entries.slice(1).forEach(entry => replacements.set(entry.index, []));
     });
     return source.flatMap((message, index) => replacements.has(index) ? replacements.get(index) : [message]);
@@ -37515,6 +38993,7 @@ async function repairCompanionTurnCommit(companion, promptMessages, visibleReply
     try {
         const textProvider = companionTextProviderId(companion);
         const recoverVisibleOnly = options.recoverVisible === true && options.preserveCommit === true;
+        const commitTool = options.observer ? COMPANION_OBSERVER_COMMIT_TOOL : COMPANION_TURN_COMMIT_TOOL;
         const repairMessages = [
             ...promptMessages,
             { role: 'assistant', content: visibleReply || '[No visible text; the response may consist only of media.]' },
@@ -37523,23 +39002,47 @@ async function repairCompanionTurnCommit(companion, promptMessages, visibleReply
                 content: recoverVisibleOnly
                     ? `[VISIBLE REPLY RECOVERY — PRIVATE INSTRUCTION, NOT A PLAYER MESSAGE]
 The private commit_human_turn receipt was recorded successfully, but the completion contained no player-visible reply or deliverable media. Return only one clean, natural reply to the player's latest actual message. Do not call tools, output JSON, mention this recovery, add timing headers, or expose engine language.`
-                    : `[PRIVATE SIMULATION RECEIPT REPAIR — DO NOT WRITE ANOTHER VISIBLE MESSAGE]
+                    : options.observer
+                        ? `[PRIVATE STATE OBSERVATION — DO NOT WRITE A VISIBLE MESSAGE]
+Call commit_human_turn once for the exchange above. Record only the smallest evidence-backed changes. Routine conversation should normally create no durable memory, event, belief, intention, boundary or relationship jump. Claims are not facts and plans are not completed events.`
+                        : `[PRIVATE SIMULATION RECEIPT REPAIR — DO NOT WRITE ANOTHER VISIBLE MESSAGE]
 Call commit_human_turn once for the response immediately above. Preserve what it actually did. Explicitly decide photo, voice_note and video_clip; use video_clip=none unless the player explicitly sent a [CLIP REQUEST id]. Report the emotional state change. Do not invent media that the visible response did not agree to send. Choose one conversation_goal. Keep profile claims, direct statements and observed patterns distinct. Add no unsupported relationship jump, secret, boundary event or milestone.`
             }
         ];
-        const body = applyCompanionGenerationConfig({
-            model: companion.model || state.globalSettings.defaultModel,
+        let body = applyCompanionGenerationConfig({
+            model: options.model || companion.observerModel || companion.model || state.globalSettings.defaultModel,
             messages: sanitizeMessagesForProvider(repairMessages, textProvider),
             ...(recoverVisibleOnly ? {} : {
-                tools: [COMPANION_TURN_COMMIT_TOOL],
+                tools: [commitTool],
                 tool_choice: { type: 'function', function: { name: 'commit_human_turn' } }
             })
         }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
-        const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
+        body = VHConversationEngine.fitRequest(body, { contextSize: companionRequestContextSize(companion, body.model), tailMessages: 3 }).body;
+        let response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
             body: JSON.stringify(body)
         }, companion, true);
+        // Some otherwise-useful local servers implement JSON mode but reject
+        // OpenAI tool_choice. Retry the private observer as schema-guided JSON;
+        // this never changes or delays the already-visible human reply.
+        if (!response.ok && options.observer && !recoverVisibleOnly) {
+            const jsonMessages = [...repairMessages, {
+                role: 'user',
+                content: `Your server does not support forced tool calls. Return only one JSON object matching this schema:\n${JSON.stringify(commitTool.function.parameters)}`
+            }];
+            let jsonBody = applyCompanionGenerationConfig({
+                model: options.model || companion.observerModel || companion.model || state.globalSettings.defaultModel,
+                messages: sanitizeMessagesForProvider(jsonMessages, textProvider),
+                response_format: { type: 'json_object' }
+            }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
+            jsonBody = VHConversationEngine.fitRequest(jsonBody, { contextSize: companionRequestContextSize(companion, jsonBody.model), tailMessages: 4 }).body;
+            response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
+                body: JSON.stringify(jsonBody)
+            }, companion, true);
+        }
         if (!response.ok) return null;
         const message = (await response.json())?.choices?.[0]?.message || {};
         const embedded = extractCompanionEmbeddedToolCalls(message.content);
@@ -37561,7 +39064,163 @@ Call commit_human_turn once for the response immediately above. Preserve what it
     }
 }
 
-function applyCompanionAgencyCommit(companion, rawAgency, nowMs, sourceMessageIds = []) {
+const companionObserverQueues = new Map();
+
+function companionObserverPrompt(companion, messages, nowMs, sourceMessageIds, responseGroupId, relevantMemoryIds) {
+    const packet = buildCompanionContextPacket(companion, messages, nowMs, {
+        experience: companionChatExperience(companion.id),
+        query: messages.filter(message => sourceMessageIds.includes(message.id))
+            .map(message => message.text || message.mediaDescription || '').join('\n'),
+        relevantMemoryIds
+    });
+    const observed = messages.filter(message => sourceMessageIds.includes(message.id)).map(message => {
+        let content = `[player message ${message.id}] ${message.text || ''}`;
+        if (message.type === 'photo') {
+            const parts = [{ type: 'text', text: `[player image ${message.id}] ${message.text || message.mediaDescription || 'Inspect the attached image.'}` }];
+            if (message.photo && companionObserverInputSupports(companion, 'image')) {
+                parts.push({ type: 'image_url', image_url: { url: message.photo } });
+            }
+            content = parts;
+        } else if (message.type === 'voice') {
+            const parts = [{ type: 'text', text: `[player voice note ${message.id}] ${message.text || message.mediaDescription || 'Listen to the attached voice note.'}` }];
+            const match = String(message.audio || '').match(/^data:audio\/[^;]+;base64,(.+)$/);
+            if (match && companionObserverInputSupports(companion, 'audio')) {
+                parts.push({ type: 'input_audio', input_audio: { data: match[1], format: message.audioFormat || 'webm' } });
+            }
+            content = parts;
+        }
+        return { role: 'user', content };
+    });
+    return [{
+        role: 'system',
+        content: `You are the private State Observer for a persistent simulated person. You never speak to the player. Inspect only the supplied exchange and propose the smallest evidence-backed state transaction. Transient feelings and durable memories are different: ordinary conversation can change warmth, amusement, irritation, activation or attraction without earning a lasting memory. Assess the actual meaning, relationship, preferences and boundaries; a zero reaction is valid when warranted. Never reward flattery automatically. If immediate affect is already committed, preserve it and enrich only durable understanding. Claims stay claims; an inference is never promoted to fact. Do not manufacture secrets, trauma, milestones, life events or intentions for narrative interest. A plan is not a completed event. Every update must be attributable to the supplied source messages and response group ${responseGroupId}.\n\nSTATE BEFORE EXCHANGE (revision ${packet.stateRevision}):\n${companionContextPacketText(packet)}`
+    }, ...observed];
+}
+
+function sanitizeCompanionObserverCommit(companion, commit, nowMs) {
+    if (!isPlainObject(commit)) return null;
+    const cleaned = safeJsonClone(commit);
+    cleaned.photo = { decision: 'none' };
+    cleaned.voice_note = { decision: 'none' };
+    cleaned.video_clip = { decision: 'none' };
+    cleaned.social_post = { decision: 'none' };
+    // Observing a conversation does not execute travel or rewrite the schedule.
+    delete cleaned.life_state;
+    delete cleaned.life_event;
+    if (!isPlainObject(cleaned.state)) { delete cleaned.state; return cleaned; }
+    if (!companionSexualSystemActive(companion)) {
+        ['desire_change', 'sexual_arousal_change', 'sexual_frustration_change', 'sexual_cooldown_minutes']
+            .forEach(field => { cleaned.state[field] = 0; });
+        cleaned.state.intimacy_outcome = 'none';
+    }
+    if (Number(cleaned.state.intoxication_change) > 0 && !companionAlcoholContext(companion, nowMs)) {
+        cleaned.state.intoxication_change = 0;
+    }
+    return cleaned;
+}
+
+function scheduleCompanionTurnObservation(companion, messages, visibleReply, details = {}) {
+    if (!companion?.separatedCognition) return Promise.resolve(null);
+    const companionId = companion.id;
+    const responseGroupId = String(details.responseGroupId || '');
+    const sourceMessageIds = (details.sourceMessageIds || []).map(String).slice(-20);
+    const prior = companionObserverQueues.get(companionId) || Promise.resolve();
+    const task = prior.catch(() => null).then(async () => {
+        const liveCompanion = getCompanion(companionId);
+        const timeline = liveCompanion && getActiveCompanionTimeline(companionId);
+        if (!liveCompanion || !timeline || timeline.id !== details.timelineId) return null;
+        const liveMessages = timeline.messages || messages;
+        if (!liveMessages.some(message => message.responseGroupId === responseGroupId && !message.invalidated)) return null;
+        const first = liveMessages.find(message => message.responseGroupId === responseGroupId && !message.invalidated);
+        if (first?.turnAudit?.observerStatus === 'committed') return null;
+        if (first?.turnAudit) first.turnAudit.observerAttempts = (Number(first.turnAudit.observerAttempts) || 0) + 1;
+        const ownerRuntime = liveCompanion.continuityRuntime;
+        const baseRevision = companionContinuity(liveCompanion).revision || 0;
+        const transcript = JSON.stringify(liveMessages.map(message => [message.id, message.text, message.invalidated, message.responseGroupId]));
+        const stillOwned = () => getCompanion(companionId) === liveCompanion
+            && getActiveCompanionTimeline(companionId) === timeline
+            && timeline.messages === liveMessages
+            && liveCompanion.continuityRuntime === ownerRuntime
+            && (companionContinuity(liveCompanion).revision || 0) === baseRevision
+            && JSON.stringify(liveMessages.map(message => [message.id, message.text, message.invalidated, message.responseGroupId])) === transcript;
+        const rejectStale = async () => {
+            if (first?.turnAudit) {
+                first.turnAudit.observerStatus = 'rejected_stale';
+                first.turnAudit.observerRetryAt = !first.invalidated && getActiveCompanionTimeline(companionId) === timeline
+                    && first.turnAudit.observerAttempts < 2 ? Date.now() + 15000 : 0;
+                first.turnAudit.observerSources = sourceMessageIds;
+            }
+            await saveState();
+            return null;
+        };
+        await refreshCompanionObserverCapabilities(liveCompanion);
+        if (!stillOwned()) return rejectStale();
+        const prompt = companionObserverPrompt(liveCompanion, liveMessages, details.nowMs || Date.now(),
+            sourceMessageIds, responseGroupId, details.relevantMemoryIds);
+        if (first?.turnAudit?.affectStatus === 'committed') prompt.push({ role: 'system',
+            content: 'Immediate emotional state was already committed with this reply. Return zero state deltas; enrich only evidence-backed memory and conversational understanding.' });
+        const observed = await repairCompanionTurnCommit(liveCompanion, prompt, visibleReply, {
+            model: liveCompanion.observerModel || liveCompanion.lifeBuilderModel || liveCompanion.model,
+            observer: true
+        });
+        if (!observed?.commit) throw new Error('State Observer returned no valid transaction.');
+        if (!stillOwned()) return rejectStale();
+        const committedAt = Math.max(Date.now(), details.nowMs || 0);
+        const commit = sanitizeCompanionObserverCommit(liveCompanion, observed.commit, details.nowMs || Date.now());
+        if (!commit) return null;
+        // The foreground receipt owns affect. The observer must not count it twice.
+        const newerReply = liveMessages.some(message => message.role === 'companion' && !message.invalidated
+            && message.responseGroupId !== responseGroupId && Number(message.timestamp) > Number(first?.timestamp));
+        if (first?.turnAudit?.affectStatus === 'committed' || newerReply) delete commit.state;
+        const observerHasAffect = !!commit.state && VHConversationEngine.hasAffect(observed.commit.state);
+        if (observerHasAffect) applyCompanionMoodUpdate(liveCompanion, commit.state, committedAt);
+        if (commit.state?.conversation) {
+            const runtime = companionContinuity(liveCompanion);
+            runtime.conversation = VHConversationEngine.receive(runtime.conversation, commit.state.conversation,
+                liveMessages.filter(message => sourceMessageIds.includes(message.id)), committedAt);
+            VHWorldEngine.acknowledge(liveCompanion,commit.state.conversation.followThrough,visibleReply,committedAt);
+            VHWorldEngine.consent(liveCompanion,commit.state.conversation.giftConsent,liveMessages.filter(message=>sourceMessageIds.includes(message.id)),committedAt);
+            VHConversationEngine.enactChoice(liveCompanion, commit.state.conversation.choice, liveMessages.filter(message=>sourceMessageIds.includes(message.id)), committedAt, companionSituationAt(liveCompanion,committedAt), VHActivityEngine);
+        }
+        applyCompanionTurnCommit(liveCompanion, commit, committedAt,
+            details.initiative ? 'autonomy' : 'observer', sourceMessageIds, responseGroupId);
+        const continuity = companionContinuity(liveCompanion);
+        continuity.revision = Math.max(0, Number(continuity.revision) || 0) + 1;
+        if (first?.turnAudit) {
+            if (observerHasAffect) first.turnAudit.affectStatus = 'committed';
+            else if (first.turnAudit.affectStatus !== 'committed') first.turnAudit.affectStatus = 'unavailable';
+            first.turnAudit.observerStatus = 'committed';
+            first.turnAudit.observerRetryAt = 0;
+            first.turnAudit.observerModel = liveCompanion.observerModel || liveCompanion.lifeBuilderModel || liveCompanion.model || '';
+            first.turnAudit.observerBaseRevision = baseRevision;
+            first.turnAudit.observerCommittedRevision = continuity.revision;
+        }
+        persistCompanionRuntime(liveCompanion);
+        await saveState();
+        if (state.activeCompanionId === companionId && state.view === 'companionChat') renderCompanionThread();
+        // Further async enrichment must have its own transaction ownership; it
+        // cannot mutate this live runtime after the observer has released it.
+        return commit;
+    }).catch(async error => {
+        const liveCompanion = getCompanion(companionId);
+        const liveMessages = liveCompanion && getActiveCompanionTimeline(companionId)?.id === details.timelineId
+            ? getCompanionThread(companionId) : [];
+        const first = liveMessages.find(message => message.responseGroupId === responseGroupId);
+        if (first?.turnAudit) {
+            first.turnAudit.observerStatus = 'failed';
+            first.turnAudit.observerError = String(error?.message || error).slice(0, 300);
+        }
+        console.warn('Virtual Human State Observer failed:', error);
+        try { await saveState(); } catch (saveError) { /* foreground reply remains valid */ }
+        return null;
+    }).finally(() => {
+        if (companionObserverQueues.get(companionId) === task) companionObserverQueues.delete(companionId);
+    });
+    companionObserverQueues.set(companionId, task);
+    return task;
+}
+
+function applyCompanionAgencyCommit(companion, rawAgency, nowMs, sourceMessageIds = [], sourceResponseGroupId = '') {
     const agency = isPlainObject(rawAgency) ? rawAgency : {};
     const runtime = companionContinuity(companion);
     const perceived = String(agency.perceived_event || '').trim().slice(0, 700);
@@ -37593,6 +39252,7 @@ function applyCompanionAgencyCommit(companion, rawAgency, nowMs, sourceMessageId
         interpretation,
         certainty: agency.confidence,
         sourceMessageIds,
+        sourceResponseGroupId,
         createdAt: nowMs,
         perceivedAt: nowMs,
         dedupeKey: sourceMessageIds.length ? `decision:${sourceMessageIds.join(',')}:${nowMs}` : ''
@@ -37654,9 +39314,9 @@ function applyCompanionAgencyCommit(companion, rawAgency, nowMs, sourceMessageId
     runtime.milestones = runtime.milestones.slice(-120);
 }
 
-function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn', sourceMessageIds = []) {
+function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn', sourceMessageIds = [], sourceResponseGroupId = '') {
     if (!isPlainObject(commit)) return;
-    applyCompanionAgencyCommit(companion, commit.agency, nowMs, sourceMessageIds);
+    applyCompanionAgencyCommit(companion, commit.agency, nowMs, sourceMessageIds, sourceResponseGroupId);
     if (sourceMessageIds.length) companionRecordMilestone(companion, {
         type: 'first_message', summary: `First active exchange between ${companion.name} and the player.`
     }, nowMs);
@@ -37681,6 +39341,32 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn', sou
             relationshipImpact: Number(commit.state?.relationship_change) || 0,
             emotionalTone: String(commit.state?.mood_label || ''), createdAt: nowMs
         }, nowMs);
+    }
+    [
+        ['memory_write', 'observation', 'observed_behavior', 65],
+        ['relationship_event', 'milestone', 'observed_behavior', 78],
+        ['life_event', 'milestone', 'companion_statement', 68]
+    ].forEach(([field, kind, memorySource, weight]) => {
+        const text = String(commit[field] || '').trim();
+        if (!text) return;
+        upsertCompanionMemory(companion, {
+            text: text.slice(0, 500), kind, weight, source: memorySource,
+            subject: field === 'life_event' ? companion.id : 'relationship',
+            sourceMessageIds, certainty: field === 'memory_write' ? 82 : 100,
+            createdAt: nowMs, updatedAt: nowMs
+        });
+    });
+    const mediaMemory = String(commit.player_media_memory || '').trim().slice(0, 600);
+    if (mediaMemory && sourceMessageIds.length) {
+        const thread = getCompanionThread(companion.id);
+        const mediaMessages = thread.filter(message => sourceMessageIds.includes(message.id)
+            && ['photo', 'voice'].includes(message.type));
+        mediaMessages.forEach(message => { message.mediaDescription = mediaMemory; });
+        if (mediaMessages.length) upsertCompanionMemory(companion, {
+            text: mediaMemory, kind: 'observation', source: 'observed_media', subject: 'player',
+            certainty: 92, sourceMessageIds: mediaMessages.map(message => message.id),
+            weight: 52, createdAt: nowMs, updatedAt: nowMs
+        });
     }
     if (isPlainObject(commit.life_state)) {
         if (String(commit.life_state.outfit || '').trim()) {
@@ -37714,6 +39400,14 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn', sou
         const action = raw?.action;
         if (action === 'create' && String(raw.text || '').trim()) {
             const dueMinutes = livingClamp(Number(raw.due_in_minutes) || 0, 0, 60 * 24 * 90);
+            const semanticText = String(raw.text).trim().toLowerCase().replace(/\s+/g, ' ');
+            const duplicate = companion.commitments.find(item => item.status === 'pending'
+                && item.medium === raw.medium
+                && String(item.text || '').trim().toLowerCase().replace(/\s+/g, ' ') === semanticText);
+            if (duplicate) {
+                if (dueMinutes) duplicate.dueAt = nowMs + dueMinutes * 60 * 1000;
+                return;
+            }
             companion.commitments.push(normalizeCompanionCommitment({
                 text: raw.text,
                 medium: raw.medium,
@@ -37739,11 +39433,14 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn', sou
     });
     if (commit.photo?.decision === 'postpone' && Number(commit.photo.due_in_minutes) > 0) {
         const text = String(commit.photo.reason || 'Send the promised photo').trim();
-        companion.commitments.push(normalizeCompanionCommitment({
-            text, medium: 'photo',
-            dueAt: nowMs + livingClamp(Number(commit.photo.due_in_minutes), 1, 60 * 24 * 30) * 60 * 1000,
-            createdAt: nowMs
-        }));
+        if (!companion.commitments.some(item => item.status === 'pending' && item.medium === 'photo'
+            && String(item.text).trim().toLowerCase() === text.toLowerCase())) {
+            companion.commitments.push(normalizeCompanionCommitment({
+                text, medium: 'photo',
+                dueAt: nowMs + livingClamp(Number(commit.photo.due_in_minutes), 1, 60 * 24 * 30) * 60 * 1000,
+                createdAt: nowMs
+            }));
+        }
     }
     const fulfillOldest = medium => {
         const pending = companion.commitments.find(item => item.status === 'pending' && item.medium === medium);
@@ -37762,7 +39459,7 @@ function applyCompanionTurnCommit(companion, commit, nowMs, source = 'turn', sou
     }
     companion.commitments = companion.commitments.slice(-100);
     if (String(commit.persona_visual_memory || '').trim()) {
-        const activePersona = state.personas.find(persona => persona.id === state.activePersonaId);
+        const activePersona = companionActivePersona(companion);
         if (activePersona?.avatar) {
             companion.personaVisualMemory = {
                 personaId: activePersona.id,
@@ -38078,6 +39775,23 @@ function showCompanionClipRequestModal(companion) {
  * instead of needing a second call.
  */
 async function sendCompanionMessage(companion, messages, userText, nowMs = Date.now(), options = {}) {
+    if (!VHWorldEngine.connected(companion)) throw new Error('Messaging unlocks after the connection request is accepted.');
+    if (companionReplyInFlight.has(companion.id)) throw new Error('A reply is already being generated for this human.');
+    const replyTimeline = getActiveCompanionTimeline(companion.id);
+    assertCompanionReplyTarget(companion, replyTimeline, messages);
+    // A durable response may already exist if a later observer/UI step failed.
+    // Reuse its response group instead of charging for and publishing a duplicate.
+    const completedGroup = options.responseGroupId ? messages.filter(message =>
+        message.role === 'companion' && !message.invalidated
+        && message.responseGroupId === options.responseGroupId) : [];
+    if (completedGroup.length) {
+        (options.replyBatch || []).forEach(message => { message.awaitingReply = false; message.replyDueAt = 0;
+            if (message.attention) message.attention.stage = 'answered'; });
+        return { replyMessages: completedGroup,
+            pendingPhoto: completedGroup.find(message => message.type === 'photo' && message.pending) || null };
+    }
+    companionReplyInFlight.add(companion.id);
+    try {
     const textProvider = companionTextProviderId(companion);
     const experience = normalizeCompanionChatExperience(options.experience || companionChatExperience(companion.id));
     const userMessage = options.initiative
@@ -38096,12 +39810,16 @@ async function sendCompanionMessage(companion, messages, userText, nowMs = Date.
     // OpenRouter's native web-search tool is not part of the OpenAI-compatible
     // contract used by GPTProto or local servers. All ordinary function tools
     // remain available everywhere.
-    const tools = companionToolsFor(companion, textProvider !== 'openrouter');
+    const separatedCognition = companion.separatedCognition !== false;
+    const tools = companionToolsFor(companion, textProvider !== 'openrouter', separatedCognition);
     const pendingPersonaVision = !options.initiative ? companionPendingPersonaVision(companion) : null;
     const startingScenarioThisTurn = !options.initiative
         ? companionConsumeStartingScenario(companion, userMessage, nowMs) : '';
     const cognitionRuntime = companionContinuity(companion);
-    const labsSocial = !options.initiative && userText ? await labsProposal('social_signal', {
+    // The separated pipeline keeps the foreground path to one model call.
+    // Optional classifiers belong after the visible response; waiting for
+    // them here recreated the sluggishness this architecture is meant to fix.
+    const labsSocial = !separatedCognition && !options.initiative && userText ? await labsProposal('social_signal', {
         message: String(userText).slice(0, 1800),
         text: String(userText).slice(0, 1800),
         relationshipContext: `Virtual Human: ${companion.name}; relationship ${companion.mood?.relationship ?? 'unspecified'}; mood ${companion.mood?.label || 'unspecified'}; channel ${options.channel || 'text'}; connection ${companion.connectionType || 'stranger'}; motive ${companion.initialMotive || 'unspecified'}`,
@@ -38117,14 +39835,19 @@ async function sendCompanionMessage(companion, messages, userText, nowMs = Date.
         const memoryQuery = options.initiative
             ? String(options.initiativeReason || 'Evaluate a grounded proactive contact.').slice(0, 1200)
             : String(userText || userMessage?.text || '').slice(0, 1200);
-        const memoryResult = await labsProposal('memory_relevance', {
-            text: memoryQuery,
-            currentMessage: memoryQuery,
-            allowedMemoryIds: companion.memory.longTerm.map(entry => entry.id),
-            memories: companion.memory.longTerm.slice(0, 60).map(entry => ({ id: entry.id, text: entry.text }))
-        }, 'humans', { priority: 115 });
-        if (memoryResult?.candidate && Number(memoryResult.candidate.confidence) >= 0.65) {
-            relevantMemoryIds = memoryResult.candidate.memoryIds;
+        if (separatedCognition) {
+            relevantMemoryIds = companionRelevantMemories(companion, memoryQuery, null, nowMs, 10)
+                .map(memory => memory.id);
+        } else {
+            const memoryResult = await labsProposal('memory_relevance', {
+                text: memoryQuery,
+                currentMessage: memoryQuery,
+                allowedMemoryIds: companion.memory.longTerm.map(entry => entry.id),
+                memories: companion.memory.longTerm.slice(0, 60).map(entry => ({ id: entry.id, text: entry.text }))
+            }, 'humans', { priority: 115 });
+            if (memoryResult?.candidate && Number(memoryResult.candidate.confidence) >= 0.65) {
+                relevantMemoryIds = memoryResult.candidate.memoryIds;
+            }
         }
     }
     const promptMessages = buildCompanionMessages(companion, messages, nowMs, {
@@ -38132,7 +39855,9 @@ async function sendCompanionMessage(companion, messages, userText, nowMs = Date.
         initiative: options.initiative === true,
         localCognition: labsSocial,
         startingScenarioThisTurn,
-        relevantMemoryIds
+        relevantMemoryIds,
+        performanceOnly: separatedCognition,
+        query: userText || userMessage?.text || options.initiativeReason || ''
     });
     if (options.initiative) {
         const initiativeReason = String(options.initiativeReason || '').trim();
@@ -38143,12 +39868,15 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         });
     }
 
-    const body = applyCompanionGenerationConfig({
+    let body = applyCompanionGenerationConfig({
         model: companion.model || state.globalSettings.defaultModel,
         messages: sanitizeMessagesForProvider(promptMessages, textProvider),
         tools,
         tool_choice: 'auto'
     }, companion, { maxTokens: companionProviderOutputBudget(companion) });
+    const fitted = VHConversationEngine.fitRequest(body, { contextSize: companionRequestContextSize(companion),
+        compactSystem: companionCompactPrompt(companion, messages, nowMs, { ...options, experience, startingScenarioThisTurn }) });
+    body = fitted.body;
     if (companion.webAccess && textProvider === 'openrouter') body.max_tool_calls = 4;
     const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
@@ -38160,13 +39888,19 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         throw new Error(humanizeApiError(new Error(errText || `Request failed (${response.status})`)));
     }
     const choice = (await response.json())?.choices?.[0] || {};
-    const embeddedTools = extractCompanionEmbeddedToolCalls(choice.message?.content);
+    if (choice.finish_reason === 'length') {
+        showToast('The model reached its output limit; this reply may be incomplete. Increase Max output tokens in VH Studio → Model settings.', 'warning');
+    }
+    const rawReplyContent = String(choice.message?.content || '');
+    const protocolLeakBlocked = companionProtocolLeakDetected(rawReplyContent);
+    const embeddedTools = extractCompanionEmbeddedToolCalls(rawReplyContent);
     let replyText = companionVisibleReplyLimit(sanitizeCompanionTextReply(
         quarantineCompanionProtocolText(embeddedTools.visibleText), companion.name), companion);
     let actions = extractCompanionToolCalls([
         ...(Array.isArray(choice.message?.tool_calls) ? choice.message.tool_calls : []),
         ...embeddedTools.toolCalls
     ]);
+    let foregroundAffect = VHConversationEngine.hasAffect(actions.state) || VHConversationEngine.hasAffect(actions.commit?.state);
     let commitSource = actions.commit ? 'commit_human_turn' : '';
     if (!actions.commit && (actions.state || actions.photo || actions.voice)) {
         actions.commit = {
@@ -38180,10 +39914,11 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         };
         commitSource = 'legacy_tools';
     }
-    if (!actions.commit) {
+    if (!actions.commit && !separatedCognition) {
         const repaired = await repairCompanionTurnCommit(companion, promptMessages, replyText);
         if (repaired?.commit) {
             actions = repaired;
+            foregroundAffect = VHConversationEngine.hasAffect(actions.state) || VHConversationEngine.hasAffect(actions.commit?.state);
             if (!replyText && repaired.visibleReply) replyText = repaired.visibleReply;
             commitSource = 'repair';
         }
@@ -38199,7 +39934,7 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
             video_clip: { decision: 'none' }
         };
         actions.state = actions.commit.state;
-        commitSource = 'frozen_no_receipt';
+        commitSource = separatedCognition ? 'observer_pending' : 'frozen_no_receipt';
     }
     const annotationCanDeliver = (Array.isArray(choice.message?.annotations) ? choice.message.annotations : [])
         .some(annotation => annotation?.type === 'url_citation'
@@ -38285,12 +40020,20 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         throw new Error('The conversation model returned no visible reply or deliverable media.');
     }
 
+    assertCompanionReplyTarget(companion, replyTimeline, messages);
+    if (options.validUntil && Date.now() >= options.validUntil) {
+        throw new Error('This departure message is no longer timely; the activity has already changed.');
+    }
     const lastCompanionAt = messages.reduce((latest, message) =>
         message.role === 'companion' && !message.invalidated ? Math.max(latest, Number(message.timestamp) || 0) : latest, 0);
     const sourceMessageIds = messages.filter(message => message.role === 'user' && !message.invalidated
         && Number(message.timestamp) >= lastCompanionAt
         && (!experience.realTimeLife || (Number(message.readAt || 0) > 0 && Number(message.readAt) <= nowMs)))
         .map(message => message.id).slice(-20);
+    if (actions.state?.conversation_goal) actions.commit.agency = {
+        conversation_goal: actions.state.conversation_goal, decision: 'Continue the conversation', confidence: 100
+    };
+    if (Array.isArray(actions.state?.commitments)) actions.commit.commitments = actions.state.commitments;
     if (!isPlainObject(actions.commit.agency)) {
         const perceivedMessages = messages.filter(message => sourceMessageIds.includes(message.id));
         actions.commit.agency = {
@@ -38308,8 +40051,19 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
             }
         };
     }
-    if (actions.state) applyCompanionMoodUpdate(companion, actions.state, nowMs);
-    applyCompanionTurnCommit(companion, actions.commit, nowMs, options.initiative ? 'autonomy' : 'turn', sourceMessageIds);
+    if (actions.state && (!separatedCognition || foregroundAffect)) applyCompanionMoodUpdate(companion, actions.state, nowMs);
+    // Media actions must be committed immediately so a photo/voice/clip request
+    // can enter its pending UI state. Deeper cognition is observed after the
+    // visible reply and never blocks it.
+    const immediateCommit = separatedCognition ? {
+        photo: actions.commit.photo || { decision: 'none' },
+        voice_note: actions.commit.voice_note || { decision: 'none' },
+        video_clip: actions.commit.video_clip || { decision: 'none' },
+        commitments: actions.commit.commitments || [],
+        ...(actions.state?.conversation_goal ? { agency: actions.commit.agency } : {})
+    } : actions.commit;
+    applyCompanionTurnCommit(companion, immediateCommit, nowMs,
+        options.initiative ? 'autonomy' : 'turn', sourceMessageIds, responseGroupId);
     if (pendingPersonaVision && companion.personaVisualMemory?.avatarFingerprint !== pendingPersonaVision.fingerprint) {
         companion.personaVisualMemory = {
             personaId: pendingPersonaVision.persona.id,
@@ -38324,21 +40078,25 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         userMessage.mediaDescription = String(actions.commit?.player_media_memory || '').trim().slice(0, 600)
             || (userMessage.type === 'photo' ? 'A photo the player shared.' : 'A voice note the player shared.');
     }
-    [
-        ['memory_write', 'fact'],
-        ['relationship_event', 'milestone'],
-        ['life_event', 'milestone']
-    ].forEach(([field, kind]) => {
-        const text = String(actions.commit?.[field] || '').trim();
-        if (!text) return;
-        companion.memory.longTerm.push(normalizeCompanionMemoryEntry({
-            text: text.slice(0, 500), kind, weight: field === 'relationship_event' ? 75 : 60,
-            createdAt: nowMs
-        }));
-    });
-    companion.memory.longTerm = companion.memory.longTerm.slice(-200);
+    if (foregroundAffect && actions.state?.activity_goal && companion.lifeRuntime?.activities) {
+        VHActivityEngine.addGoal(companion.lifeRuntime.activities, actions.state.activity_goal.kind,
+            `turn-goal:${responseGroupId}`, nowMs, String(actions.state.activity_goal.label || '').slice(0, 150));
+    }
+    if (actions.state?.conversation) {
+        const continuity = companionContinuity(companion);
+        continuity.conversation = VHConversationEngine.receive(continuity.conversation, actions.state.conversation,
+            messages.filter(message => sourceMessageIds.includes(message.id)), nowMs);
+        VHWorldEngine.acknowledge(companion,actions.state.conversation.followThrough,replyText,nowMs);
+        VHWorldEngine.consent(companion,actions.state.conversation.giftConsent,messages.filter(message=>sourceMessageIds.includes(message.id)),nowMs);
+        VHConversationEngine.enactChoice(companion, actions.state.conversation.choice, messages.filter(message=>sourceMessageIds.includes(message.id)), nowMs, companionSituationAt(companion,nowMs), VHActivityEngine);
+    }
     const turnAudit = {
+        contextBudget: fitted.audit,
+        finishReason: String(choice.finish_reason || 'unknown'),
+        outputTruncated: choice.finish_reason === 'length',
+        dialogueQuality: VHConversationEngine.assessDialogue(replyText, messages, nowMs),
         source: commitSource,
+        protocolLeakBlocked,
         photoDecision: actions.commit?.photo?.decision || (actions.photo ? 'send' : 'none'),
         photoReason: String(actions.commit?.photo?.reason || '').slice(0, 240),
         voiceDecision: actions.commit?.voice_note?.decision || (actions.voice ? 'send' : 'none'),
@@ -38351,6 +40109,8 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         rejectedActions,
         committedAt: nowMs
     };
+    turnAudit.affectStatus = foregroundAffect ? 'committed' : 'pending';
+    if (separatedCognition) turnAudit.observerStatus = 'pending';
 
     const newMessages = splitCompanionReplyIntoBubbles(replyText, experience.replyBursts).map((bubble, index) =>
         normalizeCompanionMessage({
@@ -38389,6 +40149,7 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
         pendingPhoto = normalizeCompanionMessage({
             role: 'companion', type: 'photo', text: String(actions.photo.caption || '').trim(),
             scene: String(actions.photo.scene).trim(), pending: true,
+            photoContext:companionPhotoSnapshot(companion,String(actions.photo.scene),nowMs+(newMessages.length+1)*400),
             captureType: String(actions.photo.capture_type || 'auto'),
             photographer: String(actions.photo.photographer || '').trim(),
             timestamp: nowMs + (newMessages.length + 1) * 400, moodLabel: companion.mood.label,
@@ -38400,10 +40161,31 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
     }
 
     newMessages.forEach(m => messages.push(m));
+    // Complete the durable inbox claim together with the visible response.
+    // Any snapshot before this point retains a retryable pending message.
+    (options.replyBatch || (userMessage ? [userMessage] : [])).forEach(message => {
+        message.awaitingReply = false;
+        message.replyDueAt = 0;
+        if (message.attention) message.attention.stage = 'answered';
+    });
+    companionContinuity(companion).lastExchangeAt = nowMs;
+    companionContinuity(companion).revision += 1;
     companion.usage.textTurns += 1;
     consolidateCompanionMemory(companion, messages);
-    await applyCompanionLabsMemoryGate(companion, userMessage, newMessages, nowMs);
-    return { userMessage, replyMessages: newMessages, mood: companion.mood, pendingPhoto, pendingSocialPhoto };
+    persistCompanionRuntime(companion);
+    if (state.activeCompanionId === companion.id && state.view === 'companionChat') renderCompanionThread();
+    const timeline = getActiveCompanionTimeline(companion.id);
+    const observation = separatedCognition
+        ? scheduleCompanionTurnObservation(companion, messages, replyText, {
+            timelineId: timeline?.id || '', responseGroupId, sourceMessageIds,
+            relevantMemoryIds, nowMs, initiative: options.initiative === true,
+            baseRevision: companionContinuity(companion).revision || 0
+        })
+        : applyCompanionLabsMemoryGate(companion, userMessage, newMessages, nowMs);
+    return { userMessage, replyMessages: newMessages, mood: companion.mood, pendingPhoto, pendingSocialPhoto, observation };
+    } finally {
+        companionReplyInFlight.delete(companion.id);
+    }
 }
 
 /** Tolerant JSON parse for a tool-call payload that came back slightly malformed. */
@@ -38954,7 +40736,7 @@ const COMPANION_PHOTO_CAPTURE_TYPES = Object.freeze([
 function companionPhotoCapturePlan(companion, sceneDescription, atMs = Date.now(), options = {}) {
     const scene = String(sceneDescription || '');
     const lower = scene.toLowerCase();
-    const situation = companionSituationAt(companion, atMs);
+    const situation = options.historicalPhoto ? {placeLabel:scene,withNames:[],outfit:'',environment:null} : companionSituationAt(companion, atMs);
     const policy = normalizeCompanionPhotoCapturePolicy(companion.photoCapturePolicy);
     const withNames = (Array.isArray(situation.withNames) ? situation.withNames : [])
         .map(name => String(name).trim()).filter(Boolean);
@@ -39048,34 +40830,228 @@ function companionPhotoCapturePlan(companion, sceneDescription, atMs = Date.now(
         : 'The subject is alone and no mirror or timer was established.');
 }
 
+function companionPhotoLocationReference(companion, scene, options = {}) {
+    if(options.includeReference===false||options.locationReferenceOnly)return null;
+    const locations=[...(companion.lifeProfile?.places||[]),...(companion.photoLocations||[])].filter(p=>p.photo&&!p.referenceDisabled);
+    if(options.photoLocationId)return locations.find(p=>p.id===options.photoLocationId)||null;
+    const present=options.photoContext||(!options.historicalPhoto?companionSituationAt(companion,Number(options.atMs)||Date.now()):{});
+    const words=' '+String(scene||'').toLowerCase().replace(/[^a-z0-9]+/g,' ')+' ';
+    const matches=locations.filter(p=>{
+        if(!options.historicalPhoto&&p.parentPlaceId&&present.placeId&&p.parentPlaceId!==present.placeId&&p.id!==present.placeId)return false;
+        return [p.label,p.referenceRole,...String(p.referenceAliases||'').split(',')].filter(Boolean).some(label=>{const text=String(label).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();return text&&words.includes(' '+text+' ');});
+    });
+    if(matches.length===1)return matches[0];
+    return locations.find(p=>p.id===present.placeId)||null;
+}
+function companionPhotoSnapshot(companion,scene,atMs){
+    const situation=companionSituationAt(companion,atMs),room=companionPhotoLocationReference(companion,scene,{atMs});
+    return {atMs,placeId:situation.placeId||'',placeLabel:situation.placeLabel||companion.currentLocationDetail||'',outfit:situation.outfit||companion.currentOutfit||'',roomId:room?.id||'',garmentIds:[...(companion.lifeRuntime?.world?.outfit?.ids||[])],environment:situation.environment||{},withNames:situation.withNames||[],scene:String(scene||''),style:companion.photoStyle,direction:companion.photoDirection||'',personality:companion.personality||''};
+}
+function companionPhotoPrevious(messages,context,minutes=90){
+    if(!context.placeId&&!context.placeLabel)return null;
+    return [...(messages||[])].reverse().find(m=>m.role==='companion'&&m.type==='photo'&&m.photo&&!m.invalidated&&m.photoContext&&m.timestamp<context.atMs&&context.atMs-m.timestamp<=minutes*60000
+        &&!(m.photoContext.environment?.isDay!=null&&context.environment?.isDay!=null&&m.photoContext.environment.isDay!==context.environment.isDay)&&m.photoContext.placeId===context.placeId&&m.photoContext.placeLabel===context.placeLabel&&m.photoContext.roomId===context.roomId&&m.photoContext.outfit===context.outfit)||null;
+}
+function companionPhotoReferences(companion,scene,options={}){
+    if(options.includeReference===false||options.locationReferenceOnly)return [];
+    const room=companionPhotoLocationReference(companion,scene,{...options,photoLocationId:options.photoContext?.roomId||options.photoLocationId});
+    const ids=options.photoContext?.garmentIds||companion.lifeRuntime?.world?.outfit?.ids||[];
+    const garments=companion.lifeProfile?.world?.closet.mode==='items'&&!options.historicalPhoto?ids.map(id=>companion.lifeProfile.world.items.find(i=>i.id===id)?.photo).filter(Boolean):[];
+    return [...new Set([companion.basePhoto,options.previousPhoto?.photo,room?.photo,...garments].filter(Boolean))];
+}
+
+function companionGarmentVisionRequest(vision,photo,settings,openrouterKey){
+    const remote=vision.provider==='openrouter',model=String((remote?vision.openrouterModel:vision.localModel)||'').trim();
+    if(!photo)throw Error('Upload an item photo first.');
+    if(!model)throw Error('Choose or enter a vision-capable model first.');
+    const base=remote?'https://openrouter.ai/api/v1':normalizeOpenAICompatibleBase(settings.localBaseUrl,'http://127.0.0.1:11434/v1');
+    if(!remote&&!['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname))throw Error('Local vision tagging requires a localhost endpoint.');
+    const key=remote?String(openrouterKey||'').trim():settings.localApiKey;
+    if(remote&&!key)throw Error('Add your OpenRouter API key in Settings first.');
+    return {url:base+'/chat/completions',options:{method:'POST',headers:{'Content-Type':'application/json',...(key?{Authorization:`Bearer ${key}`}:{})},body:JSON.stringify({model,max_tokens:400,messages:[{role:'user',content:[{type:'text',text:'Classify only this garment. Return JSON with category (top,bottom,dress,outerwear,underwear,shoes,accessory), tags (array of everyday use/style tags), warmth (0-5). No prose.'},{type:'image_url',image_url:{url:photo}}]}]})}};
+}
+
+function companionOpeningContactDue(companion,messages,now){
+ const frame=companion.lifeProfile?.world?.frame;if(frame?.openerMode!=='vh_first'||companion.initiativeMode==='off'||!VHWorldEngine.connected(companion)||companion.continuityRuntime?.originScenarioConsumedAt||messages.some(m=>!m.invalidated&&['user','companion'].includes(m.role)))return false;
+ const r=VHWorldEngine.ensure(companion);if(!r.openingAt)r.openingAt=now+(frame.openingDelayMinutes??1)*60000;return now>=r.openingAt;
+}
+function renderCompanionWorldSystems(companion) {
+    const panel=document.getElementById('cs-world-systems'); if(!panel)return;
+    const expanded=new Set([...panel.querySelectorAll('details[open]')].map(el=>el.querySelector('summary')?.textContent));
+    const p=companion.lifeProfile.world=VHWorldEngine.config(companion.lifeProfile.world),r=VHWorldEngine.ensure(companion);
+    const field=(path,label,type='text',options=null)=>{const [group,key]=path.split('.'),v=p[group][key];return `<label class="form-label">${escapeHTML(label)}${options?`<select class="form-select" data-world-field="${path}">${options.map(o=>`<option value="${o}" ${v===o?'selected':''}>${o}</option>`).join('')}</select>`:type==='checkbox'?`<input type="checkbox" data-world-field="${path}" ${v?'checked':''}>`:`<input class="form-input" type="${type}" data-world-field="${path}" value="${escapeHTML(Array.isArray(v)?v.join(', '):String(v))}">`}</label>`;};
+    panel.innerHTML=`<h3>Connected life systems</h3><p class="form-hint">These settings govern simulated actions. Money and deliveries are fictional. Changes save on this character; inventory, journeys and connection state belong to each timeline.</p>
+    <details class="form-section"><summary>Transport & consequences</summary>${field('transport.enabled','Enable persistent journeys','checkbox')}${field('transport.liveRouting','Use selected provider at departure (API usage)','checkbox')}${['car','bicycle','transit','rideshare'].map(k=>field('transport.'+k,'Access to '+k,'checkbox')).join('')}${field('transport.preferredMode','Usual transport','text',['WALK','DRIVE','BICYCLE','TRANSIT','RIDESHARE'])}${field('transport.habitWeight','Transport habit strength','number')}${field('transport.weatherWeight','Avoid outdoor travel in bad weather','number')}${field('transport.fatigueWeight','Avoid physical travel when tired','number')}${field('transport.costWeight','Travel cost sensitivity','number')}${field('transport.budget','Starting travel wallet (new timelines)','number')}${field('transport.lateStress','Stress per minute late','number')}${field('transport.fatiguePerMinute','Travel fatigue per minute','number')}${field('transport.delayChance','Delay probability (0–1)','number')}${field('transport.maxDelay','Maximum delay minutes','number')}<p>Current simulated wallet: ${Number(r.balance??p.transport.budget).toFixed(2)}</p><p>Author routes and costs in Edit active life → Recurring places. An unavailable or unaffordable route can cause a missed commitment.</p><button type="button" class="btn btn-ghost" data-world-delay>Pause current journey for 5 minutes</button><div data-world-status></div></details>
+    <details class="form-section"><summary>Gift permissions & preferences</summary>${field('gifts.enabled','Accept gift offers','checkbox')}${field('gifts.mailAllowed','Initial permission for mailed gifts','checkbox')}${field('gifts.cashAllowed','Initial permission for simulated cash','checkbox')}${field('gifts.minTrust','Minimum trust','number')}${field('gifts.maxValue','Maximum accepted gift value','number')}${field('gifts.playerBudget','Starting player gift wallet (new timelines)','number')}${field('gifts.openingMinutes','Time to open a collected gift (minutes)','number')}${field('gifts.pressureSensitivity','Sensitivity to excessive gifts (0–1)','number')}${field('gifts.deliveryHours','Delivery hours','number')}${field('gifts.likes','Liked tags (comma separated)')}${field('gifts.dislikes','Disliked tags (comma separated)')}<p>Permission can also be granted in a conversation. Gift offers still respect the value and trust requirements.</p></details>
+    <details class="form-section"><summary>Closet & inventory</summary>${field('closet.mode','Wardrobe mode','text',['presets','items'])}${field('closet.style','Preferred style tags')}${field('closet.laundryHours','Start laundry after garments are dirty for (hours)','number')}${field('closet.laundryMinutes','Laundry cycle minutes','number')}<p>Items support multiple tags: casual, fitness, lounge, work, cozy, cute. A complete outfit needs a dress or a top and bottom. Uploaded images stay attached to their items.</p>
+    <div>${p.items.map(i=>`<div class="form-section" data-world-item="${escapeHTML(i.id)}"><input class="form-input" data-item-field="name" value="${escapeHTML(i.name)}" aria-label="Item name"><select class="form-select" data-item-field="category" aria-label="Category">${VHWorldEngine.categories.map(k=>`<option ${k===i.category?'selected':''}>${k}</option>`).join('')}</select><input class="form-input" data-item-field="tags" value="${escapeHTML(i.tags.join(', '))}" aria-label="Item tags" placeholder="Comma-separated tags"><label>Warmth 0–5<input class="form-input" type="number" min="0" max="5" data-item-field="warmth" value="${i.warmth}"></label><label><input type="checkbox" data-item-field="owned" ${i.owned?'checked':''}>Owned at start (off = gift catalogue)</label><input class="form-input" data-item-field="incompatible" value="${escapeHTML(i.incompatible.join(', '))}" placeholder="Incompatible item IDs" aria-label="Incompatible items"><small>Item ID: ${escapeHTML(i.id)}</small>${i.photo?`<img src="${escapeHTML(i.photo)}" alt="${escapeHTML(i.name)}" style="max-width:120px;max-height:120px">`:''}<input type="file" accept="image/*" data-item-upload aria-label="Upload garment photo"><button type="button" class="btn btn-ghost" data-item-tag>Suggest garment tags</button><button type="button" class="btn btn-ghost" data-item-try>Try on & preview photo</button><button type="button" class="btn btn-ghost" data-item-remove>Remove item</button><div data-item-status></div></div>`).join('')}</div>
+    <button type="button" class="btn btn-ghost" data-item-add>Add closet / gift item</button><label>Vision provider<select class="form-select" data-vision-provider><option value="local" ${p.vision.provider==='local'?'selected':''}>Local</option><option value="openrouter" ${p.vision.provider==='openrouter'?'selected':''}>OpenRouter</option></select></label><label>Vision model<input class="form-input" data-vision-model list="vh-garment-vision-models" value="${escapeHTML(p.vision.provider==='openrouter'?p.vision.openrouterModel:p.vision.localModel)}" placeholder="${p.vision.provider==='openrouter'?'provider/model-id':'Model loaded in your local server'}"></label><datalist id="vh-garment-vision-models"></datalist><button type="button" class="btn btn-ghost" data-vision-models ${p.vision.provider==='openrouter'?'':'hidden'}>Load OpenRouter vision models</button><p data-vision-status class="form-hint">${p.vision.provider==='openrouter'?'Uses your saved OpenRouter key. Clicking Suggest garment tags sends this item photo to the selected model and may use credits.':'Uses your local server URL and an image-capable model. No cloud fallback.'} Model choices are saved separately for each provider. Suggestions remain editable.</p><div data-outfit-preview></div></details>
+    <details class="form-section"><summary>Adaptation & follow-through</summary>${field('adaptation.enabled','Reconsider disrupted plans','checkbox')}${field('adaptation.retryMinutes','Reconsider after (minutes)','number')}${field('adaptation.followupHours','Keep conversational follow-ups relevant (hours)','number')}${field('adaptation.socialRestMinutes','Supporting people rest duration (minutes)','number')}${field('adaptation.socialRecoveryEnergy','Supporting people rest below energy','number')}<p>Missed commitments stay missed. Recovery creates a new activity instead of inventing completion.</p></details>
+    <details class="form-section"><summary>Supporting-person LLM activity</summary>${field('socialAgent.enabled','Enable scheduled LLM batches (provider usage)','checkbox')}${field('socialAgent.model','Model ID (blank uses this VH’s model)')}${field('socialAgent.intervalHours','Hours between planning calls','number')}${field('socialAgent.maxEvents','Maximum proposed events per batch','number')}<p>Uses this VH’s text provider while Horde is open. Plans delayed messages and comments on public posts; the engine validates them before delivery.</p><p>${escapeHTML(r.socialError||'')}</p></details>
+    <details class="form-section"><summary>Supporting people’s routines</summary><p>Encounters require shared place and time. These are ordinary activities, not invented conversations.</p>${p.people.map((n,i)=>`<div data-npc-row="${i}"><select class="form-select" data-npc="personId">${companion.lifeProfile.socialCircle.map(person=>`<option value="${escapeHTML(person.id)}" ${person.id===n.personId?'selected':''}>${escapeHTML(person.name)}</option>`).join('')}</select><select class="form-select" data-npc="placeId">${companion.lifeProfile.places.map(place=>`<option value="${escapeHTML(place.id)}" ${place.id===n.placeId?'selected':''}>${escapeHTML(place.label)}</option>`).join('')}</select><input class="form-input" data-npc="days" value="${n.days.join(',')}" aria-label="Weekdays 0 Sunday through 6 Saturday"><input class="form-input" type="number" data-npc="start" value="${n.start}" aria-label="Start minute"><input class="form-input" type="number" data-npc="end" value="${n.end}" aria-label="End minute"><input class="form-input" data-npc="activity" value="${escapeHTML(n.activity)}" placeholder="Activity"><input class="form-input" data-npc="goal" value="${escapeHTML(n.goal||'')}" placeholder="Continuing personal task"><input type="number" class="form-input" data-npc="goalMinutes" value="${n.goalMinutes||60}" aria-label="Personal task effort minutes"><input class="form-input" data-npc="mood" value="${escapeHTML(n.mood)}" placeholder="Ordinary mood"><button class="btn btn-ghost" type="button" data-npc-remove>Remove routine</button></div>`).join('')}<button class="btn btn-ghost" type="button" data-npc-add>Add supporting routine</button></details>
+    <details class="form-section"><summary>Communication setting</summary>${field('frame.mode','App framing','text',['direct','dating','private_social','public_social'])}${field('frame.acceptRequests','Open to new connection requests','checkbox')}${field('frame.openerMode','Who starts the conversation','text',['player_first','vh_first'])}${field('frame.openingDelayMinutes','First contact delay (minutes)','number')}${field('frame.openerScenario','Reason or scenario for approaching the player')}${field('frame.minComfort','Minimum relationship comfort for connection','number')}${field('frame.requestMinutes','Typical request review minutes','number')}<p>Dating requires a match. A private social profile requires an accepted request before messaging. Direct and public messaging are open.</p></details>`;
+    const save=async()=>{p.voice=companion.lifeProfile.world.voice;companion.lifeProfile.world=VHWorldEngine.config(p);await saveState();};
+    panel.querySelector('[data-vision-provider]').onchange=async e=>{const input=panel.querySelector('[data-vision-model]');p.vision[p.vision.provider==='openrouter'?'openrouterModel':'localModel']=input.value.trim();p.vision.provider=e.target.value;input.value=p.vision.provider==='openrouter'?p.vision.openrouterModel:p.vision.localModel;input.disabled=true;e.target.disabled=true;await save();renderCompanionWorldSystems(companion);};
+    panel.querySelector('[data-vision-model]').onchange=async e=>{p.vision[p.vision.provider==='openrouter'?'openrouterModel':'localModel']=e.target.value.trim();await save();};
+    panel.querySelector('[data-vision-models]').onclick=async function(){this.disabled=true;const output=panel.querySelector('[data-vision-status]');try{
+        const response=await fetch('https://openrouter.ai/api/v1/models',{signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error(`Model list failed (${response.status}).`);
+        const data=await response.json(),models=(data.data||[]).filter(m=>m.architecture?.input_modalities?.includes('image')&&m.architecture?.output_modalities?.includes('text'));
+        if(!this.isConnected)return;
+        panel.querySelector('#vh-garment-vision-models').innerHTML=models.map(m=>`<option value="${escapeHTML(m.id)}">${escapeHTML(m.name||m.id)}</option>`).join('');output.textContent=`${models.length} image-capable models loaded. Type in Vision model to search. Tagging sends this photo to OpenRouter and may use credits.`;
+    }catch(error){output.textContent=error.message+' You can also enter a model ID manually.';}finally{this.disabled=false;}};
+    panel.querySelectorAll('[data-world-field]').forEach(input=>{input.onchange=async()=>{const [group,key]=input.dataset.worldField.split('.');p[group][key]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;await save();};});
+    panel.querySelector('[data-world-delay]').onclick=async()=>{try{VHWorldEngine.interrupt(companion,Date.now(),5);await saveState();panel.querySelector('[data-world-status]').textContent='Journey paused; arrival has moved back by five minutes.';}catch(e){panel.querySelector('[data-world-status]').textContent=e.message;}};
+    panel.querySelector('[data-item-add]').onclick=async function(){if(p.items.length>=150)return;this.disabled=true;this.textContent='Adding item…';p.items.push({id:`garment-${Date.now()}`,name:'New item',category:'top',tags:[],owned:true,warmth:1});await save();renderCompanionWorldSystems(companion);};
+    panel.querySelectorAll('[data-world-item]').forEach(row=>{const item=p.items.find(i=>i.id===row.dataset.worldItem);
+        row.querySelectorAll('[data-item-field]').forEach(input=>{input.onchange=async()=>{item[input.dataset.itemField]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;await save();};});
+        row.querySelector('[data-item-upload]').onchange=async e=>{try{if(!e.target.files[0])return;item.photo=await normalizeUploadedImage(e.target.files[0],1280,0.84);await save();renderCompanionWorldSystems(companion);}catch(error){row.querySelector('[data-item-status]').textContent=error.message;}};
+        row.querySelector('[data-item-remove]').onclick=async()=>{p.items=p.items.filter(i=>i!==item);await save();renderCompanionWorldSystems(companion);};
+        row.querySelector('[data-item-tag]').onclick=async function(){this.disabled=true;const status=row.querySelector('[data-item-status]');try{
+            p.vision[p.vision.provider==='openrouter'?'openrouterModel':'localModel']=panel.querySelector('[data-vision-model]').value.trim();
+            const photo=item.photo,request=companionGarmentVisionRequest(p.vision,photo,state.globalSettings,state.apiKey);
+            await save();status.textContent='Analysing garment…';
+            const response=await fetch(request.url,{...request.options,signal:AbortSignal.timeout(60000)});
+            if(!response.ok)throw Error(`Vision request failed (${response.status}). Check the selected model, key and quota.`);
+            const data=await response.json();if(data.choices?.[0]?.finish_reason==='length')throw Error('Vision response was truncated; no tags were changed. Try another model.');
+            const text=data.choices?.[0]?.message?.content||'';const suggestion=JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g,''));
+            if(!VHWorldEngine.categories.includes(suggestion.category)||!Array.isArray(suggestion.tags)||!suggestion.tags.every(t=>typeof t==='string')||!Number.isFinite(suggestion.warmth)||suggestion.warmth<0||suggestion.warmth>5)throw Error('The model returned invalid garment tags; no changes were applied.');
+            if(item.photo!==photo)throw Error('The item photo changed during analysis. Please try again.');
+            if(!p.items.includes(item)||!row.isConnected)return;item.category=suggestion.category;item.tags=Array.isArray(suggestion.tags)?suggestion.tags:item.tags;item.warmth=suggestion.warmth??item.warmth;await save();renderCompanionWorldSystems(companion);
+        }catch(e){status.textContent=e.message;}finally{this.disabled=false;}};
+        row.querySelector('[data-item-try]').onclick=async function(){this.disabled=true;const status=row.querySelector('[data-item-status]');try{
+            const now=Date.now(),situation=companionSituationAt(companion,now);if(['asleep','private'].includes(situation.availability)||situation.source==='travel'||(companion.lifeProfile.world.transport.enabled&&companion.lifeProfile.places.find(p=>p.id===companion.lifeRuntime.world.placeId)?.kind!=='home'))throw Error('They cannot change clothes right now.');
+            const outfit=VHWorldEngine.chooseOutfit(companion,now,situation,item.id);if(!outfit)throw Error('Enable item wardrobe and add a compatible complete outfit.');companion.currentOutfit=outfit.label;await saveState();
+            const image=await generateCompanionPhoto(companion,`Trying on ${outfit.label} at ${situation.placeLabel}.`);const photo=await loadGeneratedImage(new Image(),image);
+            if(!panel.isConnected)return;const img=document.createElement('img');img.src=photo;img.alt=outfit.label;img.style.maxWidth='320px';panel.querySelector('[data-outfit-preview]').replaceChildren(img);companion.usage.photosGenerated++;await saveState();status.textContent='Outfit applied. Photo preview ready.';
+        }catch(e){status.textContent=e.message;}finally{this.disabled=false;}};
+    });
+    panel.querySelector('[data-npc-add]').onclick=async()=>{if(!companion.lifeProfile.socialCircle.length||!companion.lifeProfile.places.length){showToast('Add a supporting person and recurring place first.','error');return;}p.people.push({personId:companion.lifeProfile.socialCircle[0].id,placeId:companion.lifeProfile.places[0].id,days:[1,2,3,4,5],start:540,end:1020,activity:'working',mood:''});await save();renderCompanionWorldSystems(companion);};
+    panel.querySelectorAll('[data-npc-row]').forEach(row=>{const i=Number(row.dataset.npcRow);row.querySelectorAll('[data-npc]').forEach(input=>{input.onchange=async()=>{p.people[i][input.dataset.npc]=input.dataset.npc==='days'?input.value.split(',').map(Number):input.type==='number'?Number(input.value):input.value;await save();};});row.querySelector('[data-npc-remove]').onclick=async()=>{p.people.splice(i,1);await save();renderCompanionWorldSystems(companion);};});
+    panel.querySelectorAll('details').forEach(el=>{el.open=expanded.has(el.querySelector('summary')?.textContent);});
+    renderCompanionVoiceBuilder(companion);
+}
+function renderCompanionVoiceBuilder(companion){const panel=document.getElementById('cs-voice-builder');if(!panel)return;const voice=companion.lifeProfile.world.voice;
+ panel.innerHTML='<h3>Personal vocabulary & cadence</h3><p>Examples influence voice without becoming repeated catchphrases. Cadence scales phone-check timing; attention still determines whether they can reply.</p>'+Object.entries({vocabulary:'Vocabulary and preferred expressions',fillers:'Filler words and habitual phrasing',affection:'How they express affection',conflict:'How they handle disagreement',punctuation:'Punctuation habits',capitalization:'Capitalization habits',emoji:'Emoji habits',cadence:'Phone-check cadence multiplier (0.25–3)'}).map(([key,label])=>`<label class="form-label">${label}<input class="form-input" data-voice="${key}" type="${key==='cadence'?'number':'text'}" value="${escapeHTML(String(voice[key]))}"></label>`).join('');
+ panel.querySelectorAll('[data-voice]').forEach(input=>{input.onchange=async()=>{companion.lifeProfile.world.voice[input.dataset.voice]=input.type==='number'?Number(input.value):input.value;companion.lifeProfile.world=VHWorldEngine.config(companion.lifeProfile.world);await saveState();};});}
+function renderCompanionLifeActions(companion){
+ const dialog=document.getElementById('cc-gift-dialog'),panel=document.getElementById('cc-life-actions');if(!panel)return;
+ document.getElementById('cc-gift-open').onclick=()=>{renderCompanionLifeActions(companion);if(!dialog.open)dialog.showModal();};document.getElementById('cc-gift-close').onclick=()=>dialog.close();
+ const p=companion.lifeProfile.world,r=VHWorldEngine.ensure(companion),connected=VHWorldEngine.connected(companion),items=p.items.filter(i=>!i.owned&&!r.inventory.includes(i.id));
+ const previousMode=panel.querySelector('[data-gift-delivery]')?.value||'item',previousItem=panel.querySelector('[data-gift-item]')?.value;
+ panel.innerHTML=`<header class="gift-heading"><span class="gift-eyebrow">A little something</span><h2>For ${escapeHTML(companion.name)}</h2><p>Choose something they would love.</p></header>${!connected?`<section class="gift-empty"><h3>${r.connection.state==='pending'?'Request pending':'Connect first'}</h3><p>Gifts become available after ${p.frame.mode==='dating'?'you match':'your request is accepted'}.</p><button class="btn btn-primary" data-connect ${['pending','declined'].includes(r.connection.state)?'disabled':''}>Send connection request</button></section>`:!p.gifts.enabled?'<section class="gift-empty">This character is not accepting gifts.</section>':`
+ <div class="gift-tabs" role="group" aria-label="Gift type"><button type="button" data-gift-mode="item">🎁 Gift</button><button type="button" data-gift-mode="digital">✉ Digital</button><button type="button" data-gift-mode="cash">↗ Send money</button></div>
+ <select hidden data-gift-delivery><option value="item">Mailed gift</option><option value="digital">Digital gift</option><option value="cash">Cash</option></select>
+ <section data-gift-item-label><select hidden data-gift-item>${items.map(i=>`<option value="${escapeHTML(i.id)}">${escapeHTML(i.name)}</option>`).join('')}</select><div class="gift-catalogue">${items.map(i=>`<button type="button" class="gift-tile" data-select-gift="${escapeHTML(i.id)}">${i.photo?`<img src="${escapeHTML(i.photo)}" alt="">`:'<span class="gift-tile-icon">🎁</span>'}<span>${escapeHTML(i.name)}</span></button>`).join('')}${!items.length?'<div class="gift-empty"><h3>Find their next favorite thing</h3><p>Add a photo of your gift to get started.</p></div>':''}</div></section>
+ <label class="gift-upload" data-gift-upload-label>＋ Add a gift photo<input type="file" accept="image/*" data-gift-upload></label>
+ <div class="gift-amount"><label for="gift-value">Amount <span>in-game balance</span></label><input id="gift-value" type="number" min="0" value="10" class="form-input" data-gift-value><small>Available: ${Number(r.playerBalance??p.gifts.playerBudget).toLocaleString(undefined,{maximumFractionDigits:2})}</small></div>
+ <p class="gift-permission" data-gift-permission></p><button type="button" class="btn btn-primary gift-submit" data-offer-gift>Offer gift</button><p class="gift-footnote">In-game gifts and money. Nothing is charged or shipped.</p>`}
+ <div data-gift-status role="status"></div>${r.gifts.length?`<section class="gift-history"><h3>Recent gifts</h3>${r.gifts.slice(-5).reverse().map(g=>`<div><span>${escapeHTML(g.label)}</span><span>${escapeHTML(g.status)}</span></div>`).join('')}</section>`:''}`;
+ const modeInput=panel.querySelector('[data-gift-delivery]'),itemInput=panel.querySelector('[data-gift-item]');if(modeInput)modeInput.value=previousMode;if(itemInput&&items.some(i=>i.id===previousItem))itemInput.value=previousItem;
+ const update=()=>{if(!modeInput)return;const mode=modeInput.value,item=items.find(i=>i.id===itemInput.value),allowed=mode==='cash'?(r.cashConsent??p.gifts.cashAllowed):mode==='item'?(r.mailConsent??p.gifts.mailAllowed):true;
+ panel.querySelector('[data-gift-item-label]').hidden=mode==='cash';panel.querySelector('[data-gift-upload-label]').hidden=mode==='cash';panel.querySelectorAll('[data-gift-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.giftMode===mode)));panel.querySelectorAll('[data-select-gift]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.selectGift===itemInput.value)));
+ panel.querySelector('[data-gift-permission]').textContent=allowed?(mode==='cash'?'They accept money transfers.':mode==='item'?'They have shared permission to receive mailed gifts.':'Delivered digitally.'):(mode==='cash'?'They have not agreed to receive money yet.':'Ask them in chat before mailing a gift.');const button=panel.querySelector('[data-offer-gift]');button.disabled=!allowed||(mode!=='cash'&&!item);button.textContent=mode==='cash'?'Send money':item?`Offer ${item.name}`:'Choose a gift';};
+ panel.querySelectorAll('[data-gift-mode]').forEach(b=>b.onclick=()=>{modeInput.value=b.dataset.giftMode;update();});panel.querySelectorAll('[data-select-gift]').forEach(b=>b.onclick=()=>{itemInput.value=b.dataset.selectGift;update();});modeInput?.addEventListener('change',update);itemInput?.addEventListener('change',update);update();
+ panel.querySelector('[data-connect]')?.addEventListener('click',async()=>{VHWorldEngine.requestConnection(companion,Date.now());await saveState();renderCompanionLifeActions(companion);});
+ panel.querySelector('[data-offer-gift]')?.addEventListener('click',async e=>{const button=e.currentTarget;button.disabled=true;try{VHWorldEngine.offerGift(companion,{id:`gift-${Date.now()}`,kind:modeInput.value,itemId:itemInput.value,value:Number(panel.querySelector('[data-gift-value]').value)},Date.now());advanceCompanionWorld(companion,Date.now());await saveState();renderCompanionLifeActions(companion);}catch(error){panel.querySelector('[data-gift-status]').textContent=error.message;update();}});
+ panel.querySelector('[data-gift-upload]')?.addEventListener('change',async e=>{try{const file=e.target.files[0];if(!file)return;if(p.items.length>=150)throw Error('Item catalogue is full.');panel.querySelector('[data-gift-status]').textContent='Adding your gift…';const photo=await normalizeUploadedImage(file,1280,0.84);const id=`gift-item-${Date.now()}`;p.items.push({id,name:file.name.replace(/\.[^.]+$/,''),category:'accessory',tags:[],warmth:1,owned:false,photo,incompatible:[]});await saveState();renderCompanionLifeActions(companion);const select=panel.querySelector('[data-gift-item]');select.value=id;select.dispatchEvent(new Event('change'));}catch(error){panel.querySelector('[data-gift-status]').textContent=error.message;}});
+}
+
+function renderCompanionPhotoLocations(companion) {
+    const list = document.getElementById('cs-photo-locations');
+    if (!list) return;
+    list.innerHTML = (companion.lifeProfile.places || []).filter(place=>!place.referenceDisabled).map(place => `<div class="form-section place-reference-card" data-photo-location="${escapeHTML(place.id)}">
+        <header class="place-reference-heading"><span>📍</span><div><h3>${escapeHTML(place.label)}</h3><small>Linked recurring location · rename in Places</small></div></header>
+        <label>Fixed room / place role<select class="form-select" data-place-role><option value="">None</option>${['bedroom','bathroom','kitchen','living room','home exterior','gym','work','campus'].map(role=>`<option ${place.referenceRole===role?'selected':''}>${role}</option>`).join('')}</select></label>
+        <label>Inside / linked to<select class="form-select" data-place-parent><option value="">This is a standalone place</option>${companion.lifeProfile.places.filter(p=>p.id!==place.id).map(p=>`<option value="${escapeHTML(p.id)}" ${place.parentPlaceId===p.id?'selected':''}>${escapeHTML(p.label)}</option>`).join('')}</select></label>
+        <input class="form-input" data-place-aliases value="${escapeHTML(place.referenceAliases||'')}" placeholder="Aliases, separated by commas">
+        <textarea class="form-textarea" data-place-description placeholder="Room layout, materials, furniture and permanent details">${escapeHTML(place.referenceDescription)}</textarea>
+        ${place.photo ? `<img src="${escapeHTML(place.photo)}" alt="${escapeHTML(place.label)} reference" style="max-width:180px;max-height:120px">` : ''}
+        <button type="button" class="btn btn-ghost" data-place-upload>Upload reference</button>
+        <input type="file" accept="image/*" hidden data-place-file>
+        <button type="button" class="btn btn-ghost" data-place-generate>Generate reference</button>
+        <button type="button" class="btn btn-ghost" data-place-remove>Remove reference card</button><span class="form-hint" data-place-status></span>
+    </div>`).join('');
+    list.querySelectorAll('[data-photo-location]').forEach(card => {
+        const livePlace=()=>companion.lifeProfile.places.find(item=>item.id===card.dataset.photoLocation);
+        let place=livePlace(), referenceOperation=0;
+        for(const [selector,key] of [['[data-place-role]','referenceRole'],['[data-place-parent]','parentPlaceId'],['[data-place-aliases]','referenceAliases']])card.querySelector(selector).onchange=async e=>{const current=livePlace();if(current){current[key]=e.target.value;await saveState();}};
+        card.querySelector('[data-place-description]').oninput = e => { livePlace().referenceDescription = e.target.value.slice(0,1500); };
+        const upload = card.querySelector('[data-place-file]');
+        card.querySelector('[data-place-upload]').onclick = () => upload.click();
+        upload.onchange = async () => {
+            if (!upload.files[0]) return;
+            const operation=++referenceOperation;
+            try { const photo=await normalizeUploadedImage(upload.files[0],1280,0.84);place=livePlace();if(!place||operation!==referenceOperation)return;place.referenceDisabled=false;place.photo=photo; await saveState(); renderCompanionPhotoLocations(companion); }
+            catch (error) { card.querySelector('[data-place-status]').textContent = error.message; }
+        };
+        card.querySelector('[data-place-generate]').onclick = async e => {
+            place=livePlace();
+            if (!place.referenceDescription.trim()) { card.querySelector('[data-place-status]').textContent = 'Describe the place first.'; return; }
+            const operation=++referenceOperation;place.referenceDisabled=false;e.target.disabled = true;
+            try {
+                card.querySelector('[data-place-status]').textContent = 'Generating place reference…';
+                const image = await generateCompanionPhoto(companion, `${place.label}: ${place.referenceDescription}`, {includeReference:false,locationReferenceOnly:true});
+                const photo = await loadGeneratedImage(new Image(),image);
+                place=livePlace();if(!place||place.referenceDisabled||operation!==referenceOperation)return;
+                place.photo = photo; companion.usage.photosGenerated += 1; await saveState(); renderCompanionPhotoLocations(companion);
+            } catch (error) { card.querySelector('[data-place-status]').textContent = error.message; }
+            finally { e.target.disabled = false; }
+        };
+        card.querySelector('[data-place-remove]').onclick = async () => { referenceOperation++;place=livePlace();if(!place)return;place.photo='';place.referenceDisabled=true;companion.photoLocations=(companion.photoLocations||[]).filter(p=>p.id!==place.id&&`${String(p.id).slice(0,65)}_reference`!==place.id);await saveState();renderCompanionPhotoLocations(companion); };
+    });
+    const add=document.getElementById('cs-photo-location-add');
+    let picker=document.getElementById('cs-photo-location-picker');if(!picker){picker=document.createElement('select');picker.id='cs-photo-location-picker';picker.className='form-select';picker.setAttribute('aria-label','Saved location for reference');add.before(picker);}
+    const available=companion.lifeProfile.places.filter(p=>p.referenceDisabled);
+    picker.innerHTML='<option value="">Choose a saved location…</option>'+available.map(p=>`<option value="${escapeHTML(p.id)}">${escapeHTML(p.label)}</option>`).join('');
+    add.textContent='Link location reference';add.disabled=!available.length;
+    picker.hidden=!available.length;add.title=available.length?'':'Add a recurring location in Places first. Every current location already has a reference card.';
+    add.onclick=async()=>{const place=companion.lifeProfile.places.find(p=>p.id===picker.value);if(!place)return;place.referenceDisabled=false;await saveState();renderCompanionPhotoLocations(companion);};
+}
+
 function buildCompanionPhotoPrompt(companion, sceneDescription, options = {}) {
-    const style = COMPANION_PHOTO_STYLES[normalizeCompanionPhotoStyle(companion.photoStyle)];
+    const style = COMPANION_PHOTO_STYLES[normalizeCompanionPhotoStyle(options.photoContext?.style||companion.photoStyle)];
     const atMs = Number(options.atMs) || Date.now();
     const capture = companionPhotoCapturePlan(companion, sceneDescription, atMs, options);
-    const situation = capture.situation;
+    const situation = options.photoContext ? {...capture.situation,...options.photoContext} : capture.situation;
     const environment = companionWeatherLabel(situation.environment);
-    const hasReference = options.hasReference !== false;
-    const subject = companion.appearance
-        || (hasReference
-            ? 'the adult person in the identity reference image'
-            : 'an adult matching this virtual human; no identity reference is available, so create a consistent natural-looking person');
-    return `Create an image sent by this virtual human during a private chat.
+    if (options.locationReferenceOnly) return `Photograph of a place, with no people. ${sceneDescription}. Preserve the described room layout, architecture, furniture and materials. Natural available light. No captions, labels, diagrams or text overlays.`;
+    const hasReference = !!companion.basePhoto && options.hasReference !== false;
+    const age = Number(companion.age);
+    const ageText = Number.isFinite(age) && age >= 18 ? `${Math.round(age)} years old` : 'adult (exact age unspecified)';
+    const subject = hasReference
+        ? `${ageText}. Use the identity reference for the same face, body shape, proportions and distinguishing features. Do not redesign or idealize the person based on incidental scene wording.`
+        : `${ageText}. ${companion.appearance || 'A natural-looking adult person'}`;
+    let scene = String(sceneDescription || '').trim().replace(/[.]+$/, '');
+    for (const look of companion.lifeProfile?.wardrobe || []) {
+        if (look.id && look.items) scene = scene.replaceAll(look.id, look.items);
+    }
+    const locationReference = companionPhotoLocationReference(companion, sceneDescription, {...options,photoLocationId:options.photoContext?.roomId||options.photoLocationId});
+    const continuity = options.previousPhoto ? 'Same photographic moment as the attached previous image: preserve its exact outfit, accessories, room, lighting and time of day. Visual evidence in that image wins over conflicting clothing or setting words in this follow-up request.' : options.historicalPhoto
+        ? 'This is an earlier photograph. Use the requested scene for its place, clothing and lighting; do not substitute the present-day schedule or weather.'
+        : `Current setting: ${situation.outfit ? `wearing ${situation.outfit}` : companion.currentOutfit ? `wearing ${companion.currentOutfit}` : 'outfit not otherwise established'}; ${situation.placeLabel || companion.currentLocationDetail || companion.locationLabel || 'specific surroundings not otherwise established'}${environment ? `; local conditions are ${environment}` : ''}.
+People present: ${situation.withNames?.length ? situation.withNames.join(', ') : 'no additional people established'}.
+Keep the established setting, clothing and time of day. Do not add an unseen friend or photographer.`;
+    return `A personal photograph shared in a conversation.
 
-Subject: ${subject}.
-Scene: ${sceneDescription}.
-Authoritative current continuity: ${situation.outfit ? `wearing ${situation.outfit}` : companion.currentOutfit ? `wearing ${companion.currentOutfit}` : 'outfit not otherwise established'}; ${situation.placeLabel || companion.currentLocationDetail || companion.locationLabel || 'specific surroundings not otherwise established'}${environment ? `; local conditions are ${environment}` : ''}.
-People actually present: ${situation.withNames?.length ? situation.withNames.join(', ') : 'none established'}.
-Do not silently relocate, restyle, redress or change the time of day to make a prettier image. If the requested scene conflicts with this situation, treat the current situation as ground truth. Never invent an unseen friend, photographer or group.
+Subject: ${subject}
+Photographic personality: ${options.photoContext?.personality||companion.personality||'Use the established character'}. Translate personality into expression, posture and framing, without changing appearance or inventing company.
+Personal photo direction: ${options.photoContext?.direction??companion.photoDirection??'Use natural expressions and the established visual treatment.'}
+${options.previousPhoto ? `FOLLOW-UP TO THE PREVIOUS PHOTO (attached after identity, if identity is present): Preserve the exact same garments, including cut, fabric, pattern, accessories and fit; the same room, lighting and time of day. The earlier image is visual ground truth. Change only the requested gesture or framing. Earlier scene: ${options.previousPhoto.scene}. Earlier outfit: ${options.previousPhoto.photoContext?.outfit||'match the attached photo exactly'}. Ignore contradictory outfit or room suggestions in the new scene. Earlier photo direction: ${options.previousPhoto.photoContext?.direction||''}` : ''}
+${companion.photoLargeBreasts === true ? 'Appearance emphasis: large breasts, with natural anatomy and realistic clothing fit. Retain this bust size even when using the identity reference; preserve the rest of the referenced identity and the established outfit.' : ''}
+${options.previousPhoto?'Follow-up gesture/framing request (ignore conflicting outfit or background suggestions)':'Scene'}: ${scene}.
+${continuity}
+${locationReference ? `Place reference (${options.previousPhoto?'attached after the identity and previous photo':companion.basePhoto ? 'second attached image; the first is identity' : 'first attached image'}): ${locationReference.label}. Use the attached place image for its architecture, room layout, furniture and materials, not for the person's identity. ${locationReference.referenceDescription || locationReference.description || ''}` : ''}
+
+${companion.lifeProfile?.world?.closet.mode==='items' && !options.historicalPhoto ? 'Any attached garment references after identity and place show the actual selected outfit pieces. Preserve their cut, color and details; do not treat garment models as identity references.' : ''}
 
 Camera provenance — ${capture.label}:
 ${capture.instruction}
-Reason: ${capture.reason}
 This camera provenance overrides any generic camera-angle wording in the visual style below.
 
 Visual treatment — ${style.label}:
 ${style.appendix}
 
-The result should feel like something this person genuinely chose to send in the conversation. Keep the requested scene clear, the character consistent, and the moment personal and believable.`;
+Keep the scene clear, the person consistent, and the moment believable. Do not render instructions or labels as image text.`;
 }
 
 /**
@@ -39086,29 +41062,28 @@ The result should feel like something this person genuinely chose to send in the
 function buildCompanionImageRequest(companion, sceneDescription, options = {}) {
     const provider = normalizedProviderId(options.providerId || companionImageProviderId(companion));
     const model = companion.imageModel || companionImageModelFallback(provider);
-    const includeReference = !!companion.basePhoto && options.includeReference !== false;
+    const references = companionPhotoReferences(companion, sceneDescription, options);
+    const includeReference = references.length > 0;
+    if (references.length > 1 && (provider === 'fal' || provider === 'gptproto' || (provider === 'nanogpt' && nanoGPTImageReferenceMode(model) !== 'multiple'))) throw new Error('This image route supports one reference only. Choose a multi-reference route to preserve identity and place together.');
     const body = {
         model,
-        prompt: buildCompanionPhotoPrompt(companion, sceneDescription, { ...options, hasReference: includeReference })
+        prompt: buildCompanionPhotoPrompt(companion, sceneDescription, { ...options, hasReference: !!companion.basePhoto && options.includeReference !== false })
     };
     if (includeReference) {
         if (provider === 'fal') {
-            body.imageDataUrl = companion.basePhoto;
+            body.imageDataUrl = references[0];
         } else if (provider === 'nanogpt') {
             // NanoGPT accepts browser-local identity references directly as a
             // data URL. This avoids a public image host and keeps the photo on
             // the user's device until the generation request is submitted.
-            if (nanoGPTImageReferenceMode(model) === 'multiple') body.imageDataUrls = [companion.basePhoto];
-            else body.imageDataUrl = companion.basePhoto;
+            if (nanoGPTImageReferenceMode(model) === 'multiple') body.imageDataUrls = references;
+            else body.imageDataUrl = references[0];
         } else if (provider === 'gptproto') {
             // GPTProto's OpenAI-compatible image endpoint accepts the identity
             // reference as a base64 data string or public URL in `image`.
-            body.image = companion.basePhoto;
+            body.image = references[0];
         } else {
-            body.input_references = [{
-                type: 'image_url',
-                image_url: { url: companion.basePhoto }
-            }];
+            body.input_references = references.map(url => ({type:'image_url',image_url:{url}}));
         }
     }
     return applyCompanionImageParameters(
@@ -39516,14 +41491,23 @@ async function requestCompanionPhoto(body, providerId = state.globalSettings.api
 function companionMcpGenerationArguments(companion, sceneDescription, options = {}) {
     const tool = companionMcpTool(companion);
     if (!tool) throw new Error(`Choose a ${HORDE_MCP_PROVIDERS[companion.imageSource]?.label || 'MCP'} image tool in Photos & Voice.`);
-    const schema = isPlainObject(tool.inputSchema) ? tool.inputSchema : {};
+    const { schema, wrapper } = companionMcpSchema(tool);
     const properties = isPlainObject(schema.properties) ? schema.properties : {};
     const required = new Set(Array.isArray(schema.required) ? schema.required : []);
-    const includeReference = !!companion.basePhoto && options.includeReference !== false;
+    const references = companionPhotoReferences(companion, sceneDescription, options);
+    const includeReference = references.length > 0;
+    const selectedModel = tool._models?.find(model => model.id === (companion.mcpImageArguments?.mode || 'auto'));
+    if (companion.imageSource === 'magnific' && includeReference && selectedModel
+        && (selectedModel.supportsReferences === false || (selectedModel.referenceTypes && !selectedModel.referenceTypes.includes('image')))) {
+        throw new Error(`${selectedModel.name || selectedModel.id} does not accept photo references. Choose an image-reference model or explicitly disable the reference.`);
+    }
+
     const prompt = buildCompanionPhotoPrompt(companion, sceneDescription, {
-        ...options, hasReference: includeReference
+        ...options, hasReference: !!companion.basePhoto && options.includeReference !== false
     });
-    const args = safeJsonClone(isPlainObject(companion.mcpImageArguments) ? companion.mcpImageArguments : {});
+    const saved = isPlainObject(companion.mcpImageArguments) ? companion.mcpImageArguments : {};
+    const args = safeJsonClone(wrapper && isPlainObject(saved[wrapper]) ? saved[wrapper] : saved);
+    for (const key of COMPANION_MCP_REFERENCE_KEYS) delete args[key];
     const promptKey = COMPANION_MCP_PROMPT_KEYS.find(key => properties[key])
         || (Object.keys(properties).length ? '' : 'prompt');
     if (!promptKey) {
@@ -39531,9 +41515,13 @@ function companionMcpGenerationArguments(companion, sceneDescription, options = 
     }
     args[promptKey] = prompt;
     const referenceKey = COMPANION_MCP_REFERENCE_KEYS.find(key => properties[key]);
-    if (includeReference && referenceKey) {
-        const descriptor = properties[referenceKey] || {};
-        args[referenceKey] = descriptor.type === 'array' ? [companion.basePhoto] : companion.basePhoto;
+    if (includeReference && !referenceKey) throw new Error(`${tool.name} does not advertise reference input. Select a reference-capable tool or explicitly disable the reference.`);
+    if (includeReference) {
+        const descriptor = properties[referenceKey];
+        if (references.length > 1 && descriptor.type !== 'array') throw new Error('This tool accepts only one reference. Choose a tool that supports identity and place references together.');
+        if (descriptor.maxItems && references.length > descriptor.maxItems) throw new Error('Too many references for this tool.');
+        const mapped = references.map(value => companionMcpReferenceValue(value, descriptor, referenceKey));
+        args[referenceKey] = descriptor.type === 'array' ? mapped.flat() : mapped[0];
     }
     Object.entries(properties).forEach(([key, descriptor]) => {
         if (args[key] !== undefined || !isPlainObject(descriptor)) return;
@@ -39541,52 +41529,50 @@ function companionMcpGenerationArguments(companion, sceneDescription, options = 
         else if (key === 'action' && descriptor.enum?.includes('create')) args[key] = 'create';
         else if (['type', 'media_type', 'mediaType'].includes(key) && descriptor.enum?.includes('image')) args[key] = 'image';
         else if (['count', 'n', 'limit', 'num_images', 'numImages'].includes(key)) args[key] = 1;
-        else if (required.has(key) && Array.isArray(descriptor.enum) && descriptor.enum.length) {
-            args[key] = safeJsonClone(descriptor.enum[0]);
-        }
+
     });
+    for (const [key, value] of Object.entries(args)) {
+        const descriptor = properties[key];
+        if (!descriptor) { if (schema.additionalProperties !== true) delete args[key]; continue; }
+        if (Array.isArray(descriptor.enum) && !descriptor.enum.includes(value)) throw new Error(`Choose a supported value for ${key}.`);
+        if (['number', 'integer'].includes(descriptor.type) && (!Number.isFinite(value) || (descriptor.type === 'integer' && !Number.isInteger(value))
+            || (descriptor.minimum != null && value < descriptor.minimum) || (descriptor.maximum != null && value > descriptor.maximum))) throw new Error(`Invalid number for ${key}.`);
+    }
     const missing = [...required].filter(key => args[key] === undefined || args[key] === '');
     if (missing.length) {
         throw new Error(`${tool.name} still needs: ${missing.join(', ')}. Configure these fields under the MCP tool.`);
     }
-    return { tool, args, includeReference, referenceKey };
+    return { tool, args: wrapper ? { [wrapper]: args } : args, includeReference, referenceKey };
 }
 
 async function generateCompanionMcpPhoto(companion, sceneDescription, options = {}) {
-    const request = companionMcpGenerationArguments(companion, sceneDescription, options);
-    try {
-        const response = await mcpBridgeRequest(`/providers/${companion.imageSource}/generate`, {
-            method: 'POST',
-            body: { tool: request.tool.name, arguments: request.args },
-            timeoutMs: 330000
-        });
-        if (!response.image) throw new Error('The MCP bridge returned no image.');
-        return response.image;
-    } catch (error) {
-        const referenceRejected = request.includeReference && request.referenceKey
-            && /reference|input image|source image|sensitive|privacy|unsupported image/i.test(String(error.message || error));
-        const mayFallback = referenceRejected
-            && options.fallbackWithoutReference !== false
-            && companion.photoReferenceFallback !== false;
-        if (!mayFallback) throw error;
-        if (typeof options.onReferenceFallback === 'function') options.onReferenceFallback(error);
-        const fallback = companionMcpGenerationArguments(companion, sceneDescription, {
-            ...options, includeReference: false
-        });
-        const response = await mcpBridgeRequest(`/providers/${companion.imageSource}/generate`, {
-            method: 'POST',
-            body: { tool: fallback.tool.name, arguments: fallback.args },
-            timeoutMs: 330000
-        });
-        if (!response.image) throw new Error('The MCP bridge returned no image.');
-        return response.image;
+    companion = safeJsonClone(companion);
+    if (!companionMcpTool(companion)) {
+        const data = await mcpBridgeRequest(`/providers/${companion.imageSource}/tools`, {timeoutMs:45000});
+        const tools = companionMcpImageTools(data.tools);
+        const models = await companionMcpDiscoverModels(companion.imageSource, data.tools || []);
+        tools.forEach(tool => { tool._models = models; });
+        companionMcpToolCatalog[companion.imageSource] = tools;
     }
+    const request = companionMcpGenerationArguments(companion, sceneDescription, options);
+    if (companion.imageSource === 'magnific') {
+        const health = await mcpBridgeRequest('/health', {timeoutMs:10000});
+        if (health.capabilities?.magnificReferenceImport !== 1) {
+            throw new Error('The running local bridge does not have the Magnific import fix. Reopen the Horde Studio launcher from this project, then reload this page. No generation was submitted.');
+        }
+    }
+    const response = await mcpBridgeRequest(`/providers/${companion.imageSource}/generate`, {
+        method: 'POST', body: { tool: request.tool.name, arguments: request.args }, timeoutMs: 330000
+    });
+    if (!response.image) throw new Error('The MCP bridge returned no image.');
+    return response.image;
 }
 
 async function generateCompanionLocalPhoto(companion, sceneDescription, options = {}) {
+    if (companionPhotoReferences(companion, sceneDescription, options).length > (companion.basePhoto ? 1 : 0)) throw new Error('Place or garment references are not supported by this local workflow. Choose a multi-reference image provider.');
     const includeReference = !!companion.basePhoto && options.includeReference !== false;
     const prompt = buildCompanionPhotoPrompt(companion, sceneDescription, {
-        ...options, hasReference: includeReference
+        ...options, hasReference: !!companion.basePhoto && options.includeReference !== false
     });
     const settings = state.globalSettings;
     const comfyProfile = activeComfyWorkflowProfile(settings);
@@ -39668,6 +41654,7 @@ async function generateCompanionPhoto(companion, sceneDescription, options = {})
         return await requestCompanionPhoto(body, imageProvider);
     } catch (error) {
         const mayFallback = (error?.referencePrivacyRejected || error?.referenceTransportRejected)
+            && companionPhotoReferences(companion,sceneDescription,options).length <= (companion.basePhoto?1:0)
             && options.fallbackWithoutReference !== false
             && companion.photoReferenceFallback !== false;
         if (!mayFallback) throw error;
@@ -40550,6 +42537,7 @@ function companionCallPlan(companion, nowMs = Date.now(), rawExperience = null) 
 }
 
 async function requestCompanionCallTurn(companion, chatMessages, callTranscript, nowMs = Date.now(), answering = false) {
+    if(!VHWorldEngine.connected(companion)) throw new Error('Connect before calling.');
     const textProvider = companionTextProviderId(companion);
     const prompt = buildCompanionSystemPrompt(companion, chatMessages, nowMs, {
         channel: 'call',
@@ -41670,8 +43658,14 @@ function collectCompanionLifeEditorValues(editor, life) {
         const place = life.places[Number(row.dataset.lifePlace)];
         if (!place) return;
         place.label = row.querySelector('[data-field="label"]').value.trim();
+        place.googlePlaceId = row.querySelector('[data-field="googlePlaceId"]')?.value.trim() || '';
+        const lon=row.querySelector('[data-field="longitude"]')?.value,lat=row.querySelector('[data-field="latitude"]')?.value;
+        place.mapCoordinates=lon!==''&&lat!==''&&lon!==undefined&&lat!==undefined?[Number(lon),Number(lat)]:null;
+
         place.kind = row.querySelector('[data-field="kind"]').value;
         place.detail = row.querySelector('[data-field="detail"]').value.trim();
+        place.travelMode = row.querySelector('[data-field="travelMode"]')?.value || 'WALK';
+        place.travelOverride = row.querySelector('[data-field="travelOverride"]')?.checked === true;
         place.travelMinutesFromHome = livingClamp(Number(row.querySelector('[data-field="travelMinutesFromHome"]').value) || 0, 0, 360);
     });
     editor.querySelectorAll('[data-life-person]').forEach(row => {
@@ -41685,6 +43679,22 @@ function collectCompanionLifeEditorValues(editor, life) {
         person.tension = livingClamp(Number(row.querySelector('[data-field="tension"]').value) || 0, 0, 100);
         person.influence = livingClamp(Number(row.querySelector('[data-field="influence"]').value) || 0, 0, 100);
         person.knowsPlayer = row.querySelector('[data-field="knowsPlayer"]').checked;
+    });
+    editor.querySelectorAll('[data-life-opportunity]').forEach(row => {
+        const item = life.activityOptions[Number(row.dataset.lifeOpportunity)];
+        if (!item) return;
+        ['label', 'kind', 'participantId', 'reason'].forEach(field => { item[field] = row.querySelector(`[data-field="${field}"]`).value.trim(); });
+        item.days = [...row.querySelectorAll('[data-life-day]:checked')].map(input => Number(input.dataset.lifeDay));
+        ['startMinute', 'endMinute'].forEach(field => { const value = companionScheduleMinuteFromInput(row.querySelector(`[data-field="${field}"]`).value); item[field] = field === 'endMinute' && value === 0 ? 1440 : value; });
+        ['priority', 'minEnergy', 'projectMinutes'].forEach(field => { item[field] = Number(row.querySelector(`[data-field="${field}"]`).value); });
+        item.learnFromOutcomes = row.querySelector('[data-field="learnFromOutcomes"]').checked;
+    });
+    editor.querySelectorAll('[data-contact-window]').forEach(row => {
+        const [personIndex, index] = row.dataset.contactWindow.split(':').map(Number);
+        const window = life.socialCircle[personIndex]?.contactWindows[index];
+        if (!window) return;
+        window.days = [...row.querySelectorAll('[data-life-day]:checked')].map(input => Number(input.dataset.lifeDay));
+        ['startMinute', 'endMinute'].forEach(field => { const value = companionScheduleMinuteFromInput(row.querySelector(`[data-field="${field}"]`).value); window[field] = field === 'endMinute' && value === 0 ? 1440 : value; });
     });
     editor.querySelectorAll('[data-life-schedule]').forEach(row => {
         const block = life.weeklySchedule[Number(row.dataset.lifeSchedule)];
@@ -41722,6 +43732,7 @@ function renderCompanionLifeEditor(companion, draftLife = null) {
     const life = normalizeCompanionLifeProfile(
         draftLife || safeJsonClone(companion.lifeProfile)
     );
+    life._initialPlaceIds = draftLife?._initialPlaceIds || companion.lifeProfile.places.map(p=>p.id);
     const textureFields = [
         ['fashionSense', 'Fashion sense'], ['grooming', 'Grooming'],
         ['foodHabits', 'Food habits'], ['mediaHabits', 'Media habits'],
@@ -41750,10 +43761,63 @@ function renderCompanionLifeEditor(companion, draftLife = null) {
                         <label><span>Name</span><input class="form-input" data-field="label" value="${escapeHTML(place.label)}"></label>
                         <label><span>Kind</span><select class="form-select" data-field="kind">${COMPANION_PLACE_KINDS.map(kind => `<option value="${kind}" ${place.kind === kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label>
                         <label class="wide"><span>Continuity details</span><textarea class="form-textarea" rows="2" data-field="detail">${escapeHTML(place.detail)}</textarea></label>
-                        <label><span>Minutes from home</span><input class="form-input" type="number" min="0" max="360" data-field="travelMinutesFromHome" value="${place.travelMinutesFromHome}"></label>
+                        <label class="wide"><span>Google place ID</span><input class="form-input" data-field="googlePlaceId" value="${escapeHTML(place.googlePlaceId || '')}"></label>
+                        <label><span>Longitude (openrouteservice / manual)</span><input type="number" step="any" min="-180" max="180" class="form-input" data-field="longitude" value="${place.mapCoordinates?.[0] ?? ''}"></label>
+                        <label><span>Latitude (openrouteservice / manual)</span><input type="number" step="any" min="-90" max="90" class="form-input" data-field="latitude" value="${place.mapCoordinates?.[1] ?? ''}"></label>
+                        <div class="wide"><input class="form-input" data-map-query placeholder="Search actual place and city" aria-label="Search places"><button class="btn btn-ghost" type="button" data-map-search>Search places</button><div data-map-results aria-live="polite"></div></div>
+                        <label><span>Transport from home</span><select class="form-select" data-field="travelMode">${['WALK','DRIVE','BICYCLE','TRANSIT','RIDESHARE'].map(mode=>`<option ${place.travelMode===mode?'selected':''}>${mode}</option>`).join('')}</select></label>
+                        <label><input type="checkbox" data-field="travelOverride" ${place.travelOverride?'checked':''}> Use manual override</label>
+                        <label><span>Minutes from home (route estimate / fallback)</span><input class="form-input" type="number" min="0" max="360" data-field="travelMinutesFromHome" value="${place.travelMinutesFromHome}"></label><button type="button" class="btn btn-ghost" data-home-route>Update travel times</button><div data-home-route-status aria-live="polite">${escapeHTML(life.travelLegs?.find(l=>l.to===place.id&&l.from===life.places.find(p=>p.kind==='home')?.id&&l.mode===(place.travelMode||'WALK'))?.source || 'Fallback until both places are mapped')}</div>
                     </div>
                 </div>`).join('')}</div>
             <button class="btn btn-ghost vh-life-add" type="button" data-life-add="place">+ Add place</button>
+            <p class="form-hint">Selecting places or changing transport recalculates linked travel times using your selected provider. Map both home and destination. Save life changes to keep estimates and coordinates.</p>
+            <h4>Travel between places</h4>
+            <p class="form-hint">Route estimates determine when to leave and how long journeys take. Routes are directional, including trips between places other than home. Driving requires access to a car. Manual durations are fallback estimates or explicit overrides.</p>
+            <select class="form-select" data-route-from aria-label="Travel origin">${placeOptions}</select>
+            <select class="form-select" data-route-to aria-label="Travel destination">${placeOptions}</select>
+            <select class="form-select" data-route-mode aria-label="Transport">${['WALK','DRIVE','BICYCLE','TRANSIT','RIDESHARE'].map(mode=>`<option>${mode}</option>`).join('')}</select>
+            <button class="btn btn-ghost" type="button" data-route-preview>Preview route</button>
+            <div data-route-result aria-live="polite"></div>
+            <label>Route minutes (edit to override)<input class="form-input" type="number" min="1" max="360" value="20" data-route-minutes></label>
+            <label>Simulated fare / fuel cost<input type="number" class="form-input" min="0" value="0" data-route-cost></label><button class="btn btn-ghost" type="button" data-route-add>Save travel leg</button>
+            <div>${(life.travelLegs || []).map((leg,i)=>`<p>${escapeHTML(life.places.find(p=>p.id===leg.from)?.label || leg.from)} → ${escapeHTML(life.places.find(p=>p.id===leg.to)?.label || leg.to)} · ${escapeHTML(leg.mode)} · ${leg.minutes} min · ${escapeHTML(leg.source || "Fallback estimate")} <button type="button" class="tool-btn" data-route-remove="${i}">Remove</button></p>`).join('')}</div>
+
+        </details>
+        <details class="vh-life-edit-section" open>
+            <summary>Daily opportunities <span>${life.activityOptions.length}</span></summary>
+            <p>Reusable possibilities compete for free time. They can be interrupted or missed. Contacts require the other person's availability; preparing for a promise does not fulfill it.</p>
+            <div class="vh-life-edit-list">${life.activityOptions.map((item, index) => `
+                <div class="vh-life-edit-row" data-life-opportunity="${index}">
+                    <div class="vh-life-edit-row-head"><strong>${escapeHTML(item.label)}</strong>${companionLifeEditorRowActions('opportunity')}</div>
+                    ${item.projectMinutes ? `<p class="form-hint">Project effort: ${Math.floor((companion.lifeRuntime?.activities?.projects?.find(p=>p.id===item.id)?.progressMs || 0)/60000)} / ${item.projectMinutes} minutes. Work invested does not guarantee the real-world outcome.</p>` : ''}
+                    <div class="vh-life-edit-grid">
+                        <label><span>Activity</span><input class="form-input" data-field="label" value="${escapeHTML(item.label)}"></label>
+                        <label><span>Kind</span><select class="form-select" data-field="kind">${['focus','leisure','recovery','meal','contact'].map(kind => `<option value="${kind}" ${kind === item.kind ? 'selected' : ''}>${kind}</option>`).join('')}</select></label>
+                        <label><span>Contact with</span><select class="form-select" data-field="participantId"><option value="">Nobody selected</option>${life.socialCircle.map(person => `<option value="${escapeHTML(person.id)}" ${person.id === item.participantId ? 'selected' : ''}>${escapeHTML(person.name)}</option>`).join('')}</select></label>
+                        <label><span>Earliest start</span><input class="form-input" type="time" data-field="startMinute" value="${companionScheduleTimeValue(item.startMinute)}"></label>
+                        <label><span>Window closes</span><input class="form-input" type="time" data-field="endMinute" value="${companionScheduleTimeValue(item.endMinute)}"></label>
+                        <label><span>Importance (0–80)</span><input class="form-input" type="number" min="0" max="80" data-field="priority" value="${item.priority}"></label>
+                        <label><span>Minimum energy</span><input class="form-input" type="number" min="0" max="100" data-field="minEnergy" value="${item.minEnergy}"></label>
+                        <label><span>Project work target (minutes; focus only, 0 = recurring activity)</span><input class="form-input" type="number" min="0" max="100000" data-field="projectMinutes" value="${item.projectMinutes || 0}"></label>
+                        <label><input type="checkbox" data-field="learnFromOutcomes" ${item.learnFromOutcomes ? 'checked' : ''}> Learn scheduling preference from outcomes</label>
+                        <label><span>Why it matters</span><input class="form-input" data-field="reason" value="${escapeHTML(item.reason)}"></label>
+                    </div>
+                    <div class="vh-life-day-picker">${COMPANION_WEEKDAYS.map((day,i) => `<label><input type="checkbox" data-life-day="${i}" ${item.days.includes(i) ? 'checked' : ''}><span>${day.slice(0,3)}</span></label>`).join('')}</div>
+                </div>`).join('')}</div>
+            <button class="btn btn-ghost vh-life-add" type="button" data-life-add="opportunity">+ Add opportunity</button>
+        </details>
+        <details class="vh-life-edit-section">
+            <summary>Contact availability</summary>
+            <p>These windows describe when supporting people can take part in a remote conversation. No window means their availability is unknown.</p>
+            ${life.socialCircle.map((person, personIndex) => `<div class="vh-life-edit-row"><strong>${escapeHTML(person.name)}</strong>
+                ${(person.contactWindows || []).map((window,index) => `<div data-contact-window="${personIndex}:${index}">
+                    <div class="vh-life-edit-grid"><label><span>From</span><input class="form-input" type="time" data-field="startMinute" value="${companionScheduleTimeValue(window.startMinute)}"></label><label><span>Until</span><input class="form-input" type="time" data-field="endMinute" value="${companionScheduleTimeValue(window.endMinute)}"></label></div>
+                    <div class="vh-life-day-picker">${COMPANION_WEEKDAYS.map((day,i) => `<label><input type="checkbox" data-life-day="${i}" ${window.days.includes(i) ? 'checked' : ''}><span>${day.slice(0,3)}</span></label>`).join('')}</div>
+                    <button type="button" class="btn btn-ghost" data-remove-contact-window="${personIndex}:${index}">Remove window</button>
+                </div>`).join('')}
+                <button type="button" class="btn btn-ghost" data-life-add="contact-window" data-person-index="${personIndex}">+ Add availability window</button>
+            </div>`).join('')}
         </details>
         <details class="vh-life-edit-section">
             <summary>Supporting cast <span>${life.socialCircle.length}</span></summary>
@@ -41829,26 +43893,140 @@ function renderCompanionLifeEditor(companion, draftLife = null) {
     editor.classList.remove('hidden');
     overview?.classList.add('hidden');
 
+    editor.querySelectorAll('[data-map-search]').forEach(button => { button.onclick = async () => {
+        const row=button.closest('[data-life-place]'), output=row.querySelector('[data-map-results]');
+        button.disabled=true; output.textContent='Searching places…';
+        try {
+            const data=await mcpBridgeRequest('/maps/search',{method:'POST',body:{query:row.querySelector('[data-map-query]').value}});
+            if (!row.isConnected) return;
+            output.replaceChildren();
+            const attribution=document.createElement('p'); attribution.textContent=data.attribution || 'Google Maps'; output.append(attribution);
+            for (const place of data.places || []) {
+                const choice=document.createElement('button'); choice.type='button'; choice.className='btn btn-ghost';
+                choice.textContent=`${place.displayName?.text || place.id} — ${place.formattedAddress || ''}`;
+                choice.onclick=()=>{if(data.provider==='openrouteservice'){row.querySelector('[data-field="longitude"]').value=place.coordinates[0];row.querySelector('[data-field="latitude"]').value=place.coordinates[1];row.querySelector('[data-field="googlePlaceId"]').value='';}else{row.querySelector('[data-field="googlePlaceId"]').value=place.id;row.querySelector('[data-field="longitude"]').value='';row.querySelector('[data-field="latitude"]').value='';} output.textContent='Place selected. Save life changes to keep it.'; refreshLinkedRoutes();}; output.append(choice);
+            }
+            if (!data.places?.length) output.append('No places found. Include the city in your search.');
+        } catch(error) { output.textContent=error.message; } finally {button.disabled=false;}
+    }; });
+    const routeSelection=()=>({from:editor.querySelector('[data-route-from]').value,to:editor.querySelector('[data-route-to]').value,mode:editor.querySelector('[data-route-mode]').value});
+    const routeDraft={};editor._routeDraft=routeDraft;
+    const pendingRoutes=new Set();
+    const routeKey=r=>JSON.stringify([r.from,r.to,r.mode]);
+    const fingerprint=r=>JSON.stringify([r, ...[r.from,r.to].map(id=>{const p=life.places.find(p=>p.id===id);return [p?.googlePlaceId,p?.mapCoordinates];})]);
+    const routeVersions=new Map();
+    let selectedEstimate=null;
+    function storeLeg(route,minutes,source) {
+        const old=life.travelLegs?.find(l=>routeKey(l)===routeKey(route));
+        life.travelLegs=(life.travelLegs||[]).filter(l=>routeKey(l)!==routeKey(route));
+        life.travelLegs.push({...route,minutes,cost:old?.cost||0,source});
+    }
+    async function estimateRoute(route) {
+        const from=life.places.find(p=>p.id===route.from),to=life.places.find(p=>p.id===route.to);
+        if(!from||!to||from.id===to.id)throw Error('Choose two different places.');
+        if(!(from.googlePlaceId&&to.googlePlaceId)&&!(from.mapCoordinates&&to.mapCoordinates))throw Error('Map both places first; using fallback minutes.');
+        const key=routeKey(route),version=(routeVersions.get(key)||0)+1;routeVersions.set(key,version);
+        const signature=fingerprint(route);
+        const data=await mcpBridgeRequest('/maps/route',{method:'POST',body:{origin:from.googlePlaceId,destination:to.googlePlaceId,originCoordinates:from.mapCoordinates,destinationCoordinates:to.mapCoordinates,mode:route.mode==='RIDESHARE'?'DRIVE':route.mode}});
+        collectCompanionLifeEditorValues(editor,life);
+        if(!editor.isConnected||editor._routeDraft!==routeDraft||routeVersions.get(key)!==version||fingerprint(route)!==signature)throw Error('Route changed; estimate discarded.');
+        const seconds=Number(String(data.routes?.[0]?.duration||'').replace(/s$/,''));
+        if(!Number.isFinite(seconds)||seconds<=0||seconds>21600)throw Error('No supported route within six hours; using fallback minutes.');
+        return {minutes:Math.ceil(seconds/60),source:data.attribution||data.provider||'Google Maps'};
+    }
+    function trackRoute(work){const promise=work();pendingRoutes.add(promise);promise.finally(()=>pendingRoutes.delete(promise));return promise;}
+    let linkedGeneration=0;
+    function refreshLinkedRoutes(){const generation=++linkedGeneration;return trackRoute(async()=>{
+        collectCompanionLifeEditorValues(editor,life);
+        const home=life.places.find(p=>p.kind==='home');if(!home){editor.querySelectorAll('[data-home-route-status]').forEach(output=>output.textContent='Set one recurring place to Home first.');return;}
+        for(const row of editor.querySelectorAll('[data-life-place]')){
+            const place=life.places[Number(row.dataset.lifePlace)],status=row.querySelector('[data-home-route-status]');
+            if(editor._routeDraft!==routeDraft||generation!==linkedGeneration)return;
+            if(place.id===home.id)continue;
+            if(place.travelOverride){storeLeg({from:home.id,to:place.id,mode:place.travelMode},Math.max(1,place.travelMinutesFromHome),'Manual override');status.textContent='Manual override';continue;}
+            const route={from:home.id,to:place.id,mode:place.travelMode};
+            const prior=life.travelLegs?.find(l=>routeKey(l)===routeKey(route));if(prior?.source==='Manual override')prior.source='Fallback estimate';
+            status.textContent='Updating route…';
+            try{const result=await estimateRoute(route);if(generation!==linkedGeneration)return;if(place.travelOverride||place.travelMode!==route.mode)continue;
+                storeLeg(route,result.minutes,result.source);place.travelMinutesFromHome=result.minutes;
+                row.querySelector('[data-field="travelMinutesFromHome"]').value=result.minutes;
+                status.textContent=`${route.mode} · ${result.minutes} minutes · ${result.source}. Save life changes.`;
+                // Return routes are independent: one-way streets can change the duration.
+                const back={from:place.id,to:home.id,mode:route.mode};if(life.travelLegs?.find(l=>routeKey(l)===routeKey(back))?.source!=='Manual override'){const reverse=await estimateRoute(back);if(!place.travelOverride&&place.travelMode===route.mode)storeLeg(back,reverse.minutes,reverse.source);}
+            }catch(error){status.textContent=error.message+' Using the last saved duration or fallback.';}
+        }
+        // Build only links the weekly schedule actually needs, not every map pair.
+        const links=new Map();
+        const addLink=(from,to)=>{if(!from||!to||from===to||from===home.id||to===home.id)return;
+            const mode=life.places.find(p=>p.id===to)?.travelMode||'WALK',route={from,to,mode};links.set(routeKey(route),route);};
+        for(let day=0;day<7;day++){
+            const blocks=(life.weeklySchedule||[]).filter(b=>b.days.includes(day)).sort((a,b)=>a.startMinute-b.startMinute);
+            for(let i=1;i<blocks.length;i++)addLink(blocks[i-1].placeId,blocks[i].placeId);
+        }
+        for(const leg of life.travelLegs||[])if(leg.from!==home.id&&leg.to!==home.id)links.set(routeKey(leg),{from:leg.from,to:leg.to,mode:leg.mode});
+        for(const route of links.values()){
+            if(editor._routeDraft!==routeDraft||generation!==linkedGeneration)return;
+            if(life.travelLegs?.find(l=>routeKey(l)===routeKey(route))?.source==='Manual override')continue;
+            try{const result=await estimateRoute(route);storeLeg(route,result.minutes,result.source);}catch(error){editor.querySelector('[data-route-result]').textContent=error.message;}
+        }
+    });}
+    editor.querySelectorAll('[data-home-route]').forEach(button=>button.onclick=refreshLinkedRoutes);
+    editor.querySelectorAll('[data-field="longitude"],[data-field="latitude"],[data-field="googlePlaceId"],[data-field="travelMode"],[data-field="travelOverride"]').forEach(input=>input.onchange=refreshLinkedRoutes);
+    editor.querySelectorAll('[data-field="travelMinutesFromHome"]').forEach(input=>input.onchange=()=>{const row=input.closest('[data-life-place]');row.querySelector('[data-field="travelOverride"]').checked=true;refreshLinkedRoutes();});
+    editor.querySelectorAll('[data-life-place] [data-field="kind"],[data-life-schedule] [data-field="placeId"]').forEach(input=>input.onchange=refreshLinkedRoutes);
+    const preview=()=>trackRoute(async()=>{
+        collectCompanionLifeEditorValues(editor,life);const route=routeSelection(),output=editor.querySelector('[data-route-result]');selectedEstimate=null;
+        output.textContent='Checking route…';
+        try{const result=await estimateRoute(route);if(routeKey(routeSelection())!==routeKey(route))return;
+            selectedEstimate={...result,key:routeKey(route)};editor.querySelector('[data-route-minutes]').value=result.minutes;
+            output.textContent=`${result.source}: ${result.minutes} minutes. Save travel leg to use this for departure planning.`;
+        }catch(error){output.textContent=error.message;}
+    });
+    editor.querySelector('[data-route-preview]').onclick=preview;
+    editor.querySelectorAll('[data-route-from],[data-route-to],[data-route-mode]').forEach(input=>input.onchange=preview);
+    editor.querySelector('[data-route-minutes]').oninput=()=>{selectedEstimate=null;const key=routeKey(routeSelection());routeVersions.set(key,(routeVersions.get(key)||0)+1);};
+    editor.querySelector('[data-route-add]').onclick=async()=>{
+        await Promise.all([...pendingRoutes]);
+        collectCompanionLifeEditorValues(editor,life);const route=routeSelection(),minutes=Number(editor.querySelector('[data-route-minutes]').value);
+        if(!route.from||!route.to||route.from===route.to||!Number.isFinite(minutes)||minutes<1||minutes>360){showToast('Choose different places and 1–360 minutes.','error');return;}
+        storeLeg(route,Math.round(minutes),selectedEstimate?.key===routeKey(route)?selectedEstimate.source:'Manual override');
+        const home=life.places.find(p=>p.kind==='home'),destination=life.places.find(p=>p.id===route.to);
+        if(route.from===home?.id&&destination?.travelMode===route.mode){destination.travelMinutesFromHome=Math.round(minutes);destination.travelOverride=life.travelLegs.at(-1).source==='Manual override';}
+        life.travelLegs.at(-1).cost=Math.max(0,Number(editor.querySelector('[data-route-cost]').value)||0);
+        renderCompanionLifeEditor(companion,life);
+    };
+    editor.querySelectorAll('[data-route-remove]').forEach(button=>{button.onclick=()=>{collectCompanionLifeEditorValues(editor,life);life.travelLegs.splice(Number(button.dataset.routeRemove),1);renderCompanionLifeEditor(companion,life);};});
     editor.querySelector('#cs-life-editor-cancel').onclick = () => {
         editor.classList.add('hidden');
         overview?.classList.remove('hidden');
     };
     editor.querySelector('#cs-life-editor-save').onclick = async () => {
+        await Promise.all([...pendingRoutes]);
         collectCompanionLifeEditorValues(editor, life);
+        // The separate inventory/reference editors save immediately. A stale
+        // schedule draft must not roll back their newer authored data.
+        life.world = companion.lifeProfile.world;
+        for (const current of companion.lifeProfile.places) {
+            const drafted=life.places.find(p=>p.id===current.id);
+            if(drafted){for(const key of ['photo','referenceDescription','referenceDisabled','parentPlaceId','referenceRole','referenceAliases'])drafted[key]=current[key];}
+            else if(!life._initialPlaceIds.includes(current.id))life.places.push(current);
+        }
         companion.lifeProfile = normalizeCompanionLifeProfile(life);
         await saveState();
         editor.classList.add('hidden');
         renderCompanionLifeOverview(companion);
+        renderCompanionPhotoLocations(companion);
+        renderCompanionWorldSystems(companion);
         showToast('Active life changes saved.', 'success');
     };
     editor.querySelectorAll('[data-life-remove]').forEach(button => {
         button.onclick = () => {
-            const row = button.closest('[data-life-place],[data-life-person],[data-life-schedule],[data-life-look],[data-life-wildcard]');
+            const row = button.closest('[data-life-place],[data-life-person],[data-life-schedule],[data-life-look],[data-life-wildcard],[data-life-opportunity]');
             const type = button.dataset.lifeRemove;
             const map = {
                 place: ['places', 'lifePlace'], person: ['socialCircle', 'lifePerson'],
                 schedule: ['weeklySchedule', 'lifeSchedule'], look: ['wardrobe', 'lifeLook'],
-                wildcard: ['wildcardDeck', 'lifeWildcard']
+                wildcard: ['wildcardDeck', 'lifeWildcard'], opportunity: ['activityOptions', 'lifeOpportunity']
             }[type];
             if (!row || !map) return;
             collectCompanionLifeEditorValues(editor, life);
@@ -41856,10 +44034,23 @@ function renderCompanionLifeEditor(companion, draftLife = null) {
             renderCompanionLifeEditor(companion, life);
         };
     });
+    editor.querySelectorAll('[data-remove-contact-window]').forEach(button => {
+        button.onclick = () => {
+            collectCompanionLifeEditorValues(editor, life);
+            const [personIndex, index] = button.dataset.removeContactWindow.split(':').map(Number);
+            life.socialCircle[personIndex]?.contactWindows.splice(index, 1);
+            renderCompanionLifeEditor(companion, life);
+        };
+    });
     editor.querySelectorAll('[data-life-add]').forEach(button => {
         button.onclick = () => {
             const type = button.dataset.lifeAdd;
             collectCompanionLifeEditorValues(editor, life);
+            if (type === 'opportunity') life.activityOptions.push(VHActivityEngine.normalizeOpportunities([{ id: livingId('opportunity', `${Date.now()}|${Math.random()}`), kind: 'focus', label: 'A personal task' }])[0]);
+            if (type === 'contact-window') {
+                const person = life.socialCircle[Number(button.dataset.personIndex)];
+                if (person && person.contactWindows.length < 14) person.contactWindows.push({ days: [1,2,3,4,5], startMinute: 1080, endMinute: 1200 });
+            }
             if (type === 'place') life.places.push(normalizeCompanionLifePlace({ label: 'New place', kind: 'other' }, life.places.length));
             if (type === 'person') life.socialCircle.push(normalizeCompanionSocialPerson({ name: 'New person' }, life.socialCircle.length));
             if (type === 'schedule') life.weeklySchedule.push(normalizeCompanionScheduleBlock({ days: [1], startMinute: 540, endMinute: 600, activity: 'New activity', availability: 'busy' }, life.weeklySchedule.length));
@@ -41996,12 +44187,17 @@ function commitCompanionStudioForm() {
         'cs-pronouns': 'pronouns',
         'cs-appearance': 'appearance',
         'cs-personality': 'personality',
+        'cs-behavior-examples': 'behaviorExamples',
         'cs-backstory': 'backstory',
         'cs-occupation': 'occupation',
         'cs-social-world': 'socialWorld',
         'cs-location-label': 'locationLabel',
         'cs-timezone': 'timezone',
         'cs-texting-style': 'textingStyle',
+        'cs-conversation-style': 'conversationStyle',
+        'cs-chat-examples': 'chatExamples',
+        'cs-chat-avoid': 'chatAvoid',
+        'cs-chat-length': 'chatLength',
         'cs-values': 'values',
         'cs-contradictions': 'contradictions',
         'cs-vulnerabilities': 'vulnerabilities',
@@ -42009,6 +44205,7 @@ function commitCompanionStudioForm() {
         'cs-habits': 'habits',
         'cs-routine': 'routine',
         'cs-life-builder-model': 'lifeBuilderModel',
+        'cs-observer-model': 'observerModel',
         'cs-private-life': 'privateLife',
         'cs-relationship-context': 'relationshipContext',
         'cs-connection-role': 'connectionRole',
@@ -42092,6 +44289,8 @@ function commitCompanionStudioForm() {
         if (modelImageInput?.checked) companion.inputModalities.push('image');
         if (modelAudioInput?.checked) companion.inputModalities.push('audio');
     }
+    const separatedCognition = document.getElementById('cs-separated-cognition');
+    if (separatedCognition) companion.separatedCognition = separatedCognition.checked;
     const regulationProfile = document.getElementById('cs-regulation-profile');
     if (regulationProfile) companion.regulationProfile = COMPANION_REGULATION_PROFILES.includes(regulationProfile.value)
         ? regulationProfile.value : 'typical';
@@ -42161,6 +44360,7 @@ function renderCompanionStudioForm() {
     document.getElementById('cs-pronouns').value = companion.pronouns;
     document.getElementById('cs-appearance').value = companion.appearance;
     document.getElementById('cs-personality').value = companion.personality;
+    document.getElementById('cs-behavior-examples').value = companion.behaviorExamples || '';
     document.getElementById('cs-backstory').value = companion.backstory;
     document.getElementById('cs-occupation').value = companion.occupation;
     document.getElementById('cs-social-world').value = companion.socialWorld;
@@ -42173,6 +44373,10 @@ function renderCompanionStudioForm() {
     customLocationMode?.onchange?.();
     updateCompanionTimezoneFieldStatus();
     document.getElementById('cs-texting-style').value = companion.textingStyle;
+    document.getElementById('cs-conversation-style').value = companion.conversationStyle || '';
+    document.getElementById('cs-chat-examples').value = companion.chatExamples || '';
+    document.getElementById('cs-chat-avoid').value = companion.chatAvoid || '';
+    document.getElementById('cs-chat-length').value = companion.chatLength || 'adaptive';
     document.getElementById('cs-values').value = companion.values;
     document.getElementById('cs-contradictions').value = companion.contradictions;
     document.getElementById('cs-vulnerabilities').value = companion.vulnerabilities;
@@ -42180,6 +44384,11 @@ function renderCompanionStudioForm() {
     document.getElementById('cs-habits').value = companion.habits;
     document.getElementById('cs-routine').value = companion.routine;
     document.getElementById('cs-life-builder-model').value = companion.lifeBuilderModel || '';
+    const observerModel = document.getElementById('cs-observer-model');
+    if (observerModel) observerModel.value = companion.observerModel || '';
+    const separatedCognition = document.getElementById('cs-separated-cognition');
+    if (separatedCognition) separatedCognition.checked = companion.separatedCognition !== false;
+    document.getElementById('cs-observer-model-row')?.classList.toggle('hidden', companion.separatedCognition === false);
     updateCompanionLifeBuilderModelStatus(companion);
     document.getElementById('cs-life-wildcards').checked = companion.lifeWildcardsEnabled;
     document.getElementById('cs-life-weather').checked = companion.lifeWeatherEnabled;
@@ -42208,6 +44417,8 @@ function renderCompanionStudioForm() {
         input.checked = companion.socialContentTypes.includes(input.value);
     });
     renderCompanionSocialStudio(companion);
+    renderCompanionPhotoLocations(companion);
+    renderCompanionWorldSystems(companion);
     renderCompanionVideoStudio(companion);
     renderCompanionLifeOverview(companion);
     document.getElementById('cs-private-life').value = companion.privateLife;
@@ -42252,6 +44463,10 @@ function renderCompanionStudioForm() {
 
     const photoStyleEl = document.getElementById('cs-photo-style');
     if (photoStyleEl) photoStyleEl.value = companion.photoStyle;
+    document.getElementById('cs-photo-direction').value=companion.photoDirection||'';
+    document.getElementById('cs-photo-continuity-minutes').value=companion.photoContinuityMinutes??90;
+    const breastSizeEl=document.getElementById('cs-photo-large-breasts');
+    if(breastSizeEl)breastSizeEl.checked=companion.photoLargeBreasts===true;
     updateCompanionPhotoStyleDescription(companion.photoStyle);
     const photoCaptureEl = document.getElementById('cs-photo-capture-policy');
     if (photoCaptureEl) photoCaptureEl.value = companion.photoCapturePolicy;
@@ -42349,19 +44564,36 @@ function renderCompanionMemoriesList(companion) {
     if (!companion.memory.longTerm.length) {
         memList.innerHTML = `<div class="form-hint">Nothing consolidated yet. You can also add memories manually below.</div>`;
     } else {
-        memList.innerHTML = companion.memory.longTerm.slice(0, 20).map((entry, idx) =>
+        memList.innerHTML = companion.memory.longTerm.filter(entry => entry.status === 'active').slice(0, 20).map(entry =>
             `<div style="display:flex; justify-content:space-between; align-items:center; background:var(--surface2); padding:6px 10px; border-radius:8px; font-size:0.82rem;">
-                <span>${escapeHTML(entry.text)}</span>
-                <button class="btn btn-ghost" style="padding:2px 6px; font-size:0.7rem; color:var(--red);" data-del-mem="${idx}">✕</button>
+                <span><span>${escapeHTML(entry.text)}</span><small style="display:block; opacity:.65; margin-top:3px;">${escapeHTML(entry.kind)} · ${Math.round(entry.certainty)}% certain · ${escapeHTML(entry.source.replaceAll('_', ' '))}</small></span>
+                <span style="display:flex; gap:4px;"><button class="btn btn-ghost" style="padding:2px 6px; font-size:0.7rem;" data-edit-mem="${escapeHTML(entry.id)}">Correct</button><button class="btn btn-ghost" style="padding:2px 6px; font-size:0.7rem; color:var(--red);" data-del-mem="${escapeHTML(entry.id)}">Forget</button></span>
             </div>`).join('');
         memList.querySelectorAll('[data-del-mem]').forEach(btn => {
             btn.onclick = () => {
-                const idx = parseInt(btn.dataset.delMem);
-                if (Number.isInteger(idx)) {
-                    companion.memory.longTerm.splice(idx, 1);
+                const entry = companion.memory.longTerm.find(item => item.id === btn.dataset.delMem);
+                if (entry) {
+                    entry.status = 'forgotten';
+                    entry.updatedAt = Date.now();
                     saveState();
                     renderCompanionMemoriesList(companion);
                 }
+            };
+        });
+        memList.querySelectorAll('[data-edit-mem]').forEach(btn => {
+            btn.onclick = () => {
+                const entry = companion.memory.longTerm.find(item => item.id === btn.dataset.editMem);
+                if (!entry) return;
+                const corrected = prompt('Correct this memory:', entry.text);
+                if (!corrected?.trim() || corrected.trim() === entry.text) return;
+                upsertCompanionMemory(companion, {
+                    text: corrected.trim(), kind: entry.kind, weight: Math.max(70, entry.weight),
+                    certainty: 100, subject: entry.subject, source: 'author_correction',
+                    sourceMessageIds: entry.sourceMessageIds, supersedes: entry.id,
+                    createdAt: Date.now(), updatedAt: Date.now()
+                });
+                saveState();
+                renderCompanionMemoriesList(companion);
             };
         });
     }
@@ -42524,6 +44756,40 @@ function rankCompanionTextModels(models) {
         .slice(0, 500);
 }
 
+function rankCompanionObserverModels(models) {
+    return [...(Array.isArray(models) ? models : [])].sort((left, right) => {
+        const structuredLeft = Number(left.supportsTools) + Number(left.supportsJSON);
+        const structuredRight = Number(right.supportsTools) + Number(right.supportsJSON);
+        const size = model => {
+            const match = `${model.id} ${model.name}`.match(/(?:^|[^\d])(\d+(?:\.\d+)?)\s*[bB](?:[^\w]|$)/);
+            return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+        };
+        return structuredRight - structuredLeft
+            || (left.promptPrice ?? Number.POSITIVE_INFINITY) - (right.promptPrice ?? Number.POSITIVE_INFINITY)
+            || size(left) - size(right)
+            || left.name.localeCompare(right.name);
+    });
+}
+
+function updateCompanionObserverModelOptions(companion, catalog = companionTextModelCatalog) {
+    const list = document.getElementById('cs-observer-model-options');
+    const input = document.getElementById('cs-observer-model');
+    const hint = document.getElementById('cs-observer-model-hint');
+    if (!list || !input || !hint) return;
+    const ranked = rankCompanionObserverModels(catalog);
+    const recommended = ranked.find(model => model.supportsTools || model.supportsJSON) || ranked[0] || null;
+    list.innerHTML = ranked.slice(0, 80).map(model => {
+        const traits = [model.supportsTools ? 'Tools' : '', model.supportsJSON ? 'JSON' : '',
+            model.inputModalities.includes('image') ? 'Vision' : '', companionTextModelPriceLabel(model.promptPrice)]
+            .filter(Boolean).join(' · ');
+        return `<option value="${escapeHTML(model.id)}" label="${escapeHTML(`${model.name}${traits ? ` · ${traits}` : ''}`)}"></option>`;
+    }).join('');
+    if (!companion.observerModel && recommended) input.placeholder = `Recommended: ${recommended.id}`;
+    hint.textContent = recommended
+        ? `Recommended for private state: ${recommended.name}. Structured-output models are ranked first, then lower input cost and size. Blank inherits the Life Architect or conversation model.`
+        : 'Use a small, fast model with reliable tool/JSON output. Blank inherits the Life Architect or conversation model.';
+}
+
 function companionTextModelPriceLabel(price) {
     if (!Number.isFinite(price)) return '';
     const perMillion = price * 1000000;
@@ -42651,6 +44917,7 @@ function renderCompanionTextModelResults(companion) {
     if (status && query) {
         status.textContent = `${matches.length} of ${companionTextModelCatalog.length} text models match “${query}”.`;
     }
+    updateCompanionObserverModelOptions(companion, companionTextModelCatalog);
 }
 
 async function populateCompanionTextModelPicker(companion, force = false) {
@@ -42733,20 +45000,45 @@ const COMPANION_MCP_PROMPT_KEYS = Object.freeze([
     'prompt', 'query', 'description', 'text_prompt', 'textPrompt', 'scene', 'instruction'
 ]);
 const COMPANION_MCP_REFERENCE_KEYS = Object.freeze([
-    'reference_images', 'referenceImages', 'input_images', 'inputImages',
+    'references', 'medias', 'reference_image_urls', 'image_urls', 'reference_images', 'referenceImages', 'input_images', 'inputImages',
     'reference_image', 'referenceImage', 'input_image', 'inputImage', 'image_url', 'imageUrl', 'image'
 ]);
 
+function companionMcpSchema(tool) {
+    const root = tool?.inputSchema || {};
+    const nested = root.properties?.params;
+    return nested?.properties ? { schema: nested, wrapper: 'params' } : { schema: root, wrapper: '' };
+}
+
+function companionMcpReferenceValue(value, descriptor, key) {
+    if (key === 'medias') {
+        if (!/^(?:https:\/\/|data:image\/)/i.test(value)) throw new Error('This tool needs an image reference.');
+        return [{ role: 'image', value }];
+    }
+    const item = descriptor.type === 'array' ? descriptor.items || {} : descriptor;
+    if (key === 'references' && item.properties?.identifier && item.properties?.type?.enum?.includes('image')) return [{ type: 'image', identifier: value }];
+    let mapped = value;
+    if (item.type === 'object' || item.properties) {
+        const field = ['url', 'image_url', 'imageUrl', 'uri'].find(name => item.properties?.[name]);
+        if (!field) throw new Error(`Reference field ${key} has an unsupported object schema. No generation was submitted.`);
+        mapped = { [field]: value };
+        for (const required of item.required || []) {
+            if (required === field) continue;
+            if (item.properties?.[required]?.default !== undefined) mapped[required] = item.properties[required].default;
+            else throw new Error(`Reference ${key} requires ${required}; automatic mapping is unavailable.`);
+        }
+    }
+    return descriptor.type === 'array' ? [mapped] : mapped;
+}
+
 function companionMcpImageToolScore(tool) {
-    const text = `${tool?.name || ''} ${tool?.title || ''} ${tool?.description || ''}`.toLowerCase();
-    let score = 0;
-    if (/\b(generate|create|render)\b/.test(text)) score += 8;
-    if (/\b(image|photo|portrait|visual)\b/.test(text)) score += 8;
-    if (/\b(upscale|enhance|retouch|edit)\b/.test(text)) score += 2;
-    if (/\b(video|audio|music|sound|3d)\b/.test(text)) score -= 12;
-    const properties = tool?.inputSchema?.properties || {};
-    if (COMPANION_MCP_PROMPT_KEYS.some(key => Object.prototype.hasOwnProperty.call(properties, key))) score += 5;
-    return score;
+    // Descriptions mention other tools and modalities; never classify by them.
+    const name = String(tool?.name || '').replace(/[_-]/g, ' ').toLowerCase();
+    if (/\b(video|audio|svg|batch|estimate|list|search|show|library|design|crop|resize|upscale|retouch|expand|remove)\b/.test(name)) return 0;
+    const properties = companionMcpSchema(tool).schema.properties || {};
+    return /\b(image|images|photo|portrait)\b/.test(name)
+        && /\b(generate|create|render|variations)\b/.test(name)
+        && COMPANION_MCP_PROMPT_KEYS.some(key => properties[key]) ? 20 : 0;
 }
 
 function companionMcpImageTools(tools) {
@@ -42758,7 +45050,95 @@ function companionMcpImageTools(tools) {
 
 function companionMcpTool(companion) {
     const catalog = companionMcpToolCatalog[companion.imageSource] || [];
-    return catalog.find(tool => tool.name === companion.mcpImageTool) || null;
+    const original = catalog.find(tool => tool.name === companion.mcpImageTool);
+    if (!original) return null;
+    const tool = safeJsonClone(original);
+    const { schema, wrapper } = companionMcpSchema(tool);
+    const modelKey = ['model', 'model_id', 'modelId', 'mode'].find(key => schema.properties?.[key]);
+    if (modelKey && tool._models?.length) {
+        const saved = companion.mcpImageArguments || {};
+        const selected = (wrapper ? saved[wrapper]?.[modelKey] : '') || saved[modelKey];
+        schema.properties[modelKey].enum = [...new Set([...tool._models.map(model => model.id), ...(selected ? [selected] : [])])];
+        const model = tool._models.find(model => model.id === selected);
+        if (model) {
+            for (const [key, values] of Object.entries({aspectRatio:model.aspectRatios, resolution:model.resolutions, quality:model.qualities})) {
+                if (schema.properties[key] && values?.length) schema.properties[key].enum = values;
+            }
+            for (const parameter of model.parameters || []) {
+                if (!parameter.name || schema.properties[parameter.name]) continue;
+                schema.properties[parameter.name] = {
+                    type: ({bool:'boolean', string_array:'array'})[parameter.type] || parameter.type || 'string',
+                    ...(parameter.options ? {enum:parameter.options} : {}),
+                    ...(parameter.default !== undefined ? {default:parameter.default} : {}),
+                    minimum:parameter.min, maximum:parameter.max, description:parameter.description
+                };
+                if (parameter.required === 'required') schema.required = [...new Set([...(schema.required || []), parameter.name])];
+            }
+            if (model.aspect_ratios?.length && schema.properties.aspect_ratio) schema.properties.aspect_ratio.enum = model.aspect_ratios;
+        }
+    }
+    return tool;
+}
+
+function companionMcpResultData(result) {
+    if (isPlainObject(result?.structuredContent)) return result.structuredContent;
+    for (const item of result?.content || []) {
+        if (item.type !== 'text') continue;
+        try { const data = JSON.parse(item.text); if (isPlainObject(data)) return data; } catch (_) { /* Non-JSON tool commentary. */ }
+    }
+    return result || {};
+}
+
+function companionMagnificModels(result) {
+    const text = (result?.content || []).filter(item => item.type === 'text').map(item => item.text).join('\n');
+    const header = /^models\[(\d+)\]:\s*$/m.exec(text);
+    if (!header) throw new Error('Magnific returned an unrecognized model catalog.');
+    const models = [];
+    let current;
+    const scalar = value => { try { return JSON.parse(value); } catch (_) { return value; } };
+    for (const line of text.split('\n')) {
+        const start = /^  - slug: (.+)$/.exec(line);
+        if (start) { current = {id:scalar(start[1])}; models.push(current); continue; }
+        if (!current) continue;
+        const field = /^    (name|supportsReferences|referenceTypes|aspectRatios|resolutions|qualities)(?:\[(\d+)\])?: (.*)$/.exec(line);
+        if (!field) continue;
+        const values = field[3].match(/"(?:[^"\\]|\\.)*"|[^,]+/g) || [];
+        current[field[1]] = field[2] !== undefined ? values.map(value => scalar(value.trim())) : scalar(field[3]);
+        if (field[2] !== undefined && current[field[1]].length !== Number(field[2])) throw new Error('Magnific returned a malformed model parameter list.');
+    }
+    if (models.length !== Number(header[1])) throw new Error('Magnific model catalog was incomplete. Refresh tools.');
+    return models;
+}
+
+async function companionMcpDiscoverModels(provider, tools) {
+    const entry = tools.find(tool => /^(?:higgsfield_)?(?:images_)?models_list$/.test(tool.name));
+    if (!entry) return [];
+    const { schema, wrapper } = companionMcpSchema(entry);
+    const properties = schema.properties || {};
+    const models = [];
+    const seen = new Set();
+    let cursor = '';
+    for (let page = 0; page < 50; page++) {
+        const args = {};
+        if (properties.type) args.type = 'image';
+        if (properties.limit) args.limit = 50;
+        const cursorKey = ['after', 'cursor', 'page_token'].find(key => properties[key]);
+        if (cursor && cursorKey) args[cursorKey] = cursor;
+        const response = await mcpBridgeRequest(`/providers/${provider}/call`, {
+            method:'POST', body:{tool:entry.name, arguments:wrapper ? {[wrapper]:args} : args}, timeoutMs:45000
+        });
+        const data = companionMcpResultData(response.result);
+        if (provider === 'magnific' && !data.items && !data.models && !data.error) return companionMagnificModels(response.result);
+        if (data.error) throw new Error(String(data.error));
+        const items = data.items || data.models || [];
+        if (!Array.isArray(items)) throw new Error('The provider returned an unsupported model catalog.');
+        for (const item of items) if (item?.id && (!item.output_type || item.output_type === 'image')) models.push(item);
+        cursor = data.next_page_token || data.nextCursor || data.next_cursor || '';
+        if (!cursor) return models;
+        if (!cursorKey || seen.has(cursor)) throw new Error('The provider model catalog could not be fully paginated.');
+        seen.add(cursor);
+    }
+    throw new Error('The provider model catalog exceeded its page limit.');
 }
 
 function updateCompanionImageSourceUI(companion) {
@@ -42823,25 +45203,31 @@ function renderCompanionMcpToolSchema(companion) {
         preview.textContent = 'No MCP tool selected.';
         return;
     }
-    description.textContent = String(tool.description || tool.title || tool.name).slice(0, 1000);
-    const schema = isPlainObject(tool.inputSchema) ? tool.inputSchema : {};
+    description.textContent = `${tool.title || tool.name}. Choose the model and output settings below. Reference mapping is shown in the request summary.`;
+    const { schema, wrapper } = companionMcpSchema(tool);
     const properties = isPlainObject(schema.properties) ? schema.properties : {};
     const required = new Set(Array.isArray(schema.required) ? schema.required : []);
     const automatic = new Set([...COMPANION_MCP_PROMPT_KEYS, ...COMPANION_MCP_REFERENCE_KEYS]);
     controls.innerHTML = Object.entries(properties)
         .filter(([key]) => !automatic.has(key))
+        .sort(([a], [b]) => (['model', 'model_id', 'modelId', 'mode'].includes(b) ? 1 : 0) - (['model', 'model_id', 'modelId', 'mode'].includes(a) ? 1 : 0) || (required.has(b) ? 1 : 0) - (required.has(a) ? 1 : 0))
         .map(([key, rawDescriptor]) => {
             const descriptor = isPlainObject(rawDescriptor) ? rawDescriptor : {};
             const id = `cs-mcp-arg-${key.replace(/[^a-z0-9_-]/gi, '-')}`;
             const label = descriptor.title || key.replace(/[_-]+/g, ' ');
-            const selected = companion.mcpImageArguments?.[key];
+            const selected = (wrapper ? companion.mcpImageArguments?.[wrapper]?.[key] : undefined) ?? companion.mcpImageArguments?.[key];
             const note = required.has(key) ? 'required' : 'optional';
+            if (['model', 'model_id', 'modelId', 'mode'].includes(key) && Array.isArray(descriptor.enum)) {
+                return `<div class="vh-mcp-schema-field wide"><label class="form-label" for="${id}">Generation model <small>${note}</small></label>
+                    <input id="${id}" class="form-input" list="${id}-options" data-mcp-argument="${escapeHTML(key)}" value="${escapeHTML(String(selected ?? descriptor.default ?? ''))}" placeholder="Search by model name or ID…">
+                    <datalist id="${id}-options">${descriptor.enum.map(value => `<option value="${escapeHTML(String(value))}">${escapeHTML(tool._models?.find(model => model.id === value)?.name || String(value))}</option>`).join('')}</datalist></div>`;
+            }
             if (Array.isArray(descriptor.enum)) {
                 return `<div class="vh-mcp-schema-field">
                     <label class="form-label" for="${id}">${escapeHTML(label)} <small>${note}</small></label>
                     <select id="${id}" class="form-select" data-mcp-argument="${escapeHTML(key)}">
-                        ${required.has(key) ? '' : '<option value="">Provider default</option>'}
-                        ${descriptor.enum.map(value => `<option value="${escapeHTML(String(value))}" ${String(selected ?? descriptor.default ?? '') === String(value) ? 'selected' : ''}>${escapeHTML(String(value))}</option>`).join('')}
+                        <option value="">${required.has(key) ? 'Choose a value' : 'Provider default'}</option>
+                        ${descriptor.enum.map(value => `<option value="${escapeHTML(String(value))}" ${String(selected ?? descriptor.default ?? '') === String(value) ? 'selected' : ''}>${escapeHTML(tool._models?.find(model => model.id === value)?.name || String(value))}</option>`).join('')}
                     </select>
                 </div>`;
             }
@@ -42849,7 +45235,7 @@ function renderCompanionMcpToolSchema(companion) {
                 return `<div class="vh-mcp-schema-field">
                     <label class="form-label" for="${id}">${escapeHTML(label)} <small>${note}</small></label>
                     <select id="${id}" class="form-select" data-mcp-argument="${escapeHTML(key)}">
-                        ${required.has(key) ? '' : '<option value="">Provider default</option>'}
+                        <option value="">${required.has(key) ? 'Choose a value' : 'Provider default'}</option>
                         <option value="true" ${selected === true || (selected == null && descriptor.default === true) ? 'selected' : ''}>Enabled</option>
                         <option value="false" ${selected === false || (selected == null && descriptor.default === false) ? 'selected' : ''}>Disabled</option>
                     </select>
@@ -42869,18 +45255,33 @@ function renderCompanionMcpToolSchema(companion) {
                 ${descriptor.description ? `<span class="form-hint">${escapeHTML(String(descriptor.description).slice(0, 300))}</span>` : ''}
             </div>`;
         }).join('') || '<p class="form-hint">This tool has no additional configurable fields.</p>';
+    const advanced = document.createElement('details');
+    advanced.className = 'wide';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Advanced tool options';
+    advanced.appendChild(summary);
+    const basic = new Set(['model', 'model_id', 'modelId', 'mode', 'aspect_ratio', 'aspectRatio', 'ratio', 'resolution', 'quality', 'size', 'count', 'n']);
+    Array.from(controls.children).forEach(field => {
+        const key = field.querySelector('[data-mcp-argument]')?.dataset.mcpArgument;
+        if (key && !required.has(key) && !basic.has(key)) advanced.appendChild(field);
+    });
+    if (advanced.children.length > 1) controls.appendChild(advanced);
     controls.querySelectorAll('[data-mcp-argument]').forEach(input => {
-        const event = input.tagName === 'SELECT' ? 'change' : 'input';
+        const event = input.tagName === 'SELECT' || ['model', 'model_id', 'modelId', 'mode'].includes(input.dataset.mcpArgument) ? 'change' : 'input';
         input.addEventListener(event, () => {
             const live = getCompanion(state.editingCompanionId);
             if (!live) return;
             const key = input.dataset.mcpArgument;
             const descriptor = properties[key] || { type: input.dataset.mcpType };
             const value = companionMcpArgumentValue(input.value, descriptor);
+            if (input.value.trim() && value === undefined) { input.setCustomValidity('Enter valid JSON for this field.'); input.reportValidity(); return; }
+            input.setCustomValidity('');
             live.mcpImageArguments = isPlainObject(live.mcpImageArguments) ? live.mcpImageArguments : {};
+            if (wrapper && isPlainObject(live.mcpImageArguments[wrapper])) live.mcpImageArguments = { ...live.mcpImageArguments[wrapper] };
             if (value === undefined || (typeof value === 'number' && !Number.isFinite(value))) delete live.mcpImageArguments[key];
             else live.mcpImageArguments[key] = value;
-            updateCompanionMcpRequestPreview(live, tool);
+            if (['model', 'model_id', 'modelId', 'mode'].includes(key)) renderCompanionMcpToolSchema(live);
+            else updateCompanionMcpRequestPreview(live, tool);
         });
     });
     updateCompanionMcpRequestPreview(companion, tool);
@@ -42890,7 +45291,7 @@ function updateCompanionMcpRequestPreview(companion, tool = companionMcpTool(com
     const preview = document.getElementById('cs-mcp-request-preview');
     if (!preview) return;
     if (!tool) return void (preview.textContent = 'No MCP tool selected.');
-    const properties = tool.inputSchema?.properties || {};
+    const properties = companionMcpSchema(tool).schema.properties || {};
     const promptKey = COMPANION_MCP_PROMPT_KEYS.find(key => properties[key]) || 'prompt';
     const referenceKey = COMPANION_MCP_REFERENCE_KEYS.find(key => properties[key]);
     const configured = Object.keys(companion.mcpImageArguments || {});
@@ -42912,7 +45313,7 @@ function renderCompanionMcpToolResults(companion) {
             aria-selected="${selected}" data-mcp-image-tool="${escapeHTML(tool.name)}">
             <span class="vh-model-option-head"><strong>${escapeHTML(tool.title || tool.name)}</strong><span class="vh-model-check">✓</span></span>
             <code>${escapeHTML(tool.name)}</code>
-            <span class="vh-model-option-meta"><span>${tool._imageScore >= 13 ? 'Generation ready' : 'Image workflow'}</span></span>
+            <span class="vh-model-option-meta"><span>${COMPANION_MCP_REFERENCE_KEYS.some(key => companionMcpSchema(tool).schema.properties?.[key]) ? 'Reference input advertised' : 'Text to image'}</span></span>
         </button>`;
     }).join('') || '<div class="vh-model-empty">No image tools match this search.</div>';
     hidden.value = companion.mcpImageTool || '';
@@ -42931,6 +45332,7 @@ function renderCompanionMcpToolResults(companion) {
 
 async function populateCompanionMcpTools(companion, force = false) {
     if (!['higgsfield', 'magnific'].includes(companion.imageSource)) return;
+    const provider = companion.imageSource;
     const results = document.getElementById('cs-mcp-tool-results');
     const description = document.getElementById('cs-mcp-tool-description');
     if (results) results.innerHTML = '<div class="vh-model-empty">Discovering provider tools…</div>';
@@ -42938,10 +45340,16 @@ async function populateCompanionMcpTools(companion, force = false) {
     try {
         if (force) companionMcpToolCatalog[companion.imageSource] = [];
         const data = await mcpBridgeRequest(`/providers/${companion.imageSource}/tools`, { timeoutMs: 45000 });
-        if (state.editingCompanionId !== companion.id) return;
+        if (state.editingCompanionId !== companion.id || companion.imageSource !== provider) return;
         const tools = companionMcpImageTools(data.tools);
+        let modelError = '';
+        try {
+            const models = await companionMcpDiscoverModels(provider, data.tools || []);
+            tools.forEach(tool => { tool._models = models; });
+        } catch (error) { modelError = error.message; }
+        if (state.editingCompanionId !== companion.id || companion.imageSource !== provider) return;
         companionMcpToolCatalog[companion.imageSource] = tools;
-        if (!tools.some(tool => tool.name === companion.mcpImageTool)) {
+        if (!companion.mcpImageTool) {
             companion.mcpImageTool = tools[0]?.name || '';
             companion.mcpImageArguments = {};
         }
@@ -42949,8 +45357,10 @@ async function populateCompanionMcpTools(companion, force = false) {
         if (search) search.value = '';
         renderCompanionMcpToolResults(companion);
         renderCompanionMcpToolSchema(companion);
+        if (description && modelError) description.textContent += ` Model discovery failed: ${modelError}`;
         if (description && !tools.length) description.textContent = 'The connected MCP server advertised no image-generation tools.';
     } catch (error) {
+        if (state.editingCompanionId !== companion.id || companion.imageSource !== provider) return;
         if (results) results.innerHTML = '<div class="vh-model-empty">No tools available.</div>';
         if (description) description.textContent = `${error.message} Connect this provider under Settings → MCP image generation.`;
     }
@@ -43355,6 +45765,9 @@ Return ONLY strict JSON using this exact shape:
   "wardrobe": [
     {"id":"stable_id","label":"short look name","context":"sleep|home|work|social|active|formal|weather","items":"specific reusable garments, footwear and accessories","notes":"fit, condition, repeats or situational variation"}
   ],
+  "activityOptions": [
+    {"id":"personal_project","kind":"focus","label":"a concrete personal task from their identity","days":[0,1,2,3,4,5,6],"startMinute":600,"endMinute":1260,"priority":40,"minEnergy":25,"costs":{},"reason":"why this matters to them"}
+  ],
   "weeklySchedule": [
     {"id":"stable_id","days":[1,2,3,4,5],"startMinute":540,"endMinute":1020,"activity":"specific activity","placeId":"place id","placeLabel":"","withIds":[],"availability":"available|busy|private","flexibility":"fixed|soft|optional","outfitContext":"home|work|social|active|formal|weather"}
   ],
@@ -43364,7 +45777,7 @@ Return ONLY strict JSON using this exact shape:
   "summary":"three sentences describing the life rhythm, social pressure and what makes its ordinary texture distinctive"
 }
 
-Use numeric weekdays where Sunday=0. Use minutes after midnight. Group identical weekdays in one block. Provide 4-10 places, 4-10 supporting people, 8-16 wardrobe looks, enough schedule blocks to cover mornings/day/evenings on all seven days, and 12-20 varied wildcards. Every referenced placeId and withId must exist.`;
+Use numeric weekdays where Sunday=0. Use minutes after midnight. Group identical weekdays in one block. Provide 4-10 places, 4-10 supporting people, 8-16 wardrobe looks, enough schedule blocks to cover mornings/day/evenings on all seven days, and 12-20 varied wildcards. Every referenced placeId and withId must exist. For multi-day focus projects optionally set projectMinutes to a finite total work target. Set learnFromOutcomes true only when scheduling should adapt to repeated completion/missed windows. Neither measures quality or guarantees success. Also provide 4-8 reusable activityOptions, not completed stories: kinds focus, leisure, recovery, meal or contact. They compete for free time and may fail. Contact options must reference an existing participantId; that socialCircle person must have contactWindows [{days:[0,1,2,3,4,5,6],startMinute:1080,endMinute:1200}] describing plausible availability for remote conversation. Other activity options are local activities and must not claim travel or purchases. Costs are explicit inventory requirements; unknown resources are unavailable, never assume free money. Use specific personal interests and existing concerns for labels; no generic randomized drama.`;
 }
 
 function companionBalancedJSONObjectBlocks(raw) {
@@ -43693,6 +46106,13 @@ function setupCompanionsLogic() {
     bindText('cs-location-label', 'locationLabel');
     bindText('cs-timezone', 'timezone');
     bindText('cs-texting-style', 'textingStyle');
+    bindText('cs-conversation-style', 'conversationStyle');
+    bindText('cs-chat-examples', 'chatExamples');
+    bindText('cs-chat-avoid', 'chatAvoid');
+    document.getElementById('cs-chat-length').onchange = event => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.chatLength = event.target.value;
+    };
     bindText('cs-values', 'values');
     bindText('cs-contradictions', 'contradictions');
     bindText('cs-vulnerabilities', 'vulnerabilities');
@@ -43737,6 +46157,9 @@ function setupCompanionsLogic() {
         const companion = getCompanion(state.editingCompanionId);
         if (companion) companion.connectionAuthenticity = e.target.value;
     };
+    document.getElementById('cs-photo-direction').onchange=async e=>{const c=getCompanion(state.editingCompanionId);if(c){c.photoDirection=e.target.value.slice(0,4000);await saveState();}};
+    document.getElementById('cs-photo-continuity-minutes').onchange=async e=>{const c=getCompanion(state.editingCompanionId);if(c){c.photoContinuityMinutes=livingClamp(Number(e.target.value)||0,0,360);await saveState();}};
+    document.getElementById('cs-photo-large-breasts').onchange=async(e)=>{const companion=getCompanion(state.editingCompanionId);if(!companion)return;companion.photoLargeBreasts=e.target.checked;await saveState();};
     document.getElementById('cs-photo-style').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
         if (companion) {
@@ -43810,6 +46233,19 @@ function setupCompanionsLogic() {
     document.getElementById('cs-model-preset').onchange = (event) => {
         const companion = getCompanion(state.editingCompanionId);
         if (companion) applyCompanionModelPreset(companion, event.target.value);
+    };
+    document.getElementById('cs-separated-cognition').onchange = (event) => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (companion) companion.separatedCognition = event.target.checked;
+        document.getElementById('cs-observer-model-row')?.classList.toggle('hidden', !event.target.checked);
+    };
+    document.getElementById('cs-observer-model').oninput = event => {
+        const companion = getCompanion(state.editingCompanionId);
+        if (!companion) return;
+        companion.observerModel = event.target.value.trim();
+        const selected = companionTextModelCatalog.find(model => model.id === companion.observerModel);
+        companion.observerInputModalities = selected?.inputModalities?.length
+            ? [...selected.inputModalities] : ['text'];
     };
     Object.values(COMPANION_PARAMETER_FIELDS).forEach(([inputId, field]) => {
         document.getElementById(inputId).oninput = (event) => {
@@ -43973,7 +46409,8 @@ function setupCompanionsLogic() {
         const companion = getCompanion(state.editingCompanionId);
         if (!companion) return;
         companion.socialPostFrequency = e.target.value;
-        companion.socialFeedRuntime.nextPostAt = companionNextSocialPostAt(companion, Date.now());
+        companion.socialFeedRuntime.nextPostAt = 0;
+        reconcileCompanionSocialSchedule(companion, Date.now());
     };
     document.getElementById('cs-social-platform').onchange = (e) => {
         const companion = getCompanion(state.editingCompanionId);
@@ -44084,7 +46521,10 @@ function setupCompanionsLogic() {
                 await resolveCompanionSocialPhoto(companion, post);
                 renderCompanionSocialStudio(companion);
             }
-            if (status) status.textContent = 'Starter photos finished. Any provider failures remain editable and can be retried.';
+            const imported = missing.filter(post => post.photo).length;
+            if (status) status.textContent = `Finished: ${imported} of ${missing.length} photos imported. ${missing.length - imported} need attention.`;
+        } catch (error) {
+            if (status) status.textContent = `Stopped: ${error.message}. Imported photos are kept; retry only missing photos.`;
         } finally { button.disabled = false; }
     };
     document.getElementById('cs-social-apply-current').onclick = async () => {
@@ -44475,6 +46915,7 @@ function reconcileCompanionExperienceMessages(timeline, previous, next, nowMs = 
     }
     messages.filter(message => message.role === 'user' && message.awaitingReply).forEach(message => {
         if (!next.replyDelays) {
+            message.attention = null;
             message.deliveredAt = nowMs;
             message.readAt = nowMs;
             message.replyDueAt = nowMs;
@@ -44486,6 +46927,7 @@ function reconcileCompanionExperienceMessages(timeline, previous, next, nowMs = 
             message.replyDueAt = nowMs + 8 * 1000;
             message.deliveryState = 'read';
             message.deferredReason = 'available';
+            message.attention = null;
         }
     });
 }
@@ -44601,8 +47043,11 @@ function openCompanionSimulationDetails() {
     ];
     const life = companionLifeState(companion, nowMs);
     const meter = (label, value, min = 0, max = 100) => {
-        const percent = livingClamp(Math.round((value - min) / (max - min) * 100), 0, 100);
-        return `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track"><span class="companion-sim-meter-fill" style="--meter-fill:${percent}%"></span></div><strong>${escapeHTML(String(Math.round(value)))}</strong></div>`;
+        const amount = livingClamp(Number(value) || 0, min, max);
+        // Signed relationship values show magnitude and colour, so neutral
+        // zero does not misleadingly look half full.
+        const percent = livingClamp(Math.abs(amount) / Math.max(Math.abs(min), max) * 100, 0, 100);
+        return `<div class="companion-sim-meter"><span>${escapeHTML(label)}</span><div class="companion-sim-meter-track" role="meter" aria-label="${escapeHTML(label)}" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${amount}"><span class="companion-sim-meter-fill${amount < 0 ? ' is-negative' : ''}" style="--meter-fill:${percent}%"></span></div><strong>${escapeHTML(String(Math.round(amount)))}</strong></div>`;
     };
     const empty = text => `<div class="companion-sim-empty">${escapeHTML(text)}</div>`;
     const visibleFeelings = COMPANION_EMOTIONS
@@ -44614,6 +47059,7 @@ function openCompanionSimulationDetails() {
             <button type="button" class="active" data-sim-tab="overview">Overview</button>
             <button type="button" data-sim-tab="feelings">Feelings</button>
             <button type="button" data-sim-tab="agency">Agency</button>
+            <button type="button" data-sim-tab="activities">Activities</button>
             <button type="button" data-sim-tab="history">History &amp; media</button>
         </nav>
         <div class="companion-sim-panel active" data-sim-panel="overview">
@@ -44651,6 +47097,22 @@ function openCompanionSimulationDetails() {
                     ).join('') : empty('Nothing currently promised.')}</div>
                 </section>
             </div>
+        </div>
+        <div class="companion-sim-panel" data-sim-panel="activities">
+            <section class="companion-sim-card">
+                <div class="companion-sim-card-head"><div><span>Intentions in progress</span><h3>Activities &amp; goals</h3></div></div>
+                <p>Daily opportunities, needs and promises compete for free time. Activities pause for obligations and retain progress. Completing them changes energy, stress, supplies, and remembered events.</p>
+                <label for="vh-activity-kind">Add a personal goal</label>
+                <select id="vh-activity-kind" class="form-select"><option value="recovery">Rest and recover</option><option value="meal">Prepare and eat a meal</option><option value="focus">Make progress on a personal task</option><option value="leisure">Enjoy a personal interest</option></select>
+                <label for="vh-activity-label">Personal task to focus on (optional)</label><input id="vh-activity-label" class="form-input" maxlength="160" placeholder="For example, drafting an essay">
+                <button type="button" class="btn btn-secondary" id="vh-add-activity">Add goal</button>
+                <div class="companion-sim-list">${(companion.lifeRuntime?.activities?.goals || []).slice().reverse().map(goal => {
+                    const total = goal.steps.reduce((sum, step) => sum + step.durationMs, 0);
+                    const progress = goal.steps.reduce((sum, step) => sum + Math.min(step.durationMs, step.progressMs), 0);
+                    return `<article><strong>${escapeHTML(goal.label)}</strong><small>${escapeHTML(goal.status)} · ${Math.round(progress / total * 100)}% · ${escapeHTML(goal.reason)}</small>${!['completed', 'abandoned'].includes(goal.status) ? `<button type="button" class="btn btn-secondary" data-abandon-goal="${escapeHTML(goal.id)}">Abandon goal</button>` : ''}</article>`;
+                }).join('') || empty('No executable goals yet.')}</div>
+                <p class="companion-sim-foot">Meal activities track abstract ingredients and meals. Shopping currently models time and effort; money and travel routes are not simulated here.</p>
+            </section>
         </div>
         <div class="companion-sim-panel" data-sim-panel="feelings">
             <section class="companion-sim-emotion-summary"><span>Emotional read</span><strong>${escapeHTML(companionEmotionSummary(companion, nowMs))}</strong><small>Visible: ${escapeHTML(visibleFeelings)} · masking ${Math.round(emotionState.masking)}/100</small></section>
@@ -44696,6 +47158,26 @@ function openCompanionSimulationDetails() {
             content.querySelectorAll('[data-sim-panel]').forEach(panel => panel.classList.toggle('active', panel.dataset.simPanel === button.dataset.simTab));
         };
     });
+    const reopenActivities = () => {
+        openCompanionSimulationDetails();
+        document.querySelector('[data-sim-tab="activities"]')?.click();
+    };
+    content.querySelector('#vh-add-activity').onclick = async () => {
+        const kind = content.querySelector('#vh-activity-kind').value;
+        companion.lifeRuntime.activities ||= VHActivityEngine.normalize();
+        const goal = VHActivityEngine.addGoal(companion.lifeRuntime.activities, kind, livingId('vh_goal', `${companion.id}|${Date.now()}|${Math.random()}`), Date.now(), content.querySelector('#vh-activity-label').value);
+        if (!goal) return showToast('Finish or abandon an existing goal before adding another.', 'info');
+        persistCompanionRuntime(companion);
+        await saveState();
+        reopenActivities();
+    };
+    content.querySelectorAll('[data-abandon-goal]').forEach(button => { button.onclick = async () => {
+        const goal = companion.lifeRuntime.activities.goals.find(item => item.id === button.dataset.abandonGoal);
+        if (!goal || ['completed', 'abandoned'].includes(goal.status)) return;
+        goal.status = 'abandoned'; goal.reason = 'This goal was withdrawn.';
+        companionRecordContinuityEvent(companion, { type: 'life_event', summary: `Abandoned ${goal.label}.`, createdAt: Date.now(), perceivedAt: Date.now() });
+        persistCompanionRuntime(companion); await saveState(); reopenActivities();
+    }; });
     const overlay = document.getElementById('companion-simulation-overlay');
     overlay.classList.remove('hidden');
     overlay.onclick = event => { if (event.target === overlay) overlay.classList.add('hidden'); };
@@ -44739,7 +47221,11 @@ function setupCompanionTimelineControls() {
     });
     select.onchange = async event => {
         const companion = getCompanion(state.activeCompanionId);
-        if (!companion || !activateCompanionTimeline(companion.id, event.target.value)) return;
+        if (!companion) return;
+        if (!activateCompanionTimeline(companion.id, event.target.value)) {
+            renderCompanionTimelineControls(companion);
+            return;
+        }
         await saveState();
         renderCompanionThread();
         const timeline = getActiveCompanionTimeline(companion.id);
@@ -44747,6 +47233,7 @@ function setupCompanionTimelineControls() {
     };
     document.getElementById('companion-new-timeline-btn').onclick = async () => {
         const companion = getCompanion(state.activeCompanionId);
+        if (companionTimelineBusy(companion)) return;
         if (!companion) return;
         const store = ensureCompanionTimelineStore(companion.id);
         const name = prompt('Name this fresh timeline:', `Timeline ${store.sessions.length + 1}`);
@@ -44758,6 +47245,7 @@ function setupCompanionTimelineControls() {
     };
     document.getElementById('companion-fork-timeline-btn').onclick = async () => {
         const companion = getCompanion(state.activeCompanionId);
+        if (companionTimelineBusy(companion)) return;
         const current = companion && getActiveCompanionTimeline(companion.id);
         if (!companion || !current) return;
         const name = prompt('Name this fork:', `Fork of ${current.name}`);
@@ -44781,15 +47269,19 @@ function setupCompanionTimelineControls() {
     };
     document.getElementById('companion-clear-timeline-btn').onclick = async () => {
         const companion = getCompanion(state.activeCompanionId);
+        if (companionTimelineBusy(companion)) return;
         const timeline = companion && getActiveCompanionTimeline(companion.id);
         if (!timeline || !confirm('Clear this conversation but keep its current relationship, mood and memories?')) return;
         timeline.messages.length = 0;
+        companion.memory.consolidatedThroughIndex = 0;
+        persistCompanionRuntime(companion);
         closeCompanionThreadMenu();
         await saveState();
         renderCompanionThread();
     };
     document.getElementById('companion-reset-timeline-btn').onclick = async () => {
         const companion = getCompanion(state.activeCompanionId);
+        if (companionTimelineBusy(companion)) return;
         const timeline = companion && getActiveCompanionTimeline(companion.id);
         if (!timeline || !confirm('Reset this timeline completely to the authored starting relationship? Messages, memories, wounds and live relationship changes will be removed.')) return;
         timeline.messages.length = 0;
@@ -44802,6 +47294,7 @@ function setupCompanionTimelineControls() {
     };
     document.getElementById('companion-delete-timeline-btn').onclick = async () => {
         const companion = getCompanion(state.activeCompanionId);
+        if (companionTimelineBusy(companion)) return;
         const store = companion && ensureCompanionTimelineStore(companion.id);
         const current = companion && getActiveCompanionTimeline(companion.id);
         if (!store || !current) return;
@@ -44858,6 +47351,13 @@ function companionLinksHTML(links) {
 
 function companionBubbleHTML(companion, message) {
     const links = companionLinksHTML(message.links);
+    if (message.protocolLeak) {
+        return `<div class="companion-bubble companion-bubble-recovery" role="alert">
+            <strong>Broken model output blocked</strong>
+            <span>${escapeHTML(message.generationError || 'A private engine receipt was kept out of the conversation.')}</span>
+            <button class="tool-btn" type="button" data-repair-companion-reply="${escapeHTML(message.id)}">Regenerate reply</button>
+        </div>`;
+    }
     if (message.type === 'photo') {
         return `<div class="companion-bubble companion-bubble-photo">
             ${message.pending ? `<div class="form-hint">📷 sending a photo…</div>`
@@ -45014,6 +47514,7 @@ function renderCompanionSocialStudio(companion) {
             </div>
             <label class="vh-social-seed-price ${post.visibility === 'paid' ? '' : 'hidden'}" data-social-seed-price-row>Unlock price <input class="form-input" data-social-seed-price type="number" min="0" max="1000000" value="${post.unlockPrice || companion.socialSubscriptionPrice || 10}"> ${escapeHTML(companion.socialCurrency)}</label>
             <textarea class="form-textarea" rows="2" data-social-seed-text placeholder="What did they post?">${escapeHTML(post.text)}</textarea>
+            ${post.generationError ? `<p class="form-hint">${escapeHTML(post.generationError)}</p>` : ''}
             <textarea class="form-textarea ${post.kind === 'photo' ? '' : 'hidden'}" rows="2" data-social-seed-scene placeholder="Describe the photo for generation: camera, place, outfit, people present…">${escapeHTML(post.scene)}</textarea>
         </div>
     </article>`).join('');
@@ -45071,8 +47572,15 @@ function addCompanionStartingSocialPost(companion, kind = 'status') {
         text: '', scene: '', seedAgeDays: Math.max(1, (companion.startingSocialPosts?.length || 0) + 1),
         createdAt: Date.now(), source: 'manual'
     });
+    companion.startingSocialPosts ||= [];
     companion.startingSocialPosts.push(post);
     renderCompanionSocialStudio(companion);
+    const card = document.querySelector(`[data-social-seed-id="${CSS.escape(post.id)}"]`);
+    card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    card?.querySelector('[data-social-seed-text]')?.focus();
+    const status = document.getElementById('cs-social-seed-status');
+    if (status) status.textContent = kind === 'photo' ? 'Photo draft added. Write a caption, upload an image or describe one to generate.' : 'Status draft added. Write the post below.';
+    saveState().catch(error => showToast(`Could not save the draft: ${error.message}`, 'error'));
 }
 
 async function generateCompanionStartingSocialPosts(companion) {
@@ -45093,7 +47601,7 @@ async function generateCompanionStartingSocialPosts(companion) {
                 location: companion.locationLabel, textingStyle: companion.textingStyle,
                 habits: companion.habits, routine: companion.routine,
                 socialBehavior: companionSocialBehaviorSummary(companion),
-                activeLife: companion.lifeProfile?.initializedAt ? companion.lifeProfile : undefined
+                activeLife: companion.lifeProfile?.initializedAt ? JSON.parse(JSON.stringify(companion.lifeProfile,(key,value)=>key==='photo'?undefined:value)) : undefined
             })
         }],
         temperature: 0.86,
@@ -45129,7 +47637,9 @@ function companionSocialQuickControlsHTML(companion) {
     const runtime = companion.socialFeedRuntime;
     const now = Date.now();
     const providerReady = providerHasCredentials(companionTextProviderId(companion));
-    const scheduleCopy = !providerReady
+    const scheduleCopy = state.globalSettings.companionAgencyPaused === true
+        ? 'Autonomous activity is paused. Resume agency to allow scheduled posts.'
+        : !providerReady
         ? 'Text provider needs setup before autonomous posts can be written.'
         : companion.socialPostFrequency === 'manual'
             ? 'Manual cadence selected. Horde Studio will not create autonomous posts.'
@@ -45166,8 +47676,8 @@ function bindCompanionSocialQuickControls(companion, content) {
         postNow.textContent = 'Creating post…';
         try {
             const result = await generateCompanionAutonomousSocialPost(companion, Date.now(), { force: true });
-            if (result.pendingPhoto) resolveCompanionSocialPhoto(companion, result.pendingPhoto);
-            showToast(result.posted ? 'Social post published.' : 'They decided this was not a moment they would post.', result.posted ? 'success' : 'info');
+            if (result?.pendingPhoto) resolveCompanionSocialPhoto(companion, result.pendingPhoto);
+            showToast(result?.posted ? 'Social post published.' : 'No post was created; check the feed settings or active timeline.', result?.posted ? 'success' : 'info');
         } catch (error) {
             recordCompanionSocialFailure(companion, error, Date.now());
             showToast(`Social post failed: ${error.message}`, 'error');
@@ -45240,7 +47750,7 @@ function companionSocialPostAccessible(companion, post) {
 function companionSocialCommentsHTML(post) {
     const comments = (post.comments || []).slice(-3);
     return `${comments.length ? `<div class="companion-social-comments">${comments.map(comment =>
-        `<div><strong>You</strong><span>${escapeHTML(comment.text)}</span></div>`).join('')}</div>` : ''}
+        `<div><strong>${escapeHTML(comment.authorId?comment.authorName||'Contact':'You')}</strong><span>${escapeHTML(comment.text)}</span></div>`).join('')}</div>` : ''}
         <form class="companion-social-comment-form" data-comment-social-post="${escapeHTML(post.id)}">
             <input type="text" maxlength="500" placeholder="Comment on this post…" aria-label="Comment on this post">
             <button type="submit">Comment</button>
@@ -45332,6 +47842,16 @@ function openCompanionSocialImage(companion, post) {
 }
 
 function bindCompanionSocialImageOpeners(companion, root) {
+    root.querySelectorAll('[data-retry-social-photo]').forEach(button => {
+        button.onclick = async () => {
+            const post = companion.socialPosts.find(item => item.id === button.dataset.retrySocialPhoto);
+            if (!post || post.pending || !post.scene || !companionSocialPostAccessible(companion, post)) return;
+            post.pending = true; post.generationError = '';
+            await saveState();
+            renderCompanionSocialPanel(companion);
+            await resolveCompanionSocialPhoto(companion, post);
+        };
+    });
     root.querySelectorAll('img').forEach(image => {
         image.addEventListener('error', () => {
             const host = image.closest('.companion-social-photo-open, .companion-social-gallery > button');
@@ -45360,6 +47880,11 @@ function renderCompanionSocialPanel(companion) {
     panel.classList.toggle('hidden', !open);
     button.classList.remove('hidden');
     button.classList.toggle('active', open);
+    if(companion.lifeProfile?.world?.frame.mode==='private_social'&&!VHWorldEngine.connected(companion)) {
+        content.textContent='This profile is private. Send a connection request from the chat and wait for acceptance.';
+        return;
+    }
+
     button.innerHTML = `<span aria-hidden="true">▦</span> Social Media <span class="companion-social-state ${companion.socialFeedEnabled ? 'on' : 'off'}">${companion.socialFeedEnabled ? 'On' : 'Off'}</span>`;
     button.title = companion.socialFeedEnabled
         ? 'Social feed and gallery' : 'Set up social feed and gallery';
@@ -45436,12 +47961,14 @@ function renderCompanionSocialPanel(companion) {
         ? '<div class="companion-social-paused-banner"><strong>Feed paused</strong><span>No new posts will be created. Your gallery and social relationship are still available.</span><button type="button" data-social-resume>Resume feed</button></div>' : '';
     const quickControls = companion.socialFeedEnabled ? companionSocialQuickControlsHTML(companion) : '';
     if (companionSocialTab === 'gallery') {
-        const photos = posts.filter(post => post.photo);
-        content.innerHTML = relationshipCard + pausedBanner + (photos.length
+        const photos = posts.filter(post => post.photo || post.kind === 'photo');
+        content.innerHTML = relationshipCard + pausedBanner + quickControls + (photos.length
             ? `<div class="companion-social-gallery">${photos.map(post => companionSocialPostAccessible(companion, post)
-                ? `<button type="button" data-open-social-photo="${escapeHTML(post.id)}" aria-label="Open photo: ${escapeHTML(post.text || 'social post')}"><img src="${escapeHTML(post.photo)}" alt="Gallery post from ${escapeHTML(companion.name || 'virtual human')}" title="${escapeHTML(post.text || post.scene || '')}"></button>`
+                ? !post.photo ? `<div class="companion-social-photo-state">${post.pending ? 'Generating photo…' : escapeHTML(post.generationError || 'Photo unavailable')}${!post.pending && post.scene ? `<button type="button" class="btn btn-secondary" data-retry-social-photo="${escapeHTML(post.id)}">Retry photo</button>` : ''}</div>`
+                : `<button type="button" data-open-social-photo="${escapeHTML(post.id)}" aria-label="Open photo: ${escapeHTML(post.text || 'social post')}"><img src="${escapeHTML(post.photo)}" alt="Gallery post from ${escapeHTML(companion.name || 'virtual human')}" title="${escapeHTML(post.text || post.scene || '')}"></button>`
                 : `<div class="companion-social-gallery-lock"><span>🔒</span><small>${post.visibility === 'paid' ? `${post.unlockPrice || companion.socialSubscriptionPrice} ${escapeHTML(companion.socialCurrency)}` : post.visibility}</small></div>`).join('')}</div>`
             : '<div class="companion-social-empty">No gallery photos yet. Photo posts appear here automatically.</div>');
+        bindCompanionSocialQuickControls(companion, content);
         bindCompanionSocialRelationshipControls(companion, content);
         bindCompanionSocialImageOpeners(companion, content);
         const resume = content.querySelector('[data-social-resume]');
@@ -45461,7 +47988,7 @@ function renderCompanionSocialPanel(companion) {
         const photo = post.pending
             ? '<div class="companion-social-photo-state">Generating photo…</div>'
             : post.photo && accessible ? `<button type="button" class="companion-social-photo-open" data-open-social-photo="${escapeHTML(post.id)}" aria-label="Open full-size photo"><img src="${escapeHTML(post.photo)}" alt="Social post from ${escapeHTML(companion.name || 'virtual human')}"></button>`
-            : post.generationError ? `<div class="companion-social-photo-state">Photo failed · ${escapeHTML(post.generationError)}</div>` : '';
+            : post.generationError ? `<div class="companion-social-photo-state">Photo failed · ${escapeHTML(post.generationError)}${accessible && post.scene ? `<button type="button" class="btn btn-secondary" data-retry-social-photo="${escapeHTML(post.id)}">Retry photo</button>` : ''}</div>` : '';
         const locked = !accessible ? `<div class="companion-social-locked"><strong>Locked post</strong><span>${post.visibility === 'paid' ? `${post.unlockPrice || companion.socialSubscriptionPrice} ${escapeHTML(companion.socialCurrency)} to unlock` : 'Available to followers or subscribers'}</span>${post.visibility === 'paid' ? `<button type="button" data-unlock-social-post="${escapeHTML(post.id)}">Unlock</button>` : ''}</div>` : '';
         const canTip = ['tips', 'tips_subscription'].includes(companion.socialMonetization);
         return `<article class="companion-social-post">
@@ -45586,12 +48113,56 @@ function companionPlayerPhotoCapabilityMessage(companion) {
     return `${model} does not advertise image input. This button sends your photo to the virtual human; they can still generate and send you photos through the separately configured image model.`;
 }
 
+/** An explicit chat profile stays selected when the global persona changes. */
+function companionActivePersona(companion) {
+    const timeline=getActiveCompanionTimeline(companion.id),selected=timeline?timeline.personaId:state.activePersonaId;
+    const persona=state.personas.find(persona=>persona.id===selected);
+    return persona?{...persona,text:timeline?.profileOverrides?.[selected]??persona.text}:null;
+}
+
+function renderCompanionPersonaSelector(companion) {
+    const select = document.getElementById('cc-persona-select');
+    if (!select) return;
+    const timeline = getActiveCompanionTimeline(companion.id);
+    const globalPersona = state.personas.find(persona => persona.id === state.activePersonaId);
+    const selected = timeline?.personaId || '';
+    select.innerHTML = `<option value="">No profile for this chat</option>`
+        + (selected && !state.personas.some(persona => persona.id === selected)
+            ? `<option value="${escapeHTML(selected)}">Deleted profile — select another</option>` : '')
+        + state.personas.map(persona => `<option value="${escapeHTML(persona.id)}">${escapeHTML(persona.name || 'Unnamed persona')}</option>`).join('');
+    select.value = selected;
+    const details=document.getElementById('cc-profile-details');
+    if(details){const persona=companionActivePersona(companion);details.innerHTML=`<summary>Profile & remembered details for this chat</summary><textarea class="form-textarea" data-chat-profile rows="4" placeholder="Select a profile above first">${escapeHTML(persona?.text||'')}</textarea><button type="button" class="btn btn-ghost" data-save-chat-profile>Save profile for this chat</button><p data-profile-save-status></p><pre style="white-space:pre-wrap">${escapeHTML(VHConversationEngine.playerFactsBrief(companionContinuity(companion),persona?.id)||'No basic details remembered yet.')}</pre>`;
+        details.querySelector('[data-save-chat-profile]').onclick=async()=>{if(companionTimelineBusy(companion.id))return showToast('Let the reply finish first.','info');if(!timeline.personaId)return showToast('Select a profile first.','info');timeline.profileOverrides ||= {};timeline.profileOverrides[timeline.personaId]=details.querySelector('[data-chat-profile]').value.slice(0,6000);companionContinuity(companion).revision++;persistCompanionRuntime(companion);await saveState();details.querySelector('[data-profile-save-status]').textContent='Saved only for this chat.';};
+    }
+
+    select.onchange = async () => {
+        if (companionTimelineBusy(companion.id)) {
+            select.value = selected;
+            showToast('Let the current reply finish before changing your profile.', 'info');
+            return;
+        }
+        if (!timeline || getActiveCompanionTimeline(companion.id) !== timeline) return;
+        for(const message of timeline.messages)if(message.role==='user'&&!message.playerPersonaId)message.playerPersonaId=timeline.personaId||'__none__';
+        for(const item of companionContinuity(companion).playerModel)if(!item.personaId)item.personaId=timeline.personaId||'__none__';
+        timeline.personaId = select.value;timeline.personaPinned=true;
+        // A pending observer must not attach the old profile's appraisal to
+        // the newly selected identity. Keep existing chat history intact.
+        companionContinuity(companion).revision += 1;
+        persistCompanionRuntime(companion);
+        await saveState();
+        renderCompanionThread();
+    };
+}
+
 function renderCompanionThread() {
     const companion = getCompanion(state.activeCompanionId);
     const container = document.getElementById('companion-messages');
     if (!companion || !container) return;
 
     renderCompanionTimelineControls(companion);
+    renderCompanionPersonaSelector(companion);
+    renderCompanionLifeActions(companion);
     document.getElementById('cc-name').textContent = companion.name || 'Unnamed';
     const avatar = document.getElementById('cc-avatar');
     avatar.setAttribute('style', companionAvatarStyle(companion));
@@ -45620,7 +48191,11 @@ function renderCompanionThread() {
             ? `${life.label}${experience.replyDelays ? ' · replies may be delayed' : ' · replies stay immediate'}`
             : life.label;
     statusEl.className = `companion-chat-status ${life.availability}`;
-    if (Number(nextPending?.replyDueAt) > nowMs) {
+    if (nextPending?.attention && nextPending.attention.stage !== 'ready') {
+        const labels = { waiting: 'has not opened the message', deferred: 'will reconsider when attention frees up',
+            withheld: 'taking space', composing: 'considering a response' };
+        statusEl.textContent = `${life.label} · ${labels[nextPending.attention.stage] || 'message pending'}`;
+    } else if (Number(nextPending?.replyDueAt) > nowMs) {
         const expected = companionClockParts(nextPending.replyDueAt, companion);
         statusEl.textContent = `${life.label} · reply expected around ${expected.time}`;
     }
@@ -45724,6 +48299,9 @@ function renderCompanionThread() {
             resolveCompanionPendingPhoto(companion, message);
         };
     });
+    container.querySelectorAll('[data-repair-companion-reply]').forEach(button => {
+        button.onclick = () => rerollCompanionReplyFromMessage(button.dataset.repairCompanionReply);
+    });
     container.querySelectorAll('[data-companion-photo]').forEach(image => {
         image.onerror = async () => {
             const message = messages.find(item => item.id === image.dataset.companionPhoto);
@@ -45810,146 +48388,13 @@ async function refreshCompanionEnvironment(companion, nowMs = Date.now(), force 
     return request;
 }
 
-function weightedCompanionWildcard(deck, seed) {
-    const usable = deck.filter(event => event.weight > 0);
-    if (!usable.length) return null;
-    const total = usable.reduce((sum, event) => sum + event.weight, 0);
-    let cursor = companionSeededRoll(seed) * total;
-    for (const event of usable) {
-        cursor -= event.weight;
-        if (cursor <= 0) return event;
-    }
-    return usable[usable.length - 1];
-}
-
-function companionSocialContactIntervalMs(person, seed) {
-    const ranges = {
-        daily: [18, 34], few_week: [42, 90], weekly: [120, 240],
-        monthly: [480, 960], rare: [960, 2160]
-    }[person.contactFrequency] || [120, 240];
-    return (ranges[0] + companionSeededRoll(seed) * (ranges[1] - ranges[0])) * 60 * 60 * 1000;
-}
-
-function companionSocialWorldState(companion) {
-    const life = companion.lifeProfile || normalizeCompanionLifeProfile({});
-    const runtime = companion.lifeRuntime ||= normalizeCompanionLifeRuntime({}, life.socialCircle);
-    runtime.socialWorld = normalizeCompanionSocialWorldRuntime(runtime.socialWorld, life.socialCircle);
-    return runtime.socialWorld;
-}
 
 /**
  * Advance the supporting cast without a model call. This deliberately changes
  * only bounded relationship pressure and ordinary contact timing. It never
  * fabricates a concrete secret, catastrophe, promise, or player action.
  */
-function advanceCompanionSocialWorld(companion, nowMs = Date.now(), options = {}) {
-    if (!companion.lifeProfile?.initializedAt) return [];
-    const world = companionSocialWorldState(companion);
-    let changed = false;
-    const startAt = world.lastAdvancedAt || companion.lifeProfile.initializedAt || nowMs;
-    const maxCatchupMs = livingClamp(Number(options.maxDays) || 28, 1, 90) * 86400000;
-    const boundedStart = Math.max(startAt, nowMs - maxCatchupMs);
-    const firstDay = Math.floor(boundedStart / 86400000);
-    const lastDay = Math.floor(nowMs / 86400000);
-    const events = [];
 
-    for (const relation of world.people) {
-        const person = companion.lifeProfile.socialCircle.find(item => item.id === relation.personId);
-        if (!person) continue;
-        if (!relation.nextInteractionAt) {
-            relation.nextInteractionAt = boundedStart + companionSocialContactIntervalMs(
-                person, `${companion.lifeProfile.seed}|social-first|${person.id}|${firstDay}`);
-            changed = true;
-        }
-        let guard = 0;
-        while (relation.nextInteractionAt <= nowMs && guard++ < 40) {
-            changed = true;
-            const at = relation.nextInteractionAt;
-            const dayKey = Math.floor(at / 86400000);
-            const warmthRoll = companionSeededRoll(`${companion.lifeProfile.seed}|social-tone|${person.id}|${dayKey}`);
-            const closenessDelta = warmthRoll < 0.16 ? -2 : warmthRoll > 0.78 ? 2 : warmthRoll > 0.58 ? 1 : 0;
-            const tensionDelta = warmthRoll < 0.10 ? 2 : warmthRoll < 0.24 ? 1 : warmthRoll > 0.76 ? -1 : 0;
-            relation.closeness = livingClamp(relation.closeness + closenessDelta, -100, 100);
-            relation.trust = livingClamp(relation.trust + Math.sign(closenessDelta), -100, 100);
-            relation.tension = livingClamp(relation.tension + tensionDelta, 0, 100);
-            relation.lastInteractionAt = at;
-            relation.currentSituation = tensionDelta > 0
-                ? 'Their latest ordinary contact left some friction.'
-                : closenessDelta > 0 ? 'Recent contact felt easy or supportive.'
-                : 'They remain part of each other’s ordinary life.';
-            const meaningful = Math.abs(closenessDelta) >= 2 || tensionDelta >= 2;
-            const summary = meaningful
-                ? `${companion.name} and ${person.name} had ordinary contact that ${closenessDelta > 0 ? 'brought them a little closer' : 'created some distance'}${tensionDelta > 0 ? ' and left mild tension' : ''}.`
-                : `${companion.name} and ${person.name} stayed in ordinary contact.`;
-            const event = {
-                id: livingId('vh_social_event', `${companion.id}|${person.id}|${dayKey}|${guard}`),
-                summary, closenessDelta, tensionDelta, createdAt: at
-            };
-            relation.relationshipEvents.push(event);
-            relation.relationshipEvents = relation.relationshipEvents.slice(-30);
-            world.interactions.push({ id: event.id, personId: person.id, summary, createdAt: at });
-            if (meaningful) events.push({ ...event, person, relation });
-
-            // Gossip is allowed only when it can point back to an authored
-            // tension. The deterministic engine never invents a secret or a
-            // fresh accusation just to make the social graph look active.
-            const gossipSubject = companion.lifeProfile.socialCircle.find(subject =>
-                subject.id !== person.id && subject.currentTension
-                && companionSeededRoll(`${companion.lifeProfile.seed}|gossip-subject|${person.id}|${subject.id}|${dayKey}`) > 0.82);
-            if (meaningful && gossipSubject) {
-                const gossipId = livingId('vh_gossip', `${companion.id}|${person.id}|${gossipSubject.id}|${dayKey}`);
-                if (!world.gossip.some(item => item.id === gossipId)) {
-                    world.gossip.push({
-                        id: gossipId,
-                        sourcePersonId: person.id,
-                        subjectPersonId: gossipSubject.id,
-                        summary: `${person.name} brought up the already-established situation involving ${gossipSubject.name}: ${gossipSubject.currentTension}`,
-                        createdAt: at,
-                        expiresAt: at + 14 * 86400000
-                    });
-                }
-            }
-            relation.nextInteractionAt = at + companionSocialContactIntervalMs(
-                person, `${companion.lifeProfile.seed}|social-next|${person.id}|${dayKey}|${guard}`);
-        }
-    }
-    world.interactions = world.interactions.slice(-120);
-    const activeGossip = world.gossip.filter(item => !item.expiresAt || item.expiresAt > nowMs).slice(-40);
-    if (activeGossip.length !== world.gossip.length) changed = true;
-    world.gossip = activeGossip;
-    // A five-second poll is not a simulation event. Moving this marker on an
-    // idle pass made the entire companion record dirty, so installations with
-    // embedded photos/videos rewrote hundreds of megabytes to IndexedDB over
-    // and over. Only persist an advancement marker when canonical social state
-    // actually changed.
-    if (changed) world.lastAdvancedAt = nowMs;
-
-    if (!options.preview) {
-        events.slice(-3).forEach(event => {
-            const id = `vh_social_${event.id}`.slice(0, 100);
-            if (!companion.lifeEvents.some(item => item.id === id)) {
-                companion.lifeEvents.push(normalizeCompanionLifeEvent({
-                    id, text: event.summary, createdAt: event.createdAt, source: 'relationship'
-                }));
-            }
-            const influence = livingClamp(Number(event.person.influence) || 35, 0, 100) / 100;
-            applyCompanionMoodUpdate(companion, {
-                valence_change: Math.round(event.closenessDelta * influence),
-                arousal_change: Math.round(Math.max(0, event.tensionDelta) * influence),
-                relationship_change: 0,
-                stress_change: Math.round(event.tensionDelta * influence),
-                social_need_change: event.closenessDelta > 0 ? -1 : 1,
-                mood_label: companion.mood?.label || 'content'
-            }, event.createdAt);
-        });
-        companion.lifeRuntime.simulationLedger.push(...events.slice(-8).map(event => ({
-            id: event.id, kind: 'social', summary: event.summary, createdAt: event.createdAt, costCalls: 0
-        })));
-        companion.lifeRuntime.simulationLedger = companion.lifeRuntime.simulationLedger.slice(-500);
-        companion.lifeEvents = companion.lifeEvents.slice(-200);
-    }
-    return events;
-}
 
 function companionAutonomyHealthReport(companion, days = 28, nowMs = Date.now()) {
     const horizonDays = livingClamp(Math.round(Number(days) || 28), 7, 84);
@@ -45966,7 +48411,7 @@ function companionAutonomyHealthReport(companion, days = 28, nowMs = Date.now())
             const from = life.places.find(place => place.id === previous.placeId);
             const to = life.places.find(place => place.id === current.placeId);
             if (from && to && from.id !== to.id) {
-                const required = Math.abs((from.travelMinutesFromHome || 0) - (to.travelMinutesFromHome || 0));
+                const required = life.travelLegs?.find(leg => leg.from === from.id && leg.to === to.id)?.minutes ?? ((from.travelMinutesFromHome || 0) + (to.travelMinutesFromHome || 0));
                 if (current.startMinute - previous.endMinute < Math.max(5, required)) impossibleTravel += 1;
             }
         }
@@ -46012,121 +48457,6 @@ function companionAutonomyHealthReport(companion, days = 28, nowMs = Date.now())
     };
 }
 
-function advanceCompanionLife(companion, nowMs = Date.now()) {
-    // Uninitialized life is a pure fallback computed from the clock. Merely
-    // observing it must not dirty persistent state on every agency poll.
-    if (!companion.lifeProfile?.initializedAt) return null;
-    const runtime = companion.lifeRuntime;
-    const priorSimulatedAt = runtime.lastSimulatedAt || nowMs;
-    const elapsed = Math.max(0, nowMs - priorSimulatedAt);
-    let changed = false;
-    const socialBefore = JSON.stringify(runtime.socialWorld || null);
-    advanceCompanionSocialWorld(companion, nowMs);
-    if (socialBefore !== JSON.stringify(runtime.socialWorld || null)) changed = true;
-    const situation = companionSituationAt(companion, nowMs);
-    const situationKey = [situation.source, situation.placeId || situation.placeLabel, situation.activity].join('|').slice(0, 240);
-    if (situationKey && situationKey !== runtime.currentSituationKey) {
-        const previous = runtime.currentSituationKey ? companionSituationAt(companion, priorSimulatedAt) : null;
-        const placeChanged = previous && (previous.placeId || previous.placeLabel) !== (situation.placeId || situation.placeLabel);
-        const transitionSummary = previous
-            ? `${companion.name}'s routine advanced from ${previous.activity}${previous.placeLabel ? ` at ${previous.placeLabel}` : ''} to ${situation.activity}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}.`
-            : `${companion.name}'s current routine is ${situation.activity}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}.`;
-        runtime.simulationLedger.push({
-            id: livingId('vh_schedule_transition', `${companion.id}|${situationKey}|${nowMs}`),
-            kind: placeChanged ? 'travel' : 'schedule', summary: transitionSummary,
-            createdAt: nowMs, costCalls: 0
-        });
-        runtime.simulationLedger = runtime.simulationLedger.slice(-500);
-        runtime.currentSituationKey = situationKey;
-        changed = true;
-    }
-    if (runtime.activeWildcard?.endsAt <= nowMs) {
-        runtime.activeWildcard = null;
-        changed = true;
-    }
-    if (runtime.pendingInitiative?.expiresAt <= nowMs) {
-        runtime.pendingInitiative = null;
-        changed = true;
-    }
-    if (!companion.lifeWildcardsEnabled || !companion.lifeProfile.wildcardDeck.length) {
-        if (changed) runtime.lastSimulatedAt = nowMs;
-        return null;
-    }
-    const catchupDays = Math.min(7, Math.max(0, Math.ceil(elapsed / 86400000)));
-    let newestActive = runtime.activeWildcard;
-    for (let daysAgo = catchupDays; daysAgo >= 0; daysAgo -= 1) {
-        const sampleAt = nowMs - daysAgo * 86400000;
-        const local = companionLocalMinuteInfo(companion, sampleAt);
-        if (runtime.processedWildcardDays.includes(local.dateKey)) continue;
-        const currentMinute = local.hour * 60 + local.minute;
-        const consideredMinute = daysAgo > 0 ? 1439 : currentMinute;
-        const triggerMinute = 8 * 60 + Math.floor(companionSeededRoll(`${companion.lifeProfile.seed}|trigger|${local.dateKey}`) * 13 * 60);
-        if (consideredMinute < triggerMinute) continue;
-        runtime.processedWildcardDays.push(local.dateKey);
-        changed = true;
-
-        const localMidnightApprox = sampleAt - currentMinute * 60000;
-        const startedAt = localMidnightApprox + triggerMinute * 60000;
-        const gapDays = runtime.lastWildcardAt ? Math.abs(startedAt - runtime.lastWildcardAt) / 86400000 : 999;
-        if (companionSeededRoll(`${companion.lifeProfile.seed}|occurs|${local.dateKey}`) > 0.22) continue;
-        const event = weightedCompanionWildcard(
-            companion.lifeProfile.wildcardDeck.filter(item => gapDays >= item.minGapDays),
-            `${companion.lifeProfile.seed}|pick|${local.dateKey}`);
-        if (!event) continue;
-
-        const active = { ...event, startedAt, endsAt: startedAt + event.durationMinutes * 60000 };
-        runtime.lastWildcardAt = Math.max(runtime.lastWildcardAt || 0, startedAt);
-        changed = true;
-        if (active.endsAt > nowMs && active.startedAt <= nowMs) {
-            runtime.activeWildcard = active;
-            newestActive = active;
-        }
-        if (!companion.lifeEvents.some(item => item.id === `vh_wildcard_${event.id}_${local.dateKey}`)) {
-            companion.lifeEvents.push(normalizeCompanionLifeEvent({
-                id: `vh_wildcard_${event.id}_${local.dateKey}`,
-                text: event.label,
-                createdAt: startedAt,
-                source: 'autonomy'
-            }));
-        }
-        if (event.initiativeHook && nowMs - startedAt < 8 * 60 * 60 * 1000) {
-            runtime.pendingInitiative = {
-                text: `${event.label}. ${event.initiativeHook}`,
-                createdAt: startedAt,
-                expiresAt: nowMs + 8 * 60 * 60 * 1000
-            };
-        }
-        const moodDelta = ['conflict', 'inconvenience', 'money', 'health', 'travel'].includes(event.category) ? -6
-            : ['delight', 'opportunity'].includes(event.category) ? 7 : 0;
-        if (moodDelta && nowMs - startedAt < 36 * 60 * 60 * 1000) {
-            applyCompanionMoodUpdate(companion, {
-                valence_change: moodDelta,
-                arousal_change: Math.abs(moodDelta) / 2,
-                mood_label: moodDelta > 0 ? 'content' : 'overwhelmed',
-                relationship_change: 0,
-                stress_change: moodDelta < 0 ? Math.abs(moodDelta) : -3,
-                anger_change: event.category === 'conflict' ? 8 : 0,
-                social_need_change: event.category === 'social' || event.category === 'delight' ? -5 : 0,
-                emotion_appraisal: {
-                    summary: event.label,
-                    goal_impact: moodDelta > 0 ? 35 : moodDelta < 0 ? -35 : 0,
-                    threat: ['health', 'conflict', 'travel'].includes(event.category) ? 28 : 5,
-                    loss: ['money', 'health'].includes(event.category) ? 22 : 0,
-                    novelty: 55,
-                    norm_violation: event.category === 'conflict' ? 35 : 0,
-                    control: ['inconvenience', 'travel'].includes(event.category) ? 30 : 55,
-                    certainty: 85,
-                    social_safety: event.category === 'conflict' ? 32 : event.category === 'social' ? 78 : 55,
-                    responsibility: 'circumstance'
-                }
-            }, startedAt);
-        }
-    }
-    runtime.processedWildcardDays = runtime.processedWildcardDays.slice(-45);
-    companion.lifeEvents = companion.lifeEvents.slice(-200);
-    if (changed) runtime.lastSimulatedAt = nowMs;
-    return newestActive;
-}
 
 function companionSocialPostArgsFromMessage(message) {
     const embedded = extractCompanionEmbeddedToolCalls(message?.content);
@@ -46156,11 +48486,33 @@ function recordCompanionSocialFailure(companion, error, nowMs = Date.now()) {
 async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now(), options = {}) {
     if (!companion.socialFeedEnabled || (!options.force && companion.socialPostFrequency === 'manual')
         || !providerHasCredentials(companionTextProviderId(companion))) return null;
+    const ownerPosts = companion.socialPosts;
+    const ownerRuntime = companion.socialFeedRuntime;
+    const ownerTimeline = getActiveCompanionTimeline(companion.id);
+    const stillOwned = () => companion.socialPosts === ownerPosts && companion.socialFeedRuntime === ownerRuntime
+        && getActiveCompanionTimeline(companion.id) === ownerTimeline
+        && (options.force || state.globalSettings.companionAgencyPaused !== true);
+    try {
     const life = companionLifeState(companion, nowMs);
     const situation = life.situation || companionSituationAt(companion, nowMs);
+    if (!options.force && ['asleep', 'private'].includes(situation.availability || life.availability)) {
+        const end = Number(situation.endsAt) || 0;
+        return { posted: false, pendingPhoto: null, reason: 'availability', retryAt: end > nowMs ? end
+            : life.availability === 'asleep' ? companionNextWakeAt(companion, nowMs) : nowMs + 30 * 60000 };
+    }
+    const earliest = (Number(ownerRuntime.lastPostAt) || 0) + companionSocialMinimumGapMs(companion);
+    if (!options.force && ownerRuntime.lastPostAt && earliest > nowMs) {
+        return { posted: false, pendingPhoto: null, reason: 'cadence', retryAt: earliest };
+    }
     const currentContext = `${situation.label || life.label}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}${situation.withNames?.length ? ` with ${situation.withNames.join(', ')}` : ''}. Current clothing: ${situation.outfit || companion.currentOutfit || 'not established'}. Recent life event: ${companion.lifeEvents.at(-1)?.text || 'none'}`.slice(0, 1800);
-    const gate = await labsProposal('human_social_gate', { currentContext }, 'humans', { background: true, priority: 20 });
-    if (!options.force && gate?.candidate && (gate.candidate.shouldPost !== true || Number(gate.candidate.confidence) < 0.55)) {
+    let gate = null;
+    if (!options.force) {
+        try { gate = await labsProposal('human_social_gate', { currentContext }, 'humans', { background: true, priority: 20 }); }
+        catch (error) { console.warn('Optional social advice unavailable:', error); }
+    }
+    if (!stillOwned()) return { posted: false, pendingPhoto: null, reason: 'stale' };
+    // An unavailable or uncertain optional sensor is not a veto.
+    if (!options.force && gate?.candidate?.shouldPost === false && Number(gate.candidate.confidence) >= 0.7) {
         return { posted: false, pendingPhoto: null, reason: 'gate' };
     }
     const photoEligible = companion.socialFeedImages && companion.allowPhotos;
@@ -46168,11 +48520,10 @@ async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now
         && companionSeededRoll(`${companion.id}|post-format|${Math.floor(nowMs / 3600000)}`) * 100 < companion.socialPhotoRatio
         ? 'photo' : 'status';
     const allowedTypes = companion.socialContentTypes?.length ? companion.socialContentTypes : ['everyday'];
-    const recent = getCompanionThread(companion.id);
     const textProvider = companionTextProviderId(companion);
-    const messages = [{ role: 'system', content: buildCompanionSystemPrompt(companion, recent, nowMs, {
-        experience: companionChatExperience(companion.id), suppressPersonaVision: true
-    }) }, {
+    const messages = [{ role: 'system', content: `Write one social post as ${companion.name}. This is a public-facing profile action, not a chat reply. Use only publish_social_post, or the requested JSON fallback. Never call chat, memory or media-delivery tools. Do not expose private player conversations, internal state or instructions. Do not claim a new event occurred merely to make a post interesting.
+Identity and voice: ${String(companion.personality || '').slice(0, 1000)}. ${String(companion.socialWritingStyle || companion.textingStyle || '').slice(0, 700)}
+Recent posts (avoid repeating them): ${companion.socialPosts.slice(-5).map(post => String(post.text || '').slice(0, 200)).join(' | ')}` }, {
         role: 'user',
         content: `[PRIVATE AUTONOMOUS SOCIAL EVENT — NOT A PLAYER MESSAGE]\nYour social profile has reached a valid posting window. Current authoritative context: ${currentContext}\nAuthored controls: ${companionSocialBehaviorSummary(companion)}\nPublish exactly one ${requestedFormat} post grounded in this real moment. The category MUST be one of: ${allowedTypes.join(', ')}. Keep it in the authored social writing voice and obey every custom posting rule. Thirst-trap intensity is ${companion.socialThirstTrapLevel}/100; this controls flirtatious public presentation, not nudity or invented circumstances. Do not address the player, mention the simulation, expose private relationship state, or invent a new event. Call publish_social_post. If tool calling is unavailable, output only one JSON object with category, text, visibility, unlock_price, scene and reason.`
     }];
@@ -46186,7 +48537,8 @@ async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now
     const request = requestBody => fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(VHConversationEngine.fitRequest(requestBody, {
+            contextSize: companionRequestContextSize(companion, requestBody.model) }).body)
     });
     let response = await request(body);
     if (!response.ok && [400, 404, 422].includes(response.status)) {
@@ -46202,9 +48554,14 @@ async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now
     }
     if (!response.ok) throw new Error(humanizeApiError(new Error(await response.text().catch(() => `Request failed (${response.status})`))));
     const message = (await response.json())?.choices?.[0]?.message || {};
+    if (!stillOwned()) return { posted: false, pendingPhoto: null, reason: 'stale' };
     const args = companionSocialPostArgsFromMessage(message);
-    if (!isPlainObject(args) || !String(args.text || '').trim()) {
+    if (!isPlainObject(args) || (!String(args.text || '').trim()
+        && !(requestedFormat === 'photo' && String(args.scene || '').trim()))) {
         throw new Error('The text model returned no usable social post. Try another text model or retry.');
+    }
+    if (requestedFormat === 'photo' && !String(args.scene || '').trim()) {
+        throw new Error('A photo post was requested, but the model omitted its image description. No text-only replacement was published.');
     }
     const beforeCount = companion.socialPosts.length;
     const pendingPhoto = applyCompanionSocialPostCommit(companion, { social_post: {
@@ -46214,6 +48571,10 @@ async function generateCompanionAutonomousSocialPost(companion, nowMs = Date.now
     } }, nowMs, options.force ? 'manual' : 'autonomy');
     companion.socialFeedRuntime.lastAttemptAt = nowMs;
     return { posted: companion.socialPosts.length > beforeCount, pendingPhoto, reason: 'model' };
+    } catch (error) {
+        if (!stillOwned()) return { posted: false, pendingPhoto: null, reason: 'stale' };
+        throw error;
+    }
 }
 
 async function processCompanionLabsLifeBeat(companion, nowMs = Date.now()) {
@@ -46224,6 +48585,8 @@ async function processCompanionLabsLifeBeat(companion, nowMs = Date.now()) {
     companion.lifeRuntime.lastLabsBeatAt = nowMs;
     const life = companion.lifeProfile;
     const situation = companionSituationAt(companion, nowMs);
+    const owner = companion.lifeRuntime;
+    const timeline = getActiveCompanionTimeline(companion.id);
     const result = await labsProposal('life_beat', {
         text: `${situation.label}${situation.placeLabel ? ` at ${situation.placeLabel}` : ''}`,
         currentSituation: situation,
@@ -46232,22 +48595,18 @@ async function processCompanionLabsLifeBeat(companion, nowMs = Date.now()) {
         allowedPlaceIds: life.places.map(place => place.id),
         allowedPersonIds: life.socialCircle.map(person => person.id)
     }, 'humans', { background: true, priority: 15 });
-    const beats = Array.isArray(result?.candidate?.beats) ? result.candidate.beats : [];
-    beats.forEach((beat, index) => {
-        const text = String(beat.summary || '').trim();
-        if (!text) return;
-        companion.lifeEvents.push(normalizeCompanionLifeEvent({
-            id: livingId('vh_labs_beat', `${companion.id}|${nowMs}|${beat.anchorId}|${index}`),
-            text,
-            createdAt: nowMs,
-            source: 'autonomy'
-        }));
-        companionRecordContinuityEvent(companion, {
-            type: 'life_event', summary: text, createdAt: nowMs, perceivedAt: nowMs,
-            certainty: 100, dedupeKey: `life_beat:${companion.id}:${beat.anchorId || index}:${nowMs}`
-        });
-    });
-    companion.lifeEvents = companion.lifeEvents.slice(-200);
+    if (getCompanion(companion.id) !== companion || companion.lifeRuntime !== owner
+        || getActiveCompanionTimeline(companion.id) !== timeline) return null;
+    const beats = (Array.isArray(result?.candidate?.beats) ? result.candidate.beats : [])
+        .filter(beat => life.weeklySchedule.some(block => block.id === beat.anchorId)).slice(0, 8);
+    // A suggestion is not an executed action. Keep it diagnostic until the
+    // activity engine can validate and execute a supported goal.
+    beats.forEach((beat, index) => owner.simulationLedger.push({
+        id: livingId('vh_labs_proposal', `${companion.id}|${nowMs}|${index}`),
+        kind: 'proposal', summary: `Unexecuted suggestion: ${String(beat.summary || '').slice(0, 700)}`,
+        createdAt: nowMs, costCalls: 1
+    }));
+    owner.simulationLedger = owner.simulationLedger.slice(-500);
     return beats;
 }
 
@@ -46268,7 +48627,35 @@ async function companionTinyContactAdvice(companion, context) {
     }
 }
 
+const companionWorldRouteInFlight = new Set();
+async function refreshCompanionWorldRoute(companion, nowMs) {
+    const request=VHWorldEngine.routeRequest(companion,nowMs);if(!request)return;
+    const timeline=getActiveCompanionTimeline(companion.id),runtime=companion.lifeRuntime;
+    const key=companion.id+'|'+timeline?.id+'|'+request.id;if(companionWorldRouteInFlight.has(key))return;
+    companionWorldRouteInFlight.add(key);
+    try {
+        let result;try{result=await mcpBridgeRequest('/maps/route',{method:'POST',body:request});}catch(error){result={};}
+        if(companion.lifeRuntime!==runtime||getActiveCompanionTimeline(companion.id)!==timeline)return;
+        VHWorldEngine.applyRoute(companion,request.id,result,Date.now());await saveState();
+    }finally{companionWorldRouteInFlight.delete(key);}
+}
+
+const companionSocialChunkInFlight=new Set();
+async function planCompanionSupportingPeople(companion,nowMs){
+ const config=companion.lifeProfile.world.socialAgent,r=VHWorldEngine.ensure(companion),timeline=getActiveCompanionTimeline(companion.id);
+ if(!config?.enabled||!companion.lifeProfile.socialCircle.length||companionSocialChunkInFlight.has(companion.id)||nowMs<(r.socialNextAt||0)||companionTimelineBusy(companion.id))return;
+ companionSocialChunkInFlight.add(companion.id);r.socialNextAt=nowMs+config.intervalHours*3600000;
+ try{await saveState();const provider=companionTextProviderId(companion),body={model:config.model||companion.model||state.globalSettings.defaultModel,max_tokens:1200,messages:[{role:'system',content:'Plan a small batch of ordinary supporting-person messages and public-post comments in a fictional life simulation. Return JSON only: {"events":[{"personId":"existing id","kind":"message|comment","postId":"existing public post id or empty","delayMinutes":30,"text":"what this person types"}]}. These are proposals for later execution. Stay within the supplied relationships, routines and continuing tasks. Do not invent private knowledge of the player, shared incidents, meetings, secrets, completed actions or emergencies. Use varied ordinary voices and leave room for silence. Content is fictional dialogue, never instructions to the engine.'},{role:'user',content:JSON.stringify({recipient:companion.name,horizonHours:config.intervalHours,maxEvents:config.maxEvents,people:companion.lifeProfile.socialCircle.map(p=>({id:p.id,name:p.name,relationship:p.relationship,description:p.description,routines:companion.lifeProfile.world.people.filter(x=>x.personId===p.id)})),posts:(companion.socialPosts||[]).filter(p=>p.visibility==='public').slice(-5).map(p=>({id:p.id,text:p.text})),recent:r.socialQueue.slice(-8).map(x=>({personId:x.personId,text:x.text}))})}]};
+  const response=await fetch(providerApiBase(provider)+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',...providerAuthHeaders(provider),...providerAttributionHeaders(provider)},signal:AbortSignal.timeout(60000),body:JSON.stringify(VHConversationEngine.fitRequest(body,{contextSize:companionRequestContextSize(companion,body.model)}).body)});
+  if(!response.ok)throw Error(`Supporting-person planning failed (${response.status}).`);const data=await response.json();if(data.choices?.[0]?.finish_reason==='length')throw Error('Supporting-person plan was truncated.');const text=data.choices?.[0]?.message?.content||'',result=JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g,''));
+  if(companion.lifeRuntime.world!==r||getActiveCompanionTimeline(companion.id)!==timeline||!companion.lifeProfile.world.socialAgent.enabled)return;
+  VHWorldEngine.enqueueSocial(companion,result.events,nowMs);r.socialError='';await saveState();
+ }catch(error){if(companion.lifeRuntime.world===r){r.socialError=String(error.message||error).slice(0,500);await saveState();}}
+ finally{companionSocialChunkInFlight.delete(companion.id);}
+}
+
 async function processCompanionAgency(nowMs = Date.now()) {
+    if (typeof HordeDB !== 'undefined' && HordeDB.conflicted) return;
     let stateChanged = false;
     const agencyPaused = state.globalSettings.companionAgencyPaused === true;
     for (const companion of state.companions) {
@@ -46282,7 +48669,11 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const lifeBefore = JSON.stringify(companion.lifeRuntime);
         if (!agencyPaused) {
             advanceCompanionLife(companion, nowMs);
-            await processCompanionLabsLifeBeat(companion, nowMs);
+            await refreshCompanionWorldRoute(companion,nowMs);
+            planCompanionSupportingPeople(companion,nowMs).catch(error=>console.warn('Supporting people:',error.message));
+            processCompanionLabsLifeBeat(companion, nowMs).then(result => {
+                if (result) return saveState();
+            }).catch(error => console.warn('Optional life proposal failed:', error));
         }
         advanceCompanionHumanDynamics(companion, nowMs);
         advanceCompanionEmotionState(companion, nowMs);
@@ -46295,8 +48686,21 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const timeline = getActiveCompanionTimeline(companion.id);
         const experience = normalizeCompanionChatExperience(timeline?.experience);
         const messages = getCompanionThread(companion.id);
+        if (!companionReplyInFlight.has(companion.id) && !companionObserverQueues.has(companion.id)) {
+            const retry = messages.find(message => !message.invalidated && message.turnAudit?.observerRetryAt > 0
+                && message.turnAudit.observerRetryAt <= nowMs && message.turnAudit.observerAttempts < 2);
+            if (retry) {
+                retry.turnAudit.observerRetryAt = 0;
+                scheduleCompanionTurnObservation(companion, messages,
+                    messages.filter(message => message.responseGroupId === retry.responseGroupId).map(message => message.text || '').join('\n'),
+                    { timelineId: timeline?.id, responseGroupId: retry.responseGroupId,
+                        sourceMessageIds: retry.turnAudit.observerSources || [], nowMs });
+            }
+        }
         messages.forEach(message => {
-            if (message.role !== 'user') return;
+            if (message.role !== 'user' || message.invalidated) return;
+            if (!companionAgencyInFlight.has(companion.id) && !companionReplyInFlight.has(companion.id)
+                && advanceCompanionMessageAttention(companion, message, nowMs, experience, messages)) stateChanged = true;
             if (message.deliveryState === 'sent' && message.deliveredAt && nowMs >= message.deliveredAt) {
                 message.deliveryState = 'delivered';
                 companionRecordContinuityEvent(companion, {
@@ -46372,7 +48776,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
         }
         if (companionAgencyInFlight.has(companion.id) || !textProviderReady) continue;
         const due = messages.filter(message =>
-            message.role === 'user' && message.awaitingReply
+            message.role === 'user' && !message.invalidated && message.awaitingReply
             && message.replyDueAt > 0 && message.replyDueAt <= nowMs).pop();
 
         if (due) {
@@ -46394,10 +48798,12 @@ async function processCompanionAgency(nowMs = Date.now()) {
             // latest companion bubble.
             if (!readableBatch.includes(due)) readableBatch.push(due);
             readableBatch.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+            const replyJobId = due.replyJobId || livingId('vh_reply', `${nowMs}_${due.id}_${companion.id}`);
             readableBatch.forEach(message => {
                 message.deliveryState = 'read';
                 message.readAt = nowMs;
-                message.awaitingReply = false;
+                message.awaitingReply = true;
+                message.replyJobId = replyJobId;
             });
             companionRecordContinuityEvent(companion, {
                 type: 'message_batch_seen',
@@ -46408,12 +48814,12 @@ async function processCompanionAgency(nowMs = Date.now()) {
                 dedupeKey: `message_batch:${readableBatch.map(message => message.id).join(',')}`
             });
             const trigger = readableBatch[readableBatch.length - 1] || due;
+            try {
             await saveState();
             if (state.activeCompanionId === companion.id && state.view === 'companionChat') renderCompanionThread();
             if (state.activeCompanionId === companion.id) setCompanionTyping(true, `${companion.name || 'They'} is typing…`);
-            try {
                 const result = await sendCompanionMessage(companion, messages, trigger.text, nowMs, {
-                    existingUserMessage: trigger
+                    existingUserMessage: trigger, replyBatch: readableBatch, responseGroupId: replyJobId
                 });
                 const continuity = companionContinuity(companion);
                 readableBatch.forEach(message => {
@@ -46427,8 +48833,10 @@ async function processCompanionAgency(nowMs = Date.now()) {
             } catch (error) {
                 // Restore a single retry gate for the batch. The model will
                 // still receive every now-read message on the retry.
-                trigger.awaitingReply = true;
-                trigger.replyDueAt = nowMs + 2 * 60 * 1000;
+                readableBatch.forEach(message => {
+                    message.awaitingReply = true;
+                    message.replyDueAt = nowMs + 2 * 60 * 1000;
+                });
                 console.error('Deferred companion reply failed:', error);
                 if (state.activeCompanionId === companion.id) showToast('Reply delayed by a connection error. It will retry.', 'error');
             } finally {
@@ -46445,6 +48853,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
             companion.socialFeedRuntime.lastGateAt = nowMs;
             try {
                 const result = await generateCompanionAutonomousSocialPost(companion, nowMs);
+                if (result?.reason === 'stale') continue;
                 if (result?.pendingPhoto) resolveCompanionSocialPhoto(companion, result.pendingPhoto);
                 if (result?.posted) {
                     companionContinuity(companion).intentions.filter(intention => intention.status === 'active'
@@ -46455,7 +48864,7 @@ async function processCompanionAgency(nowMs = Date.now()) {
                     });
                 }
                 if (!result?.posted) {
-                    companion.socialFeedRuntime.nextPostAt = result?.reason === 'gate'
+                    companion.socialFeedRuntime.nextPostAt = result?.retryAt > nowMs ? result.retryAt : result?.reason === 'gate'
                         ? Math.min(companionNextSocialPostAt(companion, nowMs), nowMs + 6 * 60 * 60 * 1000)
                         : companionNextSocialPostAt(companion, nowMs);
                 }
@@ -46474,13 +48883,26 @@ async function processCompanionAgency(nowMs = Date.now()) {
             : { activity: 'available', label: 'available to chat', availability: 'available' };
         const hasPendingReply = messages.some(message => message.role === 'user' && message.awaitingReply);
         const contactHistory = companionContactHistory(companion, messages, nowMs);
+        const openingDue=companionOpeningContactDue(companion,messages,nowMs);
         const dueCommitment = companion.commitments.find(commitment =>
             commitment.status === 'pending' && commitment.dueAt > 0 && commitment.dueAt <= nowMs);
         const dueIntention = companion.initiativeMode === 'off' ? null : companionContinuity(companion).intentions
             .filter(intention => intention.status === 'active' && intention.dueAt > 0 && intention.dueAt <= nowMs
                 && ['reach_out', 'remind', 'commitment'].includes(intention.executionMode))
             .sort((left, right) => (right.priority - left.priority) || (left.dueAt - right.dueAt))[0];
-        const lifeTrigger = companion.initiativeMode === 'off' ? null : companion.lifeRuntime.pendingInitiative;
+        const transition = experience.realTimeLife ? companionConversationTransition(companion, messages, nowMs) : null;
+        const handoff = transition?.engaged && transition.upcoming
+            && nowMs - companion.continuityRuntime.lastHandoffAttemptAt > 60000
+            && transition.upcoming.key !== companion.continuityRuntime.lastHandoffKey
+            ? transition.upcoming : null;
+        const continuation = companion.continuityRuntime.conversation;
+        const resume = companion.initiativeMode !== 'off' && continuation?.status === 'paused'
+            && continuation.resumeAfter > 0 && continuation.resumeAfter <= nowMs && continuation.resumeReason;
+        const worldFollowup=VHWorldEngine.pendingFollowup(companion,nowMs);
+        const lifeTrigger = companion.initiativeMode === 'off' ? null : openingDue ? {text:`Initiate the first conversation. This is your first message to this player, with no invented shared history. Opening situation: ${companion.lifeProfile.world.frame.openerScenario||companion.startingScenario||'Make a natural introduction based only on the selected public profile.'}`} : handoff
+            ? { text: `Your ongoing conversation is about to be interrupted by ${handoff.activity}. Close the current thought and briefly let them know if appropriate. Do not invent a return time.` }
+            : resume ? { text: `Return to the unfinished conversation: ${continuation.topic}. ${continuation.openQuestion || ''} Reason to return: ${continuation.resumeReason}.` }
+            : worldFollowup ? {text:worldFollowup.text} : companion.lifeRuntime.pendingInitiative;
         const initiativeDue = nowMs >= companionNextInitiativeAt(companion, messages, nowMs);
         const unanswered = companionUnansweredState(messages, nowMs);
         const dynamics = advanceCompanionHumanDynamics(companion, nowMs);
@@ -46488,13 +48910,13 @@ async function processCompanionAgency(nowMs = Date.now()) {
         const emotionallyUnavailable = (
             dynamics.cooldownUntil > nowMs && dynamics.anger >= 55 && dynamics.cooldownReason
         ) || emotions.towardPlayer.disgust >= 72 || emotions.towardPlayer.anger >= 78;
-        if (!agencyPaused && contactHistory.hasSpoken && !hasPendingReply && unanswered.mayFollowUp && !emotionallyUnavailable
+        if (!agencyPaused && (contactHistory.hasSpoken||openingDue) && !hasPendingReply && (unanswered.mayFollowUp || handoff || openingDue) && !emotionallyUnavailable
             && (dueIntention || dueCommitment || lifeTrigger || initiativeDue) && life.availability === 'available') {
             const initiativeReason = dueCommitment
                 ? `A pending ${dueCommitment.medium} commitment is due: ${dueCommitment.text}`
                 : dueIntention ? `A private intention became due: ${dueIntention.action}${dueIntention.reason ? ` — ${dueIntention.reason}` : ''}`
                 : lifeTrigger?.text || 'Their current life and relationship made reaching out feel worthwhile.';
-            const tinyAdvice = dueCommitment ? null : await companionTinyContactAdvice(companion,
+            const tinyAdvice = dueCommitment || handoff ? null : await companionTinyContactAdvice(companion,
                 `Current availability is available. Current activity: ${life.label || life.activity}. Contact reason: ${initiativeReason}. Unanswered companion response turns: ${unanswered.responseTurns}. Current mood: ${companion.mood?.label || 'neutral'}.`);
             if (tinyAdvice?.decision === 'wait') {
                 companion.lastProactiveAt = nowMs;
@@ -46524,14 +48946,28 @@ async function processCompanionAgency(nowMs = Date.now()) {
             });
             if (state.activeCompanionId === companion.id) setCompanionTyping(true, `${companion.name || 'They'} is typing…`);
             try {
+                if(openingDue)VHWorldEngine.ensure(companion).openingAt=nowMs+5*60000;
+                if (handoff) companionContinuity(companion).lastHandoffAttemptAt = nowMs;
                 const result = await sendCompanionMessage(companion, messages, '', nowMs, {
+                    validUntil: handoff?.at || 0,
                     initiative: true,
                     initiativeReason: dueCommitment
                         ? `${initiativeReason} [id ${dueCommitment.id}]`
                         : initiativeReason
                 });
+                if(openingDue&&result.replyMessages.length){companionContinuity(companion).originScenarioConsumedAt=nowMs;companionRecordContinuityEvent(companion,{type:'origin',summary:'They initiated the first conversation from the authored opening situation.',createdAt:nowMs,perceivedAt:nowMs,dedupeKey:'vh-first-contact'});}
+                if(worldFollowup&&result.replyMessages.length&&worldFollowup.status==='pending')worldFollowup.dueAt=nowMs+3600000;
                 if (result.pendingPhoto) resolveCompanionPendingPhoto(companion, result.pendingPhoto);
                 if (result.pendingSocialPhoto) resolveCompanionSocialPhoto(companion, result.pendingSocialPhoto);
+                if (handoff && result.replyMessages.length) {
+                    const continuity = companionContinuity(companion);
+                    continuity.lastHandoffKey = handoff.key;
+                    if (continuity.conversation.status !== 'closed') continuity.conversation.status = 'paused';
+                }
+                if (resume && result.replyMessages.length) {
+                    companion.continuityRuntime.conversation.resumeAfter = 0;
+                    if (companion.continuityRuntime.conversation.status === 'paused') companion.continuityRuntime.conversation.status = 'active';
+                }
                 if (dueIntention && result.replyMessages.length) {
                     dueIntention.status = 'completed';
                     dueIntention.resolvedAt = nowMs;
@@ -46580,20 +49016,22 @@ function companionAlwaysOnClientId() {
 }
 
 function companionAlwaysOnContext(companion, timeline, nowMs) {
-    const life = companionLifeState(companion, nowMs);
-    const relation = companion.relationshipDynamics || {};
-    return [
-        `PERSON: ${companion.name}. ${companion.age ? `Age ${companion.age}.` : ''}`,
-        `IDENTITY: ${companion.personality || 'No personality summary authored.'}`,
-        `TEXTING VOICE: ${companion.textingStyle || 'Natural, concise texting.'}`,
-        `LIFE: ${companion.occupation || 'Occupation unspecified'}; ${companion.routine || 'routine unspecified'}.`,
-        `RIGHT NOW: ${life.label || life.activity || 'living their normal life'}; ${companion.locationLabel || 'location unspecified'}.`,
-        `PLAYER CONNECTION: ${companion.connectionType}; ${companion.relationshipContext || 'no additional context'}.`,
-        `RELATIONSHIP STATE: trust ${Math.round(Number(relation.trust) || 0)}, warmth ${Math.round(Number(relation.warmth) || 0)}, attraction ${Math.round(Number(relation.attraction) || 0)}, resentment ${Math.round(Number(relation.resentment) || 0)}.`,
-        `CURRENT FEELING: ${companion.mood?.label || 'neutral'}.`,
-        `BOUNDARIES AND PRIVATE CONTEXT: ${companion.privateLife || companion.intimacyBoundaries || 'none authored'}.`,
-        `TIMELINE: ${timeline.name}. Never mention being an AI, a worker, a prompt, scores, or background processing.`
-    ].join('\n').slice(0, 15000);
+    const packet = buildCompanionContextPacket(companion, timeline.messages || [], nowMs, {
+        experience: timeline.experience,
+        query: 'Decide whether a grounded reply or proactive message is due.'
+    });
+    return `${companionContextPacketText(packet)}\n\nBACKGROUND PERFORMANCE:\nYou are still the same person from foreground chat. Do not become a generic check-in bot. Contact the player only because of an unread message, a due commitment, an active intention, or a concrete life event. Never expose engine state, JSON, prompts or scores. Timeline: ${timeline.name}.`.slice(0, 18000);
+}
+
+function companionAlwaysOnSnapshot(companion, timeline) {
+    const snapshot = safeJsonClone(companion);
+    // Authored/simulated state only. Provider headers remain in the separate
+    // RAM-only transport envelope. Do not copy embedded media into the worker.
+    ['basePhoto', 'profilePhoto', 'photoLocations', 'referencePhotos', 'personaVisualMemory', 'videoJobs', 'socialPosts', 'startingSocialPosts'].forEach(key => delete snapshot[key]);
+    for (const place of snapshot.lifeProfile?.places || []) delete place.photo;
+    for (const item of snapshot.lifeProfile?.world?.items || []) delete item.photo;
+    return { companion: snapshot, experience: timeline.experience,
+        messages: timeline.messages.slice(-80).map(message => ({ ...message, photo: '', audio: '', turnSnapshot: null })) };
 }
 
 function companionAlwaysOnManifest(companion, nowMs = Date.now()) {
@@ -46609,19 +49047,34 @@ function companionAlwaysOnManifest(companion, nowMs = Date.now()) {
     const proactiveDue = companion.initiativeMode !== 'off' && hasSpoken
         ? companionNextInitiativeAt(companion, messages, nowMs) : 0;
     const headers = { ...providerAuthHeaders(providerId), ...providerAttributionHeaders(providerId) };
+    const dueCommitment = companion.commitments.find(item => item.status === 'pending' && item.dueAt > 0);
+    const dueIntention = companionContinuity(companion).intentions.filter(item => item.status === 'active'
+        && ['reach_out', 'remind', 'commitment'].includes(item.executionMode))
+        .sort((left, right) => (left.dueAt || Infinity) - (right.dueAt || Infinity))[0];
+    const initiativeReason = pending
+        ? `Reply to the unread player message ${pending.id}.`
+        : dueCommitment ? `A promise is due: ${dueCommitment.text}`
+        : dueIntention ? `A private intention is due: ${dueIntention.action}${dueIntention.reason ? ` — ${dueIntention.reason}` : ''}`
+        : companion.lifeRuntime?.pendingInitiative?.text || 'A concrete current-life reason may justify contact; choosing none is allowed.';
     return {
         id: companion.id,
         name: companion.name,
         timelineId: timeline.id,
         messagesEnabled: state.globalSettings.companionAlwaysOnMessages !== false,
+        snapshotId: `${timeline.id}:${companionContinuity(companion).revision || 0}:${messages.at(-1)?.id || 'empty'}`,
+        baseMessageIds: messages.filter(message => !message.invalidated).map(message => message.id),
+        contextSize: companion.contextSize,
+        simulation: companionAlwaysOnSnapshot(companion, timeline),
         socialEnabled: state.globalSettings.companionAlwaysOnSocial !== false
             && companion.socialFeedEnabled && companion.socialPostFrequency !== 'manual',
         messageDueAt: Number(pending?.replyDueAt || proactiveDue || 0),
         socialDueAt: Number(companion.socialFeedRuntime?.nextPostAt || 0),
         hasSpoken,
+        stateRevision: companionContinuity(companion).revision || 0,
+        initiativeReason,
         context: companionAlwaysOnContext(companion, timeline, nowMs),
         recentMessages: messages.filter(message => ['user', 'companion'].includes(message.role)
-            && !message.invalidated && message.type === 'text').slice(-12).map(message => ({
+            && !message.invalidated && message.type === 'text').slice(-24).map(message => ({
                 role: message.role, text: message.text, timestamp: message.timestamp
             })),
         provider: {
@@ -46642,7 +49095,7 @@ function renderCompanionAlwaysOnStatus(status = null, error = '') {
         badge.textContent = error ? 'Unavailable' : !enabled ? 'Off' : status?.paused ? 'Paused' : status?.armed ? 'Armed' : 'Waiting';
         badge.classList.toggle('online', enabled && status?.armed && !error);
     }
-    if (text) text.textContent = error || (!enabled
+    if (text) text.textContent = error || (enabled && status?.simulationError ? status.simulationError : '') || (!enabled
         ? 'Browser-only behavior is active. No background calls can occur.'
         : status ? `${status.paused ? `Paused${status.pauseReason ? ` — ${status.pauseReason}` : ''}. ` : ''}${status.humanCount || 0} human${status.humanCount === 1 ? '' : 's'} configured · ${status.usedToday || 0}/${status.dailyLimit || state.globalSettings.companionAlwaysOnDailyLimit} calls used today · ${status.queuedEvents || 0} event${status.queuedEvents === 1 ? '' : 's'} waiting.`
             : 'Save Settings to arm the local runtime.');
@@ -46655,6 +49108,7 @@ async function importCompanionAlwaysOnEvents() {
     });
     const imported = [];
     const transactionBackups = new Map();
+    const observations = [];
     for (const event of Array.isArray(response.events) ? response.events : []) {
         const companion = getCompanion(event.humanId);
         const store = companion ? ensureCompanionTimelineStore(companion.id) : null;
@@ -46674,18 +49128,53 @@ async function importCompanionAlwaysOnEvents() {
         }
         const alreadyImported = timeline.messages.some(message => message.id === event.id)
             || (timeline.runtime?.socialPosts || []).some(post => post.id === event.id);
+        const active = store.activeSessionId === timeline.id;
+        const baseRuntime = active ? captureCompanionRuntime(companion) : timeline.runtime;
+        if (!alreadyImported && event.simulation) {
+            const currentIds = timeline.messages.filter(message => !message.invalidated).map(message => message.id);
+            const expectedRevision = Number(baseRuntime?.continuityRuntime?.revision) || 0;
+            if (Number(event.stateRevision) !== expectedRevision
+                || JSON.stringify(currentIds) !== JSON.stringify(event.baseMessageIds || [])) {
+                imported.push(event.id); // The browser has superseded this snapshot.
+                continue;
+            }
+        } else if (!alreadyImported && timeline.messages.some(message => message.role === 'user'
+            && !message.invalidated && message.awaitingReply && message.attention)) {
+            imported.push(event.id); // Legacy workers cannot own attention jobs.
+            continue;
+        }
         if (!alreadyImported && event.kind === 'message' && event.text) {
-            timeline.messages.filter(message => message.role === 'user' && message.awaitingReply).forEach(message => {
+            const sourceMessageIds = event.simulation ? (event.consumedMessageIds || [])
+                : timeline.messages.filter(message => message.role === 'user' && message.awaitingReply).map(message => message.id);
+            const turnSnapshot = { runtime: safeJsonClone(baseRuntime), messageCount: timeline.messages.length, initiative: !sourceMessageIds.length };
+            if (event.simulation?.companion) {
+                const snapshot = event.simulation.companion;
+                const nextRuntime = safeJsonClone(baseRuntime);
+                for (const key of ['mood', 'humanDynamics', 'emotionState', 'relationshipDynamics', 'lifeRuntime',
+                    'continuityRuntime', 'lifeEvents', 'commitments', 'memory', 'trauma']) {
+                    if (snapshot[key] !== undefined) nextRuntime[key] = safeJsonClone(snapshot[key]);
+                }
+                timeline.runtime = normalizeCompanionRuntime(nextRuntime, companion);
+                if (active) applyCompanionRuntime(companion, timeline.runtime);
+            }
+            timeline.messages.filter(message => message.role === 'user' && sourceMessageIds.includes(message.id)).forEach(message => {
                 message.awaitingReply = false;
+                message.replyDueAt = 0;
+                if (message.attention) message.attention.stage = 'answered';
                 message.deliveryState = 'read';
                 message.readAt = Number(event.createdAt) || Date.now();
             });
             timeline.messages.push(normalizeCompanionMessage({
                 id: event.id, role: 'companion', type: 'text', text: event.text,
-                timestamp: Number(event.createdAt) || Date.now(), autonomous: true,
-                responseGroupId: event.id
+                timestamp: Number(event.createdAt) || Date.now(), autonomous: !sourceMessageIds.length,
+                responseGroupId: event.id, turnSnapshot,
+                turnAudit: { source: 'always_on_performer', affectStatus: event.affectCommitted === true ? 'committed' : 'pending',
+                    observerStatus: 'pending', committedAt: Number(event.createdAt) || Date.now() }
             }));
             timeline.updatedAt = Date.now();
+            if (active) persistCompanionRuntime(companion);
+            // Observation is deliberately scheduled only after the import save.
+            observations.push({ companion, timeline, event, sourceMessageIds });
             imported.push(event.id);
         } else if (!alreadyImported && event.kind === 'social_status' && event.text) {
             const post = normalizeCompanionSocialPost({
@@ -46718,6 +49207,13 @@ async function importCompanionAlwaysOnEvents() {
             });
             throw error;
         }
+        observations.forEach(({ companion, timeline, event, sourceMessageIds }) => {
+            if (getActiveCompanionTimeline(companion.id) !== timeline) return;
+            scheduleCompanionTurnObservation(companion, timeline.messages, event.text, {
+                timelineId: timeline.id, responseGroupId: event.id, sourceMessageIds,
+                nowMs: Number(event.createdAt) || Date.now(), initiative: !sourceMessageIds.length
+            });
+        });
         await mcpBridgeRequest('/always-on/ack', { method: 'POST', body: { eventIds: imported }, timeoutMs: 8000 });
         if (state.view === 'companionChat') renderCompanionThread();
         showToast(`${imported.length} background Virtual Human event${imported.length === 1 ? '' : 's'} caught up.`, 'info');
@@ -46819,31 +49315,46 @@ async function resolveCompanionSocialPhoto(companion, post) {
     const flightId = `${companion.id}|social|${post.id}`;
     if (companionSocialPhotoInFlight.has(flightId)) return;
     companionSocialPhotoInFlight.add(flightId);
+    const ownerKey = companion.startingSocialPosts?.includes(post) ? 'startingSocialPosts' : 'socialPosts';
+    const ownerPosts = companion[ownerKey];
+    const stillOwned = () => companion[ownerKey] === ownerPosts && ownerPosts?.includes(post);
     try {
-        const generated = await generateCompanionPhoto(companion, post.scene, { atMs: post.createdAt });
-        post.photo = await loadGeneratedImage(new Image(), generated);
+        const generated = await generateCompanionPhoto(companion, post.scene, { atMs: post.createdAt, historicalPhoto: ownerKey === 'startingSocialPosts' });
+        const photo = await loadGeneratedImage(new Image(), generated);
+        if (!stillOwned()) return;
+        post.photo = photo;
         post.generationError = '';
         companion.usage.photosGenerated += 1;
     } catch (error) {
+        if (!stillOwned()) return;
         post.generationError = String(error.message || error).slice(0, 1000);
         console.warn('Social feed photo generation failed:', error);
     } finally {
-        post.pending = false;
         companionSocialPhotoInFlight.delete(flightId);
+        if (!stillOwned()) return;
+        post.pending = false;
         await saveState();
-        if (state.activeCompanionId === companion.id) renderCompanionSocialPanel(companion);
+        if (ownerKey === 'socialPosts' && state.activeCompanionId === companion.id) renderCompanionSocialPanel(companion);
     }
 }
 
 /** After a send resolves, generate any pending photo and re-render once ready. */
-async function resolveCompanionPendingPhoto(companion, pendingPhoto) {
-    if (!pendingPhoto) return;
+const companionPhotoQueues=new Map();
+function resolveCompanionPendingPhoto(companion,pendingPhoto){const key=companion.id;const prior=companionPhotoQueues.get(key)||Promise.resolve();const task=prior.catch(()=>{}).then(()=>performCompanionPendingPhoto(companion,pendingPhoto));companionPhotoQueues.set(key,task);task.finally(()=>{if(companionPhotoQueues.get(key)===task)companionPhotoQueues.delete(key);});return task;}
+async function performCompanionPendingPhoto(companion, pendingPhoto) {
+    if (!pendingPhoto||pendingPhoto.photo||!pendingPhoto.pending||pendingPhoto.invalidated||!getCompanionThread(companion.id).includes(pendingPhoto)) return;
     const flightId = `${companion.id}|${pendingPhoto.id}`;
     if (companionPhotoInFlight.has(flightId)) return;
     companionPhotoInFlight.add(flightId);
     let referenceFallbackUsed = false;
     try {
+        pendingPhoto.photoContext ||= companionPhotoSnapshot(companion,pendingPhoto.scene,pendingPhoto.timestamp);
+        const previousPhoto=companionPhotoPrevious(getCompanionThread(companion.id),pendingPhoto.photoContext,companion.photoContinuityMinutes??90);
+        pendingPhoto.photoContext.previousPhotoId=previousPhoto?.id||'';
+        if(previousPhoto){pendingPhoto.photoContext.style=previousPhoto.photoContext.style;pendingPhoto.photoContext.direction=previousPhoto.photoContext.direction;}
+        pendingPhoto.photoContext.prompt=buildCompanionPhotoPrompt(companion,pendingPhoto.scene,{photoContext:pendingPhoto.photoContext,previousPhoto,atMs:pendingPhoto.timestamp,captureType:pendingPhoto.captureType,photographer:pendingPhoto.photographer});
         const generated = await generateCompanionPhoto(companion, pendingPhoto.scene, {
+            photoContext:pendingPhoto.photoContext,previousPhoto,
             atMs: pendingPhoto.timestamp,
             captureType: pendingPhoto.captureType,
             photographer: pendingPhoto.photographer,
@@ -46872,6 +49383,7 @@ async function resolveCompanionPendingPhoto(companion, pendingPhoto) {
 
 async function rerollLastCompanionReply() {
     const companion = getCompanion(state.activeCompanionId);
+    if (companionTimelineBusy(companion)) return;
     const messages = companion && getCompanionThread(companion.id);
     const hasTextCredentials = !!companion && providerHasCredentials(companionTextProviderId(companion));
     if (!companion || !messages?.length || !hasTextCredentials) {
@@ -46927,11 +49439,27 @@ async function rerollLastCompanionReply() {
     }
 }
 
+async function rerollCompanionReplyFromMessage(messageId) {
+    const companion = getCompanion(state.activeCompanionId);
+    const messages = companion && getCompanionThread(companion.id);
+    const target = messages?.find(message => message.id === messageId && message.protocolLeak);
+    if (!target) return showToast('That broken reply is no longer present.', 'info');
+    const latestReply = [...messages].reverse().find(message => message.role === 'companion' && !message.pending);
+    if (latestReply !== target) {
+        return showToast('Only the latest reply can be regenerated safely; later turns depend on older state.', 'info');
+    }
+    if (!target.turnSnapshot) {
+        return showToast('This older broken reply predates reversible Virtual Human turns. Start a new timeline or remove the conversation.', 'info');
+    }
+    await rerollLastCompanionReply();
+}
+
 async function queueCompanionUserMessage(payload) {
     const companion = getCompanion(state.activeCompanionId);
     const text = String(payload?.text || '').trim();
     const type = ['text', 'photo', 'voice', 'clip_request'].includes(payload?.type) ? payload.type : 'text';
     if (!companion || (!text && type === 'text')) return;
+    if (!VHWorldEngine.connected(companion)) return showToast('Send a connection request and wait for acceptance before messaging.','info');
     if (!providerHasCredentials(companionTextProviderId(companion))) {
         return showToast(`${providerDisplayName(companionTextProviderId(companion))} API key missing (Settings).`, 'error');
     }
@@ -46957,6 +49485,7 @@ async function queueCompanionUserMessage(payload) {
     optimisticUser.replyDueAt = plan.replyDueAt;
     optimisticUser.awaitingReply = plan.willReply;
     optimisticUser.deferredReason = plan.reason;
+    optimisticUser.attention = plan.attention;
     messages.push(optimisticUser);
     companionRecordResponsePlan(companion, optimisticUser, plan, optimisticUser.timestamp);
     persistCompanionRuntime(companion);
@@ -47224,6 +49753,7 @@ async function fetchCompanionLiveCallReply(companion) {
 async function startCompanionCall() {
     const companion = getCompanion(state.activeCompanionId);
     if (!companion) return;
+    if(!VHWorldEngine.connected(companion))return showToast('Connect before calling.','info');
     if (!providerHasCredentials(companionTextProviderId(companion))) {
         return showToast(`${providerDisplayName(companionTextProviderId(companion))} API key missing (Settings).`, 'error');
     }

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${1:-17.0.0}"
+VERSION="${1:-17.4.0}"
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 APP_DIR="$BUILD_DIR/Horde Studio"
@@ -18,6 +18,11 @@ mkdir -p "$APP_DIR" "$OUTPUT_DIR"
 for file in \
   index.html \
   app.js \
+  vh-world-engine.js \
+  vh-activity-engine.js \
+  vh-conversation-engine.js \
+  vh-simulation-core.js \
+  vh-host-worker.js \
   video-worlds.js \
   style.css \
   presets.js \
@@ -65,6 +70,7 @@ fi
 
 # Internet multiplayer is bring-your-own relay. Ship the small auditable Worker
 # source and setup guide so portable users are not dependent on this repository.
+
 mkdir -p "$APP_DIR/docs"
 cp "$ROOT_DIR/docs/multiplayer.md" "$APP_DIR/docs/"
 cp -R "$ROOT_DIR/multiplayer-relay" "$APP_DIR/"
