@@ -218,8 +218,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/v1/chat/completions":
             return self.send_json(404, {"error": "not found"})
         messages = body.get("messages") if isinstance(body.get("messages"), list) else []
-        user_text = " ".join(str(item.get("content") or "") for item in messages if isinstance(item, dict) and item.get("role") == "user")
-        delayed = "ACCEPTANCE_DELAY" in user_text
+        # The real Worlds narrator assembles the authored turn into its
+        # complete provider prompt; it is not guaranteed to remain a literal
+        # ``role: user`` message by the time it reaches an OpenAI-compatible
+        # transport.  This mock therefore detects its disposable marker in
+        # the same complete request string used by ``completion`` above.
+        request_text = " ".join(str(item.get("content") or "") for item in messages if isinstance(item, dict))
+        delayed = "ACCEPTANCE_DELAY" in request_text
         audit.append({
             "path": self.path,
             "delayed": delayed,
