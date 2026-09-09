@@ -38441,9 +38441,13 @@ function restoreWorldTurnState(world, sess, snapshot) {
     return true;
 }
 
-function addWorldMessage(role, text, metadata = {}) {
-    const sess = getCurrentWorldSession();
+function addWorldMessage(role, text, metadata = {}, owner = {}) {
+    // Foreground generation may complete after the user selected a different
+    // World or timeline. Completion owns the source session captured at turn
+    // start; never resolve it again from the live UI selection.
+    const sess = owner.session || getCurrentWorldSession();
     if (!sess) return;
+    const messageWorld = owner.world || state.worlds.find(w => w.id === state.activeWorldId) || null;
     
     const msgId = Date.now().toString(36) + Math.random().toString(36).substring(2);
 
@@ -38462,9 +38466,8 @@ function addWorldMessage(role, text, metadata = {}) {
             
             // Scrub NPC observations for the previous version
             if (lastMsg.id) {
-                const world = state.worlds.find(w => w.id === state.activeWorldId);
-                if (world && !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-                    world.entities.forEach(ent => {
+                if (messageWorld && !window.HordeSidecarHooks?.isSidecarWorld?.(messageWorld, sess)) {
+                    messageWorld.entities.forEach(ent => {
                         if (ent.type === 'npc' && sess.entityStates[ent.id]) {
                             const entState = sess.entityStates[ent.id];
                             if (entState.observations) {
@@ -38517,7 +38520,7 @@ function addWorldMessage(role, text, metadata = {}) {
 
             if (!metadata.deferPersist) {
                 saveState().catch(() => {});
-                renderWorldPlayState();
+                if (getCurrentWorldSession() === sess) renderWorldPlayState();
             }
         }
     } else {
@@ -38528,9 +38531,8 @@ function addWorldMessage(role, text, metadata = {}) {
         // Legacy observations are a compatibility cache only.  Sidecar worlds
         // derive private cognition later from episode-scoped perception evidence;
         // copying raw narration into every NPC dossier would grant false memory.
-        const world = state.worlds.find(w => w.id === state.activeWorldId);
-        if (world && !window.HordeSidecarHooks?.isSidecarWorld?.(world, sess)) {
-            world.entities.forEach(ent => {
+        if (messageWorld && !window.HordeSidecarHooks?.isSidecarWorld?.(messageWorld, sess)) {
+            messageWorld.entities.forEach(ent => {
                 if (ent.type === 'npc') {
                     const entState = sess.entityStates[ent.id];
                     if (entState) {
@@ -38546,12 +38548,12 @@ function addWorldMessage(role, text, metadata = {}) {
 
         if (!metadata.deferPersist) {
             saveState().catch(() => {});
-            renderWorldPlayState();
+            if (getCurrentWorldSession() === sess) renderWorldPlayState();
         }
     }
 
     // Background, non-blocking asynchronous embedding pre-computation for future world turns
-    const embeddingWorld = state.worlds.find(w => w.id === state.activeWorldId);
+    const embeddingWorld = messageWorld;
     const shouldEmbedMessage = !embeddingWorld
         || !normalizeWorldKernelConfig(embeddingWorld).enabled
         || normalizeWorldKernelConfig(embeddingWorld).memoryMode === 'semantic';
@@ -41393,7 +41395,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                 turnSnapshot,
                 witnesses: endingWitnesses,
                 deferPersist: true
-            });
+            }, { world, session: sess });
             // Keep the completed streamed narration in the transcript while
             // Reader/Reconciler work finishes. `addWorldMessage` below will
             // replace the transient stream with the durable message; removing
