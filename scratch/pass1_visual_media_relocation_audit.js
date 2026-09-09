@@ -26,11 +26,24 @@ assert(adapter.includes('getGlobalSettings') && adapter.includes('markExperiment
     'adapter exports only the explicit visual settings and media-dirty bindings');
 assert(!adapter.includes('state.'), 'adapter source does not reach into host state itself');
 
+const providerStart = acceptedApp.indexOf("function worldVisualProvider(world, pipeline = 'new')");
+const providerEnd = acceptedApp.indexOf("const WORLD_VISUAL_ASPECTS = new Set", providerStart);
+assert(providerStart >= 0 && providerEnd > providerStart, 'Pass-0 visual provider source unit is present');
+const acceptedProviderUnit = acceptedApp.slice(providerStart, providerEnd);
+const relocatedProvider = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-provider-core.js', 'utf8');
+assert.equal(
+    relocatedProvider.replace('normalizedProviderId(ExperimentalWorldsVisualMediaHost.globalSettings().apiProvider)', 'normalizedProviderId(state.globalSettings.apiProvider)').trimEnd(),
+    acceptedProviderUnit.trimEnd(),
+    'visual provider core differs from the Pass-0 oracle only at the explicit effective-settings seam'
+);
+assert(!relocatedProvider.includes('state.globalSettings'), 'visual provider core has no direct host settings access');
+
 const html = fs.readFileSync('index.html', 'utf8');
 const adapterIndex = html.indexOf('host-adapters/experimental-worlds/visual-media-host-adapter.js');
 const coreIndex = html.indexOf(relocatedPath);
+const providerIndex = html.indexOf('experiences/experimental-worlds/visuals/world-visual-provider-core.js');
 const appIndex = html.indexOf('src="app.js');
-assert(adapterIndex >= 0 && adapterIndex < coreIndex && coreIndex < appIndex,
+assert(adapterIndex >= 0 && adapterIndex < coreIndex && coreIndex < providerIndex && providerIndex < appIndex,
     'adapter and relocated core load before the single host bootstrap');
 
 console.log('Pass-1 visual/media relocation audit passed.');
