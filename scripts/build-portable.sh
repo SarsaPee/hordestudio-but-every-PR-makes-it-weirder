@@ -56,6 +56,31 @@ cp "$ROOT_DIR/experiences/stock-worlds-17-pass0/runtime.js" \
   "$ROOT_DIR/experiences/stock-worlds-17-pass0/style.css" \
   "$APP_DIR/experiences/stock-worlds-17-pass0/"
 
+# Pass 1 begins the mechanical relocation of the accepted Experimental Worlds
+# implementation. Ship the relocated runtime, never the old reference tree.
+mkdir -p "$APP_DIR/experiences/experimental-worlds/runtime"
+cp "$ROOT_DIR/experiences/experimental-worlds/runtime/sidecar-core.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/runtime/dossier-claims.js" \
+  "$APP_DIR/experiences/experimental-worlds/runtime/"
+mkdir -p "$APP_DIR/experiences/experimental-worlds/mechanics" \
+  "$APP_DIR/experiences/experimental-worlds/visuals" \
+  "$APP_DIR/experiences/experimental-worlds/scenepulse" \
+  "$APP_DIR/experiences/experimental-worlds/styles"
+cp "$ROOT_DIR/experiences/experimental-worlds/mechanics/world-mechanics.js" \
+  "$APP_DIR/experiences/experimental-worlds/mechanics/"
+cp "$ROOT_DIR/experiences/experimental-worlds/visuals/world-portrait-prompt.js" \
+  "$APP_DIR/experiences/experimental-worlds/visuals/"
+cp "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js" \
+  "$APP_DIR/experiences/experimental-worlds/scenepulse/"
+cp "$ROOT_DIR/experiences/experimental-worlds/styles/scene-pulse-worlds.css" \
+  "$APP_DIR/experiences/experimental-worlds/styles/"
+# The native Source Runtime dynamically imports its pinned local ScenePulse
+# source modules. Keep that licensed vendor tree in the portable build; it is
+# runtime code, not an alternate Horde installation or development worktree.
+mkdir -p "$APP_DIR/scenepulse"
+cp -R "$ROOT_DIR/scenepulse/vendor" "$APP_DIR/scenepulse/"
+
 # Built-in humans follow the same boot path as the rest of the application.
 # Packaging must copy both definitions and must never rewrite them into inline
 # scripts (which CSP correctly blocks). Treat either missing file as a fatal
