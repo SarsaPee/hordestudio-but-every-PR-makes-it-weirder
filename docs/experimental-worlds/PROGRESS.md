@@ -16,7 +16,7 @@
 - [x] Merge exact upstream target `520aa2155b02289f9db1c6740a48e494124d2cca` in staging.
 - [x] Preserve upstream maps/VH bridge additions while retaining the narrow Experimental Worlds seam.
 - [x] Run upstream engine gates and test a fresh portable extraction.
-- [ ] Repeat the full browser proof after the Milestone A checkpoint.
+- [~] Repeat the full browser proof after the Milestone A checkpoint. The staged 17.4 F18 graduation/save/readback passed with a mocked provider; the remaining browser matrix is still outstanding.
 - [ ] Perform guarded live mirror cutover/deployment only after the remaining browser acceptance items pass.
 
 ## Recorded blockers before live cutover
@@ -25,11 +25,12 @@
   different snapshot from the legacy mirror. The migration tool refused to
   overwrite it; both originals remain in place pending a deliberate readback
   and reconciliation decision.
-- The 17.0 isolated-browser ledger now separates observed mocked-provider and
-  provider-independent work from outstanding proof. A mocked turn persisted
-  through reload; its in-place rewind confirmation rendered, but confirmation
-  dispatch did not complete in the in-app browser dialog session. F16, F18,
-  F19, F20, F09, and late-response assertions remain unproven browser work.
+- The isolated-browser ledger now separates observed mocked-provider and
+  provider-independent work from outstanding proof. F18 graduation has now
+  passed in both the 17.0 acceptance worktree and staged 17.4 as mocked-provider
+  browser/save/readback evidence. The in-place rewind confirmation still needs
+  a completed dispatch proof; F16, F19, F20, F09, and late-response assertions
+  remain unproven browser work.
 - Cross-mode deletion reached the confirmation for a disposable Experimental
   World only, but the isolated browser's JavaScript-dialog bridge stalled
   before accept/cancel. No user, backup, production, or staging-copy world was

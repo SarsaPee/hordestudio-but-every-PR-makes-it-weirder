@@ -23,7 +23,7 @@ checks and the portable package do not substitute for an unchecked row.
 | Late response | Started a marked delayed attempt, navigated to stock before release. | The test transport audit did not record a delayed request; do not infer a pass from later UI state. | Not run successfully |
 | Cross-mode deletion | Opened the real delete confirmation for the disposable Experimental World only. | The in-app browser dialog bridge stalled before accept/cancel; no destructive retry was made. | Incomplete; no pass claimed |
 | F16 portrait upload/clear | Not exercised. | No browser readback. | Not run |
-| F18 specialist graduation | Not exercised. | No browser readback. | Not run |
+| F18 specialist graduation | In staged 17.4 `Experimental 17.4 F18 Disposable`, sent the seeded Mira candidate through the actual mocked transport, opened Inspect, staged World review, created and confirmed the durable Person, verified Mira in People, saved, and manually published the isolated mirror. | Mirror revision 1 retained the canonical entity ID, `candidate_mira`, exact source turn/snapshot IDs, `fertStatus: "N/A"`, `fertNotes: "No relevant state"`, all three goals, and observed outfit provenance. | Passed as mocked-provider browser/save/readback evidence on `c1838d0`; not live-model proof |
 | F19 five-meter save, including zero | Not exercised. | No browser readback. | Not run |
 | F20 relationship metadata save | Not exercised. | No browser readback. | Not run |
 | F09 Location graduation | Not exercised. | No browser readback. | Not run |
