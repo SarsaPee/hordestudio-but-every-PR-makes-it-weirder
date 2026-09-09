@@ -1,0 +1,235 @@
+/* ═══ RELATIONSHIP WEB OVERLAY ═══ */
+.sp-web-overlay {
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh;
+    background: rgba(0,0,0,0.8); backdrop-filter: blur(6px); z-index: 100001;
+    display: flex; align-items: center; justify-content: center;
+    animation: sp-glass-in 0.2s ease-out;
+}
+.sp-web-container {
+    background: var(--sp-bg, rgba(12,14,20,0.98)); border: 1px solid var(--sp-border);
+    border-radius: 12px; max-width: min(1280px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+    width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.7); overflow: hidden;
+    display: flex; flex-direction: column;
+}
+.sp-web-header {
+    display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    border-bottom: 1px solid var(--sp-border);
+}
+.sp-web-title { font-size: var(--sp-fs-md); font-weight: 700; color: var(--sp-text-bright); flex: 1; }
+/* v6.8.28: two-column body layout — SVG on the left, legend panel on the right. */
+.sp-web-body { flex: 1; display: flex; flex-direction: row; min-height: 0; }
+.sp-web-toolbar { display: flex; align-items: center; gap: 6px; }
+.sp-web-close {
+    background: none; border: 1px solid var(--sp-border); color: var(--sp-text-dim); cursor: pointer;
+    border-radius: 4px; padding: 4px 10px; font-size: var(--sp-fs-sm); transition: all 0.15s;
+    min-width: 32px; min-height: 32px;
+}
+.sp-web-close:hover { color: var(--sp-text); background: var(--sp-surface); }
+
+/* v6.8.27+8.28: toolbar buttons */
+.sp-web-layout-toggle,
+.sp-web-generate-btn,
+.sp-web-labels-toggle,
+.sp-web-reset-btn {
+    background: var(--sp-surface); border: 1px solid var(--sp-border); color: var(--sp-text-dim);
+    cursor: pointer; border-radius: 4px; padding: 4px 10px; font-size: var(--sp-fs-xs);
+    transition: all 0.15s; min-height: 28px;
+}
+.sp-web-layout-toggle:hover,
+.sp-web-generate-btn:hover,
+.sp-web-labels-toggle:hover,
+.sp-web-reset-btn:hover { color: var(--sp-text); border-color: var(--sp-accent); }
+.sp-web-generate-btn.sp-web-loading { opacity: 0.65; cursor: wait; }
+.sp-web-tb-active { color: var(--sp-text-bright) !important; border-color: var(--sp-accent) !important; background: rgba(77,184,164,0.08) !important; }
+.sp-web-stale { color: #facc15; font-weight: 600; }
+.sp-web-focus-note { color: var(--sp-accent); font-weight: 600; }
+
+/* NPC edge glyph + two-tone edge styles */
+.sp-web-edge-glyph { pointer-events: none; }
+.sp-web-edge-label { pointer-events: none; }
+.sp-web-edge-npc { transition: stroke-width 0.15s ease; }
+.sp-web-edge-npc:hover { stroke-width: 3; }
+
+/* SVG container — v6.8.29: background matches the SVG's internal canvas
+   rect (#0c0e14) so there's no visible color break between the SVG and
+   the wrap when the SVG doesn't fill the entire container (zoomed out,
+   short aspect ratio, etc). Previously the wrap inherited the container
+   background rgba(12,14,20,0.98) which was close but not identical —
+   created a visible "halo" around the SVG at small sizes. */
+.sp-web-svg-wrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 0; overflow: hidden; min-height: 300px; position: relative; cursor: grab; background: #0c0e14; }
+.sp-web-svg-wrap:active { cursor: grabbing; }
+.sp-web-svg-wrap svg { max-width: 100%; width: 100%; height: auto; max-height: 72vh; user-select: none; touch-action: none; display: block; }
+
+/* v6.8.28: legend panel — right sidebar showing edge type → color + glyph
+   + count + filter state. Click a row to toggle that type's filter. */
+.sp-web-legend-panel {
+    flex: 0 0 200px; display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 10px; border-left: 1px solid var(--sp-border);
+    overflow-y: auto; max-height: 72vh; font-size: var(--sp-fs-xs);
+    background: rgba(0,0,0,0.12);
+}
+.sp-web-legend-header {
+    font-size: var(--sp-fs-xs); font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--sp-text-dim);
+    padding: 4px 2px; border-bottom: 1px solid var(--sp-border);
+    margin-bottom: 4px;
+}
+.sp-web-legend-row {
+    display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+    border-radius: 4px; cursor: pointer; transition: background 0.12s ease;
+    user-select: none;
+}
+.sp-web-legend-row:hover { background: rgba(255,255,255,0.06); }
+.sp-web-legend-all {
+    font-size: var(--sp-fs-xs); font-weight: 700; color: var(--sp-text-dim);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 4px 6px; margin-bottom: 4px;
+    border: 1px dashed var(--sp-border);
+}
+.sp-web-legend-all:hover { color: var(--sp-text); border-color: var(--sp-accent); }
+.sp-web-legend-swatch {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0; box-shadow: 0 0 4px currentColor;
+}
+.sp-web-legend-glyph {
+    font-size: var(--sp-fs-base); min-width: 14px; text-align: center; flex-shrink: 0;
+}
+.sp-web-legend-label {
+    flex: 1; color: var(--sp-text); font-size: var(--sp-fs-xs);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sp-web-legend-count {
+    font-size: var(--sp-fs-xs); font-weight: 600; color: var(--sp-text-dim);
+    background: var(--sp-surface); padding: 1px 5px; border-radius: 8px;
+    min-width: 14px; text-align: center;
+}
+.sp-web-legend-empty { opacity: 0.35; }
+.sp-web-legend-empty:hover { background: transparent; cursor: default; }
+.sp-web-legend-inactive { opacity: 0.4; text-decoration: line-through; }
+.sp-web-legend-inactive .sp-web-legend-swatch { box-shadow: none; filter: grayscale(0.7); }
+
+/* v6.8.41: organizations section — chips listing detected orgs.
+   Click a chip to highlight its members with a colored halo and fade
+   all other characters. Multi-select union semantics. */
+.sp-web-legend-org-section {
+    margin-top: 10px; padding-top: 6px;
+    border-top: 1px dashed var(--sp-border);
+    display: flex; flex-direction: column; gap: 4px;
+}
+.sp-web-legend-subheader {
+    font-size: var(--sp-fs-xs); font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--sp-text-dim);
+    padding: 2px 2px 4px;
+}
+.sp-web-legend-org-list {
+    display: flex; flex-direction: column; gap: 3px;
+}
+.sp-web-org-chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px; border-radius: 4px; cursor: pointer;
+    font-size: var(--sp-fs-xs); color: var(--sp-text);
+    border: 1px solid transparent;
+    background: rgba(255,255,255,0.03);
+    transition: all 0.12s ease; user-select: none;
+    white-space: nowrap;
+}
+.sp-web-org-chip:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: var(--sp-org-color, var(--sp-accent));
+}
+.sp-web-org-chip-active {
+    background: rgba(255,255,255,0.1);
+    border-color: var(--sp-org-color, var(--sp-accent));
+    box-shadow: 0 0 8px -2px var(--sp-org-color, var(--sp-accent));
+}
+.sp-web-org-chip-swatch {
+    width: 10px; height: 10px; border-radius: 2px;
+    flex-shrink: 0; box-shadow: 0 0 4px currentColor;
+}
+.sp-web-org-chip-name {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 600;
+}
+.sp-web-org-chip-count {
+    font-size: var(--sp-fs-xs); font-weight: 600; color: var(--sp-text-dim);
+    background: var(--sp-surface); padding: 1px 5px; border-radius: 8px;
+    min-width: 14px; text-align: center;
+}
+.sp-web-org-chip-all {
+    justify-content: center; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--sp-text-dim);
+    border: 1px dashed var(--sp-border);
+    background: transparent;
+    padding: 3px 6px;
+}
+.sp-web-org-chip-all:hover { color: var(--sp-text); border-color: var(--sp-accent); }
+.sp-web-org-chip-all.sp-web-org-chip-active {
+    color: var(--sp-text-bright); border-color: var(--sp-accent);
+    box-shadow: none;
+}
+
+/* Footer */
+.sp-web-footer {
+    padding: 6px 16px; border-top: 1px solid var(--sp-border);
+    font-size: var(--sp-fs-xs); color: var(--sp-text-dim); text-align: center;
+}
+
+/* Tooltip */
+.sp-web-tooltip {
+    position: fixed; z-index: 100010;
+    background: rgba(18,20,28,0.96); border: 1px solid var(--sp-border);
+    border-radius: 8px; padding: 10px 14px; min-width: 160px; max-width: 220px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5); pointer-events: none;
+    animation: sp-glass-in 0.15s ease-out;
+}
+.sp-web-tip-name { font-size: var(--sp-fs-sm); font-weight: 700; margin-bottom: 2px; }
+.sp-web-tip-role { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); margin-bottom: 4px; }
+.sp-web-tip-type { font-size: var(--sp-fs-xs); color: var(--sp-accent); background: var(--sp-accent-dim); border-radius: 3px; padding: 1px 6px; display: inline-block; margin-bottom: 4px; }
+.sp-web-tip-meters { display: flex; flex-direction: column; gap: 2px; }
+.sp-web-tip-meter { display: flex; justify-content: space-between; font-size: var(--sp-fs-xs); color: var(--sp-text-dim); }
+.sp-web-tip-absent { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); font-style: italic; margin-top: 4px; opacity: 0.6; }
+
+/* v6.8.27: NPC edge list inside the tooltip — compact rows with glyph
+   + direction arrow + other-character name + label */
+.sp-web-tip-npc-list { margin-top: 6px; padding-top: 4px; border-top: 1px dashed var(--sp-border); display: flex; flex-direction: column; gap: 3px; max-height: 160px; overflow-y: auto; }
+.sp-web-tip-npc-row { display: flex; align-items: center; gap: 5px; font-size: var(--sp-fs-xs); }
+.sp-web-tip-glyph { font-size: var(--sp-fs-xs); min-width: 12px; text-align: center; }
+.sp-web-tip-dir { color: var(--sp-text-dim); font-size: var(--sp-fs-xs); min-width: 14px; text-align: center; }
+.sp-web-tip-other { font-weight: 600; }
+.sp-web-tip-label { color: var(--sp-text-dim); font-style: italic; margin-left: 4px; }
+
+/* Node hover effect (SVG) */
+.sp-web-node:hover circle:first-child { stroke-width: 3; filter: drop-shadow(0 0 6px currentColor); }
+
+/* v6.8.44: hover-enlarged portrait preview styles live in
+   css/characters.css now (same file as .sp-char-portrait). The
+   universal delegated listener in src/ui/portraits.js handles every
+   avatar site in the extension, not just the relationship web. */
+
+/* ═══ RESPONSIVE ═══ */
+@media(max-width:900px){
+    .sp-web-body { flex-direction: column; }
+    .sp-web-legend-panel {
+        flex: 0 0 auto; max-height: 200px; border-left: none;
+        border-top: 1px solid var(--sp-border);
+        display: flex; flex-direction: row; flex-wrap: wrap;
+        gap: 4px; overflow-x: auto; overflow-y: auto;
+    }
+    .sp-web-legend-header { display: none; }
+    .sp-web-legend-row { flex: 0 0 auto; padding: 4px 8px; font-size: var(--sp-fs-xs); }
+    .sp-web-legend-all { flex-basis: 100%; }
+    .sp-web-legend-org-section {
+        flex-basis: 100%; margin-top: 6px; padding-top: 4px;
+        flex-direction: column;
+    }
+    .sp-web-legend-org-list { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+    .sp-web-org-chip { flex: 0 0 auto; }
+    .sp-web-legend-subheader { display: none; }
+}
+@media(max-width:600px){
+    .sp-web-container { max-width: calc(100vw - 16px); max-height: calc(100vh - 24px); }
+    .sp-web-svg-wrap { min-height: 250px; }
+    .sp-web-close { min-width: 44px; min-height: 44px; }
+    .sp-web-toolbar button { padding: 4px 6px; font-size: var(--sp-fs-xs); }
+}

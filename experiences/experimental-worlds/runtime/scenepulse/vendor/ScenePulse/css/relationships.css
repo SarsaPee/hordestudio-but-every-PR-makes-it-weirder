@@ -1,0 +1,275 @@
+/* ═══ RELATIONSHIPS ═══ */
+/* v6.8.33: per-character background pattern layered over the flat
+   --char-bg tint. Same technique as .sp-char-card — top layer is the
+   SVG pattern URL, bottom layer is the solid color. */
+.sp-rel-block {
+    padding: 0;
+    margin-bottom: 4px;
+    border-bottom: none;
+    border-radius: var(--sp-radius);
+    background-image: var(--char-pattern, none);
+    background-color: var(--char-bg, transparent);
+    background-repeat: repeat;
+    border-left: 3px solid var(--char-border, var(--sp-border));
+    contain: layout style;
+    /* v6.15.0: container query scope for the card header so the pill can
+       degrade to a dot when the CARD itself is narrow, regardless of viewport.
+       Same card renders in main panel (~380px), wiki overlay (~600px),
+       thoughts panel (~280px), and mobile fullscreen (calc(100vw - 16px)). */
+    container-type: inline-size;
+    container-name: rel-card;
+}
+.sp-rel-block:last-child { margin-bottom: 0; }
+/* v6.15.0: Grid header beats flex here. minmax(0, 1fr) on the name column is
+   load-bearing — without the 0 minimum, an unbroken 25-char name forces overflow
+   regardless of text-overflow:ellipsis. Pills stay auto-sized but capped from
+   inside via max-inline-size. Same lesson as the meter row fix in v6.13.7. */
+.sp-rel-header {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    column-gap: 6px;
+    padding: 6px 6px;
+    cursor: pointer;
+    user-select: none;
+}
+.sp-rel-header:hover { background: rgba(255,255,255,0.02); }
+/* v6.8.38: portrait thumbnail in relationship header. Smaller than the
+   main character card's 26px — compact rel blocks use 22px. Reuses
+   .sp-char-portrait classes from characters.css for monogram fallback
+   and image clipping. */
+.sp-rel-header .sp-char-portrait { width: 22px; height: 22px; }
+.sp-rel-header .sp-char-portrait-monogram { font-size: var(--sp-fs-xs); }
+.sp-rel-chevron { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); transition: transform 0.2s ease; flex-shrink: 0; }
+.sp-rel-block.sp-card-open .sp-rel-chevron { transform: rotate(90deg); }
+.sp-rel-name {
+    font-size: var(--sp-fs-base);
+    font-weight: 700;
+    color: var(--char-accent, var(--sp-text-bright));
+    /* belt-and-braces with grid minmax — Adrian Roselli's recurring warning */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* v6.15.0: Both pills are now content-capped and ellipsize as a SAFETY net.
+   The real defense is the LLM-side cap (relType <=2 words, relPhase = 1
+   enum word). Width budget: ~11ch covers "Estranged"/"Customer" comfortably,
+   ~35cqi prevents either pill from eating more than a third of the card. */
+.sp-rel-type-badge,
+.sp-rel-phase-badge {
+    font-size: var(--sp-fs-xs);
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: var(--sp-radius);
+    max-inline-size: min(11ch, 35cqi);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+}
+.sp-rel-type-badge {
+    text-transform: uppercase;
+    background: rgba(155,122,196,0.15);
+    color: var(--sp-purple);
+    letter-spacing: 0.02em;
+}
+/* v6.15.0: relPhase is a closed enum (REL_PHASE_ENUM in src/rel-phase.js)
+   coerced in normalize.js. data-family attribute drives color from the
+   7-family palette below. Title Case stays (no text-transform) — typography
+   research at small sizes (Spiekermann) shows Title Case preserves bouma
+   and reads ~13% faster than ALL CAPS at pill sizes. */
+.sp-rel-phase-badge {
+    background: rgba(140,148,164,0.12);
+    color: var(--sp-text-dim);
+}
+.sp-rel-phase-badge[data-family="neutral"] { background: rgba(140,148,164,0.14); color: #aab2c0; }
+.sp-rel-phase-badge[data-family="civil"]   { background: rgba(91,140,196,0.14);  color: #7fb0e6; }
+.sp-rel-phase-badge[data-family="warm"]    { background: rgba(74,184,109,0.14);  color: #6fcf8a; }
+.sp-rel-phase-badge[data-family="romance"] { background: rgba(232,121,165,0.14); color: #f49bc1; }
+.sp-rel-phase-badge[data-family="damaged"] { background: rgba(214,158,86,0.14);  color: #e6b87a; }
+.sp-rel-phase-badge[data-family="hostile"] { background: rgba(225,90,90,0.14);   color: #f08080; }
+.sp-rel-phase-badge[data-family="complex"] { background: rgba(168,128,212,0.14); color: #c8a8e0; }
+
+/* v6.15.0: Dot fallback at very narrow card widths. Never DELETE the signal
+   — color preserves the archetypal-glance even when text disappears (Frost +
+   Wroblewski mobile-first principle). Title attribute keeps the full word
+   accessible to screen readers and on hover. */
+@container rel-card (max-width: 260px) {
+    .sp-rel-phase-badge {
+        inline-size: 10px;
+        block-size: 10px;
+        max-inline-size: 10px;
+        padding: 0;
+        text-indent: -9999px;
+        border-radius: 50%;
+    }
+    .sp-rel-type-badge {
+        max-inline-size: 8ch;
+    }
+}
+.sp-rel-body { display: none; padding: 0 6px 6px 6px; }
+.sp-rel-block.sp-card-open .sp-rel-body { display: block; }
+.sp-rel-meta { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; padding-left: 2px; }
+.sp-rel-meta-item { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); display: flex; align-items: center; gap: 5px; }
+.sp-rel-meta-label { font-weight: 600; color: var(--sp-text-dim); text-transform: uppercase; font-size: var(--sp-fs-xs); letter-spacing: 0.04em; min-width: 80px; }
+.sp-rel-milestone { color: var(--sp-amber); }
+
+/* The label column uses a fixed width sized for the longest label
+   (AFFECTION at each font size) + 10px right padding. Labels are
+   right-aligned so shorter ones (TRUST, COMPAT) sit flush-right
+   within the column, keeping all bars left-aligned. Each responsive
+   breakpoint overrides this width to match its font-size. */
+/* Label column uses auto to fit content at any font size.
+   This prevents label/bar overlap when --sp-fs-xs scales up.
+   v6.13.7: third column uses minmax(0, 70px) — the previous `60px`
+   fixed value still allowed the cell to grow because grid items
+   default to `min-width: auto`, so content like "100+99❤" pushed
+   the bar narrower. minmax(0, X) caps the maximum AND sets
+   min-content to 0, locking the column at exactly 70px regardless
+   of content. Combined with min-width:0 + overflow:hidden on
+   .sp-meter-value below, the bar's right edge is now stable across
+   rows whether or not the value changed this turn. */
+.sp-meter-row { display: grid; grid-template-columns: auto 1fr minmax(0, 70px) 44px; align-items: center; gap: 4px; padding: 2px 0; }
+.sp-meter-row.sp-meter-has-tag { grid-template-rows: auto auto; }
+.sp-meter-row.sp-meter-has-tag > .sp-meter-label { grid-row: 2; }
+.sp-meter-row.sp-meter-has-tag > .sp-meter-bar-wrap { grid-row: 2; }
+.sp-meter-row.sp-meter-has-tag > .sp-meter-bar-na { grid-row: 2; }
+.sp-meter-row.sp-meter-has-tag > .sp-meter-value,
+.sp-meter-row.sp-meter-has-tag > .sp-meter-value-na { grid-row: 2; }
+.sp-meter-row.sp-meter-has-tag > .sp-sparkline { grid-row: 2; }
+/* v6.13.7: sparkline pinned to the right edge of its 44px column via
+   justify-self: end. The previous `display: flex; justify-content: flex-end`
+   on the canvas itself was a no-op (canvas has no flex children), so the
+   canvas defaulted to start-aligned within the column with 4px slack on
+   the right — different per row depending on canvas redraw width. */
+.sp-meter-row > .sp-sparkline { justify-self: end; align-self: center; max-width: 100%; }
+/* v6.9.10: padding-right on the label creates clear separation
+   between the meter name and the bar's left edge. This is independent
+   of the grid gap (which controls bar→value spacing) so both spacings
+   work correctly at all panel widths and resolutions. */
+/* min-width ensures all labels align (sized for "AFFECTION" at
+   --sp-fs-xs with uppercase + letter-spacing). Right-aligned text
+   within the min-width keeps shorter labels flush with the bar edge. */
+.sp-meter-label { font-size: var(--sp-fs-xs); font-weight: 600; text-align: right; color: var(--sp-text-dim); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; padding-right: 10px; min-width: calc(var(--sp-fs-xs) * 8); }
+.sp-meter-bar-wrap { position: relative; height: clamp(6px, 1.4cqi, 12px); background: rgba(100,110,130,0.12); border-radius: 5px; overflow: visible; }
+.sp-meter-bar-fill { height: 100%; border-radius: 5px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); position: relative; overflow: hidden; }
+.sp-meter-bar-fill::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, transparent 60%); border-radius: 5px; }
+.sp-meter-bar-track { position: absolute; inset: 0; border-radius: 5px; overflow: hidden; } /* clips the fill */
+.sp-meter-bar-prev { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(255,255,255,0.5); border-radius: 1px; z-index: 2; box-shadow: 0 0 4px rgba(255,255,255,0.3); }
+/* Delta gain/loss bar segments */
+.sp-meter-bar-delta { position: absolute; top: 0; height: 100%; z-index: 1; border-radius: 5px; animation: sp-delta-bar-in 0.5s ease-out; }
+/* v6.9.6: use theme variables for gain/loss colors */
+.sp-meter-bar-gain { background: var(--sp-green, #2d8a4e); }
+.sp-meter-bar-loss { background: var(--sp-red, #a83a3a); }
+@keyframes sp-delta-bar-in { from { opacity: 0; } to { opacity: 1; } }
+.sp-meter-bar-na { height: 10px; background: repeating-linear-gradient(90deg,rgba(100,110,130,0.08) 0,rgba(100,110,130,0.08) 4px,transparent 4px,transparent 8px); border-radius: 5px; }
+.sp-meter-face {
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-left: 2px; vertical-align: middle;
+}
+.sp-meter-face svg { width: 13px; height: 13px; flex-shrink: 0; animation: sp-delta-pop 0.4s ease-out; }
+/* v6.13.7: min-width:0 + overflow:hidden lock the value cell to its
+   grid track width (70px from .sp-meter-row). Without these, grid items
+   default to min-width:auto and content like "100+99❤" pushes the cell
+   wider, which shrinks the bar. */
+.sp-meter-value { font-size: var(--sp-fs-xs); font-weight: 700; font-family: var(--sp-font-mono); color: var(--sp-text-dim); text-align: right; min-width: 0; overflow: hidden; display: flex; align-items: center; justify-content: flex-end; gap: 2px; white-space: nowrap; }
+.sp-meter-value-na { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); font-style: italic; text-align: right; min-width: 0; overflow: hidden; }
+.sp-meter-tag { grid-column: 2 / 4; grid-row: 1; font-size: var(--sp-fs-xs); font-style: italic; color: var(--sp-text-dim); opacity: 0.6; text-align: right; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 1px; margin-bottom: -1px; }
+/* Delta indicators */
+.sp-meter-delta { font-size: var(--sp-fs-xs); font-weight: 700; font-family: var(--sp-font-mono); line-height: 1; white-space: nowrap; display: inline-flex; align-items: center; gap: 1px; animation: sp-delta-pop 0.4s ease-out; }
+.sp-meter-delta-up { color: #4ade80; text-shadow: 0 0 6px rgba(74,222,128,0.4); }
+.sp-meter-delta-down { color: #f87171; text-shadow: 0 0 6px rgba(248,113,113,0.4); }
+.sp-meter-delta-stress-up { color: #facc15; text-shadow: 0 0 6px rgba(250,204,21,0.4); }
+.sp-meter-delta-stress-down { color: #4ade80; text-shadow: 0 0 6px rgba(74,222,128,0.4); }
+.sp-delta-icon { vertical-align: middle; margin-left: 1px; animation: sp-delta-pop 0.4s ease-out; }
+@keyframes sp-delta-pop { 0% { opacity: 0; transform: scale(0.6); } 50% { transform: scale(1.15); } 100% { opacity: 1; transform: scale(1); } }
+
+/* ═══ SPARKLINES ═══ */
+.sp-sparkline { display: inline-block; vertical-align: middle; margin-left: 4px; border-radius: 3px; opacity: 0.9; transition: opacity 0.15s; max-width: 40px; }
+.sp-sparkline:hover { opacity: 1; }
+
+/* Full-screen graph overlay */
+.sp-graph-overlay {
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh;
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(4px); z-index: 100001;
+    display: flex; align-items: center; justify-content: center;
+    animation: sp-glass-in 0.2s ease-out;
+}
+.sp-graph-container {
+    background: var(--sp-bg, rgba(18,20,26,0.98)); border: 1px solid var(--sp-border, rgba(255,255,255,0.06));
+    border-radius: 12px; padding: 20px; width: min(92vw, 1400px); max-height: calc(100vh - 40px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6); overflow: auto;
+}
+@media (max-width: 600px) {
+    .sp-graph-container { padding: 10px; width: calc(100vw - 16px); max-height: calc(100vh - 16px); border-radius: 8px; }
+}
+@media (min-width: 1921px) {
+    .sp-graph-container { width: min(85vw, 1800px); }
+}
+.sp-graph-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.sp-graph-title { font-size: var(--sp-fs-md); font-weight: 700; color: var(--sp-text-bright, #e8ecf4); flex: 1; }
+.sp-graph-close {
+    background: none; border: 1px solid var(--sp-border, rgba(255,255,255,0.1)); color: var(--sp-text-dim, #6b7280);
+    cursor: pointer; font-size: var(--sp-fs-md); width: 28px; height: 28px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; transition: all 0.15s;
+}
+.sp-graph-close:hover { color: var(--sp-text, #c8ccd4); background: var(--sp-surface, rgba(28,32,42,0.9)); }
+.sp-graph-svg-wrap { margin-bottom: 10px; border-radius: 6px; overflow: hidden; min-height: 200px; }
+@media (min-height: 800px) { .sp-graph-svg-wrap { min-height: 350px; } }
+@media (min-height: 1080px) { .sp-graph-svg-wrap { min-height: 500px; } }
+.sp-graph-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; justify-content: center; }
+.sp-graph-legend-btn {
+    font-size: var(--sp-fs-sm); color: var(--sp-text-dim, #6b7280); display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03);
+    cursor: pointer; transition: all 0.15s; font-family: inherit; opacity: 0.6;
+}
+.sp-graph-legend-btn:hover { opacity: 0.9; background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.15); }
+.sp-graph-legend-btn.sp-graph-legend-active {
+    opacity: 1; font-weight: 700; color: var(--sp-text-bright, #e8ecf4);
+    background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2);
+}
+.sp-graph-legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+/* Clickable X-axis labels */
+.sp-graph-xlabel:hover { fill: var(--sp-accent, #4db8a4) !important; }
+.sp-graph-stats { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--sp-fs-xs); color: var(--sp-text-dim, #6b7280); padding-top: 4px; border-top: 1px solid var(--sp-border, rgba(255,255,255,0.06)); }
+/* Hover tooltip near data point */
+.sp-graph-tooltip {
+    position: absolute; z-index: 20;
+    background: var(--sp-bg, rgba(14,16,22,0.97)); border: 1px solid var(--sp-accent, #4db8a4);
+    border-radius: 8px; padding: 8px 12px; width: 220px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.6); pointer-events: none;
+    animation: sp-glass-in 0.1s ease-out;
+}
+.sp-graph-tip-header { font-size: var(--sp-fs-xs); color: var(--sp-text-bright, #e8ecf4); margin-bottom: 3px; }
+.sp-graph-tip-header strong { color: var(--sp-accent, #4db8a4); }
+.sp-graph-tip-loc { font-size: var(--sp-fs-xs); color: var(--sp-text, #c8ccd4); font-weight: 600; }
+.sp-graph-tip-topic { font-size: var(--sp-fs-xs); color: var(--sp-text-dim, #6b7280); font-style: italic; }
+.sp-graph-tip-msg { font-size: var(--sp-fs-xs); color: var(--sp-text, #c8ccd4); margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06); line-height: 1.4; max-height: 60px; overflow: hidden; }
+.sp-graph-tip-val { font-size: var(--sp-fs-xs); color: var(--sp-accent, #4db8a4); margin-top: 3px; }
+.sp-graph-tip-hint { font-size: var(--sp-fs-xs); color: var(--sp-text-dim, #6b7280); opacity: 0.5; margin-top: 2px; }
+.sp-graph-tip-goto {
+    display: block; width: 100%; margin-top: 6px; padding: 6px; font-size: var(--sp-fs-base); font-weight: 600;
+    background: var(--sp-accent-dim, rgba(77,184,164,0.15)); color: var(--sp-accent, #4db8a4);
+    border: 1px solid var(--sp-accent, #4db8a4); border-radius: 5px; cursor: pointer; text-align: center;
+    font-family: inherit;
+}
+.sp-graph-tip-goto:hover { background: rgba(77,184,164,0.25); }
+
+/* Mobile graph adjustments */
+@media (max-width: 600px) {
+    .sp-graph-container { padding: 10px; }
+    .sp-graph-title { font-size: var(--sp-fs-base); }
+    .sp-graph-legend { gap: 4px; }
+    .sp-graph-legend-btn { font-size: var(--sp-fs-xs); padding: 5px 10px; }
+    .sp-graph-stats { font-size: var(--sp-fs-xs); gap: 8px; }
+    .sp-graph-tooltip { width: min(260px, 85vw); }
+}
+
+.sp-meter-affection .sp-meter-bar-fill { background: linear-gradient(90deg,#d46a7e,#f08ca0); }
+.sp-meter-trust .sp-meter-bar-fill { background: linear-gradient(90deg,#4aaa60,#6ad480); }
+.sp-meter-desire .sp-meter-bar-fill { background: linear-gradient(90deg,#b060a0,#d480c0); }
+.sp-meter-stress .sp-meter-bar-fill { background: linear-gradient(90deg,#c47040,#e89060); }
+.sp-meter-compatibility .sp-meter-bar-fill { background: linear-gradient(90deg,#40a0c4,#60c8e8); }

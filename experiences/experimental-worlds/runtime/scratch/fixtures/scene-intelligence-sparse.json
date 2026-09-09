@@ -1,0 +1,14 @@
+{
+  "name": "Sparse Scene Intelligence fixture",
+  "purpose": "Verify that rich schema fields remain unknown rather than fabricated.",
+  "authoredBeat": {
+    "playerInput": "Alex walks into the empty flat and shuts the door.",
+    "narration": "The lock clicks behind Alex. The flat is quiet.",
+    "handoff": "SCENE READING: Alex is alone in the flat.\nANSWER core.location: Alex's flat.\nANSWER core.cast: Alex only."
+  },
+  "required": {
+    "people": ["Alex"],
+    "unknown": ["weather", "other character thoughts", "relationship change", "salient object", "unresolved thread"],
+    "forbidden": ["invented mood certainty", "invented off-scene character relevance", "invented character memory"]
+  }
+}

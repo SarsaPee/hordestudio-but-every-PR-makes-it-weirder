@@ -1,0 +1,37 @@
+/* ScenePulse — Modular Styles */
+@import url('./css/variables.css');
+@import url('./css/panel.css');
+@import url('./css/sections.css');
+@import url('./css/dashboard.css');
+@import url('./css/loading.css');
+@import url('./css/quests.css');
+@import url('./css/story-ideas.css');
+@import url('./css/relationships.css');
+@import url('./css/characters.css');
+@import url('./css/character-wiki.css');
+@import url('./css/relationship-web.css');
+@import url('./css/thoughts.css');
+@import url('./css/message-button.css');
+@import url('./css/settings.css');
+@import url('./css/focus-mode.css');
+@import url('./css/debug.css');
+@import url('./css/weather-overlay.css');
+@import url('./css/time-tint.css');
+@import url('./css/scene-transition.css');
+@import url('./css/timeline.css');
+@import url('./css/responsive.css');
+@import url('./css/mobile.css');
+@import url('./css/tablet.css');
+@import url('./css/setup-guide.css');
+@import url('./css/guided-tour.css');
+@import url('./css/custom-panels.css');
+@import url('./css/dialogs.css');
+@import url('./css/accessibility.css');
+@import url('./css/analytics.css');
+@import url('./css/crash-log.css');
+@import url('./css/perf-overlay.css');
+@import url('./css/prompt-editor.css');
+@import url('./css/preset-browser.css');
+
+/* Safety: hide message text flagged as containing tracker markers (cleared after extraction) */
+.mes_text[data-sp-has-tracker] { max-height: 0 !important; overflow: hidden !important; }

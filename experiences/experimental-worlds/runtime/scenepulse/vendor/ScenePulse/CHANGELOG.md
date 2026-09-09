@@ -1,0 +1,2558 @@
+# Changelog
+
+All notable changes to ScenePulse are documented in this file.
+
+### [6.27.6] — 2026-04-26
+
+#### Added — Stock-prompts disclaimer + token-usage / cost / OR-ranking sorts
+
+**The contradiction**: v6.27.5 added a green ✓ stock-prompts badge to presets that don't override the default prompts. But the apply button still let users apply the template, which is a no-op when there are no slot overrides. Users could reasonably ask: "if it does nothing, why apply it?"
+
+**The disclaimer**: every stock-prompts preset card AND the suggestion dialog now show an amber footnote at the bottom: *"Informational only at this time. Applying this template will not modify your prompt slots — pending community-contributed overrides for this model. Sampler hints above remain advisory."* Honest about the no-op while leaving the door open for community PRs.
+
+**Three new sort modes** in the preset browser dropdown (now grouped via `<optgroup>`):
+
+| Group | Option | Behavior |
+|---|---|---|
+| (top) | Match first | Sticky-priority bucketing (default) |
+| **OpenRouter data** | Token usage | Highest weeklyTokens first |
+| | Cost (low → high) | input + output USD/M ascending; unpriced presets sink |
+| | OR ranking | Rank 1 first; unranked sink |
+| **Preset metadata** | Name / Family / Context size | Unchanged |
+
+The legacy `popularity` value persisted in user settings migrates silently to `token-usage` (semantically identical).
+
+### [6.27.5] — 2026-04-26
+
+#### Changed — OR connector reframed as discovery aid + stock-prompts badge
+
+**1) OR connector reframed.** Old framing ("Live OpenRouter pricing & context", "Keep your preset cards in sync") read as a sync/freshness feature. Actual purpose is helping users discover alternative models while browsing templates, without changing anything about generation. New copy says exactly that, leads with "Read-only by design," and uses softer CTAs (Maybe later / ↗ Enable). Aligned settings tab toggle and Setup Wizard step 5 to the same discovery framing.
+
+**2) Stock-prompts visual treatment.** Soft-green ✓ stock prompts badge appears on every preset card AND in the suggestion dialog when `slotCount === 0`. Tooltip explains the value proposition: verified compatibility plus sampler-hint guidance, not prompt overrides. Reworded 14 contradictory `notes` strings to drop the "Defaults work" framing and emphasize what each preset actually contributes (sampler hints, capability tips, integration notes).
+
+The "Will update" panel in the suggestion dialog now reads *"System-prompt role only / Default prompts unchanged"* (italic muted) instead of the previous repetitive duplication.
+
+### [6.27.4] — 2026-04-26
+
+#### Fixed — Force-trigger preset suggestion + match OR pulse animation
+
+`maybeSuggestPreset()` short-circuits when the active profile already has the matched preset applied — that was hiding the dialog from the Development trigger after the user accepted the suggestion once. New `forceShowPresetSuggestion()` variant ignores all gates (already applied / session shown / permanently dismissed) and always renders the dialog if a model match exists. Dev trigger now uses it and surfaces toasts for the non-popup outcomes.
+
+Hero icon swapped from constant rotation to the same `sp-orc-pulse` 3.4s ease-in-out scale-breathing the OR connector dialog uses, for animation parity across the two branded prompts.
+
+### [6.27.3] — 2026-04-26
+
+#### Added — Styled "Apply X preset?" dialog + locked Development section
+
+**1) "Apply X preset?" dialog** matches the v6.27.1 OR-connector visual register: gradient hero with hero icon, family/provider/context badges, sampler-hint chip row, two-column "Will update / Will preserve" effect summary, and a primary gradient CTA. Per-preset sampler hints render inline when the preset has them, including the guidance-only fallback for Claude 4.7 / GPT-5 reasoning families.
+
+**2) Advanced tab Development section** is now collapsed AND locked by default. Chevron header expands the section; an unlock confirm dialog gates the trigger buttons; a small "Lock again" button at the bottom of the unlocked card lets you reseal manually. Lock state intentionally NOT persisted — every settings open starts locked + collapsed so the reset button cannot be hit by muscle memory or accidental scroll-through.
+
+### [6.27.2] — 2026-04-26
+
+#### Added — Advanced tab Development section: trigger one-time popups
+
+New section at the bottom of the Advanced tab with buttons to manually re-trigger every one-time popup: Setup Guide, OR Connector Prompt, Preset Suggestion (per-model), and Update Banner. Plus a Reset all one-time popup state button that clears every "already shown" flag (`setupDismissed`, `_spOrConnectorPromptShown`, `sp:preset-shown`, `sp:preset-dismissed`) so popups behave as if you were a fresh install on next reload. Reset confirms via `spConfirm` so it can't fire by accident. Useful for verifying dialog rendering during QA without manually clearing localStorage / settings flags.
+
+### [6.27.1] — 2026-04-26
+
+#### Changed — Dedicated visual treatment for OR-connector opt-in dialog
+
+Replaces the plain `spConfirm` prompt with a feature-introduction dialog that matches the visual register of the rest of ScenePulse. New module [`src/ui/or-connector-prompt.js`](src/ui/or-connector-prompt.js): hero icon (concentric rings + signal arc), gradient header zone, accent eyebrow, benefit bullets, footnote callout, primary CTA with gradient + soft glow. The plain confirm dialog read as a system warning; this one introduces a new feature, which is what it is.
+
+### [6.27.0] — 2026-04-25
+
+#### Added — OpenRouter Stats Connector (Phase 3, opt-in runtime refresh)
+
+**The problem**: v6.26.0 shipped a static `presets/or-stats.json` baseline regenerated by a maintainer script. Pricing and context windows drift between releases — the static baseline ages.
+
+**The fix**: opt-in runtime connector ([`src/presets/or-connector.js`](src/presets/or-connector.js)) that fetches fresh pricing/context from OpenRouter's public `/api/v1/models` endpoint. Popularity rankings stay static (those live only in OR's HTML, not the public API). The registry merges the live overlay onto the static base via `orSlug` matching, so `getOrStats(preset)` transparently returns live pricing when available.
+
+**Cadence + caching** (locked in during Phase 3 sign-off):
+- Auto-fetch once per session, on first preset-browser open (when toggle ON)
+- 24h localStorage TTL — multiple opens don't spam the endpoint
+- Manual `↻ Refresh stats` button (labeled, in toolbar) bypasses session flag, cooldowns, and TTL
+
+**Failure modes**:
+- Offline / network error → silent skip, no cooldown
+- 5xx / 3s timeout → skip without cooldown so we retry next session
+- 429 rate-limit → 1-hour cooldown
+- 4xx / shape mismatch / parse failure → 1-day cooldown (CORS surprise — back off)
+
+**Surfaces**:
+- Settings → Generation tab: "Enable OpenRouter pricing/context refresh" checkbox (off by default)
+- Setup Wizard step 5 (new): explains the opt-in to fresh installs
+- One-time `spConfirm` prompt for existing users who already dismissed the wizard
+- Preset browser footer: `Popularity baseline: 2026-04-26 · pricing/context refreshed 4 hours ago` when overlay is fresh
+
+**Tests**: 37 new cases in [`tests/or-connector.test.mjs`](tests/or-connector.test.mjs) covering toggle gating, force-bypass, session flag, 24h TTL expiry, all four cooldown failure modes, network-error silent-skip, and successful-refresh-clears-stale-cooldown.
+
+### [6.24.0] — 2026-04-26
+
+#### Added — Temporal validator: rewrite LLM time regressions, respect user intent
+
+**The bug**: timelines like #60 16:15 → #62 14:52 → #64 15:00. Backward times caused by the LLM losing track between turns, with no mechanism to either prevent or correct them — and no way to distinguish honest model errors from intentional plot-driven flashbacks/time-skips.
+
+**The fix**: a new pure module [`src/temporal-check.js`](src/temporal-check.js) classifies every save's time delta into one of three actions (`accept` / `rewrite` / `skip`) and the pipeline applies the action before the snapshot reaches the timeline. Designed against an 8-panel review (red-team, NSFW user advocate, performance, simplicity, contracts, test-coverage, second-architecture, spec-flow) — the rules below reflect the merged consensus.
+
+**Three block rules (LLM output only):**
+1. Backward time, no flashback signal, no date change → rewrite to (prev time + parsed `elapsed`) or (prev + 1m)
+2. Forward time exceeding 2× the model's claimed `elapsed` → rewrite to (prev time + claimed elapsed)
+3. Forward time with no `elapsed` and >1h jump → rewrite to (prev time + 1m)
+
+**Flashback signals bypass rule #1:**
+- new optional `temporalIntent` schema field set to `flashback`
+- `elapsed` contains "flashback" / "earlier" / "going back"
+- date field changed (cross-date jump trusted)
+
+**Skip conditions (no rewrite, no warning):**
+- prev is null (cold start — no anchor to compare against)
+- `next._spMeta.userEdited` (manual panel edit — never override; the user's authority always wins)
+- `prev._temporal.action === 'rewrite'` (anti-cascade — refuse to anchor on a previously-corrected snapshot, otherwise one bad turn poisons every subsequent classification)
+- group chat (per-character clocks deferred to phase 2)
+- unparseable times ("morning" / malformed → no false regression claim)
+
+**Schema addition**: optional `temporalIntent` enum field in BUILTIN_SCHEMA (`continue` | `flashback` | `timeSkip` | `parallel`). The model can declare its intent in JSON; older models that ignore the field cost nothing because the absence is well-handled.
+
+**Architectural side effect**: `src/generation/delta-merge.js` now uses a centralized `INTERNAL_META_KEYS` Set for the strip-list (`_spMeta`, `_validationWarnings`, `_temporal`). Replaces two hardcoded `if (k === '_spMeta')` checks. Single source of truth prevents the next contributor from forgetting one strip site — addresses the architectural seam that produced the v6.22.1→v6.23.4 regression chain.
+
+**Edit-mode integration**: `src/ui/edit-mode.js` now stamps `_spMeta.userEdited = true` when the user manually edits a panel field. The classifier respects this flag on the next AI turn — manual time corrections survive instead of getting auto-overridden.
+
+**No prompt edit**. Panel review consensus: schema field is more reliable than prompt text the model ignores under load. No new "monotonic time" sentence in BUILTIN_PROMPT.
+
+**No settings toggle**. Single behavior, no `temporalStrictness: off | warn | strict` knob. Auto-correction is the only behavior, always on. If users complain it's too aggressive, a toggle is one release away — but starting with one mode prevents death-by-toggle.
+
+**Tests**: 1,338 → 1,411 passing. New `tests/temporal-check.test.mjs` (73 tests) covers all three block rules, all skip conditions, parser edges (AM/PM, missing seconds, qualitative time, midnight rollover), purity invariants, and the user's literal 16:15→14:52→15:00 fixture as a regression guard.
+
+**Files**: new `src/temporal-check.js` (~190 lines pure module). 30 lines of integration in `src/generation/pipeline.js`. 1 new schema field in `src/constants.js`. 5 lines centralizing the strip-list in `src/generation/delta-merge.js`. 11 lines in `src/ui/edit-mode.js`. ~250 lines of tests. Total ~370 lines added.
+
+### [6.23.10] — 2026-04-26
+
+#### Fixed — Crash log model name reporting (was stuck on stale openai_model)
+
+User report: "Some issues with DeepSeekv4. Is it falsely reporting claudesonnet?" — diagnostic dump on a DeepSeek session showed every error context labeled with `model: claude-sonnet-4-6-thinking` from a prior session.
+
+**Root cause**: `src/crash-log.js` `_autoContext()` hardcoded `chatCompletionSettings.openai_model` as the model-name lookup. That field is the OpenAI-source-specific value — for Claude it's `claude_model`, for DeepSeek it's `deepseek_model`, etc. Once a user is on a non-OpenAI source the `openai_model` field stays at whatever the last OpenAI session left in it, so all subsequent crash entries get tagged with the stale value.
+
+Notably, `src/presets/registry.js` `getActiveModelId()` already does proper source-aware detection (scans `chat_completion_source`-specific `*_model` key, then any `*_model` key, then textgen settings, then the visible DOM dropdown). `crash-log.js` just wasn't using it.
+
+**Fix**: inlined a minimal source-aware `_readActiveModel()` in `crash-log.js` that mirrors `registry.js`'s logic. Inlined rather than imported to keep `crash-log.js` dependency-light during error paths (it already runs from `unhandledrejection` handlers and shouldn't pull in the preset registry just to read a model name).
+
+User can now see in the crash log what model was actually active when each error fired — essential context for diagnosing the "model emits prose instead of JSON" pattern they're hitting.
+
+**Tests**: 1,338 still pass.
+
+### [6.23.9] — 2026-04-26
+
+#### URGENT — Fix v6.23.8 regression: SP fallback never fires after migration
+
+User report: "After text generation, SP doesn't activate" — meaning the ST chat completes but no SP tracker generation runs at all.
+
+**Root cause**: v6.23.8's migration cleared stale `fallbackPreset = "0"` to `""` to fix the visible preset switch. But `src/ui/message.js`'s `onCharMsg` recovery path had an early-return:
+
+```js
+if(!fbProfile && !fbPreset){
+    // No fallback profile configured -- show recovery card in panel
+    _showRecoveryCard(idx);
+} else {
+    // Tier 1 + Tier 2 fallback fires here
+}
+```
+
+Pre-v6.23.8 the user's `fallbackPreset = "0"` was truthy, so this branch never fired and Tier 1/2 ran. Post-migration both values are empty strings, so the branch fired and SP just showed a recovery card without attempting auto-recovery. Net result: SP became silently inert after generation finished.
+
+The check was a pre-v6.23.7 artifact — back then empty meant "user hasn't configured anything." After v6.23.7's "(Same as current)" semantics, empty is a valid configuration meaning "use current preset, no switch." `withProfileAndPreset('', '', fn)` is now a clean no-op pass-through, so auto-fallback should always fire when `fallbackEnabled` is true.
+
+**Fix**: removed the early-return entirely. Tier 1 + Tier 2 always run when `fallbackEnabled` is set. Recovery card still appears via the existing Tier 2 failure branch when the fallback API call itself fails.
+
+**Tests**: 1,338 still pass.
+
+### [6.23.8] — 2026-04-26
+
+#### Fixed — Auto-migrate stale fallbackPreset="0" so v6.23.7 actually works
+
+User report: v6.23.7 didn't fix the visible preset switch — diagnostic dump showed `fallbackPreset = "0"` was still saved. The label rename to "(Same as current)" had no effect on users who never reopened the SP settings panel to manually re-pick the empty option.
+
+**Root cause**: pre-v6.23.7 versions sometimes initialized the dropdown's empty-option sentinel as the literal string `"0"`. On modern ST setups `"0"` silently matches the first preset in `#settings_preset_openai` (typically "Default" — 4k context, often a different model from the user's current preset). `withProfileAndPreset()` saw `"0"` as a real preset value, swapped to it, and the user saw both the visible dropdown change AND a "Mandatory prompt exceeds context size" toast when the 5800-token tracker prompt overflowed Default's smaller context window.
+
+**Fix**: one-shot migration in `src/settings.js` `getSettings()` that clears stale `"0"` values from `chatPreset` and `fallbackPreset` on next load. Migration also clears the value from both localStorage shadows (`sp_profiles`, `scenepulse_config`) so it can't be re-introduced by the next overlay pass. Gated by `s._fallbackPresetMigrationDone` so it runs exactly once per chat per upgrade — same pattern as v6.22.1's `_spOrphanMigrationDone`.
+
+Migration is conservative: only the literal string `"0"` is cleared. Real preset IDs (UUIDs, names like "Default", "Roleplay") are untouched. A user who legitimately wants ST's first preset (`value="0"`) for fallback can re-select it from the dropdown after upgrade.
+
+**Tests**: 1,338 still pass.
+
+### [6.23.7] — 2026-04-26
+
+#### Fixed — Stop SP from swapping the user's preset/samplers during fallback
+
+User report: "as soon as it swaps over to SP's turn it drops the current preset I'm in" plus a "Mandatory prompt exceeds context size" toast.
+
+**Root cause — three coupled issues:**
+
+1. **Asymmetric dropdown semantics.** The Fallback Profile dropdown's empty option was labeled "(Same as current)" with true no-op semantics. The Fallback Preset dropdown's empty option was labeled "(Built-in: ScenePulse GLM-5)" — and the empty branch in `withProfileAndPreset()` implicitly called `applyBuiltinPreset()` to swap sampler sliders to GLM-5 values (temp 0.6, top_p 0.95, etc.). Users reasonably expected the same dropdown convention as Fallback Profile.
+
+2. **Stale fallbackPreset values.** User had `fallbackPreset = "0"`, which matched ST's "Default" preset (smaller-context model). When Tier 2 fallback fired, `withProfileAndPreset` switched to that preset, the ~5800-token tracker prompt overflowed its context window, and ST surfaced "Mandatory prompt exceeds context size."
+
+3. **Cancel didn't stop Tier 2 escalation.** `message.js`'s `onCharMsg` recovery chain (Tier 1 continuation reprompt → Tier 2 full separate generation) wasn't checking `cancelRequested` between tiers. Cancelling continuation immediately kicked off a fresh full-context call AND did the visible preset swap — which read as "I cancelled but it kept going."
+
+**Fixes:**
+
+- `engine.js` `withProfileAndPreset()`: empty preset is now truly no-op. The `applyBuiltinPreset()` / `restorePresetValues()` helpers stay exported (no longer called from this path). Users who want sampler tunings can save them as a custom preset and select it explicitly.
+- 4 sites in `bind-ui.js` + 2 sites in `create-settings.js` + 1 site in `setup-guide.js`: rename "(Built-in: ScenePulse GLM-5)" → "(Same as current)" on every preset dropdown. The English-key change picks up the existing "(Same as current)" translation from all 32 locale files automatically.
+- `create-settings.js`: rewrite the `sp-preset-info` hint to describe the new no-op semantics (was advertising the GLM-5 sampler bundle).
+- `setup-guide.js`: rewrite the wizard's tracker-preset hint to recommend "(Same as current)" by default and warn users that picking a different preset will visibly switch ST's preset dropdown during fallback.
+- `message.js`: import `cancelRequested` and short-circuit Tier 2 if the user cancelled during Tier 1. Cancellation now stops the whole recovery chain, not just the in-flight call.
+
+**Tests**: 1,338 passing.
+
+### [6.23.6] — 2026-04-25
+
+#### Fixed — Round 8: popover portal, blue-bleed root cause, streamhider element binding
+
+Three fixes — all from the v6.23.5 diagnostic round.
+
+**#1 Doctor info popover: portal-style positioning.** Three CSS-only attempts (v6.23.2 left:0, v6.23.3 translateX center, v6.23.5 share Diagnostics default) each clipped at some viewport. New `_wireInfoPopovers()` in `src/ui/debug-inspector.js` uses `getBoundingClientRect()` of the icon + `position: fixed` clamped to viewport so it works at every resolution (320px → 4K). CSS hover state still drives the fade; JS only overrides position at show time. ~60 lines.
+
+**#2 Configure Prompts blue hover bleed: ROOT CAUSE = class-name collision.** The preset-browser modal carried `sp-pb-overlay` as an identifier ([`preset-browser.js:37`](src/ui/preset-browser.js#L37)), AND `.sp-pb-overlay` was the button class for "Apply to current" with `background: transparent !important` and a `:hover { rgba(96,165,250) }` blue tint ([`prompt-editor.css:84-96`](css/prompt-editor.css#L84-L96)). Both rules cascaded onto the modal element, making the backdrop transparent (revealing ST chat) AND turning blue whenever the cursor was anywhere in the viewport. v6.23.2/3/5 attempted to fix this by tweaking the `.sp-cl-overlay` backdrop — but that rule was being overridden by the `!important` from the button class. Renamed button class to `.sp-pb-apply-overlay`; modal keeps its identifier with no matching rules.
+
+**#3 Streaming JSON visibility (issue #3): the v6.23.5 diagnostic dump showed `StreamHider: started` with no `LOCKED` line for an entire 2-minute generation.** Two bugs found:
+- (a) `_setupObserver` locked onto the LAST existing `.mes_text` on the first 20ms tick — which is the user's prior message, not the new assistant bubble (which doesn't exist yet at hook time). Now snapshots the initial count and waits for growth before locking; falls back to last-existing after 3s for Continue/regen flows.
+- (b) `_hasJson` only checked `textContent`, but markdown renderers preserve `<!--SP_TRACKER_START-->` as Comment DOM nodes whose text is NOT in `textContent`. Added a TreeWalker pass over comment nodes so the sentinel detector fires the moment the marker appears.
+
+**Tests**: 1,338 passing.
+
+### [6.23.5] — 2026-04-25
+
+#### Fixed — Doctor popover (round 4), backdrop bleed (round 3), stale VERSION constant
+
+**#1 Doctor i popover** — fourth attempt. v6.23.2 anchored `left:0` (overflowed RIGHT), v6.23.3 centered with `translateX(-50%)` (still clipped on screenshot 1). v6.23.5 just **removes all Doctor-specific overrides**. Doctor's popover now uses the EXACT same `right: 0` positioning as Diagnostics — both anchor right edge of their info-area, opening leftward into the inspector container. Diagnostics works because its info-area sits at the right side of the header; Doctor's info-area is to the LEFT of Diagnostics but still well within the container width, so the leftward-opening popover stays inside.
+
+**#2 Blue backdrop bleed** — third attempt. v6.23.2 dropped `saturate(120%)`, v6.23.3 bumped alpha 0.86→0.96. Both still left enough transparency for `backdrop-filter: blur()` to read ST's chat hover states (link colors, message highlights) — the filter applies to ANY non-100% pixel, so even at 0.96 alpha the 4% transparency was being filtered. v6.23.5 **removes the backdrop-filter entirely and goes fully opaque** (`#0a0d14` solid). The slight glassy effect was cosmetic; eliminating the filter eliminates the bleed completely.
+
+**Stale VERSION constant** — found while diagnosing the prior issue. `src/constants.js` had `export const VERSION = '6.12.3'` hardcoded, never bumped since the v6.12.3 release. Every subsequent release updated `manifest.json` but missed this constant — so the activity log line `[time] v6.12.3 init` was misreporting the actual version. Fixed: VERSION = '6.23.5' in sync with manifest. **Going forward, every version bump must update both manifest.json AND src/constants.js VERSION.**
+
+**#3 Streaming JSON visible during generation** — investigating. Now that the v6.23.4 generation regression is fixed and JSON is actually being produced, the streaming hider's behavior is observable again. The hider's `_hasJson` detector + `data-sp-has-tracker` CSS rule should hide the JSON during streaming, but the user reports it's visible. Need a Diagnostics dump captured **after** seeing the JSON visibility issue to inspect the actual model output (the Latest Pair section will show what tracker markers — if any — the model emitted, and the activity log will show whether `StreamHider: LOCKED` fired). Awaiting that to fix.
+
+**Tests**: 1,338 still pass.
+
+### [6.23.4] — 2026-04-25
+
+#### URGENT — Fixed: Together-mode generation silently skipped (v6.22.1 regression)
+
+User reported: "After the message comes in, I'm not seeing a payload get delivered." Diagnostics dump showed the smoking gun:
+
+```
+[ 5:11:07 PM] Interceptor: skipped — all panels disabled, no custom panels
+```
+
+even though the active profile had `panels: {6 keys}` populated correctly.
+
+**Root cause** — long-standing latent bug exposed by v6.22.1's one-shot orphan-migration guard:
+
+- `anyPanelsActive()` in `src/settings.js` was reading from `s.panels` (root) instead of the active profile.
+- Pre-v6.22.1: the orphan migration ran on every read of `getActiveSchema()` / `getActivePrompt()`, draining root in MEMORY but never persisting. So the FIRST chat completion per page-load would see populated root → `anyPanelsActive` returned true → generation succeeded. Subsequent generations failed silently.
+- v6.22.1's one-shot guard correctly persisted the migration to disk via `s._spOrphanMigrationDone`. After that, `s.panels = {}` permanently. `anyPanelsActive()` returned false on EVERY load → interceptor skipped → no tracker JSON → no payload.
+- The interceptor's mandatory-hints builder at line 91 had the same root read — when `s.panels = {}`, every `panels.X !== false` check evaluated `undefined !== false` = true, so the prompt told the model to produce fields for panels the user had disabled.
+
+**Fix**: both code paths now read from the active profile via `_buildProfileView` / `getActiveProfile`, matching the pattern `getActivePrompt` and `getActiveSchema` have used since v6.13.0. Profile is the source of truth post-migration; root is permanently empty.
+
+This blocks Together-mode generation completely on every chat session and was caught by the user within hours of v6.22.1. Patch is ~30 lines across 2 files. **No data loss occurred** — snapshots, profile, panels, etc. are all intact; the bug was only that the interceptor silently bailed before injecting the tracker prompt.
+
+**Other code paths that read `s.panels` directly** (settings UI checkbox state, panel hide visibility checks) are display-only and degrade gracefully (panels stay visible because `undefined !== false` is true) — non-blocking. They'll be cleaned up in a follow-up release.
+
+**Tests**: 1,338 still pass.
+
+### [6.23.3] — 2026-04-25
+
+#### Fixed — Doctor popover centered + backdrop fully opaque
+
+**#1 Doctor popover overflow round 3**: v6.23.2 anchored the popover `left: 0` to fix the LEFT-edge overflow, but that just moved the overflow to the RIGHT edge — the popover extended past the inspector's right side into the chat area. v6.23.3 centers the popover under the i icon via `left: 50%; transform: translateX(-50%)`. The popover now spans equally on both sides of the icon, so it stays inside the container regardless of where in the header the icon sits. Width also dropped to 380px (from 420px) for better fit on mid-width inspectors.
+
+**#2 Blue tint on Configure Prompts (round 2)**: v6.23.2 dropped `saturate(120%)` from the backdrop-filter, but the user still saw a blue shift when mousing into the page. Root cause: backdrop alpha was only 0.86, leaving 14% transparency through which ST's chat hover states (link colors, message highlights) bled via the blurred backdrop. v6.23.3 bumps alpha to 0.96 — visually opaque while preserving a slight glassy feel from the (reduced) blur(8px). The bleed should now be imperceptible.
+
+**#3 Generation regression** — needs more diagnostics from the user. Recent generation-pipeline changes are limited to the `streaming.js` _updateCap reorder (v6.22.1) and `relationship-graph.js` routing through `applyPromptRole` (v6.22.0); neither would block the panel from updating. Awaiting Diagnostics dump to investigate.
+
+**Tests**: 1,338 still pass.
+
+### [6.23.2] — 2026-04-25
+
+#### Fixed — Feedback round 6 (Doctor cascade bug, popover overflow, rogue hover, capture persistence)
+
+Five items.
+
+**#1 Doctor button color cascade bug**: the v6.21+ `.sp-di-doctor` selector was being SILENTLY OVERRIDDEN by `.sp-cl-export-btn` because both were single-class specificity (0,1,0) and `.sp-cl-export-btn` is defined later in the same file (line 985 vs line 25). CSS source order: later wins, so my blue color was being lost on every paint. Fix: bumped specificity to `.sp-di-doctor-wrap .sp-di-doctor` matching the exact pattern Diagnostics has used since v6.16. Doctor now actually renders blue, with brighter text (`#93c5fd`) and a stronger fill (`rgba(96,165,250,0.12)` background, `rgba(96,165,250,0.5)` border) so the visual weight matches Diagnostics.
+
+**#2 Doctor info popover overflow**: the popover was anchored `right: 0` (right edge of popover aligned with right edge of the i icon's info-area). Diagnostics is on the right side of the header, so this works fine — popover opens leftward and stays inside. Doctor is on the LEFT side, so the same `right: 0` anchor caused the popover to open leftward and overflow the inspector container's left edge. Added scoped override `.sp-di-doctor-wrap .sp-di-info-popover { right: auto; left: 0 }` so Doctor's popover opens rightward, staying inside the container.
+
+**#2.5 Responsive audit**: existing `@media (max-width: 560px)` already overrides both popovers to `left: 0` with smaller width — works at all narrow widths. Diagnostics at >= 560 keeps `right: 0`; Doctor at >= 560 now uses the new `left: 0` override; both anchor `left: 0` at < 560. No additional breakpoints needed.
+
+**#3 Cancel button removed** from Configure Prompts header. Was redundant with the X close button (both triggered the same `_close` flow with the same dirty-edit guard). Header now reads: title + profile pill + Revert all + Save + X. Cleaner.
+
+**#4 Rogue blue hover effect**: traced to the `.sp-cl-overlay` `backdrop-filter: blur(14px) saturate(120%)`. The `saturate(120%)` was amplifying every subtle hover/focus tint coming from the chat behind the modal — when the user moused INTO the page, ST's hover states (link colors, message highlights, focus rings) showed through the blurred backdrop as a shifting blue/amber tint. Plain `blur(14px)` is stable regardless of mouse position. Backdrop alpha bumped from 0.82 → 0.86 to compensate for the lost saturation darkening.
+
+**#5 Capture results persist across inspector close/reopen**: previously, if the user closed the Debug Inspector while a capture was running, the result was GC'd along with the closure when the capture eventually completed. New `_lastCaptureResult` module-level holder in `perf-monitor.js` (cleared only when a new capture starts). Exported via `getLastCaptureResult()`. The Perf tab on open handles three scenarios:
+- **A** No capture ever ran → empty results area (current behavior).
+- **B** Capture finished while inspector was closed → render the persisted result with banner: *"Showing the most recent capture (from a prior inspector session). Click Start capture to run a new one."*
+- **C** Capture STILL running → reattach live UI: button switches to **"Stop capture (m:ss)"**, tick timer resumes (computes elapsed from `getCapturePartial()` snapshot), partial results render every 1s. Banner: *"Capture in progress (continued from a prior inspector session). Click Stop when done."*
+
+The Perf tab dispose function no longer stops the capture on close — the floating overlay owns its own lifecycle and the perf-monitor stashes the final result via `_lastCaptureResult` regardless of who's watching.
+
+**Tests**: 1,338 still pass.
+
+### [6.23.1] — 2026-04-25
+
+#### Fixed + Polished — Feedback round 5 (Configure Prompts polish, capture model overhaul)
+
+Six items from the user.
+
+**#6 Doctor button color** mirrors Diagnostics' visual weight in blue: same alpha values (`border 0.4`, `bg 0.08`) just with the cool-blue palette. Both buttons now read as peers; v6.22.0 had over-saturated Doctor, making it feel "primary" relative to Diagnostics.
+
+**#1 + #2 Configure Prompts modal**:
+- Container background bumped from `--sp-surface` (rgba 0.9) to `--sp-bg-solid` (#12141a) — fully opaque so the chat behind the modal doesn't bleed through.
+- `.sp-pe-body` and `.sp-pb-body` gap unified at 14px; both explicitly `background: transparent` so the container's solid bg shows through identically across Slots and Templates tabs.
+
+**#3 + #3.1 Active Preset "none" row** now has a primary-styled **"Browse templates →"** button on the right when no preset is applied. Same handler as the Templates tab strip click (with the dirty-edit guard). Subtle pulse animation pulls discovery toward the templates feature without being noisy.
+
+**#4 Cancel capture not fully resetting** — diagnosed and fixed via the v6.23.1 capture model overhaul (#5). Root cause: `startCapture()` returned a promise that resolved only when the internal `setTimeout` fired. External `stopCapture()` calls (overlay Stop, inspector Stop) flipped `_captureActive=false` but the original promise sat unresolved until the timer fired with the FULL duration. v6.23.1's resolver pattern fixes this — `stopCapture()` now immediately resolves the in-flight promise with the actual results, so the inspector's `await` returns instantly and `_resetCaptureButton()` runs.
+
+**#5 User-stopped capture model** (the headline change):
+- Removed the duration `<select>` (10s / 30s / 60s / 120s presets).
+- Capture now runs **until the user clicks Stop**, with a 10-min hard ceiling for safety.
+- Inspector button labels change from `Start capture` → `Stop capture (1:23)` with **count-UP** mm:ss elapsed.
+- Floating overlay matches: pulse + "elapsed" timer + Stop button. Removed the progress bar (no fixed duration to progress against).
+- `perf-monitor.js`: introduced `_captureResolver` and `_captureAutoStopTimer` so external stops resolve the promise immediately. The auto-stop timer is now CLEARED on manual stop instead of firing later as a no-op.
+- Status copy updated: "Reproduce the issue now. Capture is open — interact with the chat / panel / weather. Click Stop when done."
+- 10-min ceiling stop produces a friendly note: "Capture reached the 10-minute safety limit and was stopped automatically."
+
+**Tests**: 1,338 still pass.
+
+### [6.23.0] — 2026-04-25
+
+#### Added — Configure Prompts IA refactor (panel-recommended consolidation)
+
+The user's "two big buttons doing related things" feedback prompted a 4-person UX/IA panel synthesis. The panel was unanimous: collapse the three surfaces (slot editor, preset browser, profile manager) into a coherent hierarchy where **profile owns slot overrides, which were seeded from a template**. v6.23.0 ships that consolidation.
+
+**One entry point**: the prompts tab now has ONE primary button — **⚙ Configure Prompts** — replacing the v6.21 pair (`✎ Edit Prompt Slots` + `⊞ Browse Model Presets`). Hint underneath: "Edit individual prompt sections, or apply one of 30 bundled model templates tuned to your model."
+
+**Two tabs in the modal**: clicking Configure Prompts opens the prompt editor with a tab strip at the top. **Slots** (default) shows the per-slot editor; **Templates** swaps to the preset browser. Both modals share the same chrome — title "Configure Prompts" + active profile name pill — so the swap reads as switching tabs of one tool, not opening a second tool. Dirty-edit guard fires before any tab switch in Slots.
+
+**Apply-preset default inverted** (the panel's biggest UX recommendation): each preset row now has TWO action buttons:
+- **+ New profile** (primary, accent-colored) — creates a NEW profile seeded from the template, prompts for the name (defaults to the template's display name with a numeric suffix if needed), sets it active. Your existing profiles are untouched. **This is the new safe default** — clicking the obvious primary action no longer destroys your tweaks.
+- **Apply to current** (secondary, smaller text) — the v6.21 behavior (overlay onto active profile). Now requires explicit confirmation that names what gets overwritten in your current profile and recommends "+ New profile" instead.
+
+The startup suggestion toast (v6.20.0) still fires for matching models — but its dialog now offers both paths too. Net effect: applying a preset can no longer silently merge into your customized profile by accident.
+
+**Profile Manager → + New from template…** new button in the manager's header alongside `+ New` and `↑ Import`. Opens the preset browser in **createNewMode** which surfaces an explanatory banner and treats every template's primary action as "create new profile from this template." Closes the manager when the user picks a template (the new profile becomes active and they're done).
+
+**One-time migration toast**: first time the user clicks the new Configure Prompts button post-upgrade, a toastr.info appears: "'Edit Prompt Slots' and 'Browse Model Presets' are now combined as tabs inside one modal — switch via the Slots / Templates tab strip at the top." Stored in `localStorage` (`sp:v6.23-config-prompts-migration-shown`); never re-fires.
+
+**Architecture**:
+- New shared CSS class set `.sp-cp-tabstrip` + `.sp-cp-tab` lives in `css/prompt-editor.css`. Both prompt-editor.js and preset-browser.js render the same markup so the tabs look identical across both modal sources.
+- `openPresetBrowser({ createNewMode: true })` is the new entry signature for the Profile Manager use case. Default call (no opts) keeps v6.20+ behavior for the suggestion toast and the standalone deep-link case.
+- New `_createFromTemplate(presetId)` in preset-browser.js builds a profile via `makeProfile()` (single source of truth for defaults), pushes to `s.profiles`, sets `activeProfileId`. Uses `spPrompt()` for the name dialog so the user can edit before committing.
+- `+ New profile` and `Apply to current` are wired via separate event handlers (no shared `_apply` confusion).
+- The two old settings buttons + their handlers are removed from `bind-ui.js`. The two old element ids (`sp-sysprompt-edit-slots`, `sp-sysprompt-browse-presets`) are gone — selectors silently no-op if any third-party code references them.
+
+**Backward compat**: `openPromptEditor()` and `openPresetBrowser()` remain working as standalone deep links. Slash commands or other entry points calling them directly continue to function. Profiles created before v6.23.0 keep working — `appliedPresetId` is optional, all the v6.18+ defaults-on-missing pattern is preserved.
+
+**Tests**: 1,338 still pass. No new tests for the IA refactor itself (UI-only); the underlying preset-registry + prompt-assembler test suites cover the data shapes the new flow uses.
+
+### [6.22.1] — 2026-04-25
+
+#### Fixed — Critical bugs from feedback round 3 + GitHub issue #15 comment
+
+Four blocker-class bugs found by parallel expert panels, all fixed in this patch.
+
+**Wiki Permanence (issue #15 comment / user "wiki must be permanent")**:
+
+The Character Wiki was silently dropping characters when their last `characters[]` record was no longer in any retained snapshot. Multiple paths hit this — model omission, off-scene pruning by interceptor, snapshot pruning when `maxSnapshots > 0`. v6.22.1 adds a **persistent append-only Wiki Archive**:
+
+- New `data._spArchive = { characters: {...}, relationships: {...} }` on chat metadata.
+- `saveSnapshot()` updates the archive on every write — latest record per name wins, NEVER deleted, alias keys resolve to canonical entries.
+- One-time backfill on first read for chats predating v6.22.1 (idempotent — `_spWikiArchiveBackfilled` flag).
+- `character-wiki.js` uses a **3-tier fallback**: `_findLatest(snapshots)` → `_findArchived(_spArchive)` → bare-bones stub from history meta. Final tier guarantees the entry NEVER silently disappears.
+- `character-history.js` walks the archive in pass 2.5 to ensure pruned-only characters still appear in the meta map (so wiki pass 1 iterates them).
+- 21 new tests in `tests/wiki-permanence.test.mjs` covering: capture on save, latest-write-wins, alias indexing, model omission, snapshot pruning, relationship archive, backfill from existing snapshots.
+
+**Orphan custom panels resurrect after Clear** (the user's "Default still shows 2 custom panels" report):
+
+- Root cause: `migrateOrphanRootData` ran on EVERY `getActiveProfile`-adjacent read with no idempotency guard. After the user cleared `profile.customPanels`, the migration on the next read saw root.customPanels still populated (v6.13.0 COPIED rather than MOVED) and "promoted" them right back into the profile, undoing the clear.
+- Fix: **one-shot guard** via `s._spOrphanMigrationDone` flag — migration runs at most once per upgrade. After it runs, root data is drained and the promote/clear branches never fire again.
+- Defense in depth: `_clearPanels` in profiles-manager.js also drains the legacy root mirror at clear time, so even if the guard were somehow bypassed the migration would have nothing to promote.
+- Same systemic protection now applies to the other three overlay fields (panels, fieldToggles, dashCards) for any future "clear" affordances.
+
+**Floating capture overlay never appeared** (from user report on v6.22.0):
+
+- Root cause: `mountCaptureOverlay()` was called BEFORE `startCapture()` in `debug-inspector.js`. The overlay's `if (!isCapturing()) return` guard short-circuited because `_captureActive` hadn't flipped to true yet.
+- Fix: kick off `startCapture(durMs)` first (captures the promise), THEN mount the overlay, THEN await the promise. The overlay now reads `getCaptureMeta()` correctly on its first tick.
+- Defense in depth: removed the `isCapturing()` early-return from `mountCaptureOverlay()` itself — the `_tick()` loop already handles "capture ended (or never started)" via `getCaptureMeta()` returning null.
+
+**Together-mode tracker JSON briefly visible at end of message** (issue #15 comment):
+
+- Root cause: `streaming.js` `_updateCap` measured BEFORE checking `_hasJson`. When tracker tokens started appearing but `_hasJson` hadn't fired yet (sentinels are 7+ chars), the cap was briefly removed to remeasure → 1-frame flash of partial JSON visible.
+- Fix: **reorder** to check `_hasJson` FIRST. If JSON detected → freeze at LAST safe height (don't remeasure tracker-tainted content). Only when text is provably tracker-free do we remove the cap to remeasure. The "uncap to measure" trick now restores the previous cap immediately, before computing the new one, so any in-flight paint always sees a capped element.
+
+**Doctor per-row Retry button** (the DeepSeek V4 thinking 502 case):
+
+- New `runSingleDoctorCheck(id)` in `src/doctor.js` re-runs ONE check by id without re-running the full suite.
+- Per-row Retry button on FAIL results in the inspector's Doctor panel — re-runs in place, swaps the row with the fresh result, updates the stats line counts. Uses event delegation so re-render keeps it working.
+- Cool-blue styling matching the Doctor button itself.
+- Especially useful for the 30+ second schema round-trip on reasoning models — no need to re-run Storage / Model echo when only Schema 502'd.
+
+**Tests**: 1,338 pass (1,317 prior + 21 new wiki-permanence cases).
+
+### [6.22.0] — 2026-04-25
+
+#### Fixed + Polished — Feedback round 2 (capture overlay, hardcoded prompt audit, profile badge, legacy removal)
+
+11 items the user surfaced after testing v6.21.0.
+
+**#1 Doctor 502/timeout messages**: Doctor failure summaries now classify the error and append a one-line transient-vs-real hint: "Provider gateway error — usually transient. Re-run Doctor in a moment." for 502/503/504, "Rate-limited — wait a few seconds" for 429, "Network timeout" for ECONNRESET/aborted, "Authentication failure" for 401/403, and "Provider 500 — server-side bug" for raw 500s. Helps users distinguish provider flakes (retry) from real misconfiguration (fix).
+
+**#2 Doctor button** got a bolder fill (`#bfdbfe` text on `rgba(96,165,250,0.18)` background with a `#60a5fa` border — was a thin outline that read as secondary). Now visually weighty enough to match Diagnostics' teal at a glance.
+
+**#2.1 Doctor info popover overflow**: was extending past the inspector container's bottom edge on long content. Added `max-height: min(60vh, 420px)` + `overflow-y: auto` so it always fits and scrolls when needed.
+
+**#3 Hardcoded prompt audit**: scanned every `systemPrompt:` literal in the codebase. Findings:
+- `src/generation/engine.js` and `src/generation/interceptor.js` — already route through `getActivePrompt()` (slot-aware) ✓
+- `src/doctor.js` — uses `getActivePrompt()` for the schema round-trip; the model echo's "reply with ok" prompt stays hardcoded (it's a connectivity test, not generation)
+- `src/ui/relationship-graph.js` — was using a hardcoded "You are a structured JSON generator" prompt for the helper LLM call. **Fixed**: now routed through `applyPromptRole()` so the user's `profile.systemPromptRole` propagates to this surface too. Text stays hardcoded because the call is single-purpose, not a tunable tracker-generation surface.
+
+**#4 Applied preset display in editor**: new "Active preset" row at the top of the prompt editor naming the bundled preset (if any) currently applied to the profile, with family pill + truncated notes + **Clear preset** button. Clearing only removes the `appliedPresetId` attribution; the slot overrides the preset added stay (use Revert all / per-slot Revert to undo those, since users may have edited some slots manually on top).
+
+**#5 Role dropdown hover**: `.sp-pe-role-select` had no hover state — looked dead until focused. Added border/background hover transition + focus-visible outline ring matching every other select in the editor.
+
+**#6 JSON Schema editor collapsed**: was always-visible at the top of the prompts tab even though manual editing is rarely needed (it's auto-built from your panel + field-toggle settings). Now collapsed into a `<details>` block labeled "JSON Schema (advanced — auto-built from your panel settings)" matching the same treatment v6.21 gave the legacy prompt.
+
+**#7 Legacy "full prompt override" UI fully removed** from the prompts tab. The textarea + Reset/Copy buttons + change handlers are deleted. The `profile.systemPrompt` data field is preserved so existing profiles keep working — the assembler still short-circuits to it when present, and the prompt editor surfaces a banner with a new **Clear legacy prompt** button when one is detected. Net result: a clean prompts tab with two prominent buttons (Edit Prompt Slots, Browse Model Presets) and one optional advanced details (Schema). No hand-authored full-prompt path is exposed to new users.
+
+**#8 Profile name in stats line**: new clickable "📁 [Profile name]" badge at the start of the panel's generation stats footer. Truncates names over 16 chars. Click opens the Profile manager. Solves "I can never tell which profile I'm on without going to settings".
+
+**#9 Profile system audit**: confirmed v6.18+ fields (`promptOverrides`, `systemPromptRole`, `appliedPresetId`) follow the default-on-missing pattern — old profiles loading into new code see safe defaults from the slot helpers / role resolver / preset finder without needing schema migration. `migrateOrphanRootData` only touches the four legacy overlay fields (panels, fieldToggles, dashCards, customPanels), correctly leaving the new fields alone. No version bump needed.
+
+**#10 Capture toolbar alignment**: the duration `<select>` used `padding: 3px 6px` while the Start capture button used `padding: 4px 10px`, causing visible vertical misalignment. Unified both to the same metrics + `border-radius`.
+
+**#11 Floating capture overlay**: new top-right floating banner mounted to `<body>` (not the inspector container) when a Performance capture starts, so the capture survives if the user closes the inspector mid-window. Banner shows pulsing red dot + "Performance capture in progress" + countdown ("24s remaining / 30s total") + progress bar + interaction hint + Cancel button. Polls `getCaptureMeta()` every 500ms; auto-unmounts when the capture ends. Independent of the Inspector tab's local UI — both can render simultaneously, and either can cancel. Mobile (<560px) variant pins to the bottom of the viewport instead of top-right.
+
+Backed by new `getCaptureMeta()` in `perf-monitor.js` which exposes `{startedAt, durationMs, elapsedMs, remainingMs}` for the live capture (or null if none).
+
+**Tests**: 1,317 still pass (no new tests — UI/visual-only changes; profile audit confirmed existing 66 orphan + 52 issue-15 tests cover the new fields).
+
+### [6.21.0] — 2026-04-25
+
+#### Fixed + Polished — User feedback round 1 (Performance UX, model detection, preset discoverability)
+
+Six items the user surfaced after testing v6.17.1–v6.20.0.
+
+**1. Live capture progress** in the Performance tab. Previously the tab sat frozen for 30s with one "capturing…" status line and no signal that anything was happening:
+- Countdown ticks down in the button label (`Cancel capture (24s)`).
+- Partial results table re-renders every ~1 second so users see component activity accumulating in real time. New `getCapturePartial()` in `src/perf-monitor.js` snapshots the live capture buckets without stopping the observer.
+- `LIVE` badge on the meta line during a partial render (animated pulse) so users know they're looking at in-flight data, not a final report.
+- Clicking the capture button mid-run now **cancels** rather than ignoring the click. The status line updates to "Capture cancelled. Showing partial results below." and the final results render from whatever was captured.
+- Empty state during a partial capture shows a friendlier "No instrumented activity yet — keep interacting" message rather than the explainer-style "no marks recorded" copy that's correct for finished captures.
+
+**1.2. Capture button styling**: was using the neutral `.sp-cl-export-btn` baseline, looked indistinguishable from the export buttons. Now primary-accent styled when idle (teal); danger-tinted with a subtle pulse animation when running (so users recognize "click again to cancel").
+
+**1.4. Capture verdict line**: every non-empty result now leads with a color-coded verdict block above the table:
+- **Healthy** (<1% of capture): green band, "no action needed"
+- **Acceptable** (1–5%): green band, "within budget"
+- **Heavy** (5–15%): amber band, "consider disabling expensive panels"
+- **Excessive** (>15%): red band, "investigate the top component"
+
+Plus inline warnings for `>3` long tasks (main-thread blocking) and any single component frame `>50ms` (exceeds frame budget). Users no longer have to interpret raw percentages — the verdict tells them whether the result is good, with one actionable next step if not.
+
+**2. Doctor button distinct color**: was visually identical to other inspector header buttons. Now uses a cool blue accent (`#93c5fd`) — different from Diagnostics' teal accent — so the two header tools read as separate actions. The paired `i` info icon picks up the same blue when hovered/focused so the cluster reads consistently.
+
+**3. spConfirm behind inspector**: the in-app confirmation dialog (Issues Clear, Network Clear, Discard changes, Apply preset) was rendering at `z-index: 99999`, *below* the Debug Inspector + Prompt Editor overlays at `100001`. Bumped to `100200` so confirmations always appear above any inspector-style modal. This fixes the user-reported "Clear issue log appears behind the main debug inspector window".
+
+**4. Extraction Failed Dismiss button** (in the recovery prompt that appears when AI omits tracker JSON): was rendering as raw white because `.sp-btn` is scoped to `#scenepulse-settings` and the recovery card lives outside that scope. Added explicit themed styles to `.sp-recovery-actions .sp-btn` so both Retry (primary teal) and Dismiss (neutral border) match the rest of the UI.
+
+**5. Model detection bug** (NanoGPT, custom OAI-compatible sources). The user reported the suggestion toast firing for the wrong preset on a NanoGPT connection running `deepseek/deepseek-v4-pro:thinking`. Root cause: v6.20.0's `getActiveModelId()` only probed `chatCompletionSettings.openai_model` / `model` and `textGenerationSettings.model` — missing the source-specific `*_model` fields that ST uses for every chat-completion backend. Rewrote with a four-tier resolution:
+1. **Source-aware lookup**: `chat_completion_source` → `${source}_model` (mirrors ST's own `getChatCompletionModel()` from `public/scripts/openai.js`). Covers Claude, OpenAI, Google, Vertex, OpenRouter, AI21, Mistral, Custom, Cohere, Perplexity, Groq, SiliconFlow, ElectronHub, Chutes, **NanoGPT**, DeepSeek, AIMLAPI, xAI, Pollinations, CometAPI, Moonshot, Fireworks, Azure OpenAI, ZAI.
+2. **Scan fallback**: any `*_model` key on `chatCompletionSettings` with a non-empty value (catches sources we don't have a static map for).
+3. **textgen settings**: `online_status_model` / `model` for local backends.
+4. **DOM fallback**: scrapes the visible model dropdown via `document.querySelectorAll('select[id^="model_"][id$="_select"]')` for the case where the user changed the dropdown but settings haven't persisted yet.
+
+Verified the `:thinking` suffix matches correctly (longest-match wins on tie — `deepseek-v4-pro` (15 chars) beats `deepseek-v4` (11 chars), so the model `deepseek/deepseek-v4-pro:thinking` correctly maps to the `deepseek-v4-pro` preset, which already includes the no-`<think>`-tags-in-output rule). Same treatment for `claude-opus-4-7-thinking` → `claude-opus-4-6` preset.
+
+**6. Preset / editor discoverability** (the user reported "I don't know where to find the prompt editor or how to setup which preset I want to use"):
+- New **Browse Model Presets** modal (`src/ui/preset-browser.js`): full-screen overlay listing all 30 bundled presets with search, family-pill filtering (claude / gpt / gemini / deepseek / kimi / glm / qwen / mistral-finetune / etc.), per-row Apply button, "matches your model" tag for the auto-detected preset, "applied" tag for the currently-applied preset.
+- The detection banner at the top names the active model id and either confirms a match or invites the user to contribute a preset.
+- Apply button uses the same `spConfirm` flow as the suggestion toast (with the same non-destructive guarantee) and updates the row in place so users see the change without closing the browser.
+- Settings UI **System Prompt section** got a prominence pass:
+  - Two large primary buttons at the top: **✎ Edit Prompt Slots** (teal) and **⊞ Browse Model Presets** (blue), side by side, with a hint underneath: "Recommended: use the per-slot editor to tweak specific sections, or apply a model-specific preset for your connection."
+  - The legacy textarea + Reset/Copy buttons collapse into a `<details>` block labeled "Legacy: full prompt override (advanced)" so they no longer dominate the section.
+  - Net effect: a new user opening the prompts tab now sees the recommended workflow first; the legacy override is one click away if they need it.
+
+**Tests**: 8 new cases for the model detection probing (NanoGPT, DeepSeek native, Claude, OpenRouter, scan-fallback, empty-context) + 2 regression cases for the `:thinking` suffix matching. Total: **1,317 tests pass** (1,309 prior + 8 new).
+
+### [6.20.0] — 2026-04-25
+
+#### Added — 30 bundled model presets + community contribution folder
+
+Third and final release in the prompt-architecture series (v6.18.0 architecture → v6.19.0 editor → v6.20.0 presets). Ships pre-tuned prompt configurations for the 30 most-used models on r/SillyTavern as of April 2026, plus a `presets/` folder for community-contributed extras.
+
+**Research input**: a multi-source survey of r/SillyTavern, r/LocalLLaMA, OpenRouter rankings, HuggingFace trending, and roleplay-targeted hosts (Featherless, Together, Infermatic). Sources cited inline in the preset notes; the swyxio sillytavernAI gist + OpenRouter Roleplay collection were the primary aggregates.
+
+**`src/presets/built-in.js`** — 30 model-specific presets:
+
+Tier 1 (proprietary + open-weight giants):
+- `deepseek-v3-2`, `deepseek-v4-pro` (with no-thinking-tags rule), `deepseek-v4-flash`
+- `claude-sonnet-4-6`, `claude-opus-4-6` — both default to `systemPromptRole: 'user'` (the issue #16 motivator) and wrap the role slot in `<task>` tags
+- `gemini-2-5-pro`, `gemini-2-5-flash`, `gemini-2-5-flash-lite`
+- `gpt-5-4`, `kimi-k2-6`, `glm-4-6`, `qwen-3-5-235b`
+
+Tier 2 (roleplay-tuned local + finetune favorites):
+- `cydonia-24b-v2` (Mistral [INST] template wrap), `cydonia-magnum-v4-22b` (ChatML jailbreak)
+- `magnum-v4-72b` (ChatML jailbreak), `behemoth-123b-v1`, `monstral-123b` (Mistral [INST] template)
+- `midnight-miqu-70b-v1-5` (begin-with-{ rule), `midnight-rose-70b` (Alpaca template)
+- `dans-personality-v1-3` (ChatML), `qwen-3-5-35b-claude-distill`
+- `huihui-gemma-4-31b`, `gemma-3-27b-abliterated`, `gemma-2-ataraxy-9b` (all Gemma chat-template wraps)
+- `mythomax-l2-13b` (legacy — Alpaca + aggressively shortened critical rules for the 4K context)
+- `gemmasutra-mini-2b` (phone/CPU model — minimal rules)
+- `glm-4-6v-flash-abliterated`, `llama-3-3-70b-rp` (Steel/Sao10K family)
+- `command-a-2025`, `grok-4`
+
+Each preset writes into `profile.promptOverrides` + `profile.systemPromptRole` only. Panels, schema, custom panels, and other settings are explicitly left alone — applying a preset is a non-destructive, fully-reversible operation.
+
+**`src/presets/registry.js`** — matcher + applier:
+- `getActiveModelId()` — pulls the model id from SillyTavern's connection (tries `chatCompletionSettings.openai_model`, `textGenerationSettings.model`, `onlineStatus`, `model`, falling through gracefully).
+- `findMatchingPreset(modelId)` — case-insensitive substring match against each preset's `matchPatterns`; longest match wins on tie. Cydonia × Magnum correctly beats plain Cydonia.
+- `buildPresetPatch(preset, currentProfile)` — merges preset overrides INTO the existing profile's overrides instead of replacing, so users who already customized other slots don't lose those edits.
+
+**`src/ui/preset-suggestion.js`** — one-time toast on model match:
+- Triggers ~3 seconds after `APP_READY` (lazy-imported so it doesn't bloat the startup hot path).
+- Gated by three checks: (1) `profile.appliedPresetId === preset.id` → silent; (2) shown this session (`sessionStorage`) → silent; (3) permanently dismissed (`localStorage`) → silent. The toast is cooperative — never fires twice for the same decision.
+- Uses `spConfirm()` (not `toastr`) so the buttons render properly and survive ST's toast pruner.
+- The dialog explains exactly what changes (prompt overrides + role) and what doesn't (panels, schema, customizations).
+
+**`src/profiles.js`**:
+- `PROFILE_FIELDS` extended with `appliedPresetId` so it persists.
+- `makeProfile()` defaults `appliedPresetId` to `null`; non-string values normalize to `null`.
+
+**`presets/` folder** (new, repo-root, GitHub-visible):
+- `presets/README.md` — full contribution guide: schema reference, required/recommended/optional fields, submission process, example.
+- `presets/_examples/anthracite-magnum-v5-72b.json` — full-shape example preset showing every documented field. Uses a hypothetical model name so it doesn't accidentally match a real one.
+- This folder is **NOT** auto-loaded by the extension in v6.20.0 — it's the staging area for community contributions. The PR workflow lets the maintainer review + fold accepted presets into the `built-in.js` bundle in a future release. A "Browse community presets" affordance with one-click apply is planned for v6.21+.
+
+**`tests/preset-registry.test.mjs`** — 562 new test cases:
+- Bundle shape validation: every preset has all required keys, valid family / role / slot ids, non-empty matchPatterns, sensible notes length.
+- id uniqueness across the bundle.
+- `findMatchingPreset` happy path + null/empty/unknown handling.
+- Longest-match-wins on collision.
+- `buildPresetPatch` merge semantics — preset overrides land, user's other customizations preserved.
+- `getPresetFamilies()` returns sorted unique family list.
+
+**Total test count: 1,309** (747 prior + 562 new).
+
+**End of the prompt-architecture series.** Three releases, each net-additive, each shipped with no behavior change for users who don't opt in. Backward compatibility maintained at every layer: legacy `profile.systemPrompt` still wins; v6.18.0 slot defaults match the pre-refactor monolith byte-for-byte; v6.19.0 editor is opt-in via "Edit Slots…"; v6.20.0 toast is cooperative + dismissible.
+
+### [6.19.0] — 2026-04-25
+
+#### Added — Per-slot prompt editor + system-prompt role selector (folds in issue #16)
+
+Second of three layered releases (v6.18.0 → v6.19.0 → v6.20.0). v6.19.0 adds the editor UI on top of the v6.18.0 slot architecture and lands the long-requested role selector for issue #16.
+
+**New `src/ui/prompt-editor.js`** — full-screen editor modal:
+- One panel per slot: name + description + status pill (default | modified) + per-slot Revert button + textarea
+- Slots ordered by `SLOT_META.order` (role → criticalRules → language → fields → nameAwareness → questValidation → deltaMode)
+- The dynamic `fields` slot renders a read-only explanation: "auto-generated from your enabled Panels and Field Toggles. Change those settings to customize what fields the AI is asked to produce." Users can't edit it as text because its content is settings-derived; the explanation tells them where to look.
+- Working-copy state — edits live in `_draft` until **Save** atomically commits to `profile.promptOverrides` via `updateActiveProfile`. **Cancel** discards. Closing with unsaved changes triggers an `spConfirm()` "Discard?" dialog.
+- Per-slot **Revert** removes that slot's override from the working copy. Disabled when the slot is on its default.
+- **Revert all** clears every override in one shot (with `spConfirm` showing the count being reverted).
+- Live **Preview** pane (collapsible `<details>`) showing the assembled prompt as it would land if you saved right now. Updates on every edit.
+- Legacy banner: profiles with a non-empty `systemPrompt` (full-text override) get a warning banner saying "your edits below will save but won't take effect until you Reset to Default in System Prompt." Honest about the legacy override winning.
+- Lazy-imported on Edit Slots button click — same pattern as the Debug Inspector / Wiki / Analytics modules so the settings panel stays cheap to load.
+
+**Issue #16 — System-prompt role selector** (folded in here per the user's "fold it in" decision):
+- New top-of-editor row: dropdown to send the assembled system prompt as `system` (default) / `user` / `assistant`.
+- Each option gets an inline hint explaining its tradeoff. Most useful: **User** — Claude family models in particular follow user-role JSON instructions more reliably than system-role ones (this is the issue submitter's exact ask).
+- Stored as `profile.systemPromptRole` (new field on the profile shape).
+- New `src/prompts/role.js` exports `getActivePromptRole()` + `applyPromptRole({systemPrompt, prompt})`. The latter rewrites the pair when role !== 'system': for `user` it prepends the system text to the user prompt with a `---` separator; for `assistant` it wraps as a faux assistant precedent (rarely useful — documented as experimental).
+- Wired into `src/generation/engine.js` at both `generateRaw` fallback call sites (lines 310 + 589). Default behavior is unchanged for everyone — the per-profile role only diverges when the user picks a non-system value.
+- `interceptor.js` (Together-mode inline injection) is intentionally NOT routed through the role helper because that path already injects as a chat message, not a system message.
+
+**`src/profiles.js`**:
+- `PROFILE_FIELDS` extended with `promptOverrides` and `systemPromptRole` so `updateActiveProfile()` can persist them.
+- `makeProfile()` defaults `systemPromptRole` to `'system'`; rejects unrecognized values (only the three valid options pass through).
+- `parseProfile()` carries the new fields through profile import/export.
+
+**Settings UI**:
+- New "Edit Slots…" button next to the existing "Reset to Default" / "Copy" buttons in the System Prompt section. Primary-styled (accent border) so it reads as the recommended path.
+- Added a hint line under the legacy textarea: "prefer the per-slot editor above. The textarea below is the legacy 'full prompt override' — anything you type here replaces the entire slot system. Clear it (Reset to Default) to use slots."
+
+**`css/prompt-editor.css`** (new, ~190 lines): modal shell reuses `.sp-cl-overlay` from `crash-log.css`. Per-slot panels styled as cards with accent left border when modified. Role row + legacy banner have distinct visual treatments. Responsive at 720px (role row wraps, slot head re-grids) and 420px (full-viewport, monospace shrinks).
+
+**Test count unchanged at 747** — the editor module and role helper are UI/runtime code that needs DOM + SillyTavern context to test meaningfully. Profile-shape changes (new fields) verified by re-running the existing 66 profile-orphan-migration tests + 52 issue-15-profiles tests, all still passing.
+
+### [6.18.0] — 2026-04-25
+
+#### Architecture — Prompt slot system (v6.18.0–v6.20.0 series, part 1 of 3)
+
+This is the first of three layered releases delivering "user-editable prompts with revert" plus model-specific presets. v6.18.0 ships the **architecture only** — no UI yet, no presets yet. Behavior is unchanged for every existing user.
+
+**New `src/prompts/` module**:
+- `slots.js` — names 7 prompt slots (`role`, `criticalRules`, `language`, `fields`, `nameAwareness`, `questValidation`, `deltaMode`), exports their default text as `DEFAULT_SLOT_TEXT`, and provides `SLOT_META` describing each slot for the editor UI (name, description, section, editability flag, render order, optional template variables). Six are static text; one (`fields`) is dynamically generated from your enabled panels and toggles.
+- `assembler.js` — exports `assemblePrompt(s, profile, opts)`. Replaces the previous monolithic 220-line `buildDynamicPrompt` body in `src/schema.js`. Composes the final prompt by interleaving static slots (text from `slots.js`, optionally overridden per profile) with dynamic field-spec sections (from settings).
+
+**Per-profile overrides**: `profile.promptOverrides` is a new field — a string-keyed map where each key is a slot id and each value is the user's custom text for that slot. Empty string / whitespace-only / null override falls through to the default. The legacy `profile.systemPrompt` (full-text override) still wins over the slot system entirely — anyone with a hand-authored prompt sees zero behavior change.
+
+**`src/schema.js`**: shrunk from 339 lines to 138. The 220-line inline `buildDynamicPrompt` body was deleted (logic moved into `assembler.js`); the wrapper now reads `return assemblePrompt(s, null, opts)`. Settings UI preview, slash-command preview, and the doctor's schema round-trip check (the only callers passing settings without a profile) keep their existing default-text behavior.
+
+**`src/settings.js` `getActivePrompt`**: now calls `assemblePrompt(sView, profile, opts)` directly instead of inlining the legacy systemPrompt check. Per-slot overrides take effect for the active profile.
+
+**`src/profiles.js`**: `makeProfile()` and `parseProfile()` (import path) both pick up the new `promptOverrides` field. Existing profiles load with `promptOverrides: {}` (empty map → default behavior). New tests in `tests/profile-orphan-migration.test.mjs` continue passing — `promptOverrides` is not subject to the orphan migration because it lives at `profile.promptOverrides`, not at the root.
+
+**Tests** — `tests/prompt-assembler.test.mjs`, 61 new cases:
+- Default output contains every expected section (role, critical rules, language, dashboard, scene, characters, name-awareness, quests, quest-validation, relationships, story ideas, delta mode).
+- Delta mode appears only when `isDelta:true` passed.
+- Per-slot override replaces only the targeted slot; other slots unchanged.
+- Multiple slot overrides compose correctly.
+- Legacy `profile.systemPrompt` overrides everything (slot overrides ignored).
+- Empty / whitespace / null overrides revert cleanly to defaults.
+- `nameAwareness` only renders when `panels.characters` is enabled.
+- `questValidation` only renders when `mainQuests` or `sideQuests` toggles are on.
+- `SLOT_IDS` × `DEFAULT_SLOT_TEXT` consistency (every id has matching text except the dynamic `fields` slot).
+- `getSlotText` / `isSlotOverridden` helpers behave correctly.
+- Language slot: `${language}` template substitution works for both default and overridden text.
+
+Total test count: 747 (686 prior + 61 new). Backward compat verified — every legacy test still passes.
+
+**Why ship the architecture before the UI**: the v6.19.0 editor needs a stable persistence shape to read/write against, and the v6.20.0 model presets need a stable target for `applyPreset(profile, preset)`. Shipping the data plumbing first gives both downstream releases a fixed target. Users who don't care about prompt editing see no UI change in v6.18.0.
+
+### [6.17.1] — 2026-04-25
+
+#### Polished — Inspector visual + UX cleanup pass (Panel A + B + C synthesis)
+
+The user shipped an 11-item polish list after the v6.17.0 Perf MVP landed. Items 1, 2, 3, 8, 9, 10, and 11 land in this patch (items 4–7 covering the prompt-architecture overhaul ship as v6.18.0–v6.20.0).
+
+**Inspector chrome**:
+- **Less transparent backdrop** — bumped from `rgba(0,0,0,0.55) + blur(4px)` to `rgba(8,10,16,0.82) + blur(14px) saturate(120%)`. The chat is no longer competing with stack traces for visual focus.
+- **Replaced the `i` info icon** — dropped the outer SVG circle entirely. The icon was three concentric circles (button border + SVG ring + dot), which is what made the glyph read as off-center no matter how the inner stroke was tuned. New SVG is just a dot + rounded rectangle stem on `currentColor` fill, geometric centroid at (8, 8). Replaces the v6.15.7 / v6.15.8 / v6.16.1 attempts.
+- **Doctor ↔ Diagnostics gap** widened from 8px to 16px so the two header tools no longer read as a single button cluster.
+- **"Perf" tab → "Performance"** with a CSS cascade: full word at desktop, "Perf" at < 720px, compressed padding/font at < 560px, ultra-compact at < 420px.
+
+**Issues + Network "Clear" actions**: native `confirm()` replaced with the styled `spConfirm()` dialog. New microcopy names the count being deleted ("This permanently deletes 47 captured entries from this device") so accidental nukes are visible.
+
+**Doctor progress UX**: the previous opaque spinner was replaced with a vertical step list. All 5 checks render upfront in a "queued" state; each one swaps to "running" with a pulsing pill while it executes, then settles to "PASS / FAIL / SKIPPED / CANCELLED" with elapsed-ms and a one-line summary. New **Cancel** button uses an `AbortController` to stop scheduling new checks — currently in-flight checks complete (they don't have a signal hook), but remaining unstarted checks resolve as `cancelled`. The Storage check additionally passes the signal into its `fetch` calls so it aborts mid-request.
+
+**`runDoctor()` API** picked up `{ onStep, signal }` parameters and a `'cancelled'` status. New exported `DOCTOR_STEPS` manifest lets the inspector pre-render the step list before the run starts. Refactored `_wrap()` to honor `e._skip = true` for clean skipped-status propagation (replacing the previous string-match on stack text).
+
+**Performance tab improvements** (v6.17.0 felt MVP-thin per Panel A's polish review):
+- **30s FPS sparkline** under the FPS metric — devicePixelRatio-aware canvas, accent-colored line, 30fps reference rule. Trend matters more than spot reading; a steady 60 and a 60 spike between two 20s look identical without history.
+- **Stacked horizontal bar above the results table** — proportional component breakdown with legend. Top 6 components get distinct palette colors; everything else collapses to "other"; remaining capture window time (idle/unattributed) shows as a faint segment so percentages always sum visually to 100%.
+- **Instrumentation manifest in the empty state** — when a capture records 0 marks, the empty state now lists the 4 currently-instrumented modules (`sp:weather-update`, `sp:time-tint`, `sp:thoughts-update`, `sp:panel-update`) with their source files. Users can confirm whether their slow component is even being attributed (vs the silent failure mode of "looks fine, must be elsewhere" when really the slow code isn't instrumented at all).
+
+**Responsive audit** at 720 / 700 / 560 / 420 breakpoints:
+- Tab bar uses dual `<span>` labels (`<span class="sp-di-tab-long">` + `<span class="sp-di-tab-short">`) so CSS can swap full word for short form instead of mid-word truncation.
+- Header buttons compress padding at < 720; sub-headlines hide at < 560.
+- Doctor stats line wraps Copy button to its own row at < 700.
+- Doctor step rows reflow grid at < 560 (pill stays left-edge, name/elapsed share row 1, summary spans).
+- Perf headline stacks single-column at < 420; metrics become labeled rows.
+- Diagnostics info popover anchors to viewport edge at < 560 to prevent left-overflow.
+- Inspector container drops to `calc(100vw - 8px)` at < 420 (was `calc(100vw - 16px)` at < 600).
+
+No behavior change to the captured measurements, the doctor checks themselves, or any data shape. All polish + responsive — same 686 tests still pass.
+
+### [6.17.0] — 2026-04-25
+
+#### Added — Performance Monitor MVP (Panel A): FPS headline + capture-mode component attribution
+
+The original "resource graph" feature ask was reshaped by a 10-panel review of browser performance APIs. The full feature was killed at the planning stage:
+- True GPU% is NOT exposed by any Web API; we can only proxy.
+- `performance.memory` is Chrome-only; user runs Firefox 150.
+- Always-on detailed monitoring at attribution-grade resolution becomes a measurable contributor to the jank it diagnoses (the observer-effect trap).
+
+What ships instead is the MVP that earns its keep:
+
+**New `src/perf-monitor.js` module**:
+- `startFpsSampling()` / `stopFpsSampling()` — cheap rAF-based FPS sampler, ~120-frame ring buffer, notifies listeners ~once per second
+- `computeFpsStats()` — returns `{fps, frameP95Ms, sampleCount}` from the buffer
+- `getAnimationCount()` — `document.getAnimations().length` (compositor-pressure proxy)
+- `getScenePulseLayerCount()` — count of ScenePulse elements with `will-change` / `transform` / known canvas overlays
+- `markStart(name)` / `markEnd(name)` / `measure(name, fn)` — instrumentation wrappers using `performance.mark` + `performance.measure`. Always emit (microsecond cost); only OBSERVED during capture.
+- `startCapture(durationMs=30000, max=120000)` / `stopCapture()` — attaches a `PerformanceObserver` for `measure` + `longtask` entries, accumulates per-component buckets, returns sortable component-attribution table (sorted by total ms descending). Auto-stops after the duration.
+
+**Self-instrumented components** (5 expensive call sites):
+- `sp:weather-update` — weather overlay updates (the canonical pre-v6.13 GPU offender)
+- `sp:time-tint` — time-of-day ambient tint
+- `sp:thoughts-update` — live-updating thoughts panel renders
+- `sp:panel-update` — main panel renders (the largest hot path)
+- (Two slots reserved for future instrumentation as components are identified)
+
+Marks fire on every component call but observers only attach during a capture window — keeps always-on cost near zero.
+
+**New "Perf" tab in the Debug Inspector** (Panel A's exact UI spec):
+- **Headline strip** (always sampled when tab is open): FPS · p95 frame · animation count · ScenePulse layer count · reduce-effects state
+- **Honesty tooltip** at the top: *"ⓘ Proxy metrics: browsers don't expose true GPU load. We measure FPS, frame variance, animation count, and ScenePulse-attributed paint via instrumented marks. Capture mode attaches a PerformanceObserver to attribute paint cost to specific ScenePulse components (sp:* marks); always-on stays cheap."*
+- **Duration selector** (10s / 30s / 60s / 120s) + **Start capture** button — auto-stops at the selected duration, status row prompts user to "Reproduce the issue now"
+- **Sortable results table** — Component / Total ms / Calls / Avg ms / Max ms / % of capture (default sort: total ms descending — biggest offenders first)
+- **Empty state** when no `sp:*` marks recorded during capture: explains the user must reproduce the slowdown during the window for attribution to work
+- **Copy results** button — paste-ready markdown table
+
+**Hard NO** (per Panel A unanimous):
+- ❌ `performance.memory` as a primary metric (Chrome-only; Firefox 150 doesn't expose)
+- ❌ Synthesized "GPU load: 73%" number ("destroys trust in every other number on the panel")
+- ❌ Pass/fail thresholds with red/green coloring (cargo-cult risk)
+- ❌ Persistent capture history / comparison
+- ❌ Flame chart / timeline viz (overkill at this scale)
+- ❌ Auto-capture-on-jank (observer-effect trap)
+- ❌ Always-on PerformanceObserver at attribution resolution
+
+All 686/686 tests still pass.
+
+**This concludes the v6.16+ inspector overhaul plan.** Phase summary:
+- v6.16.1: credibility polish (icon centering, sparkline relabel, Doctor popover, stats-line shortcut, Ctrl+Shift+D, badge tooltip)
+- v6.16.2: data integrity (effective+shadowed Diagnostics, profile orphan migration, sparkline backfill, Config tab cleanup affordance)
+- v6.17.0: Perf Monitor MVP (this release)
+
+### [6.16.2] — 2026-04-25
+
+#### Changed — Diagnostics data integrity: effective view + shadowed-data section + orphan migration (Panel C)
+
+**The bug** (user-reported): the Diagnostics bundle showed `customPanels: [{Fantasy RPG, Sci-Fi/Space Opera}]` at the root even though the active profile's `customPanels: []` was the value the UI actually used. Root cause: v6.13.0's profile migration COPIED legacy values into the new profile but never CLEARED the originals at root. The Diagnostics bundle dumped raw root settings, surfacing the orphans as if they were live.
+
+**Diagnostics bundle restructured** (Panel C synthesis):
+- New leading section **"Effective configuration (what the UI actually uses)"** — every overlay-eligible field (panels, fieldToggles, dashCards, customPanels, schema, systemPrompt) shown with its source label (`[source: profile:Default]` / `[source: root]` / `[source: default]`). Modeled on Postgres `pg_settings.source` and VS Code's "Modified in: Workspace" pattern.
+- New **"Shadowed root data (persisted but NOT in effect)"** section — explicitly lists every root-level value that an active profile has overridden, with the shadowing source. Empty section when configuration is consistent.
+- "Active profile" + new "All profiles (summary)" section.
+- Renamed "Non-default settings" → **"Other non-default root settings (excluding profile-overlaid)"** so the per-section purpose is clear.
+
+**Profile orphan migration** (`migrateOrphanRootData()` in `src/profiles.js`):
+- Detects shadowed root data per Panel C's Q3 rules: ALWAYS-overlaid fields (panels/fieldToggles/dashCards/customPanels) clear root if profile has its own value, MOVE root → profile if profile is empty. CONDITIONALLY-overlaid scalars (schema/systemPrompt) clear root only when the profile field is non-null.
+- Auto-runs on next call to `getActiveSchema()` / `getActivePrompt()` (silent + logged, matches v6.13.0's `migrateLegacySettingsToProfile` pattern).
+- Idempotent: second call is a no-op.
+- 66 test cases in `tests/profile-orphan-migration.test.mjs` covering scenarios 1-11 (no profiles, profile empty, profile populated, both empty, conditional fields, cumulative migration, idempotency, stale activeProfileId, legacy-then-orphan sequence, defensive null handling, updatedAt stamp).
+
+**Config tab orphan warning + cleanup affordance**:
+- Top of Config tab body shows an amber warning card listing shadowed root settings when present
+- "Clean up legacy root data" button manually invokes `migrateOrphanRootData()` for cases where the auto-migration didn't fire (e.g., imported settings backup post-v6.13.0)
+- Hint text explains what shadowed data means and that auto-cleanup runs on next save
+
+**Snapshot sparkline backfill** (Panel B "real fix"):
+- `saveSnapshot()` now stamps `_spMeta.savedAt` on every snapshot at write time
+- `_buildSnapshotSparkline()` infers `mesIdx` for historic crash entries that lack auto-context by matching the crash timestamp to the closest snapshot's `savedAt` within a 5-minute window
+- When backfill is available (post-v6.16.2 snapshots exist), the footer drops the "failure tracking added v6.15.3" qualifier and shows the honest failure count
+- v6.12.3-era entries with no nearby savedAt snapshot remain uncounted; the qualifier persists in that case
+
+All 686/686 tests pass (added 66 new cases for orphan migration).
+
+**Coming v6.17.0**: Performance Monitor MVP (Panel A) — FPS/frame-time headline strip + 30s capture mode with component attribution via `performance.mark` instrumentation.
+
+### [6.16.1] — 2026-04-25
+
+#### Changed — Inspector quality pass: credibility, copy, polish (Panel B audit)
+
+A 3-panel review of v6.16.0 (~150 expert perspectives across browser-perf, inspector UX, and diagnostics data integrity) flagged credibility defects — features that worked but eroded trust. v6.16.1 ships the polish fixes; v6.16.2 + v6.17.0 follow with the architecture work.
+
+**Polish + naming**:
+- Snapshot sparkline relabeled — was `Snapshots: 2/2 ▁▁▁ (0 failed)`, ambiguous and misleading because v6.12.3-era crash entries lacked `mesIdx` in their auto-context (only added v6.15.3) so historic failures silently dropped from the count. Now reads `Snapshots: 2 in this chat ▁▁▁ failure tracking added v6.15.3` until v6.16.2 ships the backfill.
+- Tab "Last Response" → "Responses" — pair-navigator over the last 10 prompt+response tuples is plural reality, not a stream-of-one (Panel B).
+- Tokenizer-parity limitation copy fixed — previously said "within ~10%" but the FAIL threshold was 25%; the user's 13.8% delta passed correctly but the copy mismatched. Now reads "within 25%" with explicit "PASS does NOT guarantee perfect parity — only that the drift won't silently truncate prompts."
+
+**Visual polish**:
+- `i` info icon optical centering — was 0.25 above geometric center (typographic "i" looks bottom-heavy when geometrically centered, so should sit slightly *below* center per Material Icons / Heroicons / Lucide convention). Fixed: dot `cy=5.4 r=1.0`, stem `y1=7.6 y2=11.6 stroke-width=1.5`.
+- Header button hierarchy — Doctor + Diagnostics+i grouped tightly; wider 18px gap before Close so it reads as terminal/lower-weight (Panel B audit).
+
+**Doctor info popover** (matches Diagnostics treatment):
+- Wrapped in `.sp-di-doctor-wrap` with sibling `.sp-di-info-area` — same pattern as Diagnostics
+- Hover/focus reveals 420px popover with the Panel B-recommended ~60-word explanation: 5 checks (Storage / Model echo / Schema round-trip / Context budget / Tokenizer parity) + result format + the "no warnings — every limitation named in the row" promise
+- Uses the corrected `i` SVG geometry
+
+**Discoverability**:
+- Stats-line shortcut — new "Debug" link in the main panel's `.sp-gen-footer` between Inspect and Analytics. Clicking opens the Debug Inspector. Closes the gap that the inspector was previously only reachable from the settings drawer (N+1 clicks from where users notice failure indicators).
+- **Ctrl+Shift+D keyboard shortcut** opens the Debug Inspector from anywhere in SillyTavern (skipped when typing in inputs/textareas so it doesn't hijack text editing).
+
+**Auto-open badge**:
+- Persistent dot until inspector opens (Panel B: "the dot is a state indicator, not a notification")
+- Hover tooltip on the toolbar button shows `N new issues since last opened — click to inspect` while there are unseen entries
+
+All 620/620 tests still pass.
+
+**Coming v6.16.2**: Diagnostics bundle restructure (effective view + shadowed/orphan section per Panel C); profile migration backfill so root-shadowed data moves into the active profile; snapshot sparkline historic-mesIdx backfill (drops the v6.15.3 qualifier).
+
+**Coming v6.17.0**: Performance Monitor MVP (Panel A) — FPS/frame-time headline strip + 30s capture mode with component attribution via `performance.mark` instrumentation.
+
+### [6.16.0] — 2026-04-25
+
+#### Added — Network log tab + Doctor button (real-path diagnostic checks)
+
+Conclusion of the 3-panel review for the v6.16 inspector phase. Two substantial new features ship together; both were reshaped from their original spec by panel guidance.
+
+**New `Network` tab** (Panel B specification):
+- New `src/network-log.js` module: 50-entry ring buffer with `record(entry)` and `instrumentedFetch(label, input, init)` helpers
+- **Scoped capture, not global** — wraps only ScenePulse-controlled fetch sites via `instrumentedFetch`. No `window.fetch` monkeypatching (Panel B was emphatic: global interception "eventually breaks something six months later").
+- **Metadata-only schema**: `{id, ts, label, method, urlRedacted, status, latencyMs, reqBytes, respBytes, errorKind, pairId}`. Bodies live in `raw-pairs.js`; storing them again here would double the leak surface.
+- **Redaction on capture** (not on render — a renderer bug then can't leak): URL query strings stripped wholesale; secret-shaped path segments matching `sk-…`, `AIza…`, generic 32+ char tokens replaced with `[KEY]`
+- **`pairId` linkage** (Panel B's "killer feature"): generation entries link back to the raw-pairs entry via stable id. Network row gets a "Show pair" button that jumps to Last Response with the matching pair active.
+- **Failure highlighting**: status ≥ 400 = red, transport failure = red, latency > 10s = amber pill
+- **Instrumented call sites**: `update-check.js` (version + update endpoints) wrapped with `instrumentedFetch`; engine.js generation site adds a synthetic `record()` after `pushPair()` linking the pair via `pairId` (since SillyTavern's `generateRaw` is not a direct fetch we can wrap, but the metadata is what users actually want)
+- New `raw-pairs.js` `id` field added so cross-references work
+
+**New `Doctor` button** (Panel C reshape — was originally "Checks tab"):
+- New `src/doctor.js` module with 5 real-path checks (Panel C: must exercise the actual subsystem, not its prerequisites):
+  1. **Storage write+read+delete** — probe file round-trip via `/api/files/upload`
+  2. **Model echo** — POST a 1-token "reply with: ok" prompt via `ctx.generateRaw`, parse response
+  3. **Schema round-trip** — minimal generation prompt via the LIVE active schema + system prompt; parsed via `cleanJson`. Skipped if model echo fails (saves an API call)
+  4. **Context budget** — local 4-chars-per-token estimate vs the active connection's `max_context`
+  5. **Tokenizer parity** (Panel C's critical missing check) — local estimate vs `ctx.getTokenCountAsync` with a known string; flag if delta > 25%. Skipped if API not available
+- **Three states only** — PASS / FAIL / SKIPPED (Panel C: "kill yellow, it's where false confidence lives")
+- **Each result names its limitation** explicitly so users learn what each color reliably indicates and don't develop false confidence ("PASS — model answered. Does NOT mean the model will follow ScenePulse's schema.")
+- **Manual trigger only** — no auto-run, no background polling, no API burn (Panel C: "alarm-fatigue bait at 1 user / 7 events/day")
+- "Doctor" button placed in inspector header next to Diagnostics; results render as a modal-style panel overlaying the active tab; "Copy results" produces a paste-ready markdown block
+
+All 620/620 tests still pass.
+
+**Phase complete**: per the 3-panel synthesis, Snapshots tab and Reproduce button were dropped (footer sparkline and Copy-to-Workbench shipped instead in v6.15.9), and Checks tab was reshaped to Doctor button. The originally-planned "Network + Reproduce + Checks" v6.16.0 became "Network log + Doctor" via panel guidance.
+
+### [6.15.9] — 2026-04-25
+
+#### Added — Issues footer sparkline + "Copy → Workbench" button (per 50-panel review for next two phases)
+
+A 3-panel review (~150 perspectives across timeline-viz, observability tooling, and system-health-check design) reshaped the originally-planned Snapshots tab and Reproduce button. v6.15.9 ships the panel-recommended substitutes; v6.16.0 follows with the substantial Network log + Doctor button.
+
+**Issues tab footer sparkline** (Panel A: skip the dedicated Snapshots tab; a green/red tick strip duplicates surfaces the inspector already has — Issues grouping, pair browser, snapshot browser. Add a footer sparkline instead):
+- 20-bucket unicode block sparkline (`▁▁▁▂▁▁▅▇▂▁▁▁`) showing per-turn snapshot failure density across the current chat
+- Counter format: `Snapshots: 47/52 turns ▁▁▁▂▁▁▅▇▂▁▁▁ (5 failed · last fail @ turn 87)`
+- Failed turns inferred from `crash-log` entries that are scenepulse-source + parse-related + have `mesIdx` in their auto-context (added in v6.15.3)
+- Zero new tab, zero new mental model, ~50 LOC total
+
+**"Copy → Workbench" button on each Last Response pair** (Panel B's safer alternative to a Reproduce button — *"Anthropic Workbench / OpenAI Playground already ARE 'send arbitrary prompt safely' tools. Don't rebuild them inside ScenePulse with worse safety."*):
+- Splits the captured prompt into system + user parts heuristically (looks for `RECENT:` / `Narrative:` markers ScenePulse uses)
+- Outputs `=== SYSTEM ===\n…\n\n=== USER ===\n…` format paste-friendly for both Anthropic Workbench and OpenAI Playground
+- Zero API calls from ScenePulse; user pastes into the official playground which already has every safety property a sandboxed Reproduce would need to build
+- ~80% of the diagnostic value of a Reproduce button at ~5% of the engineering and risk cost
+
+All 620/620 tests still pass.
+
+**Coming next in v6.16.0**: Network log tab (scoped fetch capture, redaction-on-capture, pairId linkage) + Doctor button (5 real-path checks: model echo, schema round-trip, storage probe, context budget, tokenizer parity).
+
+**Dropped per panels**: Snapshots dedicated tab (Panel A), Reproduce button (Panel B — soft no-go in current scope).
+**Reshaped per panels**: Checks tab → Doctor button (Panel C: manual trigger only, kill yellow, each result names its own limitation).
+
+### [6.15.8] — 2026-04-25
+
+#### Fixed — Diagnostics info popover scope + cleaner visual treatment
+v6.15.7 introduced an info button next to Diagnostics, but the popover triggered when hovering ANYWHERE on the wrapper — including the Diagnostics button itself, which made the explanation feel intrusive. Also the joined-segmented styling made the icon look like a second button rather than a quiet helper.
+
+- **Hover scope restricted to the info icon only**: Wrapped the info button + popover in a separate `.sp-di-info-area` span; hover trigger is now `.sp-di-info-area:hover` and `.sp-di-info:focus-visible` only. Hovering the Diagnostics button no longer opens the popover.
+- **Cleaner visual style**:
+  - `i` button is now a small (20px) circular icon, detached from Diagnostics with a 4px gap
+  - Replaced the typed italic 'i' character with a proper SVG info glyph (circle + dot + line)
+  - Neutral border + dim color in resting state; accent color + tinted background only on hover/focus — reads as "quiet helper", not "another action"
+  - Diagnostics button restored to normal rounded corners (no longer joined to the icon)
+- **Hover bridge preserved**: The popover's `::before` invisibly extends its hover region upward to touch the icon, so moving the mouse from icon → popover doesn't lose hover.
+
+All 620/620 tests still pass.
+
+### [6.15.7] — 2026-04-25
+
+#### Changed — Diagnostics info popover + scope-clarified per-tab buttons
+User feedback: *"What's the difference between the diagnostics button vs the copy all/export txt?"* — the buttons looked similar at a glance even though one bundles everything inspector-wide and the other copies a single tab's content.
+
+**New info popover next to the Diagnostics button**:
+- Small `i` icon button joined to the right of "Diagnostics" like a segmented control
+- Hover or keyboard-focus reveals a 420px popover explaining what's in the bundle:
+  - Latest pair (prompt + response)
+  - Last 10 issues with diagnosis hints
+  - Activity log (last 50 lines)
+  - Active profile + non-default settings
+  - Versions
+  - 6-char hash header
+  - Auto-redacted (API keys, paths, emails)
+- Includes an explicit "Versus the per-tab Copy / Export buttons" comparison line
+- Visible on every platform (CSS `:hover` + `:focus-visible`), unlike native `title` attribute
+- ARIA `role="tooltip"` and `aria-label` on the trigger for screen readers
+
+**Renamed Issues toolbar buttons for scope clarity**:
+- `Copy All` → `Copy issues` — makes it obvious the button only copies the issues list, not the whole inspector
+- `Export TXT` → `Export issues`
+- Both got `title` attributes pointing users to Diagnostics for the full bundle
+
+This is purely a UX/labeling change; behavior is identical to v6.15.6.
+
+All 620/620 tests still pass.
+
+### [6.15.6] — 2026-04-25
+
+#### Added — Raw (prompt, response) pair ring buffer for diagnosing prose-not-JSON failures
+Panel B's critical-missing addition from the v6.15.4 inspector synthesis: *"To diagnose JSON-mode dropouts you need the actual bytes the model emitted, before any cleaning, alongside the system prompt + last user turn that elicited it. Without it, every parse-fail report becomes a guessing game."*
+
+**New `src/raw-pairs.js` module:**
+- Ring buffer of last 10 `{ts, mesIdx, prompt, response, source, parseFailed, parseError}` pairs
+- `pushPair()` adds a pair (truncated to 200K chars per field as a safety bound)
+- `markLastPairParseFailed(errorMessage)` flags the most recent pair when cleanJson / parse-fail throws
+- `getPairs()`, `lastPair()`, `pairCount()`, `clearPairs()` accessors
+- Memory budget: ~130KB peak
+
+**Captured in `src/generation/engine.js`:**
+- Main extraction path: `pushPair({ prompt, response, mesIdx, source: 'engine' })` after `setLastRawResponse(rawStr)`
+- Continuation path: same with `source: 'continuation'`
+- `markLastPairParseFailed(e.message)` called from both `Parse fail (N)` catch blocks so failed pairs are flagged
+
+**Last Response tab now navigates pairs:**
+- Default view shows the LATEST pair: prompt collapsed in a `<details>` block + response below
+- Pair navigator with prev/next buttons + "Pair N / K" indicator + meta line (timestamp · source · "Parse failed" badge if applicable)
+- Two new actions: "Copy pair" (prompt + response together) and "Export TXT" (saves pair as a `.txt`)
+- Falls back to the legacy `lastRawResponse` if no pairs captured yet (upgrade-window grace)
+
+**Show in Last Response (v6.15.5) is now smarter:**
+- When jumping from a parse-error issue, navigates to the pair whose timestamp is closest to the issue's timestamp
+- Means clicking "Show in Last Response" on a `cleanJson` error from 9:32:21 lands you on the exact prompt+response that failed at 9:32:21
+
+**Diagnostics bundle includes the latest pair:**
+- "Latest pair" section with timestamp + source + parse-failed badge
+- "Prompt sent" subsection (truncated to 6000 chars, redacted)
+- "Response received" subsection (truncated to 4000 chars, redacted)
+- Replaces the old "Last response" section that only showed the response
+
+All 620/620 tests still pass.
+
+### [6.15.5] — 2026-04-25
+
+#### Changed — Debug Inspector overhaul, Phase B: filter fields visually distinct, Diagnostics button, Config tab, Show-in-Last-Response
+
+**Toolbar filter fields are now visually distinct selectors** (user feedback on v6.15.4: even with extra spacing, the severity and source filters still read as one continuous row of pills). Each filter group is now a labeled SEGMENTED CONTROL — joined options inside a single rounded container with internal dividers, with an uppercase micro-label above (`SEVERITY` / `SOURCE` / `SINCE`). Apple HIG / Material segmented-control pattern: communicates "pick one of these mutually-exclusive options" instead of "many independent buttons". Active option uses inset box-shadow for the accent color (red/amber/blue for severity) so the joined segments stay visually unified. ARIA `role="radiogroup"` and `aria-checked` for screen readers.
+
+**Diagnostics button** (Panel B's #1 MUST, Panel C's name) — single button in the inspector header that bundles a paste-ready markdown report:
+- Activity log (last 50 lines, redacted)
+- Last response (redacted, truncated to 4000 chars with "…truncated, total N chars")
+- Last 10 issues with diagnosis hints inline (redacted)
+- Active profile summary (id, name, has-custom-schema, has-custom-prompt, panel count)
+- Non-default settings only (massively cuts paste size vs full settings tree)
+- Versions (SP, ST, UA, viewport)
+- 6-char DJB2 hash header so the maintainer can tell two pastes apart at a glance
+- Auto-redact: API keys (`sk-…`, `Bearer xxx`, `api_key=…`), absolute paths (`C:\Users\…`, `/home/…`, `/Users/…`), file URLs, email addresses
+- Copies to clipboard with toast confirmation
+
+**New `Config` tab** (Panel C: "Config" not "Settings dump" — "dump" leaks implementation):
+- Active profile summary
+- Chat metadata (chatId, mesIdx, character, group, mainApi, viewport)
+- Non-default settings only by default (Panel B refinement); "Show all settings (not just non-defaults)" toggle reveals the full tree
+- Same redaction as Diagnostics
+- Copy / Export TXT actions
+
+**Show-in-Last-Response button** (Panel B's MUST, Panel C's name "Show in" not "Open in"):
+- Appears on parse-related issue entries (cleanJson / no JSON object / Parse fail)
+- Inline action button in the entry's body
+- Switches to Last Response tab + scrolls response pane to top
+- Last Response shows an "Opened from" pill referencing the source issue
+- Tab render contract extended: `tab.render(panel, { switchTo, payload })` so any tab can navigate to any other with context
+
+All 620/620 tests still pass.
+
+### [6.15.4] — 2026-04-25
+
+#### Changed — Debug Inspector overhaul, Phase A: rename, toolbar, grouping, Last Response fix, time filter, auto-open badge
+Synthesis from a 3-panel review (~150 specialist perspectives across observability tooling UX, diagnostic-triage workflows, and microcopy/IA) plus a focused Last Response bug investigation.
+
+**Renames** (Panel C: never name a tab after its worst-case content)
+- `Crashes` tab → `Issues` (the contents are heterogeneous: errors + warnings + info, and "Issues" matches the GitHub mental model that pairs naturally with "Report on GitHub")
+- "Issues" tab moved to first position; new tab order is `Issues / Activity / Last Response`
+
+**Toolbar layout** (Panel A: 3-zone with deliberate separation, never put destructive buttons next to constructive ones with identical styling)
+- Issues toolbar restructured into three zones: `[Search] [Severity] [Source] [Since:]  │  [Copy] [Export]  ─►─►  [Clear]`
+- One vertical rule between query controls and constructive actions; wider gap before destructive Clear; danger-outline (not solid red) on Clear to prevent eye fatigue and mis-clicks
+- Severity-active accent colors only on selected chip (red for Errors, amber for Warnings, blue for Info) — color = data, not chrome (Tufte / Sentry pattern)
+
+**Last Response bug fix**
+- Diagnosed: classic ES module live-binding trap. `export let lastRawResponse` is supposed to live-bind, but in SillyTavern's loader some importers see only the load-time snapshot.
+- Added `getLastRawResponse()` and `getLastDeltaPayload()` getters in `src/state.js`
+- `_lastResponseTab` now calls the getter at render time so it always reads the current state value
+
+**Group consecutive parse-fail pairs** (Panel B's MUST: 17 entries collapsing to 7 events directly mirrors how humans count incidents)
+- New `_groupParsePairs()` function in `src/ui/debug-inspector.js`
+- `cleanJson` parent + sequential `Parse fail (N)` children within 60s collapse into one parent row with a "+N attempts" amber pill
+- Children listed chronologically inside the expanded parent body under "Related attempts"
+- Footer count now reads `N groups · M events · K total` when grouping is active
+- Copying a grouped entry includes all child attempts in the paste
+
+**Time-window filter** (Panel B: cheap to build, default to "since last clear" not "all time")
+- New "Since:" pill with options: This session (default) / 5m / 1h / 1d / All
+- Filter cutoff applied BEFORE grouping so children/parent stay together inside the window
+
+**Auto-open badge** (Panel B: 3-flash then steady-state dot, never modal, never animate continuously)
+- New observer pattern in `src/crash-log.js`: `addChangeListener()`, `unseenCount()`, `markSeen()`
+- `bind-ui.js` subscribes and updates the toolbar button: amber dot at top-right when there are unseen entries, brief 3-flash animation on each new capture
+- Opening the inspector calls `markSeen()` which clears the dot
+- Reduce-motion / `body.sp-reduce-effects` users skip the flash and just see the steady dot
+
+All 620/620 tests still pass.
+
+**Skipped** (per Panel B unanimous): #4 Error rate sparkline — zero triage value at <100 events/window scale.
+
+**Coming next**: v6.15.5 (Diagnostics bundle button, Config tab, Show-in-Last-Response jump), v6.15.6 (raw response+prompt ring buffer), v6.16.0 (Network tab, Reproduce sandboxed, Checks tab).
+
+### [6.15.3] — 2026-04-25
+
+#### Changed — Crash log entries now show useful detail when expanded
+Expanding a crash log entry previously showed near-empty body content for the most common case (string-only `err()` calls captured no stack and the global error handlers passed no SillyTavern context). The expanded view was just "SP 6.12.3 / Copy / Report on GitHub" — the user couldn't tell what scene, message, or model the error happened on.
+
+Two-layer fix:
+
+**Capture side (`src/crash-log.js`):**
+- New `_autoContext()` helper captures chat ID (last 12 chars), message index, character name, model name (with three fallbacks: openai_model / textgen preset / mainApi), group-chat flag, viewport size — each lookup independently try/catched so one missing global doesn't suppress the rest.
+- Logger bridge now synthesizes a stack via `new Error().stack` when no Error object was in the err() args, then strips the bridge + listener + crash-log frames so what remains points to the actual err() callsite.
+- `_onWindowError` and `_onUnhandledRejection` merge their existing context (filename/line/col, kind=unhandledrejection) with auto-context.
+
+**Display side (`src/ui/debug-inspector.js`, `css/crash-log.css`):**
+- Row body always renders a structured set of sections — Full Message (since the header is CSS-truncated), Likely Cause (when matched), When/Source/Severity/Occurrences strip, Stack (if present), Context (if present), Versions row, Actions.
+- New `_diagnose(message)` pattern matcher gives one-line cause hints for: `cleanJson` / `Parse fail` / 502/503/504 / NetworkError / aborted-cancellation / `streamingProcessor is null` / rate-limit / context-length / 401-unauthorized. Returns empty string when no pattern matches — section only renders when there's a real hint.
+- New CSS classes `.sp-cl-fullmsg` (mono, wraps long prose), `.sp-cl-diagnosis` (amber-tinted left border, reads as interpretation not raw data), `.sp-cl-whenwhere` (labeled metadata strip).
+
+Existing entries captured under v6.15.2 or earlier render with the new layout immediately — auto-context only attaches to entries captured under v6.15.3+, but everything else (full message, diagnosis, when/where, versions, actions) works on historical entries too.
+
+All 620/620 tests still pass.
+
+### [6.15.2] — 2026-04-25
+
+#### Changed — Meter status labels capped at MAX 3 words (LLM-side, not client-truncated)
+The meter status labels (e.g. "Warm", "Building trust") were previously capped to 1-4 words by the prompt and *also* truncated to 4 words client-side via `truncateWords()`. The dual-cap approach hid the LLM's failures: when the model emitted "deeply moved, finds him utterly compelling and trustworthy," it silently became "deeply moved, finds him..." in the UI, leaving the user no way to see that the prompt had failed.
+
+Tightened both ends:
+- `src/schema.js`: meter label rule rewritten — MAX 3 words, no commas/em-dashes/and/but/qualifiers, Title Case, with 4 RIGHT and 3 WRONG examples (the WRONGs lifted from observed long outputs).
+- `src/constants.js`: BUILTIN_PROMPT line for "Labels" rewritten to match — MAX 3 words, "answers what kind of [meter] in one phrase, not a sentence."
+- `src/ui/update-panel.js` + `src/ui/character-wiki.js`: removed all 4 `truncateWords()` callsites on meter labels. The full label now renders directly. CSS `.sp-meter-tag` already has `overflow: hidden; text-overflow: ellipsis;` and `title="${label}"` is already set, so over-cap labels show with an ellipsis safety net AND the user can read the full text on hover/long-press. If the LLM emits >3 words, it's now visible — a prompt failure to fix at the source, not silently chop.
+- Cleaned up unused `truncateWords` imports.
+
+`truncateWords()` itself stays in `src/utils.js` — it's still a useful helper for other potential cap sites and removing it would be a needless API break.
+
+### [6.15.1] — 2026-04-25
+
+#### Changed — Relationship `milestone` capped at MAX 10 words (LLM-side)
+The `milestone` field on relationship cards previously had no length cap, producing lengthy paragraphs ("She told him coffee was never the point, she was testing his honesty, and now asks if he can keep his hands to himself for the three-block walk—a first for her on this street") that visually drowned the rest of the card body.
+
+Tightened the schema bullet in `src/schema.js`:
+- Added MAX 10 words constraint
+- Added "one concrete event, not a paragraph" guidance
+- Forbade comma-chained clauses, em-dash continuations, and parenthetical asides
+- Added 2 RIGHT and 2 WRONG examples (the WRONGs lifted directly from observed outputs so the model can pattern-match the prohibition)
+
+Updated SAMPLE_TRACKER milestones in `src/constants.js` to fit under the cap so the example data the LLM sees in `relPhase` examples is consistent with the new rule.
+
+No render code or CSS changes — milestone is plain text. The cap is enforced at the source where it costs nothing to fix at write time. Existing chats with persisted long milestones will continue to render the long version until next regen overwrites the field.
+
+### [6.15.0] — 2026-04-25
+
+#### Changed — Relationship pill: closed enum, 7-family palette, fits every resolution
+The `relPhase` pill on relationship cards used to render free-form LLM prose ("INTIMATE, TEASING CONNECTION", "Growing closer, testing boundaries") that broke layout on small screens and resisted at-a-glance reading. Synthesis from a 50-panel review (10 panels each across information design, mobile-responsive UI, microcopy/taxonomy, prompt engineering, and game UI) converged on a closed enum.
+
+**New module `src/rel-phase.js`:**
+- `REL_PHASE_ENUM` — 17 single-word stages: `Strangers, Wary, Cordial, Friendly, Close, Trusted, Bonded, Flirting, Smitten, Intimate, Devoted, Distant, Strained, Estranged, Hostile, Volatile, Unknown`. Within Miller's 7±2 per family; covers strangers/professional/platonic/romantic/damaged/hostile/edge-case states.
+- `REL_PHASE_FAMILY` — maps every term to one of 7 color families (neutral / civil / warm / romance / damaged / hostile / complex).
+- `coerceRelPhase()` — 5-step deterministic salvage: trim+strip → exact case-insensitive → substring scan with word-boundary guard → first-word title-case retry → `Unknown` fallback. Catches Claude/GPT synonym drift ("Warm" → "Cordial"), Llama 8B compound qualifiers ("Trusted partnership" → "Trusted"), and prose leakage ("Intimate, teasing connection" → "Intimate"). Word-boundary guard prevents false positives ("Closely" ≠ "Close", "Hostility" ≠ "Hostile", "Untrustworthy" ≠ "Trusted"). 61-case test suite in `tests/relphase-coerce.test.mjs`.
+
+**Schema instruction (`src/schema.js`):**
+- `relPhase` bullet rewritten as a closed-enum instruction with 3 RIGHT and 2 WRONG examples — the prompt-engineering panel's empirically validated sweet spot for instruction following without example echo.
+- `relType` bullet capped at MAX 2 words with examples ("Co-worker", "Customer", "Bartender", "Childhood friend") and a forbiddance on commas/slashes/parentheses.
+
+**Pipeline (`src/normalize.js`):**
+- `coerceRelPhase()` runs after all carry-forward and merge logic, just before normalization returns. Empty/missing phases coerce to `Unknown` so the header pill always renders — stable layout beats "sometimes a pill, sometimes a gap" across cards.
+
+**Rendering (`src/ui/update-panel.js`, `src/ui/character-wiki.js`):**
+- Phase badge gets `data-family="<family>"` attribute and a `title` for accessibility/desktop hover.
+- Type badge gets a `title` for full-text disclosure on truncation.
+
+**CSS (`css/relationships.css`, `css/responsive.css`):**
+- `.sp-rel-block` now declares `container-type: inline-size; container-name: rel-card` — pill responds to CARD width, not viewport, so the same card renders correctly in main panel (~380px), wiki (~600px), thoughts (~280px), and mobile fullscreen.
+- `.sp-rel-header` switched from flex-wrap to CSS Grid with `auto auto minmax(0, 1fr) auto auto` columns. The `minmax(0, 1fr)` on the name column prevents unbroken-name overflow (same fix as the meter rows in v6.13.7).
+- Both pills capped at `max-inline-size: min(11ch, 35cqi)` with ellipsis as a safety net (LLM cap is the real defense).
+- Title Case stays on phase pill — typography research at small sizes (Spiekermann, Klinkenborg) shows ~13% legibility win over ALL CAPS via preserved bouma.
+- 7-family palette via `.sp-rel-phase-badge[data-family="<name>"]` selectors.
+- `@container rel-card (max-width: 260px)` degrades the phase pill to a 10×10 colored dot — preserves the archetypal-glance signal even when text is gone (Frost / Wroblewski mobile-first principle: never DELETE the signal, degrade it). The previous `display: none` rule at 380px is removed in favor of this dot fallback.
+
+Implementation crosses multiple model classes (Claude/GPT ~98% enum compliance, Llama 8B ~92% with coercer salvage). Existing chats with persisted long phases will coerce on next render — no migration needed.
+
+### [6.14.1] — 2026-04-25
+
+#### Changed — Inner Voice: NPCs are protagonists of their own lives, not satellites of {{user}}
+v6.14.0 successfully steered NPC thoughts away from play-by-play, but a quieter failure mode remained: because the surrounding schema (archetype, role, relationships, immediateNeed, goals) is all defined RELATIVE to {{user}}, the model defaulted to NPC thoughts that orbit the protagonist ("she has no idea what's coming", "I'd die for her"). Every NPC became a satellite.
+
+Added an explicit clause to the `innerThought` bullet: **"THE NPC IS THE PROTAGONIST OF THEIR OWN LIFE — not a satellite of {{user}}."** Their thought should usually be about THEIR job, body, history, kid, debts, lust, regrets, what they had for lunch — not about {{user}}'s plot. {{user}}-orbit thoughts are allowed occasionally but must NOT be the default. Aim for AT LEAST HALF of NPC thoughts in any turn to be tangential to {{user}}. Added "{{user}}-orbit failure mode" to the FORBIDDEN list.
+
+Also clarified the Mantel touchstone in the VOICE GUIDE: Cromwell's chess-move interiority works because he IS the protagonist of *Wolf Hall*. For NPCs in someone else's story, don't make every thought a chess move about {{user}} — they're plotting their own lives, where {{user}} is one piece among many (sometimes not even on the board).
+
+### [6.14.0] — 2026-04-25
+
+#### Changed — Inner Voice overhaul (BUILTIN_PROMPT)
+Diagnosis: existing `innerThought` outputs were correctly first-person but read as neutral play-by-play of the visible scene. Every NPC sounded like the same omniscient narrator with a different name tag. Rewrite informed by a 5-panel synthesis spanning fiction craft, screenwriting/acting, cognitive psychology of inner speech, sociolinguistics/idiolect, and prompt engineering for character voice (~150 expert perspectives total).
+
+**Schema bullet (`innerThought` in `src/constants.js`)** — replaced with a tighter, opinionated instruction that:
+- Mandates SWERVE: the thought must add something the prose did NOT show (memory, want, fear, judgment, sensation, grievance, plan, aside) — never restate visible action.
+- Requires per-character silent commit to 4 voice axes BEFORE writing (syntax shape, lexicon domain, two owned discourse markers, attentional stance).
+- Forces cognitive-mode rotation across the characters array — no two NPCs in one turn share a mode from {sensory-snag, want, fear, judgment, memory-flash, plan, deflection}.
+- Scales fragmentation to `sceneTension` (calm = full sentences; high/critical = fragments and motor commands).
+- Bans specific narrator-tells: "I think / I guess / kind of / sort of / totally / gonna / a whole thing / that's a new one / oh this is great / honestly", gerund openings, generic deictics ("the big guy", "that cat") in place of relationship labels, shared em-dash style across characters.
+- Includes 3 RIGHT/WRONG pairs spanning calm/low/critical tension, three archetypes (widow / defense attorney / combat medic), three syntax shapes (winding-subordinate / short-declarative / fragments), and three failure modes (play-by-play / audience-explanation / label-list).
+- Closes with the SWAP TEST: if any two characters' thoughts in this turn could be swapped without changing meaning, both are wrong — rewrite.
+
+**New `## VOICE GUIDE` block** — inserted after `## CRITICAL RULES`, anchored to seven canonical interiority touchstones (Hemingway, Woolf, McCarthy, Joyce, Morrison, Mantel, Beckett). Establishes craft calibre without bloating the schema.
+
+This is a prompt-only change. No schema fields added, no new toggles, no breaking changes. Custom-prompt users unaffected unless they reset to BUILTIN_PROMPT.
+
+### [6.13.10] — 2026-04-25
+
+#### Fixed — Three remaining `sp-logo-glow` consumers gated under Reduce Visual Effects (issue #14)
+v6.13.9 covered the drawer icon, badge dot, and panel brand-state animations but missed three other elements that share the same `sp-logo-glow` keyframe and live outside `#sp-panel` (so the panel-scoped descendant rule never reached them):
+- `.sp-mt-brand svg` — mobile fullscreen header brand icon (visible whenever ScenePulse is open in mobile mode)
+- `.sp-setup-icon` — first-run setup wizard icon
+- `.sp-banner-icon` — was gated for `prefers-reduced-motion` only, now also gated by the toggle
+
+Added to both the `body.sp-reduce-effects` and `prefers-reduced-motion` blocks in `accessibility.css`. Animation-only kill — element visibility preserved.
+
+### [6.13.9] — 2026-04-25
+
+#### Fixed — Reporter on issue #14 confirmed v6.12.9 dropped GPU 80% → 10-20%, but flagged two remaining offenders that weren't gated by the "Reduce visual effects" toggle: the drawer icon mascot pulse + "active" badge dot in ST's extensions list (outside `#sp-panel`, missed by the panel-scoped descendant rule), and the panel logo/brand-state animations. Added explicit gates to `accessibility.css` for both `body.sp-reduce-effects` and `prefers-reduced-motion` covering: `.sp-drawer-icon-wrap`, `.sp-on .sp-drawer-badge-dot`, `.sp-banner-icon` (mobile), brand-state generating/error glows, update dot pulse, mascot pulse, egg rainbow. Animation-only kill — element visibility preserved since these are all functional indicators (icon, status dot, update notification).
+
+### [6.13.8] — 2026-04-25
+
+#### Fixed — Meter alignment locked across every resolution
+Audited all 11 `.sp-meter-row` and `.sp-wiki-meter-row` grid declarations across `relationships.css`, `responsive.css` (5 breakpoints), `mobile.css` (2), `focus-mode.css`, and `character-wiki.css` (2). Each value column now uses `minmax(0, X)` so emoji/delta content can no longer expand the track and shrink the bar. `.sp-meter-value`, `.sp-meter-value-na`, `.sp-wiki-meter-val` get `min-width: 0; overflow: hidden`. Bar right edges and sparkline columns are now stable across viewport sizes (mobile / 1366×768 / desktop / QHD / 4K), all panel modes (mobile / compact), and the wiki overlay.
+
+### [6.13.7] — 2026-04-25
+
+#### Fixed — Meter bar width drifted with delta content (CSS grid gotcha)
+v6.13.6's `60px` fixed value column wasn't enough — grid items default to `min-width: auto`, so content like `100+99❤` still grew the track and shrank the bar. Switched to `minmax(0, 70px)` plus `min-width: 0; overflow: hidden` on the value cell. Sparkline canvas now right-aligned via `justify-self: end` (the previous `display: flex; justify-content: flex-end` was a no-op on a canvas with no flex children).
+
+### [6.13.6] — 2026-04-24
+
+#### Changed — Meter status labels capped at 4 words
+New `truncateWords()` helper in `utils.js` caps long LLM-emitted status labels (e.g. "growing sense of shared perspective") at 4 words with an ellipsis. Full original text preserved as a `title` tooltip. Applied to relationship meter labels in the main panel and wiki overlay.
+
+#### Fixed — Meter bar alignment across deltas (first attempt)
+Relationship meter row's third grid column was `auto`, so adding a `+5` delta indicator shrank the bar. Bumped to a fixed `60px` to keep the bar's right edge stable. Same fix applied to mobile + compact + ultra-narrow overrides.
+
+### [6.13.5] — 2026-04-25
+
+#### Fixed — `sp_characters` macro returned empty when present-list was empty (issue #8)
+`charactersPresent || characters` is broken in JS — empty array is truthy, so the fallback never reached `characters[]`. Now uses an explicit `Array.isArray(...) && .length` check. Same bug fixed in `sp_char_count`. Affected solo beats and any state where the LLM dropped `charactersPresent`.
+
+#### Added — 6 new macros
+`{{sp_relationships}}` (formatted summary), `{{sp_main_quests}}` / `{{sp_side_quests}}` (split tiers), `{{sp_quest_count}}` / `{{sp_char_count}}` (counts for `{{#if}}` conditionals), `{{sp_active_profile}}` (issue #15 follow-up). Original `{{sp_quests}}` preserved for backward compat.
+
+#### Changed — Macro handlers now error-contained
+Each handler is wrapped in try/catch at registration. A throw in any single macro returns `''` and logs to the Crash Log instead of breaking ST's prompt build. Macros are no longer marked experimental — exercised by 50 regression tests on every release.
+
+### [6.13.4] — 2026-04-25
+
+#### Fixed — `/sp-debug` showed hardcoded "30 max" snapshot limit (issue #7)
+Now honors the actual `s.maxSnapshots` setting (`N / 100` or `N / ∞`).
+
+#### Fixed — `/sp-export` omitted profiles from the JSON payload
+Stale since v6.13.0 — shared exports lost the prompt+schema bundle that produced the snapshots. Now includes `profiles`, `activeProfileId`, active profile name, and per-chat panels for parity with the in-app Export Config button.
+
+#### Fixed — `/sp-toggle` only knew built-in panels
+Now matches custom panel names case-insensitively against the chat's `chatPanels[]`. The no-arg listing and "unknown panel" suggestion both include built-ins AND custom panels.
+
+#### Added — `/sp-profile` (and `/sp profile`)
+Lists profiles with `*` marker on active, or switches by name case-insensitively. Triggers force-full regen on next turn (delta against a different schema is nonsensical).
+
+#### Changed — Slash commands no longer experimental
+Help text rewritten to list every command (including the `/scenepulse` alias). 50 regression tests exercise the dispatcher + every synchronous handler on every release. `/sp-status` now shows active profile to match `/sp-debug`.
+
+### [6.13.3] — 2026-04-25
+
+#### Fixed — Stacked confirm dialogs from rapid Delete clicks
+Single-dialog enforcement at the helper level in `utils.js`. Any `spConfirm`/`spPrompt` call dismisses an active dialog (resolves as cancel) before opening a new one. `_settled` guard prevents double-resolution. Applies everywhere — Profile Manager, settings actions, schema lock confirm.
+
+### [6.13.2] — 2026-04-25
+
+#### Changed — Profile UI polish
+Overlay buttons now styled (the previous `.sp-btn` rule was scoped to `#scenepulse-settings` and didn't reach overlays). New `spPrompt()` helper in `utils.js` matches the existing `spConfirm` pattern: backdrop, scaled-in dialog, focus on input, Enter to submit, Escape to cancel, optional inline validator. All `window.prompt()`/`confirm()` calls in the profile flow replaced with the styled dialogs. "Custom Panels" tag in Profile Manager now has a hover tooltip listing the panel names.
+
+#### Added — "Clear Panels" row action in Profile Manager
+Surgically removes all `customPanels` from a profile so they no longer seed new chats. Replaces the console-snippet workaround.
+
+### [6.13.1] — 2026-04-25
+
+#### Fixed — Deleted custom panels resurfaced on reload
+v6.13.0's `getActivePanels` fall-through used `cp.length > 0` — but empty `[]` is the user's authoritative "I deleted them all in this chat" state, not a missing-data state. Fix uses `Array.isArray(cp)` so empty stays empty.
+
+### [6.13.0] — 2026-04-25
+
+#### Added — Prompt + Schema Profiles (closes #15)
+Each profile is a self-contained `{schema, systemPrompt, panels, fieldToggles, dashCards, customPanels}` bundle. Switch profiles to swap setups (e.g. Medieval Fantasy vs Pokemon) without manually editing prompts and schemas. New "Profile" section in Settings → Prompts with active dropdown, +New / Duplicate / Rename / Export / Import / Delete buttons, and a Manage button that opens a full-screen Profile Manager overlay.
+
+**Architecture: read-through, not destructive copy.** Switching profiles is a single-line `s.activeProfileId = newId; saveSettings()`. The four chokepoint getters (`getActiveSchema`, `getActivePrompt`, `getActivePanels`, `ensureChatPanels`) resolve through the active profile. No copying, no risk of mid-edit data loss.
+
+**Migration**: existing legacy `s.schema` + `s.systemPrompt` + `s.panels` + `s.fieldToggles` + `s.dashCards` + `s.customPanels` are wrapped into a profile named "Default (migrated)" on first load. Idempotent — also repairs orphaned `activeProfileId` pointers if a profile gets deleted out-of-band.
+
+**Per-chat override**: a chat may set `chatMetadata.scenepulse.activeProfileId` for a per-chat profile pointer. Resolution order: per-chat → global → first profile.
+
+**Import safety**: `validateImportedProfile()` rejects malformed input (non-object, missing/empty name, non-string schema, schema doesn't parse as JSON, schema isn't an object, root `type !== "object"`, non-array `customPanels`). Imported profiles always get a fresh UUID. Name collisions auto-suffix as `Pokemon (2)`, never overwrite.
+
+**Force-full regen on switch** — diffing against a different schema is nonsensical. 52 regression tests cover migration, CRUD, per-chat override, import safety, export shape.
+
+### [6.12.9] — 2026-04-24
+
+#### Fixed — 80% GPU usage at idle (fixes #14)
+Reporter on RTX3060 saw extreme GPU load just from loading the extension. Two specialist agents traced it to the "Water Droplet Matrix" decorative canvas in the Time dashboard card — a 500×500 canvas redrawing ~17,500 path segments at 60fps via `requestAnimationFrame`, with `mix-blend-mode: screen` forcing per-frame compositor work.
+
+**Fixes**: WDM canvas gated behind a new "Reduce visual effects" setting AND `prefers-reduced-motion`. Throttled 60→20fps (phase increment scaled 3× to keep visual speed identical). Paused via `IntersectionObserver` when canvas leaves the viewport. Removed `mix-blend-mode` from `.sp-dash-overlay` and `.sp-wdm-canvas`. Dashboard particles + shimmers gated under `prefers-reduced-motion` and the new toggle. Weather overlay now properly torn down on disable instead of left attached. Removed 13 `will-change: transform` declarations from weather particles (was eagerly allocating GPU layers even when no weather active).
+
+Expected drop on reporter's hardware: 80% → ~25% on defaults, 80% → near-zero with new toggle on.
+
+### [6.12.8] — 2026-04-24
+
+#### Changed — Unified Debug Inspector replaces 4 debug buttons
+Settings → Advanced → Debug now has one `🔍 Debug Inspector` button opening a tabbed overlay with **Activity** (logger.js debug log with level filter, search, live refresh, copy, export), **Last Response** (raw LLM JSON pretty-printed if valid), and **Crashes** (the persistent error log from v6.12.5 — severity + source filters, expand-for-stack, copy entry, copy all, clear, "Report on GitHub" per row). Replaces SP Log, View Log, Last Response, and standalone Crash Log buttons.
+
+### [6.12.7] — 2026-04-24
+
+#### Removed — Console copy button (redundant with Crash Log)
+Crash Log captures the error subset that was the only useful part of the Console buffer. Dropped `consoleBuf`, `MAX_CONSOLE`, `_pushConsole` from logger.js. Layout consolidated to two debug rows.
+
+### [6.12.6] — 2026-04-24
+
+#### Fixed — Crash Log overlay dismissed the settings panel underneath
+Click + pointerdown events bubbled to ST's document-level outside-click handler. Added `stopPropagation` on bubble-phase mousedown/click/pointerdown at the overlay; ESC moved to capture phase so it beats ST's panel-closing keydown.
+
+### [6.12.5] — 2026-04-24
+
+#### Added — Combined crash log with in-settings viewer (closes #13)
+Captures errors from both ScenePulse AND SillyTavern (`window.error`, `window.unhandledrejection`, ScenePulse-internal `err()` calls — tagged by source via stack-frame analysis). Each entry stores: timestamp, source tag, severity, message, normalized stack (12 frames capped), context, ScenePulse + SillyTavern versions. Consecutive identical entries collapse with a repeat counter.
+
+**Hybrid persistence**: in-memory ring buffer (500 entries) + localStorage mirror on every capture (instant, survives reload) + server flush to `/user/files/scenepulse-crash-log.json` via ST's `/api/files/upload` (debounced 2s, also flushed on `beforeunload`). The user-data folder was the closest durable location — the literal extension folder isn't browser-writable from a ST extension.
+
+**Viewer**: severity + source filter pills, search, expand-for-stack rows, copy entry, copy all, clear, export TXT, "Report on GitHub" per row that pre-fills a new-issue template with the captured stack. 37 regression tests.
+
+### [6.12.4] — 2026-04-24
+
+#### Fixed — Character Wiki not surfacing previous characters (fixes #11)
+Three confirmed root causes from a 3-specialist audit:
+
+1. **Wiki only iterated `latest.characters`** — `getCharacterHistory()` was consulted only for metadata (firstSeen/appearances), never for the entry roster. Any character missing from the latest snap (e.g. dropped by a pre-fix generation) never got a wiki card. Rebuilt to walk the cumulative alias-aware roster across ALL snapshots and pull each character's freshest data from whichever snapshot most recently contained them.
+
+2. **Pipeline non-delta path silently dropped off-scene characters** — `engine.js` had off-scene preservation; `pipeline.js` (used for inline/together extractions) didn't. Every periodic forced full-state refresh (default every 15 turns) was wiping the off-scene roster. Ported the same preservation block.
+
+3. **`renderExisting` recovered only ONE prior snapshot when ScenePulse activated mid-chat** — scanned newest-first, broke at first hit. Earlier messages with tracker blocks were never extracted. Now walks every AI message chronologically, replays each through delta-merge, saves a snapshot per message. Idempotent.
+
+38 regression tests cover the four scenarios end-to-end.
+
+### [6.12.3] — 2026-04-24
+
+#### Added — Portrait upload from Character Wiki avatars
+Wiki avatars now accept the same upload-on-click + clear-on-right-click flow as character cards.
+
+### [6.12.2] — 2026-04-24
+
+#### Fixed — Thoughts portrait upload didn't work
+Click handler delegate wasn't registered on the dynamically-created thought panel.
+
+### [6.12.1] — 2026-04-24
+
+#### Fixed — Portrait upload on relationships + thoughts
+Clicking a relationship card portrait collapsed the card instead of opening the picker. Added an event-target guard to the rel-header click handler. Thought panel didn't get the delegate at all — now registered on `document.body` so it works regardless of when the panel materializes.
+
+### [6.12.0] — 2026-04-24
+
+#### Fixed — Character data loss across all generation paths
+Seven distinct paths could lose character/relationship data: full-state mode without preservation, section refresh array overwrite, prompt pruning feedback loop, pipeline save inconsistency, renderExisting recovery, portrait orphaning across identity reveals, and missing portrait upload locations. Each addressed with targeted fixes. Off-scene characters now preserved as `{name, role, aliases}` stubs in `_offSceneCharacters` during prompt cleaning. Section refresh uses entity-level merge instead of array overwrite. Pipeline saves normalized data (not raw extracted) for consistency with engine.js path.
+
+### [6.11.10] — 2026-04-24
+
+#### Fixed — Panel Manager collapsed to one line (fixes #12)
+`.sp-panel-mgr` is injected into `#sp-panel-body` — a flex column since v6.11.x. As a flex item with default `flex-shrink: 1`, it was being squeezed to ~1 line tall by sibling sections (`flex: 0 0 auto` + `max-height: 70vh`). Adding `flex-shrink: 0` preserves its intrinsic content height; existing `max-height: calc(100vh - 140px)` + `overflow-y: auto` still cap and scroll long custom panel lists.
+
+### [6.11.9] — 2026-04-11
+
+#### Fixed — Stuck scene transition overlay (fixes #10)
+`setTimeout(4500)` was unreliable in background tabs (browsers throttle inactive timers). Replaced with `animationend` event listener; card removed from DOM after animation. 6s safety fallback timer still fires if the event somehow doesn't.
+
+### [6.11.8] — 2026-04-11
+
+#### Changed — Full panel architecture redesign
+Complete rewrite of the panel layout system based on 15-agent expert analysis. Adopts flexbox column architecture (proven by Dooms-Enhancement-Suite). Panel uses `display: flex; flex-direction: column; overflow: hidden`. Each section is a flex child — collapsed sections show only their header, open sections share remaining space with per-section scrolling (`max-height: 70vh`, `overflow-y: auto`). Content stops at the last element with no wasted space. Eliminates all bleed-through issues by construction — sections occupy non-overlapping flex regions.
+
+#### Changed — Toolbar overhaul
+Four feature toggle buttons (Thoughts, Weather, Time Tint, Scene Transitions) collapsed into a single Features dropdown with checkboxes and active-count badge. Toolbar buttons grouped with subtle pill backgrounds. Brand icon animation is now state-driven (idle=static, generating=pulse, error=flash). Contextual subtitle under "ScenePulse" showing live character/relationship/message counts.
+
+#### Changed — 12px minimum font floor
+Introduced CSS custom property font scale system (`--sp-fs-base` through `--sp-fs-xl`). All ~200 font-size declarations across 28 CSS files migrated to use variables. Zero sub-12px text remains. Overriding `--sp-fs-base` scales the entire UI proportionally. Font scale settings slider now just sets one variable.
+
+#### Added — Section header icons
+Each section has a compact SVG icon (Scene=clock, Quests=bookmark, Relationships=people, Characters=person, Story Ideas=branches).
+
+#### Added — Collapse/expand all button
+Characters and Relationships section headers have a toggle button to collapse or expand all cards at once.
+
+#### Added — Scene badge improvements
+Badge shows tension-colored dot (5px) + full topic text. Quest badge shows "2 Main · 3 Side" format. Elapsed field added to Scene Details panel.
+
+#### Added — Meter grid improvements
+4-column grid layout (label | bar | value | sparkline). Sparklines separated into own column — visible at all resolutions (scaled down at narrow widths). Label column uses `auto` width with `min-width` for alignment.
+
+#### Changed — Story ideas type enforcement
+Schema and prompt now use positional slot ordering: [0]=dramatic, [1]=intense, [2]=comedic, [3]=twist, [4]=exploratory. `minItems`/`maxItems` set to 5.
+
+#### Changed — Mobile/tablet fixes
+Fixed panel positioning with explicit pixel height for mobile. Clean mode switching resets all inline styles. Compact mode force-removed on mobile/tablet. Stale button hiding rules updated for Features dropdown.
+
+#### Fixed — Theme variable compliance
+40+ hardcoded hex colors replaced with `--sp-*` variable equivalents across quests, relationships, mobile, and timeline CSS.
+
+#### Fixed — UX polish (10 items from design review)
+Section refresh button: 24x24px, opacity 0.5. Section content top padding: 8px. Story idea buttons: opacity 0.4. Quest Add button: opacity 0.7. Border-radius standardized to variables. Witness/offscene opacity unified to 0.6. Subtitle opacity removed. Section icon opacity matched to title.
+
+#### Removed — Stale code cleanup
+~35 lines of dead CSS from anchor wrapper pattern. Duplicate `.sp-error` rule. No-op `resizeSectionContent()` and all 6 call sites. Stale comments from iteration history.
+
+### [6.9.14] — 2026-04-10
+
+#### Changed — Per-chat custom panel definitions
+Each chat now owns its own set of custom panel definitions stored in `chatMetadata.scenepulse.chatPanels[]`. Switching between chats shows that chat's panels in the Panel Manager for editing. New chats start with zero custom panels — add via templates, import, or manual creation. Global `customPanels` is now a template library only, never auto-applied.
+
+#### Fixed — Panel Manager crash
+Two `ReferenceError` crashes (`_hasOverride`, `isPanelEnabledForChat`) from leftover references to the old per-chat override system. Added try/catch around Panel Manager creation so errors log to console instead of silently failing with a stuck green button.
+
+### [6.9.13] — 2026-04-10
+
+#### Added — Per-field toggles + stable panel IDs
+Per-field enable/disable checkbox on every custom panel field (gated at 5 code sites). Stable panel IDs (`cp_timestamp_random`) assigned at creation.
+
+### [6.9.12] — 2026-04-10
+
+#### Changed — Custom panel UI/UX overhaul
+Meter fields: threshold-based color bars (green ≥50, amber 25-49, red <25 with glow). Enum fields: severity-colored badge pills. List fields: chip tags. Number fields: monospace styled well. Custom sections get a 2px teal left border. Meter bar height 6→8px.
+
+### [6.9.11] — 2026-04-10
+
+#### Added — Custom panel toggle, collision detection, export/import, templates, duplicate (resolves #9)
+Enable/disable toggle per panel. Key collision detection. Export/import as JSON. 13 genre templates. Duplicate panel button. Bug fix: type change no longer deletes panel.
+
+### [6.9.10] — 2026-04-10
+
+#### Fixed — Quality check: 9 issues resolved
+Post-ship quality audit by 4 independent agents found and fixed: meter label-bar overlap at all resolutions (responsive grid columns sized for longest label), `charactersPresent` row removed from scene panel (redundant with Characters section), `witnesses` added to dynamic prompt + normalizer filter (strips names matching `characters[]`), incorrect feature hint corrected, `initI18n()` now awaited before first render (fixes English flash for non-English users), JS tension colors read from CSS variables via `getComputedStyle`, and corrected test assertions + comments.
+
+### [6.9.9] — 2026-04-09
+
+#### Added — Customer experience: model compatibility, feature hints, first-run toast
+Model compatibility guide in setup step 1 (Recommended: Claude Opus 4.6, GPT-5.4, Gemini 3.1 Pro, Grok 4, GLM-5.1 | Compatible: DeepSeek V3.2, Mistral Large 3, Qwen 3 32B+ | Not recommended: under 14B). Tips & Hidden Features section in setup step 4. First-run success toast on first extraction.
+
+### [6.9.8] — 2026-04-09
+
+#### Changed — state.js consolidation + normalize.js test coverage
+state.js: 37 let+setter pairs consolidated into a single internal state object with backward-compat wrappers. tests/normalize.test.mjs: 33 test cases covering the core normalization pipeline (previously zero dedicated coverage).
+
+### [6.9.7] — 2026-04-09
+
+#### Changed — i18n translations extracted to JSON locale files
+Moved 8,350 lines of translation dictionaries from inline JS to 29 JSON files in `locales/`. The JS codebase dropped by ~35%. `i18n.js` is now an 89-line async loader that fetches the appropriate locale on startup.
+
+### [6.9.6] — 2026-04-09
+
+#### Fixed — UI/UX polish + WCAG contrast + theme compliance
+Auto-fit button styled (was rendering white), `--sp-text-dim` raised for WCAG AA (4.1:1 → ~5.5:1), changed-this-turn indicators unified, section scroll trap removed, Story Ideas buttons discoverable at rest, dashboard sub-label legibility improved. Theme compliance: tension CSS variables, panel bg, monogram text, confirm buttons, meter gain/loss all migrated from hardcoded values to CSS custom properties.
+
+### [6.9.5] — 2026-04-09
+
+#### Changed — Scene Details panel overhaul
+Comprehensive visual and informational upgrade to the Scene Details panel: sceneSummary now visible as a dedicated row, sceneTension as a color-coded visual meter with tension-colored left border on the section, charactersPresent as colored name chips, witnesses shown as dimmed dashed chips, solo scene indicator, changed-this-turn dots, italic sound environment, and a richer collapsed badge (tension dot + topic + character count).
+
+### [6.9.4] — 2026-04-09
+
+#### Changed — Separate Experimental section in General settings
+Moved experimental features (function tool calling, NPC relationship graph, weather overlay, time-of-day ambience) into a dedicated "Experimental" section at the bottom of the General settings tab, separated by a dashed border and disclaimer hint.
+
+### [6.9.3] — 2026-04-09
+
+#### Changed — Remove delta mode toggle from settings UI
+Delta mode is now always-on with no user-facing toggle. The `/sp-refresh` command remains as the manual escape hatch.
+
+### [6.9.2] — 2026-04-09
+
+#### Fixed — Integration sweep: 2 critical stale deltaMode checks
+Post-promotion integration sweep by the bug-hunter agent found two critical code paths that still used raw `settings.deltaMode` instead of the shared `shouldUseDelta()` helper, which could cause snapshot corruption on periodic-refresh or `/sp-refresh` turns.
+
+**engine.js continuation re-prompt** (line 492) — when the LLM's response omitted the tracker JSON block, the continuation re-prompt path used `settings.deltaMode && lastSnap` to decide whether to inject delta instructions. This bypassed both the periodic refresh counter AND the `forceFullNextTurn` flag. On a forced-full turn, the continuation would inject delta instructions while the engine expected full-state output, producing a partial snapshot saved as if it were complete. Fixed to use `shouldUseDelta()`.
+
+**schema.js buildDynamicPrompt** (line 315) — used `s.deltaMode && opts.hasPrevState` to decide whether to append the "DELTA MODE" instruction block. On periodic-refresh turns, the interceptor correctly sent a full-state injection prompt, but the schema prompt would still say "DELTA MODE." The LLM would follow the schema's delta instructions and return a partial response, which the engine would save as a full snapshot (because `shouldUseDelta()` was false on the merge side). Fixed to accept `opts.isDelta` from callers and fall back to the raw check only for UI preview callers.
+
+**extraction.js minimum-key threshold** (line 161) — read-only threshold check that would accept both delta (3+ keys) and full (5+ keys) in either direction. Not a data corruption risk (full > 5 > 3 always passes), but inconsistent with the migrated codebase. Updated to use `shouldUseDelta()`.
+
+All engine.js `getActivePrompt()` callers now pass `isDelta: shouldUseDelta()` so the schema prompt and the engine's merge decision are always in agreement.
+
+### [6.9.1] — 2026-04-09
+
+#### Changed — Prompt-level roster pruning + full pipeline reveal test (Phase 3)
+
+**Prompt roster pruning** — the previous-state JSON embedded in the prompt now only includes characters and relationships for NPCs currently in `charactersPresent`. Historical characters who left the scene are pruned from the prompt payload (but preserved in the stored snapshot for the wiki). This reduces input token cost for long-running chats with 10+ historical characters. Applied to all three `_cleanSnap` / `_cleanSnapForPrompt` functions in `interceptor.js` and `engine.js`.
+
+**Full pipeline reveal integration test** — new test case in `tests/delta-mode.test.mjs` that exercises the complete delta → merge → normalize → filterForView pipeline for a character name reveal ("Stranger" → "Jenna" via aliases). Verifies that the renamed character appears correctly in all three arrays (`characters[]`, `relationships[]`, `charactersPresent[]`) and that `filterForView` produces a consistent single-character view.
+
+54 total delta-mode test cases across 7 groups. All 9 test files pass.
+
+### [6.9.0] — 2026-04-09
+
+#### Changed — Delta mode is now the default (Phase 2)
+Delta mode is now enabled by default for all new installations (`DEFAULTS.deltaMode: true`). Existing users who already have delta mode explicitly set in their settings are unaffected — their saved preference takes priority over the new default.
+
+Delta mode saves ~66-77% of output tokens per generation by asking the LLM to return only changed fields, with the client merging the delta against the previous snapshot. The Phase 1 prerequisites (v6.8.50) ensured production-readiness:
+
+- **Periodic full-state refresh** prevents data drift over long conversations (every 15 delta turns, one full-state generation re-establishes ground truth)
+- **`/sp-refresh` recovery command** provides a manual escape hatch when data seems stale
+- **`plotBranches` and `charactersPresent` omission guards** prevent stale array carry-forward
+- **43 critical test cases** cover multi-turn chains, full-state-as-delta, empty deltas, meter stability, and more
+
+Users who experience issues can use `/sp-refresh` to force a single full-state regeneration. The system also auto-refreshes every 15 delta turns to prevent data drift.
+
+### [6.8.50] — 2026-04-09
+
+#### Added — Delta mode production-readiness: periodic refresh, recovery, omission guards, critical tests
+Prerequisite work for promoting delta mode from experimental to default-on. Five independent reviewers (code audit, architecture, data integrity, test coverage, performance) identified two blocking items and one non-blocking data integrity issue. All three are resolved in this version.
+
+**Periodic full-state refresh** — after `deltaRefreshInterval` consecutive delta turns (default 15), the system automatically forces one full-state generation to re-establish ground truth and flush stale scalars, phantom entities, and fossilized relationship meters. The counter is tracked in `_spMeta.deltaTurnsSinceFull` on each snapshot. A new shared `shouldUseDelta()` helper in `settings.js` is the single decision point used by the interceptor (prompt building), engine (delta merge gating), and pipeline (delta merge gating), ensuring all three agree on whether this turn is delta or forced-full. The counter resets to 0 on every full-state generation (including the first turn of a new chat, which is always full).
+
+**Full-state recovery command** — `/sp-refresh` (or `/sp refresh`) forces a full-state regeneration regardless of the delta counter, bypassing delta mode for one generation cycle. The `forceFullStateRefresh()` flag auto-clears after the generation completes (success or failure) via a `finally` block, so subsequent turns resume delta mode normally. Useful when data seems stale or incorrect after many delta turns, or after importing a snapshot from an external source.
+
+**`plotBranches` omission guard** — plot branches should be fresh every turn (5 new story suggestions per the prompt contract). If the LLM omits `plotBranches` from the delta, the delta-merge layer now treats the omission as an explicit empty array (same pattern as the v6.8.45 `charactersPresent` fix), preventing stale suggestions from persisting indefinitely. The normalize-layer carry-forward that previously re-filled empty plotBranches from the prior snapshot has been removed.
+
+**Critical test coverage** — new test file `tests/delta-mode.test.mjs` with 43 test cases covering the six critical/important gaps identified in the test coverage audit:
+1. Multi-turn chain (4 sequential deltas): scalar carry-forward, roster stability, quest cap enforcement through `normalizeTracker`
+2. Full-state-as-delta: LLM ignores delta instructions and returns complete snapshot — entities are merged by name, not doubled
+3. Empty object delta: `{}` produces a clean clone of prev minus resolved quests, with `charactersPresent: []` and `plotBranches: []`
+4. Resolved quest eviction: resolved quests are stripped from carry-forward data
+5. Meter stability: delta updates only `innerThought`, all five relationship meters remain unchanged
+6. plotBranches omission guard: omitted → empty, explicit → replaced
+
+All 9 test files pass (43 new delta-mode cases + 11 solo-scene + 25 delta-merge-fuzzy + 13 character-aliases + 20 group-chat + 46 no-user-as-character + paren-aliases + classify-quest + extraction-cleanjson).
+
+### [6.8.49] — 2026-04-09
+
+#### Changed — Quest journal quality: actionability gate, consolidation, urgency calibration
+**Reported**: (1) "Side quests don't really feel like side quests/side objectives/side tasks" — all 6 side quests were NPC activity logs ("Elly's Tracking Ability", "Jack Browning's Research") instead of player-actionable objectives. (2) "Do you see an issue as to how main quests are handled?" — 5 main quests (exceeding MAX 3), three of them fragments of one investigation, and 4 of 5 marked CRITICAL.
+
+**Root cause (prompt)**: The existing quest rules said "from {{user}}'s perspective" and "consolidate duplicates" but never defined what a quest IS. The model had no actionability gate to reject NPC activity logs, no concept-consolidation rule to merge investigation fragments, and no urgency threshold to prevent CRITICAL inflation. The WRONG/RIGHT example pattern (which worked for NAME AWARENESS) was absent.
+
+**Root cause (code)**: The MAX 3/MAX 4 caps were prompt-only — no code enforcement. The view caps in `filterForView` were set to 5/6 (deliberately above the prompt limit), and the normalize pipeline's carry-forward logic preserved all non-resolved quests without truncation. The previous-state JSON sent back to the LLM contained 5+ quests, so the model saw the over-cap data as valid and perpetuated it.
+
+**Prompt fix** — added a `QUEST VALIDATION` checklist to `src/schema.js` (same structure as the NAME AWARENESS checklist), with four tests every quest must pass before emission:
+
+1. **PLAYER ACTION TEST** — can {{user}} take a concrete action to advance this? NPC abilities, backstory, and independent activity are character notes, not quests. Genre-spanning WRONG/RIGHT examples: "The Ship's Warp Core Status" → "Repair the warp core before the fleet arrives"; "Sir Aldric's Oath of Fealty" → "Earn Sir Aldric's loyalty"; "The Sheriff's Bounty List" → "Collect the bounty on Black Bart".
+2. **CONSOLIDATION TEST** — does an existing quest already cover this objective? Three clues about the same mystery = one quest, not three. Examples span modern investigation, sci-fi escape planning, and medieval crafting.
+3. **URGENCY CALIBRATION** — urgency reflects timing, not emotional weight. Concrete thresholds: CRITICAL = irreversible harm THIS scene or NEXT, MAX 1 critical at a time; HIGH = deadline within days; MODERATE = active, no deadline (most quests); LOW = background aspiration.
+4. **TIER + CAP TEST** — main (MAX 3) = failure reshapes the story; side (MAX 4) = enriching but optional. Single-scene events are never quests.
+
+**Code fix** — two changes in `src/normalize.js`:
+- Hard quest cap enforcement after carry-forward: drops resolved quests first, then trims by urgency rank to 3 main / 4 side. The previous-state JSON sent back to the LLM now never exceeds the stated cap, closing the "model sees 5, emits 5" feedback loop.
+- Lowered `_QUEST_VIEW_CAPS` from `{mainQuests: 5, sideQuests: 6}` to `{mainQuests: 3, sideQuests: 4}` to match the prompt-stated limits.
+
+**Interceptor hint** — updated the mandatory quest hint in `src/generation/interceptor.js` to reinforce the actionability rule and MAX 1 critical constraint.
+
+### [6.8.48] — 2026-04-09
+
+#### Fixed — Tracker placeholder names no longer contaminate narrative prose
+**Reported**: "The LLM is using the alias as if it was a name. It ruins the flow of the narrative." Example: the tracker internally labels a character "Ponytail Nurse" (a physical-descriptor placeholder), and the narrative LLM writes `"Ponytail Nurse" wasn't listed. The name there read Nguyen.` — using the compound placeholder as a proper noun in prose, which reads unnaturally and breaks immersion.
+
+**Root cause**: ScenePulse's default "piggyback" mode (`injectionMethod: 'inline'`) appends the tracker extraction prompt — including the full previous-state JSON with character names like `"Ponytail Nurse"` — into the SAME context window as the narrative generation. The model sees the placeholder name in the tracker JSON and, with zero instruction separating "tracker labels" from "prose vocabulary," naturally treats it as a proper noun and uses it in dialogue and narration.
+
+**Fix**: wrapped the previous-state JSON in `<scene_pulse_tracker_state>` XML tags with a positive-framed anti-contamination instruction placed immediately before the data. The instruction tells the model:
+
+- Character names in the tracker state are **internal tracking labels**, not prose vocabulary
+- In narrative text, **refer to characters naturally** — by appearance, role, pronoun, title, or whatever the story has established
+- Compound placeholder labels must **never appear as proper nouns** in prose or dialogue
+- In the tracker JSON appended at the end, **use these exact label names as-is** for continuity
+- The separation is between **PROSE** (natural descriptions) and **JSON** (tracker labels)
+
+Design decisions (validated by 4 independent reviewers — architecture, prompt engineering, simplicity, LLM behavior):
+
+- **Positive framing** ("refer to characters naturally") over negative prohibition ("NEVER use tracker names") — research shows positive constraints outperform negative instructions for LLM compliance (NegativePrompt, IJCAI 2024)
+- **XML tag delimiters** (`<scene_pulse_tracker_state>`) give the model a structural "this is metadata, not story content" boundary signal, improving compliance by ~5% over plain text warnings (per Anthropic prompt engineering docs)
+- **Placed in `interceptor.js` only**, immediately before the JSON data it governs — not in `schema.js` (too far from the data, also fires in separate mode where contamination isn't an issue)
+- **Machine-readable prefix tags** (e.g. `[SP:Ponytail Nurse]`) were considered but deferred — they add 35+ LOC of permanent complexity across 7 files, and the instruction approach should be validated on real sessions first before escalating
+
+### [6.8.47] — 2026-04-09
+
+#### Fixed — Hover preview now snaps to the hover tooltip (not the overlay gutter)
+**Reported**: "The image isn't snapping to the data for the relationship web data. It's off to the side still."
+
+**Root cause**: the v6.8.46 fix anchored the preview to the outer panel container (`.sp-web-container`), which for a full-width relationship web overlay meant the preview landed way off in the left viewport gutter. The actual "data" the user wanted to see adjacent to the image is the hover tooltip card that appears next to the cursor — a separate DOM node appended to `document.body` by `_showTooltip` in relationship-web.js, containing the character's meters, relationship edges, and absent/present status. That tooltip, not the overlay container, is what the user thinks of as "the data."
+
+**Fix**: added a `DATA_ANCHOR_SELECTORS` priority list to [src/ui/portraits.js](src/ui/portraits.js) checked BEFORE `PANEL_ANCHOR_SELECTORS` on every preview positioning pass. `.sp-web-tooltip` is the first (and currently only) data anchor. When present, the preview snaps its right edge to the tooltip's left edge minus a 16px gap, visually pairing the enlarged image with the tooltip's text. When absent (no hover tooltip active), the preview falls back to panel-anchor positioning, then target-anchor as a last resort.
+
+**Timing fix**: the sibling `mouseenter` handler that creates the tooltip fires AFTER our delegated `mouseover` handler, so at the moment our handler reads the DOM to compute preview placement, the tooltip doesn't yet exist. Fixed by running positioning in two passes: a synchronous first pass (falls back to panel anchor since tooltip isn't there yet), then a `requestAnimationFrame` re-run on the next frame (by which time the sibling handler has added the tooltip, which is now detected as the DATA anchor). The visual transition happens inside the preview's fade-in animation, so the user perceives a single smooth reveal rather than two positions.
+
+#### Fixed — Edges no longer bleed through name labels and dimmed node circles
+**Reported**: "Hide the lines behind the images and bottom text." User showed an "Elly Forester" node with yellow edge lines crossing through both the circle and the name pill beneath it, making the text hard to read.
+
+**Root causes** — two separate opacity issues:
+
+1. **Name pill was translucent** (`opacity="0.82"`). Edges drawn first (behind nodes) showed through the rectangular pill area whenever an edge between two OTHER nodes happened to cross that space. Made the character name hard to read.
+2. **Node group opacity dimmed the whole node, including the backing disc** — off-scene characters rendered at `opacity="0.5"`, meaning 50% of the edges behind their circle showed through the disc fill. The "Elly Forester" line-through-circle case was specifically this: she was off-scene, so her whole node group was at 0.5, and edges behind her circle were half-visible through the dimmed disc.
+
+**Fix — pill**: removed the `opacity="0.82"` attribute and drew the pill rect **outside the dim sub-group** entirely. The pill is now solid `#0c0e14` at full opacity regardless of whether the character is in-scene, off-scene, focused, or org-filtered. Edges behind the pill area are completely hidden.
+
+**Fix — nodes**: split the node `<g>` into two nested groups. The outer `.sp-web-node` carries the click/hover identity and draws an **always-opaque backing disc** (`#0c0e14` at full opacity). The inner `.sp-web-node-dim` carries the dim modifier (`opacity="0.5"` for off-scene, `0.15` for focus/org dim) and contains the coloured disc, portrait/monogram, name text, and in-scene dot. Because the backing disc is outside the dim group, edges behind the node circle are always hidden by a fully-opaque dark disc, then the coloured disc + image/monogram/label render at the dim opacity on top. Off-scene characters still look correctly faded, but no edges show through them.
+
+Visually: in-scene characters look identical to before, off-scene characters still fade to 50% in the coloured disc and label (the same dim state), but now the dim is layered over an opaque dark backing disc so nothing behind the node ever bleeds through.
+
+### [6.8.46] — 2026-04-09
+
+#### Fixed — Hover preview now snaps to the LEFT of the data panel, not the target
+**Reported**: "Image is still hovering over the data in the relationship web. Have the image nestled to the left of the data (snapped to the left of it)."
+
+**Root cause**: the v6.8.45 fix positioned the preview relative to the hovered target's bounding rect (`rect.right + gap`), which put it to the right of the avatar circle. But the avatar circle lives INSIDE the `.sp-web-container` (the centered data panel of the relationship web overlay), so "right of target" landed squarely in the container's content area, overlapping the character name label that sits directly below each avatar node.
+
+**Fix**: the preview now snaps to the LEFT of the nearest **data container**, not the hovered target. A new `PANEL_ANCHOR_SELECTORS` list at the top of [src/ui/portraits.js](src/ui/portraits.js) names the outer container for each avatar-rendering site: `.sp-web-container` (relationship web), `.sp-wiki-container` (character wiki), `.sp-char-card` (main panel cards). On hover, `_showPreviewForTarget` walks up from the target via `closest()` to find the innermost matching ancestor, then positions the preview so its RIGHT edge touches the container's LEFT edge minus a 16px gap. The preview now sits in the side gutter OUTSIDE the data panel where nothing else renders.
+
+Placement fallback chain (tried in order):
+1. **Snap to left of container** — preview's right edge touches `containerRect.left − 16`. User's preferred case.
+2. **Flip to right of container** — if there isn't enough room on the left (narrow viewport, container near the left edge), flip to `containerRect.right + 16`. Still outside the data panel.
+3. **Snap to viewport left edge** — if neither side fits, `tx = 8`. Last resort for extremely narrow screens; may still overlap the container but better than cursor-relative guessing.
+
+Vertical placement still tracks the hovered TARGET (not the container), so hovering different avatars in the same panel produces distinct Y positions that visually correspond to which one is being previewed. The vertical flip-to-bottom-anchored logic from v6.8.45 is preserved for targets near the viewport bottom.
+
+Adding preview support for a new avatar site is now a two-step opt-in: (1) place the three `data-sp-preview-*` attributes on the target (or go through `getPortraitHtml()` which bakes them in), and (2) add the site's outer container class to `PANEL_ANCHOR_SELECTORS` in portraits.js so the preview knows where to snap. Sites that skip step 2 still work via the fallback to target-relative positioning, which gives the old behavior.
+
+### [6.8.45] — 2026-04-09
+
+#### Fixed — Solo scenes no longer populated with the previous beat's cast
+**Reported**: "I have a scene where the character is by himself, but a whole cast of crew appears in the scene. Determine why." User showed {{user}} walking alone through a train yard at dawn ("No voice in his head. No women. Just the dawn coming whether he wanted it to or not."), while the Characters and Relationships panels displayed 9 characters (Buzzcut, Detective Keene, Detective Orozco, Female Paramedic, Jack Browning, Mrs. Patterson, Officer Jane, Paramedic Chris, Reyes) all marked "In Scene".
+
+**Root cause**: four stacked failure modes, any one of which would defeat an empty `charactersPresent` signal from the LLM:
+
+1. **[src/generation/delta-merge.js:181](src/generation/delta-merge.js#L181)** — `charactersPresent` was in `REPLACE_ARRAYS`, meaning an omitted field in the delta left the previous snapshot's value untouched. The LLM interpreted "omit fields whose values didn't change" (delta-mode rule 2) as permission to skip the field entirely in solo scenes, and delta-merge carried the previous beat's full roster forward.
+2. **[src/normalize.js:564-566](src/normalize.js#L564-L566)** — when `charactersPresent` was empty, normalize synthesized it from `characters[]` ("infer from characters array"). Even if delta-merge produced an empty roster, normalize immediately filled it back with every tracked character.
+3. **[src/normalize.js:710](src/normalize.js#L710)** — if `charactersPresent` was still empty after that, normalize carried it forward from the previous snapshot via the comprehensive carry-forward block. A third safety net, also actively wrong for solo scenes.
+4. **[src/normalize.js:1147-1152](src/normalize.js#L1147-L1152)** — `filterForView` treated an empty `charactersPresent` as "no filter data — skip the char/rel sync," returning every character and relationship in the snapshot unfiltered. The view-layer final gate that would have caught the bug instead perpetuated it.
+
+**The prompt side** ([src/schema.js:127, 157, 278](src/schema.js)) also had two direct contradictions: rule 1 said "NEVER return empty array []" while delta-mode rule 2 said "omit fields whose values didn't change." Combined with a vague field description ("ALL character names in the current location or nearby"), the LLM had no clean way to express "the scene is solo" — every path was either forbidden or ambiguous.
+
+**Fix**: all five layers updated to agree on a single contract — *`charactersPresent` is the authoritative signal every turn, an empty array means solo, and no layer may invent or carry forward character presence.*
+
+- **[schema.js](src/schema.js)** — carved out `charactersPresent` from the "NEVER return empty array" rule; rewrote the field description with explicit solo-scene language ("SOLO SCENES ARE REAL... NEVER carry forward the previous scene's roster out of habit"); added `charactersPresent: ALWAYS include` as a new delta-mode rule #7 with an explicit note that omission is a bug.
+- **[delta-merge.js](src/generation/delta-merge.js)** — after the main delta loop, check if the delta omitted `charactersPresent` and set it to `[]` explicitly. The function is only called from delta-mode codepaths, so no conditional guard is needed.
+- **[normalize.js](src/normalize.js)** — deleted the "fill from characters[]" fallback (lines 564-566) and the "carry forward from previous" block (line 710). Both were defensive hacks from a time when the prompt contract was loose; the new strict prompt makes them actively harmful.
+- **[normalize.js filterForView](src/normalize.js#L1147-L1165)** — when `charactersPresent` is empty AND not a group chat, return empty `characters[]` and `relationships[]` arrays instead of skipping the filter. Solo scenes correctly show zero characters in the panel. Group chats still rescue chat members via the existing `_isGroupChat` fallthrough so the chat roster survives even when the model forgot to list them.
+- **[tests/solo-scene.test.mjs](tests/solo-scene.test.mjs)** — new regression test file (11 cases) locking down all four failure modes independently: delta-merge omission, delta-merge explicit empty, delta-merge non-empty replacement, normalize empty preservation, filterForView solo collapse, and a control case for non-empty presence filtering. `tests/group-chat.test.mjs` (20 cases) also continues to pass, verifying the group chat rescue path is unaffected.
+
+After the fix, a solo beat correctly displays zero characters in the Characters and Relationships panels, while the Wiki still shows the full historical roster (the Wiki deliberately reads raw tracker data so you can browse everyone who ever appeared, regardless of current presence).
+
+#### Fixed — Hover preview no longer overlaps the target's own label
+**Reported**: "For the relationship web, the image blocks the data on hover." Screenshot showed the enlarged "Female Paramedic" portrait preview rendered directly on top of the character's name pill below the circle, making the caption unreadable.
+
+**Root cause**: the v6.8.43 / v6.8.44 preview positioned itself relative to the cursor (`clientX + 32, clientY + 20`). When the cursor was inside the target's own avatar circle — which is where the hover handler fires — the `+20` vertical offset placed the preview immediately below the cursor, which landed squarely on top of the target's name label (the pill sitting just below the relationship-web node circle).
+
+**Fix**: replaced cursor-relative positioning with target-relative positioning. The preview now reads `target.getBoundingClientRect()` and places itself outside the target's rect entirely: to the right by default (`rect.right + 24`), flipping to the left (`rect.left - 24 - boxW`) if there isn't enough horizontal room, or centered horizontally as a last resort. Vertical alignment matches `rect.top`, clamped to the viewport. This guarantees the preview never overlaps the source element regardless of how wide or tall the source is — the train-yard "Female Paramedic" node now shows its preview cleanly to the right of the circle + label block instead of on top of the label.
+
+The `clientX`/`clientY` parameters are still accepted by `_showPreviewForTarget()` but are no longer used for primary placement; they're kept for API compatibility in case a future caller wants to influence secondary positioning.
+
+### [6.8.44] — 2026-04-09
+
+#### Fixed — Hover-enlarged portrait preview now universal across the extension
+**Reported**: "Attempted to hover over a real image in the wiki — doesn't work. Verify if that's intended." Followed by: "If there's an avatar used by the extension, ensure it gets enlarged over hover. It might be recommended to consult with professionals about creating a function/single bounce that would be universal across the app."
+
+**Root cause**: the v6.8.43 hover-to-enlarge preview was scoped to the relationship web only. Its `_showPortraitPreview` / `_hidePortraitPreview` helpers lived in `src/ui/relationship-web.js` and were wired exclusively to the `.sp-web-hit` SVG hit areas. The character wiki, thoughts panel, update panel character cards, relationship block headers, and off-scene stubs all rendered avatars through shared helpers but received no hover handler. Architecturally unsound: six avatar sites, one preview behavior, zero shared wiring.
+
+**Fix**: consolidated the preview into a single universal mechanism driven by document-level event delegation, living in `src/ui/portraits.js` alongside the existing `getPortraitDescriptor` / `getPortraitHtml` chokepoint. Key changes:
+
+1. **Universal contract via data attributes**: any element anywhere in the extension with a `data-sp-preview-url` attribute triggers the preview on hover. The delegated listener reads `data-sp-preview-url`, `data-sp-preview-name`, and `data-sp-preview-color` from the hovered element (via `e.target.closest('[data-sp-preview-url]')`) and shows a singleton preview pinned near the cursor. Adding preview support to a new avatar site is a matter of setting three attributes — no JS wiring, no re-registration after re-renders, no init ordering.
+
+2. **Chokepoint through `getPortraitHtml()`**: the existing HTML helper now bakes the three attributes into its URL branch automatically. This covers four sites with zero per-site churn: update-panel character cards, relationship block headers, off-scene stubs, and the thoughts panel. Monogram fallback branches set no attrs and therefore never trigger the preview (enlarging a single letter carries no information).
+
+3. **Explicit attr injection for hand-built sites**: the relationship web SVG (`<circle class="sp-web-hit">`) and the character wiki (`<span class="sp-wiki-avatar-slot">`) build their markup by hand and can't go through `getPortraitHtml()`. Both now call the new `getPortraitPreviewAttrs(descriptor, nameOverride, colorOverride)` helper and interpolate the returned string directly into their templates.
+
+4. **Singleton preview element with in-place mutation**: one preview DOM node is lazily created on first show and reused across all avatar sites. Hover swaps the `<img src>` and caption text in place rather than removing and re-appending the element, eliminating the flashing/reload that a per-site preview would cause when hovering adjacent avatars in a grid.
+
+5. **Orphan guard via `requestAnimationFrame`**: when the hovered element is removed mid-hover (common in the update panel's delta-merge re-render loop and the relationship web's drag re-render), no `mouseout` event fires. A small rAF loop checks `currentTarget.isConnected` on every frame and hides the preview when the target disappears.
+
+6. **`mouseover` / `mouseout` with `closest()` traversal**: uses bubbling events (not `mouseenter` which doesn't bubble), so a single listener on `document.body` covers every avatar without per-site binding. The mouseout handler checks `e.relatedTarget` and ignores traversal to children of the same hover target, preventing flicker when the cursor moves from the `<img>` to its wrapper.
+
+7. **`getPortraitDescriptor()` extended with a `name` field**: the shared descriptor now carries the full character name alongside the first-letter monogram, so the preview caption can be populated without every site having to pass the name separately.
+
+Code changes:
+
+- `src/ui/portraits.js` (+130 LOC): new `getPortraitPreviewAttrs()` export, new `hidePortraitPreview()` export, singleton preview element, delegated listener auto-installed on module import (guarded for DOM readiness), orphan guard, `name` field added to `getPortraitDescriptor()`, `getPortraitHtml()` now calls `getPortraitPreviewAttrs()` internally.
+- `src/ui/relationship-web.js` (−45 LOC): deleted the local `_showPortraitPreview` / `_hidePortraitPreview` helpers and their per-handler wiring. Added `getPortraitPreviewAttrs` call to the `.sp-web-hit` circle template. `_close()` calls the shared `hidePortraitPreview()`.
+- `src/ui/character-wiki.js` (+2 LOC): URL branch of the avatar render now interpolates `getPortraitPreviewAttrs()` into the `<span class="sp-wiki-avatar-slot">` opening tag. `_close()` calls `hidePortraitPreview()`.
+- `css/characters.css` (+37 LOC): new `.sp-portrait-preview` / `.sp-portrait-preview img` / `.sp-portrait-preview-caption` styles, co-located with `.sp-char-portrait`.
+- `css/relationship-web.css` (−28 LOC): removed the old `.sp-web-portrait-preview` styles. The CSS-less selector is now a no-op.
+
+No changes to update-panel.js or thoughts.js — they use `getPortraitHtml()` and inherit the preview automatically. No new files, no new CSS files, no new module. Touch-device behavior unchanged (hover-only, same as v6.8.43).
+
+### [6.8.43] — 2026-04-09
+
+#### Changed — Relationship web labels and avatars are fully uniform
+**Reported**: (1) "For the relationship map, put all names under the circle. Right now, short names are the only ones in it." (2) "If there is no picture for the character in the relationship map, use the first letter of the name. Ensure that there is a function for this and is used for any parts of the code that call for a user picture/avatar." (3) "If a user hovers over an image, it displays an enlarged image on the screen." (4) "Character Wiki has partial avatars — only those with pictures. Ensure all characters have an avatar."
+
+**Fix — labels**: every node in the relationship web now renders its name as a dark pill below the circle, regardless of length. Short names no longer sit inside the circle. Drops the v6.8.42 `_nameFitsInside()` branch entirely — the circle is always either a portrait image OR a monogram letter (never a label), and the label is always a pill below. Visually uniform roster.
+
+**Fix — monogram fallback in the relationship web**: nodes whose characters have no resolvable portrait now render a first-letter monogram inside the circle. The circle is filled with the character's accent color, and the uppercase first letter is drawn in SVG `<text>` scaled to ~95% of the node radius. Matches the style of the main character-card monogram used in the thoughts panel and update panel.
+
+**Fix — unified helper**: added `getPortraitDescriptor(ch, accent, stIndex)` to [src/ui/portraits.js](src/ui/portraits.js). Returns a structured object `{type, url?, letter, bg, fg}` with a guaranteed letter + color, so every avatar-rendering site in the extension can derive the same fallback without duplicating logic. The existing `getPortraitHtml()` now delegates to this helper internally (zero behavior change for callers that already used it). Sites migrated to the descriptor:
+
+- Relationship web nodes (SVG monogram fallback + hover-enlarge)
+- Character wiki entries (HTML monogram fallback)
+
+Older callers (`getPortraitHtml()` consumers in [thoughts.js](src/ui/thoughts.js) and [update-panel.js](src/ui/update-panel.js)) continue to work unchanged because `getPortraitHtml()` now uses the descriptor as its single source of truth.
+
+**Fix — hover preview**: hovering any relationship-web node that has a real image shows an enlarged square preview pinned near the cursor (224px with character-name caption, positioned to avoid viewport edges). Nodes backed by a monogram fallback do not show a preview — the larger size would carry no new information. The preview clears on pointerleave, node click, panel close, or Escape.
+
+**Fix — character wiki avatars for everyone**: the wiki grid and list modes previously rendered an empty slot for any entry without a resolvable portrait URL. Now every entry produces either an `<img>` (URL case) or a `<span class="sp-wiki-avatar sp-wiki-avatar-monogram">` (fallback) with the first letter on the character's accent color. Grid mode uses a 40px avatar with a larger monogram font; list mode uses the 28px default.
+
+### [6.8.42] — 2026-04-09
+
+#### Fixed — Long character names no longer truncate in the relationship web
+**Reported**: "Relationship circles still aren't dynamically adjusting to account for the name of the person so that it's fully displayed." Example screenshot showed "Jack Browning" rendered as "Jack Br…" inside a force-directed web node.
+
+**Root cause**: the v6.8.41 dynamic-radius formula produced a 33px radius for 13-character names, which gave an inside-circle fit capacity of 8 characters (`(33*2 - 8) / 7`). The `_dynamicNodeRadius()` curve capped growth at a 22-character threshold, so names in the 11-21 range always fell short of the radius needed to fit them inside the circle. The inside-circle label path had a fundamental geometric ceiling regardless of how far the radius was grown.
+
+**Fix**: replaced the per-node radius growth with a below-pill label fallback. All nodes now use the same `NODE_R = 28` radius (reverting v6.8.41's per-node sizing, the growth curve's `NODE_R_MAX`, and the layout-spacing `radiusBonus` term). When a name would overflow the inside-circle text space (approximated as `name.length × 6.5 > diameter − 10`), the label renders as a dark pill below the circle with width growing to fit the full name, reusing the same render path already used for portrait nodes. Short names ("Reyes", "Buzzcut") still render inside the circle unchanged; long names ("Jack Browning", "Paramedic Chris") get a below-pill label with no truncation. This removes three magic-number tuning knobs (`NODE_R_MAX`, the 22-char cap, the radius bonus multiplier) and simplifies the layout code.
+
+#### Changed — NAME AWARENESS checklist added to the character prompt
+**Reported**: "I want names to be updated once they're found out. For instance, 'Buzzcut' was 'Officer Buzzcut' because his name wasn't mentioned in the story, but they referred to him as 'Buzzcut' as if it was, when it was just an identifier for his character at the time. There needs to be ways to track full names for characters (first and last). If any part of their name isn't known, then it should be an alias until then. Once either a last name or a first name is known, then the true name gets replaced with the actual name."
+
+**Root cause**: the infrastructure for placeholder → real-name promotion already existed and was correct. `src/generation/delta-merge.js` lines 289-318 have a REVEAL match path: when the LLM emits `{name: "Jack Browning", aliases: ["Buzzcut"]}`, the merger renames the prior entry from "Buzzcut" to "Jack Browning" and `reconcileIdentityAliases()` rewrites all stale relationship and presence references. `tests/character-aliases.test.mjs` covers 13 cases of this flow. The failure wasn't in the code path — it was in **LLM compliance**. The prior prompt mentioned alias promotion as a single sentence buried inside the `aliases` field description, and the model routinely forgot to emit the aliases hint on reveal.
+
+**Fix**: added a dedicated **NAME AWARENESS** checklist section in `src/schema.js` that runs as part of the character-output prompt. It forces a per-character, per-turn check:
+
+1. Classify the current canonical name as PLACEHOLDER or REAL NAME (with explicit placeholder signals: physical descriptors, role-only labels, definite-article epithets).
+2. Check whether any real name — first OR last OR full — was mentioned this turn.
+3. If #1 is placeholder and #2 is yes, PROMOTE NOW: set `name` to the fullest known real name, push the old placeholder into `aliases`, emit a single entry.
+4. When uncertain, prefer promoting — the client preserves the old value as an alias, so nothing is lost.
+
+The checklist includes explicit multi-turn progression examples covering both first-name-only and full-name reveals:
+
+```
+Turn N:   {name: "Buzzcut",       aliases: []}
+Turn N+1: {name: "Jack",          aliases: ["Buzzcut"]}         ← first name revealed
+Turn N+2: {name: "Jack Browning", aliases: ["Buzzcut", "Jack"]} ← last name revealed
+```
+
+Plus explicit anti-patterns (two entries under different names, keeping the placeholder after reveal, embedding aliases in parens in the `name` field, omitting the old placeholder from `aliases` on the reveal turn). No code changes to `delta-merge.js` or `normalize.js` were needed — the existing REVEAL path handles everything once the model actually emits the aliases hint.
+
+### [6.8.41] — 2026-04-08
+
+#### Added — Organization tracking + filter in the relationship web
+**Reported**: "I want the relationship web to generate organizations that can be filtered. For example, what if there are 5 cultists, but 3 of them are for a different cult? Or multiple teachers, but they work for different schools? There needs to be a tracking for that."
+
+**Fix**: the NPC graph inference now emits a top-level `organizations` array alongside `edges`. Each organization has a `name`, a genre-neutral `kind`, and a `members` list. Characters may belong to multiple organizations, and two organizations with the same `kind` are deliberately kept separate when the story implies they are distinct institutions (two cults with different names, two schools with different names, two crews on different ships, etc.).
+
+The prompt was extended with a dedicated **## Organizations** section containing multi-genre examples (modern precincts, medieval orders, sci-fi crews, slice-of-life staff, horror cults) and an explicit rule: *"When two characters share the same kind of role (both teachers, both cultists, both knights), ask whether the story implies they belong to the SAME institution or DIFFERENT ones. If it's ambiguous, err on the side of treating them as separate unless there's clear textual evidence they work together."*
+
+The relationship web legend now shows a new **Organizations** section below the edge-type filters. Each detected org renders as a colored chip showing `[name] [kind] [member count]`. Clicking a chip highlights all its members with a colored halo ring and fades non-members to 15% opacity (union semantics for multi-select). The "All" reset chip clears the org filter. Chips persist across re-renders and are cleared automatically on regeneration since the org list may change.
+
+#### Changed — Relationship web layout spacing
+**Reported**: "The initial webbing is very closely packed. Is there a way so that there is more spacing between them?"
+
+**Fix**: Fruchterman-Reingold constants rebalanced for more breathing room on first layout:
+
+- `k` multiplier bumped `0.65` → `1.05` (main ideal-edge-length constant)
+- Initial ring radius bumped `0.28` → `0.36` of `min(W, H)` so nodes start more spread out
+- Initial temperature bumped `0.12` → `0.18` so the early simulation can travel further
+- Iterations bumped `180` → `200`
+- Per-node jitter bumped `30` → `40` pixels
+- New `radiusBonus` term: when the roster contains dynamically-sized nodes (see next section), `k` is increased proportional to the largest node radius so oversized circles don't overlap
+
+#### Changed — Dynamic node radius for long names
+**Reported**: "Increase the size of the circles dynamically to accommodate longer names. Make the current size the default size still until it gets dynamically adjusted."
+
+**Fix**: added `_dynamicNodeRadius(name)` which returns the existing `NODE_R = 28` for names of 10 characters or fewer (so most rosters are visually unchanged) and grows linearly up to `NODE_R_MAX = 48` for names of 22+ characters. The computed radius is stored on each node as `node.radius` and propagated through every rendering path: the clipPath `<defs>`, the node background circle, the portrait image, the hit-area radius, the in-scene dot position, the drag clamp, the layout margin clamp, and the label fit-capacity calculation. `{{user}}` node also uses dynamic sizing with a `+4px` bonus over `CENTER_R`.
+
+### [6.8.40] — 2026-04-09
+
+#### Changed \u2014 NPC graph prompt rewritten to be genre-agnostic
+**Reported**: "Do the changes account for different scenarios, like common medieval roleplay, sci-fi, modern, etc. It needs to be universal to all forms of story telling... it needs to also account for other types of fields \u2014 not just the ones listed."
+
+**Root cause**: the v6.8.39 prompt rewrite was heavily biased toward modern procedural/police/medical settings. The "What COUNTS as an edge" examples were patrol partners and IA detectives; the keyword shortcut list mentioned "officer", "detective", "paramedic", "EMT"; the output example showed Officer Jones + Detective Alvarez + Paramedic Lee. A fantasy chat with knights and wizards, a sci-fi chat with bridge crew, or a slice-of-life chat with teachers wouldn't get the same structural-tie detection because the prompt was pattern-matching on modern vocabulary instead of teaching the model to reason about the underlying structures.
+
+**Fix**: rewrote the prompt from scratch around the principle that **relationship structures are genre-independent** \u2014 only the vocabulary changes. Key changes:
+
+1. **Explicit multi-genre framing at the top**: *"Given a list of characters from an ongoing story of ANY genre (modern, medieval, fantasy, sci-fi, historical, slice-of-life, noir, post-apocalyptic, wuxia, space opera, urban fantasy, western, horror, romance, or anything else)..."*
+
+2. **Replaced "keyword shortcut list" with structural categories**. Instead of enumerating modern-only keywords, the prompt now teaches 7 genre-neutral questions the model should ask for each pair:
+   - Do they share a **hierarchy**? (any ranking system where one answers to another)
+   - Do they share a **team, unit, or working group**?
+   - Do they belong to the same **organization, order, house, or clan**?
+   - Do they share a **household, camp, caravan, ship, or lodging**?
+   - Do they share a **craft, calling, or role-type**? (healer, warrior, scholar, performer, spy/scout)
+   - Is there a **vertical teaching relationship**? (master/apprentice, mentor/trainee, elder/novice)
+   - Is there a **named story-specific tie**?
+
+3. **Examples for each category span 6+ genres** (modern, military, medieval/fantasy, sci-fi, academic, criminal/political, religious, historical) with the explicit note: *"these are illustrations, not a closed list"*. The prompt instructs the model to generalize the pattern, not match on the specific words.
+
+4. **"The pattern generalizes" callouts** for craft/calling \u2014 "any kind of healer", "any kind of warrior", "any kind of scholar" \u2014 teaching the model to detect peer relationships across profession vocabulary it hasn't seen specific examples for (monster hunter, herbalist, hacker, wuxia sect disciple, post-apocalyptic scavenger, xenolinguist, etc.).
+
+5. **Genre-neutral type definitions**: `mentor` includes "magic tutor, combat instructor, academic advisor, wise elder"; `authority` includes "liege, master, abbot, guildmaster, boss, judge, king"; `family` includes "clan relative, sworn brother".
+
+6. **Four output example templates spanning different genres** (modern procedural, medieval fantasy, sci-fi, slice-of-life) with explicit framing: *"use these as **structural templates**, not content to copy. The structure is identical across genres \u2014 only the labels change to match the setting."* Anchors the model on the structural shape rather than on any one genre's vocabulary.
+
+7. **"What does NOT count" negatives updated**: added *"don't assume all elves hate all dwarves; don't assume all soldiers are bitter; don't assume all nobles know each other"* to prevent the model from inventing relationships from genre convention alone.
+
+8. **Label guidance**: *"The label should fit the genre of the story \u2014 'patrol partner' fits modern, 'sworn brother' fits medieval, 'bridge officer' fits sci-fi, 'fellow apprentice' fits fantasy."*
+
+**Impact**: a medieval chat with a fellowship should now produce "sworn brother" + "knight and squire" + "fellow council member" edges. A sci-fi chat should produce "bridge officer" + "commanding officer" + "away team" edges. A slice-of-life school chat should produce "teaching staff" + "childhood friend" + "student club member" edges. The structural reasoning is the same; only the labels change to match the world.
+
+234/234 tests still pass. No code changes outside the prompt function.
+
+### [6.8.39] — 2026-04-09
+
+#### Added \u2014 "Auto-fit thoughts" toggle button in thought panel header
+The fit toggle (added as a settings drawer checkbox in v6.8.38) now also has a dedicated button in the thought panel header, next to the existing snapleft / ghost / regen / close buttons. Clicking it flips `settings.thoughtPanelFit`, updates the header button's active state, and immediately re-runs `autoFitThoughtPanel()` so the scale change is visible without reloading. The settings drawer checkbox stays in sync when toggled from either side.
+
+**Custom icon**: four arrows pointing inward from each corner toward a centered highlight square \u2014 the universal "compact / fit to screen" glyph. Rendered as inline SVG to match the other header buttons' visual weight. No PNG or icon font dependency.
+
+#### Changed \u2014 NPC graph prompt rewritten for richer relationship coverage
+**Reported**: "there are multiple officers and multiple paramedics. After a generation, it only accounted for one link. How can we improve relation building?"
+
+**Root cause**: the v6.8.27-v6.8.36 NPC graph prompt told the model to emit only "narratively significant" connections with a negative example of "a waiter who served a drink". The model was interpreting that conservatively \u2014 two cops in the same scene without specific dialogue about their shared job got classified as "not narratively significant enough" and skipped. Same for two paramedics on the same call, two IA detectives working the same case, family members without explicit mentioned relationships. The model defaulted to "emit the most dramatic few" rather than "systematic pass over all pairs."
+
+**Fix**: four prompt rewrites working together:
+
+1. **Explicit pairwise instruction.** The new prompt says: "For EACH PAIR of characters in the roster, consider whether they have ANY connection \u2014 structural, social, professional, familial, romantic, or conflict-based \u2014 and emit an edge when they do. Work through the list systematically." This replaces the old "only emit connections with actual narrative weight" framing that encouraged skipping.
+
+2. **Soft target edge count.** Based on roster size:
+   - 2\u20133 characters: `n-1` to `~2n` edges
+   - 4\u20136 characters: `n` to `~2.5n` edges
+   - 7+ characters: `~1.3n` to `~2.5n` edges (capped at 30)
+   
+   The prompt tells the model the target range explicitly: "Roster has **N characters** \u2014 aim for **X\u2013Y total edges**. If you emit fewer than X, you are undercounting structural ties." This gives the model a floor it can hit instead of defaulting to 1-2 "important" edges.
+
+3. **Structural ties section.** New "What COUNTS as an edge" block lists examples the model should emit eagerly:
+   - Same team/partnership (patrol partners, shift-mates, IA detectives on the same case, paramedics on the same truck)
+   - Same organization (all officers on one force are colleagues even without specific dialogue)
+   - Family household, squad, unit, band, gang, crew, class, department
+   
+   Paired with a "What does NOT count" block that keeps the old negative examples (waiter, background crowd, strangers).
+
+4. **Role-keyword shortcuts.** The prompt now tells the model to scan role descriptions for common patterns:
+   - `"officer"`, `"detective"`, `"deputy"`, `"cop"` from same precinct \u2192 colleague edges
+   - `"paramedic"`, `"EMT"`, `"medic"` on same call \u2192 shift partner edges
+   - `"junior partner"`, `"senior partner"`, `"mentor"`, `"trainee"` \u2192 paired mentor/authority edges
+   - Role mentions another named character (`"Jenna's sister"`) \u2192 explicit relationship
+   - Shared last names often imply family
+
+5. **Default type guidance.** "When in doubt between friend and acquaintance, pick acquaintance \u2014 it's the honest default for colleague relationships without specific warmth established." Prevents the model from inflating every colleague tie to "friend".
+
+**Impact**: a 7-character roster like the user's (Officer Jane, Buzzcut, Reyes, Detective K, Detective O, Paramedic Chris, Female Paramedic) should now emit roughly 9\u201317 edges instead of 1\u20133 \u2014 capturing the "same precinct" colleague edges, the paramedic shift pairing, the IA detective partnership, and any named narrative ties on top. Regenerate the NPC graph after upgrading to see the richer web.
+
+234/234 tests still pass.
+
+### [6.8.38] — 2026-04-09
+
+#### Added \u2014 character portraits in relationships panel
+The relationship blocks now show a 22\u00D722 circular portrait thumbnail next to the character name. Uses the same four-layer `portraits.js` resolver as the main character card: user override \u2192 SillyTavern character avatar \u2192 alias-matched ST avatar \u2192 monogram fallback. The resolver walks the character entry's `aliases` field so an NPC named "Stranger" (that was later revealed as "Jenna") still picks up Jenna's ST avatar once the alias link is established.
+
+#### Added \u2014 character portraits in thought panel
+The thought panel cards now show a 28\u00D728 circular portrait thumbnail to the left of the character name. The existing thought-bubble decorative icon stays on the right of the header (it floats via `order: 1` + `margin-left: auto` in the CSS). Same portrait resolver as the relationships panel and main character card.
+
+#### Added \u2014 "Auto-fit thoughts to screen" toggle
+**Reported**: "I have 7 characters that are present in the scene currently. The thoughts extend past the scene. I want a toggle setting for having the system auto-adjust the thoughts so that they all fit on-screen and visible to the viewer."
+
+New setting in General: **"Auto-fit thoughts to screen"** (off by default). When enabled:
+1. `autoFitThoughtPanel` measures the panel's natural scrollHeight.
+2. If natural height exceeds the viewport cap (window height minus ST top bar minus 8px bottom margin), it computes a scale factor `(availableHeight - slack) / naturalHeight`, clamped to `[0.55, 1.0]` so text stays readable.
+3. Sets a new CSS custom property `--sp-tp-fit-scale` on the panel root.
+4. Every card dimension in `css/thoughts.css` is now wrapped in `calc(base * var(--sp-tp-fit-scale, 1))` \u2014 font size, padding, margin, portrait size, thought-bubble icon size.
+5. When the natural content fits without scaling, the scale property is unset and cards render at their full size.
+
+Result: a roster of 7+ characters that previously forced internal scrolling now shrinks proportionally so every card is visible at once. The 55% minimum scale keeps text legible; below that, the panel falls back to scrolling instead of making text unreadable.
+
+**Not affected when off**: users who prefer the current scrolling behavior see no change. The CSS `calc()` expressions default to `* 1` when the scale property is unset.
+
+#### Architecture notes
+- The fit-scale must be reset to the unset state BEFORE measuring natural height at the start of each `autoFitThoughtPanel` call, otherwise repeated calls would compound the scale and cards would shrink further on every render.
+- CSS `calc()` with a CSS custom-property-based scale is preferred over `transform: scale()` because transforms don't re-flow \u2014 a transform-scaled panel would still occupy its original bounding box, wasting space. Multiplying through font-size and padding makes the panel actually smaller.
+- Pattern backgrounds (v6.8.33) continue to work unchanged because they're `background-image` URIs; scaling the container doesn't affect how the pattern tiles.
+
+234/234 tests still pass.
+
+### [6.8.37] — 2026-04-09
+
+#### Fixed \u2014 Relationships panel showed wrong name for title-collision characters
+**Reported**: Two new characters "Detective Keene" and "Detective Orozco" both rendered as "Detective Keene" in the relationships panel, while the characters panel correctly showed both. The data layer was fine \u2014 the bug was only in the relationship section's `displayName` resolver.
+
+**Root cause**: [src/ui/update-panel.js](src/ui/update-panel.js) line 600 did a loose first-token fuzzy match as a fallback when looking up the canonical casing of a relationship name in the characters array:
+
+```js
+const chFirst = chLow.split(/\s/)[0];   // "detective"
+const relFirst = relLow.split(/\s/)[0]; // "detective"
+if (chFirst === relFirst && chFirst.length > 2) {
+    displayName = ch.name;  // picks WHICHEVER detective came first
+    break;
+}
+```
+
+This is the same class of bug I fixed in `src/color.js` in v6.8.33 \u2014 any two characters sharing a title/honorific first word ("Detective", "Officer", "Dr.", "Lord", "Captain", "Father", "Lady") would collide to whichever character the loop iterated first. The `src/color.js` fix used a TITLE_STOPLIST; the update-panel.js displayName resolver was never touched.
+
+**Fix**: removed the fuzzy first-token branch entirely. Since v6.8.30 the normalizer already canonicalizes relationship names via the alias map, so an exact match plus the substring alias form (`"Jenna"` \u2194 `"Jenna Smith"`) is sufficient. The fuzzy fallback was legacy code that hasn't been needed for several releases but kept firing on title collisions.
+
+Scenarios verified:
+- `"Detective Keene"` + `"Detective Orozco"` \u2192 distinct display names
+- `"Jenna"` \u2194 `"Jenna Smith"` alias \u2192 still resolves (substring clause)
+- `"Officer Jane"` exact match \u2192 still works
+- Previously broken: all cases with a shared first token + a title prefix
+
+234/234 tests still pass.
+
+#### Not a bug \u2014 log line duplication explained
+The debug logs showed each `Entity merge: new entity added: detective keene` line appearing twice, which looked suspicious. It's actually correct behavior: the merge loop runs once per entity array in the delta (characters, relationships, mainQuests, sideQuests), so one new character that appears in both `characters[]` and `relationships[]` produces two log lines. Chatty but not a duplication bug.
+
+### [6.8.36] — 2026-04-09
+
+#### Fixed \u2014 Relationship web rendered multiple edges per NPC pair
+**Reported**: the NPC graph was drawing multiple lines between the same two characters (e.g. Reyes\u2194Officer Jane had both "protective colleague" and "grateful" labels as separate edges).
+
+**Root cause**: the edge dedup in [src/ui/relationship-graph.js](src/ui/relationship-graph.js) keyed by the `(from, to, type)` triple, so the LLM could emit the same pair with two different types and both would pass through as separate edges. Same for reciprocal detection \u2014 it needed identical types on both sides.
+
+**Fix**: dedup by `(from, to)` PAIR only. A relationship between two characters is one connection, period. When the LLM emits multiple facets for the same pair, a new `TYPE_PRIORITY` map picks the strongest narrative tie:
+
+```
+family (10) > lover (9) > lust (8) > antagonist (7) > mentor/authority (6)
+> rival (5) > ally (4) > friend (3) > acquaintance (1) > unknown (0)
+```
+
+First-seen wins on ties so labels stay stable across re-renders. Reciprocal detection simplified to pair-only matching since each direction now has exactly one edge.
+
+#### Fixed \u2014 Hex pattern (pattern 9) had a visible seam on repeat
+**Reported**: "one of the pattern cuts off in its repetition for character cards".
+
+**Root cause**: the hex pattern drew a central hexagon plus two half-hexagons at the left and right edges of the tile at y=20\u201332. The half-hexagons expected continuity with the *previous* tile's bottom-half hexagons \u2014 but those weren't drawn, so tiled repetition showed a visible horizontal seam where the bleeding edges didn't meet.
+
+**Fix**: redesigned as a single centered hexagon fully contained inside a 28\u00D728 tile. No bleeding edges, no continuity dependencies.
+
+```svg
+<path d="M14,5 l7,4 l0,10 l-7,4 l-7,-4 l0,-10 z" .../>
+```
+
+Audited the other 11 patterns for tileability \u2014 diagonal stripes (1, 2), chevron (8), and zigzag (11) rely on edge-meeting continuity but their path geometry is self-consistent (endpoints on opposite edges at matching coordinates). All tile cleanly.
+
+234/234 tests still pass.
+
+### [6.8.35] — 2026-04-09
+
+#### Fixed \u2014 Relationship Web drag had an invisible wall at default canvas bounds
+**Reported**: "relationship web has a maximum distance for dragging people around. I want the user to be able to drag as far as they want within the window pane when fully zoomed out."
+
+**Root cause**: the drag handler in [src/ui/relationship-web.js](src/ui/relationship-web.js) was clamping node positions to `[NODE_R, W-NODE_R]` \u00D7 `[NODE_R, H-NODE_R]` where `W=1000, H=700` are the default SVG canvas constants. When users zoomed out (`viewBox.w` grew to 2-3\u00D7 the default), they could still only drag nodes inside the original 1000\u00D7700 box \u2014 creating an invisible wall at the canvas center regardless of how far they'd zoomed out.
+
+**Fix**: clamp against the CURRENT viewBox bounds instead of fixed W\u00D7H constants:
+
+```js
+const minX = viewBox.x + NODE_R;
+const maxX = viewBox.x + viewBox.w - NODE_R;
+// ...
+```
+
+Now when you zoom out to see more canvas area, you can drag nodes to any point in the expanded view. The small `NODE_R` margin inside the viewBox keeps the node circle from clipping past the visible edge during the drag. 234/234 tests still pass.
+
+### [6.8.34] — 2026-04-09
+
+#### Changed \u2014 character pattern backgrounds less prominent
+Per user feedback that the v6.8.33 per-character SVG patterns were too visible. Reduced the baked-in opacity of all 12 pattern generators by ~40%:
+- Previous range: 0.08 \u2013 0.14 (average ~0.11)
+- New range: 0.04 \u2013 0.08 (average ~0.07)
+
+Patterns now read as barely-there ambient texture rather than a noticeable foreground layer. The character accent color is still identifiable at a glance but the flat tint dominates instead of the pattern. 234/234 tests still pass.
+
+### [6.8.33] — 2026-04-09
+
+#### Added \u2014 expanded character color palette (10 \u2192 30 colors)
+Tripled the character color palette to reduce visual collisions when a chat has many tracked characters. Colors hand-curated for:
+- Distinct perceptual spacing (>15\u00B0 hue separation between neighbors)
+- Consistent luminance against the dark theme background
+- No muddy yellows, no unreadable saturated reds
+- Every accent passes a contrast check against `#0c0e14`
+
+The palette is organized in four bands: warm core (teal/pink/amber/sky/rose/sage/gold), cool mid (lavender/mint/periwinkle/coral/cerulean/bronze/lime), saturated feature (orange/mauve/aqua/magenta/chartreuse/royal blue/apricot), and desaturated neutrals (sage green/dusty violet/sand/slate teal/clay pink/steel blue/khaki/dusty mauve/jade). Adjacent indices get visually different hues so the first N characters in a scene don't all look similar.
+
+#### Added \u2014 per-character SVG background patterns
+Every character card, relationship block, thought card, and Character Wiki entry now renders with a subtle per-character SVG pattern layered over the flat background tint. 12 pattern generators:
+- `dots`, `diagonal` (two variants), `crosshatch`, `grid`, `waves`, `triangles`, `circles`, `chevron`, `hex`, `plus`, `zigzag`
+
+Patterns are deterministic per character (hash of lowercased name mod 12) and rendered as inline SVG data URIs. Tint color = the character's accent at 0.08-0.16 alpha so the pattern reads as a subtle texture rather than a distracting foreground. 30 colors \u00D7 12 patterns = **360 distinct (color, pattern) combinations** before any two characters look identical.
+
+Data URI encoding is minimal (only `<`, `>`, `#`, `"` escaped) so payloads stay small; browsers cache repeated pattern instances efficiently.
+
+#### Fixed \u2014 title collision in the fuzzy color matcher
+**Root cause**: the v5.x fuzzy color matcher in [`src/color.js`](src/color.js) had a loose first-token match — any two characters whose first word matched (length > 2) would get the same color. "Officer Jane", "Officer Buzzcut", "Officer Ponytail", "Dr. Smith", "Dr. Jones", "Lord Varys", "Lord Tyrion", "Mr. Brown", "Father Martin" \u2014 all broken.
+
+This was a bigger contributor to the "three of the same colors" user report than the 10-color palette cap alone, because it was *actively* collapsing distinct characters instead of just running out of colors.
+
+**Fix**:
+1. Added a **TITLE_STOPLIST** of ~50 common titles and honorifics (officer, detective, sergeant, doctor, dr, mr, mrs, ms, sir, lord, lady, king, queen, captain, father, mother, priest, saint, the, uncle, grandma, ...).
+2. Added a `_cleanTok()` helper that strips trailing/leading punctuation so `"Dr."` normalizes to `"dr"` for stoplist lookup.
+3. The first-token fuzzy match now skips when the shared token is in the stoplist.
+
+The alias form (`"Yuzuki"` \u2194 `"Yuzuki Tamura"`) is preserved \u2014 only the loose title match is gated.
+
+#### Consumers updated
+`update-panel.js` (character cards + off-scene stubs), `update-panel.js` (relationship blocks), `thoughts.js` (thought panel cards), and `character-wiki.js` (wiki entry cards) all set the new `--char-pattern` CSS variable alongside the existing `--char-bg`/`--char-border`/`--char-accent`. CSS selectors updated to use a two-layer background:
+
+```css
+background-image: var(--char-pattern, none);
+background-color: var(--char-bg, ...);
+background-repeat: repeat;
+```
+
+The pattern paints as the top layer and the flat tint below. When `--char-pattern` is unset (stub entries, absent characters, legacy code paths) the top layer resolves to `none` and the flat bg remains \u2014 backward compatible.
+
+234/234 tests still pass.
+
+### [6.8.32] — 2026-04-09
+
+#### Fixed \u2014 Thought panel not using full vertical height
+**Reported**: The inner-thoughts panel left dead space at the bottom of the screen even when it had more content to show. The main ScenePulse panel fills the viewport properly; the thoughts panel didn't.
+
+**Root cause**: the thought panel had two compounding height limits that both fell short of the viewport:
+1. CSS: `max-height: 85vh` \u2014 hard 15vh dead zone at the bottom regardless of what else was on screen.
+2. JS `autoFitThoughtPanel`: `maxH = window.innerHeight * 0.85` \u2014 same 85% cap but computed in pixels, same result.
+3. JS `snapThoughtToLeft`: `maxH = Math.min(chatRect.height, window.innerHeight * 0.85)` plus a hardcoded `top = Math.max(34, chatRect.top)` that ignored ST's actual top bar height.
+
+Meanwhile `panel.js` correctly measures ST's top bar (`#top-bar` / `#top-settings-holder` / `.header`) and sets the main panel to `calc(100vh - topBarBottom)`, giving it the full usable column.
+
+**Fix**: the thought panel now mirrors the main panel's approach. New `_measureTopBar()` helper in [src/ui/thoughts.js](src/ui/thoughts.js) reads the actual ST top bar height the same way panel.js does. Both `autoFitThoughtPanel` and `snapThoughtToLeft` use `window.innerHeight - topBarBottom - 8px bottom margin` as their height cap. The 8px margin keeps the panel from butting right up against the viewport edge. CSS `max-height` loosened to `calc(100vh - 16px)` so it acts as a sane fallback before JS layout runs but doesn't fight the JS-computed value.
+
+**Result**: the thought panel now grows to fill the full usable column \u2014 no more 15vh dead zone, no more hardcoded 34px top offset that didn't match the actual top bar in all layouts.
+
+### [6.8.31] — 2026-04-09
+
+#### Fixed \u2014 duplicate relationship entries leaking through to the panel
+**Reported**: A new chat showed 4 characters (Officer Jane, Truck Driver, Officer Buzzcut, Officer Ponytail) but 4 relationships where three of them were separate entries for Officer Jane with different relType labels ("Former Predator/Prey", "Interrogating Authority", "Peripheral Authority"). The LLM was emitting multiple relationship entries for the same character representing different "facets" of the NPC's perception of {{user}}.
+
+**Root cause**: The v6.8.30 normalize canonicalization pass correctly dedupes multiple same-name relationship entries, BUT the assignment back to `o.relationships = out` only fires when `rewrote > 0 || out.length !== original.length`. In this case `rewrote === 0` (all three "Officer Jane" entries are already canonical — no alias rewriting happened) but `out.length !== original.length` (dedup did reduce from 4 → 2) so the assignment SHOULD have fired. A unit test reproducing the exact payload confirmed normalize DID dedupe correctly.
+
+So the dedup was happening at the normalize layer, but something downstream was bypassing it \u2014 either a render path that fed filterForView a snapshot without re-normalizing, a WeakMap cache hit on an old code path, or delta-merge reconstituting a fresh relationships array from storage.
+
+**Fix**: add the canonical-name dedup directly to `filterForView` as a belt-and-braces pass. This guarantees the render layer NEVER sees duplicate relationship entries regardless of which normalize path the snapshot came through, what WeakMap caches might exist, or whether delta-merge rewrote the array.
+
+**Semantics**: for multiple entries collapsing to the same canonical name, the merged entry keeps the FIRST-seen `relType` / `relPhase` / `milestone` labels so user-visible display stays stable turn-to-turn. Non-zero numeric meters win (first-seen non-zero). Non-empty string fields fill in where the first entry had empty values.
+
+**Tests**: 2 new cases in `tests/character-paren-aliases.test.mjs`:
+- `filterForView: dedup duplicate same-name relationships` \u2014 4 rels (3 Officer Jane + 1 Truck Driver) collapse to 2, Officer Jane keeps first-seen label
+- `filterForView: dedup via alias resolution` \u2014 3 alias-equivalent rels (Officer Jane / The Entity / Lilith) collapse to 1 canonical
+
+**Full sweep**: 234/234 passing (51 character-paren-aliases + 49 character-aliases + 26 delta-merge-fuzzy + 24 classify-quest + 46 no-user-as-character + 20 group-chat + 18 extraction-cleanjson).
+
+#### Changed \u2014 canonicalization log promoted to info level
+The `Canonicalize: relationships rewrote=X before=Y after=Z` log in normalizeTracker previously fired only when verbose logging was on, which made the v6.8.30 regression hard to diagnose. Now fires at info level so the next time this kind of dedup issue arises, the console shows which path did what.
+
+### [6.8.30] — 2026-04-09
+
+#### Fixed \u2014 empty character card for chars with paren-aliases in cross-array references
+**Reported**: "I'm on message 18 on a new chat, and no information is being pushed to a character." Character card rendered as "Officer Jane (The Entity/Lilith)" with every field empty except role = "Eternal Mates Reborn".
+
+**Root cause** \u2014 traced via the actual payload provided by the user:
+
+The LLM emitted the character cleanly in `characters[]`:
+```json
+{ "name": "Officer Jane", "aliases": ["The Entity", "Lilith"], "role": "...", "innerThought": "...", ... }
+```
+
+But referenced the same character inconsistently elsewhere:
+```json
+"relationships": [
+  { "name": "Officer Jane (The Entity)", ... },
+  { "name": "Officer Jane (The Entity/Lilith)", ... }
+],
+"charactersPresent": ["Officer Jane (The Entity/Lilith)"]
+```
+
+`filterForView` at [src/normalize.js](src/normalize.js) did exact-name matching against `charactersPresent`. The real "Officer Jane" was NOT in the present-set ("officer jane (the entity/lilith)" is a different string) so she got **filtered out**. Then the sync-stub fallback invented a phantom character `{name: "Officer Jane (The Entity/Lilith)", role: "Eternal Mates Reborn"}` from the mismatched relationship entry. That synthetic stub is what rendered as the empty card \u2014 the real character data was in storage the whole time, just filtered out of the view.
+
+**Fix \u2014 five layers**:
+
+1. **`normalizeChar` now splits paren-aliases from the name field** when they look alias-like. Heuristic: short (\u226460 chars), no sentence punctuation, no possessive 's, no "of the", parts start with uppercase or are \u226415 chars. `"Officer Jane (The Entity/Lilith)"` \u2192 `name: "Officer Jane", aliases: ["The Entity", "Lilith"]`. Descriptive parentheticals like `"John (the scientist who studied black holes.)"` are preserved as-is.
+2. **`normalizeTracker` canonicalizes cross-array references**. After characters[] is parsed, an alias \u2192 canonical map is built. Any relationship or charactersPresent entry whose name matches a known alias (or a paren-stripped base name, or a paren item) is rewritten to the canonical form.
+3. **Post-canonicalization dedup** merges relationship entries that collapsed to the same canonical. Non-zero numeric fields win on collision; non-empty strings win on collision.
+4. **Prompt tightening**: new "NAME FIELD INTEGRITY" rule in `BUILTIN_PROMPT`, `buildDynamicPrompt`, and the `interceptor.js` runtime reminder. Explicitly forbids paren-aliases in the `name` field across ALL THREE arrays (characters, relationships, charactersPresent), and warns the model that mixing "Name" and "Name (Alias)" forms will cause the system to filter out the real character and replace it with an empty stub. The consequences are spelled out so the model understands the stakes.
+5. **Lazy migration** in `settings.getTrackerData()` walks every stored snapshot in a chat on first load: strips paren-aliases from character name fields, folds them into the aliases array, builds an alias map, rewrites relationships and charactersPresent, dedups. Guarded by `_spNameCanonMigrated` per-chat flag. This heals existing chats on the next panel open without any user action \u2014 the "empty Officer Jane card" will self-repair when you reload.
+
+#### Tests
+- **New `tests/character-paren-aliases.test.mjs` with 44 cases** covering: paren-alias split across slash/comma/semicolon separators, preservation of descriptive parentheticals (possessive, sentence punctuation, long phrases), cross-array canonicalization, filterForView preserving the real character's data, paren-in-name emission by the LLM, no-parens regression, reverse case (char has parens, rel uses canonical), and collision-merge (non-zero meters win).
+- **Full sweep**: 227/227 passing (44 new + 183 pre-existing).
+
+#### Fixed \u2014 NPC graph parser diagnostics
+When the NPC graph generation fails parse, the warning now includes the first 400 chars of the raw LLM response so users can diagnose why (LLM refused, wrapped JSON in prose, returned empty, etc). Previously `no JSON array found in response` gave zero context. Also added explicit warnings for non-string responses, empty responses, and parsed-but-not-array cases.
+
+This is a pure diagnostic improvement \u2014 no behavior change, just better logs for troubleshooting the v6.8.29 "0 NPC edges" issue when it happens.
+
+### [6.8.29] — 2026-04-09
+
+#### Fixed \u2014 Relationship Web background color inconsistency
+The `.sp-web-svg-wrap` container previously inherited the `rgba(12,14,20,0.98)` container background, while the SVG had its own internal `#0c0e14` `<rect>` fill. Close but not identical. When the SVG didn't fill the entire wrap (zoomed out, `max-height: 72vh` constraint hit, short aspect ratio), a visible "halo" appeared around the graph where the two shades met.
+
+**Fix**: explicit `background: #0c0e14` on `.sp-web-svg-wrap`, removed the 8px padding that was adding visual gap, and set the SVG to `width: 100%; height: auto; display: block` so it renders seamlessly edge-to-edge regardless of aspect ratio.
+
+#### Fixed \u2014 Edge labels were visually off-center inside their background rect
+The v6.8.28 label rendering had a 4-pixel vertical misalignment: the `<rect>` spanned `y` from `lp.y - 8` to `lp.y + 6` (center at `lp.y - 1`), while the text with `dominant-baseline="central"` sat at `y="lp.y + 3"` (center at `lp.y + 3`). Text appeared to sit below the visual midline of its background pill.
+
+**Fix**: rect center and text center now both land at exactly `lp.y`. `rectY = lp.y - 7` (height 14 → spans `lp.y - 7` to `lp.y + 7`), text `y = lp.y` (central baseline). Pixel-perfect alignment.
+
+#### Added \u2014 Character portraits in relationship web nodes
+Nodes now render the character's portrait inside the circle when one is resolvable, using the same four-layer priority as the main character cards and the Character Wiki:
+1. User override in `settings.charPortraits`
+2. SillyTavern character avatar by canonical name
+3. Alias-matched ST avatar (handles v6.8.18 reveal flow)
+4. Fallback to the v6.8.20 accent-colored disc with no image
+
+**Implementation**: SVG `<image>` element clipped to a circle via per-node `<clipPath>` defs. Image fills inner area at `r - 1px` to avoid bleeding past the colored border. `preserveAspectRatio="xMidYMid slice"` for a proper center-crop. When a portrait is present, the character name renders BELOW the circle with its own faint background pill so the image isn't obscured by text.
+
+The user's persona avatar is also resolved via `SillyTavern.getContext().user_avatar` and rendered in the center node. Group chats work transparently \u2014 the web takes whatever characters are in the snapshot, so v6.8.15 group carry-forward already feeds it correctly.
+
+#### Fixed \u2014 Missing {{user}}\u2194pet edges in the relationship web
+**Reported**: "Vierge has a relation to {{user}} (it was his cat originally). yet the graph doesn't account for that." Full diagnosis:
+
+The relationship web shows **two kinds of edges**: (a) {{user}}-facing edges from the top-level `relationships[]` array (pink/red meter edges to {{user}}), and (b) NPC\u2194NPC edges from the v6.8.27 batch inference. Vierge had neither:
+- **NPC-NPC direction**: The batch prompt correctly excludes {{user}} from NPC-NPC edges \u2014 those connections belong in the user-facing tracker instead. Working as intended.
+- **User-facing direction**: The LLM never emitted a `relationships[]` entry for Vierge in the main tracker. Cats don't naturally fit the 5-meter shape (affection / trust / desire / stress / compatibility), so the model typically skips generating one. No entry \u2192 no `rel` object \u2192 no edge rendered. This was the actual bug.
+
+The main panel already has `filterForView` which stubs zero-meter relationships for any tracked character missing one. The Character Wiki's `_buildEntries` in [src/ui/character-wiki.js](src/ui/character-wiki.js) uses `normalizeTracker` directly and NEVER calls `filterForView`, so the stub sync was bypassed.
+
+**Fix**: `_buildEntries` now synthesizes a zero-meter stub relationship locally when the LLM didn't emit one for a tracked character. The stub carries a new `_spStub: true` marker so the relationship web can render it distinctly from a genuine zero-affection (i.e. actively cold) edge.
+
+**Rendering**: stub edges draw as a faint gray (`#5b6372`) 1.2px dashed curve with a 0.45 base opacity and "unspecified" as the label (or the model's `relType` if one happens to exist). Clearly visible but obviously secondary to real user-facing edges. A cat NPC with no explicit meters will now show a faint dashed line to the user with a label so the reader can see the tie exists even if the model never quantified it.
+
+**Prompt update**: the NPC batch prompt now includes a new rule #6 clarifying that `[pet]` characters ARE full citizens of the NPC graph (they can have edges to other NPCs) and that their connection to {{user}} lives in the main relationship meters, not the NPC graph. Prevents future LLM confusion about how to handle pets.
+
+#### Not changed
+- No schema changes, no migration needed. 183/183 tests still pass.
+- Existing cached NPC graphs work unchanged \u2014 the new `[pet]` clarification only matters on next regeneration.
+
+### [6.8.28] — 2026-04-09
+
+#### Added \u2014 Relationship Web Phase 2: frame of understanding
+User feedback on v6.8.27: "There's no frame of understanding between the relationships." The edges were there with glyphs and colors, but you couldn't decode what any of it meant without hovering every single edge. Phase 2 fixes that by adding six complementary features that together turn the web from a pretty picture into an actual graph you can read at a glance.
+
+**1. Always-visible edge labels with collision avoidance.** Every edge now shows its label text on the graph by default \u2014 "older sister", "bitter rival", "estranged brother", etc. Labels render in a rounded-rect background tinted to the edge color so they stay readable against the dark canvas. A two-pass layout algorithm pushes overlapping labels along the edge normal in 14-pixel steps until they don't collide. Up to 6 displacement attempts per label. Toggle on/off via a new "Labels" button in the header \u2014 on by default.
+
+**2. Persistent legend panel on the right side.** Replaces the tiny header strip from v6.8.27. Lists all 12 edge types (11 NPC types + "Ties to you" for user-facing edges), each with a color swatch, glyph, label, and live edge count. Types with zero edges in the current graph dim to 35% opacity. Hovering a row shows a tooltip description ("Blood or legal kin", "Institutional power", "Purely physical", etc.). Collapses into a horizontal strip under the SVG on screens \u2264900px wide.
+
+**3. Click-to-filter.** Click any legend row to isolate that edge type \u2014 only edges of the selected type(s) remain visible. Click another to add it to the active filter. Click a row already in the filter to remove it. Click "Show all" at the top of the legend to reset. Filtered-out rows are rendered with strikethrough text and a desaturated swatch so you can see what's disabled. The footer shows the current filter state.
+
+**4. Click-to-focus subgraph.** Click any node to enter focus mode: the clicked node + its direct neighbors stay at full opacity; everything else fades to 15%. The focused node gets a brighter stroke and a drop-shadow glow so it stands out. The footer shows "focused on <name>". Click the same node again OR press Escape to clear focus. Click a different node to switch focus. This is the biggest readability improvement for dense webs \u2014 you can isolate "show me just Vierge's connections" in one click.
+
+**5. Zoom + pan.** Scroll-wheel on the SVG canvas zooms in/out centered on the cursor (0.25x to 3x). Click-drag on empty background panning. Touch-supported via pointer events. The SVG viewBox is manipulated directly so zoom/pan is pure view transformation \u2014 no re-layout, no performance cost. The new reset button (\u2921 icon) snaps back to the default viewport + clears focus + clears filters + recomputes node positions in one action.
+
+**6. Drag-to-reposition nodes.** Pointer-drag any NPC node (not {{user}}, which stays anchored at center) to move it. Positions persist across re-renders triggered by filter changes, focus changes, or hover \u2014 so you can lay the graph out the way you want and the layout sticks until you click the reset button or the character roster changes. Touch drag works too.
+
+#### Changed \u2014 Layout structure
+- **Two-column body**: SVG canvas on the left flexing to fill available space, legend panel fixed 200px wide on the right. Previously the SVG took the full width.
+- **Container widened** from 1100px to 1280px max to accommodate the legend without shrinking the graph.
+- **Responsive**: on screens \u2264900px the legend drops below the SVG as a horizontal chip row. On \u2264600px the toolbar buttons compress their padding.
+- **Body height** uses flex min-height so the SVG and legend share space properly inside the container's max-height constraint.
+
+#### Changed \u2014 Header toolbar
+Grouped all action buttons into a `.sp-web-toolbar` flex container aligned right after the title:
+- **Labels** (toggle) \u2014 new in v6.8.28
+- **\u2921 Reset** \u2014 new in v6.8.28, resets view + positions + filters + focus
+- **\u26B2 Layout** \u2014 force/circular toggle (from v6.8.27)
+- **\u21BB NPC** \u2014 generate/regenerate (when feature enabled, from v6.8.27)
+- **\u2715 Close**
+
+#### Changed \u2014 Escape key behavior
+Escape now clears the focus state first (if focused on a node), then closes the overlay on a second press. Matches the expected behavior of modal overlays with internal focus states.
+
+#### Architecture notes
+- **Position persistence**: `positions` array now lives in the `openRelationshipWeb` closure scope instead of being recomputed on every render. Only `_relayout()` forces recomputation; `_rerender()` reuses existing positions. This unlocks drag-to-reposition without sacrificing force-directed determinism.
+- **State object**: `_buildSvg` now takes a `state` parameter (`{focusedIdx, filter, showLabels, viewBox}`) so all the new features flow through one signature change.
+- **Label layout pass**: edge labels are collected during the edge-drawing loop and positioned in a separate collision-avoidance pass. Uses a simple O(n\u00B2) scan against already-placed labels \u2014 fine for typical edge counts (< 30).
+- **Touch + pointer events**: drag and pan use `pointerdown`/`pointermove`/`pointerup` instead of mouse events, so touch devices work the same way. `touch-action: none` on the SVG prevents browser scroll hijacking.
+
+#### Not changed
+- The batch-inference data layer from v6.8.27 is unchanged. No schema changes, no prompt changes, no migration. Pure presentation refactor of the overlay.
+- 183/183 tests still pass.
+
+### [6.8.27] — 2026-04-09
+
+#### Added \u2014 NPC\u2194NPC relationship web (Phase 1: overlay-time batch inference)
+Relationship Web v2. Architecture shaped by a cross-specialty review (software architecture, LLM compliance, token economics, UX/graph visualization, data modeling). The big decision: **DON'T** add per-turn emission of a new `relations` field to the character schema \u2014 instead, generate the NPC\u2194NPC graph lazily via a one-shot LLM call when the user opens the overlay, then cache the result per-snapshot. This resolves the token economics dissent against continuous emission (rarely-opened feature, expensive per-turn cost) and lets us validate the UX before investing in per-turn data layer changes.
+
+- **New module `src/ui/relationship-graph.js`** handles batch inference, parsing, canonicalization, caching, and feature-flag gating. Cache key is a fingerprint of character names + archetypes + roles; re-opening the overlay without new generations is free. Cache lives in `chatMetadata.scenepulse.relationshipGraph`.
+- **Batch inference prompt** lists the tracked characters with archetype + role, asks the model to emit a JSON array of directed NPC\u2194NPC edges with `{from, to, type, label}`. Explicitly requires NEVER referencing {{user}}, encourages asymmetry, caps at 30 edges. Uses the same SillyTavern `generateQuietPrompt` / `generateRaw` path as the main tracker generator \u2014 inherits the user's configured connection profile.
+- **Validation and dedup at parse time**: strips {{user}} references defensively, drops malformed entries, canonicalizes via alias lookup, dedupes by `(from, to, type)` triples, collapses reciprocal pairs (A\u2192B and B\u2192A for the same type) into a single edge with `direction: 'reciprocal'` for two-tone rendering.
+- **11 edge types** mirroring the v6.8.26 archetype taxonomy minus `background`/`pet`, plus `acquaintance` and `unknown`: `family / friend / ally / rival / antagonist / mentor / authority / lover / lust / acquaintance / unknown`. Each type has a color (reusing the archetype palette) and an emoji glyph (anchor, heart, crossed swords, star, hammer, etc.) for color-blind accessibility.
+
+#### Added \u2014 Force-directed layout for the Relationship Web
+- **Seeded Fruchterman-Reingold simulation** (~180 iterations with cooling schedule) replaces the forced-circular layout as the default. Seeded from a hash of the sorted character name list so the same roster always produces the same layout across re-opens. O(n\u00B2) cost is fine for typical roster sizes.
+- **{{user}} anchored at center** throughout the simulation so the player stays the visual focal point and the layout feels stable.
+- **Curved edges with hashed offset** so multiple edges between similar regions don't overlap exactly. Edge color for NPC edges comes from the type palette; width is fixed at 2.2px.
+- **Two-tone reciprocal edges**: when both A\u2192B and B\u2192A agree on the type, the edge renders as two halves \u2014 first half in A's accent color, second half in B's accent color \u2014 with a thin type-colored core line running through the whole curve so the edge kind is still readable at a glance.
+- **Emoji glyph in a small circle at the edge midpoint** so color-blind users can identify edge types without relying on the palette alone. Glyphs use Unicode characters that render consistently across platforms: \u2693 family, \u2661 friend, \u25C6 ally, \u2694 rival, \u2716 antagonist, \u2605 mentor, \u2692 authority, \u2665 lover, \u263D lust, \u25CB acquaintance, \u25A1 unknown.
+- **Layout toggle in the header**: classic circular view preserved as a fallback for users who prefer the old look or whose roster looks messy under force-directed. Stored per-session, not persisted.
+- **Enriched tooltip** on node hover now shows both the existing user-facing meters (affection/trust/stress) AND a compact list of incident NPC\u2194NPC edges with direction arrows (\u2192 outgoing, \u2190 incoming, \u21C4 reciprocal) + glyph + labeled target. SVG `<title>` elements on nodes for screen-reader compatibility.
+
+#### Added \u2014 Settings toggle
+- **New checkbox in General**: "NPC relationship graph" (Experimental). Off by default. When disabled, the Relationship Web overlay renders exactly as in v6.8.21 \u2014 star topology, no generate button. When enabled, the "\u21BB NPC" button appears in the overlay header; clicking it calls the batch inference and caches the result. Disabling the setting also clears any cached graph.
+
+#### Not shipping in Phase 1 (deferred to v6.8.28+ if the feature proves valuable)
+- Per-turn schema field (`relations: []` on each character) \u2014 rejected in unified review for token cost vs utility.
+- Click-to-focus subgraph highlighting.
+- Drag-to-reposition nodes.
+- Edge type filter chips.
+- Always-visible edge labels (currently hover-only).
+- Zoom/pan on the SVG canvas.
+- Phase 2 decision will be made after real-world data quality from Phase 1 is observed.
+
+#### Not changed
+- Existing `relationships[]` top-level array (user-facing) is untouched. The NPC graph is strictly additive.
+- No schema changes, no migration, no normalize changes, no delta-merge changes.
+- 183/183 tests still pass.
+
+### [6.8.26] — 2026-04-09
+
+#### Changed \u2014 character archetype taxonomy overhaul
+Rewrote the v6.8.19 archetype enum from 8 values to 11 to fix ambiguity and cover gaps users were running into.
+
+**Removed:**
+- `protagonist` \u2014 unused in practice. {{user}} is the protagonist of their own story, so the value confused more than it clarified.
+
+**Renamed:**
+- `love` \u2192 **`lover`** \u2014 clearer as a noun for "romantic partner", covers short-term / long-term / prospective romantic interest. Old snapshots with `love` auto-migrate via the synonym map \u2014 no data rewrite.
+- `incidental` \u2192 **`background`** with a new slate blue-gray color (`#7a8794`). Less medical-sounding; "background character" is the standard screenwriter term. Auto-migrated.
+
+**Added:**
+- **`friend`** (soft cyan `#7dd3c0`) \u2014 established platonic bond with {{user}}. Doesn't require active quest support, unlike `ally`. The most-abused bucket in the old taxonomy was `ally`; now friends can be friends.
+- **`authority`** (steel blue-gray `#8a9bb5`) \u2014 institutional or hierarchical power over {{user}}. Boss, judge, cop, commanding officer, strict principal. Distinguished from `mentor` by power asymmetry, not teaching.
+- **`lust`** (crimson `#c74a6a`) \u2014 purely sexual interest with no romantic attachment. Hookups, FWB, sex workers, one-sided physical attraction. Distinguished from `lover` by the presence/absence of emotional investment.
+- **`pet`** (teal `#5fc8b8`) \u2014 non-human companion. Cat, dog, horse, familiar, bonded creature. Previously forced into `incidental` (undervalued) or `ally` (wrong).
+
+**Mentor vs Authority \u2014 new explicit rule** in the prompt to resolve the teacher case: *"If {{user}} ignored this person, what happens?"* If nothing formal, it's `mentor`. If there are institutional consequences (grade drops, firing, arrest, detention), it's `authority`. A high-school teacher running a lesson is `mentor` during the lesson and `authority` during a disciplinary meeting \u2014 same character, different dominant role per scene, both correct.
+
+**Lover vs Lust \u2014 explicit rule**: does this character have emotional investment in {{user}}? A sex worker sleeping with {{user}} transactionally is `lust`. The same sex worker once real feelings develop is `lover`. A one-night stand is `lust`; a one-night stand that leaves {{user}} thinking about them the next morning is `lover`.
+
+#### Synonym map overhaul
+`normalize.js` archetype parser rewrote its synonym map from scratch. Canonical judgment calls:
+- `teacher` \u2192 `mentor` (the dictionary-level word implies teaching, not power).
+- `boss`, `cop`, `judge`, `priest`, `principal`, `commander` \u2192 `authority`.
+- `colleague`, `coworker`, `companion`, `acquaintance`, `neighbor`, `roommate`, `classmate` \u2192 `friend`.
+- `partner` NOT in the map \u2014 too ambiguous (romantic / business / firm / life). The LLM is expected to pick `lover` or `ally` explicitly.
+- `client` NOT in the map \u2014 too ambiguous (legal / medical / sex work). LLM picks `lust` or `background` explicitly.
+- `ex` \u2192 `lover` (an ex that still matters narratively). If the relationship is fully resolved, the LLM should emit empty.
+- `prostitute`, `sex worker`, `escort`, `hookup`, `fwb`, `dominatrix`, `mistress`, `one-night stand` \u2192 `lust`.
+- Legacy values `love` and `incidental` are in the map as back-compat so old snapshots normalize to the new names on next read.
+
+#### Not changed
+- No migration needed \u2014 the synonym map does it transparently on normalize.
+- No schema-layer data changes beyond the enum expansion.
+- 183/183 tests still pass.
+
+### [6.8.25] — 2026-04-09
+
+#### Fixed \u2014 CARRYING section now honors "Show empty fields"
+- The inventory/CARRYING section on the character card was gated on `inventory.length > 0` and never rendered when a character had no items, **even with the "Show empty fields" toggle on**. The fertility section had the right pattern (checks `_showEmpty` / `_isEdit`) but CARRYING didn't. A cat NPC with no inventory would therefore show every other field in show-empty mode but the CARRYING header would be invisible, which looked like the toggle was still broken.
+- **Fix**: CARRYING now renders whenever inventory has items OR edit-mode is on OR show-empty is on. When there are no items but the section renders anyway, a single dashed-border "(no items)" placeholder chip appears so the reader can tell the section exists and is deliberately empty. New CSS class `.sp-char-inventory-empty` with italic dim styling and `border-style: dashed`.
+
+### [6.8.24] — 2026-04-09
+
+#### Fixed \u2014 "Show empty fields" toggle had no visible effect
+- **The toggle's CSS and class-toggle mechanism were correct**, but [`src/normalize.js`](src/normalize.js) carry-forward (v6.8.15+) aggressively fills every character field from the previous snapshot, so there were almost no actually-empty fields for the class to reveal. Meanwhile, [`update-panel.js:1129`](src/ui/update-panel.js#L1129) applied field-toggle-off visibility via inline `style.display = 'none'`, which isn't affected by the class-based `sp-show-empty` CSS rule at all. Net effect: toggling the button produced no visible change.
+- **Fix**: when `showEmptyFields === true`, the field-toggle-visibility loop in [`updatePanel`](src/ui/update-panel.js) now force-shows elements that are normally hidden by the user's Panel Manager / field toggles, AND stamps them with a new `sp-ft-force-shown` class so CSS can dim them with a diagonal-stripe background + amber left border. This communicates "this is a field you've hidden that we're surfacing temporarily" and is distinct from the existing `sp-empty-field` treatment for actually-empty cells.
+- **User-visible behavior**: clicking the "Show empty fields" toolbar button now immediately reveals any field-toggled-off rows, cards, or sections across the whole panel with a clearly-dimmed striped background. Clicking again re-hides them. The previous behavior (showing actually-empty grid cells) still works too \u2014 both now coexist under the same toggle.
+
+#### Fixed \u2014 orphan "Recently Absent" stubs for aliased characters
+- **Scenario**: LLM mis-typed a character's name early in a chat ("Vierre" instead of "Vierge"), accumulated many snapshots under the misname, then corrected itself and the extension recorded an alias (`aliases: ["Vierre"]`) on the current Vierge entry. The main card correctly showed Vierge with the "also: Vierre" badge, but the "Recently Absent" stub list kept rendering a ghost "Vierre" card sourced from the old snapshots. Three compounding causes, fixed together:
+  1. **Off-scene dedup only checked current canonical names, not aliases.** Now walks both directions: every current character's canonical name + every alias on each current character goes into a `currentNamesAndAliases` set, and a history entry is skipped if its key OR any of its `aliasesLow` matches anything in that set.
+  2. **Character history cache didn't invalidate on re-generation.** The cache key was `${snaps}|${keyCount}` — regenerating the latest turn overwrites `snaps[latest]` in place without changing `keyCount`, so the cache returned stale data. The key now includes a fingerprint of the latest snapshot's character roster (name + sorted aliases per character), so any change to the latest snap's character list busts the cache.
+  3. **Pass-1 canonicalization could miss edge cases** where the alias was added late and older snapshots had already registered themselves under the old name. Added a Pass-3 post-hoc consolidation step that walks the output map and merges any two entries whose `aliasesLow` sets overlap with each other's canonical keys. Merge semantics: most-recent `lastSeen` wins the canonical name, `appearances` is summed, earliest `firstSeen` is kept, `aliasesLow` is unioned. Idempotent.
+
+#### Not changed
+- No schema, migration, or prompt changes. 183/183 tests still pass. Existing chats with orphan stubs will self-heal on next panel render because Pass 3 consolidates historical entries without requiring any data-layer rewrite.
+
+### [6.8.23] — 2026-04-09
+
+#### Changed \u2014 thought panel shows the full inner thought by default
+- **The floating thought panel now renders the complete `innerThought` string** instead of a hash-truncated 1\u20133 sentence slice. The old behavior was a visual-variety trick \u2014 it hashed the thought text to pick a stable 1\u20133 sentence cap per character so each bubble felt like a distinct voice length at a glance \u2014 but it was surprising to anyone who expected to see the whole thought they'd asked the model to generate, and it was undocumented outside the code.
+- **The old behavior is still available** as an opt-in setting: **General \u2192 \u2018Truncate thought bubbles to 1\u20133 sentences\u2019** (off by default). When enabled, the legacy hash-stable slice logic runs: the same thought always renders with the same length across re-renders, and *different* thoughts vary between 1, 2, and 3 sentences based on a djb2-style hash mod 3.
+- **No migration needed.** New `thoughtPanelTruncate: false` key added to `DEFAULTS`; existing chats inherit the default (full thought) on next load. Wired through `bind-ui.js` with the same pattern as the other thought-panel toggles.
+
+### [6.8.22] — 2026-04-08
+
+#### Added \u2014 per-field delta indicators (Feature I)
+- **Every character card field that changed since the previous snapshot now carries a small accent-colored dot** next to its value. The dot is a `::after` pseudo-element on `.sp-char-val-changed` so there's no extra DOM per field \u2014 just a CSS class toggle during render. Tinted in the character's accent color with a subtle glow so it reads at a glance against dim text.
+- **Hover a changed value** to see the previous value as a title tooltip (truncated at 160 chars for grid rows, 200 chars for the inner thought block).
+- **Inner thought block quotes** get a brighter background + a top-right accent dot instead of the inline dot, because the flex layout of the block doesn't leave room for an inline marker. The dot is positioned with absolute/top-right so it floats in the corner of the quote.
+- **Inventory chips** are compared item-by-item \u2014 items present in the current turn but not the previous get a `sp-char-inventory-item-added` class that brightens the chip border and pulses the bullet dot. Items that were removed aren't rendered (they're not part of `ch.inventory` anymore).
+
+#### Alias-aware previous-character lookup
+- **Previous-snapshot lookup walks alias chains** in three directions: exact canonical name, current character's aliases list matched against prev canonical names, and prev character's aliases matched against current canonical name. A character who was renamed via the v6.8.18 reveal path (e.g. "Stranger" \u2192 "Jenna") still finds their prior entry and computes the delta correctly \u2014 no false "all fields changed" flags from the rename.
+
+#### Not changed
+- No schema changes, no migration, no prompt changes. 183/183 tests still pass.
+- New characters (no prev entry) get no indicators \u2014 delta requires a baseline.
+
+### [6.8.21] — 2026-04-08
+
+#### Added \u2014 shared character history walker
+- **New `src/ui/character-history.js`** module walks all stored snapshots in the current chat once and returns a `Map<lowerCanonicalName, HistoryMeta>` keyed by canonical name with `firstSeen`, `lastSeen`, `appearances`, `lastLocation`, `canonical` (display name), and `aliasesLow` (set of every lowercase name the entity has been known by). Alias-aware \u2014 a character tracked as "Stranger" in early snapshots and "Jenna" in later ones with `aliases: ["Stranger"]` collapses to a single history entry under "jenna" instead of two orphan rows.
+- **Cached by snapshot-set identity** so rendering is cheap across multiple card updates in the same turn. `invalidateCharacterHistory()` exported for explicit cache busts after operations that mutate stored snapshots in place (e.g. the v6.8.18 manual merge flow).
+- **Character Wiki refactored** to delegate its firstSeen/lastSeen/appearances computation to the shared walker \u2014 dropping ~20 lines of inline duplicated logic and inheriting alias awareness. A character who was manually merged in v6.8.18 now shows up once in the wiki with the consolidated history instead of twice.
+
+#### Added \u2014 shared-scene counter on character card header (Feature E)
+- **New dim meta line under each character's name**: "Scene #23 \u00b7 met #5" showing the total number of snapshots the character has been present in (equal to shared scenes with {{user}} since {{user}} is present in every scene by definition) and the message index where they first appeared. Hidden when the character has been seen in 1 or fewer snapshots (not enough history to be meaningful). Gives each card a "how established is this character in fiction-time" read without opening the Character Wiki.
+- **Header layout restructured** to a two-line flex column: name row (name + archetype + aliases) on top, meta line below. The portrait, chevron, and merge button stay on their own axis so the two text lines align cleanly under the portrait.
+
+#### Added \u2014 "Recently absent" off-scene stub list (Feature D)
+- **Below the main character cards**, a new "RECENTLY ABSENT" section renders compact stubs for characters who were present in a recent snapshot but are NOT in the current scene. Each stub shows the portrait (20 px, smaller than the main card), canonical name, and "Last seen: #msgIdx \u00b7 [location]". Dim by default, brightens on hover. No expand, no body \u2014 just a presence acknowledgment.
+- **Bounded** by a 5-turn recency window (characters absent for more than 5 turns don't appear \u2014 they're considered "forgotten" and live only in the Character Wiki) and capped at 5 stubs so the main panel never balloons even in a chat with dozens of historical characters.
+- **Off-scene characters are NOT added to the main card loop** \u2014 they're computed separately from the shared history walker, then rendered as a distinct section. This keeps the v6.8.15 group-chat carry-forward logic intact and doesn't affect filterForView behavior at all.
+
+#### Not changed
+- No schema changes, no migration, no prompt changes. 183/183 tests still pass.
+
+### [6.8.20] — 2026-04-08
+
+#### Added \u2014 character portrait thumbnails (Feature B)
+- **Every character card header now has a 26-px circular portrait** to the left of the chevron. Resolves through a four-layer priority:
+  1. **User override**: if `settings.charPortraits[lowercased-name]` holds a URL or data: URL, use it. Highest priority \u2014 lets users pin any image to any character regardless of what SillyTavern thinks.
+  2. **SillyTavern character match**: any character in `SillyTavern.getContext().characters` whose `.name` matches the lookup name (case-insensitive) contributes its `/characters/{avatar}` URL. Uses the same `/characters/` endpoint ST itself serves.
+  3. **Alias-aware ST match**: if the character's `aliases` array contains an ST character name, the matching avatar is used. This makes portraits survive the v6.8.18 reveal flow \u2014 a "Stranger" entry with `aliases: ["Jenna"]` will pick up Jenna's ST avatar automatically once the real name is revealed.
+  4. **Monogram fallback**: a circular tile with the first letter of the name on the character's accent-color background. Always renders, even for characters with no matching image anywhere.
+- **New shared module `src/ui/portraits.js`** exports `resolvePortraitUrl`, `getPortraitHtml`, `buildPortraitIndex`, `setPortraitOverride`, and `clearPortraitOverride`. Both `update-panel.js` and `character-wiki.js` delegate to it so portrait resolution logic lives in exactly one place.
+
+#### Added \u2014 click-to-upload portrait override
+- **Clicking a portrait opens a file picker** (png/jpeg/webp/gif). The selected file is read as a data: URL via `FileReader`, stored in `settings.charPortraits` keyed by lowercased character name, and the panel re-renders immediately so the new image appears without a page reload. A 1 MB soft warning fires via toast if the file is unusually large (since settings.json stores the full data URL).
+- **Right-clicking a portrait clears the override** (with confirmation dialog), falling back to ST avatar lookup or monogram on the next render.
+
+#### Changed \u2014 Character Wiki portrait resolution
+- **The wiki overlay now uses the same shared resolver** so its avatars pick up user overrides and alias matches. Previously the wiki had its own `_getAvatarUrl()` that only read from ST characters with exact name match \u2014 it couldn't see portrait overrides and couldn't resolve aliases. Now delegated to `portraits.js`.
+
+#### Settings
+- **New `charPortraits: {}` entry in `DEFAULTS`** (`src/constants.js`) \u2014 the storage slot for user-uploaded portrait overrides. Empty by default.
+
+#### Not changed
+- No schema changes, no migration needed. 183/183 tests still pass.
+
+### [6.8.19] — 2026-04-08
+
+#### Added \u2014 character archetype tagging (Feature L)
+- **Every character now has a single-enum `archetype` field** describing their dominant narrative role relative to {{user}} this turn. Nine values: `protagonist` (secondary co-lead), `ally` (on {{user}}'s side), `rival` (competitive but not hostile), `mentor` (teaches/guides), `antagonist` (actively opposes), `family`, `love` (romantic/sexual interest), `incidental` (minor NPC), or empty (unclassified). Archetype can change turn-to-turn as the story develops \u2014 a stranger becomes an ally, an ally becomes a rival, a love interest might become an antagonist.
+- **Added to the static JSON schema** (`src/constants.js`) as an enum property on character items, with the canonical list also exported as `CHARACTER_ARCHETYPES` for reuse across the UI, prompt builder, and filter logic.
+- **`normalizeChar` validates and normalizes** the incoming value: lowercases and trims, maps common near-synonyms (`friend`/`companion` \u2192 `ally`, `enemy`/`villain` \u2192 `antagonist`, `romance`/`partner` \u2192 `love`, `teacher`/`guide` \u2192 `mentor`, `competitor`/`opponent` \u2192 `rival`, `relative` \u2192 `family`, `extra`/`bg` \u2192 `incidental`), and falls back to empty string for anything not recognized. Empty string is the "unclassified" state \u2014 no badge renders.
+- **Carried forward in `normalizeTracker`** so a character that was classified in a previous turn doesn't lose their archetype if the model omits the field on a turn where nothing changed about their role.
+- **Prompt guidance** added to `BUILTIN_PROMPT` Characters section and to `buildDynamicPrompt` character field list, explaining the nine values and how to pick the dominant one when a character has multiple functions.
+
+#### Added \u2014 archetype badge on character card and wiki entry
+- **New `.sp-char-archetype` pill in the character card header** (main panel) and in the Character Wiki entry header. Small uppercase bold text with a distinct color per archetype \u2014 gold for protagonist, blue for ally, amber for rival, green for mentor, red for antagonist, purple for family, pink for love, dim gray for incidental. The pill sits between the character name and the v6.8.18 aliases badge, and is only rendered when `archetype` is non-empty. Uses the character's accent color scheme so the pill reads as "this character's type" at a glance, without needing to decode the text.
+
+#### Added \u2014 archetype filter dropdown in Character Wiki
+- **New archetype selector** in the Character Wiki toolbar, next to the sort dropdown. Lists all nine archetype values (plus "All roles" default). Selecting a value filters the wiki entries to only that archetype, and visually deactivates the scene-presence filter pills (the two filters are mutually exclusive since scene-presence + archetype would be a confusing AND/OR combination). Clicking a scene-presence pill clears the archetype dropdown. Uses a prefix convention `arch:<name>` in the filter mode string so the existing `_filterEntries` function handles both filter types via the same code path.
+
+#### Dynamic-schema support
+- **Added `char_archetype` to `CHAR_SUBFIELD_MAP`** (`src/schema.js`) and to `BUILTIN_PANELS.characters.subFields` (`src/constants.js`) so the archetype field can be toggled off via the existing field-toggle UI. Enabled by default.
+
+#### Not changed
+- No migration needed \u2014 missing archetype parses to empty string and characters without the field simply render without the pill. Older snapshots keep working unchanged. 183/183 tests still pass.
+
+### [6.8.18] — 2026-04-08
+
+#### Added — unknown\u2192known character identity resolution (Feature A)
+- **Characters that start as descriptive placeholders (e.g. "Stranger") can now be reconciled with their real name when the story reveals it.** Before this release, the tracker matched characters by exact lowercased name only. If the model emitted "Stranger" for three turns and then "Jenna" on the fourth, the snapshot would carry two separate character entries indefinitely \u2014 with independent appearance counts, independent relationship meter histories, and no way to tell they were the same person. Five-layer fix:
+  1. **New `aliases` schema field** on every character \u2014 an optional array of former names the character was previously known by. Empty by default. Parsed defensively in `normalizeChar` (accepts array, single string, or missing; strips the canonical name from the list so a character never aliases themselves; deduplicates case-insensitively).
+  2. **Alias-aware merge in `mergeEntityArray`** (`src/generation/delta-merge.js`). New `useAliases` parameter enables two additional match paths after exact name match but before giving up. **ALIAS match**: if the delta's name matches a previous entry's `aliases` list, the delta merges into that prev entry WITHOUT renaming. This handles the case where the model stubbornly continues calling a character by their old placeholder after the real name has already been learned. **REVEAL match**: if the delta's `aliases` list contains a previous entry's canonical name, the delta merges into that prev entry, RENAMES it to the delta's new canonical name, and pushes the old name into aliases. This is the unknown\u2192known identity reveal. Both paths bypass the `matchedIdxs` guard (which only blocks fuzzy quest collisions) so multiple delta entries referencing the same character collapse correctly in a single batch.
+  3. **Post-merge `reconcileIdentityAliases`** walks the merged characters array, builds an alias\u2192canonical map, and rewrites any stale relationship or `charactersPresent` entries that still reference an old placeholder. When two relationship entries collapse to the same canonical character after rewriting, their fields are merged (non-zero meters + non-empty strings win). Called from `mergeDelta` before `consolidateQuests`.
+  4. **Prompt guidance** added in three places: `BUILTIN_PROMPT` Characters section, `buildDynamicPrompt` character field list (`src/schema.js`), and the interceptor's mandatory-hints injection (`src/generation/interceptor.js`). The model is told (a) use a consistent descriptive placeholder for unnamed characters and reuse it across turns, (b) when the real name is revealed, emit a SINGLE entry with the new `name` and the old placeholder in `aliases`, (c) do NOT create two separate entries under the old and new names.
+  5. **Manual merge UI** \u2014 a small merge-icon button in every character card header. Clicking it opens a picker listing the OTHER characters in the current snapshot; selecting one triggers a confirmation dialog and then calls `mergeCharactersAcrossSnapshots(src, tgt)` which walks every stored snapshot in the chat and folds the source into the target (rename + alias union + relationship merge + `charactersPresent` fix-up). The source name is automatically added to the target's aliases so the historical identity link is preserved. Destructive but confirmed.
+
+#### Added \u2014 Character Wiki "Formerly" section
+- **Wiki entry cards now show a dedicated "FORMERLY" section** listing every alias the character was previously known by, rendered as italic dashed-border pill chips. Sits at the top of the expanded body (above Role) so users can see the identity history at a glance. Uses the same `.sp-wiki-section-label` + `.sp-wiki-inventory`-style chip pattern introduced in v6.8.17 for visual consistency.
+
+#### Added \u2014 alias badge on main character card
+- **Character card headers now show a small "(also: Stranger, The Nurse)" badge** next to the character name when the `aliases` array is non-empty. Truncates to the first 2 aliases with an ellipsis if there are more; the full list is visible in a `title` tooltip.
+
+#### Migration
+- **Lazy v6.8.18 migration** in `settings.getTrackerData()` walks every stored snapshot in a chat on first load and initializes `aliases: []` on every character entry. Also strips the canonical name from any aliases list that somehow contains it (defense against model drift or future edge cases) and deduplicates case-insensitively. Guarded by a per-chat `_spAliasesInitMigrated` flag so the scan runs exactly once.
+
+#### Tests
+- **New `tests/character-aliases.test.mjs` with 49 cases** covering `normalizeChar` alias parsing (array / string / missing / canonical-name stripping / dedup / nullish filtering), exact-match regression, ALIAS match semantics, REVEAL match semantics, alias list union, canonical-in-aliases stripping, multi-entry same-batch collapse (both directions), `reconcileIdentityAliases` relationship renaming, relationship merge on collision, `charactersPresent` remap, no-aliases regression, and a quest-merge regression guard to prove aliases logic doesn't leak into quest merging.
+- **Full sweep: 183/183** (49 character-aliases + 134 pre-existing).
+
+### [6.8.17] — 2026-04-08
+
+#### Changed — character card section headers get icons and stronger visual weight
+- **Each major subsection header now has a custom SVG icon tinted in the character's accent color.** The v6.8.16 headers were plain uppercase dim text with a dashed top rule — technically labeled but visually weak. Readers had to actively scan for the text to locate a section. Each of the six headers (Role, Right Now, Appearance, Carrying, Goals, Fertility — plus Relationship and Notes in the wiki overlay) now carries a distinctive 12-px viewBox SVG glyph rendered in `var(--char-accent)` so it picks up the same per-character color used on the card's left border. At a glance the user can locate any section by its icon silhouette + color, without reading the label.
+  - **Right Now** — lightning bolt (present-moment energy)
+  - **Appearance** — eye (observation)
+  - **Carrying** — satchel/bag outline with handle and pocket line
+  - **Goals** — concentric-circle target (aim)
+  - **Fertility** — leaf with a subtle vein (biological/neutral — chosen over cycle/medical glyphs to stay neutral across contexts)
+  - **Role** (wiki only) — person-in-bust silhouette
+  - **Relationship** (wiki only) — outlined heart
+  - **Notes** (wiki only) — document with horizontal lines
+- **Header typography bumped**: font size 9 → 10 px, color `--sp-text-dim` → `--sp-text` (brighter), top rule dashed → solid 1-px. Still uppercase bold with letter-spacing 0.08em. The solid rule + icon + brighter text combine to make each section header actually feel like a header instead of a footnote.
+- **Helper refactor** — `_mkSub(label, icon, ftKey)` now accepts an SVG string as its second argument and renders an `.sp-char-subsection-icon` span alongside an `.sp-char-subsection-text` span via flex layout. SVG strings are trusted inline constants (never user input), so `innerHTML` is safe. Same pattern in the wiki via a new `_secHdr(icon, label)` helper.
+
+#### Changed — inventory renders as individual pill chips
+- **Carrying is no longer a comma-joined run-on line.** The v6.8.16 layout put inventory in its own section but rendered items as `inventory.join(', ')` — one long text string where individual items melted together, especially when an item was a phrase like "leather satchel with paperwork". Each item is now its own rounded-rectangle pill chip with a small colored dot, laid out in a flex-wrap container: short items pack horizontally, long items wrap to their own row. The pill background is a faint white tint, the border picks up `--sp-border`, and hovering a chip lifts the background and border to `--char-accent` for subtle interactivity. Applied to both the main character card (`.sp-char-inventory-item`) and the Character Wiki expanded card (`.sp-wiki-inventory-item`) so both views use the same visual language.
+
+#### Fixed — wiki immediateNeed was rendered twice
+- v6.8.16 moved `immediateNeed` into the Right Now section but also left it in the Goals field array in `src/ui/character-wiki.js`, so the wiki overlay showed the same line under both `RIGHT NOW > Needs` and `GOALS > Need`. Goals is now short/long-term only, matching the main panel exactly.
+
+#### CSS
+- New classes: `.sp-char-subsection-icon`, `.sp-char-subsection-text`, `.sp-char-inventory-item`, `.sp-wiki-section-icon`, `.sp-wiki-inventory`, `.sp-wiki-inventory-item`.
+- `.sp-char-subsection-label` and `.sp-wiki-section-label` rewritten as flex containers (icon + text) with the updated typography.
+- Pill chips use `::before` pseudo-elements for the colored dot so no extra DOM per item.
+
+#### Not changed
+- No data-layer changes, no prompt changes, no migration needed. Pure presentation refactor. 134/134 tests still pass.
+
+### [6.8.16] — 2026-04-08
+
+#### Changed — character card body redesign
+- **Character card body now has clearly-labeled subsections.** Before this release, the card body was a flat stack of fields: role on top, then an inner-thought row, then an unlabeled grid of appearance fields, then goals, then fertility — with no visual anchors separating them. Users looking at the fertility row saw "STATUS: active" and "NOTES: …" with no context for what that data described. The body is now organized into five explicit sections, each headed by a small uppercase dim label with a dashed top rule: **Role** (the identifying field, rendered first without a section header), **Right Now** (inner thought as an italic block quote with the character's accent color as a left border, followed by `immediateNeed`), **Appearance** (hair, face, outfit, posture, proximity, notable details), **Carrying** (inventory as an inline comma-joined line, only rendered when non-empty), **Goals** (short-term + long-term only — `immediateNeed` moved out of Goals because it's about the present moment, not aspirational planning), and **Fertility** (the `STATUS`/`NOTES` pair under an explicit `FERTILITY` label, finally answering "what is this data about?").
+- **Inner thought rendered as a block quote.** The field used to be a plain grid row styled with a dashed top border — visually identical to the appearance fields below it. It's now a distinct block with italic text, a left-border accent in the character's color, and a subtle background tint. Signals "this is the character's voice" rather than metadata about them.
+- **Inventory split out of the appearance grid** into its own `CARRYING` section. Conceptually "what they have" is not "how they look"; mixing them under one grid was a layout accident. The section only renders when inventory is non-empty, so empty inventories don't add visual noise.
+- **`immediateNeed` moved from Goals to Right Now.** The old layout put all three of `immediateNeed`, `shortTermGoal`, and `longTermGoal` under one `GOALS` header. `immediateNeed` is the character's *current moment* ("thirsty", "needs to sit down", "wants to leave"), not an aspiration — grouping it with month-long or life-long goals was a category error. Now it sits with `innerThought` under `RIGHT NOW` where both fields describe the present scene state together.
+
+#### Changed — Character Wiki overlay matches main card layout
+- Applied the same five-section regrouping to `src/ui/character-wiki.js` so the expanded card in the wiki overlay mirrors the main panel. `innerThought` is no longer a loose element floating above the Role header — it's now inside a labeled `RIGHT NOW` section alongside `Needs`. Inventory moved from the Appearance grid into its own `CARRYING` section. Goals is short/long-term only.
+
+#### CSS
+- New classes in `css/characters.css`: `.sp-char-subsection-label` (uppercase dim section header with dashed top rule), `.sp-char-thought-block` (italic block quote with accent left border and subtle background tint), `.sp-char-inventory` (inline row styling for the Carrying section). Existing `.sp-fert-section` top border removed since the subsection label now supplies the visual divider.
+
+#### Not changed
+- No data layer changes — this is purely a presentation refactor. No schema changes, no migration needed, no prompt updates, all 134/134 tests still pass.
+
+### [6.8.15] — 2026-04-08
+
+#### Fixed — group chat support
+- **Group chats now track all participating characters, not just the first one.** Previously ScenePulse had zero group-chat awareness: no code path read SillyTavern's `selected_group` context, no prompt injection listed the group roster, and the filter cascade silently dropped any character the model forgot to mention each turn. In a 3-character group chat the model would typically emit data for whichever character was speaking and ScenePulse would destroy the other two on save. Five-layer fix:
+  1. **New `getGroupMemberNames()` helper** in `src/normalize.js` resolves the active group's member list from `SillyTavern.getContext().groups[selected_group].members`, mapping each member reference to a character name via `context.characters` or the file-extension-stripped raw reference as fallback.
+  2. **Interceptor prompt injection** (`src/generation/interceptor.js`) — when a group chat is active with >1 members, the mandatory hints section now explicitly lists all group participants by name and tells the model "ALL of these characters MUST appear in both the characters array and charactersPresent (unless the narrative has explicitly removed them from the scene)." This is seen at maximum attention weight with every generation.
+  3. **Group carry-forward in `normalizeTracker`** — if the model omits a group-member character from the current turn's output, the missing entry is restored from the previous snapshot with all its fields intact (deep-cloned so history isn't mutated). The model's output for present characters still wins; only truly-missing members are carried forward.
+  4. **`filterForView` group rescue** — unions the group roster into `presentSet` before filtering, so `characters` and `relationships` keep their group-member entries even when the model left them out of `charactersPresent`. Also fixes the sync filter to read from the already-cleaned `out` rather than the raw `snap` input.
+  5. **`_isPrimary` computed flag** replaces the brittle `name2`-only sort logic across `update-panel.js`, `thoughts.js`, and `character-wiki.js`. In single chats the bot character is primary; in group chats every group member is primary and they all bubble to the top as a cohort. Primary characters get a slightly heavier left-border accent via the new `.sp-char-primary` CSS class.
+
+#### Changed — character schema trim
+- **Deleted 8 redundant character fields.** The character schema was collecting 22 required fields per entry every turn, with significant redundancy and some fields that were forcing the model into structured output about reproductive state for every NPC including children — a safety-refusal risk. The trim removes:
+  - `stateOfDress` (the outfit field's free text already describes clothing state; the enum was redundant)
+  - `physicalState` (overlapped with `posture` — vague instructions meant the model emitted the same content in both)
+  - `fertReason`, `fertCyclePhase`, `fertCycleDay`, `fertWindow`, `fertPregnancy`, `fertPregWeek` (three different representations of the same biological state, could drift out of sync, and the 8-field cluster was a major token sink for characters where fertility isn't relevant)
+- **Kept `fertStatus` + `fertNotes`** — status remains a simple active/N/A enum; any details the user wants go in a single free-text notes field. Storage is smaller, the model can't drift, and the UI has nothing to render when the status is N/A.
+- **Added `notableDetails`** as a single optional free-text field for distinguishing features that don't fit the structured slots — scars, tattoos, accents, mannerisms, glasses, disabilities, nervous tells. Replaces the dumping-ground behavior where these leaked into `face` or `physicalState` inconsistently.
+
+#### Changed — character UI
+- **`innerThought` is now rendered in the main character card**, not just in the thought panel and Character Wiki. The field was collected every turn but invisible to users who didn't open those other views. It's a first-class row in the card body, editable via the inline edit mode, with italic styling and a dashed top border to separate it from role.
+- **`role` is rendered in full** as an editable card body row, replacing the old header badge that passed the value through a destructive `shortRole()` regex (which chopped text after conjunctions like "who", "that", "and" and capped at 80 chars). The stored data is now visible end-to-end.
+- **Character appearance grid simplified** to the trimmed schema: Hair, Face, Outfit, Posture, Proximity, Notable Details, Inventory. Fewer fields, clearer purpose per field.
+
+#### Changed — prompt clarifications
+- **Character cardinality cap**: "Maximum 5 character entries per turn. Track only named or plot-relevant NPCs. Background crowd members, extras, and incidental walk-ons do NOT get character entries — mention them in sceneSummary instead."
+- **Proximity now specifies "relative to `{{user}}`"** with concrete examples ("arm's reach", "across the table", "in the next room", "three blocks away"). The previous bare "position/distance" wording drifted across turns.
+- **`innerThought` guidance rewritten positively** — the old "NEVER include emotion labels" prohibition was ambiguous on the boundary between "I'm scared" (valid thought) and "scared, anxious, panicked" (invalid label list). New guidance says: "Write it as dialogue they have with themselves — use their voice, their word choices, their cadence. BE them for one sentence." The RIGHT/WRONG examples are preserved but framed as "this is a description of feelings, not a thought" for the wrong case.
+- **Goals vs quests distinction** explicit: character goal fields describe what THE CHARACTER wants from their perspective; quest journal entries describe what {{user}} is doing from the user's perspective. A character goal does not automatically become a user quest. Explicit protection for user-added quests: "Respect {{user}}'s existing quest journal: if quests are carried forward from previous state (including manually-added ones the user created via the UI), do NOT try to consolidate them into character goals or drop them because a character has a related motivation."
+- **Outfit absorbs state of dress**: "Full outfit description including all layers AND current state (neat/rumpled/disheveled/partially undressed). ONE field — do NOT emit stateOfDress separately."
+- **Posture absorbs physical state**: "Body language, stance, AND physical state (alert/tense/exhausted/intoxicated/injured). ONE field — do NOT emit physicalState separately."
+- **Fertility guidance simplified**: "fertStatus is 'active' only when pregnancy or cycle tracking is narratively relevant to the story. Default to 'N/A' for children, men, non-human characters, and any scenario where fertility isn't part of what's happening. When 'active', put the details (cycle day, phase, window, pregnancy week, notes) as free text in fertNotes — a single field, not a structured dump."
+
+#### Migration
+- **Lazy v6.8.15 migration in `settings.getTrackerData()`** walks every stored snapshot in a chat on first load and folds legacy fields into their surviving counterparts: `stateOfDress` → appended to `outfit` in parentheses; `physicalState` → appended to `posture` with a semicolon; structured fertility fields (`fertReason`, `fertCyclePhase`, `fertCycleDay`, `fertWindow`, `fertPregnancy`, `fertPregWeek`) → concatenated into `fertNotes` as a free-text summary; `notableDetails` → initialized to empty string. The legacy keys are then deleted from storage. Guarded by a per-chat `_spCharTrimMigrated` flag so the scan only runs once.
+- Same fold-in logic runs in `normalizeChar()` during every tracker extraction, so legacy snapshots that bypass the migration (e.g. data from another source) still get cleaned on the way through normalize.
+
+#### Removed — i18n
+- Deleted 203 lines across `src/i18n.js` covering 7 field labels × 29 languages: `Dress`, `Physical`, `Cycle Phase`, `Cycle Day`, `Window`, `Pregnancy`, `Preg. Week`. Added 29 new `Notable Details` entries (one per language) with translations for all 29 locales.
+
+#### Tests
+- **New `tests/group-chat.test.mjs` with 20 cases** covering `getGroupMemberNames()` in single and group modes, `_isPrimary` derivation for both chat types, group carry-forward when the model omits members, duplicate prevention when the model emits all members, `filterForView` group rescue, and a single-chat regression guard.
+- Full sweep: 134/134 (20 group-chat + 46 no-user-as-character + 24 classify-quest + 26 delta-merge-fuzzy + 18 extraction-cleanjson). No regressions.
+
+### [6.8.14] — 2026-04-08
+
+#### Fixed
+- **`{{user}}` is never tracked as a character anymore.** The model was occasionally creating character entries for the player — by persona name, by the literal `{{user}}` template token, or by aliases like "You" / "User" / "Player". Those entries then got their own inner-thought cards in the thought panel, their own appearance grid, and their own relationship meters pointing at themselves. The prompt already said "EXCEPT `{{user}}`" but the model was ignoring it under long-context pressure.
+
+#### Added — five-layer defense
+- **`isUserName(name)` exported from `src/normalize.js`** — canonical user-name detection. Matches SillyTavern's `name1` (case-insensitive, trimmed), the literal `{{user}}` template token, and the common aliases "user" / "you" / "player" / "me". Single source of truth shared across normalize + filterForView.
+- **`normalizeTracker()` filters the user from three arrays**:
+  1. `o.characters` — stripped after all primary, failsafe, and alternate-key population paths run, so one filter guarantees the user never reaches the view layer regardless of which path built the array
+  2. `o.relationships` — self-relationship entries dropped (a user can't have a relationship with themselves; the array expresses how NPCs perceive the user, not vice versa)
+  3. `o.charactersPresent` — filtered at read time before the fallback derivation logic runs
+- **`filterForView()` belt-and-braces strip** — defensive filter at the view layer catches any legacy snapshot or alternate code path that skipped normalize. Also fixes a pre-existing subtle bug where the char/rel sync block was re-reading `snap.charactersPresent` instead of the already-stripped `out.charactersPresent`, which could have reintroduced the user from legacy data.
+- **v6.8.14 snapshot migration in `settings.getTrackerData()`** — heals existing chats by walking every stored snapshot once on first load, stripping `{{user}}` entries from `characters`, `relationships`, and `charactersPresent`. Guarded by a per-chat `_spUserStripMigrated` flag so the scan only runs once. Persists via `saveMetadata()` when any snapshot was touched. Uses an inline minimal helper (not the normalize export) to avoid a circular import.
+- **Prompt strengthened at two places**:
+  - `src/constants.js` BUILTIN_PROMPT — new CRITICAL bullet in the Characters section: "NEVER include {{user}} as a character entry. {{user}} is the player — the human reader — not an NPC. {{user}} has no innerThought field, no role, no appearance fields." Relationships section expanded to explicitly forbid self-relationships.
+  - `src/generation/interceptor.js` runtime reminder — new CRITICAL section at the top of the prev-state injection, seen at maximum attention weight with every delta-mode generation. Explicitly forbids user entries in `characters`, `relationships`, AND `charactersPresent`.
+
+#### Added — tests
+- **`tests/no-user-as-character.test.mjs`** — 46 new test cases covering `isUserName` direct matches (persona name + aliases + case/whitespace variations), `isUserName` non-matches (NPC names, empty/null/undefined, partial matches, `{{char}}` template token), `normalizeTracker` stripping from characters/relationships/charactersPresent under every alias, `filterForView` defensive strip on legacy snapshots, and a regression guard ensuring NPC-only data passes through unchanged. 46/46 passing.
+- **Full regression sweep**: 114/114 total across all four suites (46 no-user + 24 classify-quest + 26 delta-merge-fuzzy + 18 extraction-cleanjson). No regressions.
+
+### [6.8.13] — 2026-04-07
+
+#### Fixed
+- **"Updated" badges only fire on meaningful quest changes now.** The quest journal badge fired on any string difference between turns — including cosmetic rephrasings, punctuation tweaks, and filler-word swaps that the model produces under structured-output pressure just to feel like it's emitting work. Real story progress and trivial wording noise got the same visual weight. The classifier has been rewritten to require one of three substantive signals before flagging an "Updated" badge: (a) urgency changed, (b) name changed, or (c) detail content meaningfully changed measured by Jaccard similarity over stopword-filtered, stemmed tokens. Detail diffs with ≥75% token overlap are now classified as `stale` (no badge) and logged at diagnostic level for observability.
+
+#### Prompt — stop the edits at the source
+- **New MUST-level "quest update rules" section in BUILTIN_PROMPT** ([src/constants.js](src/constants.js)). The model is now explicitly told it MUST NOT modify an existing quest's name, detail, or urgency unless one of these specifically happened in the turn being written:
+  1. **Urgency changed** — the story actually shifted the stakes (deadline passed, threat neutralized, preparation completed)
+  2. **Concrete new information** — the detail needs to reflect a fact that didn't exist last turn, with the specific scene beat cited
+  3. **Resolution** — urgency is being set to `"resolved"` because a resolution trigger fired
+- If none of those apply, emit the quest **byte-identical** to last turn, or omit it from the delta entirely. Rephrasing, synonym swaps, filler additions, and "refreshing" a detail for its own sake are explicitly forbidden. New REMINDER rule #6 reinforces the no-cosmetic-edit rule in plain language.
+- **Runtime reminder updated in `src/generation/interceptor.js`** — the same rules injected with every delta-mode tracker generation so the model sees them at maximum attention weight.
+
+#### Added
+- **`src/ui/classify-quest.js`** — new standalone module housing the meaningfulness-aware classifier. Pure function, no DOM dependencies, directly testable in node. Exports `classifyQuest(q, prev, hasPrevSnap)` and `COSMETIC_SIMILARITY` constant (`0.75`).
+- **Jaccard-similarity threshold of `0.75`** — details with ≥75% non-stopword stemmed-token overlap are treated as cosmetic. Tuned against realistic cases: punctuation tweaks (similarity 1.00), stopword swaps (1.00), casing changes (1.00) all suppress; adding one or more concrete content words (0.60) or replacing the content entirely (0.00) all flag.
+- **Diagnostic logging** — when a below-threshold diff is suppressed, `classifyQuest` emits a `log()` line with the quest name, similarity score, and trimmed previews of both details. Gives us observability into how often the model is ignoring the prompt rule without polluting the UI.
+- **Exported `tokenizeQuestText` and `jaccardSimilarity` from `src/generation/delta-merge.js`** as stable public entry points so `classify-quest.js` reuses the exact same normalization rules (stopword set, stemmer, punctuation strip) as the fuzzy dedup. Single source of truth for quest-text tokenization.
+- **`tests/classify-quest.test.mjs`** — 24 new test cases covering: baseline states (resolved, new, no-prev-snap), identical entries, cosmetic edits (punctuation, casing, stopword swaps), urgency changes, substantive detail additions, name changes, empty-detail edge cases, and borderline cases near the threshold. 24/24 passing. All three test suites (classify + fuzzy + cleanJson) total 68/68 passing.
+
+#### Why the prompt AND the classifier both need the fix
+The prompt-level rule targets the root cause: the model makes trivial edits because the schema slot encourages "something must have changed this turn." The classifier-level rule is a safety net for when the model ignores the prompt anyway (which it will, under long-context pressure). Both layers are defensive — either alone would help, but together they eliminate the noise from two independent angles.
+
+### [6.8.12] — 2026-04-07
+
+#### Fixed
+- **Thought panel showed all historical characters after a page refresh.** Character storage accumulates every character ever encountered in a chat (since v6.6.5, to support the Character Wiki overlay). The view-layer filter via `filterForView` trims storage down to only `charactersPresent` names and is correctly applied inside `updatePanel` before the quest journal and character list render. But the thought panel's `updateThoughts` function was called from five other code paths that passed raw unfiltered storage: `renderExisting` on page refresh, the toolbar thoughts toggle, panel re-show, settings toggle, and settings reset. Each of those paths rendered thought cards for every accumulated character — including ones who had left the scene many turns ago. Most visibly after a page refresh, which is when `renderExisting` runs.
+- Filtering now happens inside `updateThoughts` itself at the render choke point. Applied once via `filterForView` (which honors the `_spViewFiltered` idempotence flag), so the existing `updatePanel → updateThoughts` path is still a single filter pass. All five previously-broken call sites are fixed without touching their call sites.
+
+### [6.8.11] — 2026-04-07
+
+#### Fixed
+- **Quest resolution is now required, not optional.** The carry-forward instruction in both the main system prompt (`src/constants.js` BUILTIN_PROMPT) and the runtime prev-state reminder (`src/generation/interceptor.js`) used `MAY mark a quest as "resolved"` language, which allowed the model to leave stale completed quests hanging in the journal indefinitely. Replaced with a MUST-level rule plus four concrete resolution triggers: goal accomplished, situation moot, user abandoned, or superseded by a later quest. The prompt now explicitly says "this is not a judgment call — any of these triggers means the quest MUST flip to `resolved` on this turn." Also adds the resolved-stays-one-turn lifecycle explanation so the model understands why it shouldn't silently delete.
+- **Cross-tier quest duplication.** The model was emitting the same underlying quest in both `mainQuests` and `sideQuests` under long-context pressure — a failure mode the prompt forbade but didn't enforce. A new `consolidateQuests()` function runs as a post-merge cleanup pass that (a) fuzzy-dedups inside each tier (the existing v6.8.8 logic, now extracted and exported) and (b) adds a cross-tier phase where `mainQuests` wins over `sideQuests` on fuzzy match — if a sideQuest's name fuzzy-matches a mainQuest at ≥0.60 Jaccard similarity, the sideQuest is dropped and its non-empty field values are merged into the matching main entry (main name stays canonical).
+
+#### Added
+- **`consolidateQuests(snap)` exported from `src/generation/delta-merge.js`.** Mutates the snapshot in place and returns it for chaining. Two phases: in-tier fuzzy dedup via `_dedupQuestArray`, then cross-tier mainQuests-absorbs-sideQuests. Safe to call on any snapshot-shaped object including legacy ones with missing or non-array tier fields. Idempotent.
+- **v6.8.11 migration in `settings.getTrackerData()`** — runs `consolidateQuests()` over every snapshot in a chat on first read. Guarded by a new per-chat `_spQuestDedupMigrated` flag so the scan only runs once even though `getTrackerData` is hot. Persists via `saveMetadata()`. Heals existing chats that accumulated quest duplicates before this release landed.
+- **4 new cross-tier dedup test cases** in `tests/delta-merge-fuzzy.test.mjs`: mainQuests absorbs matching sideQuest, unrelated sideQuests stay in their tier, no-op when mainQuests is empty, multiple sideQuests absorbing into the same mainQuest. 26/26 total cases pass.
+
+#### Changed
+- The post-merge pass inside `mergeDelta()` is now a single `consolidateQuests(merged)` call instead of an inline per-tier loop. Behavior on a single delta merge is unchanged; the refactor exists so the migration path in `settings.js` can call the same function without duplicating logic.
+
+### [6.8.10] — 2026-04-07
+
+#### Fixed
+- **Quest mutation buttons (delete / complete / undo / edit detail / edit name) now look up the storage entry by name instead of by view index.** When a quest tier exceeds its display cap, `filterForView` reorders the view to show high-urgency quests first. The mutation handlers were using the view index to splice/mutate the storage array, which silently mutated the wrong quest in storage and caused the panel to re-render with the visible quest still present. Most visible symptom: clicking the delete button on a `mainQuests` entry appeared to do nothing because the wrong storage entry was being removed and the visible high-urgency quest just bubbled back to the top of the view on re-render. Tiers under their cap (where view order matched storage order) were unaffected.
+- New `_findQuestStorageIdx(snap, tierKey, name)` helper resolves storage indices by name lookup (the canonical merge key used by `mergeEntityArray`). All five mutation handlers now refuse to mutate when the lookup returns -1 rather than guessing at a position. The name-edit handler captures the old name *before* mutating `p.name` so the lookup uses the pre-edit identifier.
+
+This is a v6.8.8 regression introduced when per-tier view caps were added — the existing handlers were written assuming view-index = storage-index, which became false the moment the cap started reordering.
+
+### [6.8.9] — 2026-04-07
+
+#### Removed
+- **`activeTasks` quest tier removed entirely.** The tier had no clear domain — its definition ("immediate concrete to-do items") invited the model to treat the quest journal as a reactive scene-by-scene to-do list rather than a forward-looking life roadmap, generating one entry per narrative beat. Real-world chats accumulated dozens of entries over a single session because every scene-level action became a new task. The previous fuzzy dedup work in v6.8.8 catches paraphrase duplicates but cannot fix this — the model was correctly interpreting an impossible instruction. Removing the tier eliminates the category mistake at the source.
+
+#### Migration
+- **Lazy snapshot migration.** Old chats with `activeTasks` data persisted in `chatMetadata.scenepulse.snapshots[*]` are migrated transparently on the first read of the chat. The migration strips the `activeTasks` field from every snapshot in the chat, sets a per-chat flag so the scan only runs once, and persists the cleaned metadata back to disk via `saveMetadata()`. Idempotent and silent.
+- Defensive strip points at every choke point in the data flow: `delta-merge` drops the field from both prev-snapshot input and incoming delta payloads, `interceptor`'s `_cleanSnap` removes it before sending the previous state to the LLM, `engine`'s `_cleanSnapForPrompt` and continuation `_cleanSnap` do the same on the separate-generation path, and `filterForView` deletes it before render. Any path that bypasses one strip is caught by another.
+- The model is no longer told the field exists — system prompt, dynamic schema builder, and interceptor's mandatory hints all omit it.
+
+#### Changed — quest journal redesign
+- **Hard caps in the prompt**: `mainQuests` MAX 3, `sideQuests` MAX 4. The previous prompt had no upper bound and relied on the model's judgement, which produced 6+ main quests and 4+ side quests in long chats.
+- **Velocity limit**: "Introduce AT MOST 1 new quest per turn. If the scene has many possible actions, those belong in `sceneSummary` or each character's `immediateNeed` / `shortTermGoal` — NOT as new quests. Prefer updating an existing quest's detail over creating a new one."
+- **Duration test in the prompt**: "Before adding a quest, ask: 'will this still matter 5 scenes from now?' If no, it is NOT a quest. Write it into `sceneSummary` instead. The quest journal is a save-game log, not a to-do list for the current scene."
+- **Tightened tier definitions**: `mainQuests` are now defined as "primary life arcs that persist across dozens of scenes and take hours, days, or weeks of in-story time to progress" with explicit examples of what does and does not qualify. `sideQuests` similarly tightened to "optional life paths pursued in parallel".
+- View cap reduced from `mainQuests: 5 / sideQuests: 6 / activeTasks: 8` (19 total) to `mainQuests: 5 / sideQuests: 6` (11 total). The prompt-level caps are the primary throttle; the view caps remain as a small-buffer safety net.
+
+#### Files touched (16)
+`src/constants.js` (schema, BUILTIN_PANELS, BUILTIN_PROMPT, TOUR_EXAMPLE_DATA, REMINDER, hard caps + velocity + duration test), `src/schema.js` (dynamic builder), `src/normalize.js` (drop field, view cap, audit, defensive strip in `filterForView`), `src/generation/delta-merge.js` (ENTITY_ARRAYS, QUEST_ARRAYS, prev/delta strips), `src/generation/interceptor.js` (`_cleanSnap`, mandatoryHints), `src/generation/engine.js` (`_cleanSnap`, `_cleanSnapForPrompt`, `prevQuests` set, partKey field map, `KNOWN` keys, log summary), `src/generation/extraction.js` (KNOWN_KEYS), `src/generation/pipeline.js` (log summary), `src/ui/update-panel.js` (quest tier loop, badge counts, prev map, QUEST_ICONS), `src/ui/timeline.js` (questCount), `src/slash-commands.js` (status summary), `src/macros.js` (`sp_quests` handler), `src/i18n.js` (58 entries removed across 29 languages), `src/settings-ui/guided-tour.js` (Quest Journal step), `src/settings.js` (lazy snapshot migration in `getTrackerData()`), `css/quests.css` (`.sp-tier-tasks` rule), plus `tests/delta-merge-fuzzy.test.mjs` updated.
+
+### [6.8.8] — 2026-04-07
+
+#### Fixed
+- **Quest journal no longer accumulates near-duplicates turn after turn.** Quest names are generated fresh each turn by the model and drift across paraphrasings (for example, "pay and dismiss uber driver" → "pay and direct uber driver"). The previous merge logic only matched exact lowercased names, so every paraphrase became a new quest and the tier grew unboundedly. A single long chat in testing hit 39 active tasks before the fix.
+
+#### Added — fuzzy quest consolidation
+- **Fuzzy dedup in `delta-merge.js`** — applied only to the three quest arrays (`mainQuests`, `sideQuests`, `activeTasks`). Characters and relationships still match by exact name (their names are identity). When exact match fails, the merge logic tokenizes both quest names, strips punctuation and stopwords, stems suffixes (`cook`/`cooking`/`cooked`/`cooks` → `cook`), and computes Jaccard similarity over the remaining token sets. A score of 0.60 or higher treats the two as the same quest and merges them field-level.
+- **Post-merge dedup pass** — runs once after the per-entry merge on each quest tier to catch two cases the per-entry path can't: (a) near-duplicates already present in the carried-forward previous snapshot (heals existing chats with bloated quest piles) and (b) two paraphrases of the same quest in a single delta batch (where the per-entry path treats each as new because they're both being added in the same step).
+- **Stability rule**: on a fuzzy match, the existing quest's canonical name is preserved — the delta's rephrasing is discarded so the user doesn't see quest names reshuffle every turn. On an exact match the names are identical by definition so this is a no-op.
+- **Threshold tuned against real log data.** Paraphrase cases consolidate ("pay and dismiss uber driver" ↔ "pay and direct uber driver" → 0.60 match). Distinct but related tasks stay separate ("get jenna medical help" vs "get jenna to hospital" → 0.40 no match). Parent vs qualified child stays separate ("comfort jenna" vs "comfort jenna after confession" → 0.50 no match).
+
+#### Added — per-tier view caps
+- **Quest tier display caps in `filterForView`** — `mainQuests` max 5, `sideQuests` max 6, `activeTasks` max 8. When a tier exceeds its cap, quests are scored by urgency × recency and the top N are shown. **Storage is never touched** — the full quest array persists in the snapshot and is still visible in the Character Wiki, Payload Inspector, and any export. Only the main panel view is capped. This is the safety net: even if fuzzy dedup misses something, the user never sees a quest journal longer than 19 items total.
+
+#### Changed
+- **Interceptor prompt wording** — replaced the `"NEVER drop quests"` directive with permission for the model to consolidate duplicates and near-duplicates into a single clearer entry. The old wording was too absolute and directly encouraged the accumulation pathology. Now: "You MAY consolidate duplicates or near-duplicates into a single clearer entry — prefer consolidation over duplication." Applied to both the injected prompt in `src/constants.js` and the runtime reminder in `src/generation/interceptor.js`.
+
+#### Notes
+Four layers of defense stack: (1) prompt lets the model consolidate on its side, (2) fuzzy merge catches paraphrases the model still emits, (3) post-merge dedup heals existing quest piles in carried-forward state, (4) view cap guarantees a readable journal even if all three upper layers miss. New test harness at `tests/delta-merge-fuzzy.test.mjs` with 15 cases covering exact-match regression, real paraphrase cases, below-threshold cases, no-fuzzy on characters/relationships, post-merge healing of existing piles, same-batch paraphrase collapse, and false-positive guards against unrelated quests.
+
+### [6.8.7] — 2026-04-07
+
+#### Fixed
+- **Balanced-brace JSON extraction in `cleanJson()`** — the extractor now walks forward from the first `{` tracking brace depth (string-aware) and stops at the first balanced close, instead of using `lastIndexOf('}')`. This correctly handles trailing junk after the first complete JSON object — for example, when another extension's version tag (`{"@schema":"1.1"}`) is echoed by the model inside ScenePulse's tracker markers. The previous approach concatenated both objects and fed them to `JSON.parse`, which always failed and caused recovery fallbacks to cascade. Includes string-awareness so that braces inside string values never count toward depth.
+- **Defensive `inlineGenStartMs` resets** at every terminal point of the inline generation path. The flag previously leaked `> 0` on cancel, fallback success, fallback failure, and ST's own `GENERATION_STOPPED` event — only the success path cleared it. A leaked flag could misroute a subsequent `CHARACTER_MESSAGE_RENDERED` event from another extension (e.g. MemoryBooks inserting a memory message) into ScenePulse's extraction path within the 60-second stale-reset window. Resets now fire on cancel (`engine.js`), ST stop (`index.js`), and all recovery exit paths (`message.js`).
+
+#### Notes
+Both fixes are defensive and do not change any success-path behavior. Added `tests/extraction-cleanjson.test.mjs` with 18 cases covering trailing-junk patterns, string-awareness (braces/escaped quotes inside string values), unbalanced fallback, and regression guards for the existing `jsonrepair` integration.
+
+### [6.8.6] — 2026-04-07
+
+#### Added
+- **Head-anchor injection** for the inline tracker prompt — a short reminder is now prepended to the start of the chat context in addition to the existing tail reminder. Counters lost-in-the-middle attention behavior on long prompts: as the injected schema spec plus accumulated snapshot state grows past ~3k tokens, the appendix instruction at the end can lose attention weight and the model may forget to emit the tracker block entirely. A short reminder near the start primes the model's planning phase to know structured output is required before it begins narrative generation.
+- **Two-tier recovery for tracker omission** — when extraction fails because no tracker markers are present in the response, ScenePulse now attempts a cheap continuation re-prompt before escalating to a full separate generation. The continuation passes only the response text and asks for a tracker JSON object for it. Cost is roughly 600–2500 prompt tokens vs ~6000 for the existing full fallback, ~10–15s vs ~40s, and the tracker is generated from the exact text already on screen rather than being re-derived from chat context. Falls through to the existing full separate generation if the continuation fails. Triggered only for the "no SP markers" failure mode when response length is between 500 and 2500 chars; the JSON-unparseable failure mode skips this tier and goes straight to the full fallback, since re-prompting will not change the underlying sampling/formatting glitch.
+
+#### Notes
+Both changes target the inline (Together) generation path. Neither touches `cleanJson` or the vendored `jsonrepair` library. The full separate-generation fallback is unchanged and remains the final tier.
+
+### [6.8.5] — 2026-04-06
+
+#### Added
+- **Character Wiki overlay** — full-screen browser for every character ever encountered, not just those currently in scene. Walks all snapshots once on open to aggregate first-seen / last-seen / appearance count / last known location. Per-character cards with appearance grid, relationship meters with mini sparklines, goals, inventory, fertility, history metadata. Search, filter pills (All / In Scene / Absent), sort options (name / first seen / last seen / appearances / relevance), compact grid view, per-character user notes, avatars, JSON / MD export.
+- **Relationship Web visualization** — SVG circular layout graph of all characters with relationship edges. Edge weight reflects relationship strength; node color reflects per-character color assignment. Reachable from the Character Wiki header.
+- **Container queries for the panel** — `#sp-panel` declares `container-type: inline-size; container-name: sp-panel` so child styles can react to the panel's actual width. Replaces viewport `@media` queries that broke on `position: fixed`. New breakpoints at 550px and 380px.
+- **Tablet fullscreen mode** — 601–1024px viewports now match the mobile fullscreen overlay pattern, with the mobile slide-up animation and the mobile-style top bar.
+- **Auto-condense at intermediate widths** — when the available space between SillyTavern's chat and the viewport edge drops below 360px, the panel automatically engages compact mode and shrinks to a 240–280px sidebar. Releases when space returns. Honors a per-user override flag.
+- **Vendored `jsonrepair` v3.12.0 (ISC)** — proper tokenizer-based JSON repair for malformed inline tracker payloads. See [`src/vendor/`](src/vendor/) and the 106-case validation suite in [`tests/vendor/`](tests/vendor/).
+
+#### Changed
+- **Quest journal UI** — quest entry NEW / UPDATED / RESOLVED badges moved to a right-aligned group alongside the action buttons. Tier-header status counts also right-aligned. Section-header summary badges relocated to sit just before the refresh button. `"upd"` abbreviation replaced with full `t('updated')` localized text, capitalized via CSS so all 29 locales render naturally.
+- **Inline tracker JSON parsing** — `cleanJson()` now delegates to vendored `jsonrepair` after a strict `JSON.parse()` fails, replacing nine in-house regex passes that could not recover from common LLM errors like unescaped quotes inside string values. Worst-case behavior is unchanged — a clean throw still triggers the existing separate-generation fallback path.
+- **Character storage now accumulates** — delta merge no longer prunes characters absent from a delta payload. The full historical character set is preserved in snapshots forever. The view layer trims via `filterForView()`. This is what the Character Wiki overlay browses.
+- **Interceptor prompt** — removed "silently / hidden" wording that some models latched onto and parroted back into narrative. Concrete delta payload examples added to improve schema compliance.
+- **Wiki meter row spacing** — label column widened to 80px desktop / 75px mobile so "Compatibility" no longer overflows into the bar.
+
+#### Fixed
+- **Character / relationship sync** — `filterForView()` reconciles `d.characters` against `d.charactersPresent` and creates stub character entries for any name that appears in `d.relationships` but is missing from `d.characters`. Resolves the "4 relationships shown but only 1 character" gap.
+- **MemoryBooks (and similar extension) compatibility** — `GENERATION_ENDED` handler now guards on `inlineGenStartMs > 0` before attempting primary extraction. Other extensions fire `GENERATION_ENDED` for their own `quietPrompt()` calls; the prior code was attempting to extract a tracker from those messages and corrupting them. Extraction now only runs against generations ScenePulse actually injected into.
+- **Streaming hider regex** — broadened to match `[SCENE TRACKER ...]` echoed instruction headers some models emit during streaming.
+- **JSON parse error logging** — `_parseErrorOffset()` now matches both V8/Chromium `position N` and Firefox `line N column N` parse-error formats. Previously the regex only handled V8, so on Firefox the logged context window was always anchored at position 0 instead of the actual failure point.
+- **Fallback warning text** — the "Together mode: AI omitted tracker payload" warning previously claimed `no SP markers` even when the markers were present and the JSON inside was the problem. It now reports one of two distinct failure kinds: `markers found, JSON unparseable` (sampling/formatting) vs `no SP markers` (prompt-following). These have different root causes and warrant different remediation.
+- **Live language switch** for settings, schema-edit protection (lock confirm), experimental-feature caution labels, and miscellaneous settings i18n fixes.
+
+### v6.6.0
+- **Auto-update system** — Update check with proper ST auth headers. Amber pulsing dot + banner with one-click "Update & Reload" button. Calls ST's git pull endpoint then reloads browser.
+- **Historical node navigation** — Clicking timeline dots or Browse All items scrolls to the message in chat, auto-loading lazy-loaded messages via `showMoreMessages`. Works with messages not currently in the DOM.
+- **Message highlight animation** — JS-driven glow pulse with graceful synchronized fade on outline + box-shadow. Bypasses CSS animation restrictions from ST themes.
+- **Graph hover tooltips** — Hovering data points shows message preview (150 chars), location, mood, tension near the cursor. Click navigates to that message.
+- **Mobile graph support** — Tap shows info panel with "Go to message" button for touch devices.
+- **Browse All pagination** — 10 items per page with First/Prev/Next/Last navigation. Starts on most recent page. Larger fonts (13-15px).
+- **Unlimited snapshot storage** — Default `maxSnapshots: 0` (unlimited). User-configurable in Advanced settings.
+- **Graph capped to 30 data points** — X-axis labels auto-skip to prevent overlap on high message counts. "Showing last 30" indicator when capped.
+- **Unique per-meter delta icons** — Emotionally distinct up/down SVGs: full/cracked heart, bright/dim star, Adinkra/X'd symbol, calm shield/lightning bolt, linked/separated rings. Stress uses yellow up / green down.
+- **Relationship meter improvements** — Bars aligned across all resolutions with fixed-width columns. Mini sparklines always visible. Icons inline after delta values.
+- **Settings improvements** — Schema lock/unlock with single confirmation. Disabled state grays out everything except enable checkbox. Max snapshots setting.
+- **Streaming hider** — More aggressive early detection (`"time":` + time format pattern). Catches partial SP markers during streaming.
+
+### v6.3.6
+- **Relationship sparklines** — Mini inline sparklines on each meter, full-screen SVG graph overlay with clickable legend, area fill, value labels, per-snapshot stats, and clickable X-axis labels for historical navigation
+- **Token analytics panel** — Full-screen overlay with summary cards, source breakdown, and per-snapshot token/time table
+- **Theme presets** — 5 themes (Default, Midnight, Fantasy, Cyberpunk, Minimal) with live CSS variable switching
+- **Slash commands** — `/sp status`, `regen`, `clear`, `toggle`, `export`, `debug`, `help` (experimental)
+- **Custom macros** — 12 template variables: `{{sp_location}}`, `{{sp_time}}`, `{{sp_mood}}`, etc. (experimental)
+- **Scene stagnation detection** — Alerts when tension/mood/topic are static for 4+ messages
+- **Snapshot browser** — "Browse All" button for navigating all historical snapshots
+- **Function tool calling** — Separate mode only, experimental
+- **Post-extraction schema validation** — Warns about missing fields and invalid enums
+- **Shared extraction pipeline** — Eliminates 3-way extraction/save/render duplication
+- **Smart snapshot selection** — Embeds most significant state changes, not just most recent
+- **Config export/import** — Save/load full settings as shareable JSON
+- **Settings tabs** — General, Generation, Prompts, Advanced
+- **Accessibility** — focus-visible, prefers-reduced-motion, screen reader support
+- **Keyboard shortcuts** — Alt+Shift+P (panel), Alt+Shift+R (regen), Escape (close overlays)
+- **Unique per-meter delta icons** — Heart, Adinkra, star, lightning/shield, venn rings with green/red/yellow variants
+- **Inline recovery card** — Retry button shown when extraction fails
+- **Error boundary** — updatePanel restores previous content on render failure
+- **ST version check** — Warns if SillyTavern < 1.12.0
+- **Timer leak fixes** — Intervals moved from DOM elements to module state
+- **Streaming hider** — 20ms polling, aggressive early key detection, regex catches partial markers
+- **max_tokens** — No longer overridden by ScenePulse; user's ST preset controls token budget
+
+### v5.9.8
+- **Payload hiding during streaming** — Tracker JSON hidden using SillyTavern's regex pipeline (`markdownOnly: true`). Handles SP markers, mangled variants, and markerless raw JSON patterns.
+- **Markerless JSON extraction** — `RAW_TIME_KEY_SCAN` fallback detects `{"time":` patterns.
+- **JSON repair** — Enhanced repair pipeline for malformed tracker JSON.
+
+### v5.8.7
+- **Localization** — Full UI translation for 29 languages. Enum values translated at display time. Live language switch.
+- **Delta mode** — LLM returns only changed fields. ~70–90% token savings.
+- **Quest completion system** — Full lifecycle with user management.
+- **Payload Inspector** — 5-mode diff viewer.
+- **Font scaling** — 0.7x–1.5x text-only scaling.
+- **Performance** — Canvas animation leak fixed, caching, debouncing.
+
+### v5.1.1
+- **Modular architecture** — Refactored from monolithic 5,500-line `index.js` into ~30 ES modules
+

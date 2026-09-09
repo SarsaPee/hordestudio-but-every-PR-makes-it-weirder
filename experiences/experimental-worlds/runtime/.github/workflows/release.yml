@@ -1,0 +1,57 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged release
+        uses: actions/checkout@v7
+
+      - name: Build portable application
+        run: ./scripts/build-portable.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes_file="docs/releases/${GITHUB_REF_NAME}.md"
+          portable_asset="dist/Horde-Studio-${GITHUB_REF_NAME}-portable.zip#Horde Studio portable app"
+          showcase_asset="Policy Panic at Bramble and Pike.horde_world#Policy Panic at Bramble and Pike.horde_world"
+          poster_file="assets/marketing/${GITHUB_REF_NAME}/horde-studio-${GITHUB_REF_NAME}-launch-poster.png"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [[ -f "$notes_file" ]]; then
+              gh release edit "$GITHUB_REF_NAME" \
+                --title "Horde Studio ${GITHUB_REF_NAME#v}" \
+                --notes-file "$notes_file"
+            fi
+            gh release upload "$GITHUB_REF_NAME" \
+              "$portable_asset" \
+              "$showcase_asset" \
+              --clobber
+          elif [[ -f "$notes_file" ]]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Horde Studio ${GITHUB_REF_NAME#v}" \
+              --notes-file "$notes_file" \
+              "$portable_asset" \
+              "$showcase_asset"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Horde Studio ${GITHUB_REF_NAME#v}" \
+              --generate-notes \
+              "$portable_asset"
+          fi
+
+          if [[ -f "$poster_file" ]]; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "$poster_file#Horde Studio launch poster" \
+              --clobber
+          fi
