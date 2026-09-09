@@ -26,3 +26,14 @@ all modify custom World receipt-repair/reasoning behavior rather than a
 genuinely application-global facility. The authoritative custom source remains
 the behavioral source of truth, so those patches are preserved in history but
 are not imported as host-global changes.
+
+## Pass-0 checkpoint
+
+- Browser-tested implementation commit: `3b64149`
+- Checkpoint tag: `checkpoint/experimental-worlds-dual-inplace-17.0`
+- Generated stock runtime source: immutable local `hordestudio-17.0.0`
+- The existing dual-origin and partial-native lineages remain rollback/oracle
+  material only.
+- Acceptance ran on isolated port `43141`; the live deployment at `43127` was
+  not modified.
+- No unreachable Git objects were pruned and no history was force rewritten.

@@ -16,18 +16,22 @@ checkpoint conflicts with this checklist, this checklist wins.
 
 ## Pass 0: rename the room and add stock Worlds
 
-- [ ] Rename the existing custom Worlds identity to **Experimental Worlds** in
+- [x] Rename the existing custom Worlds identity to **Experimental Worlds** in
   place, with only the coexistence changes that are demonstrably necessary.
-- [ ] Import actual stock Worlds and its complete World-specific dependency
+- [x] Import actual stock Worlds and its complete World-specific dependency
   closure from the pristine local 17.0 tree.
-- [ ] Preserve the existing custom Chat, Virtual Human, Video, Settings,
+- [x] Preserve the existing custom Chat, Virtual Human, Video, Settings,
   providers, backup, media, maps, files, and other global enhancements.
-- [ ] Keep existing custom persistence untouched. Use
+- [x] Keep existing custom persistence untouched. Use
   `HordeStudioStockWorlds17Pass0DB` only for temporary stock-World authority.
-- [ ] Prove both World modes and all ordinary modes in one document, origin,
+- [x] Prove both World modes and all ordinary modes in one document, origin,
   bootstrap generation, and application instance.
-- [ ] Tag the accepted result
+- [x] Tag the accepted result
   `checkpoint/experimental-worlds-dual-inplace-17.0`.
+
+Pass-0 implementation and evidence are recorded in
+`STOCK_WORLDS_17_PASS0_IMPORT_MAP.md`, `CUSTOMIZATION_INVENTORY.md`, and
+`PASS0_ACCEPTANCE_LEDGER.md`. Pass 1 has not begun.
 
 ## Pass 1: detach the working Experimental mode
 
