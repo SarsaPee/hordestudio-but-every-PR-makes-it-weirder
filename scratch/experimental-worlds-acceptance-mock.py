@@ -19,6 +19,7 @@ release = threading.Event()
 audit: list[dict[str, object]] = []
 temporal_fixture_calls = 0
 temporal_fixture_enabled = False
+delay_next_request = False
 
 
 def completion(body: dict[str, object]) -> dict[str, object]:
@@ -246,11 +247,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
-        global temporal_fixture_calls, temporal_fixture_enabled
+        global temporal_fixture_calls, temporal_fixture_enabled, delay_next_request
         if self.path == "/temporal-reset":
             temporal_fixture_calls = 0
             temporal_fixture_enabled = True
             return self.send_json(200, {"temporal_fixture": "armed"})
+        if self.path == "/delay-next":
+            delay_next_request = True
+            release.clear()
+            return self.send_json(200, {"delay_next": "armed"})
         if self.path == "/release":
             release.set()
             return self.send_json(200, {"released": True})
@@ -265,7 +270,9 @@ class Handler(BaseHTTPRequestHandler):
         # transport.  This mock therefore detects its disposable marker in
         # the same complete request string used by ``completion`` above.
         request_text = " ".join(str(item.get("content") or "") for item in messages if isinstance(item, dict))
-        delayed = "ACCEPTANCE_DELAY" in request_text
+        delayed = delay_next_request or "ACCEPTANCE_DELAY" in request_text
+        if delay_next_request:
+            delay_next_request = False
         audit.append({
             "path": self.path,
             "delayed": delayed,
