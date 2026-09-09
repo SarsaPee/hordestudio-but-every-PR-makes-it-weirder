@@ -14,6 +14,8 @@ const allowed = new Set([
     'docs/experimental-worlds/PROGRESS.md', 'docs/experimental-worlds/CODEX_EXPERIMENTAL_WORLDS_SPLIT.md',
     'docs/experimental-worlds/ACCEPTANCE_LEDGER.md', 'docs/experimental-worlds/MIRROR_AUDIT.md',
     'scratch/experimental_worlds_mirror_migration_audit.py', 'scratch/experimental-worlds-acceptance-mock.py',
+    'scratch/cross_mode_deletion_browser_acceptance.js', 'scratch/f16_portrait_browser_acceptance.js',
+    'scratch/late_response_world_switch_browser_acceptance.js', 'scratch/temporal_reroll_browser_acceptance.js',
     'scripts/check-experimental-worlds-boundary.js',
 ]);
 const required = [

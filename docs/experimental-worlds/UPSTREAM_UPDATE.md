@@ -12,7 +12,7 @@
 
 Only these upstream-owned paths may carry Experimental Worlds integration code:
 
-- `app.js`: the release-display correction from the upstream tag's stale `17.3.0` string to the verified `17.4.0` release label; no Worlds behavior changes.
+- `app.js`: the release-display correction from the upstream tag's stale `17.3.0` string to the verified `17.4.0` release label, plus the stock-owned `HordeStudioStockDB` bootstrap name. This prevents stock startup from opening or migrating legacy custom state at the old stock origin; it changes no stock Worlds semantics.
 - `index.html`: navigation registration and one script tag.
 - `experimental-worlds-navigation.js`: origin-aware navigation target.
 - `horde_mcp_bridge.py`: localhost document dispatch, explicit Experimental Worlds static allowlist, and private recovery-mirror routes.
@@ -23,9 +23,10 @@ Experimental semantics, CSS, ScenePulse, Sidecar, memory, visuals/outfits, and
 their private bridge compatibility source remain under `experiences/experimental-worlds/`.
 
 The v17.4.0 tag itself retains `HORDE_STUDIO_VERSION = '17.3.0'`. This build
-changes that display-only constant to `17.4.0`; it is the sole stock-parity
-exception outside the Experimental Worlds host seams and is documented here so
-future tag comparisons do not mistake it for a World-model change.
+changes that display-only constant to `17.4.0`. The explicit stock database
+name is the other host seam: it retains the upstream schema and writer while
+preventing a legacy custom full-state envelope at the old stock origin from
+being loaded or migrated. Neither exception changes a World model.
 
 ## Routine update
 

@@ -1,7 +1,11 @@
 window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
 
 // --- Horde Persistence (IndexedDB) ---
-const DB_NAME = 'HordeStudioDB';
+// Stock must not open or migrate the legacy custom application's state merely
+// because an older build previously occupied this browser origin. Experimental
+// Worlds keeps its preserved runtime and `HordeStudioDB` under localhost;
+// stock starts with an explicit, stock-owned envelope on 127.0.0.1.
+const DB_NAME = 'HordeStudioStockDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
