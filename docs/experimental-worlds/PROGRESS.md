@@ -16,7 +16,7 @@
 - [x] Merge exact upstream target `520aa2155b02289f9db1c6740a48e494124d2cca` in staging.
 - [x] Preserve upstream maps/VH bridge additions while retaining the narrow Experimental Worlds seam.
 - [x] Run upstream engine gates and test a fresh portable extraction.
-- [~] Repeat the full browser proof after the Milestone A checkpoint. The staged 17.4 F18 graduation/save/readback, F19/F20 relationship save/readback, and F09 Location graduation passed with a mocked provider; rewind/resend, late response, cross-mode deletion, and F16 remain outstanding.
+- [~] Repeat the full browser proof after the Milestone A checkpoint. The staged 17.4 F18 graduation/save/readback, F19/F20 relationship save/readback, and F09 Location graduation passed with a mocked provider. Cross-origin late-response isolation passed with the mock, but same-tab switching remains unproven; rewind/resend, cross-mode deletion, and F16 remain outstanding.
 - [ ] Perform guarded live mirror cutover/deployment only after the remaining browser acceptance items pass.
 
 ## Recorded blockers before live cutover
@@ -31,10 +31,11 @@
   browser/save/readback evidence. The staged 17.4 relationship fixture has
   also passed F19's five values including zero and F20's metadata save/readback
   through the native source panel, plus F09 Location graduation through the
-  native explicit-review modal. The in-place rewind confirmation still needs
-  a completed dispatch proof; F16 and late-response assertions remain unproven
-  browser work.
-- Cross-mode deletion reached the confirmation for a disposable Experimental
-  World only, but the isolated browser's JavaScript-dialog bridge stalled
-  before accept/cancel. No user, backup, production, or staging-copy world was
-  deleted.
+  native explicit-review modal. Cross-origin late-response isolation passed
+  with the mock transport, while in-place rewind confirmation, F16 native file
+  attachment, same-tab late-response switching, and cross-mode deletion still
+  lack completed browser proof.
+- Cross-mode deletion reached the synthetic Experimental and Stock 17.0 delete
+  paths, but the isolated browser's JavaScript-dialog/CDP channel stalled
+  before an accept/cancel result. No user, backup, production, or staging-copy
+  world was deleted.
