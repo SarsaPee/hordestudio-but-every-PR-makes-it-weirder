@@ -12,7 +12,9 @@ const allowed = new Set([
     'scripts/build-portable.sh', 'scripts/migrate-experimental-worlds-mirror.py',
     'docs/experimental-worlds/UPSTREAM_UPDATE.md', 'docs/experimental-worlds/OWNERSHIP.md',
     'docs/experimental-worlds/PROGRESS.md', 'docs/experimental-worlds/CODEX_EXPERIMENTAL_WORLDS_SPLIT.md',
-    'scratch/experimental_worlds_mirror_migration_audit.py', 'scripts/check-experimental-worlds-boundary.js',
+    'docs/experimental-worlds/ACCEPTANCE_LEDGER.md', 'docs/experimental-worlds/MIRROR_AUDIT.md',
+    'scratch/experimental_worlds_mirror_migration_audit.py', 'scratch/experimental-worlds-acceptance-mock.py',
+    'scripts/check-experimental-worlds-boundary.js',
 ]);
 const required = [
     'experiences/experimental-worlds/manifest.json',
