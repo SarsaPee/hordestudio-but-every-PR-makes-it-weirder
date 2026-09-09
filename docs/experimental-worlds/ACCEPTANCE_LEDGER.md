@@ -19,7 +19,7 @@ checks and the portable package do not substitute for an unchecked row.
 | Stock persistence | Created `Stock Acceptance Disposable`, saved, exited to stock Worlds list. | Card remained in the stock list. | Passed (synthetic) |
 | Experimental persistence | Created `Experimental Acceptance Disposable`, saved and entered its default timeline. | Reload retained the world, timeline, Sidecar and mocked turn. | Passed (synthetic) |
 | Mocked turn | Selected the local mock through the real Experimental Worlds Settings UI, then sent `Mocked acceptance turn two`. | The UI showed the authored user turn, a mock response, provenance controls, and `Rewind to draft`. | Passed (mocked provider) |
-| Rewind to draft | In both preserved dual-17.0 `Experimental Acceptance Disposable` and staged-17.4 `Experimental 17.4 F09 Location Disposable`, used the visible in-place `Rewind to draft` control on a settled synthetic turn. | In-app browser activation left the visible control at `Rewind to draft`; it never exposed `Confirm?`, so no rewind, draft readback, or resend was attempted. | Incomplete; shared browser-acceptance failure, no pass claimed |
+| Rewind to draft | In both preserved dual-17.0 `Experimental Acceptance Disposable` and staged-17.4 `Experimental 17.4 F09 Location Disposable`, used the visible in-place `Rewind to draft` control on a settled synthetic turn. A fresh staged-17.4 reload against the exact served runtime then attempted keyboard activation on `Experimental 17.4 F18 Disposable`. | In-app browser click activation left the control at `Rewind to draft`; the fresh keyboard attempt returned to the Experimental Worlds library rather than exposing `Confirm?`. No rewind, draft readback, or resend was attempted. | Incomplete; browser-adapter failure, no product pass claimed |
 | Late response | In `Experimental 17.4 F09 Location Disposable`, the corrected disposable mock recorded a held Reader request for `ACCEPTANCE_DELAY`. Before its explicit `/release`, a first-class Stock 17.4 document at `127.0.0.1:43136` became the active browser context. | After release, the response/settlement remained only in the original Experimental timeline. The Stock document remained its independent one-character, zero-room library with no injected response or Experimental world. | Passed for cross-origin mode isolation with mocked provider; same-tab mode/timeline switching remains unproven |
 | Cross-mode deletion | Opened the real delete path for synthetic worlds only: previously the Experimental fixture and now `Stock Acceptance Disposable` in isolated Stock 17.0 World Studio. | The in-app browser dialog/CDP channel stalled before an accept/cancel result. No destructive retry was made and no user, backup, production, or staging-copy world was deleted. | Incomplete; no cross-mode readback and no pass claimed |
 | F16 portrait upload/clear | In dual-17.0 `Experimental Acceptance Disposable`, opened synthetic Person `Mira`'s native Visuals inspector; native `Upload` and disabled `Clear` were visible. | Available browser adapter has no file-attachment capability and did not surface a native chooser; no image was written, saved/reloaded, or cleared. | Blocked by browser-automation capability; not provider-related and no pass claimed |
@@ -31,3 +31,15 @@ checks and the portable package do not substitute for an unchecked row.
 The live provider proof still needs an authorized disposable provider context:
 an Experimental Worlds draft-send/inspect/rewind/resend against a real
 provider, with the source/receipt provenance retained after reload.
+
+## Separate staged 17.4 automation gates
+
+On 9 September 2026, the staged worktree passed `node scripts/check-engine.js`
+(41/41 suites), then passed `node scratch/browser_storage_transaction_audit.js`
+and `node scratch/browser_engine_smoke_audit.js` with the desktop-provided
+Playwright module and a clean Chrome process/profile. The storage audit proved
+stale-tab conflicts, serialized writes, rollback on cloning failure and one
+canonical writer. The engine smoke audit exercised the real 17.4 application
+in an isolated origin and passed its persistence, job-ownership, map, VH,
+photo, gallery and asset checks. These are regression evidence only: they do
+not substitute for the unchecked Experimental Worlds browser rows above.
