@@ -305,6 +305,7 @@ window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
             attemptId: String(source.attemptId || defaults.attemptId || '').slice(0, 180),
             evidence,
             lastSeenAt: String(source.lastSeenAt || source.last_seen_at || new Date().toISOString()).slice(0, 40),
+            scenePulseCharacter: isPlainObject(source.scenePulseCharacter || source.scene_pulse_character) ? safeJsonClone(source.scenePulseCharacter || source.scene_pulse_character) : {},
             promotionProvenance: isPlainObject(source.promotionProvenance || source.promotion_provenance) ? safeJsonClone(source.promotionProvenance || source.promotion_provenance) : null
         };
     }
@@ -32458,7 +32459,14 @@ async function promoteImpliedWorldRecord(options = {}) {
         }, 'sidecar_conversation');
         const canonical = record.kind === 'location'
             ? world.locations.find(location => location.id === introducedId)
-            : world.entities.find(entity => entity.id === introducedId);
+            : world.entities.find(entity => entity.id === introducedId)
+                // The native reducer assigns its normal entity ID unless an
+                // explicit separate-identity resolution was requested. The
+                // earlier duplicate screen has already ruled out a visible
+                // same-name record, so this exact session/name fallback is
+                // the newly created canonical record, not a fuzzy link.
+                || world.entities.find(entity => String(entity?.sessionOrigin || '') === String(sess.id || '')
+                    && String(entity?.name || '').trim().toLowerCase() === String(record.name || '').trim().toLowerCase());
         if (!canonical) throw new Error('The native reducer did not create the requested record.');
         window.HordeSidecarPromotion?.markPromoted(protocol, record.id, canonical.id);
         const visualOutcome = {
