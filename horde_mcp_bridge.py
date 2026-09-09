@@ -214,7 +214,13 @@ else:
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
 ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
-EXPERIMENTAL_SHARED_LIBRARY_FILE = CONFIG_DIR / EXPERIMENTAL_WORLDS_ID / "shared-library.json"
+# Acceptance runs can select an isolated recovery mirror without changing the
+# production Experimental Worlds namespace. The default remains the installed
+# location so normal launch behavior and existing data stay unchanged.
+EXPERIMENTAL_SHARED_LIBRARY_FILE = Path(os.environ.get(
+    "HORDE_EXPERIMENTAL_SHARED_LIBRARY_FILE",
+    str(CONFIG_DIR / EXPERIMENTAL_WORLDS_ID / "shared-library.json"),
+))
 
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
