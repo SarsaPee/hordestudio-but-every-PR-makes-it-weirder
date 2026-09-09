@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -184,14 +185,38 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def send_stream(self, value: dict[str, object]) -> None:
-        content = str(value["choices"][0]["message"]["content"])
-        chunks = [content[:max(1, len(content) // 2)], content[max(1, len(content) // 2):]]
+        choice = value["choices"][0]
+        message = choice["message"]
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
+        if isinstance(tool_calls, list) and tool_calls:
+            # Receipt settlement is a native streamed tool call. Preserve that
+            # OpenAI-compatible shape so the browser takes its real parser,
+            # validator, and commit path rather than seeing empty prose.
+            delta = {"role": "assistant", "tool_calls": []}
+            for index, call in enumerate(tool_calls):
+                function = call.get("function") if isinstance(call, dict) else {}
+                delta["tool_calls"].append({
+                    "index": index,
+                    "id": str(call.get("id") or f"acceptance-tool-{index}"),
+                    "type": "function",
+                    "function": {
+                        "name": str(function.get("name") or ""),
+                        "arguments": str(function.get("arguments") or ""),
+                    },
+                })
+            event = {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            return
+        content = str(message.get("content") or "") if isinstance(message, dict) else ""
+        chunks = [content[:max(1, len(content) // 2)], content[max(1, len(content) // 2):]]
         for chunk in chunks:
             event = {"choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]}
             self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
@@ -244,4 +269,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", 43200), Handler).serve_forever()
+    parser = argparse.ArgumentParser(description="Disposable Horde Studio acceptance mock")
+    parser.add_argument("--port", type=int, default=43200)
+    args = parser.parse_args()
+    ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
