@@ -62,7 +62,40 @@ def completion(body: dict[str, object]) -> dict[str, object]:
     # it is never enabled by production configuration and never pretends to be
     # live-model evidence.  Its deliberately complete candidate lets the UI,
     # validators, translation reducer and persistence path run unchanged.
-    if "[SIDECAR READER]" in text and "ACCEPTANCE_SCENEPULSE_CANDIDATE" in text:
+    if "[SIDECAR READER]" in text and "ACCEPTANCE_SCENEPULSE_LOCATION" in text:
+        content = json.dumps({
+            "mode": "full",
+            "summary": "Seeded disposable ScenePulse location candidate for browser acceptance.",
+            "changed_fields": ["scenePulse", "candidateStructures"],
+            "semantic_interpretation": {
+                "scene": {"topic": "location graduation fixture", "description": "A disposable browser-only place reading."},
+                "scenePulse": {
+                    "time": "10:15", "date": "Acceptance Day", "elapsed": "a moment",
+                    "location": "Acceptance Archive", "weather": "clear", "temperature": "mild",
+                    "sceneTopic": "location graduation", "sceneMood": "focused",
+                    "sceneInteraction": "exploration", "sceneTension": "low",
+                    "sceneSummary": "The player enters the Acceptance Archive.",
+                    "soundEnvironment": "paper rustling", "witnesses": [], "charactersPresent": [],
+                    "northStar": "Exercise the location-review seam.",
+                    "mainQuests": [], "sideQuests": [], "plotBranches": [],
+                    "relationships": [], "characters": []
+                },
+                "characterIntelligence": [{
+                    "subjectRef": "player", "name": "Player", "relevance": "controlled",
+                    "presence": {"mode": "active", "location": "Acceptance Archive"},
+                    "activity": {"text": "The player authored the acceptance location fixture turn.", "epistemicKind": "user_explicit_action", "confidence": "high", "uncertainty": "", "evidence": "The visible player input."}
+                }],
+                "candidateStructures": [{
+                    "candidateId": "candidate_acceptance_archive", "candidateType": "location", "label": "Acceptance Archive",
+                    "description": "A quiet public archive with a map wall and labelled stacks.", "status": "accepted", "presence": "active",
+                    "details": {"region": "Acceptance District", "mapType": "building", "floor": "Ground floor"},
+                    "evidence": [{"text": "The authored acceptance beat places the player inside the Acceptance Archive."}]
+                }]
+            },
+            "unresolved": [], "proposed_questions": [], "time_evidence": {},
+            "controlled_character_evidence": []
+        })
+    elif "[SIDECAR READER]" in text and "ACCEPTANCE_SCENEPULSE_CANDIDATE" in text:
         content = json.dumps({
             "mode": "full",
             "summary": "Seeded disposable ScenePulse candidate for browser acceptance.",
