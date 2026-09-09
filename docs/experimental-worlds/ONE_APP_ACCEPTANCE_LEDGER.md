@@ -6,7 +6,7 @@ Revision under test: uncommitted one-app correction atop `2b19d9106cdcf458c55cfb
 | --- | --- | --- |
 | U01 same document/origin | Staging bridge at `http://localhost:43128`; browser opened Chat Library, Experimental Worlds, stock Worlds, then reloaded. | **Passed**. URL, document title and sidebar shell remained `localhost:43128`; no redirect occurred. |
 | U03 default-off acknowledgement | Opened Experimental Worlds before enabling. | **Passed**. Native view showed acknowledgment, disabled Enable control, and did not create a Reader/job. |
-| Global Settings entry | The current Settings modal owns a small Experimental Worlds status/action control that routes to the same native acknowledgment or mode. | **Implemented; post-control browser rerun pending**. |
+| Global Settings entry | At `localhost:43128`, reopened current Settings after native enablement. Its `Experimental Worlds` control showed `Enabled for this browser profile` and `Open mode`, using the same current Settings modal. | **Passed browser smoke**. |
 | Native persistence isolation | Acknowledged, enabled, created `experimental-synthetic-mtty49jj`, returned to stock Worlds, reloaded, reopened Experimental Worlds. | **Passed**. The synthetic Experimental World remained; stock Worlds remained separately rendered. |
 | U08 backup registration | Native mode registers `experimental-worlds` with the global coordinator at startup, independent of the enabled flag. | **Implemented; browser export/readback pending**. |
 | Legacy same-origin import | Native repository only probes `HordeStudioDB` after explicit user action and copies nonconflicting values while retaining archive provenance. | **Implemented; legacy-profile browser proof pending**. |
