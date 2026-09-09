@@ -1,4 +1,16 @@
 window.__hordeRuntimeErrors = window.__hordeRuntimeErrors || [];
+window.__hordeBootstrapGenerationCount = (Number(window.__hordeBootstrapGenerationCount) || 0) + 1;
+const makeHordeRuntimeToken = () => globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID() : `${Date.now()}:${Math.random()}`;
+const HORDE_BOOTSTRAP_GENERATION = `${window.__hordeBootstrapGenerationCount}:${makeHordeRuntimeToken()}`;
+window.__hordeBootstrapGeneration = HORDE_BOOTSTRAP_GENERATION;
+window.__hordeRootDocumentToken ||= Object.freeze({ createdAt: Date.now() });
+window.__hordeRootDocumentTokenId ||= makeHordeRuntimeToken();
+const hordeAppRoot = document.getElementById('app');
+if (hordeAppRoot) {
+    hordeAppRoot.dataset.hordeBootstrapGeneration = HORDE_BOOTSTRAP_GENERATION;
+    hordeAppRoot.dataset.hordeDocumentToken = window.__hordeRootDocumentTokenId;
+}
 
 /*
  * Permanent provider-call flight recorder. Every request which leaves Horde's
@@ -3163,6 +3175,26 @@ function validateWorldData(value, label = 'World') {
     return safeJsonClone(value);
 }
 
+function validatePass0StockWorldsBackup(value) {
+    requirePlainObject(value, 'Backup stock Worlds 17.0');
+    if (value.database !== 'HordeStudioStockWorlds17Pass0DB') {
+        throw new Error('Backup stock Worlds 17.0 database identity is invalid');
+    }
+    if (value.schemaVersion !== 1) {
+        throw new Error(`Unsupported stock Worlds 17.0 backup version: ${value.schemaVersion ?? 'missing'}`);
+    }
+    requireArray(value.worlds, 'Backup stock Worlds 17.0 worlds', { max: 1000 });
+    requirePlainObject(value.worldInstances, 'Backup stock Worlds 17.0 instances');
+    requirePlainObject(value.worldRecoverySnapshots || {}, 'Backup stock Worlds 17.0 recovery snapshots');
+    requirePlainObject(value.stockSettings || {}, 'Backup stock Worlds 17.0 settings');
+    requirePlainObject(value.worldMediaAssets || {}, 'Backup stock Worlds 17.0 media');
+    value.worlds.forEach((world, index) => {
+        requirePlainObject(world, `Backup stock World ${index + 1}`);
+        requireSafeId(world.id, `Backup stock World ${index + 1} id`);
+        requireString(world.name, `Backup stock World ${index + 1} name`, { max: 300 });
+    });
+}
+
 function validateBackupData(value) {
     requirePlainObject(value, 'Backup');
     if (value._format !== 'horde-studio-backup') throw new Error('Not a Horde Studio backup file');
@@ -3175,6 +3207,7 @@ function validateBackupData(value) {
     requireArray(value.worlds, 'Backup worlds', { optional: true, max: 1000 });
     requireArray(value.videoWorlds, 'Backup Video Adventures', { optional: true, max: 1000 });
     requireArray(value.companions, 'Backup Virtual Humans', { optional: true, max: 1000 });
+    if (value.stockWorlds17Pass0 !== undefined) validatePass0StockWorldsBackup(value.stockWorlds17Pass0);
     (value.characters || []).forEach((item, index) => validateCharacterData(item, `Backup character ${index + 1}`));
     (value.rooms || []).forEach((item, index) => validateRoomData(item, `Backup room ${index + 1}`));
     (value.personas || []).forEach((item, index) => {
@@ -3537,7 +3570,7 @@ let workspacePersistTimer = null;
 let pendingWorkspaceState = null;
 
 function validWorkspaceView(value) {
-    return ['library', 'chat', 'studio', 'worlds', 'worldStudio', 'worldPlay',
+    return ['library', 'chat', 'studio', 'stockWorlds', 'worlds', 'worldStudio', 'worldPlay',
         'videoWorlds', 'videoWorldStudio', 'videoWorldPlay', 'companions',
         'companionStudio', 'companionChat', 'multiplayer', 'pip'].includes(value);
 }
@@ -6439,6 +6472,7 @@ const views = {
     pip: document.getElementById('pip-view'),
     chat: document.getElementById('chat-view'),
     studio: document.getElementById('studio-view'),
+    stockWorlds: document.getElementById('stock-worlds-pass0-view'),
     worlds: document.getElementById('worlds-view'),
     worldStudio: document.getElementById('world-studio-view'),
     worldPlay: document.getElementById('world-play-view'),
@@ -8149,7 +8183,7 @@ function setupHordeLabs() {
                 document.getElementById(modalButtons[destination])?.click();
                 return;
             }
-            const view = { chat: 'library', humans: 'companions', worlds: 'worlds', pip: 'pip' }[destination];
+            const view = { chat: 'library', humans: 'companions', worlds: 'stockWorlds', pip: 'pip' }[destination];
             if (view) switchView(view);
         }
     });
@@ -8201,6 +8235,82 @@ function initGlobalSidebarToggle() {
 async function init() {
     applyPersistedSidebarState();
     initGlobalSidebarToggle();
+    if (window.StockWorlds17Pass0) {
+        window.StockWorlds17Pass0.configure({
+            getHostState: () => state,
+            navigateHost: viewName => switchView(viewName),
+            getBootstrapGeneration: () => HORDE_BOOTSTRAP_GENERATION,
+            getIncludedWorlds: () => window.HORDE_INCLUDED_WORLDS || [],
+            getBuiltinPresets: () => (typeof DEFAULT_SYSTEM_PRESETS !== 'undefined'
+                ? DEFAULT_SYSTEM_PRESETS.filter(preset => preset?.id !== 'freaky_frankenstein_54_horde_authority')
+                : []),
+            peekCurrentChatSession: () => {
+                const ownerId = state.activeRoomId || state.activeCharId;
+                if (!ownerId || !Array.isArray(state.chats?.[ownerId])) return null;
+                const sessions = state.chats[ownerId];
+                const activeId = state.activeSessionId?.[ownerId];
+                return sessions.find(session => session?.id === activeId) || sessions[0] || null;
+            },
+            getModelCatalog: async ({ force = false } = {}) => {
+                if (force) {
+                    openRouterModels = [];
+                    modelCatalogSource = null;
+                }
+                return getOpenRouterModels();
+            },
+            getModelCatalogSource: () => modelCatalogSource,
+            persistHostState: () => saveState(),
+            setCompanionImageModelCatalog: models => {
+                companionImageModelCatalog = Array.isArray(models) ? models : [];
+            },
+            labs: window.HordeLabs || null,
+            rpgMechanics: globalThis.HordeRpgMechanics || null,
+            services: {
+                apiBase,
+                attributionHeaders,
+                authHeaders,
+                cloudProviderName,
+                getEmbedding,
+                hasApiCredentials,
+                humanizeApiError,
+                isLocalProvider,
+                localGenerationIdleTimeoutMs,
+                normalizedProviderId,
+                providerDisplayName,
+                providerHasCredentials,
+                sanitizeMessagesForProvider,
+                applyRegexScripts,
+                labsProposal,
+                showConfirmModal,
+                showToast,
+                confirm: (...args) => window.confirm(...args),
+                prompt: (...args) => window.prompt(...args),
+                applyCompanionImageParameters,
+                chooseCompanionImageEndpoint,
+                companionImageCapabilities,
+                companionImageModelFallback,
+                companionImageModelInfo,
+                getCompanionImageEndpoints,
+                getCompanionOutputModels,
+                normalizeGeneratedImageSource,
+                rankCompanionTextModels,
+                rankCompanionImageModels,
+                renderCompanionSearchResults,
+                requestCompanionPhoto,
+                setCompanionSearchOpen,
+                stabilizeGeneratedImageSource
+            }
+        });
+    } else {
+        const error = new Error('The pristine stock Worlds 17.0 Pass-0 runtime did not load.');
+        console.error(error);
+        window.__hordeRuntimeErrors.push({ message: error.message, stack: error.stack || '' });
+        const stockNav = document.getElementById('nav-stock-worlds-btn');
+        if (stockNav) {
+            stockNav.disabled = true;
+            stockNav.title = error.message;
+        }
+    }
     // Ask the browser to protect our IndexedDB from storage-pressure eviction
     if (navigator.storage && navigator.storage.persist) {
         navigator.storage.persist().catch(() => {});
@@ -8520,6 +8630,9 @@ function switchView(viewName) {
         window.HordeScenePulseSourceRuntime?.unmount?.(scenePulseHost);
         window.HordeScenePulseWorlds?.unmount?.(scenePulseHost);
     }
+    if (state.view === 'stockWorlds' && viewName !== 'stockWorlds') {
+        window.StockWorlds17Pass0?.unmount?.();
+    }
     state.view = viewName;
     persistWorkspaceSoon();
     
@@ -8548,7 +8661,18 @@ function switchView(viewName) {
 
     // View specific logic
     if (viewName === 'library') renderLibrary();
-    if (viewName === 'multiplayer') renderMultiplayerHub();
+    if (viewName === 'multiplayer') {
+        renderMultiplayerHub();
+        void window.StockWorlds17Pass0?.ready?.().then(() => {
+            if (state.view === 'multiplayer') renderMultiplayerHub();
+        }).catch(error => {
+            console.error('Stock Worlds 17.0 multiplayer sources failed to load:', error);
+            window.__hordeRuntimeErrors.push({
+                message: `Stock Worlds 17.0 multiplayer sources failed to load: ${String(error?.message || error)}`,
+                stack: String(error?.stack || '')
+            });
+        });
+    }
     if (viewName === 'pip') requestAnimationFrame(() => document.getElementById('labs-guide-input')?.focus());
     
     if (viewName === 'chat') {
@@ -8574,6 +8698,22 @@ function switchView(viewName) {
 
     if (viewName === 'worlds') {
         renderWorlds();
+    }
+    if (viewName === 'stockWorlds') {
+        if (!window.StockWorlds17Pass0) {
+            showToast('Stock Worlds is unavailable because its runtime asset did not load.', 'error');
+            switchView('library');
+            return;
+        }
+        const mount = document.getElementById('stock-worlds-pass0-mount');
+        void window.StockWorlds17Pass0.mount(mount).catch(error => {
+            console.error('Stock Worlds 17.0 failed to mount:', error);
+            window.__hordeRuntimeErrors.push({
+                message: `Stock Worlds 17.0 failed to mount: ${String(error?.message || error)}`,
+                stack: String(error?.stack || '')
+            });
+            showToast(`Unable to open stock Worlds: ${error?.message || error}`, 'error');
+        });
     }
     window.HordeVideoWorlds?.onView?.(viewName);
 
@@ -24244,6 +24384,10 @@ async function exportFullBackup() {
         const blob = await HordeDB.get(`companionVideoAsset:${assetId}`).catch(() => null);
         if (blob instanceof Blob) companionVideoAssets[assetId] = await blobAsDataUrl(blob);
     }
+    if (!window.StockWorlds17Pass0) {
+        throw new Error('Cannot create a complete backup: stock Worlds 17.0 is unavailable.');
+    }
+    const stockWorlds17Pass0 = await window.StockWorlds17Pass0.exportState();
     const payload = {
         _format: 'horde-studio-backup',
         _version: 1,
@@ -24265,6 +24409,7 @@ async function exportFullBackup() {
         worlds: state.worlds,
         worldInstances: state.worldInstances,
         activeWorldId: state.activeWorldId,
+        stockWorlds17Pass0,
         videoWorlds: state.videoWorlds,
         videoWorldSessions: state.videoWorldSessions,
         activeVideoWorldId: state.activeVideoWorldId,
@@ -24319,6 +24464,15 @@ function importFullBackup(file) {
                         const blob = await fetch(source).then(response => response.blob());
                         await HordeDB.set(`companionVideoAsset:${assetId}`, blob);
                     }
+                    if (data.stockWorlds17Pass0 !== undefined) {
+                        await window.StockWorlds17Pass0.importState(data.stockWorlds17Pass0);
+                    } else {
+                        // A pre-Pass-0 backup represents the complete older
+                        // application state. Replace the temporary stock domain
+                        // with its pristine seeded state rather than retaining
+                        // unrelated stock sessions from the current profile.
+                        await window.StockWorlds17Pass0.purgeState();
+                    }
                     worldMediaDirty = true;
                     await saveState();
                     showToast('Backup restored! Reloading...', 'success');
@@ -24335,6 +24489,7 @@ function purgeAllData() {
     showConfirmModal('⚠️ Purge All Data', 'This will permanently delete all characters, settings, and memory. This action cannot be undone. Are you sure?', async () => {
         try {
             localStorage.clear();
+            await window.StockWorlds17Pass0?.purgeState?.();
             HordeDB.close();
             await new Promise((resolve, reject) => {
                 const request = indexedDB.deleteDatabase(DB_NAME);
@@ -33019,10 +33174,16 @@ let multiplayerHubTransport = 'lan';
 
 function multiplayerSources(type = multiplayerHubType) {
     if (type === 'world') {
-        return state.worlds.map(world => ({
-            type: 'world', id: world.id, name: world.name || 'Untitled World',
+        return [
+            ...state.worlds.map(world => ({
+            type: 'world', id: world.id,
+            domain: 'experimental-worlds-pass0', domainLabel: 'Experimental Worlds',
+            sourceKey: `experimental-worlds-pass0:${world.id}`,
+            name: world.name || 'Untitled World',
             description: world.description || 'Persistent World', image: world.image || world.banner || ''
-        }));
+            })),
+            ...(window.StockWorlds17Pass0?.listMultiplayerSources?.() || [])
+        ];
     }
     return [
         ...state.characters.map(character => ({
@@ -33052,7 +33213,10 @@ function renderMultiplayerHub() {
         campaignList.innerHTML = campaigns.length ? campaigns.map(campaign => {
             const system = campaign.system?.name || 'Custom rules';
             const players = Array.isArray(campaign.players) ? campaign.players.length : 0;
-            return `<button class="multiplayer-campaign-card" type="button" data-mp-campaign="${escapeHTML(campaign.id)}"><span class="multiplayer-campaign-mark">${escapeHTML(displayInitials(campaign.name))}</span><span><strong>${escapeHTML(campaign.name)}</strong><small>${escapeHTML(system)} · ${players} saved player${players === 1 ? '' : 's'} · ${escapeHTML(campaign.source?.name || 'Original campaign')}</small></span><span>Host again →</span></button>`;
+            const sourceLabel = campaign.source?.domainLabel
+                ? `${campaign.source.domainLabel} · ${campaign.source?.name || 'Original campaign'}`
+                : campaign.source?.name || 'Original campaign';
+            return `<button class="multiplayer-campaign-card" type="button" data-mp-campaign="${escapeHTML(campaign.id)}"><span class="multiplayer-campaign-mark">${escapeHTML(displayInitials(campaign.name))}</span><span><strong>${escapeHTML(campaign.name)}</strong><small>${escapeHTML(system)} · ${players} saved player${players === 1 ? '' : 's'} · ${escapeHTML(sourceLabel)}</small></span><span>Host again →</span></button>`;
         }).join('') : '<div class="multiplayer-campaign-empty"><strong>No multiplayer campaigns yet</strong><span>Choose a template below to create one. Its save will remain separate from single-player.</span></div>';
         campaignList.querySelectorAll('[data-mp-campaign]').forEach(button => {
             button.onclick = () => window.HordeMultiplayer?.prepareCampaign?.(button.dataset.mpCampaign, {
@@ -33070,8 +33234,12 @@ function renderMultiplayerHub() {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'multiplayer-source-card';
+        button.dataset.multiplayerSourceKey = source.sourceKey || `${source.type}:${source.id}`;
         const imageStyle = source.image ? ` style="background-image:url('${cssUrl(source.image)}')"` : '';
-        button.innerHTML = `<span class="multiplayer-source-avatar"${imageStyle}>${source.image ? '' : escapeHTML(displayInitials(source.name))}</span><span><strong>${escapeHTML(source.name)}</strong><small>${escapeHTML(source.description)}</small></span>`;
+        const sourceDescription = source.domainLabel
+            ? `${source.domainLabel} · ${source.description}`
+            : source.description;
+        button.innerHTML = `<span class="multiplayer-source-avatar"${imageStyle}>${source.image ? '' : escapeHTML(displayInitials(source.name))}</span><span><strong>${escapeHTML(source.name)}</strong><small>${escapeHTML(sourceDescription)}</small></span>`;
         button.onclick = () => window.HordeMultiplayer?.prepare?.(source, {
             transport: multiplayerHubTransport,
             relayUrl: document.getElementById('multiplayer-relay-url')?.value || ''
@@ -33155,6 +33323,10 @@ function currentMultiplayerContext(preferredType = '') {
         if (character) return { type: 'chat', kind: 'character', id: character.id, name: character.name || 'Shared Chat' };
     }
     if (preferredType === 'world' || !preferredType) {
+        if (state.view === 'stockWorlds') {
+            const stockContext = window.StockWorlds17Pass0?.currentMultiplayerContext?.();
+            if (stockContext) return stockContext;
+        }
         const world = state.worlds.find(item => item.id === state.activeWorldId);
         if (world) return { type: 'world', id: world.id, name: world.name || 'Shared World' };
     }
@@ -33192,6 +33364,9 @@ function buildMultiplayerSnapshot(context) {
 
 function buildMultiplayerCampaignTemplate(context) {
     if (!context?.id) return null;
+    if (context.stockWorlds17Pass0) {
+        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;
+    }
     const provider = normalizedProviderId();
     if (context.type === 'chat') {
         const room = context.kind === 'room' ? state.rooms.find(item => item.id === context.id) : null;
@@ -33212,7 +33387,11 @@ function buildMultiplayerCampaignTemplate(context) {
     if (!world) return null;
     const lore = Array.isArray(world.lore) ? world.lore.map(entry => `${entry.title || entry.name || 'Lore'}: ${entry.content || entry.text || ''}`).join('\n') : String(world.globalLore || '');
     return {
-        source: { type: 'world', id: world.id, name: world.name || context.name },
+        source: {
+            type: 'world', id: world.id, name: world.name || context.name,
+            domain: 'experimental-worlds-pass0', domainLabel: 'Experimental Worlds',
+            sourceKey: `experimental-worlds-pass0:${world.id}`
+        },
         model: world.model || state.globalSettings.defaultModel,
         provider: normalizedProviderId(world.textProvider || provider),
         systemPrompt: `You are the impartial game facilitator for a system-agnostic online tabletop campaign. Treat every submitted player as a separate character with independent knowledge, capabilities, inventory and consequences. Do not assume D&D, modern technology, a single protagonist, or a single rules system. Apply only the campaign rules supplied by the host. Preserve continuity and resolve simultaneous actions fairly.\n\nWORLD\n${world.dmPersona || world.systemPrompt || world.description || ''}\n\nLORE\n${lore}\n\nAUTHOR GUIDANCE\n${world.authorsNote || ''}`,

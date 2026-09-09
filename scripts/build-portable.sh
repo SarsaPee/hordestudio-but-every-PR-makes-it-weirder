@@ -48,6 +48,14 @@ do
   cp "$ROOT_DIR/$file" "$APP_DIR/"
 done
 
+# Pass 0 adds pristine stock 17.0 Worlds as a same-document mode. Ship only
+# its generated runtime and stylesheet; source maps and pristine reference
+# trees remain development/provenance material.
+mkdir -p "$APP_DIR/experiences/stock-worlds-17-pass0"
+cp "$ROOT_DIR/experiences/stock-worlds-17-pass0/runtime.js" \
+  "$ROOT_DIR/experiences/stock-worlds-17-pass0/style.css" \
+  "$APP_DIR/experiences/stock-worlds-17-pass0/"
+
 # Built-in humans follow the same boot path as the rest of the application.
 # Packaging must copy both definitions and must never rewrite them into inline
 # scripts (which CSP correctly blocks). Treat either missing file as a fatal
