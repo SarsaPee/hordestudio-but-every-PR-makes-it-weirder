@@ -1,0 +1,37 @@
+{
+  "name": "Five-character Scene Intelligence acceptance fixture",
+  "purpose": "Transcript-hidden scene projection and per-turn subjective intelligence contract.",
+  "canonical": {
+    "location": { "id": "loc_guildhall_bar", "name": "Guildhall Main Bar", "parent": "loc_guildhall", "localSpace": "the service end of the main bar" },
+    "time": "6:30 PM",
+    "dayDate": "Friday 14 August 2026",
+    "environment": { "weather": "rain against the front windows", "sound": "low jukebox, glassware and the cellar pump", "light": "warm bar lamps against wet blue streetlight" }
+  },
+  "participants": [
+    { "id": "player", "name": "Alex", "presence": "active", "scope": "controlled; only authored input and explicit narration may establish interiority" },
+    { "id": "npc_charlotte", "name": "Charlotte", "presence": "active", "role": "bartender" },
+    { "id": "npc_chloe", "name": "Chloe Winters", "presence": "active", "role": "arrived from the rain" },
+    { "id": "npc_sarah", "name": "Sarah Clarke", "presence": "audible", "location": "cellar", "role": "working on the cider manifold" },
+    { "id": "npc_georgia", "name": "Georgia Frederick", "presence": "remote", "channel": "unanswered work call/message", "role": "Alex's new employer" }
+  ],
+  "authoredBeat": {
+    "playerInput": "Alex folds the job-offer email away without showing it, greets Chloe, and asks Charlotte for a pint.",
+    "narration": "Rain frets at the Guildhall's front windows as Alex tucks his phone away. Chloe catches the movement but not the screen; Charlotte has noticed his interview shirt and is already reaching for a glass. From below, Sarah swears at the cider manifold and calls that she needs a hand in a minute. Alex's phone buzzes once more with Georgia Frederick's name, then stops.",
+    "handoff": "SCENE READING: Alex is at the Guildhall bar with Charlotte and Chloe. Sarah is audible from the cellar; Georgia is remotely relevant through the unseen message.\nANSWER core.time: 6:30 PM Friday.\nANSWER core.location: Guildhall Main Bar.\nANSWER core.cast: Alex, Charlotte, Chloe active; Sarah audible.\nANSWER core.world_changes: Georgia's message arrived but its content is not disclosed.\nREQUESTS: Keep the job offer private unless Alex reveals it."
+  },
+  "requiredProjectionAnswers": {
+    "here": ["Alex", "Charlotte", "Chloe Winters"],
+    "relevantNotHere": ["Sarah Clarke audible in the cellar", "Georgia Frederick remotely relevant through a message"],
+    "actions": { "Charlotte": "pouring/reaching for a glass", "Chloe": "has noticed Alex hide the phone but not its screen", "Sarah": "working on the cider manifold" },
+    "subjective": {
+      "Charlotte": "may plausibly be amused/curious about Alex's interview shirt, labelled Reader inference unless otherwise disclosed",
+      "Chloe": "knows Alex hid something but does not know it was Georgia's job offer",
+      "Sarah": "has auditory/working context only and does not know the bar exchange",
+      "Georgia": "must not receive a private thought without actual message/call content or established context"
+    },
+    "relationshipShift": "Charlotte's immediate teasing/curiosity may be scene posture only; no durable affinity change is required.",
+    "objectsPlaces": ["Alex's phone", "job-offer email (private/unread by others)", "pint glass", "cider manifold", "cellar"],
+    "unresolved": ["whether Alex reveals the offer", "whether Sarah gets help with the manifold", "content of Georgia's message"],
+    "irrelevantRegistryCharacters": "must not appear in default relevant people"
+  }
+}

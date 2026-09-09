@@ -149,6 +149,12 @@ STATIC_FILES = {
 STATIC_MEDIA_ROOTS = (
     ("/assets/bundled/", APP_DIR / "assets" / "bundled"),
     ("/assets/worlds/", APP_DIR / "assets" / "worlds"),
+    # ScenePulse is a pinned, local product import.  Its source stylesheet
+    # intentionally imports its ordered component CSS by relative path, so
+    # this explicit tree is needed for the one integrated Horde runtime to
+    # serve the vendor CSS and the narrow Horde bridge.  The same resolved-
+    # path containment check below prevents arbitrary workspace exposure.
+    ("/scenepulse/", APP_DIR / "scenepulse"),
 )
 
 if os.name == "nt":

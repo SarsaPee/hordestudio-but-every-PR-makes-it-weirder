@@ -823,7 +823,14 @@ export function saveSnapshot(id,j){
 
 export function getSnapshotFor(id){return getTrackerData().snapshots?.[String(id)]??null}
 
-export function getPrevSnapshot(id){const sorted=Object.keys(getTrackerData().snapshots).map(Number).sort((a,b)=>a-b);const p=sorted.filter(k=>k<id).pop();return p!=null?getTrackerData().snapshots[String(p)]:null}
+// The native extension's ordinary rule is the immediately previous snapshot.
+// Worlds may take several ScenePulse-only readings of one authored turn
+// (section refresh, thoughts refresh, or a retry). Those readings remain in
+// source history, but a relationship delta represents movement since the
+// previous authored turn—not a reread of the exact same turn. The Horde
+// bridge tags only its own snapshots with these opaque markers; untagged
+// source histories retain the original immediately-previous behaviour.
+export function getPrevSnapshot(id){const all=getTrackerData().snapshots||{};const sorted=Object.keys(all).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);const current=all[String(id)]||{};const currentMeta=current?._spMeta||{};const currentTurn=String(currentMeta.hordeTurnId||'').trim();const isHordeSnapshot=currentMeta.hordeScenePulseBridge===true;if(isHordeSnapshot&&currentTurn){const previous=sorted.filter(k=>k<id).reverse().map(k=>all[String(k)]).find(snapshot=>{const meta=snapshot?._spMeta||{};return meta.hordeScenePulseBridge===true&&String(meta.hordeTurnId||'').trim()&&String(meta.hordeTurnId||'').trim()!==currentTurn});return previous||null}const p=sorted.filter(k=>k<id).pop();return p!=null?all[String(p)]:null}
 
 // v6.13.0 (issue #15): schema/prompt now resolved through the active
 // profile rather than directly off `s`. Existing legacy settings were

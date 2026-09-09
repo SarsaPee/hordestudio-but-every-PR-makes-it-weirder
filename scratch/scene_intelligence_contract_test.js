@@ -29,6 +29,7 @@ const sourceRelationshipsCss = read('scenepulse', 'vendor', 'ScenePulse', 'css',
 const sourceConstants = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'constants.js');
 const sourceGuidedTour = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'guided-tour.js');
 const sourceLoading = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'loading.js');
+const sourceSettings = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings.js');
 const sourceSetupGuide = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'setup-guide.js');
 const sourceI18n = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'i18n.js');
 const sourceSlots = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'prompts', 'slots.js');
@@ -62,7 +63,10 @@ function lastRuntimeFunction(name, prefix = 'function') {
 function lastSourceFunction(source, name, prefix = 'function') {
     const start = source.lastIndexOf(`${prefix} ${name}(`);
     assert(start >= 0, `missing source ${name}`);
-    const open = source.indexOf('{', source.indexOf(') {', start));
+    // Vendored ScenePulse uses both `function name() {` and the compact
+    // `function name(){` style. Find the body after its own closing
+    // parameter delimiter instead of assuming a formatting space.
+    const open = source.indexOf('{', source.indexOf(')', source.indexOf('(', start)));
     let depth = 0;
     for (let index = open; index < source.length; index += 1) {
         if (source[index] === '{') depth += 1;
@@ -141,9 +145,13 @@ const candidateLink = lastFunction('linkScenePulseCandidateToCanonical', 'async 
 const candidateDuplicateResolution = lastFunction('resolveScenePulseCandidateDuplicate', 'async function');
 const impliedPromotion = lastFunction('promoteImpliedWorldRecord', 'async function');
 const promotionAppearance = lastFunction('applyScenePulsePromotionAppearance');
+const promotionLocation = lastFunction('applyScenePulsePromotionLocation');
 const graphNormalizer = lastFunction('normalizeSidecarNpcRelationshipGraph');
 const worldStatusResize = lastFunction('initWorldStatusResizeHandle');
 const restoreScenePulseStatusWidth = lastFunction('restoreScenePulseStatusColumnWidth');
+const sharedLibraryInit = lastFunction('initializeSharedLibrarySync', 'async function');
+const workspacePersist = lastFunction('persistWorkspaceState', 'async function');
+const statePersist = lastFunction('persistStateSnapshot', 'async function');
 const sourceMacroOrigin = lastRuntimeFunction('sourceMacroOrigin');
 const sourceCommandStatus = lastRuntimeFunction('sourceCommandStatus');
 const sourceCommand = lastRuntimeFunction('runSourceCommand', 'async function');
@@ -152,14 +160,26 @@ const sourceSetup = lastRuntimeFunction('showWorldsSetupGuide');
 const sourceBridgeControls = lastRuntimeFunction('injectBridgeControls');
 const sourceDiscard = lastRuntimeFunction('discardSourceEphemeralEditors');
 const sourceDiscardChanges = lastRuntimeFunction('discardSourceChanges');
+const sourceSnapshotHandoff = lastRuntimeFunction('handoffForCurrentSnapshot');
+const sourceClockCanonicalizer = lastRuntimeFunction('sourceCanonicalClockValue');
+const sourceNormalizedRetention = lastRuntimeFunction('retainSourceNormalizedSnapshot');
+const sourceHumanFieldOrigin = lastRuntimeFunction('nativeFieldSource');
+const sourceFieldComparator = lastRuntimeFunction('scenePulseFieldEquivalent');
 const sourceSectionAccessibility = lastRuntimeFunction('enhanceSourceSectionAccessibility');
 const sourceControlledRecordFilter = lastRuntimeFunction('stripControlledSourceRecords');
 const sourcePlayerIdentity = lastRuntimeFunction('declaredSourcePlayerName');
 const sourceNormalizedSnapshot = lastRuntimeFunction('retainSourceNormalizedSnapshot');
+const sourceUnmount = lastRuntimeFunction('unmount');
 const sourceControlledPlayerComparison = lastRuntimeFunction('controlledPlayerBoundaryEquivalent');
 const sourceGraphComparison = lastRuntimeFunction('relationshipGraphReviewMarkup');
 const sourceCompleteRelationship = lastRuntimeFunction('hasCompleteSourceRelationshipProjection');
 const sourceRelationshipFixtureSupport = lastRuntimeFunction('preserveFixtureRelationshipDisplaySupport');
+const sourceSnapshotRenderable = lastRuntimeFunction('sourceSnapshotHasRenderableScene');
+const sourcePanelRenderRecovery = lastRuntimeFunction('scheduleSourcePanelRenderRecovery');
+const freshSourceModules = lastRuntimeFunction('loadFreshSourceModules');
+const sourceModuleLoader = lastRuntimeFunction('loadModules', 'async function');
+const sourceRelationshipPhaseRenderer = lastRuntimeFunction('sourceRelationshipPhaseForRenderer');
+const sourceRelationshipPhaseAdapter = lastRuntimeFunction('adaptSourceRelationshipPhases');
 const hostActionHandler = lastFunction('bindScenePulseWorldsHostActions');
 const sourceHostActions = frozenRuntimeStringArray('SOURCE_HOST_ACTIONS');
 
@@ -175,6 +195,10 @@ assert.equal((app.match(/^function normalizeSidecarReaderEnvelope\(/gm) || []).l
 assert.equal((app.match(/^function parseSidecarReaderOutput\(/gm) || []).length, 1, 'only one active Sidecar Reader parser may exist');
 assert.equal((app.match(/^function mergeSidecarReaderEnvelope\(/gm) || []).length, 1, 'only one active Sidecar Reader delta merger may exist');
 assert.equal((app.match(/^function attachSidecarReaderSnapshot\(/gm) || []).length, 1, 'only one active Sidecar Reader snapshot attachment path may exist');
+assert.ok(app.includes('const FF_VOICE_TAG_PATTERN = /<([a-z][a-z0-9]*)(?::([a-z][a-z0-9_-]*))?>'), 'the narrative presenter must recognize optional FF delivery cues on colour tags');
+assert.match(app, /function ffVoiceTags\(text\)[\s\S]*?tone !== String\(closingTone \|\| ''\)\.toLowerCase\(\)/, 'a qualified FF voice tag must require matching colour and delivery cue at both ends');
+assert.match(app, /const voiceTags = ffVoiceTags\(paragraph\)/, 'qualified FF voice tags must feed the dialogue-card renderer');
+assert.match(app, /function stripFFVoiceTags\(text\)[\s\S]*?FF_VOICE_TAG_PATTERN/, 'non-cinematic rendering must remove only structurally valid qualified FF voice tags');
 assert.match(currentTurn, /sess\.history.*\.reverse\(\)/s, 'current authored turn must follow visible history');
 assert.match(app, /const SCENEPULSE_TOUR_EXAMPLE_DATA = Object\.freeze/, 'the actual source tutorial fixture must remain present');
 const vendoredTourFixture = vm.runInNewContext(`(${objectLiteralAfter(sourceConstants, 'export const TOUR_EXAMPLE_DATA=')})`);
@@ -185,10 +209,15 @@ assert.match(acceptedHandoff, /scenePulseHumanOverlay\(protocol, fixtureWithPref
 assert.match(acceptedHandoff, /settlementStatus === 'settled'[\s\S]*snapshot\?\.turnId/, 'live handoff must be exact-turn settled');
 assert.match(acceptedHandoff, /const settledForLatestTurn = latestTurnAccepted[\s\S]*?const settled = settledForLatestTurn \|\| historySnapshots\.at\(-1\) \|\| null/, 'an incomplete newest turn must retain the last settled ScenePulse packet rather than substitute the tutorial');
 assert.match(acceptedHandoff, /lastKnown: retainingLastKnownScene/, 'last-known presentation must be explicit provenance, not a disguised current handoff');
+assert.match(acceptedHandoff, /normalizeSidecarScenePulseShape\(envelope\.scenePulse\)/, 'restored accepted snapshots must receive the same source-shape normalization as new Reader input');
+assert.match(acceptedHandoff, /normalizeSidecarScenePulseShape\(snapshot\.envelope\.scenePulse\)/, 'historical source materializations must preserve repaired field shapes too');
 assert.doesNotMatch(acceptedHandoff, /world\.entities|world\.quests|sess\.quests/, 'accepted ScenePulse handoff must not borrow Horde registry fields');
 assert.match(nativePresentationAuthority, /SCENEPULSE_NATIVE_PRESENTATION_FIELDS/, 'the ScenePulse-facing ownership family must be explicit');
 assert.match(acceptedHandoff, /nativeFieldAuthority/, 'each accepted handoff must carry the declared source-field authority');
 assert.match(acceptedHandoff, /candidateReview/, 'settled identity handoffs must remain beside the ScenePulse tracker rather than inside it');
+assert.match(workspacePersist, /await HordeDB\.set\('workspaceStateV2', snapshot\);[\s\S]*?pendingWorkspaceState = snapshot;/, 'the persisted workspace point must become the next startup freshness baseline');
+assert.match(statePersist, /const workspaceSnapshot = captureWorkspaceState\(\);/, 'a full save must capture one explicit workspace point');
+assert.match(statePersist, /await HordeDB\.setMultiple\(records\);[\s\S]*?pendingWorkspaceState = workspaceSnapshot;/, 'a successful full save must update the shared-library reload guard with the actual persisted workspace point');
 assert.match(acceptedHandoff, /relationshipReview/, 'saved ScenePulse relationship translations must remain Inspect-only beside the source tracker');
 assert.match(app, /function scenePulseActiveSourceProfile\(/, 'the selected source Profile must be resolvable at the Reader boundary');
 assert.match(app, /function scenePulseEffectiveSourceCustomPanels\(/, 'the native panel and Reader must share one effective source custom-panel schema');
@@ -209,11 +238,40 @@ assert.match(readerPass, /scenePulseSourceProfile/, 'accepted Reader metadata mu
 assert.match(readerPass, /SCENEPULSE NPC RELATIONSHIP WEB/, 'the one Sidecar Reader pass must own the source NPC graph interpretation');
 assert.match(readerPass, /Do not make a second graph-generation call/, 'the Reader contract must forbid an independent ScenePulse graph inference');
 assert.match(readerPass, /SCENEPULSE STABLE RECORD IDENTITIES/, 'the first rich ScenePulse projection must require stable source record identities');
+assert.match(readerPass, /Every branch is exactly \{type, name, hook\}/, 'the Reader prompt must keep Story Idea category, title and hook distinct');
+const stageStoryIdea = lastFunction('stageScenePulseStoryIdea');
+assert.match(stageStoryIdea, /isPlainObject\(direction\)/, 'Story Idea source objects must be converted at the host boundary rather than coerced into the draft');
+assert.ok(stageStoryIdea.includes("const article = /^[aeiou]/i.test(type) ? 'an' : 'a';"), 'Story Idea host staging must choose a grammatical source OOC article for every source category');
+assert.match(stageStoryIdea, /Take the story in \$\{article\} \$\{type\} direction/, 'Story Idea host staging must preserve the source OOC direction format');
+assert.doesNotMatch(stageStoryIdea, /const text = String\(direction \|\| ''\)/, 'Story Idea source objects must never produce [object Object] drafts');
+const stagedStoryIdeaComposer = { value: '', dispatchEvent() {}, focus() {} };
+vm.runInNewContext(`${stageStoryIdea}; stageScenePulseStoryIdea({ direction: { type: 'exploratory', name: 'Line check', hook: 'Test the repaired cider line.' } });`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    document: { getElementById: id => id === 'world-user-input' ? stagedStoryIdeaComposer : null },
+    Event: class Event { constructor(type, options) { this.type = type; this.options = options; } },
+    resizeWorldMessageInput() {}, showToast() {}
+});
+assert.match(stagedStoryIdeaComposer.value, /^\[OOC: Take the story in an exploratory direction — "Line check"\. Test the repaired cider line\.\]$/, 'the native Exploratory card must produce grammatical OOC text before it reaches the World composer');
 assert.match(readerPass, /Do not derive an ID from a display name/, 'Reader identity must never be inferred from a mutable source label');
+assert.match(readerPass, /complete aliases array in the same changed-only ScenePulse patch/, 'an explicit visible alias change must survive the compact ScenePulse delta');
 assert.match(readerPass, /Each relationship record MUST include relationshipId and its characterId/, 'relationship dimensions need stable identity from their first source projection');
 assert.match(readerPass, /const priorReaderSnapshotId = String\(options\.priorReaderSnapshotId/, 'a delta Reader must receive the actual accepted snapshot identity rather than guess it');
 assert.match(readerPass, /COMPLETION BUDGET — HARD/, 'the Reader must favor a complete compact delta over a truncated verbose packet');
 assert.match(readerPass, /Reader compact recovery/, 'a completion-capped Reader response must receive one bounded compact reread of the same beat');
+assert.match(readerPass, /const finalResponseRound = maxRounds \+ 1/, 'a Reader that reaches its lookup limit must get one final response round');
+assert.match(readerPass, /const forceFinalReaderResponse = round === finalResponseRound/, 'the final Reader response must be an explicit bounded phase');
+assert.match(readerPass, /if \(!forceFinalReaderResponse\) \{[\s\S]*?body\.tools = tools;/, 'the final Reader response must omit lookup tools');
+assert.match(readerPass, /Reader forcing final JSON response after tool limit/, 'the forced final Reader response must remain auditable');
+assert.match(app, /forceWithoutReasoning = false/, 'bounded recovery must be able to explicitly suppress optional provider reasoning');
+const reconciliationPass = lastFunction('runSidecarReconciliation', 'async function');
+assert.match(reconciliationPass, /COMPACT SIDECAR COMMIT RECOVERY/, 'a completion-capped reconciliation must retain one compact receipt recovery');
+assert.match(reconciliationPass, /tools: \[compactSidecarCommitTool\(commitTool\)\], tool_choice: 'required'/, 'compact recovery must retain the one native commit boundary');
+assert.match(reconciliationPass, /retryPolicy: 'none', forceWithoutReasoning: true/, 'compact recovery must not consume budget on a second reasoning pass');
+assert.match(reconciliationPass, /Reconciliation compact commit recovery/, 'compact recovery attempts must remain auditable');
+assert.match(sharedLibraryInit, /const localSavedAt = Number\(pendingWorkspaceState\?\.savedAt\) \|\| 0/, 'startup sync must compare the durable local snapshot timestamp before replacing it');
+assert.match(sharedLibraryInit, /const localSnapshotIsNewer = hasPublishableLocalLibrary\(\)[\s\S]*?localSavedAt > \(Number\(status\?\.updatedAt\) \|\| 0\)/, 'a bridge revision must not outrank a newer local snapshot by itself');
+assert.match(sharedLibraryInit, /remoteWasNewer && !localSnapshotIsNewer/, 'auto-pull must be limited to remote snapshots that are not older than local data');
+assert.match(sharedLibraryInit, /Shared-library auto-pull deferred: a newer local snapshot is protected/, 'a protected local fork must produce auditable conflict evidence rather than silent replacement');
 assert.match(readerPass, /relationship\.meterDeltas as signed numeric changes/, 'Reader relationship updates must use compact signed meter deltas after their baseline');
 assert.match(readerPass, /missing any of those five meters or five named labels is also unbaselined/, 'an incomplete legacy relationship must receive a full visible meter-and-label baseline before delta-only updates begin');
 assert.match(readerPass, /affectionLabel, trustLabel, desireLabel, stressLabel, compatibilityLabel/, 'a relationship baseline must provide all five named ScenePulse meter labels');
@@ -244,12 +302,32 @@ assert.match(switchViewFunction, /state\.view === 'worldPlay' && viewName !== 'w
 assert.ok(enterWorldFunction.indexOf("switchView('worldPlay');") < enterWorldFunction.indexOf('renderWorldPlayState();'), 'entering a World must activate the World route before mounting the ScenePulse runtime');
 
 assert.match(runtime, /native-source-modules-via-horde-compatibility-scaffold/, 'runtime must identify its temporary compatibility role');
-assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/panel\.js`\)/, 'runtime must import the source panel module');
-assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/update-panel\.js`\)/, 'runtime must import the source panel renderer');
-assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/timeline\.js`\)/, 'runtime must import the source history renderer');
-assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/character-wiki\.js`\)/, 'runtime must load source wiki behavior');
-assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/relationship-web\.js`\)/, 'runtime must load source relationship-web behavior');
-assert.match(runtime, /import\(`\$\{ROOT\}\/ui\/loading\.js`\)/, 'runtime must load the source loading lifecycle primitives');
+assert.match(runtime, /SOURCE_REL_PHASE_DISPLAY_ALIASES/, 'the source bridge must adapt known legacy phase tokens only at the display boundary');
+assert.match(sourceRelationshipPhaseAdapter, /sourceRelationshipPhaseForRenderer/, 'the native tracker must adapt relationship phases before source normalization');
+assert.equal(vm.runInNewContext(`${sourceRelationshipPhaseRenderer}\nsourceRelationshipPhaseForRenderer('established_regular')`, {
+    SOURCE_REL_PHASE_DISPLAY_ALIASES: { established_regular: 'Friendly', established_kinship: 'Close' }
+}), 'Friendly', 'the known regular-relationship token must render with ScenePulse’s Friendly phase');
+assert.equal(vm.runInNewContext(`${sourceRelationshipPhaseRenderer}\nsourceRelationshipPhaseForRenderer('established_kinship')`, {
+    SOURCE_REL_PHASE_DISPLAY_ALIASES: { established_regular: 'Friendly', established_kinship: 'Close' }
+}), 'Close', 'the known kinship token must render with ScenePulse’s Close phase');
+assert.equal(vm.runInNewContext(`${sourceRelationshipPhaseRenderer}\nsourceRelationshipPhaseForRenderer('Volatile')`, {
+    SOURCE_REL_PHASE_DISPLAY_ALIASES: { established_regular: 'Friendly', established_kinship: 'Close' }
+}), 'Volatile', 'an existing source phase must pass through unchanged');
+assert.equal(vm.runInNewContext(`${sourceRelationshipPhaseRenderer}\nsourceRelationshipPhaseForRenderer('unresolved_horde_phase')`, {
+    SOURCE_REL_PHASE_DISPLAY_ALIASES: { established_regular: 'Friendly', established_kinship: 'Close' }
+}), 'unresolved_horde_phase', 'an unknown phase must remain available for the source coercer instead of being invented by Horde');
+assert.match(runtime, /SOURCE_MODULE_PATHS/, 'runtime must name the exact source module loading set');
+assert.match(runtime, /'ui\/panel\.js'/, 'runtime must import the source panel module');
+assert.match(runtime, /'ui\/update-panel\.js'/, 'runtime must import the source panel renderer');
+assert.match(runtime, /'ui\/timeline\.js'/, 'runtime must import the source history renderer');
+assert.match(runtime, /'ui\/character-wiki\.js'/, 'runtime must load source wiki behavior');
+assert.match(runtime, /'ui\/relationship-web\.js'/, 'runtime must load source relationship-web behavior');
+assert.match(runtime, /'ui\/loading\.js'/, 'runtime must load the source loading lifecycle primitives');
+assert.match(runtime, /for \(const relative of SOURCE_MODULE_PATHS\)[\s\S]*?await import\(`\$\{ROOT\}\/\$\{relative\}\$\{suffix\}`\)/, 'source modules must load sequentially to avoid cold-reload request bursts');
+assert.match(runtime, /\?horde_source_retry=\$\{encodeURIComponent\(retryToken\)\}/, 'a rejected cold-load module record must use a distinct URL for its one retry');
+assert.match(freshSourceModules, /return loadSourceModules\(retryToken\)/, 'the retry must still load ScenePulse source modules rather than a Horde substitute');
+assert.match(sourceModuleLoader, /Source module import failed; retrying the pinned local source once/, 'a fresh source import retry must be explicitly auditable');
+assert.match(sourceModuleLoader, /retryError\.cause = firstError/, 'final source failure must retain the original module-load cause');
 assert.doesNotMatch(runtime, /import\(`\$\{ROOT\}\/index\.js`\)/, 'runtime must not launch ScenePulse autonomous ST/provider interceptor');
 assert.match(runtime, /modules\.panel\.createPanel\(\)/, 'source must create its own panel DOM');
 assert.match(runtime, /const current = active\(\);\s*if \(current\?\.host && panel\.parentElement !== current\.host\) current\.host\.appendChild\(panel\);/, 'the source mount must resolve its active Horde host before reparenting the panel');
@@ -264,13 +342,17 @@ assert.match(sourceSectionAccessibility, /title\.setAttribute\('aria-expanded'/,
 assert.match(sourceSectionAccessibility, /event\.key !== 'Enter' && event\.key !== ' '/, 'source section disclosure must support both Enter and Space');
 assert.match(sourceSectionAccessibility, /title\.click\(\)/, 'keyboard disclosure must delegate to the original source header click behavior');
 assert.match(sourceSectionAccessibility, /queueMicrotask\(sync\)/, 'the accessibility state must follow the source click handler rather than duplicate its open-state logic');
+assert.match(runtime, /function enhanceSourceStoryIdeaActions\(/, 'source Story Ideas actions must retain keyboard semantics without replacing source cards');
+assert.match(runtime, /stage-story-idea/, 'source Story Ideas actions must cross the named World draft boundary');
+assert.match(runtime, /SOURCE_STORY_IDEA_TYPES\.has\(name\.replace\('sp-idea-', ''\)\)/, 'Story Idea action extraction must ignore the shared sp-idea-card class and retain the visible source category');
+assert.match(runtime, /ScenePulse action did not reach the active World/, 'an unclaimed source action must surface source recovery rather than silently resolve as a no-op');
 assert.match(runtime, /materializeNativeTracker/, 'fixture-backed fields must be materialized before source render');
 assert.match(sourceControlledRecordFilter, /controlledSourceCharacter/, 'an explicitly tagged controlled character must be filtered before building source history');
 assert.match(sourceControlledRecordFilter, /tracker\.charactersPresent.*?filter/s, 'the controlled character cannot remain in a source present roster');
 assert.match(sourceControlledRecordFilter, /tracker\.relationships.*?filter/s, 'the controlled character cannot become a second Relationship Web tie');
 assert.match(sourcePlayerIdentity, /handoff\?\.scenePulse/, 'the Relationship Web centre must retain the handoff-declared player name after source filtering');
 assert.match(sourceNormalizedSnapshot, /baselineSnapshots/, 'source-normalized presentation must keep its save baseline aligned with the visible source snapshot');
-assert.match(runtime, /retainSourceNormalizedSnapshot\(current, modules\.normalize\.normalizeTracker\(snapshot\)\)/, 'Wiki, Web, and panel must share the exact source-normalized snapshot');
+assert.match(runtime, /retainSourceNormalizedSnapshot\(current, modules\.normalize\.normalizeTracker\(repairSourceStoryIdeaShape\(snapshot\)\)\)/, 'Wiki, Web, and panel must share the exact source-normalized snapshot after the narrow Story Ideas repair');
 assert.match(sourceControlledPlayerComparison, /\['characters', 'charactersPresent'\]/, 'only the controlled-player roster fields may receive this explicit source comparison boundary');
 assert.match(sourceControlledPlayerComparison, /stripControlledSourceRecords\(clone\(sidecar/, 'the comparison must retain raw Sidecar data and test only the source-compatible view');
 assert.match(sourceGraphComparison, /Awaiting second NPC/, 'a one-NPC scene must explain why the source NPC graph is not mounted');
@@ -282,7 +364,7 @@ assert.match(sourceRelationshipFixtureSupport, /tracker\._spViewFiltered = true/
 assert.match(runtime, /fixtureDisplaySupport = fixtureDisplaySupportFields/, 'fixture-supported source cards must remain visibly provenance-labelled during partial live adoption');
 assert.match(runtime, /const customPanels = Array\.isArray\(prefs\.customPanels\) \? clone\(prefs\.customPanels\) : \[\];/, 'native runtime must render the handoff source schema rather than recreate a Horde-local tour panel');
 assert.doesNotMatch(runtime, /RPG Stats \(Tour Example\)/, 'the upstream tour panel schema must enter through the source handoff, not a duplicate runtime fallback');
-assert.match(runtime, /if \(!authority\.size\) return stripControlledSourceRecords\(fixture\)/, 'an older handoff with no declared field path must remain fixture-backed without duplicating the controlled player');
+assert.match(runtime, /if \(!authority\.size\) return adaptSourceRelationshipPhases\(stripControlledSourceRecords\(fixture\)\)/, 'an older handoff with no declared field path must remain fixture-backed without duplicating the controlled player');
 assert.match(runtime, /nativeFieldAuthority/, 'field-by-field authority must be explicit rather than inferred from live mode');
 assert.match(runtime, /nativeFieldHasAcceptedValue/, 'a declared field must still prove an accepted value before replacing the tutorial support');
 assert.match(runtime, /!clear\.has\(key\).*?!replace\.has\(key\).*?!hasValue\(value\)/s, 'implicit empty live values must not shrink source fixture data');
@@ -364,6 +446,12 @@ assert.doesNotMatch(runtime, /generateTracker/, 'native source commands must not
 assert.match(runtime, /sourceProfiles: clone\(settings\?\.profiles \|\| \[\]\)/, 'source Profile edits must return through the settings bridge');
 assert.match(runtime, /refresh-scene-pulse/, 'source refresh controls must dispatch to Sidecar');
 assert.match(runtime, /#sp-thought-panel \.sp-tp-regen/, 'the body-level source Thoughts refresh must also cross the Reader boundary');
+assert.match(sourceUnmount, /'#sp-thought-panel'/, 'leaving World Play must remove the scene-local Thoughts surface from non-World routes');
+assert.match(sourceUnmount, /const sourceRouteSurfaces = \[/, 'route teardown must keep a bounded inventory of ScenePulse-owned body-level surfaces');
+assert.match(sourceUnmount, /'#sp-diff-overlay'/, 'route teardown must remove the source payload inspector outside World Play');
+assert.match(sourceUnmount, /'\.sp-wiki-overlay'/, 'route teardown must remove the source full-window character Wiki outside World Play');
+assert.match(sourceUnmount, /'\.sp-browse-overlay'/, 'route teardown must remove the source Browse All overlay outside World Play');
+assert.doesNotMatch(sourceUnmount, /querySelectorAll\(['\"]\[id\^=/, 'route teardown must not broadly erase source preferences or reusable panel-local state');
 assert.match(runtime, /runSourceReaderRefresh/, 'native source refresh affordances must use one source-styled Reader lifecycle');
 assert.match(runtime, /showLoadingOverlay/, 'section and full-panel refreshes must visibly use source loading overlays');
 assert.match(runtime, /showThoughtLoading/, 'Thought regeneration must visibly use the source thought-loading overlay');
@@ -394,6 +482,11 @@ assert.match(sourceBridgeControls, /discardSourceChanges\(panel\);/, 'Discard cl
 assert.match(sourceDiscard, /querySelector\('#sp-panel-mgr'\)\?\.remove\(\)/, 'Discard removes the stale source panel manager');
 assert.match(sourceDiscard, /querySelector\('\.sp-cp-tmpl-menu'\)\?\.remove\(\)/, 'Discard removes a stale custom-panel template menu');
 assert.match(sourceDiscardChanges, /current\.context\.chatMetadata = clone\(current\.baseMetadata\)/, 'Discard restores the selected ScenePulse snapshot');
+assert.match(sourceSnapshotHandoff, /snapshot\?\._spMeta\?\.hordeSnapshotId/, 'source history selection must use the stable Horde snapshot identity rather than relying only on timeline position');
+assert.match(runtime, /canonicalizeCurrentSourceClock\(current\)/, 'a source dialog must not persist its AM\/PM display string as a different scene clock');
+assert.match(sourceNormalizedRetention, /!current\.dirtyMetadata/, 'source normalization must not overwrite the pre-edit baseline while the native Save action is pending');
+assert.match(sourceHumanFieldOrigin, /humanAuthoredField\(handoff, key\)/, 'a direct source edit must mark only its compact patch fields as authored');
+assert.match(sourceHumanFieldOrigin, /humanSourceBaseline\(handoff\)/, 'unchanged fixture and Reader fields must retain their prior source provenance after a direct source edit');
 assert.match(runtime, /SOURCE_LANGUAGE_OPTIONS/, 'the complete source locale set must remain available');
 assert.match(runtime, /简体中文 — Chinese \(Simplified\)/, 'the source language picker must retain native source locale labels');
 assert.match(runtime, /עברית — Hebrew/, 'the source language picker must retain the complete shipped locale list');
@@ -413,6 +506,49 @@ assert.match(sourcePanel, /export function createPanel\(\)/, 'vendored source pa
 assert.match(sourcePanel, /sp-tb-wiki/, 'source toolbar must retain Character Wiki');
 assert.match(sourcePanel, /sp-tb-edit/, 'source edit mode must remain present');
 assert.match(sourceUpdate, /sp-idea-paste.*sp-idea-inject/s, 'source Story Ideas must retain source action controls');
+assert.match(runtime, /function repairSourceStoryIdeaShape\(/, 'source bridge must repair only the known category-as-title Story Ideas wire shape');
+assert.match(runtime, /SOURCE_STORY_IDEA_TYPES/, 'source Story Ideas repair must retain the five vendored categories');
+assert.match(runtime, /normalizeTracker\(repairSourceStoryIdeaShape\(snapshot\)\)/, 'every native ScenePulse render path must normalize repaired Story Ideas');
+assert.match(runtime, /function normalizeSourceHistorySnapshots\(current\)/, 'all bridge history snapshots must use the same source normalizer as the current render');
+assert.match(runtime, /normalizeSourceHistorySnapshots\(current\);/, 'history normalisation must happen before the source renderer reads prior meter values');
+assert.match(sourcePanelRenderRecovery, /currentSnapshot\(current\)/, 'a source panel reset must rehydrate the exact selected ScenePulse snapshot');
+assert.match(sourcePanelRenderRecovery, /sourcePanelShowsRenderedScene/, 'source render recovery must be conditional and leave healthy source panels alone');
+assert.doesNotMatch(sourcePanelRenderRecovery, /materializeNativeTracker|fixtureScenePulse|dispatch\(/, 'source render recovery may not substitute fixture data, read Horde state, or call a new model pass');
+const sourceRenderability = vm.runInNewContext(`${sourceSnapshotRenderable}
+({
+    empty: sourceSnapshotHasRenderableScene({}),
+    scene: sourceSnapshotHasRenderableScene({ sceneSummary: 'The regulator finally gives.' }),
+    character: sourceSnapshotHasRenderableScene({ characters: [{ name: 'Charlotte' }] })
+})`, {
+    plain: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    hasValue: value => Array.isArray(value) ? value.length > 0 : (value != null && String(value).trim() !== '')
+});
+assert.deepEqual(JSON.parse(JSON.stringify(sourceRenderability)), { empty: false, scene: true, character: true }, 'empty-shell recovery must run only when the accepted source snapshot has actual visible scene material');
+assert.match(sourceSettings, /currentMeta\.hordeScenePulseBridge===true/, 'the source predecessor helper must identify a tagged Horde ScenePulse snapshot');
+assert.match(sourceSettings, /hordeTurnId.*!==currentTurn/, 'the source predecessor helper must skip same-turn Horde rereads for turn deltas');
+// ScenePulse may retain several source snapshots for a focused reread of one
+// authored beat. Relationship markers are explicitly turn deltas, so a
+// reread must look past its same-turn predecessor without changing ordinary
+// upstream snapshot behaviour.
+const sourceGetPrevSnapshot = lastSourceFunction(sourceSettings, 'getPrevSnapshot', 'export function').replace(/^export\s+/, '');
+const sourceTurnPredecessor = vm.runInNewContext(`${sourceGetPrevSnapshot}
+({
+    firstReread: getPrevSnapshot(1001)?._spMeta?.hordeTurnId || '',
+    nextTurn: getPrevSnapshot(1002)?._spMeta?.hordeTurnId || '',
+    secondReread: getPrevSnapshot(1003)?._spMeta?.hordeTurnId || '',
+    upstreamFallback: getPrevSnapshot(1004)?.marker || ''
+})`, {
+    getTrackerData: () => ({ snapshots: {
+        '1000': { marker: 'turn-one', _spMeta: { hordeScenePulseBridge: true, hordeTurnId: 'turn-1' } },
+        '1001': { marker: 'turn-one-reread', _spMeta: { hordeScenePulseBridge: true, hordeTurnId: 'turn-1' } },
+        '1002': { marker: 'turn-two', _spMeta: { hordeScenePulseBridge: true, hordeTurnId: 'turn-2' } },
+        '1003': { marker: 'turn-two-reread', _spMeta: { hordeScenePulseBridge: true, hordeTurnId: 'turn-2' } },
+        '1004': { marker: 'ordinary-source-snapshot' }
+    } })
+});
+assert.deepEqual(JSON.parse(JSON.stringify(sourceTurnPredecessor)), {
+    firstReread: '', nextTurn: 'turn-1', secondReread: 'turn-1', upstreamFallback: 'turn-two-reread'
+}, 'Horde relationship markers must compare the preceding authored turn while untouched upstream history still uses its immediate predecessor');
 assert.match(sourceUpdate, /sp-meter-bar-track/, 'source relationship meter renderer must remain present');
 assert.match(sourceUpdate, /const _relStableKey=entry=>/, 'source meter history must retain a stable relationship identity key');
 assert.match(sourceUpdate, /const _previousRelationship=rel=>/, 'source meter history must resolve the preceding relationship by stable identity');
@@ -462,9 +598,16 @@ assert.match(css, /\.sp-horde-command-overlay/, 'native source command surface m
 assert.match(sourceEdit, /type: 'scene_pulse_human_edit'/, 'direct edits must become human ScenePulse history nodes');
 assert.match(sourceEdit, /author: 'human'/, 'direct edit author must be preserved');
 assert.match(sourceEdit, /before,[\s\S]*after,[\s\S]*rawPatch: patch,[\s\S]*undo:/, 'direct edit must preserve before, after, raw patch, and undo data');
+assert.match(runtime, /const editedHandoff = current\.selectedHandoff \|\| current\.handoff \|\| \{\}/, 'a source save must target the ScenePulse history point being edited');
+assert.match(runtime, /targetSnapshotId: editedHandoff\.provenance\?\.snapshotId \|\| editedHandoff\.id \|\| 'fixture'/, 'a source save must preserve the selected handoff snapshot identity');
+assert.match(runtime, /targetTurnId: editedHandoff\.provenance\?\.turnId \|\| ''/, 'a source save must preserve the selected authored turn identity');
 assert.match(sourceEdit, /applyScenePulseQuestEditTranslations/, 'a saved live Quest Journal action must translate through the explicit World boundary');
 assert.match(sourceEdit, /applyScenePulseRelationshipEditTranslations/, 'a saved live relationship action must use an explicit Horde translation');
+assert.match(sourceEdit, /edit\.questReview = safeJsonClone\(questTranslations\)/, 'a saved quest action must remain attached to its authored ScenePulse history node after reload');
+assert.match(sourceEdit, /edit\.relationshipReview = safeJsonClone\(relationshipTranslations\)/, 'a saved relationship action must remain attached to its authored ScenePulse history node after reload');
 assert.match(questTranslations, /edit\.targetSnapshotId === 'fixture'/, 'fixture Quest Journal actions must remain fixture-local');
+assert.doesNotMatch(questTranslations, /!edit\?\.targetTurnId/, 'a settled snapshot must remain translatable when a historical Reader path has no parallel turn id');
+assert.match(questTranslations, /!edit\?\.targetSnapshotId \|\| edit\.targetSnapshotId === 'fixture'/, 'only fixture or unidentifiable Quest Journal edits may remain local');
 assert.match(relationshipTranslations, /edit\.targetSnapshotId === 'fixture'/, 'fixture relationship actions must remain fixture-local');
 assert.match(questTranslations, /scenePulseQuestChanges\(edit\.before, edit\.after\)/, 'the translator must derive actual source quest mutations rather than inventing World data');
 assert.match(relationshipTranslations, /scenePulseRelationshipChanges\(edit\.before, edit\.after\)/, 'relationship translation must derive exact source meter changes');
@@ -491,7 +634,13 @@ assert.match(app, /const readerPrompt = prompt \+ humanSceneStateContext/, 'huma
 assert.match(app, /ffStack\.prompt \+ ffHandoffContract \+ narratorHumanSceneState/, 'human ScenePulse state must reach the Narrator prompt');
 assert.match(app, /do not describe them as editing/, 'model context must preserve story-state language rather than UI terminology');
 assert.match(humanOverlay, /sidecarScenePulse/, 'human overlay must preserve unmodified Sidecar reading for comparison');
-assert.match(humanOverlay, /Human ScenePulse edit/, 'human edit must appear in source history');
+assert.match(humanOverlay, /scenePulseHumanHistory\(/, 'human overlay must retain source-history edits rather than only the latest overlay');
+assert.match(app, /label: 'Human ScenePulse edit'/, 'human edit must appear in source history');
+assert.match(humanOverlay, /questReview: scenePulseHumanReviewRecords\(currentEdit/, 'the current authored ScenePulse successor must retain its exact quest-action review');
+assert.match(humanOverlay, /relationshipReview: scenePulseHumanReviewRecords\(currentEdit/, 'the current authored ScenePulse successor must retain its exact relationship-action review');
+assert.match(runtime, /function adoptCommittedSourceEdit\(current, editedHandoff, saved, after\)/, 'a source save must install its committed successor before Inspect runs');
+assert.match(runtime, /const saved = await dispatch\('commit-scenepulse-source-edit'/, 'a source save must retain the exact host lifecycle result');
+assert.match(runtime, /adoptCommittedSourceEdit\(current, editedHandoff, saved, after\)/, 'a source save must attach its action result to the active source selection');
 assert.match(sourcePrefs, /customPanels: schema/, 'source custom-panel definition must persist as World schema');
 assert.match(sourcePrefs, /hasChatPanels === true/, 'an explicitly empty native custom-panel schema must survive rather than falling back to stale defaults');
 assert.match(sourcePrefs, /sourceProfiles: incoming\.sourceProfiles/, 'source Profiles must persist through the scoped World preference boundary');
@@ -568,11 +717,21 @@ assert.deepEqual(JSON.parse(JSON.stringify(persistedExplicitEmptySchema)), [], '
 assert.match(app, /detail\.action === 'stage-story-idea'/, 'Horde must claim source Story Idea actions');
 assert.match(app, /detail\.action === 'refresh-scene-pulse'/, 'Horde must claim source Reader refresh actions');
 assert.match(app, /detail\.action === 'stop-scene-pulse-refresh'/, 'Horde must claim source Reader stop actions');
+assert.match(app, /if \(!workspaceEntityExists\(state\.worlds, state\.activeWorldId\)\s*&& workspaceEntityExists\(state\.worlds, storedActiveWorldId\)\)/, 'a newer valid workspace World selection must survive reload instead of being overwritten by a legacy activeWorldId');
+assert.match(app, /activeWorldSessionId: workspaceString\(state\.activeWorldId/, 'workspace state must retain the selected World timeline as well as the World');
+assert.match(app, /enterWorld\(state\.activeWorldId, lastWorldSessionId\)/, 'World restore must request the exact saved timeline');
+assert.match(app, /activeSessionId = e\.target\.value;\s*saveState\(\)\.catch\(\(\) => \{\}\);\s*persistWorkspaceSoon\(\);/s, 'changing the World timeline must update the workspace restore snapshot');
 assert.match(acceptedRefresh, /scenePulseReaderRefreshController/, 'a ScenePulse stop must use a separate Reader controller');
 assert.match(acceptedRefresh, /The current scene was left unchanged/, 'stopping a reread must preserve the accepted scene');
 assert.match(readerRefresh, /signal: options\.signal/, 'the Sidecar Reader fetch must receive the native stop signal');
 assert.match(app, /forceFull: detail\.forceFull === true/, 'Horde must preserve source regen versus full-refresh intent');
 assert.match(app, /SCENEPULSE FOCUSED SECTION REFRESH/, 'section refresh must focus the single Sidecar Reader pass without invoking Narrator');
+assert.match(app, /armGenerationIdleTimeout\(configuredIdleTimeout === 0 \? 0 : Math\.max\(90000, configuredIdleTimeout\)\);/,
+    'a completed Narrator response must give the separate Sidecar stage a fresh practical idle window');
+assert.doesNotMatch(app, /if \(sidecarError\?\.name === 'AbortError'\) throw sidecarError;/,
+    'a downstream Sidecar abort must journal the authored beat rather than rolling it back as an unsent draft');
+assert.match(app, /An aborted Sidecar[\s\S]*?Retry Scene Update/,
+    'a failed downstream Sidecar request must remain retryable against the exact authored narration');
 assert.match(runtime, /save-scenepulse-portrait/, 'source portraits must cross a named portable host boundary');
 assert.match(runtime, /clear-scenepulse-portrait/, 'source portrait clearing must cross a named portable host boundary');
 assert.match(runtime, /portraitIdentityForCharacter/, 'portrait associations must use ScenePulse stable identities, not a canonical registry fallback');
@@ -605,9 +764,12 @@ assert.match(app, /controlled_player_candidate_exclusion/, 'the controlled playe
 assert.match(candidatePromotionDraft, /fertStatus/, 'specialist source fields must survive the explicit graduation draft');
 assert.match(promotionAppearance, /scenePulseObservedState/, 'graduated specialist state must retain observed-source provenance');
 assert.match(promotionAppearance, /!String\(canonical\.goal/, 'a ScenePulse goal may seed only an otherwise empty World goal');
+assert.match(promotionLocation, /scenePulseLocationEvidence/, 'a graduated place must retain its ScenePulse provenance on the Horde Location');
+assert.match(promotionLocation, /scenePulseEvidence/, 'a graduated place must retain its established Reader evidence');
 assert.match(impliedPromotion, /awaiting_scene_evidence/, 'an incomplete source candidate must remain visible rather than being promoted early');
 assert.match(impliedPromotion, /explicit author decision, not an automatic promotion/, 'an early promotion must disclose that it is a deliberate override');
 assert.match(impliedPromotion, /applyScenePulsePromotionAppearance/, 'explicit promotion must feed observed outfit and appearance into Horde visuals');
+assert.match(impliedPromotion, /applyScenePulsePromotionLocation/, 'explicit promotion must retain observed ScenePulse place details on a new Horde Location');
 assert.match(impliedPromotion, /markScenePulseCandidatePromotionOutcome/, 'explicit promotion must write canonical identity back to the Reader candidate');
 assert.match(candidateLink, /Reader did not provide a verified canonical identity/, 'name similarity alone must not silently link a ScenePulse candidate');
 assert.match(candidateDuplicateResolution, /duplicateCanonicalCandidates/, 'a promotion collision must remain an explicit Inspect comparison');
@@ -698,6 +860,23 @@ const richPromotionDraft = vm.runInNewContext(`${lastFunction('scenePulseCandida
 })})`, candidatePromotionDraftContext);
 assert.equal(richPromotionDraft.specialist.fertStatus, 'N/A', 'graduation must preserve a supplied specialist state exactly');
 assert.equal(richPromotionDraft.goals.longTermGoal, 'Clear her name', 'graduation must retain ScenePulse long-term goals as evidence');
+
+const promotedLocation = vm.runInNewContext(`${promotionLocation}\nconst location = { id: 'loc_lantern_court' };\nconst outcome = applyScenePulsePromotionLocation(location, ${JSON.stringify({
+    kind: 'location', scenePulseCandidateId: 'cand_lantern_court', readerSnapshotIds: ['snapshot_8'], readerSourceTurnIds: ['turn_7', 'turn_8'],
+    description: 'A rain-dark service court beneath the east viaduct.', region: 'Old Quarter', mapType: 'courtyard', floor: 'lower level', parentHint: 'loc_east_viaduct',
+    scenePulseEvidence: [{ sourceTurnId: 'turn_8', detail: 'Mira crosses Lantern Court beneath the viaduct.' }]
+})});\nJSON.stringify({ outcome, location });`, {
+    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+});
+const promotedLocationResult = JSON.parse(promotedLocation);
+assert.deepEqual(promotedLocationResult.outcome, { locationEvidence: true }, 'a location promotion must report its retained evidence outcome');
+const { promotedAt: promotedLocationAt, ...promotedLocationEvidence } = promotedLocationResult.location.scenePulseLocationEvidence;
+assert.deepEqual(promotedLocationEvidence, {
+    source: 'explicit_scenepulse_candidate_promotion', candidateId: 'cand_lantern_court', readerSnapshotIds: ['snapshot_8'], sourceTurnIds: ['turn_7', 'turn_8'],
+    location: { description: 'A rain-dark service court beneath the east viaduct.', region: 'Old Quarter', mapType: 'courtyard', floor: 'lower level', parentHint: 'loc_east_viaduct' },
+    evidence: [{ sourceTurnId: 'turn_8', detail: 'Mira crosses Lantern Court beneath the viaduct.' }]
+}, 'a promoted location must preserve exact observed place evidence without inferring a new environment');
+assert.match(promotedLocationAt, /^\d{4}-\d{2}-\d{2}T/, 'location provenance must retain the promotion timestamp');
 
 const graphContext = {
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -949,6 +1128,7 @@ const readerEnvelopeSource = [
     characterIntelligenceNormalizer,
     scenePulseCharacterCognitionBridge,
     graphNormalizer,
+    lastFunction('normalizeSidecarScenePulseShape'),
     normalizer,
     mergeSource,
     merger,
@@ -961,6 +1141,11 @@ assert.equal(customPanelEnvelope.patch.scenePulse.health, 64, 'a nested Sidecar 
 assert.equal(customPanelEnvelope.merged.scenePulse.health, 64, 'a compact Sidecar custom-panel delta must replace only its named accepted field');
 assert.equal(customPanelEnvelope.parsed.valid, true, 'a supported ScenePulse-only full reading must be accepted rather than discarded as empty');
 assert.equal(customPanelEnvelope.parsed.scenePulse.health, 64, 'parser acceptance must retain the ScenePulse custom-panel value it validated');
+
+const witnessShapeEnvelope = vm.runInNewContext(`${readerEnvelopeSource}\n(() => {\n    const full = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: { scenePulse: { witnesses: 'Early Friday patrons entering the venue' } } });\n    const delta = normalizeSidecarReaderEnvelope({ mode: 'delta', semantic_interpretation: { scenePulse: { witnesses: ['Door staff', { label: 'Security camera' }] } } });\n    return { full, delta, merged: mergeSidecarReaderEnvelope(full, delta) };\n})()`, readerEnvelopeContext);
+assert.deepEqual(JSON.parse(JSON.stringify(witnessShapeEnvelope.full.scenePulse.witnesses)), ['Early Friday patrons entering the venue'], 'a scalar Reader witness must reach the source list as one exact observer, not vanish');
+assert.deepEqual(JSON.parse(JSON.stringify(witnessShapeEnvelope.delta.scenePulse.witnesses)), ['Door staff', 'Security camera'], 'structured witness entries must normalize to their supplied source labels');
+assert.deepEqual(JSON.parse(JSON.stringify(witnessShapeEnvelope.merged.scenePulse.witnesses)), ['Door staff', 'Security camera'], 'a later witness assertion must replace the prior per-turn witness list');
 
 // A source section refresh is intentionally sparse. It must update its
 // relationship packet without erasing the accepted Quest Journal projection
@@ -1061,5 +1246,160 @@ assert.equal(refreshedThoughtCognitionJob.newJob.readerSnapshotId, 'snapshot_tho
 assert.match(refreshedThoughtCognitionJob.newJob.perceptionEvidence, /turned dangerous/, 'the replacement cognition job must use the refreshed ScenePulse thought');
 assert.match(app, /queueSidecarTurnCognitionJobs\(world, sess, protocol, turn, projection\)/, 'accepting a Reader refresh must queue snapshot-versioned cognition when its ScenePulse thought changed');
 assert.match(app, /source: 'scenepulse_thought_refresh'/, 'the explicit Thoughts action must dispatch only its new background cognition work');
+
+// A saved source edit against a historical Reader snapshot must stay in the
+// source timeline after reload. It is not allowed to vanish merely because a
+// newer accepted ScenePulse packet becomes the default visible scene.
+const humanHistorySource = [
+    lastFunction('scenePulseQuestReviewProjection'),
+    lastFunction('scenePulseRelationshipReviewProjection'),
+    lastFunction('scenePulseHumanReviewRecords'),
+    lastFunction('scenePulseHumanHistoryEntry'),
+    lastFunction('scenePulseHumanHistory'),
+    lastFunction('scenePulseCurrentHumanSuccessor'),
+    lastFunction('scenePulseHumanOverlay')
+].join('\n');
+const historicHumanProjection = vm.runInNewContext(`${humanHistorySource}\n(() => {
+    const protocol = {
+        scenePulseHumanEdits: [
+            { id: 'human_historic', status: 'active', targetSnapshotId: 'reader_1', targetTurnId: '', createdAt: '2026-09-09T00:00:00.000Z', before: { mainQuests: [] }, after: { mainQuests: [{ name: 'Source lifecycle bridge' }] }, rawPatch: [{ key: 'mainQuests' }] },
+            { id: 'human_chain', status: 'active', targetSnapshotId: 'human_historic', targetTurnId: '', createdAt: '2026-09-09T00:01:00.000Z', before: { mainQuests: [{ name: 'Source lifecycle bridge' }] }, after: { mainQuests: [{ name: 'Source lifecycle bridge', status: 'completed' }] }, rawPatch: [{ key: 'mainQuests' }] }
+        ],
+        scenePulseQuestTranslations: [{ type: 'scene_pulse_quest_translation', sourceEditId: 'human_historic', targetSnapshotId: 'reader_1', status: 'applied' }],
+        scenePulseRelationshipTranslations: []
+    };
+    const handoff = {
+        id: 'reader_handoff', status: 'accepted_live', provenance: { snapshotId: 'reader_2', turnId: 'turn_2' }, scenePulse: { sceneTopic: 'Current reader scene' },
+        history: [
+            { id: 'reader_1', turnId: 'turn_1', scenePulse: { sceneTopic: 'Earlier reader scene' } },
+            { id: 'reader_2', turnId: 'turn_2', scenePulse: { sceneTopic: 'Current reader scene' } }
+        ]
+    };
+    return scenePulseHumanOverlay(protocol, handoff);
+})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+});
+assert.equal(historicHumanProjection.status, 'accepted_live', 'a historic human edit must not replace the newer accepted Reader scene by default');
+assert.deepEqual(JSON.parse(JSON.stringify(historicHumanProjection.history.map(entry => entry.id))), ['reader_1', 'human_historic', 'human_chain', 'reader_2'], 'historic ScenePulse saves must remain as ordered, selectable source-history nodes, including edits made from an authored successor');
+assert.equal(historicHumanProjection.history[1].questReview[0].status, 'applied', 'a historical human successor must retain its exact accepted quest-translation review');
+
+// The current source view receives the same exact review without a browser
+// reload. The source Save control re-materializes from this result, so the
+// author sees the Horde lifecycle record attached to the ScenePulse state
+// they just saved rather than an earlier unedited packet.
+const currentHumanProjection = vm.runInNewContext(`${humanHistorySource}\n(() => {
+    const protocol = {
+        scenePulseHumanEdits: [{ id: 'human_current', status: 'active', targetSnapshotId: 'reader_current', targetTurnId: 'turn_current', createdAt: '2026-09-09T00:00:00.000Z', before: { mainQuests: [] }, after: { mainQuests: [{ name: 'Current source lifecycle' }] }, rawPatch: [{ key: 'mainQuests' }] }],
+        scenePulseQuestTranslations: [{ type: 'scene_pulse_quest_translation', sourceEditId: 'human_current', targetSnapshotId: 'reader_current', targetTurnId: 'turn_current', operation: 'add', status: 'applied' }],
+        scenePulseRelationshipTranslations: []
+    };
+    return scenePulseHumanOverlay(protocol, {
+        id: 'reader_handoff', status: 'accepted_live', provenance: { snapshotId: 'reader_current', turnId: 'turn_current' }, scenePulse: { mainQuests: [] }, history: [{ id: 'reader_current', turnId: 'turn_current', scenePulse: { mainQuests: [] } }]
+    });
+})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+});
+assert.equal(currentHumanProjection.status, 'accepted_human', 'the selected ScenePulse state must become an authored successor after a current source save');
+assert.equal(currentHumanProjection.questReview[0].operation, 'add', 'the current authored successor must immediately expose its exact Horde quest lifecycle outcome');
+
+const chainedHumanProjection = vm.runInNewContext(`${humanHistorySource}\n(() => {
+    const protocol = {
+        scenePulseHumanEdits: [
+            { id: 'human_base', status: 'active', targetSnapshotId: 'reader_current', targetTurnId: 'turn_current', createdAt: '2026-09-09T00:00:00.000Z', before: { mainQuests: [] }, after: { mainQuests: [{ name: 'First source quest' }] }, rawPatch: [{ key: 'mainQuests' }] },
+            { id: 'human_tip', status: 'active', targetSnapshotId: 'human_base', targetTurnId: 'turn_current', createdAt: '2026-09-09T00:01:00.000Z', before: { mainQuests: [{ name: 'First source quest' }] }, after: { mainQuests: [{ name: 'First source quest' }, { name: 'Latest source quest' }] }, rawPatch: [{ key: 'mainQuests' }] }
+        ],
+        scenePulseQuestTranslations: [{ type: 'scene_pulse_quest_translation', sourceEditId: 'human_tip', operation: 'add', status: 'applied' }],
+        scenePulseRelationshipTranslations: []
+    };
+    return scenePulseHumanOverlay(protocol, {
+        id: 'reader_handoff', status: 'accepted_live', provenance: { snapshotId: 'reader_current', turnId: 'turn_current' }, scenePulse: { mainQuests: [] }, history: [{ id: 'reader_current', turnId: 'turn_current', scenePulse: { mainQuests: [] } }]
+    });
+})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+});
+assert.equal(chainedHumanProjection.humanEdit.id, 'human_tip', 'a repeated source save must select the latest authored successor rather than its first ancestor');
+assert.equal(chainedHumanProjection.scenePulse.mainQuests[1].name, 'Latest source quest', 'the latest authored successor must remain the foreground ScenePulse state');
+assert.equal(chainedHumanProjection.questReview[0].sourceEditId, 'human_tip', 'Inspect must retain the lifecycle action made by the selected authored successor');
+
+// The compact action is stored on the authored history node as a persistence
+// fallback. A timeline-wide index is useful for review and later resolution,
+// but reload must never be able to erase a World outcome that the save itself
+// already confirmed.
+const persistedHumanActionProjection = vm.runInNewContext(`${humanHistorySource}\n(() => {
+    const protocol = { scenePulseHumanEdits: [{
+        id: 'human_persisted', status: 'active', targetSnapshotId: 'reader_current', targetTurnId: 'turn_current', createdAt: '2026-09-09T00:00:00.000Z',
+        before: { mainQuests: [] }, after: { mainQuests: [{ name: 'Persisted source lifecycle' }] }, rawPatch: [{ key: 'mainQuests' }],
+        questReview: [{ id: 'persisted-action', type: 'scene_pulse_quest_translation', sourceEditId: 'human_persisted', operation: 'add', status: 'applied' }]
+    }], scenePulseQuestTranslations: [], scenePulseRelationshipTranslations: [] };
+    return scenePulseHumanOverlay(protocol, {
+        id: 'reader_handoff', status: 'accepted_live', provenance: { snapshotId: 'reader_current', turnId: 'turn_current' },
+        scenePulse: { mainQuests: [] }, history: [{ id: 'reader_current', turnId: 'turn_current', scenePulse: { mainQuests: [] } }]
+    });
+})()`, {
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+});
+assert.equal(persistedHumanActionProjection.questReview[0].id, 'persisted-action', 'a saved lifecycle action must survive even when the historic protocol projection is unavailable');
+
+// Native source snapshots retain their Horde identity in _spMeta. The
+// rendered source timeline may be reordered (fixture, Reader, and human
+// successors), so a post-reload comparison must resolve the selected node by
+// that identity rather than by the snapshot array index.
+const sourceSnapshotIdentityProjection = vm.runInNewContext(`
+function snapshotKeys() { return [1000, 1001]; }
+${sourceSnapshotHandoff}
+handoffForCurrentSnapshot({
+    currentKey: 1001,
+    context: { chatMetadata: { scenepulse: { snapshots: {
+        '1001': { _spMeta: { hordeSnapshotId: 'scene-pulse-human-edit-persisted' } }
+    } } } },
+    handoff: {
+        id: 'reader_handoff', status: 'accepted_live', questReview: [],
+        history: [
+            { id: 'scene-pulse-human-edit-persisted', scenePulse: { mainQuests: [{ name: 'Persisted source lifecycle' }] }, questReview: [{ id: 'persisted-action', operation: 'add', status: 'applied' }] },
+            { id: 'reader_current', scenePulse: { mainQuests: [] }, questReview: [] }
+        ]
+    }
+})`, {
+    clone: value => JSON.parse(JSON.stringify(value))
+});
+assert.equal(sourceSnapshotIdentityProjection.status, 'accepted_human', 'the source must restore the authored successor selected by its stable snapshot ID');
+assert.equal(sourceSnapshotIdentityProjection.questReview[0].id, 'persisted-action', 'the selected authored successor must retain its Quest Journal action after reload');
+
+const sourceClockRoundTrip = vm.runInNewContext(`${sourceClockCanonicalizer}\n({ evening: sourceCanonicalClockValue('6:34 PM'), noon: sourceCanonicalClockValue('12:00 PM'), midnight: sourceCanonicalClockValue('12:00 AM'), twentyFourHour: sourceCanonicalClockValue('18:34'), opaque: sourceCanonicalClockValue('after the rush') })`);
+assert.deepEqual(JSON.parse(JSON.stringify(sourceClockRoundTrip)), {
+    evening: '18:34', noon: '12:00', midnight: '00:00', twentyFourHour: '18:34', opaque: 'after the rush'
+}, 'the source clock boundary must retain the same instant across its AM/PM dashboard display and never rewrite unparseable prose');
+
+const sourceFieldComparison = vm.runInNewContext(`${sourceClockCanonicalizer}\n${sourceFieldComparator}\n({ sameTime: scenePulseFieldEquivalent('time', '18:34', '6:34 PM'), differentTime: scenePulseFieldEquivalent('time', '18:34', '6:35 PM'), sameText: scenePulseFieldEquivalent('weather', 'Brewing storm', 'Brewing storm') })`, {
+    semanticEqual: (left, right) => JSON.stringify(left) === JSON.stringify(right)
+});
+assert.deepEqual(JSON.parse(JSON.stringify(sourceFieldComparison)), {
+    sameTime: true, differentTime: false, sameText: true
+}, 'Inspect must not flag ScenePulse 24-hour clock normalization as a conflicting authored field');
+
+const pendingSourceEditBaseline = vm.runInNewContext(`${sourceClockCanonicalizer}\n${sourceNormalizedRetention}\n(() => {
+    const current = {
+        currentKey: 1000,
+        dirtyMetadata: true,
+        context: { chatMetadata: { scenepulse: { snapshots: {
+            '1000': { time: '6:34 PM', sideQuests: [{ name: 'Existing quest' }, { name: 'New source quest' }] }
+        } } } },
+        baseMetadata: { scenepulse: { snapshots: {
+            '1000': { time: '18:34', sideQuests: [{ name: 'Existing quest' }] }
+        } } }
+    };
+    retainSourceNormalizedSnapshot(current, { time: '6:34 PM', sideQuests: [{ name: 'Existing quest' }, { name: 'New source quest' }] });
+    return current;
+})()`, {
+    plain: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    clone: value => JSON.parse(JSON.stringify(value)),
+    own: (object, key) => Object.prototype.hasOwnProperty.call(object, key)
+});
+assert.equal(pendingSourceEditBaseline.context.chatMetadata.scenepulse.snapshots['1000'].time, '18:34', 'the AM/PM dashboard display must be repaired before a source save is calculated');
+assert.equal(pendingSourceEditBaseline.baseMetadata.scenepulse.snapshots['1000'].sideQuests.length, 1, 'a pending source Quest Journal edit must retain its original baseline for the Save action');
 
 console.log('ScenePulse native-source integration contract passed.');

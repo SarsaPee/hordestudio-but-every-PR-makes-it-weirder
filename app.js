@@ -1198,15 +1198,30 @@ async function initializeSharedLibrarySync() {
     const status = await checkSharedLibraryStatus();
     const remoteWasNewer = !!(status?.available
         && Number(status.revision) > Number(sharedLibrarySync.revision || 0));
-    if (remoteWasNewer) {
+    // A bridge revision alone cannot establish that its payload is newer than
+    // the browser's local library. In particular, the bridge deliberately
+    // declines oversized mirrors while IndexedDB continues saving normally.
+    // Do not let an older remote snapshot erase a just-saved local fork or
+    // turn merely because the local change could not be mirrored.
+    const localSavedAt = Number(pendingWorkspaceState?.savedAt) || 0;
+    const lastSharedAt = Math.max(Number(meta.pushedAt) || 0, Number(meta.pulledAt) || 0);
+    const localSnapshotIsNewer = hasPublishableLocalLibrary()
+        && localSavedAt > lastSharedAt
+        && localSavedAt > (Number(status?.updatedAt) || 0);
+    if (remoteWasNewer && !localSnapshotIsNewer) {
         await pullSharedLibrarySnapshot();
+    } else if (remoteWasNewer && localSnapshotIsNewer) {
+        sharedLibrarySync.conflict = true;
+        console.warn('Shared-library auto-pull deferred: a newer local snapshot is protected. Pull explicitly to replace it.');
+        showToast('A newer local Horde snapshot is protected. Shared-library pull requires confirmation.', 'warning');
     }
     sharedLibrarySync.ready = true;
-    // Startup rule: remote wins only when it is newer. Otherwise this browser
-    // republishes its known-good local library, making a server restart and a
-    // subsequent Horde launch a simple freshness check rather than a manual
-    // sync ceremony. A brand-new phone with only stock starter data waits for
-    // the Mac instead of accidentally becoming the first authority.
+    // Startup rule: remote wins when it is newer and there is no later local
+    // save awaiting a mirror. Otherwise this browser republishes its
+    // known-good local library, making a server restart and a subsequent Horde
+    // launch a simple freshness check rather than a manual sync ceremony. A
+    // brand-new phone with only stock starter data waits for the Mac instead
+    // of accidentally becoming the first authority.
     if (status && !remoteWasNewer && hasPublishableLocalLibrary()) scheduleSharedLibraryPush();
     configureSharedLibraryAutoBackup();
     void refreshSharedLibraryHistory().catch(error => console.warn('Shared library history refresh failed:', error));
@@ -3540,6 +3555,8 @@ function captureWorkspaceState() {
         activeRoomId: workspaceString(state.activeRoomId),
         editingCharId: workspaceString(state.editingChar?.id || state.editingCharId),
         activeWorldId: workspaceString(state.activeWorldId),
+        activeWorldSessionId: workspaceString(state.activeWorldId
+            ? state.worldInstances?.[state.activeWorldId]?.activeSessionId : null),
         lastWorldStudioId: workspaceString(state.lastWorldStudioId),
         lastWorldStudioTab: workspaceString(state.lastWorldStudioTab),
         activeVideoWorldId: workspaceString(state.activeVideoWorldId),
@@ -3589,6 +3606,11 @@ function writeWorkspaceStateMirror(snapshot = captureWorkspaceState()) {
 async function persistWorkspaceState(snapshot = captureWorkspaceState()) {
     writeWorkspaceStateMirror(snapshot);
     if (HordeDB.db) await HordeDB.set('workspaceStateV2', snapshot);
+    // Startup's shared-library guard must compare the newest *persisted*
+    // local workspace point, not the workspace snapshot that happened to be
+    // loaded when this tab first opened. Otherwise a just-saved fork can be
+    // replaced by a remote snapshot on the next reload.
+    pendingWorkspaceState = snapshot;
 }
 
 function persistWorkspaceSoon() {
@@ -3634,13 +3656,17 @@ function workspaceEntityExists(list, id) {
 function restoreLastWorkspace() {
     const lastView = state.view;
     const lastWorldTab = state.lastWorldStudioTab;
+    const lastWorldSessionId = workspaceString(pendingWorkspaceState?.activeWorldSessionId);
     const lastStudioTab = state.lastStudioTab;
     const lastCompanionTab = state.lastCompanionStudioTab;
     const lastWorldStudioId = state.lastWorldStudioId;
     workspaceRestoring = true;
     try {
         if (lastView === 'worldPlay' && workspaceEntityExists(state.worlds, state.activeWorldId)) {
-            enterWorld(state.activeWorldId);
+            // A World can have several divergent timelines. Restoring its
+            // route must not silently substitute whichever timeline happened
+            // to be selected in a slower legacy save.
+            enterWorld(state.activeWorldId, lastWorldSessionId);
             return;
         }
         if (lastView === 'worldStudio') {
@@ -3875,7 +3901,9 @@ async function loadState() {
         state.activePersonaId = await HordeDB.get('activePersonaId') || null;
         state.rooms = await HordeDB.get('rooms') || [];
         state.theme = await HordeDB.get('theme') || state.theme;
-        state.activeWorldId = await HordeDB.get('activeWorldId') || null;
+        // The newer workspace mirror owns the last visible route and its
+        // selected World. Do not overwrite that selection with an older
+        // standalone value before the World list is available to validate it.
 
         repairLoadedState();
         state.systemPresets = await HordeDB.get('systemPresets') || [];
@@ -3883,6 +3911,15 @@ async function loadState() {
         state.regexScripts = await HordeDB.get('regexScripts') || [];
         state.worlds = await HordeDB.get('worlds') || [];
         lastPersistedWorldManifests = safeJsonClone(state.worlds);
+        const storedActiveWorldId = await HordeDB.get('activeWorldId') || null;
+        // A valid last World from the workspace snapshot is the proper
+        // reload target. Only fall back to the legacy ID when that newer
+        // selection is absent or no longer exists, so a physical reload of a
+        // ScenePulse World cannot strand the player in Chat Library.
+        if (!workspaceEntityExists(state.worlds, state.activeWorldId)
+            && workspaceEntityExists(state.worlds, storedActiveWorldId)) {
+            state.activeWorldId = storedActiveWorldId;
+        }
         state.worldRecoverySnapshots = await HordeDB.get('worldRecoverySnapshots') || {};
         if (!isPlainObject(state.worldRecoverySnapshots)) state.worldRecoverySnapshots = {};
         const storedWorldMedia = await HordeDB.get('worldMediaAssets') || {};
@@ -3892,7 +3929,6 @@ async function loadState() {
             else if ((world.mediaAssets || []).length) worldMediaDirty = true; // migrate early embedded builds
         });
         state.worldInstances = await HordeDB.get('worldInstances') || {};
-        state.activeWorldId = await HordeDB.get('activeWorldId') || null;
         state.videoWorlds = await HordeDB.get('videoWorlds') || [];
         state.videoWorldSessions = await HordeDB.get('videoWorldSessions') || {};
         state.activeVideoWorldId = await HordeDB.get('activeVideoWorldId') || null;
@@ -4366,6 +4402,10 @@ let saveStateQueued = false;
 
 async function persistStateSnapshot() {
     const savingWorldMedia = worldMediaDirty;
+    // Keep one exact workspace point beside this full library transaction.
+    // It becomes the reload-protection timestamp only after IndexedDB has
+    // accepted the same world/session state.
+    const workspaceSnapshot = captureWorkspaceState();
     try {
         (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
         // Keep heavy image payloads out of the world manifest that is rewritten
@@ -4420,7 +4460,7 @@ async function persistStateSnapshot() {
             worldRecoverySnapshots: state.worldRecoverySnapshots,
             worldInstances: state.worldInstances,
             activeWorldId: state.activeWorldId,
-            ...captureWorkspaceState(),
+            ...workspaceSnapshot,
             videoWorlds: state.videoWorlds,
             videoWorldSessions: state.videoWorldSessions,
             activeVideoWorldId: state.activeVideoWorldId,
@@ -4441,6 +4481,7 @@ async function persistStateSnapshot() {
             worldMediaDirty = false;
         }
         await HordeDB.setMultiple(records);
+        pendingWorkspaceState = workspaceSnapshot;
         lastPersistedWorldManifests = safeJsonClone(storedWorlds);
         writeGlobalSettingsMirror(records.globalSettings);
         scheduleSharedLibraryPush();
@@ -15511,7 +15552,7 @@ function sidecarTokenLimitIncomplete(payload) {
     return ['length', 'max_tokens', 'token_limit', 'incomplete'].includes(finish);
 }
 
-async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal, retryPolicy = 'bounded' } = {}) {
+async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal, retryPolicy = 'bounded', forceWithoutReasoning = false } = {}) {
     const policy = sidecarReasoningPolicy(tracker, world);
     const request = async (withoutReasoning, forceCompactCommitTransport = false) => {
         const payload = safeJsonClone(body);
@@ -15534,7 +15575,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
             body: JSON.stringify(applyOpenRouterRouting(payload, owner || world, { scope, providerId: provider }))
         });
     };
-    let response = await request(false);
+    let response = await request(forceWithoutReasoning);
     // A provider may reject optional reasoning parameters even when the model
     // catalogue advertises them. Retry the same request without reasoning so
     // a transient provider capability mismatch cannot strand an otherwise
@@ -15559,7 +15600,7 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
             response = await request(true, true);
         }
     }
-    if (retryPolicy === 'none' || !policy.enabled || !response.ok) return response;
+    if (retryPolicy === 'none' || forceWithoutReasoning || !policy.enabled || !response.ok) return response;
     const payload = await response.clone().json().catch(() => null);
     if (!sidecarTokenLimitIncomplete(payload)) return response;
     showToast('Sidecar thought too hard, retrying without reasoning.', 'info');
@@ -16827,7 +16868,7 @@ In delta mode include baseSnapshotId exactly equal to this supplied previous acc
     const scenePulseInstruction = `
 
 [SCENEPULSE RICH SCENE DATA]
-Also return semantic_interpretation.scenePulse for this same beat. Its full shape is {time,date,elapsed,temporalIntent,location,weather,temperature,sceneTopic,sceneMood,sceneInteraction,sceneTension,sceneSummary,soundEnvironment,witnesses,charactersPresent,northStar,mainQuests,sideQuests,relationships,characters,plotBranches}. Keep it rich enough to drive the source ScenePulse interface, not a generic status card. characters[] items may include name, aliases, archetype, role, innerThought, immediateNeed, shortTermGoal, longTermGoal, hair, face, outfit, posture, proximity, notableDetails, inventory, fertStatus, fertNotes. For each conscious scene-relevant NPC, innerThought is one to three first-person, present-tense sentences in that character's own voice. It must be grounded in this beat and established character grounding; it must not contain provenance labels, confidence scores, technical caveats, fabricated biography, unseen events, or a claim of the controlled player's unexpressed thoughts. Omit rather than pad an unsupported thought. relationships[] use ScenePulse's name, relType, relPhase, timeTogether, milestone, affection/trust/desire/stress/compatibility and labels. mainQuests and sideQuests describe only established durable objectives; an empty list is valid. plotBranches are suggestions, not events: when the visible beat supports creative continuation, return exactly one grounded direction for each of dramatic, intense, comedic, twist, and exploratory; otherwise return []. scenePulse is a presentation projection of this response, not persistent canon or a second state store.
+Also return semantic_interpretation.scenePulse for this same beat. Its full shape is {time,date,elapsed,temporalIntent,location,weather,temperature,sceneTopic,sceneMood,sceneInteraction,sceneTension,sceneSummary,soundEnvironment,witnesses,charactersPresent,northStar,mainQuests,sideQuests,relationships,characters,plotBranches}. Keep it rich enough to drive the source ScenePulse interface, not a generic status card. characters[] items may include name, aliases, archetype, role, innerThought, immediateNeed, shortTermGoal, longTermGoal, hair, face, outfit, posture, proximity, notableDetails, inventory, fertStatus, fertNotes. When the visible beat explicitly gives, rejects, restores, or reveals a character's name, former name, nickname, pseudonym, or alias, include that exact character's stable characterId, current name, and complete aliases array in the same changed-only ScenePulse patch—even when no other character-card field changes. Keep the current display name out of aliases; never infer or invent aliases from a role label, styling, resemblance, or guess. For each conscious scene-relevant NPC, innerThought is one to three first-person, present-tense sentences in that character's own voice. It must be grounded in this beat and established character grounding; it must not contain provenance labels, confidence scores, technical caveats, fabricated biography, unseen events, or a claim of the controlled player's unexpressed thoughts. Omit rather than pad an unsupported thought. relationships[] use ScenePulse's name, relType, relPhase, timeTogether, milestone, affection/trust/desire/stress/compatibility and labels. mainQuests and sideQuests describe only established durable objectives; an empty list is valid. plotBranches are suggestions, not events: when the visible beat supports creative continuation, return exactly one grounded direction for each of dramatic, intense, comedic, twist, and exploratory; otherwise return []. Every branch is exactly {type, name, hook}: type is one of those five category words, name is a short specific title and must never be the category word, and hook is the grounded direction. scenePulse is a presentation projection of this response, not persistent canon or a second state store.
 
 [SCENEPULSE STABLE RECORD IDENTITIES]
 In a full ScenePulse projection, each character record MUST include characterId: use the matching stable candidateId from this same Reader packet when the person is Scene-only, or a verified canonical ID only when the supplied references establish that link. Do not derive an ID from a display name. Each relationship record MUST include relationshipId and its characterId when it concerns a rendered character; retain both IDs through every rename. Each durable quest record MUST include a stable questId; retain it through title changes. Names and aliases are display data, not identity. Do not manufacture a canonical identity to satisfy this shape: an evidence-backed candidate ID is correct.
@@ -16948,8 +16989,21 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
     const timeoutId = options.signal ? null : setTimeout(() => timeoutController.abort(), Math.max(10000, Number(profile.timeoutSeconds) * 1000 || 120000));
     const readerSignal = options.signal || timeoutController.signal;
     const maxRounds = Math.max(0, Math.min(12, Number(profile.maxToolCalls) || 3));
-    for (let round = 0; round <= maxRounds; round++) {
-        const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: safeJsonClone(messages), tools, tool_choice: 'auto', parallel_tool_calls: false };
+    // A tool-cap reaches one assistant response *after* the lookup calls.
+    // Previously the last lookup appended the instruction to return JSON and
+    // then fell out of this loop, causing us to parse that tool-call response
+    // (whose content is normally empty) as an invalid Reader envelope. Keep
+    // the final request tool-free: it is still the same immutable authored
+    // beat, but the model now has one bounded chance to return its packet.
+    const finalResponseRound = maxRounds + 1;
+    for (let round = 0; round <= finalResponseRound; round++) {
+        const forceFinalReaderResponse = round === finalResponseRound;
+        const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: safeJsonClone(messages) };
+        if (!forceFinalReaderResponse) {
+            body.tools = tools;
+            body.tool_choice = 'auto';
+            body.parallel_tool_calls = false;
+        }
         const useNativeJson = sidecarSupportsStructuredJson(provider, model, readerTracker, profile);
         if (useNativeJson) body.response_format = { type: 'json_object' };
         applySidecarReasoning(body, provider, readerTracker, world);
@@ -16978,7 +17032,10 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         logSidecarConsoleTrace(`Reader response · round ${round + 1}`, { model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message) });
         recordSidecarTrace(world, sess, { kind: 'semantic_reader', round: round + 1, prompt: readerPrompt, reply: message, model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '' });
         const availableTools = sidecarReadOnlyTools();
-        const rawCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+        // A provider cannot make another lookup on the final tool-free
+        // request. Treat a malformed residual tool-call envelope as no
+        // packet rather than executing an out-of-budget lookup.
+        const rawCalls = forceFinalReaderResponse ? [] : (Array.isArray(message.tool_calls) ? message.tool_calls : []);
         const calls = rawCalls.filter(call => availableTools.some(tool => tool.function.name === call?.function?.name));
         if (!rawCalls.length) {
             const packet = parseSidecarReaderOutput(message.content, references, { controlledEntityId });
@@ -17023,7 +17080,10 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
             lookupProvenance.push({ tool: call.function?.name || '', arguments: safeParseJSONRepair(String(call.function?.arguments || '{}')) || {}, found: result?.found === true, at: new Date().toISOString(), resultSummary: JSON.stringify(result).slice(0, 1400) });
             messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         });
-        if (round === maxRounds) messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided.' });
+        if (round === maxRounds) {
+            messages.push({ role: 'user', content: 'Tool lookup limit reached. Return the JSON reading now using the evidence already provided. Do not call a tool.' });
+            logSidecarConsoleTrace('Reader forcing final JSON response after tool limit', { model, provider, rounds: round + 1 });
+        }
     }
     if (timeoutId) clearTimeout(timeoutId);
     const fallbackPacket = parseSidecarReaderOutput(finalPayload?.choices?.[0]?.message?.content || '', references, { controlledEntityId });
@@ -17279,6 +17339,28 @@ function normalizeSidecarNpcRelationshipGraph(raw) {
     return { version: 1, roster, edges, organizations };
 }
 
+// The source schema declares witnesses as a list.  Reader output occasionally
+// compresses one background observer into a scalar string; treating that as
+// an empty list makes an accepted, visible fact disappear from Scene Details.
+// Preserve the packet's wording as one witness rather than splitting or
+// inferring people. This lives at the Reader boundary so the settled
+// projection, source renderer, history and comparison use the same shape.
+function normalizeSidecarScenePulseShape(raw = {}) {
+    const scenePulse = isPlainObject(raw) ? safeJsonClone(raw) : {};
+    if (!Object.prototype.hasOwnProperty.call(scenePulse, 'witnesses')) return scenePulse;
+    const rawWitnesses = scenePulse.witnesses;
+    const witnessText = value => isPlainObject(value)
+        ? String(value.name || value.label || value.text || value.value || '').trim()
+        : String(value || '').trim();
+    if (Array.isArray(rawWitnesses)) {
+        scenePulse.witnesses = rawWitnesses.map(witnessText).filter(Boolean).slice(0, 48);
+    } else {
+        const witness = witnessText(rawWitnesses);
+        scenePulse.witnesses = witness ? [witness] : [];
+    }
+    return scenePulse;
+}
+
 function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
     const source = isPlainObject(raw) ? raw : {};
     const semantic = isPlainObject(source.semanticInterpretation || source.semantic_interpretation) ? (source.semanticInterpretation || source.semantic_interpretation) : {};
@@ -17296,7 +17378,7 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         return direct === undefined ? sidecarReaderValue(semantic, ...names) : direct;
     };
     const cleanList = (input, limit = 40) => Array.isArray(input) ? input.slice(0, limit).map(item => isPlainObject(item) ? safeJsonClone(item) : String(item || '').slice(0, 800)) : [];
-    const scenePulse = isPlainObject(value('scenePulse', 'scene_pulse', 'scenepulse')) ? safeJsonClone(value('scenePulse', 'scene_pulse', 'scenepulse')) : {};
+    const scenePulse = normalizeSidecarScenePulseShape(value('scenePulse', 'scene_pulse', 'scenepulse'));
     const characterInput = value('characterIntelligence', 'character_intelligence', 'characters') || [];
     const suppliedCharacterIntelligence = (Array.isArray(characterInput) ? characterInput : Object.values(characterInput || {}))
         .map(item => normalizeSidecarCharacterIntelligence(item, defaults)).filter(item => item.subjectRef || item.name || item.candidateId).slice(0, 48);
@@ -17968,6 +18050,21 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         parallel_tool_calls: false
     };
     applySidecarReasoning(body, provider, tracker, world);
+    // A full Reconciler declaration can be expensive for a provider that
+    // spends its complete response budget before selecting the required
+    // function. This recovery is deliberately narrower than a second
+    // settlement system: same authored beat, same accepted Reader evidence,
+    // one compact receipt_json declaration, no optional reasoning, no
+    // Narrator call, and no alternate mutation route.
+    const compactCommitRecoveryBody = {
+        model, stream: false, max_tokens: maxTokens, temperature: 0,
+        messages: [{
+            role: 'system', content: `[COMPACT SIDECAR COMMIT RECOVERY]\nReturn exactly one commit_world_turn function call now. The visible Narration is immutable and has already been accepted; do not write prose, call a Reader, invent evidence, or mutate through any route other than this receipt. Reconcile only durable facts established by the supplied evidence. If a detail is uncertain, leave it unchanged. Preserve the exact canonical IDs. The receipt_json argument must contain one complete valid JSON receipt and an ending checksum.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCLOCK EVIDENCE:\n${JSON.stringify(clockEvidence)}\n\nTEMPORAL EVIDENCE:\n${JSON.stringify(temporalBreakdown)}\n\nCANONICAL REFERENCES:\n${JSON.stringify(references)}\n\nACCEPTED READER EVIDENCE:\n${JSON.stringify({ summary: readerPacket?.summary || '', temporal: readerPacket?.temporal || readerPacket?.timeEvidence || {}, location: readerPacket?.location || {}, presence: readerPacket?.presence || {}, scene: readerPacket?.scene || {}, eventClaims: (readerPacket?.eventClaims || []).slice(0, 24), relationshipPostures: (readerPacket?.relationshipPostures || []).slice(0, 24), characterIntelligence: (readerPacket?.characterIntelligence || []).slice(0, 16), controlledCharacterEvidence: (readerPacket?.controlledCharacterEvidence || []).slice(0, 12), scenePulse: readerPacket?.scenePulse || readerPacket?.semanticInterpretation?.scenePulse || {} })}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 16000))}\n\nNARRATOR HANDOFF:\n${String(handoff || '').slice(0, 6000) || '(missing — commit only independently established facts)'}`
+        }, {
+            role: 'user', content: 'Emit the compact commit_world_turn receipt now. Do not explain your reasoning or call any tool other than commit_world_turn.'
+        }],
+        tools: [compactSidecarCommitTool(commitTool)], tool_choice: 'required', parallel_tool_calls: false
+    };
     logSidecarConsoleTrace('Reconciliation request', {
         model, provider, maxTokens, compactCommitTransport,
         prompt: sidecarPrompt,
@@ -17989,15 +18086,15 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             requestError.httpStatus = response.status;
             throw requestError;
         }
-        const payload = await response.json();
-        const choice = payload?.choices?.[0] || {};
-        const message = choice.message || {};
+        let payload = await response.json();
+        let choice = payload?.choices?.[0] || {};
+        let message = choice.message || {};
         logSidecarConsoleTrace('Reconciliation response', {
             model, provider: payload?.provider || provider,
             finishReason: choice.finish_reason || choice.native_finish_reason || '',
             assistant: safeJsonClone(message)
         });
-        const toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn')
+        let toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn')
             || (message.function_call?.name === 'commit_world_turn'
                 ? { id: message.function_call.id || '', type: 'function', function: message.function_call }
                 : null);
@@ -18005,6 +18102,39 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             kind: 'reconciliation', prompt: sidecarPrompt, reply: message, model,
             provider: payload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || ''
         });
+        let compactRecoveryAttempted = false;
+        const initialFinishReason = choice.finish_reason || choice.native_finish_reason || '';
+        if (!toolCall && /length|max[_\s-]?tokens?|token_limit|incomplete/i.test(String(initialFinishReason))) {
+            compactRecoveryAttempted = true;
+            logSidecarConsoleTrace('Reconciliation compact commit recovery', { model, provider, maxTokens, finishReason: initialFinishReason });
+            const compactResponse = await fetchSidecarCompletion(compactCommitRecoveryBody, {
+                provider, tracker, world, owner: sidecarWorld, signal: options.signal,
+                retryPolicy: 'none', forceWithoutReasoning: true
+            });
+            if (!compactResponse.ok) {
+                const compactProviderBody = await compactResponse.text().catch(() => '');
+                const compactRequestError = new Error(compactProviderBody.slice(0, 800) || `Compact Sidecar recovery failed (${compactResponse.status})`);
+                compactRequestError.code = 'sidecar_compact_recovery_http_error';
+                compactRequestError.httpStatus = compactResponse.status;
+                throw compactRequestError;
+            }
+            payload = await compactResponse.json();
+            choice = payload?.choices?.[0] || {};
+            message = choice.message || {};
+            logSidecarConsoleTrace('Reconciliation compact recovery response', {
+                model, provider: payload?.provider || provider,
+                finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message)
+            });
+            recordSidecarTrace(world, sess, {
+                kind: 'reconciliation_compact_recovery', prompt: compactCommitRecoveryBody.messages[0].content,
+                reply: message, model, provider: payload?.provider || provider,
+                finishReason: choice.finish_reason || choice.native_finish_reason || ''
+            });
+            toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn')
+                || (message.function_call?.name === 'commit_world_turn'
+                    ? { id: message.function_call.id || '', type: 'function', function: message.function_call }
+                    : null);
+        }
         if (!toolCall) {
             const truncated = choice.finish_reason === 'length' || choice.native_finish_reason === 'length';
             const missing = new Error(truncated
@@ -18019,7 +18149,8 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                 response: {
                     content: typeof message.content === 'string' ? message.content.slice(0, 12000) : message.content,
                     reasoning: String(message.reasoning || message.reasoning_content || '').slice(0, 16000),
-                    toolCalls: safeJsonClone(message.tool_calls || [])
+                    toolCalls: safeJsonClone(message.tool_calls || []),
+                    compactRecoveryAttempted
                 }
             };
             throw missing;
@@ -19812,6 +19943,33 @@ function applyScenePulsePromotionAppearance(canonical, staged) {
     return outcomes;
 }
 
+// A location promotion has no portrait or personality to seed, but it still
+// needs the same durable provenance boundary as a graduated ScenePulse person.
+// Keep the exact observed place details and Reader evidence on the new Horde
+// Location; do not replace them with the current live environment or infer a
+// containment graph from the display name.
+function applyScenePulsePromotionLocation(canonical, staged) {
+    if (!canonical || String(staged?.kind || '') !== 'location') return null;
+    const source = {
+        source: 'explicit_scenepulse_candidate_promotion', promotedAt: new Date().toISOString(),
+        candidateId: String(staged?.scenePulseCandidateId || ''), readerSnapshotIds: safeJsonClone(staged?.readerSnapshotIds || []),
+        sourceTurnIds: safeJsonClone(staged?.readerSourceTurnIds || [])
+    };
+    const observedLocation = {
+        description: String(staged?.description || '').trim().slice(0, 1800),
+        region: String(staged?.region || '').trim().slice(0, 180),
+        mapType: String(staged?.mapType || '').trim().slice(0, 80),
+        floor: String(staged?.floor || '').trim().slice(0, 120),
+        parentHint: String(staged?.parentHint || '').trim().slice(0, 180)
+    };
+    canonical.scenePulseLocationEvidence = {
+        ...source,
+        location: observedLocation,
+        evidence: safeJsonClone((staged?.scenePulseEvidence || []).slice(-24))
+    };
+    return { locationEvidence: true };
+}
+
 function markScenePulseCandidatePromotionOutcome(protocol, staged, canonical, outcome = 'promoted') {
     if (!protocol || !staged || !canonical) return null;
     const candidate = protocol.readerCandidates?.find(item => String(item?.candidateId || '') === String(staged.scenePulseCandidateId || ''));
@@ -19972,7 +20130,12 @@ function scenePulseAcceptedHandoff(world, sess) {
     // not show the older packet stored on its authored turn.
     const rawReaderEnvelope = sidecarReaderSnapshotRawEnvelope(settled, sourceTurn);
     const deltaScenePulse = isPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
-    const settledScenePulse = isPlainObject(envelope?.scenePulse) ? envelope.scenePulse : null;
+    // Persisted snapshots may predate a source-shape repair. Normalize the
+    // accepted display clone on read as well as on new Reader input, so a
+    // scalar witness in an older settled packet remains visible to the
+    // upstream renderer without mutating its raw evidence record.
+    const settledScenePulse = isPlainObject(envelope?.scenePulse)
+        ? normalizeSidecarScenePulseShape(envelope.scenePulse) : null;
     // attachSidecarReaderSnapshot already materializes compact deltas. Do not
     // apply meterDeltas again at render time: that would double an accepted
     // relationship change on every redraw.
@@ -19986,7 +20149,8 @@ function scenePulseAcceptedHandoff(world, sess) {
         const sourceTurn = (protocol.turns || []).find(turn => String(turn?.id || '') === String(snapshot.turnId || '')) || null;
         const rawReaderEnvelope = sidecarReaderSnapshotRawEnvelope(snapshot, sourceTurn);
         const rawDelta = isPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
-        const storedProjection = isPlainObject(snapshot.envelope?.scenePulse) ? snapshot.envelope.scenePulse : {};
+        const storedProjection = isPlainObject(snapshot.envelope?.scenePulse)
+            ? normalizeSidecarScenePulseShape(snapshot.envelope.scenePulse) : {};
         const projection = storedProjection;
         const priorSnapshot = index > 0 ? snapshots[index - 1] : null;
         const priorTurn = priorSnapshot && (protocol.turns || []).find(turn => String(turn?.id || '') === String(priorSnapshot.turnId || ''));
@@ -20143,7 +20307,18 @@ function stopScenePulseReaderRefresh() {
 // direction for review; Inject deliberately follows the source's immediate
 // send semantics only after the user clicks that explicit control.
 function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
-    const text = String(direction || '').trim();
+    // The vendored card hands its source object across the named host
+    // boundary. Convert that object to the source's own OOC direction here;
+    // coercing it with String() would put "[object Object]" in the draft.
+    const raw = isPlainObject(direction) ? direction : null;
+    const category = String(raw?.type || raw?.category || '').trim().toLowerCase();
+    const type = ['dramatic', 'intense', 'comedic', 'twist', 'exploratory'].includes(category) ? category : 'exploratory';
+    const article = /^[aeiou]/i.test(type) ? 'an' : 'a';
+    const name = String(raw?.name || raw?.title || '').trim();
+    const hook = String(raw?.hook || raw?.description || raw?.suggestion || '').trim();
+    const text = typeof direction === 'string'
+        ? direction.trim()
+        : (name || hook ? `[OOC: Take the story in ${article} ${type} direction — "${name || 'Story direction'}". ${hook}]` : '');
     if (!text) throw new Error('The selected Story Idea has no direction text.');
     const input = document.getElementById('world-user-input');
     if (!input) throw new Error('The World composer is unavailable.');
@@ -20702,15 +20877,31 @@ function applyScenePulseQuestChange(world, sess, protocol, change, options = {})
 function scenePulseQuestReviewProjection(protocol, options = {}) {
     const snapshotId = String(options.snapshotId || '');
     const turnId = String(options.turnId || '');
+    const sourceEditId = String(options.sourceEditId || '');
     return (Array.isArray(protocol?.scenePulseQuestTranslations) ? protocol.scenePulseQuestTranslations : [])
         .filter(item => item?.type === 'scene_pulse_quest_translation'
-            && (!snapshotId || String(item?.targetSnapshotId || '') === snapshotId)
-            && (!turnId || String(item?.targetTurnId || '') === turnId))
+            // A source action belongs most precisely to the direct human
+            // edit which produced it. Snapshot identity remains the normal
+            // history route, but authored edits can form a successor chain
+            // whose visible snapshot identity is no longer the original
+            // Reader node.
+            && (sourceEditId
+                ? String(item?.sourceEditId || '') === sourceEditId
+                // A settled Reader snapshot is the exact source identity for
+                // an edit. Historic/targeted Reader paths can lack a durable
+                // turn id, so require it only when no snapshot was supplied.
+                : (snapshotId
+                    ? String(item?.targetSnapshotId || '') === snapshotId
+                    : (!turnId || String(item?.targetTurnId || '') === turnId))))
         .slice(-24).map(item => safeJsonClone(item));
 }
 
 function applyScenePulseQuestEditTranslations(world, sess, protocol, edit) {
-    if (!edit?.targetTurnId || edit.targetSnapshotId === 'fixture') return [];
+    // A non-fixture accepted snapshot is enough provenance for an explicit
+    // source edit.  Do not discard it merely because the selected Reader
+    // history point does not retain a parallel turn id; that would leave a
+    // visible ScenePulse action with no possible Horde lifecycle path.
+    if (!edit?.targetSnapshotId || edit.targetSnapshotId === 'fixture') return [];
     const changes = scenePulseQuestChanges(edit.before, edit.after);
     if (!changes.length) return [];
     const results = changes.map(change => applyScenePulseQuestChange(world, sess, protocol, change, {
@@ -21189,6 +21380,12 @@ async function commitScenePulseSourceEdit(world, sess, payload = {}) {
     // Inspect instead of being guessed or duplicated.
     const questTranslations = applyScenePulseQuestEditTranslations(world, sess, protocol, edit);
     const relationshipTranslations = applyScenePulseRelationshipEditTranslations(world, sess, protocol, edit);
+    // The human edit is the durable authored-history node. Keep the compact
+    // outcomes on that node as well as in the timeline-wide action ledger:
+    // a later protocol migration or filtered historic projection must never
+    // make a successfully saved ScenePulse action disappear after reload.
+    edit.questReview = safeJsonClone(questTranslations);
+    edit.relationshipReview = safeJsonClone(relationshipTranslations);
     await saveState();
     return {
         saved: true, id: edit.id, edit,
@@ -21197,42 +21394,141 @@ async function commitScenePulseSourceEdit(world, sess, payload = {}) {
     };
 }
 
-function scenePulseHumanOverlay(protocol, handoff) {
-    const edits = Array.isArray(protocol?.scenePulseHumanEdits) ? protocol.scenePulseHumanEdits : [];
-    const currentSnapshotId = String(handoff?.provenance?.snapshotId || (handoff?.status === 'accepted_fixture' ? 'fixture' : ''));
-    const edit = edits.filter(item => item?.status === 'active'
-        && String(item?.targetSnapshotId || '') === currentSnapshotId
-        && isPlainObject(item?.after))
-        .sort((left, right) => String(left?.createdAt || '').localeCompare(String(right?.createdAt || '')))
-        .at(-1);
-    if (!edit) return handoff;
-    const history = Array.isArray(handoff?.history) ? safeJsonClone(handoff.history) : [];
-    history.push({
-        id: edit.id,
-        label: 'Human ScenePulse edit',
-        current: true,
-        createdAt: edit.createdAt,
-        summary: `Human tracker edit: ${(edit.rawPatch || []).map(change => change?.key).filter(Boolean).join(', ') || 'source fields'}`,
-        turnId: edit.targetTurnId,
-        scenePulse: safeJsonClone(edit.after),
-        previousScenePulse: safeJsonClone(edit.before),
-        deltaScenePulse: safeJsonClone(edit.rawPatch || []),
-        clearFields: [],
-        replaceCollections: []
+function scenePulseHumanReviewRecords(edit, projected, persistedKey) {
+    const persisted = Array.isArray(edit?.[persistedKey]) ? edit[persistedKey] : [];
+    const records = new Map();
+    // Retain the action that was committed with this edit even if a historic
+    // protocol projection cannot be reconstructed. A current projection wins
+    // for the same record, so an unresolved action still reflects its later
+    // author-chosen resolution.
+    persisted.forEach((record, index) => {
+        const id = String(record?.id || `saved-${index}`);
+        records.set(id, safeJsonClone(record));
     });
+    (Array.isArray(projected) ? projected : []).forEach((record, index) => {
+        const id = String(record?.id || `projected-${index}`);
+        records.set(id, safeJsonClone(record));
+    });
+    return [...records.values()].slice(-24);
+}
+
+function scenePulseHumanHistoryEntry(protocol, edit) {
+    const snapshotId = String(edit?.targetSnapshotId || '');
+    const turnId = String(edit?.targetTurnId || '');
+    return {
+        id: String(edit?.id || ''),
+        label: 'Human ScenePulse edit',
+        current: false,
+        createdAt: edit?.createdAt || '',
+        summary: `Human tracker edit: ${(edit?.rawPatch || []).map(change => change?.key).filter(Boolean).join(', ') || 'source fields'}`,
+        turnId,
+        scenePulse: safeJsonClone(edit?.after || {}),
+        previousScenePulse: safeJsonClone(edit?.before || {}),
+        deltaScenePulse: safeJsonClone(edit?.rawPatch || []),
+        clearFields: [],
+        replaceCollections: [],
+        // A human edit is a separate source-history node, but its World
+        // review belongs to the accepted Reader snapshot it deliberately
+        // changed. Carry that compact review forward so Inspect never makes
+        // a saved quest action vanish merely because the source is viewing
+        // its authored successor rather than the Reader node itself.
+        questReview: scenePulseHumanReviewRecords(edit,
+            scenePulseQuestReviewProjection(protocol, { snapshotId, turnId, sourceEditId: edit?.id }), 'questReview'),
+        relationshipReview: scenePulseHumanReviewRecords(edit,
+            scenePulseRelationshipReviewProjection(protocol, { snapshotId, turnId }), 'relationshipReview')
+    };
+}
+
+function scenePulseHumanHistory(protocol, handoff, edits) {
+    const sourceHistory = Array.isArray(handoff?.history) ? safeJsonClone(handoff.history) : [];
+    if (!sourceHistory.length || !edits.length) return sourceHistory;
+    const childrenByTarget = new Map();
+    edits.forEach(edit => {
+        const target = String(edit?.targetSnapshotId || '');
+        if (!target) return;
+        const children = childrenByTarget.get(target) || [];
+        children.push(edit);
+        childrenByTarget.set(target, children);
+    });
+    childrenByTarget.forEach(children => children.sort((left, right) =>
+        String(left?.createdAt || '').localeCompare(String(right?.createdAt || ''))));
+    const history = [];
+    const visited = new Set();
+    const appendWithEdits = entry => {
+        if (!entry || visited.has(String(entry.id || ''))) return;
+        visited.add(String(entry.id || ''));
+        history.push(entry);
+        (childrenByTarget.get(String(entry.id || '')) || []).forEach(edit =>
+            appendWithEdits(scenePulseHumanHistoryEntry(protocol, edit)));
+    };
+    sourceHistory.forEach(appendWithEdits);
+    return history;
+}
+
+function scenePulseCurrentHumanSuccessor(edits, snapshotId) {
+    let current = edits.filter(item => String(item?.targetSnapshotId || '') === String(snapshotId || '')).at(-1);
+    const visited = new Set();
+    while (current?.id && !visited.has(String(current.id))) {
+        visited.add(String(current.id));
+        const successor = edits.filter(item => String(item?.targetSnapshotId || '') === String(current.id)).at(-1);
+        if (!successor) break;
+        current = successor;
+    }
+    return current || null;
+}
+
+function scenePulseHumanOverlay(protocol, handoff) {
+    const edits = (Array.isArray(protocol?.scenePulseHumanEdits) ? protocol.scenePulseHumanEdits : [])
+        .filter(item => item?.status === 'active' && isPlainObject(item?.after))
+        .sort((left, right) => String(left?.createdAt || '').localeCompare(String(right?.createdAt || '')));
+    const currentSnapshotId = String(handoff?.provenance?.snapshotId || (handoff?.status === 'accepted_fixture' ? 'fixture' : ''));
+    // Every direct save is a successor of the exact scene state the author
+    // was viewing. If an author saves again before a Reader pass, that newer
+    // edit targets the prior human node, not the original Reader snapshot.
+    // Follow that explicit chain to its tip so the foreground and Inspect
+    // describe the latest authored state rather than silently showing an
+    // ancestor.
+    const currentEdit = scenePulseCurrentHumanSuccessor(edits, currentSnapshotId);
+    const history = scenePulseHumanHistory(protocol, handoff, edits);
+    if (!currentEdit) {
+        if (history.length === (Array.isArray(handoff?.history) ? handoff.history.length : 0)) return handoff;
+        return Object.freeze({ ...handoff, history });
+    }
+    // The fixture has no Reader history to anchor an edit to. Once a real
+    // scene exists, every authored source edit is inserted immediately after
+    // the precise accepted Reader snapshot it changed (including chains of
+    // edits made while reviewing that history point).
+    if (!history.some(entry => String(entry?.id || '') === String(currentEdit.id || ''))) {
+        history.push(scenePulseHumanHistoryEntry(protocol, currentEdit));
+    }
     return Object.freeze({
         ...handoff,
-        id: `${handoff?.id || 'scenepulse'}:${edit.id}`,
+        id: `${handoff?.id || 'scenepulse'}:${currentEdit.id}`,
         status: 'accepted_human',
         fixtureScenePulse: safeJsonClone(handoff?.fixtureScenePulse || handoff?.scenePulse || {}),
         // The native source panel renders the human selected snapshot. The
         // unmodified Sidecar reading remains separately available for the
         // visible comparison rather than being overwritten in place.
         sidecarScenePulse: safeJsonClone(handoff?.scenePulse || {}),
-        scenePulse: safeJsonClone(edit.after),
+        scenePulse: safeJsonClone(currentEdit.after),
         history,
-        humanEdit: Object.freeze({ id: edit.id, author: 'human', createdAt: edit.createdAt, rawPatch: safeJsonClone(edit.rawPatch || []), undo: safeJsonClone(edit.undo || {}) }),
-        provenance: Object.freeze({ ...(handoff?.provenance || {}), humanEditId: edit.id, source: 'human_scene_pulse_edit' })
+        // Inspecting the current authored successor must retain the exact
+        // World outcomes produced by this save.  Without this projection the
+        // action exists in Horde but vanishes from the panel that initiated
+        // it until the author happens to select the preceding Reader node.
+        questReview: scenePulseHumanReviewRecords(currentEdit,
+            scenePulseQuestReviewProjection(protocol, {
+                snapshotId: currentSnapshotId,
+                turnId: String(currentEdit.targetTurnId || ''),
+                sourceEditId: currentEdit.id
+            }), 'questReview'),
+        relationshipReview: scenePulseHumanReviewRecords(currentEdit,
+            scenePulseRelationshipReviewProjection(protocol, {
+                snapshotId: currentSnapshotId,
+                turnId: String(currentEdit.targetTurnId || '')
+            }), 'relationshipReview'),
+        humanEdit: Object.freeze({ id: currentEdit.id, author: 'human', createdAt: currentEdit.createdAt, rawPatch: safeJsonClone(currentEdit.rawPatch || []), undo: safeJsonClone(currentEdit.undo || {}) }),
+        provenance: Object.freeze({ ...(handoff?.provenance || {}), humanEditId: currentEdit.id, source: 'human_scene_pulse_edit' })
     });
 }
 
@@ -32161,7 +32457,10 @@ async function promoteImpliedWorldRecord(options = {}) {
             : world.entities.find(entity => entity.id === introducedId);
         if (!canonical) throw new Error('The native reducer did not create the requested record.');
         window.HordeSidecarPromotion?.markPromoted(protocol, record.id, canonical.id);
-        const visualOutcome = applyScenePulsePromotionAppearance(canonical, record);
+        const visualOutcome = {
+            ...(applyScenePulsePromotionAppearance(canonical, record) || {}),
+            ...(applyScenePulsePromotionLocation(canonical, record) || {})
+        };
         if (readerCandidate) markScenePulseCandidatePromotionOutcome(protocol, record, canonical, 'promoted');
         protocol.refinements.push({ id: `promotion_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), source: 'direct_user_refinement',
             userText: `Promoted implied ${record.kind}: ${record.name}`, committed: true, audit: safeJsonClone(commit.audit), provisionalId: record.id, canonicalId: canonical.id,
@@ -33744,6 +34043,7 @@ function setupWorldPlayLogic() {
     document.getElementById('world-session-select').onchange = (e) => {
         state.worldInstances[state.activeWorldId].activeSessionId = e.target.value;
         saveState().catch(() => {});
+        persistWorkspaceSoon();
         renderWorldPlayState();
     };
 
@@ -37297,9 +37597,38 @@ function isFFVoiceColorTag(name) {
     return FF_VOICE_COLOR_NAMES.has(String(name || '').toLowerCase());
 }
 
+// FF may qualify a locked dialogue colour with a delivery cue, e.g.
+// `<teal:measured>…</teal:measured>`.  Treat that as one presentation token
+// rather than leaving the literal markup in ordinary story prose.  The
+// closing tag must carry the same colour and optional cue; malformed or
+// non-colour markup remains visible instead of being silently eaten.
+const FF_VOICE_TAG_PATTERN = /<([a-z][a-z0-9]*)(?::([a-z][a-z0-9_-]*))?>([\s\S]*?)<\/([a-z][a-z0-9]*)(?::([a-z][a-z0-9_-]*))?>/gi;
+
+function ffVoiceTags(text) {
+    const source = String(text || '');
+    const pattern = new RegExp(FF_VOICE_TAG_PATTERN.source, 'gi');
+    const tags = [];
+    let match;
+    while ((match = pattern.exec(source))) {
+        const [, openingColor, openingTone, inner, closingColor, closingTone] = match;
+        const color = String(openingColor || '').toLowerCase();
+        const closing = String(closingColor || '').toLowerCase();
+        const tone = String(openingTone || '').toLowerCase();
+        if (!isFFVoiceColorTag(color) || color !== closing || tone !== String(closingTone || '').toLowerCase()) continue;
+        tags.push({ name: color, tone, inner, index: match.index, end: match.index + match[0].length });
+    }
+    return tags;
+}
+
 function stripFFVoiceTags(text) {
-    return String(text || '').replace(/<([a-z][a-z0-9]*)>([\s\S]*?)<\/\1>/gi, (full, name, inner) =>
-        isFFVoiceColorTag(name) ? inner : full);
+    return String(text || '').replace(FF_VOICE_TAG_PATTERN, (full, openingColor, openingTone, inner, closingColor, closingTone) => {
+        const color = String(openingColor || '').toLowerCase();
+        const closing = String(closingColor || '').toLowerCase();
+        const tone = String(openingTone || '').toLowerCase();
+        return isFFVoiceColorTag(color) && color === closing && tone === String(closingTone || '').toLowerCase()
+            ? inner
+            : full;
+    });
 }
 
 function worldVoiceColorSpeaker(world, color) {
@@ -37359,7 +37688,6 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
     if (!world || !source) return parseHordeMarkdown(stripFFVoiceTags(source));
     const paragraphs = source.split(/\n{2,}/);
     const quotePattern = /“([^”\n]+)”|"([^"\n]+)"/g;
-    const voiceTagPattern = /<([a-z][a-z0-9]*)>((?:(?!<\/\1>)[\s\S])*?)<\/\1>/gi;
     let recognized = 0;
     let carriedSpeaker = null;
     let carryAge = 99;
@@ -37381,9 +37709,7 @@ function renderWorldNarrativeHtml(world, text, sess = null) {
         // FF Voice Color spans are marked dialogue: the narrator already did
         // the speaker detection and issued the color, so they always become
         // voice lines even when this paragraph cannot name a speaker.
-        const voiceTags = [...paragraph.matchAll(voiceTagPattern)]
-            .map(match => ({ name: match[1], inner: match[2], index: match.index || 0, end: (match.index || 0) + match[0].length }))
-            .filter(tag => isFFVoiceColorTag(tag.name));
+        const voiceTags = ffVoiceTags(paragraph);
         const tagRanges = voiceTags.map(tag => [tag.index, tag.end]);
         const quoteMatches = [...paragraph.matchAll(quotePattern)]
             .filter(match => !tagRanges.some(([start, end]) => (match.index || 0) >= start && (match.index || 0) < end));
@@ -37586,23 +37912,23 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
         : '';
     const failed = backstage.status === 'reconciliation_failed' || backstage.unresolved === true;
     const failureStage = String(backstage.failure?.stage || '').toLowerCase();
-    const failureLabel = failureStage === 'reader' ? 'Reader update incomplete' : failureStage === 'reconciliation' ? 'Sidecar reconciliation incomplete' : 'Scene update incomplete';
+    const failureLabel = 'Scene update incomplete';
     const incompleteHandoff = backstage.handoffComplete === false;
     const roleplayOSChain = renderSidecarRoleplayOSChain(turnRecord);
     const activeLocationLabel = isPlainObject(packet.activeLocation)
         ? `${packet.activeLocation.name || packet.activeLocation.id || 'Unknown'}${packet.activeLocation.id ? ` · ${packet.activeLocation.id}` : ''}`
         : String(packet.activeLocation || '');
     return `<details class="world-sidecar-backstage${failed ? ' sidecar-backstage-failed' : ''}" data-sidecar-turn="${Number(turnNumber) || 0}">
-        <summary><span class="sidecar-backstage-mark">${failed ? '⚠' : '🎭'}</span><span><b>Backstage handoff</b><small>Narrator → Sidecar → next beat${turnNumber ? ` · Turn ${turnNumber}` : ''}</small></span><i>${failed ? 'Scene needs attention' : 'Scene ready'}</i></summary>
+        <summary><span class="sidecar-backstage-mark">${failed ? '⚠' : '🎭'}</span><span><b>Backstage notes</b><small>Scene update${turnNumber ? ` · Turn ${turnNumber}` : ''}</small></span><i>${failed ? 'Scene needs attention' : 'Scene ready'}</i></summary>
         <div class="sidecar-backstage-body">
-            ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Narrator’s handoff notes</b><small>What the narrated beat means for continuity.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
-            ${reader ? (() => { const envelope = reader.readerEnvelope || {}; const presence = envelope.presence || {}; const changed = Array.isArray(reader.changedFields) ? reader.changedFields : []; const proposals = [...(envelope.durableProposals || []), ...(envelope.relationshipProposals || [])]; return `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Sidecar’s semantic reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'Reader fell back to the canonical manifest.' : 'Read-only canonical evidence before reconciliation.'))}</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(reader.mode || envelope.snapshotMode || 'delta'))} snapshot</span>${reader.readerSnapshotId ? `<span>${escapeHTML(reader.readerSnapshotId)}</span>` : ''}${reader.model ? `<span>${escapeHTML(reader.model)}</span>` : ''}${reader.provider ? `<span>${escapeHTML(reader.provider)}</span>` : ''}${changed.length ? `<span>${escapeHTML(changed.length)} changed field${changed.length === 1 ? '' : 's'}</span>` : ''}</div>${presence.active?.length || presence.nearby?.length || presence.audible?.length ? `<div class="sidecar-packet-grid">${presence.active?.length ? `<span><small>Active</small>${escapeHTML(JSON.stringify(presence.active))}</span>` : ''}${presence.nearby?.length ? `<span><small>Nearby</small>${escapeHTML(JSON.stringify(presence.nearby))}</span>` : ''}${presence.audible?.length ? `<span><small>Audible</small>${escapeHTML(JSON.stringify(presence.audible))}</span>` : ''}</div>` : ''}${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${proposals.length ? `<div class="form-hint">${escapeHTML(String(proposals.length))} evidence-backed proposal${proposals.length === 1 ? '' : 's'} queued for Sidecar review; none are canonical until the reducer accepts them.</div>` : ''}${envelope.validationWarnings?.length ? `<div class="form-hint" style="color:var(--warning);">${escapeHTML(String(envelope.validationWarnings.length))} validation warning${envelope.validationWarnings.length === 1 ? '' : 's'}</div>` : ''}${reader.failure ? `<div class="form-hint">Reader diagnostic: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>`; })() : ''}
-            ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Narrator handoff was incomplete</b><small>Sidecar still ran from the visible scene and canonical frame; missing interpretation was not invented.</small></div></header></section>` : ''}
-            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${escapeHTML(backstage.failure?.code === 'sidecar_incomplete_commit_blocked' || backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Canonical commit incomplete' : failureLabel)}</b><small>${escapeHTML(backstage.failure?.message || 'Downstream scene processing did not settle.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Failure</b><span>${escapeHTML(backstage.failure?.code || 'sidecar_reconciliation_failed')}${backstage.failure?.stage ? ` · ${escapeHTML(backstage.failure.stage)}` : ''}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>Safety result</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'A partial mutation was journaled and progression is blocked. Native commit/World GM recovery is required.' : 'Narration preserved. Failed downstream evidence is excluded from active continuity.')}</span></div><div><b>Recovery</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Inspect the journaled receipt and recover through World GM; do not replay the authored prose.' : `Retry reuses this exact authored beat${reader ? ' and the successful Reader envelope where available' : ''}; it never regenerates Narration.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${backstage.failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${escapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
-            ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Sidecar’s canonical reading</b><small>${escapeHTML(receipt.summary || 'Reconciled from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
-            ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next-beat pacing</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next narrator turn receives this reconciled scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending reconciliation</small>${escapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
+            ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Story notes</b><small>What this beat sets up next.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
+            ${reader ? (() => { const envelope = reader.readerEnvelope || {}; const presence = envelope.presence || {}; const changed = Array.isArray(reader.changedFields) ? reader.changedFields : []; const proposals = [...(envelope.durableProposals || []), ...(envelope.relationshipProposals || [])]; return `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Scene reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'No additional scene reading was available.' : 'A read of the current moment.'))}</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(reader.mode || envelope.snapshotMode || 'delta'))} scene update</span>${reader.readerSnapshotId ? `<span>${escapeHTML(reader.readerSnapshotId)}</span>` : ''}${reader.model ? `<span>${escapeHTML(reader.model)}</span>` : ''}${reader.provider ? `<span>${escapeHTML(reader.provider)}</span>` : ''}${changed.length ? `<span>${escapeHTML(changed.length)} changed field${changed.length === 1 ? '' : 's'}</span>` : ''}</div>${presence.active?.length || presence.nearby?.length || presence.audible?.length ? `<div class="sidecar-packet-grid">${presence.active?.length ? `<span><small>Active</small>${escapeHTML(JSON.stringify(presence.active))}</span>` : ''}${presence.nearby?.length ? `<span><small>Nearby</small>${escapeHTML(JSON.stringify(presence.nearby))}</span>` : ''}${presence.audible?.length ? `<span><small>Audible</small>${escapeHTML(JSON.stringify(presence.audible))}</span>` : ''}</div>` : ''}${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${proposals.length ? `<div class="form-hint">${escapeHTML(String(proposals.length))} proposed change${proposals.length === 1 ? '' : 's'} await review.</div>` : ''}${envelope.validationWarnings?.length ? `<div class="form-hint" style="color:var(--warning);">${escapeHTML(String(envelope.validationWarnings.length))} validation warning${envelope.validationWarnings.length === 1 ? '' : 's'}</div>` : ''}${reader.failure ? `<div class="form-hint">Scene reading detail: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>`; })() : ''}
+            ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Scene update was incomplete</b><small>Only what the visible scene supports was retained.</small></div></header></section>` : ''}
+            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${escapeHTML(failureLabel)}</b><small>${escapeHTML(backstage.failure?.message || 'The scene update did not finish.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Details</b><span>${escapeHTML(backstage.failure?.code || 'scene_update_incomplete')}${backstage.failure?.stage ? ` · ${escapeHTML(backstage.failure.stage)}` : ''}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>What stayed safe</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'The incomplete update is held for World GM recovery.' : 'The narrated beat remains, and the scene stays at its last known state.')}</span></div><div><b>Recovery</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Open World GM to resolve this update; the story response is not replayed.' : `Retry checks this same beat again${reader ? ' with its available scene reading' : ''}; the story response is not rewritten.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${backstage.failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${escapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
+            ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Scene update</b><small>${escapeHTML(receipt.summary || 'Updated from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
+            ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next beat</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next story response receives this scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending update</small>${escapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
             ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(jobSummary.queued || 0))} queued</span><span>${escapeHTML(String(jobSummary.running || 0))} running</span><span>${escapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${escapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
-            ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${escapeHTML(String(backstage.questionCount))} open Sidecar question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
+            ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${escapeHTML(String(backstage.questionCount))} open scene question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
             ${roleplayOSChain}
             <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${escapeHTML(JSON.stringify({ status: backstage.status || null, handoffComplete: backstage.handoffComplete !== false, handoff: backstage.handoff || null, reader: backstage.reader || null, receipt: backstage.receipt || null, failure: backstage.failure || null, audit: backstage.audit || null, preFrame: backstage.preFrame || null, postFrame: backstage.postFrame || null, packet: backstage.packet || null }, null, 2))}</pre></details>
         </div>
@@ -40463,6 +40789,13 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             if (dmTypingLabel) dmTypingLabel.textContent = 'GM is writing handoff notes…';
             try {
                 if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is reading the authored beat…';
+                // Narrator streaming has its own idle window.  A completed
+                // visible beat must give the distinct Sidecar request a fresh
+                // chance to read and reconcile, rather than inheriting the
+                // last few seconds of a narrator timeout.  Keep an explicit
+                // unlimited timeout unlimited, but give enabled cloud reads a
+                // practical single-stage floor.
+                armGenerationIdleTimeout(configuredIdleTimeout === 0 ? 0 : Math.max(90000, configuredIdleTimeout));
                 turnCallAudit.sidecar = (turnCallAudit.sidecar || 0) + 1;
                 const reconciled = await runSidecarReconciliation(world, sess, {
                     handoff: narratorOutput.handoff, narration: fullText,
@@ -40484,7 +40817,12 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                 sess.lastTurnStateSource = 'sidecar';
                 if (dmTypingLabel) dmTypingLabel.textContent = 'Sidecar is preparing next-beat pacing…';
             } catch (sidecarError) {
-                if (sidecarError?.name === 'AbortError') throw sidecarError;
+                // The Narrator artifact already exists.  An aborted Sidecar
+                // request is a failed downstream handoff, not a reason to
+                // erase that authored beat or return its text as an unsent
+                // draft.  Journal it through the ordinary failed-turn path so
+                // Backstage can offer Retry Scene Update against this exact
+                // narration.
                 sidecarReconciliationFailed = true;
                 let failedAttempt = sidecarError.sidecarAttempt || null;
                 if (!failedAttempt) {
