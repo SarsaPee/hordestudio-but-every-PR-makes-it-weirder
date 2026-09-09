@@ -18,7 +18,7 @@
 - [x] Run upstream engine gates and test a fresh portable extraction.
 - [x] Run the available isolated 17.4 storage-transaction and browser-engine smoke gates with a clean Playwright profile; their results are recorded separately from Experimental Worlds acceptance.
 - [x] Repeat the retained runtime browser proof after the Milestone A checkpoint. The staged 17.4 F16 portrait save/reload/clear/reload, F18 graduation/save/readback, F19/F20 relationship save/readback, F09 Location graduation, draft-send/rewind-to-draft/resend/reload, same-Day reroll safety, cross-mode deletion/readback, and cross-origin plus same-tab late-response isolation passed with a mocked provider or provider-independent browser run as applicable.
-- [x] Live provider evidence on the user-authorized disposable legacy Melbourne timeline exercised a real send, rewind-to-draft and reroll. It exposed a persisted ScenePulse date contradiction and a same-Day backward-header clock bug. The private runtime now rejects that rollback unless the header explicitly advances the numbered day; both semantic-time audits and both isolated browser reruns pass. This is a repair proof, not a live deployment.
+- [x] Live provider evidence on the user-authorized Melbourne timeline exercised real send, settle, reload, Rewind-control readback and earlier reroll. The narrow private guard rejects a same-Day backward reroll clock mutation and its isolated browser reruns pass. This does **not** establish general provider-date coherence: the current live 17.4 send produced a `Late Autumn 2024` header against an August 2026 scenario, recorded in the acceptance ledger without a speculative fix.
 - [x] Preserve the outgoing live tree and browser/mirror preimage, deploy the rebuilt portable 17.4 package to the maintained live root, and browser-verify stock `127.0.0.1:43127` plus preserved Experimental Worlds `localhost:43127`. The live launch remains storage-isolated; no mirror was overwritten.
 
 ## Open reconciliation and evidence caveats
@@ -33,5 +33,7 @@
   F09 Location have final staged browser/readback proofs; the dual-17.0
   checkpoint proves its retained runtime's F16, delete isolation,
   rewind/resend, late-response ownership, and same-Day reroll guard. The
-  untouched real-provider Melbourne reroll remains recorded as a genuine
-  historical failure: it produced a contradictory persisted ScenePulse date.
+  current real-provider Melbourne readback remains a genuine unresolved
+  failure: its narrator header is temporally inconsistent with the saved
+  scenario, and the earlier reroll also produced a contradictory persisted
+  ScenePulse date.

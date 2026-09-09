@@ -30,6 +30,23 @@ checks and the portable package do not substitute for an unchecked row.
 | F09 Location graduation | In staged 17.4 `Experimental 17.4 F09 Location Disposable`, sent `ACCEPTANCE_SCENEPULSE_LOCATION` through the real UI and local mocked transport, opened native ScenePulse Inspect, staged the accepted `Acceptance Archive` location for World review, created the durable record, confirmed the explicit modal, saved, and manually published the isolated mirror. | Browser showed `New location discovered: Acceptance Archive`; mirror revision 5 retained canonical `loc_mttmdwkh_zki36`, `Acceptance District`, `building`, `Ground floor`, the exact Reader snapshot and source-turn IDs, reader evidence, and the promoted candidate's `canonicalMatchId`. | Passed as mocked-provider browser/save/readback evidence on `dcbe687`; not live-model proof |
 | Same-Day reroll temporal guard — staged 17.4 | In a fresh Chrome profile, configured the real Experimental Worlds Settings UI to a disposable local OpenAI-compatible mock, created `Temporal Reroll Disposable`, armed the mock only after setup, sent `ACCEPTANCE_TEMPORAL_SAME_DAY_ROLLBACK`, then used the visible native Reroll control. The mock returned Day 1 `6:33 PM` for the authored turn and Day 1 `6:32 PM` for reroll. | The actual second response visibly contained `Time 6:32 PM`. The world clock stayed `8:00 AM`; after a full browser reload it remained exactly `8:00 AM`. Mock audit confirmed the authored send and reroll reached the narrator transport. | Passed as a mocked-provider staged browser/save/reload regression proof on `717fcbc`; this proves the safe rejection path, not live-model acceptance. |
 
+## Current live-provider browser readback
+
+On the deployed 17.4 installation at `localhost:43127`, the user-authorized
+Melbourne `Fork of New Timeline 5` used its configured `GEMINI-3.8-FLASH`
+provider. Through the real composer, it sent: `I take a sip of the soda water
+and tell Charlotte I am relieved the interview is over.` The response settled,
+the authored user turn acquired its visible `Rewind to draft` control, and a
+full reload retained exactly one authored turn plus that control.
+
+The request/settle/reload path therefore passed as current live-provider
+browser evidence. It also revealed a **genuine temporal-consistency failure**:
+the new narrator header described `Day 1` in `Late Autumn 2024`, while the
+preserved scenario context is Friday, 14 August 2026. The earlier staged guard
+only rejects a same-Day backward reroll clock mutation; it does not make an
+arbitrary live-provider date header coherent. No source change was made from
+this finding.
+
 Real-provider live-17.0 evidence is recorded in the dual-17.0 ledger. It
 proved draft restoration but exposed a reroll regression: a same-Day-1
 one-minute-backward header was treated as a 1,439-minute clock advance and
