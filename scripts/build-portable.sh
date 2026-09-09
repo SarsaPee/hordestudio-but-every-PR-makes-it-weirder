@@ -42,6 +42,7 @@ for file in \
   ashlyn-reynolds-human.js \
   jane-harlow-human.js \
   policy-panic-world.js \
+  experimental-worlds-navigation.js \
   favicon.svg \
   horde_mcp_bridge.py \
   README.md \
@@ -68,11 +69,26 @@ if [ -d "$ROOT_DIR/assets/bundled" ]; then
   cp -R "$ROOT_DIR/assets/bundled" "$APP_DIR/assets/"
 fi
 
+# Experimental Worlds is a private, executable runtime, not an implicit source
+# tree. Keep this explicit copy in the portable manifest so a fresh archive
+# never resolves its document, ScenePulse assets, or styles from a developer
+# checkout.
+if [ ! -f "$ROOT_DIR/experiences/experimental-worlds/manifest.json" ]; then
+  echo "Experimental Worlds manifest is missing." >&2
+  exit 1
+fi
+mkdir -p "$APP_DIR/experiences"
+cp -R "$ROOT_DIR/experiences/experimental-worlds" "$APP_DIR/experiences/"
+
 # Internet multiplayer is bring-your-own relay. Ship the small auditable Worker
 # source and setup guide so portable users are not dependent on this repository.
 
 mkdir -p "$APP_DIR/docs"
 cp "$ROOT_DIR/docs/multiplayer.md" "$APP_DIR/docs/"
+mkdir -p "$APP_DIR/docs/experimental-worlds" "$APP_DIR/scripts"
+cp "$ROOT_DIR/docs/experimental-worlds/CODEX_EXPERIMENTAL_WORLDS_SPLIT.md" "$APP_DIR/docs/experimental-worlds/"
+cp "$ROOT_DIR/docs/experimental-worlds/OWNERSHIP.md" "$ROOT_DIR/docs/experimental-worlds/UPSTREAM_UPDATE.md" "$APP_DIR/docs/experimental-worlds/"
+cp "$ROOT_DIR/scripts/migrate-experimental-worlds-mirror.py" "$APP_DIR/scripts/"
 cp -R "$ROOT_DIR/multiplayer-relay" "$APP_DIR/"
 
 chmod +x "$APP_DIR/Start Horde Studio.command" "$APP_DIR/start-horde-studio.sh"

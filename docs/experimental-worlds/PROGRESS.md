@@ -1,6 +1,6 @@
 # Experimental Worlds split progress
 
-## Current phase: Milestone A — extraction and host isolation
+## Current phase: Milestone A — acceptance completion
 
 - [x] Preserve the supplied checklist in this repository.
 - [x] Record live and sanitized source checkpoints; keep their histories reachable.
@@ -8,10 +8,13 @@
 - [x] Copy the live Experimental Worlds dependency closure into its private package.
 - [x] Add the narrow host router, storage/bridge namespace, and first-class navigation.
 - [x] Add a copy-verify-idempotent bridge-mirror migration tool; production cutover remains pending.
-- [ ] Browser-prove dual 17.0 and tag the checkpoint.
+- [x] Smoke-prove stock save/reload and a distinct Experimental Worlds origin in a clean 17.0 browser profile.
+- [ ] Complete the provider-backed Experimental Worlds draft-send/inspect/rewind/resend and persistence acceptance, then tag the full dual-17.0 checkpoint.
 
-## Next phase: Milestone B — complete upstream 17.4 integration
+## Staged, not approved: Milestone B — upstream 17.4 verification and package
 
-Do not begin until the dual-17.0 checkpoint passes. Merge the exact target
-`520aa2155b02289f9db1c6740a48e494124d2cca`, then replay only the documented
-host seams and run stock, experimental, storage, package, and browser checks.
+- [x] Merge exact upstream target `520aa2155b02289f9db1c6740a48e494124d2cca` in staging.
+- [x] Preserve upstream maps/VH bridge additions while retaining the narrow Experimental Worlds seam.
+- [x] Run upstream engine gates and test a fresh portable extraction.
+- [ ] Repeat the full browser proof after the Milestone A checkpoint.
+- [ ] Perform guarded live mirror cutover/deployment only after the remaining browser acceptance items pass.

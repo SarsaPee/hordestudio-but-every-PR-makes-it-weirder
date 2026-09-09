@@ -24538,6 +24538,10 @@ function showAppUpdateNotice(release) {
 }
 
 async function checkForAppUpdate() {
+    // This document is the pinned Experimental Worlds runtime, not the stock
+    // release channel. Its upstream-version notice would otherwise advertise
+    // a stock update as if it were an Experimental Worlds upgrade.
+    if (location.hostname === 'localhost') return;
     const cacheKey = 'horde_update_check_cache_v1';
     const cacheDuration = 24 * 60 * 60 * 1000;
     let cached = null;

@@ -7,7 +7,9 @@ const STORE_NAME = 'state';
 const SETTINGS_MIRROR_KEY = 'horde_settings_mirror_v1';
 // Bump this when publishing a GitHub Release. The checker accepts tags such as
 // v10.1.0, 10.1 or Horde-Studio-10.1.0.
-const HORDE_STUDIO_VERSION = '17.3.0';
+// The verified v17.4.0 release tag retained its prior display string. Keep
+// runtime reporting aligned with the exact release integrated by this build.
+const HORDE_STUDIO_VERSION = '17.4.0';
 const HORDE_STUDIO_RELEASED_AT = '2026-09-04T14:05:54+05:00';
 const HORDE_STUDIO_RELEASE_API = 'https://api.github.com/repos/ddkhan24/hordestudio/releases/latest';
 const HORDE_STUDIO_RELEASES_URL = 'https://github.com/ddkhan24/hordestudio/releases/latest';
