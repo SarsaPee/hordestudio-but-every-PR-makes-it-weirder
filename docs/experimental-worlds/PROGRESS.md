@@ -6,8 +6,8 @@
 - [x] Record live and sanitized source checkpoints; keep their histories reachable.
 - [x] Create a clean integration branch from upstream `v17.0.0` commit `8d5d68378f3fc1ac06a35ed31e05cff77be45584`.
 - [x] Copy the live Experimental Worlds dependency closure into its private package.
-- [ ] Add the narrow host router, storage/bridge namespaces, and first-class navigation.
-- [ ] Copy and read back experimental data before stock can start at its origin.
+- [x] Add the narrow host router, storage/bridge namespace, and first-class navigation.
+- [x] Add a copy-verify-idempotent bridge-mirror migration tool; production cutover remains pending.
 - [ ] Browser-prove dual 17.0 and tag the checkpoint.
 
 ## Next phase: Milestone B — complete upstream 17.4 integration

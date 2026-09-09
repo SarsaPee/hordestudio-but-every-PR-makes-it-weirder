@@ -38,6 +38,8 @@ from typing import Any
 # ── Load .env if present ────────────────────────────────────
 APP_DIR = Path(__file__).resolve().parent
 ENV_FILE = APP_DIR / ".env"
+EXPERIMENTAL_WORLDS_ID = "experimental-worlds"
+EXPERIMENTAL_RUNTIME_DIR = APP_DIR / "experiences" / EXPERIMENTAL_WORLDS_ID / "runtime"
 
 
 def _load_env(path: Path) -> None:
@@ -112,6 +114,7 @@ STATIC_FILES = {
     "/index.html": ("index.html", "text/html"),
     "/style.css": ("style.css", "text/css"),
     "/app.js": ("app.js", "text/javascript"),
+    "/experimental-worlds-navigation.js": ("experimental-worlds-navigation.js", "text/javascript"),
     "/video-worlds.js": ("video-worlds.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
     "/boot-diagnostics.js": ("boot-diagnostics.js", "text/javascript"),
@@ -157,10 +160,140 @@ else:
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
 ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
+EXPERIMENTAL_SHARED_LIBRARY_FILE = CONFIG_DIR / EXPERIMENTAL_WORLDS_ID / "shared-library.json"
 
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
 mcp_sessions: dict[str, dict[str, str]] = {}
+
+
+class ExperimentalSharedLibraryStore:
+    """A private recovery mirror for the preserved Experimental Worlds runtime.
+
+    Browser IndexedDB remains canonical. This store deliberately has no access
+    to the stock mirror, so a stale full-state publish from either experience
+    cannot overwrite the other product's library.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.lock = threading.RLock()
+
+    @staticmethod
+    def _empty() -> dict[str, Any]:
+        return {"version": 1, "revision": 0, "snapshot": None, "fingerprint": "",
+                "updatedAt": 0, "updatedBy": "", "history": [], "activeDevices": []}
+
+    def _load(self) -> dict[str, Any]:
+        if not self.path.exists():
+            return self._empty()
+        try:
+            value = json.loads(self.path.read_text("utf-8"))
+        except (OSError, ValueError) as error:
+            raise ValueError("Experimental Worlds recovery mirror is unreadable; it was not replaced.") from error
+        if not isinstance(value, dict):
+            raise ValueError("Experimental Worlds recovery mirror is not an object; it was not replaced.")
+        state = self._empty()
+        state.update(value)
+        state["history"] = state["history"] if isinstance(state["history"], list) else []
+        state["activeDevices"] = state["activeDevices"] if isinstance(state["activeDevices"], list) else []
+        return state
+
+    def _write(self, state: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, separators=(",", ":"), ensure_ascii=False), "utf-8")
+        os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
+        temporary.replace(self.path)
+
+    @staticmethod
+    def _clean_snapshot(value: Any) -> tuple[dict[str, Any], str]:
+        if not isinstance(value, dict):
+            raise ValueError("A complete Experimental Worlds snapshot is required.")
+        clean = json.loads(json.dumps(value, separators=(",", ":"), ensure_ascii=False))
+        for world in clean.get("worlds", []) if isinstance(clean.get("worlds"), list) else []:
+            if isinstance(world, dict):
+                world.pop("sidecarMigrationBackups", None)
+        encoded = json.dumps(clean, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        if len(encoded) > 28 * 1024 * 1024:
+            raise ValueError("Experimental Worlds recovery snapshot exceeds the 28 MB safety limit.")
+        return clean, hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _summary(state: dict[str, Any]) -> dict[str, Any]:
+        return {"available": isinstance(state.get("snapshot"), dict), "revision": int(state.get("revision") or 0),
+                "updatedAt": int(state.get("updatedAt") or 0), "updatedBy": str(state.get("updatedBy") or ""),
+                "activeDevices": state.get("activeDevices") or []}
+
+    def _touch(self, state: dict[str, Any], device_id: Any, label: Any) -> None:
+        now = int(time.time() * 1000)
+        device = {"id": str(device_id or "anonymous")[:160], "label": str(label or "Experimental Worlds browser")[:120], "seenAt": now}
+        active = [item for item in state.get("activeDevices", []) if isinstance(item, dict)
+                  and now - int(item.get("seenAt") or 0) < 15 * 60 * 1000 and item.get("id") != device["id"]]
+        active.append(device)
+        state["activeDevices"] = active[-24:]
+
+    def status(self, device_id: Any, label: Any, include_snapshot: bool = False, include_history: bool = False) -> dict[str, Any]:
+        with self.lock:
+            state = self._load()
+            self._touch(state, device_id, label)
+            self._write(state)
+            result = self._summary(state)
+            if include_snapshot and result["available"]:
+                result["snapshot"] = state["snapshot"]
+            if include_history:
+                result["history"] = [{key: value for key, value in point.items() if key != "snapshot"}
+                                     for point in state["history"] if isinstance(point, dict)]
+            return result
+
+    def push(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        with self.lock:
+            state = self._load()
+            base = int(body.get("baseRevision") or 0)
+            revision = int(state.get("revision") or 0)
+            if base != revision:
+                result = self._summary(state)
+                result["error"] = "A newer Experimental Worlds recovery revision exists."
+                return 409, result
+            snapshot, fingerprint = self._clean_snapshot(body.get("snapshot"))
+            self._touch(state, body.get("deviceId"), body.get("label"))
+            if fingerprint == state.get("fingerprint"):
+                self._write(state)
+                return 200, {**self._summary(state), "unchanged": True}
+            previous = state.get("snapshot")
+            if isinstance(previous, dict):
+                state["history"] = ([{"id": secrets.token_hex(12), "revision": revision, "updatedAt": state.get("updatedAt", 0),
+                                      "snapshot": previous}] + state.get("history", []))[:3]
+            state.update({"snapshot": snapshot, "fingerprint": fingerprint, "revision": revision + 1,
+                          "updatedAt": int(time.time() * 1000), "updatedBy": str(body.get("deviceId") or "anonymous")[:160]})
+            self._write(state)
+            return 200, self._summary(state)
+
+    def restore(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        with self.lock:
+            state = self._load()
+            if int(body.get("baseRevision") or 0) != int(state.get("revision") or 0):
+                return 409, {**self._summary(state), "error": "A newer Experimental Worlds recovery revision exists."}
+            point = next((item for item in state.get("history", []) if isinstance(item, dict) and item.get("id") == body.get("historyId")), None)
+            if not point or not isinstance(point.get("snapshot"), dict):
+                raise ValueError("Experimental Worlds recovery point was not found.")
+            snapshot, fingerprint = self._clean_snapshot(point["snapshot"])
+            self._touch(state, body.get("deviceId"), body.get("label"))
+            state.update({"snapshot": snapshot, "fingerprint": fingerprint, "revision": int(state.get("revision") or 0) + 1,
+                          "updatedAt": int(time.time() * 1000), "updatedBy": str(body.get("deviceId") or "anonymous")[:160]})
+            self._write(state)
+            return 200, {**self._summary(state), "snapshot": snapshot}
+
+    def compact(self) -> dict[str, Any]:
+        with self.lock:
+            state = self._load()
+            if isinstance(state.get("snapshot"), dict):
+                state["snapshot"], state["fingerprint"] = self._clean_snapshot(state["snapshot"])
+            self._write(state)
+            return self._summary(state)
+
+
+experimental_shared_library_store = ExperimentalSharedLibraryStore(EXPERIMENTAL_SHARED_LIBRARY_FILE)
 
 
 class AlwaysOnRuntime:
@@ -2245,6 +2378,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[bridge] {self.address_string()} {fmt % args}")
 
+    def is_experimental_worlds_host(self) -> bool:
+        """`localhost` is the preserved experimental origin; stock is 127.0.0.1.
+
+        The distinction is intentionally at the browser-origin boundary. A path
+        or a tab alone would share IndexedDB and localStorage and allow stock
+        migration code to observe the experimental library.
+        """
+        host = self.headers.get("Host", "").strip().lower()
+        if host.startswith("["):
+            host = host[1:].split("]", 1)[0]
+        else:
+            host = host.split(":", 1)[0]
+        return host == "localhost"
+
     def origin_allowed(self) -> bool:
         origin = self.headers.get("Origin", "")
         if not origin:
@@ -2378,6 +2525,48 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.respond_bytes(200, raw, content_type)
         return True
 
+    def serve_experimental_worlds_file(self, path: str) -> bool:
+        """Serve only the preserved runtime's declared document and assets."""
+        static_files = {
+            "/": "index.html", "/index.html": "index.html", "/style.css": "style.css", "/app.js": "app.js",
+            "/video-worlds.js": "video-worlds.js", "/presets.js": "presets.js", "/boot-diagnostics.js": "boot-diagnostics.js",
+            "/policy-panic-world.js": "policy-panic-world.js", "/ashlyn-reynolds-human.js": "ashlyn-reynolds-human.js",
+            "/jane-harlow-human.js": "jane-harlow-human.js", "/labs-embedded.js": "labs-embedded.js",
+            "/labs-embedded-worker.js": "labs-embedded-worker.js", "/labs-needle.js": "labs-needle.js",
+            "/labs-needle-worker.js": "labs-needle-worker.js", "/labs-core.js": "labs-core.js",
+            "/labs-tasks.js": "labs-tasks.js", "/labs-ui.js": "labs-ui.js", "/labs-guide.js": "labs-guide.js",
+            "/help-system.js": "help-system.js", "/multiplayer.js": "multiplayer.js",
+            "/multiplayer-engine.js": "multiplayer-engine.js", "/rpg-mechanics.js": "rpg-mechanics.js",
+            "/dossier-claims.js": "dossier-claims.js", "/world-mechanics.js": "world-mechanics.js",
+            "/world-portrait-prompt.js": "world-portrait-prompt.js", "/experimental-worlds-navigation.js": "experimental-worlds-navigation.js",
+            "/favicon.svg": "favicon.svg", "/worlds/policy-panic.horde_world": "Policy Panic at Bramble and Pike.horde_world",
+        }
+        decoded = urllib.parse.unquote(path)
+        filename = static_files.get(decoded)
+        if filename:
+            target = EXPERIMENTAL_RUNTIME_DIR / filename
+        else:
+            target = None
+            for prefix in ("/assets/bundled/", "/assets/worlds/", "/scenepulse/"):
+                if decoded.startswith(prefix):
+                    candidate = (EXPERIMENTAL_RUNTIME_DIR / decoded.lstrip("/")).resolve()
+                    try:
+                        candidate.relative_to(EXPERIMENTAL_RUNTIME_DIR.resolve())
+                    except ValueError:
+                        self.respond(403, {"error": "Experimental Worlds asset path is invalid."})
+                        return True
+                    target = candidate
+                    break
+            if target is None:
+                return False
+        try:
+            raw = target.read_bytes()
+        except OSError:
+            self.respond(404, {"error": "Experimental Worlds asset not found."})
+            return True
+        self.respond_bytes(200, raw, mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+        return True
+
     def read_json(self) -> dict[str, Any]:
         declared = int(self.headers.get("Content-Length", "0") or 0)
         if declared > 30 * 1024 * 1024:
@@ -2405,8 +2594,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         parsed = urllib.parse.urlparse(self.path)
         try:
+            if self.is_experimental_worlds_host() and self.serve_experimental_worlds_file(parsed.path):
+                return
             if self.serve_app_file(parsed.path):
                 return
+            if self.is_experimental_worlds_host() and parsed.path in {"/sync/status", "/sync/snapshot", "/sync/history"}:
+                query = urllib.parse.parse_qs(parsed.query)
+                value = lambda key: (query.get(key) or [""])[0]
+                return self.respond(200, experimental_shared_library_store.status(
+                    value("deviceId"), value("label"), include_snapshot=parsed.path == "/sync/snapshot",
+                    include_history=parsed.path == "/sync/history"))
+            if parsed.path.startswith("/scenepulse/"):
+                return self.respond(404, {"error": "ScenePulse assets belong to Experimental Worlds."})
             if parsed.path == "/health":
                 return self.respond(200, {"ok": True, "service": "Horde Studio MCP Bridge", "version": 2,
                                           "build": BRIDGE_BUILD, "appInstance": APP_INSTANCE_ID,
@@ -2456,6 +2655,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         try:
             parsed_path = urllib.parse.urlparse(self.path).path
+            if self.is_experimental_worlds_host() and parsed_path == "/sync/push":
+                status, payload = experimental_shared_library_store.push(self.read_json())
+                return self.respond(status, payload)
+            if self.is_experimental_worlds_host() and parsed_path == "/sync/restore":
+                status, payload = experimental_shared_library_store.restore(self.read_json())
+                return self.respond(status, payload)
+            if self.is_experimental_worlds_host() and parsed_path == "/sync/compact":
+                return self.respond(200, experimental_shared_library_store.compact())
             if parsed_path == "/shutdown":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Server shutdown is loopback-only."})
