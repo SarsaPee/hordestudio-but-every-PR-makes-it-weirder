@@ -9,6 +9,7 @@ not a production provider or a substitute for live-model verification.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -27,16 +28,23 @@ def completion(body: dict[str, object]) -> dict[str, object]:
         # deliberately creates no people, locations, meters or facts; Mira
         # remains a Reader-derived candidate until the author promotes her in
         # the normal review UI.
+        # The fixture must not assert a location from a prior disposable
+        # world.  Generated start-location IDs are intentionally per-world;
+        # use the current canonical ID supplied in this actual narrator call.
+        # If the prompt does not expose one, omit the assertion entirely.
+        location_ids = re.findall(r"loc_start_[A-Za-z0-9_-]+", text)
+        scene = {
+            "player_location_changed": False,
+            "present_character_ids": ["player"],
+            "nearby_character_ids": [],
+            "scene_state": "active",
+        }
+        if location_ids:
+            scene["player_location_id"] = location_ids[-1]
         receipt = {
             "turn_id": "acceptance-noop-commit",
             "summary": "Disposable acceptance fixture: no canonical mutation.",
-            "scene": {
-                "player_location_id": "loc_start_1788920333745",
-                "player_location_changed": False,
-                "present_character_ids": ["player"],
-                "nearby_character_ids": [],
-                "scene_state": "active"
-            },
+            "scene": scene,
             "events": [], "entity_updates": [], "state_updates": {}
         }
         return {
