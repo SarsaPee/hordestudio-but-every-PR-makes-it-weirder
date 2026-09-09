@@ -28,8 +28,10 @@ checks and the portable package do not substitute for an unchecked row.
 | F19 five-meter save, including zero | Not exercised. | No browser readback. | Not run |
 | F20 relationship metadata save | Not exercised. | No browser readback. | Not run |
 | F09 Location graduation | Not exercised. | No browser readback. | Not run |
+| Same-Day reroll temporal guard — dual 17.0 | In a fresh Chrome profile at `localhost:43132`, configured the preserved Experimental Worlds Settings UI to the disposable local OpenAI-compatible mock, created `Temporal Reroll 17.0 Disposable`, armed the mock only after setup, sent `ACCEPTANCE_TEMPORAL_SAME_DAY_ROLLBACK`, then used the visible native Reroll control. The mock returned Day 1 `6:33 PM` for the authored turn and Day 1 `6:32 PM` for reroll. | The actual reroll response visibly contained `Time 6:32 PM`. The world clock stayed `8:00 AM`; after a full browser reload it remained exactly `8:00 AM`. Mock audit confirmed the authored send and reroll reached the narrator transport. | Passed as a mocked-provider dual-17.0 browser/save/reload regression proof on `895a1e6`; this proves the safe rejection path, not live-model acceptance. |
 
 The real-provider prerequisite is now available and has been exercised on
 the disposable Melbourne timeline. Its reroll date regression is a live
-acceptance failure that must be addressed and repeated in the isolated
-integration context before a dual-17.0 milestone pass can be claimed.
+acceptance failure; the narrow guard now has the isolated dual-17.0 browser
+proof above. This does not erase the real-provider failure or authorize a
+live deployment; remaining Milestone-A acceptance rows are tracked here.
