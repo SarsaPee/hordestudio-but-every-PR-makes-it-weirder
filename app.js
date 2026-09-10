@@ -45402,7 +45402,7 @@ function renderCompanionObserverModelResults(companion, open = true) {
             ? [...selected.inputModalities] : ['text'];
         input.value = liveCompanion.observerModel;
         setCompanionSearchOpen(input, results, false);
-        window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+        window.HordeOpenRouterRouting?.modelChanged?.('companionObserver');
     }, 'No State Observer model matches. You can still type an exact model ID.');
     setCompanionSearchOpen(input, results, open);
 }
@@ -46891,7 +46891,7 @@ function setupCompanionsLogic() {
         const selected = companionTextModelCatalog.find(model => model.id === companion.observerModel);
         companion.observerInputModalities = selected?.inputModalities?.length
             ? [...selected.inputModalities] : ['text'];
-        window.HordeOpenRouterRouting?.initialize?.('companionObserver', { force: true });
+        window.HordeOpenRouterRouting?.modelChanged?.('companionObserver');
         renderCompanionObserverModelResults(companion);
     };
     document.getElementById('cs-observer-model').onfocus = () => {

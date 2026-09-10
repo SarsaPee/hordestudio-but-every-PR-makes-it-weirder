@@ -9,6 +9,10 @@
 // through it, while other providers receive the original request object by
 // identity so their payloads are not changed by this feature.
 const OPENROUTER_ROUTING_SORTS = Object.freeze(['throughput', 'latency', 'price']);
+// Kept alongside the routing UI rather than relying on an app-global symbol:
+// this module owns the two metadata requests made by every routing surface.
+const OPENROUTER_PROVIDER_API = 'https://openrouter.ai/api/v1/providers';
+const OPENROUTER_ENDPOINT_API = 'https://openrouter.ai/api/v1/models';
 const DEFAULT_OPENROUTER_ROUTING = Object.freeze({
     order: Object.freeze([]),
     allowFallbacks: true,
@@ -68,7 +72,10 @@ const OPENROUTER_ROUTE_CHAINS = Object.freeze({
     // Virtual Human conversation traffic may pin a route for that person
     // without changing the shared Settings policy.
     companion: ['companion', 'global'],
-    companionObserver: ['companionObserver', 'global'],
+    // The State Observer is a child of the active conversation model. It may
+    // override that route for a distinct observer model, but its default is
+    // the conversation route rather than the unrelated global fallback.
+    companionObserver: ['companionObserver', 'companion', 'global'],
     companionLifeBuilder: ['companionLifeBuilder', 'global'],
     utility: ['availability']
 });
@@ -195,8 +202,7 @@ function openRouterRoutingPanelDefinition(scope) {
         companionObserver: {
             hostId: 'cs-observer-openrouter-routing',
             modelId: 'cs-observer-model',
-            inheritLabel: 'Inherit global routing',
-            compact: true,
+            inheritLabel: 'Inherit active conversation routing',
             owner: () => getCompanion(state.editingCompanionId),
             stored: () => getCompanion(state.editingCompanionId)?.observerOpenRouterRouting
         },
@@ -249,6 +255,16 @@ function openRouterRoutingPanelDefinition(scope) {
 
 function openRouterRoutingParent(scope) {
     const globalRouting = normalizeOpenRouterRouting(state.globalSettings.openRouterRouting);
+    if (scope === 'companionObserver') {
+        const companionDraft = openRouterRoutingDrafts.get('companion');
+        if (companionDraft) {
+            return companionDraft.inherit
+                ? globalRouting
+                : normalizeOpenRouterRouting(companionDraft.routing);
+        }
+        const companion = openRouterRoutingPanelDefinition('companionObserver')?.owner?.();
+        return normalizeOpenRouterRouting(companion?.openRouterRouting, { allowNull: true }) || globalRouting;
+    }
     if (!['worldAgent', 'sidecar'].includes(scope)) return globalRouting;
     const worldDraft = openRouterRoutingDrafts.get('world');
     if (worldDraft) {
@@ -359,15 +375,24 @@ function persistOpenRouterRoutingDraft(scope) {
 }
 
 function markOpenRouterRoutingModelChanged(scope) {
-    const draft = openRouterRoutingDrafts.get(scope);
-    if (!draft) return;
-    draft.endpoints = [];
-    draft.endpointsLoaded = false;
-    draft.tests.clear();
-    draft.status = 'Model changed. Refresh Providers to update endpoint metadata.';
-    draft.statusKind = 'warn';
-    persistOpenRouterRoutingDraft(scope);
-    renderOpenRouterRoutingPanel(scope);
+    const invalidate = (targetScope, status) => {
+        const draft = openRouterRoutingDrafts.get(targetScope);
+        if (!draft) return false;
+        draft.endpoints = [];
+        draft.endpointsLoaded = false;
+        draft.tests.clear();
+        draft.status = status;
+        draft.statusKind = 'warn';
+        persistOpenRouterRoutingDraft(targetScope);
+        return true;
+    };
+    const changed = invalidate(scope, 'Model changed. Refresh Providers to update endpoint metadata.');
+    // An Observer which inherits the conversation route must never display
+    // endpoint metadata collected for the previous conversation model.
+    const observerChanged = scope === 'companion'
+        && invalidate('companionObserver', 'Conversation model changed. Refresh Providers to update endpoint metadata.');
+    if (changed) renderOpenRouterRoutingPanel(scope);
+    if (observerChanged) renderOpenRouterRoutingPanel('companionObserver');
 }
 
 function openRouterRoutingDraftValue(scope) {
