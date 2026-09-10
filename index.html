@@ -4136,6 +4136,29 @@
                     <button id="restore-all-btn" class="btn btn-ghost btn-full">📂 Restore Backup</button>
                     <input type="file" id="restore-all-input" accept=".json,.hordebackup" style="display:none;">
                 </div>
+                <section class="settings-card" style="margin-top:14px;" aria-labelledby="rolling-recovery-title">
+                    <span class="settings-section-kicker">Rolling transferable recovery</span>
+                    <h4 id="rolling-recovery-title">Live State Backups &amp; Sync</h4>
+                    <p class="form-hint">Publish versioned, complete recovery points to the current Horde bridge. Another browser or Tailscale-connected client can explicitly pull or restore one. Horde never auto-pulls, reconciles by revision, or transfers credentials.</p>
+                    <label class="form-label" for="rolling-recovery-device-label">This device</label>
+                    <input id="rolling-recovery-device-label" class="form-input" maxlength="80" placeholder="Mac browser">
+                    <div class="settings-action-row" style="margin-top:10px;">
+                        <button id="rolling-recovery-pull" class="btn btn-ghost" type="button">Pull current point</button>
+                        <button id="rolling-recovery-publish" class="btn btn-primary" type="button">Publish this device</button>
+                        <button id="rolling-recovery-check" class="btn btn-ghost" type="button">Check library</button>
+                    </div>
+                    <div id="rolling-recovery-status" class="form-hint" aria-live="polite"></div>
+                    <label class="switch-row" style="margin-top:12px;"><input id="rolling-recovery-periodic" type="checkbox" checked> <span>Publish changed state every</span></label>
+                    <div class="form-row" style="margin-top:6px;"><div class="form-col"><input id="rolling-recovery-minutes" class="form-input" type="number" min="1" max="1440" value="5"></div><div class="form-col"><span class="form-hint">minutes</span></div></div>
+                    <label class="switch-row" style="margin-top:8px;"><input id="rolling-recovery-on-change" type="checkbox"> <span>Also publish after every saved change</span></label>
+                    <p class="form-hint" style="margin-top:12px;">The bridge retains the previous 12 published points. Restoring is an atomic all-domain operation and reloads Horde only after readback succeeds.</p>
+                    <label class="form-label" for="rolling-recovery-history">Previous recovery point</label>
+                    <select id="rolling-recovery-history" class="form-input" disabled><option value="">No prior recovery points yet</option></select>
+                    <div class="settings-action-row" style="margin-top:10px;">
+                        <button id="rolling-recovery-history-refresh" class="btn btn-ghost" type="button">Refresh points</button>
+                        <button id="rolling-recovery-restore" class="btn btn-ghost" type="button" disabled>Restore selected</button>
+                    </div>
+                </section>
                 <div class="settings-danger-zone"><div><strong>Hard reset</strong><span>Deletes every local character, World, conversation and setting.</span></div>
                 <button id="purge-data-btn" class="btn btn-danger btn-full">⚠️ Purge All Data (Hard Reset)</button>
                 </div></div>
@@ -5214,6 +5237,7 @@
     <script src="vh-world-engine.js?v=20260908-reply-cleanup"></script>
 <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
 <script src="backup-domain-coordinator.js?v=17.4.0-backup-domains-1"></script>
+<script src="rolling-recovery.js?v=17.4.0-rolling-recovery-1"></script>
 <script src="global-openrouter-routing.js?v=17.4.0-global-routing-2"></script>
     <script src="app.js?v=17.4.0-global-recovery-4"></script>
 </body>

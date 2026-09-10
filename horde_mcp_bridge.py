@@ -118,6 +118,7 @@ STATIC_FILES = {
     "/style.css": ("style.css", "text/css"),
     "/app.js": ("app.js", "text/javascript"),
     "/backup-domain-coordinator.js": ("backup-domain-coordinator.js", "text/javascript"),
+    "/rolling-recovery.js": ("rolling-recovery.js", "text/javascript"),
     "/global-openrouter-routing.js": ("global-openrouter-routing.js", "text/javascript"),
     "/video-worlds.js": ("video-worlds.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
@@ -168,6 +169,10 @@ else:
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
 ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
+RECOVERY_LIBRARY_FILE = CONFIG_DIR / "recovery-library.json"
+MAX_RECOVERY_SNAPSHOT_BYTES = 256 * 1024 * 1024
+RECOVERY_HISTORY_LIMIT = 12
+MAX_RECOVERY_HISTORY_BYTES = 512 * 1024 * 1024
 
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
@@ -1157,6 +1162,168 @@ class MultiplayerRuntime:
 
 
 multiplayer_runtime = MultiplayerRuntime()
+
+
+class RecoveryLibraryStore:
+    """Versioned, opaque recovery manifests shared by explicitly connected Horde browsers.
+
+    The bridge never inspects a Horde database or chooses an authority.  It
+    only retains complete, validated-by-the-browser manifest blobs.  A browser
+    must explicitly request and confirm every restore.
+    """
+
+    def __init__(self, path: Path = RECOVERY_LIBRARY_FILE) -> None:
+        self.path = path
+        self.lock = threading.RLock()
+
+    @staticmethod
+    def _default() -> dict[str, Any]:
+        return {"version": 1, "revision": 0, "snapshot": None, "fingerprint": "",
+                "updatedAt": 0, "updatedBy": "", "history": [], "activeDevices": []}
+
+    @staticmethod
+    def _clean_text(value: Any, field: str, maximum: int) -> str:
+        cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(value or "")).strip()[:maximum]
+        if not cleaned:
+            raise ValueError(f"{field} is required.")
+        return cleaned
+
+    @staticmethod
+    def _clean_snapshot(snapshot: Any) -> tuple[dict[str, Any], str, int]:
+        if not isinstance(snapshot, dict):
+            raise ValueError("Recovery snapshot must be a JSON object.")
+        try:
+            clean = json.loads(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Recovery snapshot is not valid JSON.") from error
+        if clean.get("_format") != "horde-studio-domain-backup":
+            raise ValueError("Recovery snapshot must be a Horde domain backup manifest.")
+        encoded = json.dumps(clean, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > MAX_RECOVERY_SNAPSHOT_BYTES:
+            raise ValueError("Recovery snapshot exceeds the 256 MB bridge limit.")
+        return clean, hashlib.sha256(encoded).hexdigest(), len(encoded)
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            raw = json.loads(self.path.read_text("utf-8"))
+        except (OSError, ValueError):
+            raw = {}
+        state = self._default()
+        if isinstance(raw, dict):
+            state.update(raw)
+        state["revision"] = max(0, int(state.get("revision") or 0))
+        state["snapshot"] = state["snapshot"] if isinstance(state.get("snapshot"), dict) else None
+        state["history"] = state["history"] if isinstance(state.get("history"), list) else []
+        state["activeDevices"] = state["activeDevices"] if isinstance(state.get("activeDevices"), list) else []
+        return state
+
+    def _save(self, state: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state, ensure_ascii=False, separators=(",", ":")), "utf-8")
+        try:
+            os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+        temporary.replace(self.path)
+
+    @staticmethod
+    def _summary(state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "available": isinstance(state.get("snapshot"), dict),
+            "revision": max(0, int(state.get("revision") or 0)),
+            "updatedAt": max(0, int(state.get("updatedAt") or 0)),
+            "updatedBy": str(state.get("updatedBy") or ""),
+            "activeDevices": list(state.get("activeDevices") or []),
+        }
+
+    def _record_device(self, state: dict[str, Any], device_id: Any, label: Any) -> None:
+        identifier = self._clean_text(device_id, "deviceId", 128)
+        device_label = self._clean_text(label, "label", 80)
+        now = int(time.time() * 1000)
+        cutoff = now - 15 * 60 * 1000
+        active = [item for item in state["activeDevices"] if isinstance(item, dict)
+                  and int(item.get("seenAt") or 0) >= cutoff and item.get("id") != identifier]
+        active.append({"id": identifier, "label": device_label, "seenAt": now})
+        state["activeDevices"] = active[-24:]
+
+    @staticmethod
+    def _point_bytes(point: dict[str, Any]) -> int:
+        try:
+            return len(json.dumps(point.get("snapshot"), ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        except (TypeError, ValueError):
+            return 0
+
+    def _archive_current(self, state: dict[str, Any], trigger: str) -> None:
+        if not isinstance(state.get("snapshot"), dict):
+            return
+        point = {
+            "id": secrets.token_hex(16), "revision": int(state["revision"]),
+            "snapshot": state["snapshot"], "updatedAt": int(state["updatedAt"]),
+            "updatedBy": str(state["updatedBy"]), "archivedAt": int(time.time() * 1000),
+            "trigger": str(trigger or "publish")[:80],
+        }
+        point["bytes"] = self._point_bytes(point)
+        state["history"] = [point, *state["history"]]
+        retained: list[dict[str, Any]] = []
+        used = 0
+        for candidate in state["history"]:
+            if not isinstance(candidate, dict) or not isinstance(candidate.get("snapshot"), dict):
+                continue
+            candidate = dict(candidate)
+            candidate["bytes"] = self._point_bytes(candidate)
+            if len(retained) >= RECOVERY_HISTORY_LIMIT:
+                continue
+            if retained and used + candidate["bytes"] > MAX_RECOVERY_HISTORY_BYTES:
+                continue
+            retained.append(candidate)
+            used += candidate["bytes"]
+        state["history"] = retained
+
+    def status(self, device_id: Any, label: Any, include_snapshot: bool = False,
+               history_id: str | None = None, include_history: bool = False) -> dict[str, Any]:
+        with self.lock:
+            state = self._load()
+            self._record_device(state, device_id, label)
+            self._save(state)
+            payload = self._summary(state)
+            if include_snapshot and payload["available"]:
+                payload["snapshot"] = state["snapshot"]
+            if history_id:
+                point = next((item for item in state["history"] if isinstance(item, dict)
+                              and item.get("id") == history_id and isinstance(item.get("snapshot"), dict)), None)
+                if point is None:
+                    raise ValueError("Recovery point was not found.")
+                payload["snapshot"] = point["snapshot"]
+                payload["recoveryPoint"] = {key: value for key, value in point.items() if key != "snapshot"}
+            if include_history:
+                payload["history"] = [{key: value for key, value in point.items() if key != "snapshot"}
+                                      for point in state["history"] if isinstance(point, dict)]
+            return payload
+
+    def push(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        with self.lock:
+            state = self._load()
+            self._record_device(state, body.get("deviceId"), body.get("label"))
+            base_revision = int(body.get("baseRevision") or 0)
+            if base_revision != int(state["revision"]):
+                self._save(state)
+                return 409, self._summary(state)
+            snapshot, fingerprint, _ = self._clean_snapshot(body.get("snapshot"))
+            if state.get("fingerprint") == fingerprint:
+                self._save(state)
+                return 200, {**self._summary(state), "unchanged": True}
+            self._archive_current(state, str(body.get("trigger") or "publish"))
+            state["snapshot"] = snapshot
+            state["fingerprint"] = fingerprint
+            state["revision"] += 1
+            state["updatedAt"] = int(time.time() * 1000)
+            state["updatedBy"] = self._clean_text(body.get("label"), "label", 80)
+            self._save(state)
+            return 200, self._summary(state)
+
+
+recovery_library_store = RecoveryLibraryStore()
 
 
 def load_store() -> dict[str, Any]:
@@ -3088,7 +3255,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return True
             if hostname.startswith("10.") or hostname.startswith("172.16.") or hostname.startswith("192.168."):
                 return True
-            return False
+            try:
+                # Tailscale assigns browser-facing peers from 100.64.0.0/10.
+                # This is deliberately narrower than allowing arbitrary 100/8
+                # web origins.
+                return ipaddress.ip_address(hostname) in ipaddress.ip_network("100.64.0.0/10")
+            except ValueError:
+                return False
         except ValueError:
             return False
 
@@ -3255,6 +3428,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 query = urllib.parse.parse_qs(parsed.query)
                 body = {key: values[0] for key, values in query.items() if values}
                 return self.respond(200, multiplayer_runtime.state(body))
+            if parsed.path in {"/recovery/status", "/recovery/current", "/recovery/history"}:
+                query = urllib.parse.parse_qs(parsed.query)
+                device_id = query.get("deviceId", [""])[0]
+                label = query.get("label", [""])[0]
+                return self.respond(200, recovery_library_store.status(
+                    device_id, label,
+                    include_snapshot=parsed.path == "/recovery/current",
+                    include_history=parsed.path == "/recovery/history",
+                ))
+            history_match = re.fullmatch(r"/recovery/history/([a-f0-9]{32})", parsed.path)
+            if history_match:
+                query = urllib.parse.parse_qs(parsed.query)
+                return self.respond(200, recovery_library_store.status(
+                    query.get("deviceId", [""])[0], query.get("label", [""])[0],
+                    history_id=history_match.group(1),
+                ))
             if parsed.path == "/always-on/status":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Always-on control is loopback-only."})
@@ -3317,6 +3506,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 # failure. This does not delete settings, saves or model caches.
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
+            if parsed_path == "/recovery/publish":
+                status, payload = recovery_library_store.push(self.read_json())
+                return self.respond(status, payload)
             if parsed_path == "/multiplayer/rooms":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Only the host device can create a room."})

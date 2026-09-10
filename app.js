@@ -2712,6 +2712,7 @@ async function persistStateSnapshot() {
         await HordeDB.setMultiple(records);
         lastPersistedWorldManifests = safeJsonClone(storedWorlds);
         writeGlobalSettingsMirror(records.globalSettings);
+        window.HordeRollingRecovery?.notePersisted?.();
     } catch (err) {
         if (savingWorldMedia) worldMediaDirty = true;
         const isQuota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
@@ -4862,6 +4863,7 @@ async function init() {
     await loadState();
     await recoverInterruptedHostBackupRestore();
     registerHostBackupDomain();
+    await window.HordeRollingRecovery?.setup?.();
     setupNavigation();
     setupStudioTabs();
     setupStudioLogic();

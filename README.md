@@ -253,8 +253,22 @@ Running the launcher again is safe. If Horde Studio already owns the port, it op
 To use a different port:
 
 ```bash
-HORDE_MCP_PORT=43128 python3 horde_mcp_bridge.py --open
+HORDE_SERVER_PORT=43128 python3 horde_mcp_bridge.py --open
 ```
+
+### Optional Tailscale recovery library
+
+The rolling recovery library in **Settings → Data & Backup** can transfer
+explicitly published recovery points between browsers. To make the current
+bridge reachable to a trusted Tailnet client, launch it on a Tailnet-reachable
+interface and open the matching Tailnet URL on that client:
+
+```bash
+HORDE_SERVER_LISTEN_HOST=0.0.0.0 HORDE_SERVER_HOST=YOUR_TAILNET_IP python3 horde_mcp_bridge.py
+```
+
+This does not expose or transfer provider credentials, and Horde never pulls a
+remote recovery point automatically.
 
 ---
 
