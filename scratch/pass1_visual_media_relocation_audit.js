@@ -155,8 +155,20 @@ const protocolStart = acceptedApp.indexOf('function normalizeWorldTurnReceipt');
 const protocolEnd = acceptedApp.indexOf('async function impersonateUser()', protocolStart);
 assert(protocolStart >= 0 && protocolEnd > protocolStart, 'Pass-0 Sidecar/ScenePulse protocol source unit is present');
 const relocatedProtocol = fs.readFileSync('experiences/experimental-worlds/runtime/world-protocol-core.js', 'utf8');
-assert.equal(relocatedProtocol.trimEnd(), acceptedApp.slice(protocolStart, protocolEnd).trimEnd(),
-    'Sidecar/ScenePulse protocol core differs from the Pass-0 oracle');
+const restoredProtocol = relocatedProtocol
+    // Explicit Pass-1 lifecycle seam: all user-invoked Sidecar provider work
+    // captures Experimental ownership and cannot attach a late result after a
+    // mode/world/timeline/restore change. Strip only that small guard when
+    // comparing the preserved protocol body with the Pass-0 oracle.
+    .replace(/\n\/\/ A Sidecar request is a World operation,[\s\S]*?\n}\n\nasync function runSidecarQuestionRepair/, '\nasync function runSidecarQuestionRepair')
+    .replaceAll('    const requestOwner = captureExperimentalSidecarOwner(world, sess);\n', '')
+    .replace(/^\s*assertExperimentalSidecarOwner\(requestOwner\);\n/gm, '')
+    .replace(/\n    \/\/ Do this before Reader evidence is attached to the protocol\.[\s\S]*?\n    \/\/ that the author has left while the transport was in flight\./, '')
+    .replace(/\n        \/\/ The old owner may no longer be current\.[\s\S]*?if \(error\?\.code === 'experimental_world_owner_changed'\) throw error;\n/, '\n');
+assert.equal(restoredProtocol.trimEnd(), acceptedApp.slice(protocolStart, protocolEnd).trimEnd(),
+    'Sidecar/ScenePulse protocol core differs from the Pass-0 oracle beyond the explicit late-result ownership seam');
+assert(relocatedProtocol.includes('captureExperimentalSidecarOwner') && relocatedProtocol.includes('assertExperimentalSidecarOwner'),
+    'Sidecar provider paths must capture and validate Experimental ownership around completion');
 assert(!fs.readFileSync('app.js', 'utf8').includes('function normalizeWorldTurnReceipt'),
     'Sidecar/ScenePulse protocol core is no longer ambiguously retained in the host bootstrap');
 const protocolIndex = html.indexOf('experiences/experimental-worlds/runtime/world-protocol-core.js');

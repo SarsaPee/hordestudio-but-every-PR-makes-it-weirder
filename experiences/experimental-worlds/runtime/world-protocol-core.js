@@ -5544,7 +5544,40 @@ function updateSidecarQuestion(world, sess, questionId, patch = {}) {
     return question;
 }
 
+// A Sidecar request is a World operation, not an application-global request.
+// Keep the captured UI owner separate from the canonical-checkpoint guard: the
+// checkpoint stops a stale receipt, while this stops a slow Reader/repair from
+// attaching any result after the author has changed Experimental context.
+function captureExperimentalSidecarOwner(world, sess) {
+    return Object.freeze({
+        mode: 'experimental-worlds',
+        worldId: String(world?.id || ''),
+        timelineId: String(sess?.id || ''),
+        worldEpoch: Number(sess?._worldEpoch) || 0,
+        restoreGeneration: Number(window.ExperimentalWorldsRestoreGeneration) || 0,
+        effectiveSettings: Object.freeze({
+            model: String(world?.model || state.globalSettings?.defaultModel || ''),
+            provider: String(world?.provider || state.globalSettings?.apiProvider || '')
+        })
+    });
+}
+
+function assertExperimentalSidecarOwner(owner) {
+    const currentWorld = state.worlds.find(candidate => candidate.id === state.activeWorldId);
+    const currentSession = getCurrentWorldSession();
+    const valid = state.view === 'worldPlay'
+        && String(currentWorld?.id || '') === owner.worldId
+        && String(currentSession?.id || '') === owner.timelineId
+        && Number(currentSession?._worldEpoch) === owner.worldEpoch
+        && Number(window.ExperimentalWorldsRestoreGeneration) === owner.restoreGeneration;
+    if (valid) return;
+    const error = new Error('A late Experimental Worlds Sidecar result was discarded because its captured mode, World, timeline, revision, or restore generation is no longer current.');
+    error.code = 'experimental_world_owner_changed';
+    throw error;
+}
+
 async function runSidecarQuestionRepair(world, sess, questionId) {
+    const requestOwner = captureExperimentalSidecarOwner(world, sess);
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const question = protocol?.questions?.find(item => item.id === questionId && item.status === 'open');
     if (!question) throw new Error('Question is no longer open.');
@@ -5567,6 +5600,7 @@ async function runSidecarQuestionRepair(world, sess, questionId) {
         owner: { ...world, model, provider, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting }
     });
     if (!response.ok) throw new Error((await response.text()).slice(0, 500) || `Question repair failed (${response.status})`);
+    assertExperimentalSidecarOwner(requestOwner);
     const reply = (await response.json())?.choices?.[0]?.message?.content || '{}'; const parsed = safeParseJSONRepair(reply) || {};
     recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'explicit_repair', answer: parsed.answer || 'UNKNOWN', explanation: parsed.explanation || '' });
     question.repairCallHistory = [...(question.repairCallHistory || []), { at: new Date().toISOString(), model, answer: parsed.answer || 'UNKNOWN', explanation: String(parsed.explanation || '').slice(0, 800) }].slice(-12);
@@ -5626,6 +5660,7 @@ function queueSidecarSceneOutfitQuestions(world, sess, turnRecord = null) {
 }
 
 async function runSidecarReconciliation(world, sess, options = {}) {
+    const requestOwner = captureExperimentalSidecarOwner(world, sess);
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
     const tracker = config.tracker || {};
     const narratorModel = world.model || state.globalSettings.defaultModel;
@@ -5745,6 +5780,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         // This throw occurs before the reconciliation request's try/catch.
         // Persist the failed attempt here so Retry Scene Update can safely
         // resume the same authored Take instead of accidentally rerolling it.
+        assertExperimentalSidecarOwner(requestOwner);
         failure.sidecarAttempt = failSidecarTurnAttempt(world, sess, attempt, failure, failure.sidecarDetail);
         throw failure;
     }
@@ -5752,9 +5788,14 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const failure = new Error('Sidecar Reader returned no valid scene envelope.');
         failure.code = 'sidecar_reader_invalid_output';
         failure.sidecarDetail = { code: failure.code, stage: 'reader', model: readerModel, provider: readerProvider };
+        assertExperimentalSidecarOwner(requestOwner);
         failure.sidecarAttempt = failSidecarTurnAttempt(world, sess, attempt, failure, failure.sidecarDetail);
         throw failure;
     }
+    // Do this before Reader evidence is attached to the protocol. A Reader
+    // packet is inspectable state, so it must not be published into a World
+    // that the author has left while the transport was in flight.
+    assertExperimentalSidecarOwner(requestOwner);
     if (attempt.turnRecord) {
         attempt.turnRecord.reader = safeJsonClone(readerPacket);
         const readerIsProcessable = !readerPacket?.disabled && readerPacket?.valid !== false;
@@ -5944,6 +5985,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         // Verify that the canonical checkpoint has not changed under this
         // authored beat. This is a guard, not a snapshot restore mechanism.
         const currentCheckpoint = sidecarCanonicalCheckpointFingerprint(world, sess);
+        assertExperimentalSidecarOwner(requestOwner);
         if (currentCheckpoint !== attempt.turnRecord.preCanonicalFingerprint) {
             const stale = new Error('The authored beat no longer matches its canonical pre-turn checkpoint.');
             stale.code = 'sidecar_stale_checkpoint';
@@ -6003,6 +6045,9 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         return { committed, receipt, packet: protocol?.packet || null, turnId: attempt.turnRecord?.id || null };
     } catch (error) {
         if (error?.name === 'AbortError') throw error;
+        // The old owner may no longer be current. Recording a failure on that
+        // context would itself be a late mutation, so discard it as-is.
+        if (error?.code === 'experimental_world_owner_changed') throw error;
         const failed = failSidecarTurnAttempt(world, sess, attempt, error, error.sidecarDetail || {
             code: error.code,
             provider, model
@@ -6744,6 +6789,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
 }
 
 async function runSidecarConversation(world, sess, userText, options = {}) {
+    const requestOwner = captureExperimentalSidecarOwner(world, sess);
     const protocol = window.HordeSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     if (!protocol) throw new Error('Sidecar protocol is unavailable for this timeline.');
     const config = window.HordeSidecarMode?.normalizeWorldConfig?.(world) || {};
@@ -6775,6 +6821,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sidecar conversation failed (${response.status})`);
     const data = await response.json();
+    assertExperimentalSidecarOwner(requestOwner);
     logSidecarConsoleTrace('World GM response', {
         model, provider: data?.provider || provider,
         finishReason: data?.choices?.[0]?.finish_reason || '',
