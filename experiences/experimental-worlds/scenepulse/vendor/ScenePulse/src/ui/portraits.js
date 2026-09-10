@@ -259,7 +259,7 @@ function _ensurePreviewEl() {
     _previewEl.setAttribute('aria-hidden', 'true');
     _previewEl.innerHTML = '<img alt=""><div class="sp-portrait-preview-caption"></div>';
     _previewEl.style.display = 'none';
-    document.body.appendChild(_previewEl);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(_previewEl);
     return _previewEl;
 }
 

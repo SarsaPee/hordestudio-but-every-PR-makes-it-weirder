@@ -31,7 +31,7 @@ export function createThoughtPanel(){
         <button class="sp-tp-close" title="${t('Hide thoughts')}"><svg viewBox="0 0 12 12" width="13" height="13" fill="none"><line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
     </div><div id="sp-tp-body"></div>
     <div class="sp-tp-resize" title="${t('Resize')}"><svg viewBox="0 0 16 16" fill="none"><line x1="14" y1="2" x2="2" y2="14" stroke="currentColor" stroke-width="1" opacity="0.4"/><line x1="14" y1="6" x2="6" y2="14" stroke="currentColor" stroke-width="1" opacity="0.4"/><line x1="14" y1="10" x2="10" y2="14" stroke="currentColor" stroke-width="1" opacity="0.4"/></svg></div>`;
-    document.body.appendChild(tp);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(tp);
 
     // Snap-left toggle button
     tp.querySelector('.sp-tp-snapleft').addEventListener('click',(e)=>{

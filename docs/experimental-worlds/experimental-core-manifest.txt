@@ -156,6 +156,7 @@ experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/vendor/README.m
 experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/vendor/jsonrepair.LICENSE
 experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/vendor/jsonrepair.mjs
 experiences/experimental-worlds/scenepulse/vendor/ScenePulse/style.css
+experiences/experimental-worlds/styles/experimental-worlds-isolated.css
 experiences/experimental-worlds/styles/scene-pulse-worlds.css
 experiences/experimental-worlds/styles/world-visuals-and-sidecar.css
 experiences/experimental-worlds/visuals/world-portrait-prompt.js

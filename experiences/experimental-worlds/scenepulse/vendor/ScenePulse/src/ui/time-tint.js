@@ -26,7 +26,7 @@ function _updateTimeTintInner(timeStr){
     if(period===currentTimePeriod)return;
     setCurrentTimePeriod(period);
     let ov=document.getElementById('sp-time-tint');
-    if(!ov){ov=document.createElement('div');ov.id='sp-time-tint';document.body.insertBefore(ov,document.body.firstChild)}
+    if(!ov){ov=document.createElement('div');ov.id='sp-time-tint';window.ExperimentalWorldsDom.portalRoot().prepend(ov)}
     ov.className='sp-time-tint sp-time-'+period;
 }
 export function clearTimeTint(){

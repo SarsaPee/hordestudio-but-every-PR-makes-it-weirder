@@ -45,7 +45,7 @@ function _updateWeatherOverlayInner(weatherStr){
     if(!ov){
         ov=document.createElement('div');ov.id='sp-weather-overlay';
         // Insert at start of body so it's behind everything
-        document.body.insertBefore(ov,document.body.firstChild);
+        window.ExperimentalWorldsDom.portalRoot().prepend(ov);
     }
     ov.innerHTML='';ov.className='sp-wx-ov '+wxTypes.map(t=>'sp-wx-ov-'+t).join(' ');
     // Build particles based on type

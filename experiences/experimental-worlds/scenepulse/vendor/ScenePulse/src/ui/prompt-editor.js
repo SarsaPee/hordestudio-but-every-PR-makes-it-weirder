@@ -109,7 +109,7 @@ export function openPromptEditor() {
         slotList.appendChild(_renderSlotPanel(id, meta, _draft));
     }
 
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
 
     function _markDirty() {
         _dirty = true;

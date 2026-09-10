@@ -98,7 +98,7 @@ export function mountOverlay(opts) {
     root.addEventListener('pointerdown', _stop);
 
     document.addEventListener('keydown', _onKey, true);
-    document.body.appendChild(root);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(root);
 
     return { close: _close };
 }

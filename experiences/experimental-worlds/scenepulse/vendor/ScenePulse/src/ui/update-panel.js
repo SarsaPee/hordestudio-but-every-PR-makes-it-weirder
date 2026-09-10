@@ -102,7 +102,7 @@ function _showAddQuestDialog(tierName,tierKey,d){
     });
     // Enter key in name field submits
     overlay.querySelector('#sp-qd-name').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();overlay.querySelector('.sp-quest-dialog-ok').click()}});
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     requestAnimationFrame(()=>overlay.classList.add('sp-confirm-visible'));
     overlay.querySelector('#sp-qd-name').focus();
 }
@@ -130,7 +130,7 @@ async function _openMergePicker(sourceName, otherNames) {
     const close = () => { overlay.classList.add('sp-confirm-closing'); setTimeout(() => overlay.remove(), 200); };
     overlay.querySelector('.sp-confirm-cancel').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('sp-confirm-visible'));
 
     for (const btn of overlay.querySelectorAll('.sp-merge-picker-option')) {
@@ -199,7 +199,7 @@ function _openPortraitPicker(characterName) {
         reader.onerror = () => toastr.error(t('Failed to read image'), characterName);
         reader.readAsDataURL(file);
     });
-    document.body.appendChild(input);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(input);
     input.click();
 }
 
@@ -550,7 +550,7 @@ function _updatePanelInner(d,_force=false){
             const parts=(d.location||'').split('>').map(s=>s.trim()).filter(Boolean);
             if(!parts.length)return;
             let card=document.getElementById('sp-scene-transition');
-            if(!card){card=document.createElement('div');card.id='sp-scene-transition';document.body.appendChild(card)}
+            if(!card){card=document.createElement('div');card.id='sp-scene-transition';window.ExperimentalWorldsDom.portalRoot().appendChild(card)}
             card.innerHTML=`<div class="sp-st-rule"></div>${parts.map(l=>`<span><b>${esc(l)}</b></span>`).join('<span class="sp-st-sep">\u203A</span>')}<div class="sp-st-rule"></div>`;
             card.classList.remove('sp-st-show');void card.offsetWidth;card.classList.add('sp-st-show');
             setTimeout(()=>card.classList.remove('sp-st-show'),4500);

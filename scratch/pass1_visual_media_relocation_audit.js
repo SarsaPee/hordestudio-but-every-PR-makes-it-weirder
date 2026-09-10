@@ -65,6 +65,8 @@ const restoreHostContract = source => [
     ['ExperimentalWorldsHost.labsAvailable', 'window.HordeLabs'],
     ['ExperimentalWorldsHost.sharedPersonas()', 'state.personas']
 ].reduce((next, [from, to]) => next.replaceAll(from, to), source)
+    .replaceAll('globalThis.ExperimentalWorldsDom.portalRoot().appendChild', 'document.body.appendChild')
+    .replaceAll('global.ExperimentalWorldsDom.portalRoot().appendChild', 'document.body.appendChild')
     .replaceAll('ExperimentalWorldsSidecar', 'HordeSidecar')
     .replaceAll('ExperimentalWorldsRpgMechanics', 'HordeRpgMechanics')
     .replaceAll('ExperimentalWorldsState.', 'state.')

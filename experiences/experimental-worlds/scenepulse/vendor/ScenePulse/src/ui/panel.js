@@ -166,7 +166,7 @@ export function createPanel(){
         <button class="sp-toolbar-btn" id="sp-tb-minimize" title="${t('Hide panel')}" style="display:none"><svg viewBox="0 0 16 16" width="15" height="15" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><line x1="2" y1="13" x2="14" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.4"/></svg></button>
     </div>
     <div id="sp-panel-body"><div class="sp-empty-state"><div class="sp-empty-icon">\uD83D\uDCE1</div><div class="sp-empty-title">${t('No scene data yet')}</div><div class="sp-empty-sub">${t('Send a message or click ⟳ to generate.')}</div></div></div>`;
-    document.body.appendChild(panel);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(panel);
     log('Panel appended to body');
 
     // ── Mobile FAB (floating action button to restore panel) ──
@@ -174,7 +174,7 @@ export function createPanel(){
         const fab=document.createElement('button');fab.id='sp-mobile-fab';fab.className='sp-mobile-fab';
         fab.title=t('Show ScenePulse');fab.innerHTML=MASCOT_SVG;
         fab.addEventListener('click',spRestorePanel);
-        document.body.appendChild(fab);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(fab);
     }
     // ── Minimize button handler ──
     document.getElementById('sp-tb-minimize').addEventListener('click',spMinimizePanel);
@@ -741,7 +741,7 @@ export function createPanel(){
             // Position the menu using fixed positioning so it's never
             // clipped by the Panel Manager's overflow. Place above the
             // button if there's room, otherwise below.
-            document.body.appendChild(menu);
+            window.ExperimentalWorldsDom.portalRoot().appendChild(menu);
             const _btnRect=tmplBtn.getBoundingClientRect();
             const _menuH=Math.min(320, Object.keys(_TEMPLATES).length*36+8);
             if(_btnRect.top-_menuH-4>8){

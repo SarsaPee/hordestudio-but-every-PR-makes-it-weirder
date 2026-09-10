@@ -464,9 +464,9 @@ function _spExport() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `scenepulse-export-${Date.now()}.json`;
-    document.body.appendChild(a);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(a);
     a.click();
-    document.body.removeChild(a);
+    a.remove();
     URL.revokeObjectURL(url);
 
     log('Slash command: /sp export —', count, 'snapshots exported');

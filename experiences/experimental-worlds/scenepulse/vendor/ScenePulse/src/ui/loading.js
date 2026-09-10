@@ -15,7 +15,7 @@ export function showStopButton(){
     if(!btn){
         btn=document.createElement('button');btn.id='sp-stop-btn';btn.className='sp-stop-btn';
         btn.addEventListener('click',cancelGeneration);
-        document.body.appendChild(btn);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(btn);
     }
     // Position to match panel bottom edge
     const panel=document.getElementById('sp-panel');
@@ -77,7 +77,7 @@ export function showLoadingOverlay(container,label,sub,inline=false){
             ov.style.height=r.height+'px';
         }
         ov.innerHTML=`<div class="sp-regen-overlay"><div class="sp-regen-spinner"><span class="sp-ring-3"></span></div><div class="sp-regen-text">${esc(label)}</div>${sub?`<div class="sp-regen-sub">${esc(sub)}<span class="sp-ellipsis"></span></div>`:''}<div id="sp-regen-elapsed" class="sp-regen-elapsed"></div></div>`;
-        document.body.appendChild(ov);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(ov);
         log('Overlay [fixed]: "'+label+'"');
     }
 }

@@ -3792,7 +3792,7 @@ function renderWorldLocations() {
     if (!datalist) {
         datalist = document.createElement('datalist');
         datalist.id = 'world-location-datalist';
-        document.body.appendChild(datalist);
+        globalThis.ExperimentalWorldsDom.portalRoot().appendChild(datalist);
     }
     datalist.innerHTML = '';
     world.locations.forEach(l => {
@@ -3804,7 +3804,7 @@ function renderWorldLocations() {
     if (!regionDatalist) {
         regionDatalist = document.createElement('datalist');
         regionDatalist.id = 'world-region-datalist';
-        document.body.appendChild(regionDatalist);
+        globalThis.ExperimentalWorldsDom.portalRoot().appendChild(regionDatalist);
     }
     regionDatalist.innerHTML = (world.regions || []).slice().sort((a, b) => a.name.localeCompare(b.name))
         .map(region => `<option value="${experimentalEscapeHTML(region.name)}"></option>`).join('');
@@ -3812,7 +3812,7 @@ function renderWorldLocations() {
     if (!floorDatalist) {
         floorDatalist = document.createElement('datalist');
         floorDatalist.id = 'world-floor-datalist';
-        document.body.appendChild(floorDatalist);
+        globalThis.ExperimentalWorldsDom.portalRoot().appendChild(floorDatalist);
     }
     floorDatalist.innerHTML = ['Auto', 'Outside', 'Basement', 'Lower ground', 'Ground', 'Mezzanine', '1', '2', '3', 'Roof']
         .map(floor => `<option value="${floor}"></option>`).join('');
@@ -6638,7 +6638,7 @@ function renderWorldSandboxStudio() {
         if (!datalist) {
             datalist = document.createElement('datalist');
             datalist.id = id;
-            document.body.appendChild(datalist);
+            globalThis.ExperimentalWorldsDom.portalRoot().appendChild(datalist);
         }
         datalist.innerHTML = [...new Set(values.filter(Boolean))]
             .map(value => `<option value="${experimentalEscapeHTML(value)}"></option>`).join('');
@@ -7157,7 +7157,7 @@ function openWorldItemEditor(world, value = null) {
     const rules = normalizeWorldGameRules(world);
     const item = globalThis.ExperimentalWorldsRpgMechanics.normalizeItem(value || { name: 'New item', type: 'custom' });
     let overlay = document.getElementById('world-item-editor-overlay');
-    if (!overlay) { overlay = document.createElement('div'); overlay.id = 'world-item-editor-overlay'; overlay.className = 'modal-overlay'; document.body.appendChild(overlay); }
+    if (!overlay) { overlay = document.createElement('div'); overlay.id = 'world-item-editor-overlay'; overlay.className = 'modal-overlay'; globalThis.ExperimentalWorldsDom.portalRoot().appendChild(overlay); }
     const options = globalThis.ExperimentalWorldsRpgMechanics.TYPES.map(type => `<option value="${type}" ${item.type === type ? 'selected' : ''}>${type}</option>`).join('');
     const slots = [...new Set(['', ...(rules.equipmentSlots || []), item.slot].filter(value => value !== undefined))]
         .map(slot => `<option value="${experimentalEscapeHTML(slot)}" ${item.slot === slot ? 'selected' : ''}>${experimentalEscapeHTML(slot || 'Not equipable')}</option>`).join('');

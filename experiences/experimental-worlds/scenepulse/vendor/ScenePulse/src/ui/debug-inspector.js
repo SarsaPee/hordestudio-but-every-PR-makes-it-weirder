@@ -60,8 +60,8 @@ function _fallbackCopy(text, successMsg) {
     try {
         const ta = document.createElement('textarea');
         ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta); ta.select();
-        document.execCommand('copy'); document.body.removeChild(ta);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove();
         toastr.success(successMsg);
     } catch { try { toastr.error(t('Copy failed')); } catch {} }
 }
@@ -2265,7 +2265,7 @@ export function openDebugInspector(initialTab = 'crashes') {
     overlay.addEventListener('pointerdown', _stop);
     document.addEventListener('keydown', _esc, true);
 
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     _switchTo(activeTab);
 }
 

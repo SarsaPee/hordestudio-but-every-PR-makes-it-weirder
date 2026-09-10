@@ -221,7 +221,7 @@
     // owns viewport overlays.  It is not a second runtime or a data store.
     function overlayRoot() {
         let root = document.getElementById(OVERLAY_ROOT_ID);
-        if (!root) { root = document.createElement('div'); root.id = OVERLAY_ROOT_ID; root.dataset.owner = 'scenepulse-worlds'; document.body.appendChild(root); }
+        if (!root) { root = document.createElement('div'); root.id = OVERLAY_ROOT_ID; root.dataset.owner = 'scenepulse-worlds'; global.ExperimentalWorldsDom.portalRoot().appendChild(root); }
         return root;
     }
 
@@ -233,7 +233,7 @@
         let root = document.getElementById(EFFECTS_ROOT_ID);
         if (!root) {
             root = document.createElement('div'); root.id = EFFECTS_ROOT_ID; root.dataset.owner = 'scenepulse-worlds';
-            const app = document.getElementById('app'); document.body.insertBefore(root, app || document.body.firstChild);
+            global.ExperimentalWorldsDom.portalRoot().prepend(root);
         }
         return root;
     }

@@ -314,7 +314,8 @@ assert.match(panelMount, /if \(sidecar\) restoreScenePulseStatusColumnWidth\(col
 assert.doesNotMatch(panelMount.slice(0, panelMount.indexOf('// Gate B adapter below')), /HordeScenePulseWorlds\.mount\(host, handoff\)/, 'native source failure must not silently fall back to the hand-drawn adapter');
 assert.match(panelMount, /intentionally not substituted with a host lookalike/, 'failure state must remain truthful');
 assert.match(panelMount, /if \((?:ExperimentalWorldsState|state)\.view !== 'worldPlay'\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'a late World redraw may not mount ScenePulse over a library route');
-assert.match(switchViewFunction, /state\.view === 'worldPlay' && viewName !== 'worldPlay'[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'leaving World Play must remove the source runtime and its document-level effects');
+assert.match(switchViewFunction, /state\.view === 'worldPlay' && viewName !== 'worldPlay'[\s\S]*?teardownExperimentalWorldsRoute\(\)/, 'leaving World Play must invoke the explicit Experimental route teardown');
+assert.match(app, /function teardownExperimentalWorldsRoute\(\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount[\s\S]*?ExperimentalWorldsDom\?\.clearPortal/, 'Experimental route teardown must remove the source runtime and its portal-owned document effects');
 assert.ok(enterWorldFunction.indexOf("switchView('worldPlay');") < enterWorldFunction.indexOf('renderWorldPlayState();'), 'entering a World must activate the World route before mounting the ScenePulse runtime');
 
 assert.match(runtime, /native-source-modules-via-horde-compatibility-scaffold/, 'runtime must identify its temporary compatibility role');
@@ -583,7 +584,7 @@ assert.match(sourceSparklines, /const clearGraphTooltips = \(\) => document\.que
 assert.match(sourceSparklines, /function _navigateTo\(key\) \{\s*clearGraphTooltips\(\);/s, 'navigating a graph point must clear its old-scene tooltip before changing snapshots');
 assert.match(sourceTimeline, /export function renderTimeline\(\)/, 'source timeline must remain callable');
 assert.match(sourceWiki, /export function openCharacterWiki\(\)/, 'source Wiki must remain a full focused source view');
-assert.match(sourceWiki, /document\.body\.appendChild\(overlay\)/, 'source Wiki must retain viewport takeover behavior');
+assert.match(sourceWiki, /ExperimentalWorldsDom\.portalRoot\(\)\.appendChild\(overlay\)/, 'source Wiki must retain viewport takeover behavior inside the mode-owned portal');
 assert.match(sourceCharacterHistory, /const stableMeta = new Map\(\)/, 'source dossier history must retain stable character identity beside display labels');
 assert.match(sourceCharacterHistory, /const incompatibleIdentity =/, 'source dossier history must not merge distinct stable identities through aliases');
 assert.match(sourceWiki, /const _sourceIdentityFor = item => kind === 'relationships'/, 'source Wiki must use the subject identity for relationship dossier lookup');

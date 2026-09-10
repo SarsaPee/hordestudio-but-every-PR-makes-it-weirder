@@ -390,7 +390,7 @@ export function bindUI(){const s=getSettings();
         const blob=new Blob([json],{type:'application/json'});
         const url=URL.createObjectURL(blob);const a=document.createElement('a');
         a.href=url;a.download=`scenepulse-config-${Date.now()}.json`;
-        document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
         toastr.success('Config exported');
     });
     $('#sp-btn-import-config').on('click',()=>document.getElementById('sp-import-file')?.click());
@@ -646,7 +646,7 @@ function bindProfileUI(s){
         const url=URL.createObjectURL(blob);
         const safeName=(active.name||'profile').replace(/[^a-z0-9_-]+/gi,'_').toLowerCase();
         const a=document.createElement('a');a.href=url;a.download=`scenepulse-profile-${safeName}.json`;
-        document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
         try { toastr.success(t('Profile exported')); } catch {}
     });
     $('#sp-profile-import').on('click',()=>document.getElementById('sp-profile-import-file')?.click());

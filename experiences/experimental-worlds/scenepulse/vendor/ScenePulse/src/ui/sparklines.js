@@ -428,7 +428,7 @@ function showExpandedGraph(relationship, focusMeter) {
                     if (ty < 5) ty = e.clientY + 5;
                     tip.style.left = tx + 'px';
                     tip.style.top = ty + 'px';
-                    document.body.appendChild(tip);
+                    window.ExperimentalWorldsDom.portalRoot().appendChild(tip);
                     _activeTip = tip;
                 });
                 dot.addEventListener('mouseleave', () => {

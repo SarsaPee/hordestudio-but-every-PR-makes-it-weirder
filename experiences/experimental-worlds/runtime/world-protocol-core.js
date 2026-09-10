@@ -9680,7 +9680,7 @@ function scenePulseThoughtPanel(data, ui, persist, onRegenerate = null) {
     if (ui.thoughtWidth) panel.style.width = `${Math.max(240, Number(ui.thoughtWidth))}px`;
     const cards = data.characters.filter(character => character.innerThought).map(character => `<article class="sp-tp-card"><header class="sp-tp-name"><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${experimentalEscapeHTML(sidecarWorkspaceAvatar(character.name))}</span></span><span class="sp-tp-name-text">${experimentalEscapeHTML(character.name)}</span><span class="sp-tp-name-icon">◌</span></header><blockquote class="sp-tp-monologue">${experimentalEscapeHTML(character.innerThought)}</blockquote><div class="sp-tp-goals">${character.immediateNeed ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">◆</span>${experimentalEscapeHTML(character.immediateNeed)}</div>` : ''}${character.shortTermGoal ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">→</span>${experimentalEscapeHTML(character.shortTermGoal)}</div>` : ''}</div></article>`).join('') || '<div class="sp-empty-state"><strong class="sp-empty-title">No inner thoughts yet</strong></div>';
     panel.innerHTML = `<header class="sp-tp-header" id="sp-tp-drag"><span class="sp-tp-drag-grip">━━</span><span class="sp-tp-title">Inner Thoughts</span><span class="sp-tp-header-spacer"></span>${onRegenerate ? '<button type="button" class="sp-tp-refresh" title="Regenerate inner thoughts">↻</button>' : ''}<button type="button" class="sp-tp-snapleft" title="Snap left">⇤</button><button type="button" class="sp-tp-ghost" title="Ghost mode">◌</button><button type="button" class="sp-tp-close" title="Hide thoughts">×</button></header><div id="sp-tp-body">${cards}</div><div class="sp-tp-resize" title="Resize">◢</div>`;
-    document.body.appendChild(panel);
+    globalThis.ExperimentalWorldsDom.portalRoot().appendChild(panel);
     const save = () => { persist(); };
     panel.querySelector('.sp-tp-close').addEventListener('click', () => panel.remove());
     panel.querySelector('.sp-tp-refresh')?.addEventListener('click', async event => {
@@ -10169,7 +10169,7 @@ function openWorldSidecarInspector(view = 'scene') {
         else body = `${tabs}${sidecarInspectorJson(packet, 'The next-turn scene packet has not been prepared yet.')}`;
     }
     overlay.innerHTML = `<div class="modal" style="width:min(900px, calc(100vw - 36px)); max-height:86vh; display:flex; flex-direction:column;"><div class="modal-header"><h2>${experimentalEscapeHTML(title)}</h2><button class="modal-close" id="close-world-sidecar-inspector">×</button></div><div class="modal-body" style="overflow:auto;">${body}</div></div>`;
-    document.body.appendChild(overlay);
+    globalThis.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     overlay.addEventListener('click', event => { if (event.target === overlay) closeWorldSidecarInspector(); });
     document.getElementById('close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
     document.getElementById('world-sidecar-inspector-migrate')?.addEventListener('click', () => { closeWorldSidecarInspector(); openSidecarMigrationWizard(world.id); });

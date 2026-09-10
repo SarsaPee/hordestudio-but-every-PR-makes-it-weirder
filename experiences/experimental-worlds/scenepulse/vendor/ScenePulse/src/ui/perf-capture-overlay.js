@@ -42,7 +42,7 @@ export function mountCaptureOverlay() {
             <span class="sp-perf-overlay-hint">${t('Reproduce the slowdown now — interact with the chat / panel / weather. Click Stop when done.')}</span>
         </div>
     `;
-    document.body.appendChild(el);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(el);
 
     const countdown = el.querySelector('.sp-perf-overlay-countdown');
     let _tickTimer = null;

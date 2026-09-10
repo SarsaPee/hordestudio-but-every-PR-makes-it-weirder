@@ -174,7 +174,7 @@ export function openProfilesManager(onChange) {
         const url = URL.createObjectURL(blob);
         const safeName = (p.name || 'profile').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
         const a = document.createElement('a'); a.href = url; a.download = `scenepulse-profile-${safeName}.json`;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     }
 
     async function _delete(id, name) {
@@ -257,6 +257,6 @@ export function openProfilesManager(onChange) {
     overlay.addEventListener('pointerdown', _stop);
     document.addEventListener('keydown', _esc, true);
 
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     render();
 }

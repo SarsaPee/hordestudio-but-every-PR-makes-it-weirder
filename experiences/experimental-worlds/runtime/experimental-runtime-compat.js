@@ -10,6 +10,32 @@
 (function (global) {
     'use strict';
 
+    // Every viewport-level Experimental surface lives beneath one mode-owned
+    // portal.  The original runtime used document.body because it was the
+    // only Worlds implementation in the application.  Retaining that paint
+    // model through a private portal keeps the real overlays, dialogs,
+    // thoughts, weather and source ScenePulse UI intact without letting them
+    // become ambient surfaces for Chat, stock Worlds, or another experience.
+    const EXPERIMENTAL_PORTAL_ID = 'experimental-worlds-portal-root';
+    function experimentalWorldsPortalRoot() {
+        let root = document.getElementById(EXPERIMENTAL_PORTAL_ID);
+        if (!root) {
+            root = document.createElement('div');
+            root.id = EXPERIMENTAL_PORTAL_ID;
+            root.className = 'experimental-worlds-portal-root';
+            root.dataset.owner = 'experimental-worlds';
+            document.body.appendChild(root);
+        }
+        return root;
+    }
+    global.ExperimentalWorldsDom = Object.freeze({
+        portalRoot: experimentalWorldsPortalRoot,
+        clearPortal() {
+            const root = document.getElementById(EXPERIMENTAL_PORTAL_ID);
+            if (root?.dataset.owner === 'experimental-worlds') root.replaceChildren();
+        }
+    });
+
     global.experimentalIsPlainObject = function experimentalIsPlainObject(value) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
         const proto = Object.getPrototypeOf(value);

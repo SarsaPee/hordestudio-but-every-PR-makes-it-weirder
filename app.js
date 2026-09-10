@@ -7503,6 +7503,23 @@ function requestExperimentalWorldsEntry() {
     });
 }
 
+function isExperimentalWorldsView(viewName) {
+    return viewName === 'worlds' || viewName === 'worldStudio' || viewName === 'worldPlay';
+}
+
+function teardownExperimentalWorldsRoute() {
+    // The World runtime owns real viewport surfaces and document captures.
+    // Leaving the mode releases them as a unit; a hidden World must never
+    // keep handling shortcuts, weather, thoughts, or provider completions in
+    // another Horde experience.
+    if (worldGenController) worldGenController.abort();
+    const scenePulseHost = document.getElementById('world-sidecar-workspace');
+    unbindScenePulseWorldsHostActions(scenePulseHost);
+    window.HordeScenePulseSourceRuntime?.unmount?.(scenePulseHost);
+    window.HordeScenePulseWorlds?.unmount?.(scenePulseHost);
+    window.ExperimentalWorldsDom?.clearPortal?.();
+}
+
 function switchView(viewName) {
     // ScenePulse source weather/tint lives at body level so it can match the
     // original behind-the-panel paint order.  Leaving World Play therefore
@@ -7512,11 +7529,10 @@ function switchView(viewName) {
         // Never let a provider completion from a hidden Experimental World
         // publish after navigation. The World core also validates its captured
         // owner before every mutation; aborting here makes the fast path cheap.
-        if (worldGenController) worldGenController.abort();
-        const scenePulseHost = document.getElementById('world-sidecar-workspace');
-        unbindScenePulseWorldsHostActions(scenePulseHost);
-        window.HordeScenePulseSourceRuntime?.unmount?.(scenePulseHost);
-        window.HordeScenePulseWorlds?.unmount?.(scenePulseHost);
+        teardownExperimentalWorldsRoute();
+    }
+    if (isExperimentalWorldsView(state.view) && !isExperimentalWorldsView(viewName) && state.view !== 'worldPlay') {
+        teardownExperimentalWorldsRoute();
     }
     if (state.view === 'stockWorlds' && viewName !== 'stockWorlds') {
         window.StockWorlds17Pass0?.unmount?.();

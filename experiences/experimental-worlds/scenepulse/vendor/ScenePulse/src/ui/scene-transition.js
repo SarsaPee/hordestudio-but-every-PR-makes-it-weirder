@@ -36,7 +36,7 @@ export function checkSceneTransition(d){
     const card=document.createElement('div');
     card.id='sp-scene-transition';
     card.innerHTML=`<div class="sp-st-rule"></div>${lines.map(l=>`<span><b>${esc(l)}</b></span>`).join('<span class="sp-st-sep">\u203A</span>')}<div class="sp-st-rule"></div>`;
-    document.body.appendChild(card);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(card);
     void card.offsetWidth; // force reflow
     card.classList.add('sp-st-show');
     // Use animationend for reliable cleanup — setTimeout can be

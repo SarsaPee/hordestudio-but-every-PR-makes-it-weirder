@@ -826,7 +826,7 @@ export function openCharacterWiki() {
         _exportMarkdown(_sortEntries(filtered, sortKey));
     });
 
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     _render();
     log('Character Wiki: opened with', allEntries.length, 'characters');
 }

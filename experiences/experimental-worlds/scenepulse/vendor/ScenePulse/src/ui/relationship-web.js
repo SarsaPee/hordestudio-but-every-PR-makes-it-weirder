@@ -761,7 +761,7 @@ function _showTooltip(graph, nodeIdx, x, y) {
     if (ty + 220 > vh) ty = vh - 230;
     tip.style.left = tx + 'px';
     tip.style.top = ty + 'px';
-    document.body.appendChild(tip);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(tip);
 }
 function _hideTooltip() { document.querySelectorAll('.sp-web-tooltip').forEach(t => t.remove()); }
 
@@ -1269,7 +1269,7 @@ export function openRelationshipWeb(entries) {
         });
     }
 
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     _rerender();
     _attachZoomPanHandlers();
     log('Relationship Web: opened with', entries.length, 'NPCs,', npcEdges.length, 'NPC edges, layout=', layoutMode);

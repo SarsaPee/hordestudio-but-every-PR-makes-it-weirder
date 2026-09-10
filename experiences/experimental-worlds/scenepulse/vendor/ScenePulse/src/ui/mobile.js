@@ -45,7 +45,7 @@ export function spInjectTopBar(mode){
             if(!spTop){
                 spTop=document.createElement('div');spTop.id='sp-mobile-topbar';spTop.className='sp-mobile-topbar';
                 spTop.innerHTML=`<div class="sp-mt-brand">${MASCOT_SVG}<span>Scene<span style="color:#4db8a4">Pulse</span></span></div><button class="sp-mt-minimize" id="sp-mt-minimize" title="Hide panel"><svg viewBox="0 0 16 16" width="22" height="22" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><line x1="2" y1="13" x2="14" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.4"/></svg></button>`;
-                document.body.insertBefore(spTop,document.body.firstChild);
+                window.ExperimentalWorldsDom.portalRoot().prepend(spTop);
                 spTop.querySelector('#sp-mt-minimize').addEventListener('click',spMinimizePanel);
             }
             spTop.style.display='flex';spTop.classList.add('sp-mt-visible');
@@ -147,7 +147,7 @@ export function spShowBanner(text){
     b=document.createElement('div');b.id='sp-mobile-banner';b.className='sp-mobile-banner';
     b.innerHTML=`<span class="sp-banner-icon">${MASCOT_SVG}</span><span class="sp-banner-text">${text}</span>`;
     b.addEventListener('click',()=>{b.remove();spRestorePanel()});
-    document.body.appendChild(b);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(b);
     // Auto-dismiss
     setTimeout(()=>{if(b.parentNode){b.classList.add('sp-banner-out');setTimeout(()=>b.remove(),400)}},4000);
     log('Banner shown:',text);

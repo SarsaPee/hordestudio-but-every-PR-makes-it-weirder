@@ -126,7 +126,7 @@ export function startGuidedTour(){
     let step=0;let _prevAfter=null;
     const spotlight=document.createElement('div');spotlight.className='sp-tour-spotlight';
     const card=document.createElement('div');card.className='sp-tour-card';
-    document.body.appendChild(spotlight);document.body.appendChild(card);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(spotlight);window.ExperimentalWorldsDom.portalRoot().appendChild(card);
     function renderStep(){
         if(_prevAfter){_prevAfter();_prevAfter=null}
         const s=steps[step];

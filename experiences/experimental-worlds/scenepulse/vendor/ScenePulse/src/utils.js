@@ -63,7 +63,7 @@ export function spConfirm(title,message,opts){
         const stop=(e)=>e.stopPropagation();
         overlay.addEventListener('mousedown',stop);overlay.addEventListener('click',stop);overlay.addEventListener('pointerdown',stop);
         document.addEventListener('keydown',onKey,true);
-        document.body.appendChild(overlay);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
         requestAnimationFrame(()=>overlay.classList.add('sp-confirm-visible'));
         overlay.querySelector('.'+okClass).focus();
     });
@@ -118,7 +118,7 @@ export function spPrompt(title,message,opts={}){
         const stop=(e)=>e.stopPropagation();
         overlay.addEventListener('mousedown',stop);overlay.addEventListener('click',stop);overlay.addEventListener('pointerdown',stop);
         document.addEventListener('keydown',onKey,true);
-        document.body.appendChild(overlay);
+        window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
         requestAnimationFrame(()=>overlay.classList.add('sp-confirm-visible'));
         input.focus();input.select();
     });

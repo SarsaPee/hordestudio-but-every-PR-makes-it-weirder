@@ -174,9 +174,14 @@
         // Capture at the stable window boundary (before Horde's document
         // handlers) and filter to that panel.
         panelCaptureInstalled: false,
+        panelCaptureListener: null,
         portraitCaptureInstalled: false,
+        portraitClickCaptureListener: null,
+        portraitContextCaptureListener: null,
         thoughtRefreshCaptureInstalled: false,
+        thoughtRefreshCaptureListener: null,
         historySelectionCaptureInstalled: false,
+        historySelectionCaptureListener: null,
         historySelectionTimer: null,
         // A physical reload/re-entry must start from the source dashboard.
         // Later refreshes preserve the reader's position unless the focused
@@ -803,7 +808,7 @@
     function active() { return runtime.current; }
 
     function makeToast(level, message, title = 'ScenePulse') {
-        const root = document.getElementById(RUNTIME_ROOT_ID) || document.body;
+        const root = document.getElementById(RUNTIME_ROOT_ID) || global.ExperimentalWorldsDom.portalRoot();
         const node = document.createElement('div');
         node.className = `sp-horde-native-toast sp-horde-native-toast-${level}`;
         node.setAttribute('role', 'status');
@@ -1263,7 +1268,7 @@
 
     function installHistorySelectionCapture() {
         if (runtime.historySelectionCaptureInstalled) return;
-        document.addEventListener('click', event => {
+        runtime.historySelectionCaptureListener = event => {
             const target = event.target instanceof Element ? event.target : null;
             if (!target || !active()) return;
             if (target.closest([
@@ -1275,7 +1280,8 @@
             ].join(', '))) {
                 scheduleSourceHistorySelectionSync();
             }
-        }, true);
+        };
+        document.addEventListener('click', runtime.historySelectionCaptureListener, true);
         runtime.historySelectionCaptureInstalled = true;
     }
 
@@ -1738,7 +1744,7 @@
         };
         bindQuestTranslation('[data-horde-quest-translation-link]', 'link', 'The ScenePulse quest is now linked to the matching World quest.');
         bindQuestTranslation('[data-horde-quest-translation-create]', 'create', 'A separate World quest was created from the ScenePulse action.');
-        document.body.appendChild(overlay);
+        global.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     }
 
     function escapeHtml(value) {
@@ -2069,7 +2075,7 @@
         const onKeydown = event => { if (event.key === 'Escape') { event.preventDefault(); close(); } };
         runtime.commandOverlayCleanup = close;
         overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
-        document.body.appendChild(overlay);
+        global.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
         render();
         global.setTimeout(() => overlay.querySelector('#sp-horde-command-input')?.focus(), 0);
         loadOptionalSourceModule('macros').then(module => {
@@ -2131,7 +2137,7 @@
             }
         });
         overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
-        document.body.appendChild(overlay);
+        global.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     }
 
     function showSourceLanguagePicker() {
@@ -2163,7 +2169,7 @@
         overlay.querySelector('[data-horde-source-language-save]')?.addEventListener('click', apply);
         overlay.querySelector('#sp-horde-language-select')?.addEventListener('change', () => {});
         overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
-        document.body.appendChild(overlay);
+        global.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     }
 
     function injectComparisonStrip(panel) {
@@ -2411,7 +2417,7 @@
                 makeToast('error', error?.message || error, 'ScenePulse update');
             });
         });
-        document.body.appendChild(button);
+        global.ExperimentalWorldsDom.portalRoot().appendChild(button);
     }
 
     function clearReaderRefreshUi(flight) {
@@ -2521,7 +2527,7 @@
 
     function installPanelCapture() {
         if (runtime.panelCaptureInstalled) return;
-        global.addEventListener('click', event => {
+        runtime.panelCaptureListener = event => {
             const target = event.target instanceof Element ? event.target : null;
             if (!target?.closest('#sp-panel')) return;
             const refresh = target.closest('#sp-tb-regen,.sp-section-refresh');
@@ -2538,7 +2544,8 @@
                 const direction = storyIdeaFromTarget(target);
                 if (direction) dispatch('stage-story-idea', { direction, inject: !!inject }).catch(error => makeToast('error', error?.message || error, 'Story idea'));
             }
-        }, true);
+        };
+        global.addEventListener('click', runtime.panelCaptureListener, true);
         runtime.panelCaptureInstalled = true;
     }
 
@@ -2548,7 +2555,7 @@
         // #sp-panel. Route its native refresh affordance through the same
         // exact-turn Reader boundary as the source toolbar instead of letting
         // the vendored extension begin an independent provider pipeline.
-        document.addEventListener('click', event => {
+        runtime.thoughtRefreshCaptureListener = event => {
             const target = event.target instanceof Element ? event.target : null;
             const refresh = target?.closest?.('#sp-thought-panel .sp-tp-regen');
             if (!refresh || !active()) return;
@@ -2559,7 +2566,8 @@
             runSourceReaderRefresh('thoughts')
                 .catch(() => {})
                 .finally(() => { refresh.disabled = false; refresh.classList.remove('sp-spinning'); });
-        }, true);
+        };
+        document.addEventListener('click', runtime.thoughtRefreshCaptureListener, true);
         runtime.thoughtRefreshCaptureInstalled = true;
     }
 
@@ -2634,21 +2642,21 @@
             reader.onerror = () => makeToast('error', 'The image could not be read.', 'Portrait');
             reader.readAsDataURL(file);
         }, { once: true });
-        document.body.appendChild(input);
+        global.ExperimentalWorldsDom.portalRoot().appendChild(input);
         input.click();
     }
 
     function installPortraitCapture() {
         if (runtime.portraitCaptureInstalled) return;
-        document.addEventListener('click', event => {
+        runtime.portraitClickCaptureListener = event => {
             const target = event.target instanceof Element ? event.target : null;
             const name = portraitNameFromTarget(target);
             if (!name || !active()) return;
             event.preventDefault();
             event.stopImmediatePropagation();
             openHostPortraitPicker(name);
-        }, true);
-        document.addEventListener('contextmenu', event => {
+        };
+        runtime.portraitContextCaptureListener = event => {
             const target = event.target instanceof Element ? event.target : null;
             const name = portraitNameFromTarget(target);
             const current = active();
@@ -2664,7 +2672,9 @@
                 await renderActive();
                 makeToast('info', 'Portrait cleared.', name);
             }).catch(error => makeToast('error', error?.message || error, 'Portrait'));
-        }, true);
+        };
+        document.addEventListener('click', runtime.portraitClickCaptureListener, true);
+        document.addEventListener('contextmenu', runtime.portraitContextCaptureListener, true);
         runtime.portraitCaptureInstalled = true;
     }
 
@@ -2900,6 +2910,20 @@
         runtime.resetPanelScrollOnNextMount = true;
         global.clearTimeout(runtime.historySelectionTimer);
         runtime.historySelectionTimer = null;
+        if (runtime.panelCaptureListener) global.removeEventListener('click', runtime.panelCaptureListener, true);
+        if (runtime.thoughtRefreshCaptureListener) document.removeEventListener('click', runtime.thoughtRefreshCaptureListener, true);
+        if (runtime.historySelectionCaptureListener) document.removeEventListener('click', runtime.historySelectionCaptureListener, true);
+        if (runtime.portraitClickCaptureListener) document.removeEventListener('click', runtime.portraitClickCaptureListener, true);
+        if (runtime.portraitContextCaptureListener) document.removeEventListener('contextmenu', runtime.portraitContextCaptureListener, true);
+        runtime.panelCaptureListener = null;
+        runtime.thoughtRefreshCaptureListener = null;
+        runtime.historySelectionCaptureListener = null;
+        runtime.portraitClickCaptureListener = null;
+        runtime.portraitContextCaptureListener = null;
+        runtime.panelCaptureInstalled = false;
+        runtime.thoughtRefreshCaptureInstalled = false;
+        runtime.historySelectionCaptureInstalled = false;
+        runtime.portraitCaptureInstalled = false;
         runtime.current = null;
         const panel = document.getElementById('sp-panel');
         if (panel?.dataset.hordeSourceRuntime) panel.classList.remove('sp-visible');

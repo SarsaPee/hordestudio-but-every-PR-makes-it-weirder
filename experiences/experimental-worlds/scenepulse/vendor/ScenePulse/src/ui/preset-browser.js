@@ -584,7 +584,7 @@ export function openPresetBrowser(opts = {}) {
     const _esc = (e) => { if (e.key === 'Escape') { _close(); e.stopPropagation(); } };
     document.addEventListener('keydown', _esc, true);
 
-    document.body.appendChild(overlay);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(overlay);
     _activeBrowser = overlay;
 }
 

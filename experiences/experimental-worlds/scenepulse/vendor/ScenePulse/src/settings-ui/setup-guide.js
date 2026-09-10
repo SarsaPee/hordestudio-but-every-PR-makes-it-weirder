@@ -130,7 +130,7 @@ export function showSetupGuide(){
             <div class="sp-setup-dots"><span class="sp-setup-dot sp-dot-active" data-dot="1"></span><span class="sp-setup-dot" data-dot="2"></span><span class="sp-setup-dot" data-dot="3"></span><span class="sp-setup-dot" data-dot="4"></span><span class="sp-setup-dot" data-dot="5"></span></div>
         </div>
     </div>`;
-    document.body.appendChild(ov);
+    window.ExperimentalWorldsDom.portalRoot().appendChild(ov);
 
     // Navigation
     let currentStep=1;
