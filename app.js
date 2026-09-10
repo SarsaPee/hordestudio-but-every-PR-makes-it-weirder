@@ -11825,6 +11825,15 @@ async function serializeHostBackupPayload() {
     return payload;
 }
 
+function hostBackupReadbackPayload(payload) {
+    const copy = safeJsonClone(payload);
+    // Export time is deliberately non-authoritative. Everything else,
+    // including the data-URL media payloads referenced by restored records,
+    // must survive the staged restore unchanged.
+    delete copy._exportedAt;
+    return copy;
+}
+
 async function exportFullBackup() {
     const manifest = window.HordeBackupDomains?.registered?.().includes('horde-studio-host')
         ? await window.HordeBackupDomains.export()
@@ -11892,10 +11901,12 @@ function registerHostBackupDomain() {
         rollback: applyHostBackupPayload,
         readback: async payload => {
             const current = await serializeHostBackupPayload();
-            if ((current.characters || []).length !== (payload.characters || []).length
-                || (current.worlds || []).length !== (payload.worlds || []).length
-                || (current.companions || []).length !== (payload.companions || []).length) {
-                throw new Error('Host backup readback did not match the restored records.');
+            const [expected, actual] = await Promise.all([
+                window.HordeBackupDomains.checksum(hostBackupReadbackPayload(payload)),
+                window.HordeBackupDomains.checksum(hostBackupReadbackPayload(current))
+            ]);
+            if (actual !== expected) {
+                throw new Error('Host backup readback did not match the restored records or referenced media.');
             }
         },
         journal: async (phase, transaction, preimage) => {
