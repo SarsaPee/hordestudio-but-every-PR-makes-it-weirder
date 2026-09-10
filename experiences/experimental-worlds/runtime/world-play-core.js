@@ -1129,6 +1129,7 @@ function setupWorldPlayLogic() {
     };
 
     document.getElementById('world-session-select').onchange = (e) => {
+        if (ExperimentalWorldsRuntime.turnInProgress()) ExperimentalWorldsRuntime.abortAll();
         ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.activeWorldId].activeSessionId = e.target.value;
         ExperimentalWorldsHost.persist().catch(() => {});
         renderWorldPlayState();
@@ -1431,7 +1432,13 @@ function getCurrentWorldSession(options = {}) {
     }
 
     let session = inst.sessions.find(s => s.id === inst.activeSessionId);
-    if (!session) session = inst.sessions[0];
+    // Repair a stale selection atomically. Returning the first session while
+    // retaining a missing activeSessionId made render and async ownership
+    // checks disagree about the active timeline.
+    if (!session) {
+        session = inst.sessions[0] || null;
+        if (session) inst.activeSessionId = session.id;
+    }
 
     // --- HEALING PASS: Normalize State to IDs ---
     const world = ExperimentalWorldsState.worlds.find(w => w.id === ExperimentalWorldsState.activeWorldId);
@@ -2858,6 +2865,11 @@ async function createNewWorldSession() {
     const inst = ExperimentalWorldsState.worldInstances[ExperimentalWorldsState.activeWorldId];
     if (!world || !inst) return;
 
+    // A timeline switch is an ownership boundary. Stop an in-flight response
+    // before changing the active session so it cannot later surface in this
+    // new timeline as a failure, draft, or render.
+    if (ExperimentalWorldsRuntime.turnInProgress()) ExperimentalWorldsRuntime.abortAll();
+
     // Validation: Ensure startLocationId exists
     const defaultStartId = world.startLocationId || world.locations[0]?.id || null;
 
@@ -3095,6 +3107,7 @@ function renderWorldTimelineBrowser() {
     host.querySelectorAll('.timeline-select-btn').forEach(button => button.onclick = async () => {
         const inst = ExperimentalWorldsState.worldInstances?.[ExperimentalWorldsState.activeWorldId];
         if (!inst || !inst.sessions.some(session => session.id === button.dataset.sessionId)) return;
+        if (ExperimentalWorldsRuntime.turnInProgress()) ExperimentalWorldsRuntime.abortAll();
         inst.activeSessionId = button.dataset.sessionId;
         await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
@@ -5228,20 +5241,38 @@ function appendWorldMessageUI(msg, index = null) {
             if (!editedText) return ExperimentalWorldsHost.notify('The replay draft cannot be empty.', 'info');
             const currentSession = getCurrentWorldSession();
             const messageIndex = currentSession?.history.indexOf(msg) ?? -1;
+            const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
+            const sidecarProtocol = world && currentSession
+                ? window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, currentSession)
+                : null;
             const affectedDm = messageIndex >= 0
                 ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm' && entry.turnSnapshot)
                 : null;
-            if (!affectedDm) return ExperimentalWorldsHost.notify('There is no committed response after this message to rewind.', 'info');
-            const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
-            if (world && affectedDm.turnSnapshot) restoreWorldTurnState(world, currentSession, affectedDm.turnSnapshot);
+            // A failed Sidecar reconciliation is deliberately not given a
+            // legacy turn snapshot: its canonical update never committed.
+            // Treat that authored-but-uncommitted response as rewindable
+            // without pretending it has state to restore. The scene is
+            // already at its pre-turn state; we only discard the narration
+            // tail and return the exact player wording to the composer.
+            const uncommittedSidecarDm = messageIndex >= 0
+                ? currentSession.history.slice(messageIndex + 1).find(entry => entry.role === 'dm'
+                    && !entry.turnSnapshot
+                    && (() => {
+                        const turnId = String(entry.sidecarTurnId || entry.sidecarBackstage?.sidecarTurnId || '');
+                        const turn = sidecarProtocol?.turns?.find(item => String(item?.id || '') === turnId);
+                        return !!turn && sidecarTurnNeedsDownstreamRecovery(turn);
+                    })())
+                : null;
+            const rewindTarget = affectedDm || uncommittedSidecarDm;
+            if (!rewindTarget) return ExperimentalWorldsHost.notify('There is no committed response after this message to rewind.', 'info');
+            if (world && rewindTarget.turnSnapshot) restoreWorldTurnState(world, currentSession, rewindTarget.turnSnapshot);
             // The snapshot restores Sidecar's selected pre-turn revision
             // and invalidates all derived Episode, cognition, scene and
             // sequence output sourced by the discarded tail. The ordinary
             // legacy archive receives the same rewind for Inline timelines.
             invalidateEpisodicFrom(currentSession, messageIndex);
             currentSession.history.splice(messageIndex);
-            const protocol = world && window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, currentSession);
-            if (protocol) protocol.inputMode = 'narrator';
+            if (sidecarProtocol) sidecarProtocol.inputMode = 'narrator';
             await ExperimentalWorldsHost.persist();
             renderWorldPlayState();
             // renderWorldPlayState rebuilds the composer. Restore the draft
@@ -5919,15 +5950,19 @@ function captureExperimentalTurnOwner(world, sess) {
     });
 }
 
-function assertExperimentalTurnOwner(owner) {
+function experimentalTurnOwnerIsCurrent(owner) {
     const currentWorld = ExperimentalWorldsState.worlds.find(candidate => candidate.id === owner.worldId);
     const currentSession = getCurrentWorldSession();
-    const valid = ExperimentalWorldsState.view === 'worldPlay'
+    const currentRestoreGeneration = Number(window.ExperimentalWorldsRestoreGeneration) || 0;
+    return ExperimentalWorldsState.view === 'worldPlay'
         && currentWorld === ExperimentalWorldsState.worlds.find(candidate => candidate.id === ExperimentalWorldsState.activeWorldId)
         && String(currentSession?.id || '') === owner.timelineId
         && Number(currentSession?._worldEpoch) === owner.worldEpoch
-        && Number(window.ExperimentalWorldsRestoreGeneration) === owner.restoreGeneration;
-    if (valid) return;
+        && currentRestoreGeneration === owner.restoreGeneration;
+}
+
+function assertExperimentalTurnOwner(owner) {
+    if (experimentalTurnOwnerIsCurrent(owner)) return;
     const error = new Error('A late Experimental Worlds response was discarded because its captured World, timeline, revision, or mode is no longer current.');
     error.code = 'experimental_world_owner_changed';
     throw error;
@@ -7924,6 +7959,12 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     commitTool: sidecarCommitTool, signal: controller.signal,
                     handoffComplete: narratorOutput.complete,
                     onStage: stage => {
+                        // Reader and reconciliation are two separate cloud
+                        // requests. A completed Reader must not leave the
+                        // reconciler with only the tail of its timeout window;
+                        // otherwise an in-flight native commit is aborted as
+                        // if the user pressed Stop.
+                        armGenerationIdleTimeout(configuredIdleTimeout === 0 ? 0 : Math.max(90000, configuredIdleTimeout));
                         if (!dmTypingLabel) return;
                         dmTypingLabel.textContent = stage === 'reading'
                             ? 'Sidecar is reading the authored beat…'
@@ -8541,10 +8582,10 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             // identical postSnapshot beside it doubled every ordinary turn in
             // persisted timelines, especially painfully in large worlds.
             delete dmMsg.postSnapshot;
-            const continuityCapability = ExperimentalWorldsHost.labsAvailable()?.taskCapabilities?.()
+            const continuityCapability = ExperimentalWorldsHost.labsTaskCapabilities()
                 .find(task => task.id === 'continuity_sentinel');
-            if (ExperimentalWorldsHost.labsAvailable()?.policyFor('worlds') === 'audit' && continuityCapability?.available) {
-                void ExperimentalWorldsHost.labsAvailable().propose('continuity_sentinel', {
+            if (ExperimentalWorldsHost.labsPolicy('worlds') === 'audit' && continuityCapability?.available) {
+                void ExperimentalWorldsHost.labsProposal('continuity_sentinel', {
                     narrative: cleanText.slice(0, 6500),
                     preFrame: {
                         playerLocationId: startLocation || '',
@@ -8638,6 +8679,15 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
     } catch (err) {
         const dmTypingEl = document.getElementById('world-dm-typing');
         if (dmTypingEl) dmTypingEl.style.display = 'none';
+
+        // A changed World or timeline is an intentional cancellation. The
+        // owner guard already prevented the stale result from publishing, so
+        // do not restore, persist, duplicate a draft, or toast into the new
+        // context.
+        if (turnOwner && !experimentalTurnOwnerIsCurrent(turnOwner)) {
+            console.info('Horde Engine: discarded a stale Experimental Worlds turn without mutating the active timeline.');
+            return;
+        }
 
         // Roll back generated consequences from the failed/aborted turn. A
         // failed reroll restores the previously selected take; a normal turn

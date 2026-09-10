@@ -48,6 +48,14 @@ function createNewWorld() {
             tracker: { inheritNarrator: true, provider: '', model: '', openRouterRouting: null, reasoning: false, maxTokens: 0 },
             debug: { enabled: false, retainTraceCount: 20 }
         },
+        // Experimental Worlds is authored for the cinematic presenter.  The
+        // stored per-session switch still allows Classic when an author or
+        // player deliberately needs the simpler presentation.
+        presentation: {
+            enabled: true,
+            mode: 'cinematic',
+            playerCanOverride: true
+        },
         dossierClaims: { version: 1, enabled: true },
         hudConfig: {
             showClock: true,
@@ -315,14 +323,12 @@ function setupWorldStudioLogic() {
     document.getElementById('add-w-lore-btn').onclick = () => { addWorldLore(); updateWorldTokenCount(); };
     document.getElementById('add-world-stat-btn').onclick = addWorldStat;
     document.getElementById('w-fetch-model-btn').onclick = fetchWorldModelSettings;
-    document.getElementById('w-sidecar-mode').onchange = event => {
-        if (!ExperimentalWorldsState.editingWorld) return;
-        const config = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
-        if (!config) return;
-        config.mode = event.target.value === 'sidecar' ? 'sidecar' : 'inline_legacy';
-        renderWorldSidecarConfigEditor(ExperimentalWorldsState.editingWorld);
-        renderWorldOverviewSidecarMigration(ExperimentalWorldsState.editingWorld);
-        setSidecarStudioFeatureAvailability(ExperimentalWorldsState.editingWorld);
+    document.getElementById('w-sidecar-mode').onchange = () => {
+        // Kept as an informational control for existing Studio markup. It
+        // cannot re-enable the retired Inline execution path.
+        const config = ExperimentalWorldsState.editingWorld
+            && window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.(ExperimentalWorldsState.editingWorld);
+        if (config) config.mode = 'sidecar';
     };
     document.getElementById('w-inline-legacy-migrate-btn').onclick = () => {
         if (ExperimentalWorldsState.editingWorld?.id) openSidecarMigrationWizard(ExperimentalWorldsState.editingWorld.id);
@@ -651,8 +657,39 @@ function setupWorldImport() {
 }
 
 async function fetchWorldModelSettings() {
-    const modelInput = document.getElementById('w-studio-model').value.trim();
-    await fetchModelData(modelInput, 'w-', ExperimentalWorldsState.editingWorld);
+    // This control discovers the model catalogue for the current host text
+    // provider.  It must not treat an inherited model as a World override, or
+    // require an author to type an ID merely to open the available-model list.
+    const button = document.getElementById('w-fetch-model-btn');
+    const input = document.getElementById('w-studio-model');
+    const oldText = button?.textContent || 'Fetch models';
+    if (!input) return;
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Fetching…';
+    }
+    try {
+        const models = await ExperimentalWorldsHost.getModelCatalog({ force: true });
+        if (!models.length) {
+            throw new Error('The selected provider returned no usable models. Check its connection in Settings.');
+        }
+        // The host owns the shared provider cache and the searchable input's
+        // existing renderer.  Dispatching input after the refresh opens that
+        // renderer without changing the field or saving a World model.
+        input.focus();
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const provider = ExperimentalWorldsHost.providerDisplayName(
+            ExperimentalWorldsState.globalSettings?.apiProvider
+        );
+        ExperimentalWorldsHost.notify(`${models.length} models loaded from ${provider}. Choose one to pin this World, or leave it blank to inherit Settings.`, 'success');
+    } catch (error) {
+        ExperimentalWorldsHost.notify(`Could not load the selected provider's model list: ${error.message}`, 'error');
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = oldText;
+        }
+    }
 }
 
 const sidecarProviderModelCatalogs = new Map();
@@ -1464,7 +1501,7 @@ async function saveWorld() {
         ...w,
         sidecarConfig: {
             ...priorSidecarConfig,
-            mode: document.getElementById('w-sidecar-mode').value,
+            mode: 'sidecar',
             tracker: {
                 ...(priorSidecarConfig.tracker || {}),
                 inheritNarrator: document.getElementById('w-sidecar-inherit-narrator').checked,

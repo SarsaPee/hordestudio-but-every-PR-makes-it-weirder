@@ -57,6 +57,8 @@
         ensureSharedLibraryFresh: () => requireHost().ensureSharedLibraryFresh(),
         recordSharedLibraryAssistantTurn: () => requireHost().recordSharedLibraryAssistantTurn(),
         labsAvailable: () => requireHost().labsAvailable(),
+        labsPolicy: scope => requireHost().labsPolicy?.(scope) || 'off',
+        labsTaskCapabilities: () => requireHost().labsTaskCapabilities?.() || [],
         labsProposal: (...args) => requireHost().labsProposal(...args),
         // Multiplayer is a host integration, not an ambient runtime
         // dependency.  Experimental Worlds supplies its own World source; the

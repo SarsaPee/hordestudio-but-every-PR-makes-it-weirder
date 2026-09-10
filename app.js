@@ -2396,6 +2396,8 @@ window.ExperimentalWorldsHost?.configure({
     ensureSharedLibraryFresh: () => ensureSharedLibraryFreshForGeneration(),
     recordSharedLibraryAssistantTurn: () => recordSharedLibraryAssistantTurn(),
     labsAvailable: () => Boolean(window.HordeLabs),
+    labsPolicy: scope => window.HordeLabs?.policyFor?.(scope) || 'off',
+    labsTaskCapabilities: () => window.HordeLabs?.taskCapabilities?.() || [],
     labsProposal: (...args) => labsProposal(...args),
     // Optional bridge for the host-owned Multiplayer experience.  These are
     // intentionally functions rather than a host-state reference: the
@@ -2522,6 +2524,13 @@ window.ExperimentalWorldsStateAdapter?.configure({
 });
 
 let lastPersistedWorldManifests = [];
+// `loadState()` temporarily holds the verified Experimental snapshot in its
+// bootstrap shadow while it applies one-time, additive bundled-world receipts.
+// The Experimental adapter deliberately starts empty, so a bootstrap save must
+// never read that empty adapter and overwrite the snapshot that was just read
+// from HordeStudioExperimentalWorldsDB.  The adapter becomes the sole live
+// authority immediately after the final hydrate at the end of `loadState()`.
+let experimentalRuntimeHydrated = false;
 const worldLoadWarnings = new Map();
 
 function getAllPresets() {
@@ -4388,6 +4397,7 @@ async function loadState() {
         lastWorldStudioId: state.lastWorldStudioId,
         lastWorldStudioTab: state.lastWorldStudioTab
     });
+    experimentalRuntimeHydrated = true;
 }
 
 let saveStateInFlight = null;
@@ -4396,7 +4406,22 @@ let saveStateQueued = false;
 async function persistExperimentalWorldsSnapshot(reason = 'experimental-save') {
     const savingWorldMedia = worldMediaDirty;
     try {
-        const experimental = window.ExperimentalWorldsStateAdapter?.snapshot?.() || {};
+        // During bootstrap, `state` is the verified Experimental snapshot
+        // being deliberately prepared for the first adapter hydrate. Once the
+        // adapter is live, it is the only source for Experimental writes.
+        // Reading the empty pre-hydration adapter here used to erase timelines
+        // whenever a bundled-world receipt happened to be saved on reload.
+        const experimental = experimentalRuntimeHydrated
+            ? (window.ExperimentalWorldsStateAdapter?.snapshot?.() || {})
+            : {
+                worlds: state.worlds,
+                worldInstances: state.worldInstances,
+                activeWorldId: state.activeWorldId,
+                worldRecoverySnapshots: state.worldRecoverySnapshots,
+                editingWorld: state.editingWorld,
+                lastWorldStudioId: state.lastWorldStudioId,
+                lastWorldStudioTab: state.lastWorldStudioTab
+            };
         const storedWorlds = (experimental.worlds || []).map(world => ({
             ...world,
             mediaAssets: []
@@ -4417,7 +4442,11 @@ async function persistExperimentalWorldsSnapshot(reason = 'experimental-save') {
                 .sort((a, b) => String(b[1]?.capturedAt || '').localeCompare(String(a[1]?.capturedAt || '')))
                 .slice(0, 30)
         );
-        window.ExperimentalWorldsState.worldRecoverySnapshots = experimental.worldRecoverySnapshots;
+        if (experimentalRuntimeHydrated) {
+            window.ExperimentalWorldsState.worldRecoverySnapshots = experimental.worldRecoverySnapshots;
+        } else {
+            state.worldRecoverySnapshots = experimental.worldRecoverySnapshots;
+        }
         const previousExperimental = await window.ExperimentalWorldsRepository?.snapshot?.();
         const worldMediaAssets = savingWorldMedia
             ? Object.fromEntries((experimental.worlds || []).map(world => [

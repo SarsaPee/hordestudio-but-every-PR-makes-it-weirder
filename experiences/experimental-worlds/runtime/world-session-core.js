@@ -337,7 +337,10 @@ function sessionLocations(world, sess) {
 }
 
 function worldForSession(world, sess) {
-    return { ...world, locations: sessionLocations(world, sess), entities: world.entities };
+    // Story-born entities belong only to the timeline that introduced them.
+    // Reducers still receive the canonical World object explicitly; this view
+    // is for reads, prompts and rendering.
+    return { ...world, locations: sessionLocations(world, sess), entities: (world.entities || []).filter(entity => isVisibleToSession(entity, sess)) };
 }
 
 function addSessionDynamicExit(sess, fromLocationId, targetName) {

@@ -1068,7 +1068,7 @@
                             <div class="world-visual-settings-grid">
                                 <label class="world-visual-toggle-card">
                                     <input id="w-visual-enabled" type="checkbox">
-                                    <span><strong>Enable visual presentation</strong><small>Existing and imported worlds stay Classic until enabled.</small></span>
+                                    <span><strong>Enable visual presentation</strong><small>New Experimental Worlds begin Cinematic. Classic remains available when needed.</small></span>
                                 </label>
                                 <label class="world-visual-toggle-card">
                                     <input id="w-visual-player-override" type="checkbox" checked>
@@ -1435,10 +1435,9 @@
                         <div class="form-body">
                             <div class="form-section world-state-pipeline-card">
                                 <span class="vh-eyebrow">STATE PIPELINE</span>
-                                <label class="form-label">Canonical state authority <span class="help-glyph" title="Sidecar is the authoritative state pipeline for new worlds: it reads the Narrator’s authored turn and commits the only canonical receipt. Inline Legacy exists only for compatible older timelines.">?</span></label>
+                                <label class="form-label">Canonical state authority <span class="help-glyph" title="Sidecar is the sole Experimental Worlds state pipeline. It reads the Narrator’s authored turn and commits the only canonical receipt.">?</span></label>
                                 <select id="w-sidecar-mode" class="form-select">
                                     <option value="sidecar">Sidecar · canonical authority</option>
-                                    <option value="inline_legacy">Inline Legacy · compatibility only</option>
                                 </select>
                                 <p id="w-state-pipeline-hint" class="form-hint"></p>
                             </div>
@@ -1450,7 +1449,7 @@
                                         <input type="text" id="w-studio-model" class="form-input search-dropdown-input" placeholder="Use the default model from Settings" autocomplete="off">
                                         <div id="w-studio-model-results" class="searchable-dropdown-results hidden"></div>
                                     </div>
-                                    <button id="w-fetch-model-btn" class="btn btn-ghost" title="Fetch model info from the selected provider" style="white-space: nowrap; flex-shrink: 0;">Fetch Data</button>
+                                    <button id="w-fetch-model-btn" class="btn btn-ghost" title="Refresh the available model list from the text provider selected in Settings" style="white-space: nowrap; flex-shrink: 0;">Fetch models</button>
                                 </div>
                                 <p class="form-hint">Leave blank to follow the default text provider and model from Settings. Choosing a model here deliberately pins only this World.</p>
                             </div>
@@ -5607,7 +5606,7 @@
 <script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
 <script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
 <script src="host-adapters/experimental-worlds/visual-media-host-adapter.js?v=20260910-pass1-visual-media-adapter-v2"></script>
-<script src="host-adapters/experimental-worlds/experimental-worlds-host-adapter.js?v=20260910-pass1-host-adapter-v3"></script>
+<script src="host-adapters/experimental-worlds/experimental-worlds-host-adapter.js?v=20260910-pass1-host-adapter-v4"></script>
 <script src="host-adapters/experimental-worlds/experimental-worlds-state-adapter.js?v=20260910-pass1-state-adapter-v1"></script>
 <script src="experiences/experimental-worlds/runtime/experimental-runtime-compat.js?v=20260910-pass1-private-compat-v3"></script>
 <script src="experiences/experimental-worlds/runtime/experimental-vector-memory.js?v=20260910-pass1-vector-memory-v1"></script>
@@ -5620,14 +5619,14 @@
 <script src="experiences/experimental-worlds/visuals/world-visual-provider-core.js?v=20260910-pass1-visual-provider-v2"></script>
 <script src="experiences/experimental-worlds/visuals/world-visual-editor-core.js?v=20260910-pass1-world-visual-editor-v2"></script>
 <script src="experiences/experimental-worlds/runtime/world-studio-core.js?v=20260910-pass1-world-studio-core-v2"></script>
-<script src="experiences/experimental-worlds/runtime/world-play-core.js?v=20260910-pass1-owner-guard-v7"></script>
+<script src="experiences/experimental-worlds/runtime/world-play-core.js?v=20260910-pass1-owner-guard-v10"></script>
 <script src="experiences/experimental-worlds/runtime/world-session-core.js?v=20260910-pass1-world-session-core-v2"></script>
 <script src="experiences/experimental-worlds/runtime/world-intelligence-core.js?v=20260910-pass1-world-intelligence-core-v1"></script>
 <script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
   <script src="experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js?v=20260910-pass1-scenepulse-v1"></script>
-  <script src="experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js?v=20260910-pass1-scenepulse-v1"></script>
+  <script src="experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js?v=20260910-pass1-scenepulse-v3"></script>
 <script src="experiences/stock-worlds-17-pass0/runtime.js?v=20260910-pass1-stock-exact-v15"></script>
-<script src="experiences/experimental-worlds/runtime/world-protocol-core.js?v=20260910-pass1-world-protocol-core-v4"></script>
+<script src="experiences/experimental-worlds/runtime/world-protocol-core.js?v=20260910-pass1-world-protocol-core-v10"></script>
 <script src="experiences/experimental-worlds/runtime/experimental-worlds-repository.js?v=20260910-pass1-repository-v1"></script>
 <script src="experiences/experimental-worlds/runtime/sidecar-core.js?v=20260910-pass1-sidecar-core-v1"></script>
   <script src="app.js?v=20260910-experimental-worlds-pass1-bootstrap-v10"></script>

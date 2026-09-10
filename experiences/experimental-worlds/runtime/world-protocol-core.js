@@ -3305,12 +3305,6 @@ function prepareSidecarProviderTool(tool, provider, model) {
     return normalizeSidecarProviderTool(tool);
 }
 
-function sidecarTokenLimitIncomplete(payload) {
-    const choice = payload?.choices?.[0] || {};
-    const finish = String(choice.finish_reason || choice.native_finish_reason || payload?.status || '').toLowerCase();
-    return ['length', 'max_tokens', 'token_limit', 'incomplete'].includes(finish);
-}
-
 async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal, retryPolicy = 'bounded', forceWithoutReasoning = false } = {}) {
     const policy = sidecarReasoningPolicy(tracker, world);
     const request = async (withoutReasoning, forceCompactCommitTransport = false) => {
@@ -3318,6 +3312,19 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
         delete payload.reasoning;
         delete payload.reasoning_effort;
         applySidecarReasoning(payload, provider, tracker, world, { withoutReasoning });
+        // GLM can spend the entire response allowance on its provider-default
+        // reasoning even when the World did not opt into reasoning. Only that
+        // family needs an explicit OpenRouter disable on retry. Gemini 3.8
+        // Flash rejects `reasoning: { effort: 'none' }` because its reasoning
+        // is mandatory, so for every other model the compatible retry is the
+        // conservative omission already performed by applySidecarReasoning.
+        const modelId = String(payload.model || '').toLowerCase();
+        const needsExplicitOpenRouterReasoningDisable = /(?:^|[/_-])(?:z-ai[/:_-]?)?glm(?:[/_.-]|$)/.test(modelId);
+        if (withoutReasoning
+            && needsExplicitOpenRouterReasoningDisable
+            && ExperimentalWorldsHost.normalizedProviderId(provider) === 'openrouter') {
+            payload.reasoning = { effort: 'none' };
+        }
         if (Array.isArray(payload.tools)) {
             payload.tools = payload.tools.map(tool => forceCompactCommitTransport && tool?.function?.name === 'commit_world_turn'
                 ? compactSidecarCommitTool(tool)
@@ -3359,12 +3366,11 @@ async function fetchSidecarCompletion(body, { provider, tracker, world, owner, s
             response = await request(true, true);
         }
     }
-    if (retryPolicy === 'none' || forceWithoutReasoning || !policy.enabled || !response.ok) return response;
-    const payload = await response.clone().json().catch(() => null);
-    if (!sidecarTokenLimitIncomplete(payload)) return response;
-    ExperimentalWorldsHost.notify('Sidecar thought too hard, retrying without reasoning.', 'info');
-    logSidecarConsoleTrace('Sidecar retry without optional reasoning', { model: body.model, provider, finishReason: payload?.choices?.[0]?.finish_reason || payload?.choices?.[0]?.native_finish_reason || '' });
-    return request(true);
+    // Keep the provider's first post-narration completion intact.  In this
+    // diagnostic mode a provider-side completion limit is evidence; silently
+    // retrying it with altered reasoning obscures both the raw response and
+    // the real cause of an incomplete Reader or receipt.
+    return response;
 }
 
 function sidecarCanonicalEntityRecord(world, sess, entityId) {
@@ -4445,9 +4451,8 @@ function expandScenePulseSourceMacros(template, scenePulse = {}, profile = {}) {
 }
 
 // This is the exact temporary panel created by ScenePulse's guided tour.
-// It is a source-panel *schema*, not evidence and not a source of values.
-// Keeping it here means a first Reader call can understand the visible
-// guided-tour controls without ever receiving TOUR_EXAMPLE_DATA as context.
+// It belongs to that explicitly selected tour only. It is never mounted in a
+// live Experimental World and is never included in a Reader request.
 const SCENEPULSE_TOUR_CUSTOM_PANELS = Object.freeze([Object.freeze({
     name: 'RPG Stats (Tour Example)', fields: Object.freeze([
         Object.freeze({ key: 'health', label: 'Health', type: 'meter', desc: "{{user}}'s health 0-100" }),
@@ -4470,17 +4475,22 @@ function scenePulseActiveSourceProfile(protocol = null) {
 
 // Source custom panels are a part of the foreground product, so resolve the
 // same effective schema for the native panel, its declared replacement keys,
-// and the one Reader prompt. The tour's panel is deliberately a schema only:
-// upstream creates it during the tour, but TOUR_EXAMPLE_DATA has no invented
-// health/mana/reputation values to put in its fields.
+// and the one Reader prompt. A live World with no configured schema has no
+// custom panels; the guided-tour panel is created only by the tour itself.
 function scenePulseEffectiveSourceCustomPanels(preferences = {}) {
-    const localPanels = Array.isArray(preferences?.customPanels) ? preferences.customPanels : [];
+    const isGuidedTourPanel = panel => String(panel?.name || '').trim() === 'RPG Stats (Tour Example)';
+    // Older timeline preferences may have persisted the panel that the
+    // vendored guided tour temporarily creates. It is not an author panel and
+    // must not survive into normal ScenePulse play.
+    const localPanels = Array.isArray(preferences?.customPanels)
+        ? preferences.customPanels.filter(panel => !isGuidedTourPanel(panel)) : [];
     if (localPanels.length) return localPanels;
     const profiles = Array.isArray(preferences?.sourceProfiles) ? preferences.sourceProfiles : [];
     const activeId = String(preferences?.sourceActiveProfileId || '');
     const activeProfile = profiles.find(profile => String(profile?.id || '') === activeId) || null;
-    const profilePanels = Array.isArray(activeProfile?.customPanels) ? activeProfile.customPanels : [];
-    return profilePanels.length ? profilePanels : SCENEPULSE_TOUR_CUSTOM_PANELS;
+    const profilePanels = Array.isArray(activeProfile?.customPanels)
+        ? activeProfile.customPanels.filter(panel => !isGuidedTourPanel(panel)) : [];
+    return profilePanels.length ? profilePanels : [];
 }
 
 function scenePulseReaderCustomPanelSchema(world, sess, protocol = null) {
@@ -4488,7 +4498,7 @@ function scenePulseReaderCustomPanelSchema(world, sess, protocol = null) {
     const preferences = normalizeScenePulseWorldsPreferences(workspace?.workspaceUi?.scenePulseWorlds || {});
     // A timeline-local custom schema takes precedence once a user has edited
     // it. Before then, the selected source Profile supplies its own native
-    // schema; only if neither exists do we seed the sealed tour schema.
+    // schema. The guided tour never leaks its temporary schema into play.
     const sourcePanels = scenePulseEffectiveSourceCustomPanels(preferences);
     return sourcePanels.slice(0, 12).map(panel => ({
         name: String(panel?.name || 'Custom Panel').slice(0, 120),
@@ -4574,11 +4584,6 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const model = options.model;
     const sidecarWorld = options.sidecarWorld || world;
     const references = options.references || buildSidecarCanonicalReferenceManifest(world, sess, `${options.playerInput || ''}\n${options.narration || ''}\n${options.handoff || ''}`);
-    // Automatic capacity must accommodate a complete structured reading of a
-    // populated scene. Explicit user caps remain authoritative.
-    const defaultTokens = tracker.reasoning === true ? 7000 : 6000;
-    const configuredTokens = Number(profile.maxTokens) || Number(tracker.readerMaxTokens) || 0;
-    const maxTokens = configuredTokens > 0 ? Math.max(1200, Math.min(100000, Math.trunc(configuredTokens))) : defaultTokens;
     const readerMechanicsFrame = window.ExperimentalWorldsMechanics?.isEnabled?.(world)
         ? String(window.ExperimentalWorldsMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
@@ -4700,8 +4705,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
     const priorEnvelope = options.priorReaderEnvelope || null;
     const contextBudget = Math.max(4000, Number(profile.contextBudget) || 24000);
     const boundedPriorEnvelope = JSON.stringify(priorEnvelope || {}).slice(0, contextBudget);
-    const compactOutputBudget = forceFull ? 7000 : 3600;
-    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse, npcRelationshipGraph. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.\n\n[COMPLETION BUDGET — HARD]\nReturn one complete, parseable JSON object in at most ${compactOutputBudget} tokens. This is an evidence packet, not an explanation: do not repeat the same fact in summary, semantic_interpretation, and scenePulse. For each character, send role/presence/activity plus only the evidence-supported claim arrays that add a distinct fact; use at most one compact item per relevant claim category. scenePulse character cards carry visible source fields; characterIntelligence carries provenance-rich interpretation, so do not duplicate descriptions between them. Omit unsupported optional arrays and empty objects. In bootstrap delta mode with no previous envelope, send supported current scene fields and source records, but keep optional candidates, graph edges, proposals, and duplicate evidence sparse. Before responding, close every array and object: omit lower-priority optional detail rather than returning truncated JSON.`;
+    const profileInstruction = `\n\nREADER SNAPSHOT MODE: ${forceFull ? 'full refresh' : 'delta'}. ${customPanelSchemaChanged ? 'The user-visible custom-panel schema changed since the prior accepted Reader packet, so this one response must be a full compatible projection.' : ''} ${forceFull ? 'Return every scene dimension and required subject coverage.' : 'Return only changed fields, but always return a coverage/status record for every REQUIRED SUBJECT COVERAGE entry; omitted other fields remain unchanged.'}\nPREVIOUS ENVELOPE (bounded to the configured reader context budget):\n${boundedPriorEnvelope}\n\nReturn semantic_interpretation with scene {topic,mood,tension,interactionStyle,sound,environment,description}, location {activeLocationId,localSpace,movement,evidence}, temporal {time,date,day,weather,precision,evidence}, presence {active,nearby,audible,remote,mentioned}, events, changedThisTurn, relationshipShifts, salientObjects, salientLocations, currentThreads, characterIntelligence, candidateStructures, durableProposals, relationshipProposals, provisionalCognition, scenePulse, npcRelationshipGraph. characterIntelligence is REQUIRED for every supplied required subject and keyed by stable canonical ID or stable candidate ID. candidateStructures are pre-canonical derived candidates only: {candidateId,candidateType:character|location|outfit|prop|vehicle|relationship|thread,label,role,description,presence,details,clothingDescription,individualGarments,visibleCondition,canonicalMatchId,confidence,evidence,sourceTurnIds}. Use stable candidate IDs across deltas when the same unnamed person/place/object recurs. Match existing canonical IDs only when lookup evidence supports it; otherwise leave canonicalMatchId empty. A sparse candidate is valid; do not fill omitted clothing, identity, or object details by guessing. Presence is an evidence classification, not a movement command: a mentioned name is not active; an audible or nearby character must remain off the direct cast until narration establishes arrival. Set mode to ${forceFull ? 'full' : 'delta'} and list changed_fields.\n\nReturn one complete, parseable JSON object. This is an evidence packet, not an explanation: do not repeat the same fact in summary, semantic_interpretation, and scenePulse. For each character, send role/presence/activity plus only the evidence-supported claim arrays that add a distinct fact; use at most one compact item per relevant claim category. scenePulse character cards carry visible source fields; characterIntelligence carries provenance-rich interpretation, so do not duplicate descriptions between them. Omit unsupported optional arrays and empty objects. In bootstrap delta mode with no previous envelope, send supported current scene fields and source records, but keep optional candidates, graph edges, proposals, and duplicate evidence sparse. Before responding, close every array and object.`;
     const sourcePresetRole = sourceProfileContext.role || (['system', 'user', 'assistant'].includes(sourcePreset?.systemPromptRole) ? sourcePreset.systemPromptRole : 'system');
     const messages = [{ role: sourcePresetRole, content: readerPrompt + profileInstruction }, { role: 'user', content: `Read this authored beat and return the semantic evidence packet. Include mode (delta or full) and changed_fields.\n\nFor time_evidence, return one object with resolution (established|none|unknown), authored_meaning (the exact narrator wording), source_clock and end_clock as h:mm AM/PM only when both endpoints are established, precision (exact|approximate|semantic), and a brief rationale. Resolve semantic meaning from the authored beat; never use a phrase-to-duration lookup. If either endpoint would be a guess, mark it unknown and leave both blank.` }];
     const tools = sidecarReadOnlyTools();
@@ -4742,7 +4746,6 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         return packet;
     };
     let finalPayload = null;
-    let compactRecoveryAttempted = false;
     const lookupProvenance = [];
     const timeoutController = new AbortController();
     const timeoutId = options.signal ? null : setTimeout(() => timeoutController.abort(), Math.max(10000, Number(profile.timeoutSeconds) * 1000 || 120000));
@@ -4757,7 +4760,12 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
     const finalResponseRound = maxRounds + 1;
     for (let round = 0; round <= finalResponseRound; round++) {
         const forceFinalReaderResponse = round === finalResponseRound;
-        const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: experimentalSafeJsonClone(messages) };
+        const body = {
+            model,
+            stream: false,
+            temperature: 0,
+            messages: experimentalSafeJsonClone(messages)
+        };
         if (!forceFinalReaderResponse) {
             body.tools = tools;
             body.tool_choice = 'auto';
@@ -4766,7 +4774,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         const useNativeJson = sidecarSupportsStructuredJson(provider, model, readerTracker, profile);
         if (useNativeJson) body.response_format = { type: 'json_object' };
         applySidecarReasoning(body, provider, readerTracker, world);
-        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt: readerPrompt, request: experimentalSafeJsonClone(body) });
+        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, prompt: readerPrompt, request: experimentalSafeJsonClone(body) });
         let response = await fetchSidecarCompletion(body, {
             provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal, retryPolicy: profile.retryPolicy
         });
@@ -4810,18 +4818,6 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
                     : `Reader did not account for required subject(s): ${coverage.missing.join(', ') || 'unknown'}.`];
             }
             packet.lookupProvenance = lookupProvenance.slice(-20);
-            // Completion-length failures are transport-shaped, not semantic
-            // disagreement. Re-read the same immutable authored beat once
-            // with an explicit compact budget; do not call Narrator or touch
-            // canonical state while recovering the packet.
-            const finishReason = String(packet.finishReason || '').toLowerCase();
-            const capped = /(^|[_\s-])(length|max[_\s-]?tokens?)([_\s-]|$)/.test(finishReason);
-            if (!packet.valid && capped && !compactRecoveryAttempted) {
-                compactRecoveryAttempted = true;
-                messages.push({ role: 'user', content: `The previous Reader packet reached the provider completion cap and was discarded before JSON could close. Start a fresh standalone JSON packet now. Keep it under ${compactOutputBudget} tokens, preserve required subject coverage and supported ScenePulse fields, and omit optional repetition before omitting any required structure. Return JSON only.` });
-                logSidecarConsoleTrace('Reader compact recovery', { model, provider, finishReason: packet.finishReason, targetTokens: compactOutputBudget });
-                continue;
-            }
             if (timeoutId) clearTimeout(timeoutId);
             return finishReaderMetrics(packet);
         }
@@ -5565,13 +5561,21 @@ function captureExperimentalSidecarOwner(world, sess) {
 function assertExperimentalSidecarOwner(owner) {
     const currentWorld = ExperimentalWorldsState.worlds.find(candidate => candidate.id === ExperimentalWorldsState.activeWorldId);
     const currentSession = getCurrentWorldSession();
+    const currentRestoreGeneration = Number(window.ExperimentalWorldsRestoreGeneration) || 0;
     const valid = ExperimentalWorldsState.view === 'worldPlay'
         && String(currentWorld?.id || '') === owner.worldId
         && String(currentSession?.id || '') === owner.timelineId
         && Number(currentSession?._worldEpoch) === owner.worldEpoch
-        && Number(window.ExperimentalWorldsRestoreGeneration) === owner.restoreGeneration;
+        && currentRestoreGeneration === owner.restoreGeneration;
     if (valid) return;
-    const error = new Error('A late Experimental Worlds Sidecar result was discarded because its captured mode, World, timeline, revision, or restore generation is no longer current.');
+    const mismatch = [
+        ExperimentalWorldsState.view !== 'worldPlay' ? `mode ${ExperimentalWorldsState.view || 'none'}` : '',
+        String(currentWorld?.id || '') !== owner.worldId ? `world ${String(currentWorld?.id || 'none')}` : '',
+        String(currentSession?.id || '') !== owner.timelineId ? `timeline ${String(currentSession?.id || 'none')}` : '',
+        Number(currentSession?._worldEpoch) !== owner.worldEpoch ? `epoch ${Number(currentSession?._worldEpoch) || 0}` : '',
+        currentRestoreGeneration !== owner.restoreGeneration ? `restore ${currentRestoreGeneration}` : ''
+    ].filter(Boolean).join(', ');
+    const error = new Error(`A late Experimental Worlds Sidecar result was discarded because its captured mode, World, timeline, revision, or restore generation is no longer current${mismatch ? ` (${mismatch}).` : '.'}`);
     error.code = 'experimental_world_owner_changed';
     throw error;
 }
@@ -5591,7 +5595,7 @@ async function runSidecarQuestionRepair(world, sess, questionId) {
     const readerModel = readerProfile.model || model;
     const readerProvider = readerProfile.provider ? ExperimentalWorldsHost.normalizedProviderId(readerProfile.provider) : provider;
     const prompt = `[SIDECAR QUESTION REPAIR]\nAnswer only this one unresolved authorial question from the supplied evidence. Do not mutate canon and do not infer adjacent facts. Return JSON only: {"answer":"YES|NO|UNKNOWN|CLARIFICATION","explanation":"brief"}.\nQUESTION: ${JSON.stringify({ id: question.id, prompt: question.prompt, evidence: question.evidence, dependencies: question.dependencies })}\nPACKET: ${JSON.stringify(buildSidecarScenePacket(world, sess))}`;
-    const body = { model, max_tokens: 800, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] };
+    const body = { model, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Provide the narrow repair answer.' }] };
     // A narrow repair should inherit the world's Sidecar reasoning policy;
     // it is still capped tightly so it cannot become an unbounded debate.
     applySidecarReasoning(body, provider, tracker, world);
@@ -5657,6 +5661,36 @@ function queueSidecarSceneOutfitQuestions(world, sess, turnRecord = null) {
         if (question) queued.push(question);
     });
     return queued;
+}
+
+function sidecarNarratedMovementDestination(world, sess, { playerInput, narration, handoff, readerPacket } = {}) {
+    // Sidecar deliberately does not pre-move a player before its two-call
+    // narrator/Reader path. That must not leave a genuine authored trip
+    // behind merely because the player named a person or purpose ("go talk to
+    // Blackbriar") rather than the map label. Authorize it only when three
+    // independent pieces of evidence agree: the player used a locomotion
+    // verb, the Reader resolved an existing canonical location ID, and the
+    // authored narration or handoff explicitly names that location.
+    const action = String(playerInput || '');
+    if (!/\b(?:i|we|let'?s)\s+(?:go|went|walk(?:ed)?|head(?:ed)?|travel(?:l?ed)?|move(?:d)?|run|ran|ride|rode|climb(?:ed)?|return(?:ed)?|enter(?:ed)?|exit(?:ed)?|leave|left|step(?:ped)?|cross(?:ed)?|make\s+(?:my|our)\s+way)\b/i.test(action)) return null;
+    const readLocationId = String(
+        readerPacket?.location?.activeLocationId
+        || readerPacket?.semanticInterpretation?.location?.activeLocationId
+        || readerPacket?.scene?.player_location_id
+        || readerPacket?.semanticInterpretation?.scene?.player_location_id
+        || ''
+    );
+    if (!readLocationId) return null;
+    const view = typeof worldForSession === 'function' ? worldForSession(world, sess) : world;
+    const destination = getLocationRef(view, readLocationId);
+    const origin = String(sess?.playerLocation || '');
+    if (!destination || !origin || destination.id === origin) return null;
+    const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const authoredEvidence = normalize(`${narration || ''}\n${handoff || ''}`);
+    const destinationName = normalize(destination.name);
+    if (!destinationName || !(` ${authoredEvidence} `.includes(` ${destinationName} `))) return null;
+    if (!findWorldTravelPath(view, origin, destination.id)) return null;
+    return destination;
 }
 
 async function runSidecarReconciliation(world, sess, options = {}) {
@@ -5788,6 +5822,15 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const failure = new Error('Sidecar Reader returned no valid scene envelope.');
         failure.code = 'sidecar_reader_invalid_output';
         failure.sidecarDetail = { code: failure.code, stage: 'reader', model: readerModel, provider: readerProvider };
+        // Preserve the rejected response as attempt-local evidence. It stays
+        // outside canonical state and cannot be reused by retry, but Backstage
+        // must expose whether the provider returned blank content, prose, or
+        // malformed JSON instead of concealing the operational cause.
+        if (attempt.turnRecord) {
+            attempt.turnRecord.reader = experimentalSafeJsonClone(readerPacket);
+            const currentAttempt = attempt.turnRecord.attempts?.find(item => item.id === attempt.attemptId);
+            if (currentAttempt) currentAttempt.readerStatus = 'invalid_output';
+        }
         assertExperimentalSidecarOwner(requestOwner);
         failure.sidecarAttempt = failSidecarTurnAttempt(world, sess, attempt, failure, failure.sidecarDetail);
         throw failure;
@@ -5821,6 +5864,17 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const currentAttempt = attempt.turnRecord.attempts?.find(item => item.id === attempt.attemptId);
         if (currentAttempt) currentAttempt.readerStatus = 'succeeded';
     }
+    // A direct map label in the player input remains the ordinary movement
+    // authority. This narrower reconciliation fallback only covers a real
+    // authored arrival where the player named a known destination indirectly.
+    const narratedMovementDestination = sidecarNarratedMovementDestination(world, sess, {
+        playerInput, narration, handoff, readerPacket
+    });
+    const reconciliationReceiptContext = {
+        ...(options.receiptContext || {}),
+        playerMovementAuthorized: options.receiptContext?.playerMovementAuthorized === true || !!narratedMovementDestination,
+        authorizedPlayerDestinationId: String(options.receiptContext?.authorizedPlayerDestinationId || narratedMovementDestination?.id || '')
+    };
     options.onStage?.('reconciling');
     const mechanicsFrame = window.ExperimentalWorldsMechanics?.isEnabled?.(world)
         ? String(window.ExperimentalWorldsMechanics.reconcilerFrame?.(world, sess,
@@ -5832,14 +5886,9 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         : 'Call commit_world_turn exactly once with the native structured receipt; this is the only canonical state call for the turn.';
     const scenePresenceAuthority = `[SCENE PRESENCE AUTHORITY]\nThere are three distinct states: (1) present_character_ids means physical co-presence with the player; (2) nearby_character_ids means an existing NPC is physically absent but explicitly audible, nearby, or materially off-screen involved; (3) a bare name mention is not scene state. When narration or handoff establishes state (2), include the exact canonical ID in the COMPLETE nearby_character_ids ending checksum and nearby_character_context[id] = {mode, reason}. This stores a non-moving scene-presence tag for the next packet and HUD. Never put a nearby NPC in present_character_ids, never move their location for this tag, and never invent this tag from a mere name reference.`;
     const sidecarPrompt = `[SIDECAR RECONCILIATION]\nYou are the semantic reconciliation layer for a roleplay world. The Narrator authored visible prose; do not rewrite it and do not invent missing facts. Reconcile only what the narration and handoff establish against canonical state and mechanical constraints. Mechanics constrain outcomes; they never author them. If something is uncertain, leave canonical state unchanged and let the question lifecycle carry that uncertainty.\n\nThe SIDECAR READER REPORT is a read-only pre-canonical interpretation. It may identify records, derive ephemeral candidates and surface uncertainty, but it cannot itself establish a fact. Prefer its exact resolved IDs over guessing; verify all durable changes against visible narration, handoff and canonical frame. Candidate structures are useful derived scene projection, not canon: keep them scene-local or create a proposal/question unless an existing reducer operation is explicitly supported by authored evidence. Never copy an entire candidate into a Character, Location, Outfit, Item or Vehicle merely to complete a schema.\n\nReturn exactly one native commit_world_turn tool call. This is the only canonical state call for this turn. Preserve the exact actor and location IDs in the supplied reference manifest. A canonical entity that was previously off-scene must be moved/presented under its existing ID, never introduced again. A completed movement needs a completed actor-scoped event. Do not create automatic arrival, relationship, schedule, condition, knowledge, or time changes. Temporal language is evidence, not a lookup table: preserve the Narrator's original wording/range. Do not emit time events or state_updates.time_skip_minutes. The runtime derives the only permitted clock delta from the two reconcilable phases in NARRATOR SCENE HEADER — TEMPORAL EVIDENCE: (1) the inter-turn transition from the previous committed end state to the Narrator's header start-anchor, and (2) the in-turn elapsed time from the header to the response end, taken from an exact handoff source-to-target endpoint pair. The header is the declared start state of this beat, not a contradiction: a header that advances past the canonical pre-turn clock is authored temporal progression when the player input, narration, or handoff establishes the transition. A header that cannot resolve to a plausible forward jump stays uncommitted and belongs in the question lifecycle. "immediate", "brief", and "a few seconds" never move the clock. A no-change beat still requires a valid ending checksum and empty changes.\n\nIf CURRENT SIDECAR PACKET contains reconciliationBacklog, inspect its pinned authored evidence together with the current beat. Only when this receipt actually and safely incorporates a prior failed beat, include state_updates.reconciled_prior_turn_ids with those exact Sidecar turn IDs. Otherwise leave the backlog unresolved.\n\nReconcile across the FF semantic domains: temporal (two-phase, header-anchored), location and completed movement, cast presence and appearance, character state, objectives and quests, relationship posture (explicit commitments only), inventory and economy, world conditions, traversal and vehicles, open questions, scene boundary, cognition consistency (per-character epistemics), recovery obligations, and promotion candidates for genuinely new entities and places.\nWhere the SIDECAR READER REPORT carries controlled_character_evidence, treat user_explicit_action and user_explicit_dialogue as primary player-authored evidence and narrator_paraphrase as presentation only. Never canonize a persistent character trait from a single Narrator flourish; higher-order interpretations need repeated evidence or explicit authorial confirmation.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCANONICAL PRE-TURN CLOCK EVIDENCE (12-hour display; no automatic turn tick):\n${JSON.stringify(clockEvidence)}\n\nNARRATOR SCENE HEADER — TEMPORAL EVIDENCE (two-phase: previous committed end -> header start-anchor -> response end):\n${JSON.stringify(temporalBreakdown)}\n\nWORLD MECHANICS FRAME (engine-owned state; the engine owns phases and dose arithmetic — you supply evidence only):\n${mechanicsFrame || '(no tracked mechanics state this turn)'}\n\nCANONICAL ENTITY AND LOCATION REFERENCES:\n${JSON.stringify(references)}\n\nSIDECAR READER REPORT:\n${JSON.stringify(readerPacket)}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 24000))}\n\nNARRATOR HANDOFF:\n${handoff || '(missing — commit only independently established facts, otherwise a no-op receipt)'}`;
-    const configuredTokens = Number(tracker.maxTokens) || 0;
     const outfitAuthority = `${scenePresenceAuthority}\n\n[COMMIT TRANSPORT]\n${commitTransportInstruction}\n\n[NPC OUTFIT AUTHORITY] When visible narration establishes an NPC clothing change, place the exact current description in that NPC entity_updates.outfit and optionally provide outfit_name. The canonical reducer matches an existing wardrobe entry or creates a scene outfit. Never change the player outfit from Sidecar, and never infer clothing changes from portraits or off-screen assumptions.`;
-    const maxTokens = configuredTokens > 0
-        ? Math.max(1800, Math.min(100000, Math.trunc(configuredTokens)))
-        : (tracker.reasoning === true ? 8000 : 6000);
     const body = {
         model, stream: false,
-        max_tokens: maxTokens,
         temperature: 0,
         messages: [{ role: 'system', content: `${sidecarPrompt}\n\n${outfitAuthority}\n\n[NARRATOR HANDOFF STATUS]\n${options.handoffComplete === false ? 'INCOMPLETE OR MISSING. Use visible narration and canonical evidence conservatively; never invent the missing authorial interpretation.' : 'COMPLETE.'}\n\n[CURRENT SIDECAR PACKET — Background World Agent entries and unresolved handoffs are evidence/proposals, never silently canonical]\n${JSON.stringify(priorPacket)}\n\n[PINNED PRIOR RECONCILIATION EVIDENCE — unresolved authored beats, not automatically canonical]\n${JSON.stringify(priorReconciliationEvidence)}` }, { role: 'user', content: 'Reconcile this authored turn now. Emit the native commit tool call before the output budget ends.' }],
         tools: commitTool ? [commitTool] : [],
@@ -5857,7 +5906,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     // one compact receipt_json declaration, no optional reasoning, no
     // Narrator call, and no alternate mutation route.
     const compactCommitRecoveryBody = {
-        model, stream: false, max_tokens: maxTokens, temperature: 0,
+        model, stream: false, temperature: 0,
         messages: [{
             role: 'system', content: `[COMPACT SIDECAR COMMIT RECOVERY]\nReturn exactly one commit_world_turn function call now. The visible Narration is immutable and has already been accepted; do not write prose, call a Reader, invent evidence, or mutate through any route other than this receipt. Reconcile only durable facts established by the supplied evidence. If a detail is uncertain, leave it unchanged. Preserve the exact canonical IDs. The receipt_json argument must contain one complete valid JSON receipt and an ending checksum.\n\nCANONICAL PRE-TURN FRAME:\n${JSON.stringify(preFrame)}\n\nCLOCK EVIDENCE:\n${JSON.stringify(clockEvidence)}\n\nTEMPORAL EVIDENCE:\n${JSON.stringify(temporalBreakdown)}\n\nCANONICAL REFERENCES:\n${JSON.stringify(references)}\n\nACCEPTED READER EVIDENCE:\n${JSON.stringify({ summary: readerPacket?.summary || '', temporal: readerPacket?.temporal || readerPacket?.timeEvidence || {}, location: readerPacket?.location || {}, presence: readerPacket?.presence || {}, scene: readerPacket?.scene || {}, eventClaims: (readerPacket?.eventClaims || []).slice(0, 24), relationshipPostures: (readerPacket?.relationshipPostures || []).slice(0, 24), characterIntelligence: (readerPacket?.characterIntelligence || []).slice(0, 16), controlledCharacterEvidence: (readerPacket?.controlledCharacterEvidence || []).slice(0, 12), scenePulse: readerPacket?.scenePulse || readerPacket?.semanticInterpretation?.scenePulse || {} })}\n\nPLAYER INPUT:\n${JSON.stringify(String(options.playerInput || '').slice(0, 6000))}\n\nVISIBLE NARRATION:\n${JSON.stringify(narration.slice(0, 16000))}\n\nNARRATOR HANDOFF:\n${String(handoff || '').slice(0, 6000) || '(missing — commit only independently established facts)'}`
         }, {
@@ -5866,7 +5915,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         tools: [compactSidecarCommitTool(commitTool)], tool_choice: 'required', parallel_tool_calls: false
     };
     logSidecarConsoleTrace('Reconciliation request', {
-        model, provider, maxTokens, compactCommitTransport,
+        model, provider, compactCommitTransport,
         prompt: sidecarPrompt,
         request: experimentalSafeJsonClone(body)
     });
@@ -5906,7 +5955,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const initialFinishReason = choice.finish_reason || choice.native_finish_reason || '';
         if (!toolCall && /length|max[_\s-]?tokens?|token_limit|incomplete/i.test(String(initialFinishReason))) {
             compactRecoveryAttempted = true;
-            logSidecarConsoleTrace('Reconciliation compact commit recovery', { model, provider, maxTokens, finishReason: initialFinishReason });
+            logSidecarConsoleTrace('Reconciliation compact commit recovery', { model, provider, finishReason: initialFinishReason });
             const compactResponse = await fetchSidecarCompletion(compactCommitRecoveryBody, {
                 provider, tracker, world, owner: sidecarWorld, signal: options.signal,
                 retryPolicy: 'none', forceWithoutReasoning: true
@@ -5938,7 +5987,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         if (!toolCall) {
             const truncated = choice.finish_reason === 'length' || choice.native_finish_reason === 'length';
             const missing = new Error(truncated
-                ? `Sidecar exhausted its ${maxTokens}-token output budget before emitting commit_world_turn.`
+                ? 'Sidecar reached its provider completion limit before emitting commit_world_turn.'
                 : 'Sidecar responded without the required native commit_world_turn tool call.');
             missing.code = truncated ? 'sidecar_output_truncated' : 'missing_commit_tool_call';
             missing.sidecarDetail = {
@@ -5958,7 +6007,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         const receipt = unwrapSidecarCommitReceipt(toolCall.function?.arguments || '{}');
         const explicitEndpointEvidence = applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporalBreakdown, readerPacket);
         const receiptContext = {
-            ...(options.receiptContext || {}),
+            ...reconciliationReceiptContext,
             sidecarTemporalAuthority: true,
             authorizedTimeSkipMinutes: explicitEndpointEvidence?.minutes || 0,
             authorizedInterTurnMinutes: explicitEndpointEvidence?.interTurnMinutes || 0,
@@ -6686,7 +6735,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             try {
                 const response = await fetch(ExperimentalWorldsHost.providerApiBase(jobProvider) + '/chat/completions', {
                     method: 'POST', headers: { ...ExperimentalWorldsHost.providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAttributionHeaders(jobProvider) },
-                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                         ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                         messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this character cognition.' }] },
                         jobWorld, { scope: 'sidecar' }))
@@ -6722,7 +6771,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
             try {
                 const response = await fetch(ExperimentalWorldsHost.providerApiBase(jobProvider) + '/chat/completions', {
                     method: 'POST', headers: { ...ExperimentalWorldsHost.providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAttributionHeaders(jobProvider) },
-                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                    body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                         ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}), messages: [{ role: 'system', content: prompt }, { role: 'user', content: `Consolidate this ${label}.` }] },
                         jobWorld, { scope: 'sidecar' }))
                 });
@@ -6753,7 +6802,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
         try {
             const response = await fetch(ExperimentalWorldsHost.providerApiBase(jobProvider) + '/chat/completions', {
                 method: 'POST', headers: { ...ExperimentalWorldsHost.providerAuthHeaders(jobProvider), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.providerAttributionHeaders(jobProvider) },
-                body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: Math.max(300, Number(memoryDefaults.consolidationMaxTokens) || 1400), temperature: Number(memoryDefaults.consolidationTemperature) || 0,
+                body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, temperature: Number(memoryDefaults.consolidationTemperature) || 0,
                     ...(memoryDefaults.consolidationReasoning ? { reasoning_effort: 'low' } : {}),
                     messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Consolidate this episode.' }] },
                     jobWorld, { scope: 'sidecar' }))
@@ -6809,7 +6858,6 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     const prompt = `[SIDECAR CONVERSATION]\nYou are the out-of-world continuity and state-refinement sidecar. Speak naturally and briefly to the world author. This is not roleplay, and a conversation must not itself advance time, progress a journey, or move characters. Answer from canonical state where possible. The author may deliberately establish a fact without narrating it; preserve that direct-user provenance, do not invent adjacent facts. Implied people and places are evidence-backed provisional records, not canonical entities: explain their status, but only propose promotion when the author explicitly asks.\n\nReturn one JSON object only:\n{\n  "reply": "plain-language answer for the author",\n  "resolutions": [{"question_id":"stable open question ID", "answer":"authorial answer", "status":"resolved|deferred"}],\n  "proposed_receipt": null\n}\nUse proposed_receipt only for an explicit authorial refinement that needs existing canonical reducers, including a clearly requested clock correction. It must be a complete native commit_world_turn receipt, and must never turn a conversation into an automatic tick, arrival, traversal progression, presence change, or speculative fact. If no state change is requested, use null. Use only IDs from CANONICAL REFERENCES.${recoveryInstruction}\n\nCURRENT SCENE PACKET:\n${JSON.stringify(packet)}\n\nINCOMPLETE COMMIT JOURNAL (only for explicit recovery; do not replay it):\n${incompleteCommit ? JSON.stringify(incompleteCommit).slice(0, 18000) : '(none)'}\n\nCANONICAL REFERENCES:\n${JSON.stringify(buildSidecarCanonicalReferenceManifest(world, sess, userText))}\n\nOPEN QUESTIONS:\n${JSON.stringify(openQuestions)}\n\nIMPLIED RECORDS AWAITING REVIEW:\n${JSON.stringify([...(protocol.provisionalLocations || []), ...(protocol.provisionalEntities || [])].filter(record => record.status !== 'promoted').slice(-20))}\n\nRECENT SIDECAR CONVERSATION:\n${JSON.stringify((protocol.conversations || []).slice(-12))}\n\nAUTHOR MESSAGE:\n${JSON.stringify(String(userText || '').slice(0, 6000))}`;
     const body = {
         model, stream: false,
-        max_tokens: Math.max(1200, Number(tracker.maxTokens) || 3000),
         temperature: 0.2,
         messages: [{ role: 'system', content: prompt + workspaceContract }, { role: 'user', content: 'Respond as Sidecar.' }]
     };
@@ -8019,7 +8067,9 @@ function scenePulseAcceptedHandoff(world, sess) {
         status: 'accepted_live',
         source: `${retainingLastKnownScene ? 'Last known accepted' : 'Accepted'} Horde Reader handoff · ${settled.id}`,
         lastKnown: retainingLastKnownScene,
-        fixtureScenePulse: fixture.scenePulse,
+        // The sealed fixture remains available only to the explicit guided
+        // tour. It is not part of the live ScenePulse tracker handoff.
+        tourFixtureScenePulse: fixture.scenePulse,
         scenePulse: experimentalSafeJsonClone(acceptedScenePulse),
         previousScenePulse: predecessor?.envelope?.scenePulse ? experimentalSafeJsonClone(predecessor.envelope.scenePulse) : null,
         deltaScenePulse: experimentalSafeJsonClone(deltaScenePulse),
@@ -8310,9 +8360,8 @@ function scenePulseWorldsHandoffPreferences(world, rawPreferences = {}) {
         const source = worldMediaSource(world, assetId);
         if (source) portraitSources[identity] = source;
     });
-    // The source runtime receives the resolved schema, not a separate Horde
-    // fallback. This makes the upstream tour panel a real mounted surface and
-    // lets a compact Reader delta replace one of its keys when evidence exists.
+    // The source runtime receives the resolved live schema, not a tutorial
+    // fallback. The vendored guided tour creates its temporary panel itself.
     return { ...preferences, customPanels: experimentalSafeJsonClone(scenePulseEffectiveSourceCustomPanels(preferences)), portraitSources };
 }
 
@@ -9311,7 +9360,7 @@ function scenePulseHumanOverlay(protocol, handoff) {
         ...handoff,
         id: `${handoff?.id || 'scenepulse'}:${currentEdit.id}`,
         status: 'accepted_human',
-        fixtureScenePulse: experimentalSafeJsonClone(handoff?.fixtureScenePulse || handoff?.scenePulse || {}),
+        fixtureScenePulse: experimentalSafeJsonClone(handoff?.fixtureScenePulse || {}),
         // The native source panel renders the human selected snapshot. The
         // unmodified Sidecar reading remains separately available for the
         // visible comparison rather than being overwritten in place.
@@ -10229,7 +10278,7 @@ async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
     const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...ExperimentalWorldsHost.authHeaders() },
         body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({
-            model: config.model || structuredModelFor(world), max_tokens: 1400,
+            model: config.model || structuredModelFor(world),
             messages: [
                 { role: 'system', content: 'You revise a background World Agent proposal. Return ONLY JSON with the same proposal shape. Keep it grounded in the supplied digest, never affect the player, never create unsupported entities, and do not narrate prose.' },
                 { role: 'user', content: JSON.stringify({ guidance, currentProposal: proposal, digest: buildWorldAgentDigest(world, sess) }) }
@@ -10628,10 +10677,6 @@ async function recoverWorldLedgerEntry(world, modelId, userInput, narrative, sig
                 model: modelId,
                 stream: false,
                 temperature: 0,
-                // Reasoning models spend this budget on hidden thinking before
-                // emitting a single visible token. At 120 they return empty
-                // content every time, which silently killed the chronicle.
-                max_tokens: 900,
                 messages: ExperimentalWorldsHost.sanitizeMessagesForProvider([
                     {
                         role: 'system',
@@ -10657,7 +10702,7 @@ async function recoverWorldLedgerEntry(world, modelId, userInput, narrative, sig
             // Content empty but the model clearly worked: it spent the whole
             // budget reasoning. Say so rather than failing invisibly.
             console.warn(`Horde Engine: chronicle classifier returned no content${
-                message?.reasoning ? ' (budget consumed by hidden reasoning — raise max_tokens)' : ''
+                message?.reasoning ? ' (provider reasoning produced no visible classification)' : ''
             }; falling back to local recovery.`);
             return '';
         }

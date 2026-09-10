@@ -223,11 +223,12 @@
         const prefs = handoff?.uiPreferences || {};
         const panels = prefs.panels || {};
         const features = prefs.features || {};
-        // The host has already resolved the exact active ScenePulse schema
-        // (including the upstream tour panel when no profile overrides it).
-        // Do not recreate a Horde-local copy here: a schema is foreground
-        // source configuration, while any values remain tracker evidence.
-        const customPanels = Array.isArray(prefs.customPanels) ? clone(prefs.customPanels) : [];
+        // The host resolves the live ScenePulse schema. The vendored tour
+        // creates its own temporary panel, so an older persisted tour panel
+        // must not become a normal World preference after the tour is over.
+        const isGuidedTourPanel = panel => String(panel?.name || '').trim() === 'RPG Stats (Tour Example)';
+        const customPanels = Array.isArray(prefs.customPanels)
+            ? clone(prefs.customPanels).filter(panel => !isGuidedTourPanel(panel)) : [];
         const tracker = materializeNativeTracker(handoff);
         const portraitSources = plain(prefs.portraitSources) ? prefs.portraitSources : {};
         const charPortraits = {};
@@ -245,7 +246,11 @@
             panels: {}, fieldToggles: {}, dashCards: {}, customPanels: clone(customPanels)
         };
         const profiles = Array.isArray(prefs.sourceProfiles) && prefs.sourceProfiles.length
-            ? clone(prefs.sourceProfiles) : [defaultProfile];
+            ? clone(prefs.sourceProfiles).map(profile => ({
+                ...profile,
+                customPanels: Array.isArray(profile?.customPanels)
+                    ? profile.customPanels.filter(panel => !isGuidedTourPanel(panel)) : []
+            })) : [defaultProfile];
         const activeProfileId = profiles.some(profile => profile?.id === prefs.sourceActiveProfileId)
             ? prefs.sourceActiveProfileId : profiles[0].id;
         return {
@@ -334,12 +339,9 @@
         const clear = new Set([...(handoff?.clearFields || []), ...(live.clearFields || [])].map(String));
         const replace = new Set([...(handoff?.replaceCollections || []), ...(live.replaceCollections || [])].map(String));
         if (clear.has(key) || replace.has(key)) return true;
-        const fixture = plain(handoff?.fixtureScenePulse) ? handoff.fixtureScenePulse : {};
-        if (key === 'relationships' && own(fixture, key) && !hasCompleteSourceRelationshipProjection(live[key])) return false;
-        // A sparse packet's accidental blank must never erase a populated
-        // source feature. A named clear or collection replacement is the
-        // handoff's explicit decision to replace it with an empty value.
-        return !own(fixture, key) || hasValue(live[key]);
+        // A sparse packet stays sparse. Live ScenePulse must never retain a
+        // tutorial value merely because the Reader omitted a field.
+        return hasValue(live[key]);
     }
 
     function humanAuthoredField(handoff, key) {
@@ -366,9 +368,9 @@
         if (handoff?.status === 'accepted_fixture') return 'example';
         if (handoff?.status === 'accepted_human') {
             if (humanAuthoredField(handoff, key)) return 'authored';
-            return nativeFieldHasAcceptedValue(humanSourceBaseline(handoff), key) ? 'reader' : 'example';
+            return nativeFieldHasAcceptedValue(humanSourceBaseline(handoff), key) ? 'reader' : 'unavailable';
         }
-        return nativeFieldHasAcceptedValue(handoff, key) ? 'reader' : 'example';
+        return nativeFieldHasAcceptedValue(handoff, key) ? 'reader' : 'unavailable';
     }
 
     // ScenePulse always renders the controlled person as the Relationship
@@ -416,11 +418,9 @@
     }
 
     // Relationship cards are compound source objects: showing only a name
-    // makes the vendored renderer synthesize an "unknown / ?" card. That is
-    // not a partially-live ScenePulse relationship; it is a broken fixture
-    // replacement. Keep the sealed, fully populated relationship support
-    // until Sidecar has supplied every source-visible relationship dimension,
-    // or has explicitly cleared/replaced the collection.
+    // makes the vendored renderer synthesize an "unknown / ?" card. Keep the
+    // validator for source data, but never substitute a tutorial relationship
+    // when a live Reader packet is sparse.
     function hasCompleteSourceRelationshipProjection(value) {
         if (!Array.isArray(value) || !value.length) return false;
         const meterValue = meter => {
@@ -431,45 +431,6 @@
             && ['name', 'relType', 'relPhase', 'timeTogether', 'milestone'].every(key => String(record[key] || '').trim())
             && ['affection', 'trust', 'desire', 'stress', 'compatibility'].every(key => meterValue(record[key]))
             && ['affectionLabel', 'trustLabel', 'desireLabel', 'stressLabel', 'compatibilityLabel'].every(key => String(record[key] || '').trim()));
-    }
-
-    // `filterForView()` quite properly keeps the source roster and
-    // relationship cards in lockstep. During field-by-field adoption, a live
-    // Charlotte card plus a still-fixture relationship collection would
-    // otherwise cause that source invariant to manufacture a Charlotte
-    // "unknown" relationship and hide every populated tutorial card. Keep
-    // the fixture's matching character support in this *display* snapshot
-    // until a complete live relationship collection arrives. The raw accepted
-    // handoff stays untouched for Inspect and no Horde registry is involved.
-    function preserveFixtureRelationshipDisplaySupport(tracker, handoff) {
-        if (handoff?.status !== 'accepted_live' || nativeFieldHasAcceptedValue(handoff, 'relationships')) return tracker;
-        const fixture = stripControlledSourceRecords(clone(handoff?.fixtureScenePulse || {}));
-        const relationNames = new Set((Array.isArray(fixture.relationships) ? fixture.relationships : [])
-            .map(record => String(record?.name || '').trim().toLowerCase()).filter(Boolean));
-        if (!relationNames.size) return tracker;
-        const existing = new Set((Array.isArray(tracker.characters) ? tracker.characters : [])
-            .map(record => String(record?.name || '').trim().toLowerCase()).filter(Boolean));
-        const support = (Array.isArray(fixture.characters) ? fixture.characters : [])
-            .filter(record => relationNames.has(String(record?.name || '').trim().toLowerCase()))
-            .filter(record => !existing.has(String(record?.name || '').trim().toLowerCase()));
-        if (support.length) tracker.characters = [...(Array.isArray(tracker.characters) ? tracker.characters : []), ...clone(support)];
-        // This is already a deliberate source-compatible view: its fallback
-        // cards are paired with their populated fixture relationships, so the
-        // upstream filter must not discard them or invent empty stubs.
-        tracker._spViewFiltered = true;
-        return tracker;
-    }
-
-    function fixtureDisplaySupportFields(handoff) {
-        const fields = new Set();
-        if (handoff?.status !== 'accepted_live' || nativeFieldHasAcceptedValue(handoff, 'relationships')) return fields;
-        const fixtureRelationships = Array.isArray(handoff?.fixtureScenePulse?.relationships)
-            ? handoff.fixtureScenePulse.relationships : [];
-        if (fixtureRelationships.length) {
-            fields.add('relationships');
-            fields.add('characters');
-        }
-        return fields;
     }
 
     // A few model families have returned a branch category in `name` while
@@ -508,11 +469,9 @@
         return next;
     }
 
-    // ScenePulse's fixture is a complete source tracker. Worlds declares the
-    // scene-facing field families that a settled Sidecar packet may support,
-    // but this function still adopts them one field at a time: omission or an
-    // unnamed blank leaves the source value visibly in place. It is not a
-    // blanket "live mode" replacement and never reaches into a Horde registry.
+    // Worlds declares the scene-facing field families that a settled Sidecar
+    // packet may support. Live ScenePulse contains only accepted Reader data;
+    // the sealed source fixture is reserved for the explicitly selected tour.
     function sourceRelationshipPhaseForRenderer(value) {
         const raw = String(value || '').trim();
         if (!raw) return raw;
@@ -532,25 +491,25 @@
     }
 
     function materializeNativeTracker(handoff) {
-        const fixture = clone(handoff?.fixtureScenePulse || handoff?.scenePulse || {});
+        const fixture = clone(handoff?.fixtureScenePulse || handoff?.tourFixtureScenePulse || {});
         if (handoff?.status === 'accepted_fixture') return adaptSourceRelationshipPhases(stripControlledSourceRecords(fixture));
-        if (handoff?.status === 'accepted_human') return adaptSourceRelationshipPhases(stripControlledSourceRecords(clone(handoff?.scenePulse || fixture)));
+        if (handoff?.status === 'accepted_human') return adaptSourceRelationshipPhases(stripControlledSourceRecords(clone(handoff?.scenePulse || {})));
         const authority = nativeFieldAuthority(handoff);
-        if (!authority.size) return adaptSourceRelationshipPhases(stripControlledSourceRecords(fixture));
         const live = plain(handoff?.scenePulse) ? handoff.scenePulse : {};
+        if (!authority.size) return adaptSourceRelationshipPhases(stripControlledSourceRecords(clone(live)));
+        const tracker = {};
         const clear = new Set([...(handoff?.clearFields || []), ...(live.clearFields || [])].map(String));
         const replace = new Set([...(handoff?.replaceCollections || []), ...(live.replaceCollections || [])].map(String));
         Object.entries(live).forEach(([key, value]) => {
             if (key === 'clearFields' || key === 'replaceCollections' || value === undefined || !authority.has(key)) return;
-            if (own(fixture, key) && !clear.has(key) && !replace.has(key)
-                && (!hasValue(value) || (key === 'relationships' && !hasCompleteSourceRelationshipProjection(value)))) return;
-            fixture[key] = clone(value);
+            if (!clear.has(key) && !replace.has(key) && !hasValue(value)) return;
+            tracker[key] = clone(value);
         });
         clear.forEach(key => {
             if (key.includes('.') || !authority.has(key)) return;
-            fixture[key] = emptyCollectionKeys.has(key) ? [] : '';
+            tracker[key] = emptyCollectionKeys.has(key) ? [] : '';
         });
-        return adaptSourceRelationshipPhases(repairSourceStoryIdeaShape(preserveFixtureRelationshipDisplaySupport(stripControlledSourceRecords(fixture), handoff)));
+        return adaptSourceRelationshipPhases(repairSourceStoryIdeaShape(stripControlledSourceRecords(tracker)));
     }
 
     function snapshotMeta(kind, handoff, index, extras = {}) {
@@ -652,8 +611,7 @@
     function sourceMetadata(handoff) {
         const snapshots = {};
         const history = Array.isArray(handoff?.history) ? handoff.history : [];
-        if (handoff?.status === 'accepted_fixture' || !history.length
-            || (handoff?.status !== 'accepted_human' && !nativeFieldAuthority(handoff).size)) {
+        if (handoff?.status === 'accepted_fixture') {
             const fixture = materializeNativeTracker(handoff);
             // The upstream guided tour paints its own illustrative 12-node
             // timeline. Do not fabricate twelve identical compatibility
@@ -668,7 +626,7 @@
                     label: fixtureSnapshotCount === 1 ? 'Tutorial example' : `Tutorial ${index + 1} of 12`, snapshotId: `tour-${key}`
                 }));
             }
-        } else {
+        } else if (history.length) {
             history.forEach((entry, index) => {
                 const humanHistory = String(entry?.id || '').startsWith('scene-pulse-human-edit-');
                 const historical = materializeNativeTracker({
@@ -685,6 +643,12 @@
                     createdAt: entry?.createdAt
                 }));
             });
+        } else {
+            // An unopened or as-yet-unread live World has an empty source
+            // tracker, not an illustrative cafe scene.
+            addSnapshot(snapshots, 1000, materializeNativeTracker(handoff), snapshotMeta('live-empty', handoff, 0, {
+                label: 'Awaiting first ScenePulse reading', snapshotId: 'live-empty'
+            }));
         }
         const currentKey = Object.keys(snapshots).map(Number).sort((a, b) => a - b).at(-1);
         const current = snapshots[String(currentKey)] || {};
@@ -709,7 +673,8 @@
                 _spAliasesInitMigrated: true,
                 _spCharTrimMigrated: true,
                 _spNameCanonMigrated: true,
-                chatPanels: clone((handoff?.uiPreferences?.customPanels || [])),
+                chatPanels: clone((handoff?.uiPreferences?.customPanels || [])
+                    .filter(panel => String(panel?.name || '').trim() !== 'RPG Stats (Tour Example)')),
                 ...(graphCache ? { relationshipGraph: graphCache } : {})
             },
             __experimentalWorldsCurrentKey: currentKey,
@@ -1339,7 +1304,7 @@
             ...(editedHandoff || {}),
             id: `${editedHandoff?.id || 'scenepulse'}:${historyEntry.id || 'human-edit'}`,
             status: 'accepted_human',
-            fixtureScenePulse: clone(editedHandoff?.fixtureScenePulse || editedHandoff?.scenePulse || {}),
+            fixtureScenePulse: clone(editedHandoff?.fixtureScenePulse || {}),
             sidecarScenePulse: clone(editedHandoff?.scenePulse || {}),
             scenePulse: clone(after || edit.after || {}),
             history: priorHistory,
@@ -1513,14 +1478,14 @@
         }
         if (sidecarHas) {
             return {
-                route: 'Tutorial support retained',
-                tone: 'fixture',
+                route: 'Reader field unavailable',
+                tone: 'review',
                 reason: suppliedNow
-                    ? 'The handoff named an empty or incomplete value without an explicit clear, so the populated ScenePulse tutorial value remains visible.'
-                    : 'This Sidecar value is not adopted for the selected ScenePulse field; the source value stays visible until its handoff route is complete.'
+                    ? 'The handoff named an empty or incomplete value without an explicit clear, so ScenePulse leaves the field empty.'
+                    : 'This Sidecar value is not adopted for the selected ScenePulse field; the source field remains empty until its handoff route is complete.'
             };
         }
-        if (scenePulseHas) return { route: 'Tutorial support retained', tone: 'fixture', reason: 'Sidecar has not supplied this field yet, so ScenePulse remains fully supported by its tutorial state.' };
+        if (scenePulseHas) return { route: 'Live source value', tone: 'review', reason: 'This value is present in the selected live source snapshot.' };
         return { route: 'Sidecar-only', tone: 'review', reason: 'Sidecar has a field ScenePulse is not currently showing. Keep both visible while its source mapping is decided.' };
     }
 
@@ -1664,7 +1629,8 @@
         const rows = reviews.map(({ key, state, review }) => {
             const source = nativeFieldSource(handoff, key);
             const sourceLabel = source === 'reader' ? 'settled Reader field'
-                : source === 'authored' ? 'direct authored state' : 'sealed tutorial support';
+                : source === 'authored' ? 'direct authored state'
+                    : source === 'unavailable' ? 'no settled Reader field' : 'sealed tutorial support';
             return `<tr class="sp-horde-compare-${state} sp-horde-compare-route-${escapeHtml(review.tone)}"><th>${escapeHtml(key)}</th><td>${comparisonValueMarkup(native[key], sourceLabel)}</td><td>${comparisonValueMarkup(sidecar[key], 'Sidecar accepted projection')}</td><td><strong>${escapeHtml(review.route)}</strong><small>${escapeHtml(review.reason)}</small></td><td>${escapeHtml(state)}</td></tr>`;
         }).join('');
         const reviewCount = reviews.filter(item => item.review.tone === 'review').length;
@@ -2257,8 +2223,7 @@
         Object.entries(sections).forEach(([sectionKey, fields]) => {
             const section = panel.querySelector(`.sp-section[data-key="${sectionKey}"]`);
             if (!section) return;
-            const fallbackCount = fields.filter(field => nativeFieldSource(current.handoff, field) === 'example'
-                || current.fixtureDisplaySupport?.has(field)).length;
+            const fallbackCount = fields.filter(field => nativeFieldSource(current.handoff, field) === 'example').length;
             section.querySelector('.sp-horde-example-badge')?.remove();
             if (!fallbackCount) return;
             const header = section.querySelector('.sp-section-header');
@@ -2780,7 +2745,6 @@
         modules.thoughts.updateThoughts(normalized);
         current.nativeTracker = clone(normalized);
         current.selectedHandoff = handoffForCurrentSnapshot(current);
-        current.fixtureDisplaySupport = fixtureDisplaySupportFields(current.selectedHandoff || current.handoff);
         current.sidecarTracker = clone(current.selectedHandoff?.status === 'accepted_human'
             ? (current.handoff?.sidecarScenePulse || {})
             : (current.selectedHandoff?.scenePulse || {}));
@@ -2841,7 +2805,7 @@
     }
 
     function fixturePreviewHandoff(current) {
-        const fixtureScenePulse = clone(current?.handoff?.fixtureScenePulse || current?.handoff?.scenePulse || {});
+        const fixtureScenePulse = clone(current?.handoff?.fixtureScenePulse || current?.handoff?.tourFixtureScenePulse || {});
         if (!Object.keys(fixtureScenePulse).length) throw new Error('The ScenePulse example scene is unavailable.');
         // Preserve source configuration (theme, profile, schema) while
         // stripping every live reading, history, review and graph. The
