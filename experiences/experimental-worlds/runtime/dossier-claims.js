@@ -5,9 +5,9 @@
  * world-specific vocabulary. Profiles may register presentation/adapters later;
  * the stored records remain portable canonical evidence.
  */
-(function attachHordeDossierClaims(root, factory) {
-    root.HordeDossierClaims = factory();
-}(typeof globalThis !== 'undefined' ? globalThis : this, function buildHordeDossierClaims() {
+(function attachExperimentalWorldsDossierClaims(root, factory) {
+    root.ExperimentalWorldsDossierClaims = factory();
+}(typeof globalThis !== 'undefined' ? globalThis : this, function buildExperimentalWorldsDossierClaims() {
     'use strict';
 
     const VERSION = 1;

@@ -662,7 +662,7 @@ function composeWorldImageRequest(world, subject = null, guideOverride = null, o
 // Compatibility bridge for the historical helper script.  The helper may
 // still be loaded by older exports, but it must never become a second prompt
 // architecture.
-globalThis.HordeCanonicalImageComposer = Object.freeze({
+globalThis.ExperimentalWorldsCanonicalImageComposer = Object.freeze({
     composeWorldImageRequest,
     composeWorldImageSpecification,
     fiboStructuredPromptFromSpecification

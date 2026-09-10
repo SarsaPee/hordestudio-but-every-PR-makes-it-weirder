@@ -25,6 +25,7 @@ const ambientExperimentalRuntime = /\b(?:HordeSidecar(?:Hooks|Mode|Timeline|Prom
 const hostExperienceLeak = /\bExperimentalWorldsState\.(?:characters|chats|personas|activePersonaId|activeSessionId|activeCharId|activeRoomId|rooms)\b|\bwindow\.HordeMultiplayer(?:Engine)?\b|\bgetCurrentSession\s*\(/;
 const hostUtilityLeak = /(?<![\w.])(?:escapeHTML|cssUrl|displayInitials|isPlainObject|safeJsonClone|normalizePersona|personaPromptText|extractJSON|safeParseJSONRepair|normalizeUploadedImage|optimizeImage)\s*\(/;
 const hostWorldFlightLeak = /(?<![.\w])(?:worldGenController|worldTurnInProgress|sidecarRetryInProgress|scenePulseReaderRefreshController)\b/;
+const ambiguousWorldSubsystemLeak = /\b(?:HordeDossierClaims|HordeCanonicalImageComposer)\b/;
 for (const file of ownedRuntime) {
     const source = readFileSync(file, 'utf8');
     assert(!hostStateLeak.test(source), `${file} reaches Experimental World state through the host object`);
@@ -35,6 +36,7 @@ for (const file of ownedRuntime) {
     if (!file.endsWith('/experimental-runtime-compat.js')) {
         assert(!hostWorldFlightLeak.test(source), `${file} reaches a World request flag owned by the host bootstrap instead of Experimental Worlds' runtime coordinator`);
     }
+    assert(!ambiguousWorldSubsystemLeak.test(source), `${file} leaves an Experimental World subsystem under an ambient Horde-global name`);
 }
 
 const adapter = readFileSync('host-adapters/experimental-worlds/experimental-worlds-host-adapter.js', 'utf8');

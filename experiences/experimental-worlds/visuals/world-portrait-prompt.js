@@ -85,7 +85,7 @@
     }
 
     function worldNpcPortraitRequest(world, npc, presentation = world?.presentation || {}, options = {}) {
-        const canonical = typeof globalThis !== 'undefined' ? globalThis.HordeCanonicalImageComposer : null;
+        const canonical = typeof globalThis !== 'undefined' ? globalThis.ExperimentalWorldsCanonicalImageComposer : null;
         if (canonical?.composeWorldImageRequest) {
             const request = canonical.composeWorldImageRequest(world, {
                 name: npc?.name,

@@ -775,7 +775,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     }
     const preparedDossierClaims = mechanicsEngine
         ? { enabled: false, claims: [], rejected: [] }
-        : (window.HordeDossierClaims?.prepareCommit?.(world, sess, validation, {
+        : (window.ExperimentalWorldsDossierClaims?.prepareCommit?.(world, sess, validation, {
             origin: sidecarSource ? 'sidecar' : 'narrator'
         }) || { enabled: false, claims: [], rejected: [] });
     let actionResult;
@@ -830,7 +830,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     audit.receiptFingerprint = receiptFingerprint;
     audit.npc_outfit_updates = npcOutfitUpdates;
     audit.nearby_character_context = nearbyContext;
-    const dossierClaimResult = window.HordeDossierClaims?.applyPreparedCommit?.(world, sess, preparedDossierClaims)
+    const dossierClaimResult = window.ExperimentalWorldsDossierClaims?.applyPreparedCommit?.(world, sess, preparedDossierClaims)
         || { applied: [], rejected: [] };
     if (preparedDossierClaims.enabled) {
         audit.dossier_claims = {

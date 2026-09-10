@@ -123,7 +123,7 @@
         if (!object(state.sceneTelemetry)) state.sceneTelemetry = {};
         // The dossier ledger is a separate authority layer, but shares the
         // session lifecycle so snapshots and branch restores stay atomic.
-        globalThis.HordeDossierClaims?.initializeWorld?.(world, session);
+        globalThis.ExperimentalWorldsDossierClaims?.initializeWorld?.(world, session);
         return state;
     }
 
@@ -496,7 +496,7 @@
                 reason: verdict.reason || ''
             };
         }).filter(Boolean);
-        const dossier = globalThis.HordeDossierClaims?.prepareCommit?.(world, session, validation, { origin: options?.origin || 'narrator' })
+        const dossier = globalThis.ExperimentalWorldsDossierClaims?.prepareCommit?.(world, session, validation, { origin: options?.origin || 'narrator' })
             || { enabled: false, accepted: true, claims: [], patches: [], errors: [] };
         if (dossier.enabled && !dossier.accepted) {
             // Same drop-don't-void rule as the records above. A dossier claim
@@ -779,7 +779,7 @@
                 }
             });
         });
-        globalThis.HordeDossierClaims?.applyPreparedCommit?.(world, session, prepared.dossier);
+        globalThis.ExperimentalWorldsDossierClaims?.applyPreparedCommit?.(world, session, prepared.dossier);
         state.cognition = state.cognition.slice(-1200);
         state.inventory.observations = state.inventory.observations.slice(-1200);
         markCheckpointSuperseded(world, session);
@@ -845,7 +845,7 @@
             prior.unresolvedThreads = card.unresolvedThreads;
         }
         state.sceneCards = state.sceneCards.slice(-500);
-        globalThis.HordeDossierClaims?.finalizeCommit?.(world, session, validation, audit, prepared.dossier);
+        globalThis.ExperimentalWorldsDossierClaims?.finalizeCommit?.(world, session, validation, audit, prepared.dossier);
         return card;
     }
 
@@ -1797,7 +1797,7 @@
     // real consumer and works from the candidates directly.
     function promptContext(world, session, registry) {
         const candidates = contextCandidates(world, session, registry, { audience: 'narrator' });
-        const dossierContext = globalThis.HordeDossierClaims?.promptContext?.(
+        const dossierContext = globalThis.ExperimentalWorldsDossierClaims?.promptContext?.(
             world, session, list(world.entities).filter(entity => entity?.type === 'npc'), {
                 worldTime: session.worldTime || ''
             }
@@ -2051,7 +2051,7 @@
             }, required: ['actor_id', 'kind', 'text', 'basis'] },
             description: 'Durable observation/communication/interpretation/belief/memory/reassessment with accepted provenance chains.'
         };
-        globalThis.HordeDossierClaims?.extendReceiptSchema?.(parameters);
+        globalThis.ExperimentalWorldsDossierClaims?.extendReceiptSchema?.(parameters);
         return parameters;
     }
 

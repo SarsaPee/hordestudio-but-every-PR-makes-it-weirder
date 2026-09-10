@@ -81,6 +81,8 @@ const restoreHostContract = source => [
     .replaceAll('global.ExperimentalWorldsDom.portalRoot().appendChild', 'document.body.appendChild')
     .replaceAll('ExperimentalWorldsSidecar', 'HordeSidecar')
     .replaceAll('ExperimentalWorldsRpgMechanics', 'HordeRpgMechanics')
+    .replaceAll('ExperimentalWorldsDossierClaims', 'HordeDossierClaims')
+    .replaceAll('ExperimentalWorldsCanonicalImageComposer', 'HordeCanonicalImageComposer')
     .replaceAll('ExperimentalWorldsState.', 'state.')
     .replaceAll('ExperimentalWorldsHost.persist()', 'saveState()')
     .replaceAll('window.HordeLabs()', 'window.HordeLabs');
@@ -100,7 +102,9 @@ const restorePrivateUtilities = source => [
     ['experimentalExtractJSON', 'extractJSON'],
     ['experimentalSafeParseJSONRepair', 'safeParseJSONRepair'],
     ['experimentalNormalizeUploadedImage', 'normalizeUploadedImage'],
-    ['experimentalOptimizeImage', 'optimizeImage']
+    ['experimentalOptimizeImage', 'optimizeImage'],
+    ['ExperimentalWorldsDossierClaims', 'HordeDossierClaims'],
+    ['ExperimentalWorldsCanonicalImageComposer', 'HordeCanonicalImageComposer']
 ].reduce((next, [from, to]) => next.replaceAll(from, to), source);
 
 const relocatedPath = 'experiences/experimental-worlds/visuals/world-visual-media-core.js';

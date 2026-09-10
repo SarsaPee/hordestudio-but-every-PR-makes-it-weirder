@@ -1394,8 +1394,8 @@ function resetWorldTimeline(world, sess) {
     window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline(world, sess, {
         newWorld: world?.sidecarConfig?.mode === 'sidecar' && !sess.history?.length && sess.setupComplete !== true
     });
-    window.HordeDossierClaims?.normalizeWorldConfig(world, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
-    window.HordeDossierClaims?.ensureSession(world, sess);
+    window.ExperimentalWorldsDossierClaims?.normalizeWorldConfig(world, { newWorld: world?.sidecarConfig?.mode === 'sidecar' });
+    window.ExperimentalWorldsDossierClaims?.ensureSession(world, sess);
     return sess;
 }
 
@@ -1522,8 +1522,8 @@ function getCurrentWorldSession(options = {}) {
             // the author explicitly chooses migration in Studio.
             newWorld: options.newWorld === true && !session.history?.length && session.setupComplete !== true
         });
-        window.HordeDossierClaims?.normalizeWorldConfig(world);
-        window.HordeDossierClaims?.ensureSession(world, session);
+        window.ExperimentalWorldsDossierClaims?.normalizeWorldConfig(world);
+        window.ExperimentalWorldsDossierClaims?.ensureSession(world, session);
     }
 
     return session;
@@ -3499,7 +3499,7 @@ function openNpcDossier(npcId) {
     const goalProgress = livingClamp(entState.goalProgress || 0, 0, 100);
     const goalAutonomy = ['paused', 'low', 'medium', 'high'].includes(entState.goalAutonomy) ? entState.goalAutonomy : 'medium';
     const relationships = Object.entries(sess.npcRelationships || {}).filter(([key]) => key.split('|').includes(npc.id));
-    const dossierClaims = window.HordeDossierClaims?.history?.(world, sess, npc.id)?.active || [];
+    const dossierClaims = window.ExperimentalWorldsDossierClaims?.history?.(world, sess, npc.id)?.active || [];
 
     document.getElementById('npc-dossier-title').textContent = `📇 ${npc.name}`;
     const content = document.getElementById('npc-dossier-content');
@@ -3587,7 +3587,7 @@ function openNpcDossier(npcId) {
 
     content.querySelectorAll('[data-dossier-claim-dismiss]').forEach(button => {
         button.onclick = async () => {
-            if (!window.HordeDossierClaims?.suppressClaim(world, sess, button.dataset.dossierClaimDismiss, 'Dismissed from NPC dossier')) return;
+            if (!window.ExperimentalWorldsDossierClaims?.suppressClaim(world, sess, button.dataset.dossierClaimDismiss, 'Dismissed from NPC dossier')) return;
             await ExperimentalWorldsHost.persist();
             openNpcDossier(npcId);
         };
@@ -6577,7 +6577,7 @@ Characters in this world are NOT omniscient. They only know what they have perso
     const labsWorldHint = labsWorldLens?.candidate && Number(labsWorldLens.candidate.confidence) >= 0.55
         ? `\n\n[PRIVATE MICRO WORLD SENSOR — VALIDATED CLASSIFICATION, NOT CANON]\n${JSON.stringify(labsWorldLens.candidate)}\nThis can clarify actor, intent, destination, outfit, explicit time and completion scope only. The graph still owns routes and travel time. It cannot create facts${sidecarMode ? ' or replace Sidecar reconciliation' : ', replace commit_world_turn'}, or override canonical state. If it conflicts with the player's words or canonical frame, ignore it.`
         : '';
-    const dossierClaimsContext = window.HordeDossierClaims?.promptContext?.(world, sess, presentNPCs) || '';
+    const dossierClaimsContext = window.ExperimentalWorldsDossierClaims?.promptContext?.(world, sess, presentNPCs) || '';
 
     let systemPrompt = sidecarMode ? '' : `${world.dmPrompt}${personaContext}${storyPrefsPrompt}${knowledgeBarrier}${labsWorldHint}
 
@@ -7596,8 +7596,8 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             removeToolFields(['npc_goal_updates', 'world_events', 'location_state_updates', 'faction_updates', 'player_preference_updates']);
         }
         if (!ruleModules.commerce && !ruleModules.livingWorld) removeToolFields(['economy_updates']);
-        if (window.HordeDossierClaims?.isEnabled?.(world)) {
-            window.HordeDossierClaims.extendReceiptSchema(worldStateTool.function.parameters);
+        if (window.ExperimentalWorldsDossierClaims?.isEnabled?.(world)) {
+            window.ExperimentalWorldsDossierClaims.extendReceiptSchema(worldStateTool.function.parameters);
         }
         if (window.HordeWorldMechanics?.isEnabled?.(world)) {
             window.HordeWorldMechanics.extendReceiptSchema(world, worldStateTool.function.parameters);
