@@ -5,9 +5,9 @@ checkpoint. It is deliberately a working freeze, not the checkpoint tag: the
 remaining browser acceptance and controlled data-cutover evidence must still
 pass before `checkpoint/experimental-worlds-native-17.0` may be created.
 
-- Source revision: `b9e69e2` (`integration/experimental-worlds-three-pass`)
+- Source revision: `4f9f8b9` (`integration/experimental-worlds-three-pass`)
 - Manifest: `docs/experimental-worlds/experimental-core-manifest.txt`
-- SHA-256: `f7e8a4f7f77d2eeef3b6836b6d2e5401f1f30403fbd578cb7a79f24b18806fe7`
+- SHA-256: `7926e74e9e74768b655121c8e878386fb9b80b9bb0d6b3ab5e396519dc759537`
 - Generator: `node scripts/hash-experimental-core.mjs <revision>`
 
 The generator hashes the sorted manifest paths and their exact Git blobs. It
@@ -16,5 +16,9 @@ registration, migrations, tests, documentation, acceptance evidence and
 packaging are intentionally outside the hash. The frozen domain now includes
 the unchanged pinned ScenePulse renderer, styles, and locales under the
 mode-owned vendor path, rather than loading them from a repository-level
-folder. Any subsequent core-byte change requires a new authorized domain
-change; the later 17.4 pass must adapt only the excluded host-facing seam.
+folder. This working revision also closes the last discovered ambient lore and
+plain-object helper lookups with exact private copies, so those source moves
+are part of the documented Experimental boundary rather than hidden host
+dependencies. Any subsequent core-byte change requires a new authorized
+domain change; the later 17.4 pass must adapt only the excluded host-facing
+seam.
