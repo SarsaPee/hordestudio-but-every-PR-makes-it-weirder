@@ -19,11 +19,14 @@ import hashlib
 import ipaddress
 import json
 import math
+import platform
 import mimetypes
 import os
 import re
 import secrets
 import socket
+import shutil
+import subprocess
 import stat
 import sys
 import threading
@@ -60,16 +63,18 @@ _load_env(ENV_FILE)
 
 # ── Network configuration ───────────────────────────────────
 LISTEN_HOST = os.environ.get("HORDE_SERVER_LISTEN_HOST", "127.0.0.1")
-HOST = os.environ.get("HORDE_SERVER_HOST", "127.0.0.1")
-PORT = int(os.environ.get("HORDE_SERVER_PORT", "43127"))
+HOST = os.environ.get("HORDE_SERVER_HOST", "localhost")
+PORT = int(os.environ.get("HORDE_SERVER_PORT", "42069"))
 CALLBACK_URL = f"http://{HOST}:{PORT}/oauth/callback"
 CLIENT_NAME = "Horde Studio Local MCP Bridge"
-BRIDGE_BUILD = "20260909-experimental-worlds-pass0-v1"
+BRIDGE_BUILD = "20260908-mcp-" + hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
 APP_INSTANCE_ID = hashlib.sha256(str(APP_DIR).encode("utf-8")).hexdigest()[:16]
 MAX_RESPONSE_BYTES = 40 * 1024 * 1024
 MAX_VIDEO_BYTES = 160 * 1024 * 1024
 FAL_VIDEO_JOBS: dict[str, dict[str, Any]] = {}
 FAL_VIDEO_JOBS_LOCK = threading.Lock()
+HOTAPI_VIDEO_JOBS: dict[str, dict[str, Any]] = {}
+HOTAPI_VIDEO_JOBS_LOCK = threading.Lock()
 
 def allowed_origins(port: int) -> set[str]:
     origins = {
@@ -112,33 +117,6 @@ STATIC_FILES = {
     "/index.html": ("index.html", "text/html"),
     "/style.css": ("style.css", "text/css"),
     "/app.js": ("app.js", "text/javascript"),
-    "/experiences/stock-worlds-17-pass0/runtime.js": ("experiences/stock-worlds-17-pass0/runtime.js", "text/javascript"),
-    "/experiences/stock-worlds-17-pass0/style.css": ("experiences/stock-worlds-17-pass0/style.css", "text/css"),
-    "/experiences/experimental-worlds/runtime/sidecar-core.js": ("experiences/experimental-worlds/runtime/sidecar-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/experimental-runtime-compat.js": ("experiences/experimental-worlds/runtime/experimental-runtime-compat.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/experimental-vector-memory.js": ("experiences/experimental-worlds/runtime/experimental-vector-memory.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js": ("experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/world-message-input.js": ("experiences/experimental-worlds/runtime/world-message-input.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/world-studio-core.js": ("experiences/experimental-worlds/runtime/world-studio-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/world-play-core.js": ("experiences/experimental-worlds/runtime/world-play-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/world-session-core.js": ("experiences/experimental-worlds/runtime/world-session-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/world-intelligence-core.js": ("experiences/experimental-worlds/runtime/world-intelligence-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/world-protocol-core.js": ("experiences/experimental-worlds/runtime/world-protocol-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/experimental-worlds-repository.js": ("experiences/experimental-worlds/runtime/experimental-worlds-repository.js", "text/javascript"),
-    "/experiences/experimental-worlds/runtime/dossier-claims.js": ("experiences/experimental-worlds/runtime/dossier-claims.js", "text/javascript"),
-    "/experiences/experimental-worlds/mechanics/world-mechanics.js": ("experiences/experimental-worlds/mechanics/world-mechanics.js", "text/javascript"),
-    "/experiences/experimental-worlds/visuals/world-portrait-prompt.js": ("experiences/experimental-worlds/visuals/world-portrait-prompt.js", "text/javascript"),
-    "/experiences/experimental-worlds/visuals/world-visual-media-core.js": ("experiences/experimental-worlds/visuals/world-visual-media-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/visuals/world-visual-provider-core.js": ("experiences/experimental-worlds/visuals/world-visual-provider-core.js", "text/javascript"),
-    "/experiences/experimental-worlds/visuals/world-visual-editor-core.js": ("experiences/experimental-worlds/visuals/world-visual-editor-core.js", "text/javascript"),
-    "/host-adapters/experimental-worlds/visual-media-host-adapter.js": ("host-adapters/experimental-worlds/visual-media-host-adapter.js", "text/javascript"),
-    "/host-adapters/experimental-worlds/experimental-worlds-host-adapter.js": ("host-adapters/experimental-worlds/experimental-worlds-host-adapter.js", "text/javascript"),
-    "/host-adapters/experimental-worlds/experimental-worlds-state-adapter.js": ("host-adapters/experimental-worlds/experimental-worlds-state-adapter.js", "text/javascript"),
-    "/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js": ("experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js", "text/javascript"),
-    "/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js": ("experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js", "text/javascript"),
-    "/experiences/experimental-worlds/styles/scene-pulse-worlds.css": ("experiences/experimental-worlds/styles/scene-pulse-worlds.css", "text/css"),
-    "/experiences/experimental-worlds/styles/experimental-worlds-isolated.css": ("experiences/experimental-worlds/styles/experimental-worlds-isolated.css", "text/css"),
-    "/experiences/experimental-worlds/styles/world-visuals-and-sidecar.css": ("experiences/experimental-worlds/styles/world-visuals-and-sidecar.css", "text/css"),
     "/video-worlds.js": ("video-worlds.js", "text/javascript"),
     "/presets.js": ("presets.js", "text/javascript"),
     "/boot-diagnostics.js": ("boot-diagnostics.js", "text/javascript"),
@@ -160,6 +138,10 @@ STATIC_FILES = {
     "/multiplayer.js": ("multiplayer.js", "text/javascript"),
     "/multiplayer-engine.js": ("multiplayer-engine.js", "text/javascript"),
     "/rpg-mechanics.js": ("rpg-mechanics.js", "text/javascript"),
+    "/vh-world-engine.js": ("vh-world-engine.js", "application/javascript"),
+    "/vh-simulation-core.js": ("vh-simulation-core.js", "application/javascript"),
+    "/vh-conversation-engine.js": ("vh-conversation-engine.js", "application/javascript"),
+    "/vh-activity-engine.js": ("vh-activity-engine.js", "text/javascript"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/worlds/policy-panic.horde_world": ("Policy Panic at Bramble and Pike.horde_world", "application/json"),
     "/Start%20Horde%20Studio.command": ("Start Horde Studio.command", "application/octet-stream"),
@@ -173,13 +155,6 @@ STATIC_FILES = {
 STATIC_MEDIA_ROOTS = (
     ("/assets/bundled/", APP_DIR / "assets" / "bundled"),
     ("/assets/worlds/", APP_DIR / "assets" / "worlds"),
-    # ScenePulse is a pinned, local product import.  Its source stylesheet
-    # intentionally imports its ordered component CSS by relative path, so
-    # this explicit tree is needed for the one integrated Horde runtime to
-    # serve the vendor CSS and the narrow Horde bridge.  The same resolved-
-    # path containment check below prevents arbitrary workspace exposure.
-    ("/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/",
-     APP_DIR / "experiences" / "experimental-worlds" / "scenepulse" / "vendor" / "ScenePulse"),
 )
 
 if os.name == "nt":
@@ -191,12 +166,7 @@ else:
 AUTH_FILE = CONFIG_DIR / "mcp-auth.json"
 ALWAYS_ON_QUEUE_FILE = CONFIG_DIR / "always-on-queue.json"
 VIDEO_WORLD_MEDIA_DIR = CONFIG_DIR / "video-world-media"
-SHARED_LIBRARY_FILE = CONFIG_DIR / "shared-library.json"
-MAX_SHARED_LIBRARY_SNAPSHOT_BYTES = 28 * 1024 * 1024
-SHARED_LIBRARY_HISTORY_LIMIT = 3
-MAX_SHARED_LIBRARY_HISTORY_BYTES = 48 * 1024 * 1024
-SHARED_LIBRARY_DEVICE_TTL_SECONDS = 15 * 60
-SHARED_LIBRARY_MAX_ACTIVE_DEVICES = 24
+
 store_lock = threading.RLock()
 pending_auth: dict[str, dict[str, Any]] = {}
 mcp_sessions: dict[str, dict[str, str]] = {}
@@ -228,6 +198,7 @@ class AlwaysOnRuntime:
         self.usage_day = ""
         self.usage_count = 0
         self.in_flight: set[str] = set()
+        self.lease_generation = 0
         self.last_error = ""
         self.consecutive_failures = 0
         self._restore_queue()
@@ -299,14 +270,21 @@ class AlwaysOnRuntime:
             safe_headers = {str(k)[:100]: str(v)[:4000] for k, v in list(headers.items())[:30]}
             cleaned[human_id] = {
                 "id": human_id,
+                "simulation": raw.get("simulation") if isinstance(raw.get("simulation"), dict) else None,
+                "snapshotId": str(raw.get("snapshotId") or "")[:100],
+                "baseMessageIds": raw.get("baseMessageIds") if isinstance(raw.get("baseMessageIds"), list) else [],
+                "contextSize": max(1024, int(raw.get("contextSize") or 8192)),
                 "name": str(raw.get("name") or "Virtual Human")[:160],
                 "timelineId": str(raw.get("timelineId") or "")[:100],
                 "messagesEnabled": raw.get("messagesEnabled") is True,
                 "socialEnabled": raw.get("socialEnabled") is True,
                 "messageDueAt": max(0, int(raw.get("messageDueAt") or 0)),
+                "plannedMessageDueAt": max(0, int(raw.get("messageDueAt") or 0)),
                 "socialDueAt": max(0, int(raw.get("socialDueAt") or 0)),
                 "hasSpoken": raw.get("hasSpoken") is True,
-                "context": str(raw.get("context") or "")[:16000],
+                "stateRevision": max(0, int(raw.get("stateRevision") or 0)),
+                "initiativeReason": str(raw.get("initiativeReason") or "")[:1000],
+                "context": str(raw.get("context") or "")[:18000],
                 "recentMessages": raw.get("recentMessages") if isinstance(raw.get("recentMessages"), list) else [],
                 "provider": {
                     "baseUrl": base_url,
@@ -318,6 +296,7 @@ class AlwaysOnRuntime:
                 "nextAllowedAt": max(0, int(raw.get("nextAllowedAt") or 0)),
             }
         with self.lock:
+            self.lease_generation += 1
             self.enabled = body.get("enabled") is True
             self.paused = body.get("paused") is True
             self.pause_reason = "paused by user" if self.paused else ""
@@ -348,6 +327,8 @@ class AlwaysOnRuntime:
                 "consecutiveFailures": self.consecutive_failures,
                 "queuePersistent": True,
                 "credentialsPersistent": False,
+                "sharedSimulation": bool(self._node_path()),
+                "simulationError": "" if self._node_path() else "Install Node.js 18+ or set HORDE_NODE_EXECUTABLE to enable closed-browser simulation.",
             }
 
     def pending_events(self, client_id: str) -> list[dict[str, Any]]:
@@ -390,6 +371,65 @@ class AlwaysOnRuntime:
                 with self.lock:
                     self.last_error = str(error)[:500]
 
+    def _node_path(self) -> str | None:
+        configured = os.environ.get("HORDE_NODE_EXECUTABLE")
+        if configured and Path(configured).is_file():
+            return configured
+        bundled = APP_DIR / "runtime" / f"{platform.system().lower()}-{platform.machine().lower()}" / ("node.exe" if os.name == "nt" else "node")
+        return str(bundled) if bundled.is_file() else shutil.which("node")
+
+    def _simulation(self, human: dict[str, Any], now_ms: int, commit: dict | None = None) -> dict | None:
+        snapshot = human.get("simulation")
+        if not isinstance(snapshot, dict):
+            return None
+        node = self._node_path()
+        if not node:
+            raise RuntimeError("Shared VH simulation needs Node.js 18+ (PATH or HORDE_NODE_EXECUTABLE).")
+        payload = {**snapshot, "now": now_ms, "commit": commit}
+        result = subprocess.run([node, str(APP_DIR / "vh-host-worker.js")],
+                                input=json.dumps(payload), text=True, capture_output=True, timeout=30, cwd=APP_DIR)
+        if result.returncode:
+            raise RuntimeError("Simulation failed: " + result.stderr[:300])
+        state = json.loads(result.stdout)
+        route = state.get("routeRequest")
+        if route and not commit:
+            try:
+                route_result = maps_request("route", route)
+            except Exception:
+                route_result = {}
+            # The shared worker validates journey identity and applies the
+            # fresh estimate; only the journey outcome is persisted, not a
+            # reusable provider route cache.
+            followup = {"companion": state["companion"], "messages": state["messages"],
+                        "experience": snapshot.get("experience", {}), "now": now_ms,
+                        "routeResult": {"id": route["id"], "result": route_result}}
+            routed = subprocess.run([node, str(APP_DIR / "vh-host-worker.js")],
+                                    input=json.dumps(followup), text=True, capture_output=True, timeout=30, cwd=APP_DIR)
+            if routed.returncode:
+                raise RuntimeError("Route application failed in shared simulation.")
+            state = json.loads(routed.stdout)
+
+        human["simulation"] = {"companion": state["companion"], "messages": state["messages"],
+                               "experience": snapshot.get("experience", {})}
+        human["allowOpening"] = bool(state.get("openingDueAt"))
+        human["pendingIds"] = state["pendingIds"]
+        human["replyIds"] = state["replyIds"]
+        human["present"] = state["present"]
+        human["dialogueGuidance"] = state.get("dialogueGuidance", "")
+        human["feeling"] = state["feeling"]
+        if state["pendingIds"]:
+            human["messageDueAt"] = now_ms if state["due"] else 0
+            human["hasSpoken"] = True
+        elif not state["available"]:
+            human["messageDueAt"] = 0
+        elif state.get("openingDueAt"):
+            human["messageDueAt"] = state["openingDueAt"]
+        elif state.get("followupDueAt"):
+            human["messageDueAt"] = state["followupDueAt"]
+        elif not human.get("messageDueAt"):
+            human["messageDueAt"] = human.get("plannedMessageDueAt", 0)
+        return state
+
     def _tick(self) -> None:
         now_ms = int(time.time() * 1000)
         candidate: tuple[str, str, dict[str, Any]] | None = None
@@ -401,22 +441,25 @@ class AlwaysOnRuntime:
             for human_id, human in self.humans.items():
                 if human_id in self.in_flight or now_ms < int(human.get("nextAllowedAt") or 0):
                     continue
-                if human.get("messagesEnabled") and human.get("hasSpoken") and 0 < human.get("messageDueAt", 0) <= now_ms:
+                if human.get("simulation"):
+                    self._simulation(human, now_ms)
+                if human.get("messagesEnabled") and (human.get("hasSpoken") or human.get("allowOpening")) and 0 < human.get("messageDueAt", 0) <= now_ms:
                     candidate = (human_id, "message", dict(human)); break
-                if human.get("socialEnabled") and 0 < human.get("socialDueAt", 0) <= now_ms:
+                if human.get("socialEnabled") and (not human.get("simulation") or human.get("present", {}).get("availability") == "available") and 0 < human.get("socialDueAt", 0) <= now_ms:
                     candidate = (human_id, "social_status", dict(human)); break
             if not candidate:
                 return
+            generation = self.lease_generation
             self.in_flight.add(candidate[0])
         human_id, kind, human = candidate
         try:
             result = self._generate(human, kind)
             next_minutes = max(self.minimum_minutes, min(1440, int(result.get("next_check_minutes") or self.minimum_minutes)))
             with self.lock:
-                lease_reclaimed = (time.time() - self.last_heartbeat) < self.handoff_seconds
+                lease_reclaimed = generation != self.lease_generation or (time.time() - self.last_heartbeat) < self.handoff_seconds
                 agency_paused = self.paused
                 live = self.humans.get(human_id)
-                if live:
+                if live and not lease_reclaimed:
                     live["nextAllowedAt"] = now_ms + next_minutes * 60000
                     live["messageDueAt" if kind == "message" else "socialDueAt"] = now_ms + next_minutes * 60000
                 self.usage_count += 1
@@ -427,12 +470,30 @@ class AlwaysOnRuntime:
                 # The user may reopen Horde Studio while a provider request is
                 # already in flight. The browser immediately regains authority;
                 # discarding this late result prevents a duplicated reply.
-                if not lease_reclaimed and not agency_paused and decision == kind and text:
+                if not lease_reclaimed and not agency_paused and self.enabled and live is not None and decision == kind and text:
                     event_id = f"always_{secrets.token_hex(12)}"
+                    consumed = list(human.get("replyIds") or []) if kind == "message" else []
+                    snapshot = self._simulation(human, now_ms, {"state": result.get("state") or {}, "text": text} if kind == "message" else None) if human.get("simulation") else None
+                    if snapshot:
+                        for message in human["simulation"]["messages"]:
+                            if message.get("id") in consumed:
+                                message.update({"awaitingReply": False, "replyDueAt": 0, "readAt": now_ms, "deliveryState": "read"})
+                        if kind == "message":
+                            human["simulation"]["messages"].append({"id": event_id, "role": "companion", "type": "text", "text": text, "timestamp": now_ms})
+                        live["simulation"] = human["simulation"]
+                        # At most one outstanding transaction per snapshot.
+                        live["messagesEnabled"] = False
+                        live["socialEnabled"] = False
                     self.events[event_id] = {
                         "id": event_id, "kind": kind, "humanId": human_id,
                         "timelineId": human.get("timelineId", ""), "text": text,
-                        "createdAt": now_ms, "reason": str(result.get("reason") or "")[:500]
+                        "createdAt": now_ms, "reason": str(result.get("reason") or "")[:500],
+                        "stateRevision": human.get("stateRevision", 0),
+                        "snapshotId": human.get("snapshotId", ""),
+                        "baseMessageIds": human.get("baseMessageIds", []),
+                        "consumedMessageIds": consumed,
+                        "affectCommitted": bool(snapshot and snapshot.get("affectCommitted")),
+                        "simulation": human.get("simulation") if snapshot else None
                     }
                 self._persist_queue()
         except Exception as error:
@@ -455,19 +516,28 @@ class AlwaysOnRuntime:
         provider = human["provider"]
         if not provider.get("model"):
             raise RuntimeError("No text model was selected.")
-        purpose = ("Decide whether to send one natural autonomous text message now."
+        purpose = ("Reply naturally to the pending player messages. Continue the actual conversation; do not merely comment on it." if kind == "message" and human.get("pendingIds") else "Decide whether to send one natural autonomous text message now."
                    if kind == "message" else
                    "Decide whether to publish one short text-only social status now.")
         system = (
             "You are Horde Studio's bounded background agency worker. " + purpose +
             " Stay fully in character and grounded in the supplied facts. Do not invent a major event. "
+            " The only valid reason for acting now is: " + str(human.get("initiativeReason") or "none supplied") + ". "
             "Return JSON only: {\"decision\":\"" + kind + "|none\",\"text\":\"...\","
             "\"reason\":\"brief private reason\",\"next_check_minutes\":120}. "
-            "Choosing none is correct when contact would feel forced.\n\n" + human.get("context", "")
+            "For a real pending reply, answer it unless your boundaries require taking space. Choosing none is correct when autonomous contact would feel forced. "
+            "Also return state with evidence-backed valence_change, arousal_change, mood_label, relationship_change, and optional conversation (topic, openQuestion, status, intention, optional reaction with summary, exact evidence quote from the current player message, lingerMinutes 5-360, and optional engagement 0-100 reflecting interest in continuing this exchange, not affection or agreement). A reaction is a temporary subjective impression, never a new fact or a second emotional adjustment. Zero affect is valid.\n\n" + human.get("context", "")
+            + ("\n\n" + human.get("dialogueGuidance", "") if kind == "message" else "")
+            + "\n\nCURRENT SIMULATION (supersedes earlier time/activity): " + json.dumps({"present": human.get("present"), "feeling": human.get("feeling")})
         )
         recent = []
-        for item in human.get("recentMessages", [])[-12:]:
+        source = human.get("simulation", {}).get("messages", human.get("recentMessages", []))
+        for item in source[-24:]:
             if not isinstance(item, dict):
+                continue
+            if item.get("invalidated") or item.get("role") not in ("user", "companion"):
+                continue
+            if human.get("simulation") and item.get("role") == "user" and item.get("awaitingReply") and item.get("id") not in human.get("replyIds", []):
                 continue
             role = "assistant" if item.get("role") == "companion" else "user"
             text = str(item.get("text") or "")[:1000]
@@ -479,6 +549,13 @@ class AlwaysOnRuntime:
             "model": provider["model"], "messages": [{"role": "system", "content": system}, *recent],
             "temperature": provider["temperature"], "max_tokens": provider["maxTokens"]
         }
+        if human.get("simulation"):
+            fitted = subprocess.run([self._node_path(), str(APP_DIR / "vh-host-worker.js")],
+                                    input=json.dumps({"request": payload, "contextSize": human.get("contextSize", 8192)}),
+                                    text=True, capture_output=True, timeout=30, cwd=APP_DIR)
+            if fitted.returncode:
+                raise RuntimeError(fitted.stderr[:500])
+            payload = json.loads(fitted.stdout)["body"]
         status, _, data = json_request(provider["baseUrl"] + "/chat/completions", method="POST",
                                        headers={"Content-Type": "application/json", **provider["headers"]},
                                        payload=payload, timeout=120)
@@ -489,10 +566,10 @@ class AlwaysOnRuntime:
                    if isinstance(data, dict) else "")
         if isinstance(content, list):
             content = "".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
-        match = re.search(r"\{[\s\S]*\}", str(content or ""))
-        if not match:
-            raise RuntimeError("Background model did not return JSON.")
-        parsed = json.loads(match.group(0))
+        value = str(content or "").strip()
+        if value.startswith("```") and value.endswith("```"):
+            value = value.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {"decision": "none"}
 
 
@@ -1080,233 +1157,6 @@ class MultiplayerRuntime:
 multiplayer_runtime = MultiplayerRuntime()
 
 
-class SharedLibraryStore:
-    """Crash-safe, versioned recovery snapshots shared by Horde browsers."""
-
-    def __init__(self, path: Path = SHARED_LIBRARY_FILE) -> None:
-        self.path = path
-        self.lock = threading.RLock()
-
-    @staticmethod
-    def _default() -> dict[str, Any]:
-        return {"version": 1, "revision": 0, "snapshot": None, "fingerprint": "",
-                "updatedAt": 0, "updatedBy": "", "history": [], "activeDevices": []}
-
-    @staticmethod
-    def _clean_device(value: Any, field: str, maximum: int) -> str:
-        cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(value or "")).strip()[:maximum]
-        if not cleaned:
-            raise ValueError(f"{field} is required.")
-        return cleaned
-
-    @staticmethod
-    def _clean_snapshot(snapshot: Any) -> tuple[dict[str, Any], str, int]:
-        if not isinstance(snapshot, dict):
-            raise ValueError("Shared library snapshot must be a JSON object.")
-        try:
-            clean = json.loads(json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False))
-        except (TypeError, ValueError) as error:
-            raise ValueError("Shared library snapshot is not valid JSON.") from error
-        # Migration rollbacks are local-only recovery state. They can contain
-        # entire worlds and their own earlier rollback lists, which makes a
-        # mirrored snapshot recursively copy itself on every publish.
-        worlds = clean.get("worlds")
-        if isinstance(worlds, list):
-            for world in worlds:
-                if isinstance(world, dict):
-                    world.pop("sidecarMigrationBackups", None)
-        encoded = json.dumps(clean, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        if len(encoded) > MAX_SHARED_LIBRARY_SNAPSHOT_BYTES:
-            raise ValueError("Shared library snapshot exceeds the 28 MB safety limit.")
-        return clean, hashlib.sha256(encoded).hexdigest(), len(encoded)
-
-    def _load(self) -> dict[str, Any]:
-        try:
-            value = json.loads(self.path.read_text("utf-8"))
-        except (OSError, ValueError):
-            value = {}
-        if not isinstance(value, dict):
-            value = {}
-        state = self._default()
-        state.update(value)
-        state["revision"] = max(0, int(state.get("revision") or 0))
-        state["snapshot"] = state["snapshot"] if isinstance(state.get("snapshot"), dict) else None
-        state["history"] = state["history"] if isinstance(state.get("history"), list) else []
-        state["activeDevices"] = state["activeDevices"] if isinstance(state.get("activeDevices"), list) else []
-        return state
-
-    def _save(self, state: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(state, ensure_ascii=False, separators=(",", ":")), "utf-8")
-        try:
-            os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:
-            pass
-        temporary.replace(self.path)
-
-    @staticmethod
-    def _summary(state: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "available": isinstance(state.get("snapshot"), dict),
-            "revision": max(0, int(state.get("revision") or 0)),
-            "updatedAt": max(0, int(state.get("updatedAt") or 0)),
-            "updatedBy": str(state.get("updatedBy") or ""),
-            "activeDevices": list(state.get("activeDevices") or []),
-        }
-
-    @staticmethod
-    def _point_bytes(point: dict[str, Any]) -> int:
-        snapshot = point.get("snapshot")
-        if not isinstance(snapshot, dict):
-            return 0
-        try:
-            return len(json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
-        except (TypeError, ValueError):
-            return 0
-
-    @classmethod
-    def _trim_history(cls, state: dict[str, Any]) -> None:
-        retained: list[dict[str, Any]] = []
-        used_bytes = 0
-        for point in state.get("history", []):
-            if not isinstance(point, dict) or not isinstance(point.get("snapshot"), dict):
-                continue
-            point = dict(point)
-            point["bytes"] = cls._point_bytes(point)
-            if len(retained) >= SHARED_LIBRARY_HISTORY_LIMIT:
-                continue
-            if retained and used_bytes + point["bytes"] > MAX_SHARED_LIBRARY_HISTORY_BYTES:
-                continue
-            retained.append(point)
-            used_bytes += point["bytes"]
-        state["history"] = retained
-
-    @classmethod
-    def _archive(cls, state: dict[str, Any], trigger: str) -> None:
-        snapshot = state.get("snapshot")
-        if not isinstance(snapshot, dict):
-            return
-        try:
-            encoded = json.dumps(snapshot, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        except (TypeError, ValueError):
-            return
-        point = {
-            "id": secrets.token_hex(16), "revision": int(state.get("revision") or 0),
-            "snapshot": snapshot, "updatedAt": int(state.get("updatedAt") or 0),
-            "updatedBy": str(state.get("updatedBy") or ""), "archivedAt": int(time.time() * 1000),
-            "bytes": len(encoded), "trigger": trigger,
-        }
-        state["history"] = [point, *state.get("history", [])]
-        cls._trim_history(state)
-
-    def compact(self) -> dict[str, Any]:
-        """Remove local-only recursive state and prune obsolete recovery points."""
-        with self.lock:
-            state = self._load()
-            before = self.path.stat().st_size if self.path.exists() else 0
-            snapshot = state.get("snapshot")
-            if isinstance(snapshot, dict):
-                clean, fingerprint, _ = self._clean_snapshot(snapshot)
-                state["snapshot"] = clean
-                state["fingerprint"] = fingerprint
-            compacted_history = []
-            for point in state.get("history", []):
-                if not isinstance(point, dict) or not isinstance(point.get("snapshot"), dict):
-                    continue
-                clean, _, size = self._clean_snapshot(point["snapshot"])
-                compacted_history.append({**point, "snapshot": clean, "bytes": size})
-            state["history"] = compacted_history
-            self._trim_history(state)
-            state["revision"] = max(0, int(state.get("revision") or 0)) + 1
-            state["updatedAt"] = int(time.time() * 1000)
-            state["updatedBy"] = "local mirror maintenance"
-            self._save(state)
-            return {**self._summary(state), "compacted": True, "bytesBefore": before,
-                    "bytesAfter": self.path.stat().st_size, "historyRetained": len(state["history"])}
-
-    def _record_device(self, state: dict[str, Any], device_id: Any, label: Any) -> None:
-        identifier = self._clean_device(device_id, "deviceId", 128)
-        device_label = self._clean_device(label, "label", 80)
-        now = int(time.time() * 1000)
-        cutoff = now - SHARED_LIBRARY_DEVICE_TTL_SECONDS * 1000
-        active = [
-            item for item in state.get("activeDevices", [])
-            if isinstance(item, dict) and int(item.get("seenAt") or 0) >= cutoff and item.get("id") != identifier
-        ]
-        active.append({"id": identifier, "label": device_label, "seenAt": now})
-        state["activeDevices"] = active[-SHARED_LIBRARY_MAX_ACTIVE_DEVICES:]
-
-    def status(self, device_id: Any, label: Any, include_snapshot: bool = False,
-               include_history: bool = False) -> dict[str, Any]:
-        with self.lock:
-            state = self._load()
-            self._record_device(state, device_id, label)
-            self._save(state)
-            payload = self._summary(state)
-            if include_snapshot and payload["available"]:
-                payload["snapshot"] = state["snapshot"]
-            if include_history:
-                payload["history"] = [
-                    {key: value for key, value in point.items() if key != "snapshot"}
-                    for point in state["history"] if isinstance(point, dict)
-                ]
-            return payload
-
-    def push(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        with self.lock:
-            state = self._load()
-            self._record_device(state, body.get("deviceId"), body.get("label"))
-            base_revision = int(body.get("baseRevision") or 0)
-            if base_revision != int(state["revision"]):
-                self._save(state)
-                return 409, self._summary(state)
-            snapshot, fingerprint, _ = self._clean_snapshot(body.get("snapshot"))
-            if state.get("fingerprint") == fingerprint:
-                self._save(state)
-                return 200, {**self._summary(state), "unchanged": True}
-            self._archive(state, str(body.get("trigger") or "publish")[:80])
-            state["snapshot"] = snapshot
-            state["fingerprint"] = fingerprint
-            state["revision"] += 1
-            state["updatedAt"] = int(time.time() * 1000)
-            state["updatedBy"] = self._clean_device(body.get("label"), "label", 80)
-            self._save(state)
-            return 200, self._summary(state)
-
-    def restore(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        with self.lock:
-            state = self._load()
-            self._record_device(state, body.get("deviceId"), body.get("label"))
-            base_revision = int(body.get("baseRevision") or 0)
-            if base_revision != int(state["revision"]):
-                self._save(state)
-                return 409, self._summary(state)
-            history_id = self._clean_device(body.get("historyId"), "historyId", 64)
-            point = next((
-                item for item in state["history"]
-                if isinstance(item, dict) and item.get("id") == history_id and isinstance(item.get("snapshot"), dict)
-            ), None)
-            if point is None:
-                raise ValueError("Shared library recovery point was not found.")
-            snapshot, fingerprint, _ = self._clean_snapshot(point["snapshot"])
-            restored_from_revision = int(point.get("revision") or 0)
-            self._archive(state, "restore")
-            state["snapshot"] = snapshot
-            state["fingerprint"] = fingerprint
-            state["revision"] += 1
-            state["updatedAt"] = int(time.time() * 1000)
-            state["updatedBy"] = self._clean_device(body.get("label"), "label", 80)
-            self._save(state)
-            return 200, {
-                **self._summary(state), "snapshot": snapshot,
-                "restoredFromRevision": restored_from_revision,
-            }
-
-
-shared_library_store = SharedLibraryStore()
-
-
 def load_store() -> dict[str, Any]:
     with store_lock:
         try:
@@ -1378,6 +1228,134 @@ def json_request(
         return status, response_headers, json.loads(raw.decode("utf-8")) if raw else {}
     except (UnicodeDecodeError, ValueError):
         return status, response_headers, {"raw": raw.decode("utf-8", "replace")}
+
+
+def maps_key(provider="google"):
+    settings = load_store().get("maps", {})
+    field, env = ("orsKey", "OPENROUTESERVICE_API_KEY") if provider == "openrouteservice" else ("googleKey", "GOOGLE_MAPS_API_KEY")
+    return str(settings.get(field, "") or os.environ.get(env, "")).strip()
+
+
+def maps_settings_status():
+    settings = load_store().get("maps", {})
+    saved = bool(settings.get("googleKey"))
+    ors_saved = bool(settings.get("orsKey"))
+    return {"configured": bool(maps_key()), "source": "settings" if saved else "environment" if maps_key() else "none",
+            "provider": settings.get("provider", "google"), "orsConfigured": bool(maps_key("openrouteservice")),
+            "orsSource": "settings" if ors_saved else "environment" if maps_key("openrouteservice") else "none"}
+
+
+def update_maps_settings(body):
+    with store_lock:
+        value = load_store()
+        settings = value.setdefault("maps", {})
+        if "provider" in body:
+            if body["provider"] not in {"google", "openrouteservice"}:
+                raise ValueError("Unknown maps provider.")
+            settings["provider"] = body["provider"]
+        for field, remove in (("googleKey", "remove"), ("orsKey", "removeOrs")):
+            if body.get(remove) is True:
+                settings.pop(field, None)
+            elif field in body:
+                key = str(body[field]).strip()
+                if key:
+                    if len(key) > 1000 or not re.fullmatch(r"[A-Za-z0-9_.=+/-]+", key):
+                        raise ValueError("Invalid API key format.")
+                    settings[field] = key
+        save_store(value)
+    return maps_settings_status()
+
+
+def maps_request(action, body):
+    provider = body.get("provider") or load_store().get("maps", {}).get("provider", "google")
+    if provider == "openrouteservice":
+        return openroute_request(action, body)
+    if provider != "google":
+        raise ValueError("Unknown maps provider.")
+    return {**google_maps_request(action, body), "provider": "google", "attribution": "Google Maps"}
+
+
+def maps_coordinates(value):
+    if not isinstance(value, list) or len(value) != 2 or any(isinstance(v, bool) or not isinstance(v, (float, int)) for v in value):
+        raise ValueError("Select coordinates for both places using openrouteservice search, or enter longitude and latitude.")
+    lon, lat = value
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+        raise ValueError("Coordinates are outside the supported range.")
+    return [lon, lat]
+
+
+def openroute_request(action, body):
+    key = maps_key("openrouteservice")
+    if not key:
+        raise ValueError("Add an openrouteservice key in Settings → Connections → Maps & places.")
+    headers = {"Authorization": key}
+    attribution = "openrouteservice / © OpenStreetMap contributors"
+    if action == "search":
+        query = str(body.get("query", "")).strip()
+        if not query or len(query) > 300:
+            raise ValueError("Enter a place and city (maximum 300 characters).")
+        url = "https://api.heigit.org/pelias/v1/search?" + urllib.parse.urlencode({"text": query, "size": 5})
+        status, _, result = json_request(url, "GET", headers, timeout=12)
+    elif action == "route":
+        profiles = {"WALK": "foot-walking", "BICYCLE": "cycling-regular", "DRIVE": "driving-car", "RIDESHARE": "driving-car"}
+        mode = body.get("mode", "WALK")
+        if mode not in profiles:
+            raise ValueError("openrouteservice does not support transit here. Use authored transit times or select Google explicitly.")
+        coords = [maps_coordinates(body.get("originCoordinates")), maps_coordinates(body.get("destinationCoordinates"))]
+        url = "https://api.heigit.org/openrouteservice/v2/directions/" + profiles[mode] + "/json"
+        status, _, result = json_request(url, "POST", headers, {"coordinates": coords, "instructions": False, "geometry": False}, timeout=12)
+    else:
+        raise ValueError("Unknown maps operation.")
+    if status >= 400:
+        raise ValueError(f"openrouteservice request failed ({status}). Check the key, service access and quota.")
+    if action == "search":
+        places = []
+        for feature in result.get("features", [])[:5]:
+            try:
+                coords = maps_coordinates(feature.get("geometry", {}).get("coordinates"))
+            except ValueError:
+                continue
+            props = feature.get("properties", {})
+            places.append({"id": str(props.get("gid", "")), "displayName": {"text": str(props.get("name", props.get("label", "Place")))[:300]},
+                           "formattedAddress": str(props.get("label", ""))[:500], "coordinates": coords})
+        return {"provider": "openrouteservice", "attribution": attribution, "places": places}
+    routes = []
+    for route in result.get("routes", [])[:1]:
+        summary = route.get("summary", {})
+        duration, distance = summary.get("duration"), summary.get("distance")
+        if isinstance(duration, (int, float)) and 0 < duration <= 86400 and isinstance(distance, (int, float)) and distance >= 0:
+            routes.append({"duration": f"{duration}s", "distanceMeters": distance})
+    return {"provider": "openrouteservice", "attribution": attribution, "routes": routes}
+
+
+def google_maps_request(action, body):
+    """Explicit, read-only Maps calls. Key stays in the launcher's environment."""
+    key = maps_key()
+    if not key:
+        raise ValueError("Add a Google Maps key in Settings → Connections → Maps & places. Enable Places API (New) and Routes API.")
+    if action == "search":
+        query = str(body.get("query", "")).strip()
+        if not query or len(query) > 300:
+            raise ValueError("Enter a place and city (maximum 300 characters).")
+        url = "https://places.googleapis.com/v1/places:searchText"
+        payload = {"textQuery": query, "pageSize": 5}
+        fields = "places.id,places.displayName,places.formattedAddress"
+    elif action == "route":
+        origin, destination = str(body.get("origin", "")), str(body.get("destination", ""))
+        mode = body.get("mode", "WALK")
+        if not all(re.fullmatch(r"[A-Za-z0-9_-]{1,300}", v) for v in (origin, destination)):
+            raise ValueError("Select both Google places first.")
+        if mode not in {"WALK", "DRIVE", "BICYCLE", "TRANSIT"}:
+            raise ValueError("Unsupported travel mode.")
+        url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+        payload = {"origin": {"placeId": origin}, "destination": {"placeId": destination}, "travelMode": mode}
+        fields = "routes.duration,routes.distanceMeters"
+    else:
+        raise ValueError("Unknown Maps operation.")
+    status, _, result = json_request(url, "POST", {"X-Goog-Api-Key": key, "X-Goog-FieldMask": fields}, payload, timeout=12)
+    if status >= 400:
+        raise ValueError(f"Google Maps request failed ({status}). Check API enablement, billing and key restrictions.")
+    return result
 
 
 def parse_www_authenticate(value: str) -> str:
@@ -1647,12 +1625,25 @@ def ensure_mcp(provider_id: str) -> None:
 
 def list_tools(provider_id: str) -> list[dict[str, Any]]:
     ensure_mcp(provider_id)
-    result, _ = mcp_post(provider_id, {
-        "jsonrpc": "2.0", "id": secrets.randbelow(1_000_000),
-        "method": "tools/list", "params": {},
-    }, 60)
-    tools = result.get("tools") or []
-    return tools if isinstance(tools, list) else []
+    tools = []
+    cursor = None
+    seen = set()
+    for _ in range(100):
+        result, _ = mcp_post(provider_id, {
+            "jsonrpc": "2.0", "id": secrets.randbelow(1_000_000),
+            "method": "tools/list", "params": {"cursor": cursor} if cursor else {},
+        }, 60)
+        page = result.get("tools") or []
+        if not isinstance(page, list):
+            raise RuntimeError("The MCP server returned an invalid tool catalog.")
+        tools.extend(page)
+        cursor = result.get("nextCursor")
+        if not cursor:
+            return list({tool["name"]: tool for tool in tools if isinstance(tool, dict) and tool.get("name")}.values())
+        if cursor in seen:
+            raise RuntimeError("The MCP tool catalog repeated its pagination cursor.")
+        seen.add(cursor)
+    raise RuntimeError("The MCP tool catalog exceeded the pagination limit.")
 
 
 def call_tool(provider_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1667,6 +1658,173 @@ def call_tool(provider_id: str, name: str, arguments: dict[str, Any]) -> dict[st
     return result
 
 
+def mcp_result_data(result: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(result.get("structuredContent"), dict):
+        return result["structuredContent"]
+    for item in result.get("content", []):
+        if isinstance(item, dict) and item.get("type") == "text":
+            try:
+                data = json.loads(item.get("text", ""))
+                if isinstance(data, dict):
+                    return data
+            except (ValueError, TypeError):
+                pass
+    return result
+
+
+def mcp_generated_values(value: Any):
+    # Request echoes contain source images, thumbnails and documentation links.
+    # They must never be mistaken for the paid output.
+    if isinstance(value, dict):
+        yield value
+        for key, child in value.items():
+            if key not in {"params", "arguments", "input", "inputs", "references", "medias", "reference_images", "input_images"}:
+                yield from mcp_generated_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from mcp_generated_values(child)
+
+
+def prepare_higgsfield_references(arguments: dict[str, Any]) -> dict[str, Any]:
+    arguments = json.loads(json.dumps(arguments))
+    params = arguments.get("params", arguments)
+    for media in params.get("medias", []):
+        value = media.get("value", "")
+        if not isinstance(value, str) or not value.startswith("data:"):
+            continue
+        match = re.fullmatch(r"data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)", value)
+        if not match:
+            raise ValueError("Reference must be a PNG, JPEG or WebP data image.")
+        content = base64.b64decode(match[2], validate=True)
+        if not content or len(content) > 20 * 1024 * 1024:
+            raise ValueError("Reference must be between 1 byte and 20 MiB.")
+        available = {tool["name"] for tool in list_tools("higgsfield")}
+        def operation(name):
+            return next((key for key in (name, "higgsfield_" + name) if key in available), None)
+        upload, confirm = operation("media_upload"), operation("media_confirm")
+        if not upload or not confirm:
+            raise RuntimeError("This Higgsfield connection does not advertise local reference upload. No generation was submitted.")
+        slot = mcp_result_data(call_tool("higgsfield", upload, {
+            "filename": "identity-reference." + match[1].split("/")[1], "content_type": match[1], "method": "upload_url"
+        }))
+        entries = slot.get("uploads") or []
+        if not entries or slot.get("error"):
+            raise RuntimeError("Higgsfield did not provide a reference upload slot.")
+        entry = entries[0]
+        url, media_id = entry.get("upload_url", ""), entry.get("media_id", "")
+        if not url.startswith("https://") or not media_id:
+            raise RuntimeError("Higgsfield returned an invalid reference upload slot.")
+        status, _, _ = http_request(url, method="PUT", headers={"Content-Type": match[1]}, body=content)
+        if not 200 <= status < 300:
+            raise RuntimeError("Higgsfield reference upload failed; no generation was submitted.")
+        confirmed = mcp_result_data(call_tool("higgsfield", confirm, {"media_id": media_id, "type": "image"}))
+        if confirmed.get("error") or not any(item.get("media_id") == media_id for item in confirmed.get("results", [])):
+            raise RuntimeError("Higgsfield did not confirm the reference; no generation was submitted.")
+        media["value"] = media_id
+    return arguments
+
+
+def prepare_magnific_references(arguments: dict[str, Any]) -> dict[str, Any]:
+    arguments = json.loads(json.dumps(arguments))
+    for reference in arguments.get("references", []):
+        value = reference.get("identifier", "")
+        if reference.get("type") != "image" or not isinstance(value, str):
+            continue
+        if value.startswith("https://"):
+            uploaded = mcp_result_data(call_tool("magnific", "creations_upload_image", {"url": value}))
+        elif value.startswith("data:"):
+            match = re.fullmatch(r"data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)", value)
+            if not match:
+                raise ValueError("Magnific references must be PNG, JPEG or WebP images.")
+            content = base64.b64decode(match[2], validate=True)
+            if not content or len(content) > 25 * 1024 * 1024:
+                raise ValueError("Magnific references must be between 1 byte and 25 MiB.")
+            slot = mcp_result_data(call_tool("magnific", "creations_request_upload", {"mimeType": match[1]}))
+            if slot.get("uploads"):
+                slot = slot["uploads"][0]
+            url, path = slot.get("proxyUploadUrl", ""), slot.get("path", "")
+            if not url.startswith("https://") or not path or slot.get("error"):
+                raise RuntimeError("Magnific did not return a valid reference upload slot; generation was not submitted.")
+            status, _, _ = http_request(url, method="PUT", headers={"Content-Type": match[1]}, body=content)
+            if not 200 <= status < 300:
+                raise RuntimeError("Magnific reference upload failed; generation was not submitted.")
+            uploaded = mcp_result_data(call_tool("magnific", "creations_finalize_upload", {"path": path, "visible": False}))
+        else:
+            continue  # Already a provider creation identifier.
+        identifier = uploaded.get("identifier")
+        if not identifier or uploaded.get("error") or uploaded.get("errorCount"):
+            raise RuntimeError("Magnific did not finalize the reference; generation was not submitted.")
+        reference["identifier"] = identifier
+    return arguments
+
+
+def magnific_creation_fields(result: dict[str, Any]) -> dict[str, Any]:
+    data = mcp_result_data(result)
+    if isinstance(data.get("creation"), dict):
+        return data["creation"]
+    if data.get("url") or data.get("status") or data.get("error"):
+        return data
+    # creations_get can return the same lean text format as the model catalog.
+    fields = {}
+    for item in result.get("content", []):
+        if item.get("type") != "text":
+            continue
+        for line in item.get("text", "").splitlines():
+            match = re.fullmatch(r'\s*(url|status|identifier): (.+)', line)
+            if match:
+                try:
+                    fields[match[1]] = json.loads(match[2])
+                except ValueError:
+                    fields[match[1]] = match[2]
+    return fields
+
+
+def wait_magnific_image(result: dict[str, Any]) -> dict[str, Any]:
+    data = mcp_result_data(result)
+    if data.get("error"):
+        raise RuntimeError(str(data["error"]))
+    creations = data.get("creations") or ([data["creation"]] if data.get("creation") else [])
+    identifiers = [item["identifier"] for item in creations if isinstance(item, dict) and item.get("identifier")]
+    if not identifiers:
+        raise RuntimeError("Magnific returned no creation identifier. Check the provider before retrying.")
+    # The VH photo slot displays one image. Keep all submitted IDs in errors.
+    deadline = time.monotonic() + 270
+    while time.monotonic() < deadline:
+        creation = magnific_creation_fields(call_tool("magnific", "creations_get", {"creationIdentifier": identifiers[0]}))
+        status = str(creation.get("status", "")).lower()
+        if creation.get("error") or status in {"failed", "error", "cancelled", "canceled", "rejected"}:
+            raise RuntimeError(f"Magnific creation {identifiers[0]} failed. Check the provider for details.")
+        url = creation.get("url")
+        if isinstance(url, str) and url.startswith("https://") and status not in {"pending", "queued", "processing", "in_progress", "generating"}:
+            return {"url": url}
+        time.sleep(2)
+    raise RuntimeError("Magnific generation is still pending: " + ", ".join(identifiers) + ". Check the provider before resubmitting.")
+
+
+def wait_higgsfield_image(result: dict[str, Any]) -> dict[str, Any]:
+    data = mcp_result_data(result)
+    if data.get("error") or data.get("unlim_choice"):
+        raise RuntimeError(str(data.get("error") or data["unlim_choice"].get("message") or "Choose a billing balance in the tool settings."))
+    jobs = data.get("results") or []
+    pending = [job for job in jobs if isinstance(job, dict) and job.get("id") and job.get("status") not in {"completed", "failed", "canceled", "nsfw", "ip_detected"}]
+    if not pending:
+        return data
+    names = {tool["name"] for tool in list_tools("higgsfield")}
+    waiter = next((name for name in ("jobs_wait", "higgsfield_jobs_wait") if name in names), None)
+    if not waiter:
+        raise RuntimeError("Generation was submitted but is still pending. This connection has no supported job-status tool; do not resubmit blindly.")
+    for _ in range(18):
+        data = mcp_result_data(call_tool("higgsfield", waiter, {
+            "jobs": [{"index": index, "job_id": job["id"]} for index, job in enumerate(pending[:8])], "timeout_seconds": 15
+        }))
+        if data.get("error"):
+            raise RuntimeError(str(data["error"]))
+        if data.get("all_terminal"):
+            return data
+        time.sleep(min(2, max(0.25, float(data.get("poll_after_seconds") or 1))))
+    raise RuntimeError("Generation is still pending at Higgsfield. Check the provider before resubmitting.")
+
+
 def walk_values(value: Any):
     if isinstance(value, dict):
         yield value
@@ -1679,13 +1837,14 @@ def walk_values(value: Any):
 
 def result_image(result: dict[str, Any]) -> tuple[str, str]:
     download_candidates: list[str] = []
-    for item in walk_values(result):
+    result = mcp_result_data(result)
+    for item in mcp_generated_values(result):
         item_type = str(item.get("type", "")).lower()
         data = item.get("data")
         mime = str(item.get("mimeType") or item.get("mime_type") or "")
         if item_type == "image" and isinstance(data, str) and data:
             return f"data:{mime or 'image/png'};base64,{data}", "embedded"
-        for key in ("url", "uri", "image_url", "imageUrl", "download_url", "downloadUrl"):
+        for key in ("rawUrl", "result_url", "url", "uri", "image_url", "imageUrl", "download_url", "downloadUrl"):
             candidate = item.get(key)
             if isinstance(candidate, str) and re.match(r"^https?://", candidate):
                 download_candidates.append(candidate)
@@ -1829,246 +1988,31 @@ FAL_IMAGE_MODELS = {
     "fal-ai/flux/dev",
     "fal-ai/flux/dev/image-to-image",
     "fal-ai/wan-25-preview/image-to-image",
+    "fal-ai/nano-banana-2/edit",
 }
-# Models above keep hand-authored payload shapes (flux image_size sizing,
-# wan image_urls, the schnell/dev -> dev/image-to-image remap). Everything
-# else from the live catalog travels with a minimal generic payload and the
-# endpoint's own validation is the only authority.
-
-
-def is_fal_endpoint_id(value: str) -> bool:
-    """A fal.run endpoint path: owner/model/... segments, no traversal."""
-    segments = str(value or "").split("/")
-    return (len(segments) >= 2
-            and all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", segment) for segment in segments))
-
-
-def list_fal_models(body: dict[str, Any]) -> dict[str, Any]:
-    """Live Fal model catalog, paginated server-side.
-
-    Horde's image pickers consume this instead of a hardcoded list, so newly
-    released endpoints (FLUX 2 and friends) are usable the day they appear.
-    Optional `categories` filters server-side to keep the payload small.
-    """
-    key = fal_key(body.get("apiKey"))
-    categories = {str(item) for item in body.get("categories", []) if str(item or "").strip()} \
-        if isinstance(body.get("categories"), list) else set()
-    models: list[dict[str, Any]] = []
-    cursor = ""
-    for _ in range(6):
-        url = "https://api.fal.ai/v1/models?limit=500" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
-        data = fal_json_request(url, key, timeout=30)
-        page = data.get("models") if isinstance(data.get("models"), list) else []
-        for entry in page:
-            if not isinstance(entry, dict) or not str(entry.get("endpoint_id") or "").strip():
-                continue
-            if categories and str((entry.get("metadata") or {}).get("category") or "") not in categories:
-                continue
-            models.append(entry)
-        cursor = str(data.get("next_cursor") or "")
-        if not data.get("has_more") or not cursor:
-            break
-    return {"ok": True, "provider": "fal", "models": models}
-
-
-FIBO_STRUCTURED_TOP_STRINGS = {
-    "short_description": 800, "background_setting": 800, "context": 1200,
-    "style_medium": 400, "artistic_style": 400,
-}
-FIBO_STRUCTURED_NESTED = {
-    "lighting": {"conditions": 400, "direction": 300, "shadows": 300},
-    "aesthetics": {"composition": 400, "color_scheme": 400, "mood_atmosphere": 400,
-                   "aesthetic_score": 100, "preference_score": 100},
-    "photographic_characteristics": {"depth_of_field": 300, "focus": 300,
-                                     "camera_angle": 300, "lens_focal_length": 200},
-}
-FIBO_OBJECT_FIELDS = {
-    "description": 800, "location": 400, "relationship": 400, "relative_size": 200,
-    "shape_and_color": 300, "texture": 300, "appearance_details": 600,
-    "pose": 400, "expression": 300, "clothing": 600, "action": 400,
-    "gender": 100, "skin_tone_and_texture": 300, "orientation": 200,
-}
-
-FIBO_STRUCTURED_TOP_OPAQUE = {"text_render"}
-
-
-def _fibo_string(source: dict[str, Any], key: str, limit: int, label: str):
-    value = source.get(key)
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, str):
-        raise ValueError(f"{label} must be a string.")
-    text = value.strip()
-    if not text:
-        return None
-    if len(text) > limit:
-        raise ValueError(f"{label} exceeds the {limit} character limit.")
-    return text
-
-
-def fibo_structured_prompt(body: dict[str, Any]) -> dict[str, Any] | None:
-    """Validated Fibo structured prompt / instruction from Horde's app layer.
-
-    Horde builds this from the world's authored image guide; the bridge
-    re-validates every field so only known, well-typed values reach the
-    endpoint. Returns None when nothing was authored.
-    """
-    raw = body.get("fiboStructuredPrompt")
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise ValueError("fiboStructuredPrompt must be an object.")
-    structured: dict[str, Any] = {}
-    for key, limit in FIBO_STRUCTURED_TOP_STRINGS.items():
-        text = _fibo_string(raw, key, limit, f"fibo structured {key}")
-        if text:
-            structured[key] = text
-    for parent, children in FIBO_STRUCTURED_NESTED.items():
-        nested_raw = raw.get(parent)
-        if nested_raw is None:
-            continue
-        if not isinstance(nested_raw, dict):
-            raise ValueError(f"fibo structured {parent} must be an object.")
-        nested = {}
-        for child, limit in children.items():
-            text = _fibo_string(nested_raw, child, limit, f"fibo structured {parent}.{child}")
-            if text:
-                nested[child] = text
-        if nested:
-            structured[parent] = nested
-    objects_raw = raw.get("objects")
-    if objects_raw is not None:
-        if not isinstance(objects_raw, list) or len(objects_raw) > 20:
-            raise ValueError("fibo structured objects must be a list of at most 20 entries.")
-        objects: list[dict[str, Any]] = []
-        for index, entry in enumerate(objects_raw):
-            if not isinstance(entry, dict):
-                raise ValueError(f"fibo structured object {index + 1} must be an object.")
-            obj: dict[str, Any] = {}
-            for field, limit in FIBO_OBJECT_FIELDS.items():
-                text = _fibo_string(entry, field, limit, f"fibo structured object {index + 1} {field}")
-                if text:
-                    obj[field] = text
-            count = entry.get("number_of_objects")
-            if count is not None:
-                if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 100:
-                    raise ValueError(f"fibo structured object {index + 1} number_of_objects is invalid.")
-                obj["number_of_objects"] = count
-            if obj:
-                if "relationship" not in obj:
-                    raise ValueError(f"fibo structured object {index + 1} needs a relationship.")
-                objects.append(obj)
-        if objects:
-            structured["objects"] = objects
-    if "text_render" in raw:
-        # The endpoint exposes this field but its element schema is not stable
-        # enough for Horde to manufacture. Preserve an explicitly supplied
-        # JSON value and let the endpoint validate its documented shape.
-        try:
-            structured["text_render"] = json.loads(json.dumps(raw["text_render"]))
-        except (TypeError, ValueError):
-            raise ValueError("fibo structured text_render must be JSON-serializable.")
-    unknown = set(raw) - set(FIBO_STRUCTURED_TOP_STRINGS) - set(FIBO_STRUCTURED_NESTED) - FIBO_STRUCTURED_TOP_OPAQUE - {"objects"}
-    if unknown:
-        raise ValueError(f"Unknown fibo structured fields: {', '.join(sorted(unknown))}.")
-    return structured or None
-
-
-# Bria's structured prompt endpoints validate a core of required fields whose
-# schema defaults are None: an omitted field fails validation with
-# "Input should be a valid string/dictionary". The app authors only what it
-# has (blank = omitted), so the transport completes the required core with
-# explicit blank values, which the endpoints accept as "no direction".
-FIBO_REQUIRED_TOP_STRINGS = ("short_description", "background_setting", "context")
-FIBO_REQUIRED_DETAILS = {
-    "lighting": ("conditions", "direction", "shadows"),
-    "aesthetics": ("composition", "color_scheme", "mood_atmosphere"),
-}
-
-
-def complete_fibo_structured(structured: dict[str, Any]) -> dict[str, Any]:
-    """Fill the required core of a validated Fibo structured payload."""
-    completed = dict(structured)
-    for key in FIBO_REQUIRED_TOP_STRINGS:
-        if completed.get(key) is None:
-            completed[key] = ""
-    for key, subfields in FIBO_REQUIRED_DETAILS.items():
-        detail = completed.get(key)
-        detail = dict(detail) if isinstance(detail, dict) else {}
-        for subfield in subfields:
-            if detail.get(subfield) is None:
-                detail[subfield] = ""
-        completed[key] = detail
-    objects = completed.get("objects")
-    if isinstance(objects, list):
-        completed["objects"] = [
-            {**obj, "location": obj.get("location") or ""}
-            if isinstance(obj, dict) else obj
-            for obj in objects
-        ]
-    return completed
-
-
-def fal_advanced_image_fields(body: dict[str, Any]) -> dict[str, Any]:
-    """Optional fal request parameters from Horde's Advanced Request Settings.
-    accept these fields and some do not, so a populated value passes through
-    untouched and the endpoint's own validation is the only authority. Blank
-    or missing values are omitted entirely so the endpoint default applies.
-    Adding a field later means one mapping here — no provider-layer rewrite.
-    """
-    fields: dict[str, Any] = {}
-    raw_tolerance = body.get("safetyTolerance")
-    if raw_tolerance is not None and str(raw_tolerance).strip() != "":
-        if isinstance(raw_tolerance, bool):
-            raise ValueError("safety_tolerance must be a number or blank.")
-        try:
-            tolerance = float(raw_tolerance)
-        except (TypeError, ValueError):
-            raise ValueError("safety_tolerance must be a number or blank.")
-        if not 0 <= tolerance <= 100:
-            raise ValueError("safety_tolerance must be between 0 and 100.")
-        fields["safety_tolerance"] = int(tolerance) if tolerance.is_integer() else tolerance
-
-    # Seedream and some other Fal endpoints use this boolean instead of a
-    # numeric tolerance. Missing means omit it entirely, allowing the model's
-    # default; false is intentionally preserved as an explicit request.
-    raw_checker = body.get("enableSafetyChecker")
-    if raw_checker is not None and str(raw_checker).strip() != "":
-        if not isinstance(raw_checker, bool):
-            raise ValueError("enable_safety_checker must be true, false or blank.")
-        fields["enable_safety_checker"] = raw_checker
-
-    # A pinned seed is the one way to opt out of Horde's per-call random
-    # seed. Blank keeps the randomization the image pipeline always applies.
-    raw_seed = body.get("seed")
-    if raw_seed is not None and str(raw_seed).strip() != "":
-        if isinstance(raw_seed, bool):
-            raise ValueError("seed must be a whole number or blank.")
-        try:
-            seed = int(str(raw_seed).strip())
-        except (TypeError, ValueError):
-            raise ValueError("seed must be a whole number or blank.")
-        if not 0 <= seed <= 2_147_483_647:
-            raise ValueError("seed must be between 0 and 2147483647.")
-        fields["seed"] = seed
-    return fields
 
 
 def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     """Generate a portable image through a small curated Fal model surface."""
     key = fal_key(body.get("apiKey"))
     prompt = str(body.get("prompt") or "").strip()
-    fibo_structured = fibo_structured_prompt(body)
-    revision_instruction = str(body.get("fiboRevisionInstruction") or "").strip()
-    native_fibo_compile = body.get("fiboNativeCompile") is True
-    if not prompt and not fibo_structured:
+    if not prompt:
         raise ValueError("An image prompt is required.")
     if len(prompt) > 12000:
         raise ValueError("The image prompt exceeds the 12,000 character limit.")
     requested_model = str(body.get("model") or "fal-ai/flux/schnell").strip()
-    if not is_fal_endpoint_id(requested_model):
-        raise ValueError("That Fal model id is not a valid endpoint path.")
+    if requested_model not in FAL_IMAGE_MODELS:
+        raise ValueError("That Fal image model is not supported by this Horde Studio build.")
     image_url = str(body.get("imageDataUrl") or "").strip()
+    image_urls = body.get("imageDataUrls") if isinstance(body.get("imageDataUrls"), list) else []
+    image_urls = [str(value or "").strip() for value in image_urls[:14] if str(value or "").strip()]
+    if image_url and not image_urls:
+        image_urls = [image_url]
+    if sum(len(value) for value in image_urls) > 24 * 1024 * 1024:
+        raise ValueError("The combined image references exceed the 24 MB request limit.")
+    for value in image_urls:
+        if not re.match(r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", value, re.I):
+            raise ValueError("Each image reference must be a JPEG, PNG or WebP data URL.")
     if image_url:
         if not re.match(r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", image_url, re.I):
             raise ValueError("The image reference must be a JPEG, PNG or WebP data URL.")
@@ -2083,143 +2027,28 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     image_size = {
         "16:9": "landscape_16_9", "4:3": "landscape_4_3", "9:16": "portrait_16_9",
         "3:4": "portrait_4_3", "1:1": "square_hd",
-    }.get(aspect, "")
-    if not image_size:
-        # Aspects outside the fixed enum (3:2, 4:5, 5:4) travel as an explicit
-        # width/height pair, which the curated Flux endpoints accept natively.
-        try:
-            ratio_w, ratio_h = (float(part) for part in aspect.split(":", 1))
-            if ratio_w > 0 and ratio_h > 0:
-                scale = 1024.0 / max(ratio_w, ratio_h)
-                image_size = {
-                    "width": max(64, int(round(ratio_w * scale))),
-                    "height": max(64, int(round(ratio_h * scale))),
-                }
-            else:
-                image_size = "square_hd"
-        except (ValueError, ZeroDivisionError):
-            image_size = "square_hd"
+    }.get(aspect, "square_hd")
     payload: dict[str, Any] = {
         "prompt": prompt, "num_images": 1, "output_format": "jpeg",
-        # Every call rolls a fresh seed: identical prompts must not collapse
-        # into identical images. A seed pinned in Advanced Request Settings
-        # overrides this via the update below.
-        "seed": secrets.randbelow(2_000_000_000),
+        "enable_safety_checker": body.get("enableSafetyChecker") is not False,
     }
-    sync_mode = body.get("syncMode")
-    if isinstance(sync_mode, bool):
-        payload["sync_mode"] = sync_mode
-    payload.update(fal_advanced_image_fields(body))
-    # Bria Fibo endpoints speak their own structured JSON. Horde's authored
-    # image guide arrives as a validated structured prompt (generation) or a
-    # structured instruction carrying the edit wording (editing). Other fal
-    # fields Fibo does not document are omitted rather than guessed.
-    is_fibo_edit = model.startswith("bria/fibo-edit")
-    is_fibo_gen = model == "bria/fibo-gen-1.5/text-to-image"
-    if is_fibo_gen or is_fibo_edit:
-        payload.pop("num_images", None)
-        payload.pop("output_format", None)
-        payload.pop("enable_safety_checker", None)
-        payload.pop("safety_tolerance", None)
-        if is_fibo_gen:
-            payload["aspect_ratio"] = aspect
-            resolution = str(body.get("fiboResolution") or "").strip()
-            if resolution in {"1MP", "4MP"}:
-                payload["resolution"] = resolution
-            if fibo_structured and not native_fibo_compile:
-                payload["structured_prompt"] = complete_fibo_structured(fibo_structured)
-            if native_fibo_compile:
-                if not prompt:
-                    raise ValueError("FIBO native compile requires a natural-language prompt.")
-            elif revision_instruction and body.get("fiboCombinedRevision") is True:
-                # FIBO 1.5 combined refinement is capability-tested by the
-                # app. Only the tested operation may send this extra field.
-                payload["prompt"] = revision_instruction
-            elif not native_fibo_compile:
-                payload.pop("prompt", None)
-        else:
-            # Fibo Edit has no `prompt` field: the wording is `instruction`
-            # prose, or a structured_instruction used verbatim when the app
-            # authored one. A single reference keeps its own ratio, so no
-            # aspect_ratio is forced. Resolution is 1MP or 4MP only.
-            payload.pop("prompt", None)
-            if image_url:
-                payload["image_urls"] = [image_url]
-            resolution = str(body.get("fiboResolution") or "").strip()
-            if resolution in {"1MP", "4MP"}:
-                payload["resolution"] = resolution
-            if fibo_structured:
-                payload["structured_instruction"] = complete_fibo_structured(fibo_structured)
-                if revision_instruction:
-                    payload["instruction"] = revision_instruction
-            else:
-                payload["instruction"] = prompt
+    if model == "fal-ai/nano-banana-2/edit":
+        if not image_urls:
+            raise ValueError("Nano Banana reference composition requires at least one image.")
+        payload = {
+            "prompt": prompt, "image_urls": image_urls, "aspect_ratio": aspect,
+            "resolution": "1K", "num_images": 1, "output_format": "jpeg",
+            "safety_tolerance": "4" if body.get("enableSafetyChecker") is not False else "6",
+        }
     elif model == "fal-ai/wan-25-preview/image-to-image":
         payload["image_urls"] = [image_url]
         payload["aspect_ratio"] = aspect if aspect in {"16:9", "9:16", "1:1"} else "auto"
-    elif model in FAL_IMAGE_MODELS:
+    else:
         payload["image_size"] = image_size
         if image_url:
             payload["image_url"] = image_url
             payload["strength"] = float(body.get("strength") or 0.35)
-    else:
-        # Live-catalog model (FLUX 2 and anything else from the fal API):
-        # no hand-authored schema, so send the generic request shape and let
-        # the endpoint's own validation be the authority.
-        payload.pop("num_images", None)
-        payload.pop("output_format", None)
-        payload.pop("enable_safety_checker", None)
-        payload["aspect_ratio"] = aspect
-        if image_url:
-            payload["image_url"] = image_url
-    submit = lambda: fal_json_request(f"https://fal.run/{model}", key, method="POST", payload=payload, timeout=180)
-    try:
-        result = submit()
-    except FalRequestError as error:
-        # Reference-image conventions differ across fal generations
-        # (image_url vs image_urls). For generic live-catalog models a
-        # validation error naming the other field is a free, unbilled 422:
-        # adapt the field once and resubmit.
-        generic_model = model not in FAL_IMAGE_MODELS and model != "fal-ai/wan-25-preview/image-to-image"
-        wanted = ""
-        if image_url and generic_model and error.status == 422 and error.error_type == "missing":
-            wanted = "image_urls" if "image_urls" in error.fields else (
-                "image_url" if "image_url" in error.fields else "")
-        if wanted:
-            payload.pop("image_url", None)
-            payload.pop("image_urls", None)
-            if wanted == "image_urls":
-                payload["image_urls"] = [image_url]
-            else:
-                payload["image_url"] = image_url
-            result = submit()
-        elif error.status == 422 and "seed" in (error.fields or []):
-            # Horde always sends a fresh random seed, but a minority of
-            # endpoints do not document one. Their 422 is free and unbilled:
-            # drop the seed and let the endpoint's own default apply.
-            payload.pop("seed", None)
-            result = submit()
-        elif (not image_url and generic_model and error.status == 422
-              and error.error_type == "missing"
-              and ({"image_url", "image_urls"} & set(error.fields or []))):
-            # A world portrait without an existing asset is text-to-image,
-            # even when a stale/live catalog entry led the UI to a
-            # reference-only endpoint. Do not send an empty reference field:
-            # fall back to the known text-only FAL endpoint and preserve the
-            # full compiled prompt, including its requested framing.
-            model = "fal-ai/flux/schnell"
-            payload.pop("image_url", None)
-            payload.pop("image_urls", None)
-            payload.pop("aspect_ratio", None)
-            payload.update({
-                "num_images": 1,
-                "output_format": "jpeg",
-                "enable_safety_checker": body.get("enableSafetyChecker") is not False,
-                "image_size": image_size,
-            })
-            result = submit()
-        else:
-            raise
+    result = fal_json_request(f"https://fal.run/{model}", key, method="POST", payload=payload, timeout=180)
     images = result.get("images") if isinstance(result.get("images"), list) else []
     first = images[0] if images and isinstance(images[0], dict) else {}
     single_image = result.get("image") if isinstance(result.get("image"), dict) else {}
@@ -2227,16 +2056,7 @@ def generate_fal_image(body: dict[str, Any]) -> dict[str, Any]:
     if not output_url:
         raise RuntimeError("Fal completed the request without an image URL.")
     safe_fal_url(output_url, media=True)
-    resolved = result.get("structured_prompt") or result.get("structuredPrompt")
-    return {
-        "ok": True,
-        "provider": "fal",
-        "model": model,
-        "image": download_image(output_url),
-        "seed": payload.get("seed"),
-        "requested_payload": payload,
-        "resolved_structured_prompt": resolved if isinstance(resolved, dict) else None,
-    }
+    return {"ok": True, "provider": "fal", "model": model, "image": download_image(output_url)}
 
 
 def download_fal_video(url: str, media_id: str) -> tuple[Path, int]:
@@ -2287,10 +2107,22 @@ FAL_VIDEO_RENDERERS = {
 
 
 def _fal_video_request(model: str, body: dict[str, Any], prompt: str, image_url: str,
+                       reference_image_urls: list[str],
                        duration: int, resolution: str, aspect_ratio: str,
                        seed: int) -> tuple[str, dict[str, Any], int, str]:
     """Translate Horde's stable video contract to one documented Fal model schema."""
     if model == "minimax/h3-max":
+        if reference_image_urls:
+            endpoint = f"{model}/reference-to-video"
+            h3_resolution = "768P" if resolution in {"768P", "1080P"} else "480P"
+            payload = {
+                "prompt": prompt, "reference_image_urls": reference_image_urls,
+                "duration": duration, "resolution": h3_resolution,
+                "aspect_ratio": aspect_ratio, "seed": seed,
+                "enable_safety_checker": body.get("enableSafetyChecker") is not False,
+                "prompt_expansion_mode": "disabled",
+            }
+            return endpoint, payload, duration, h3_resolution
         endpoint = f"{model}/{'image-to-video' if image_url else 'text-to-video'}"
         h3_resolution = "768P" if resolution in {"768P", "1080P"} else "480P"
         payload: dict[str, Any] = {
@@ -2303,6 +2135,17 @@ def _fal_video_request(model: str, body: dict[str, Any], prompt: str, image_url:
         else:
             payload["aspect_ratio"] = aspect_ratio
         return endpoint, payload, duration, h3_resolution
+
+    if model == "alibaba/wan-3.0" and reference_image_urls:
+        endpoint = f"{model}/reference-to-video"
+        wan_resolution = "1080p" if resolution == "1080P" else "720p" if resolution == "768P" else "480p"
+        payload = {
+            "prompt": prompt, "reference_image_urls": reference_image_urls,
+            "duration": duration, "resolution": wan_resolution, "aspect_ratio": aspect_ratio,
+            "audio": True, "enable_thinking": False, "enable_prompt_expansion": False,
+            "enable_safety_checker": body.get("enableSafetyChecker") is not False, "seed": seed,
+        }
+        return endpoint, payload, duration, wan_resolution
 
     if model.startswith("alibaba/wan-3.0"):
         endpoint = f"{model}/{'image-to-video' if image_url else 'text-to-video'}"
@@ -2358,6 +2201,13 @@ def generate_fal_video(body: dict[str, Any], on_model: Any = None) -> dict[str, 
             raise ValueError("The continuity frame must be a JPEG, PNG or WebP data URL.")
         if len(image_url) > 12 * 1024 * 1024:
             raise ValueError("The continuity frame exceeds the 12 MB safety limit.")
+    reference_image_urls = body.get("referenceImageDataUrls") if isinstance(body.get("referenceImageDataUrls"), list) else []
+    reference_image_urls = [str(value or "").strip() for value in reference_image_urls[:4] if str(value or "").strip()]
+    if sum(len(value) for value in reference_image_urls) > 24 * 1024 * 1024:
+        raise ValueError("The combined video references exceed the 24 MB request limit.")
+    for value in reference_image_urls:
+        if not re.match(r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", value, re.I):
+            raise ValueError("Each video reference must be a JPEG, PNG or WebP data URL.")
 
     requested_models = body.get("models") if isinstance(body.get("models"), list) else []
     models = []
@@ -2380,7 +2230,7 @@ def generate_fal_video(body: dict[str, Any], on_model: Any = None) -> dict[str, 
             on_model(model)
         try:
             endpoint, payload, actual_duration, actual_resolution = _fal_video_request(
-                model, body, prompt, image_url, duration, resolution, aspect_ratio, seed)
+                model, body, prompt, image_url, reference_image_urls, duration, resolution, aspect_ratio, seed)
             if latency_mode != "queue":
                 result = fal_json_request(f"https://fal.run/{endpoint}", key,
                                           method="POST", payload=payload, timeout=240)
@@ -2548,6 +2398,363 @@ def delete_fal_videos(body: dict[str, Any]) -> dict[str, Any]:
         except FileNotFoundError:
             pass
     return {"ok": True, "removed": removed}
+
+
+HOTAPI_VIDEO_RENDERERS = {
+    "minimax-h3-spicy",
+    "seedance-2.0-fast-spicy",
+    "seedance-2.0-spicy",
+    "seedance-2.5-spicy",
+}
+
+
+def safe_hotapi_url(value: Any, *, api: bool = False) -> str:
+    """Validate HotAPI control URLs and provider-returned public media URLs."""
+    url = str(value or "").strip()
+    parsed = urllib.parse.urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not hostname or parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("HotAPI URLs must be credential-free HTTPS URLs.")
+    if api and hostname != "api.hotapi.ai":
+        raise ValueError("HotAPI requests must use api.hotapi.ai.")
+    try:
+        addresses = {entry[4][0] for entry in socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)}
+    except OSError as error:
+        raise ValueError("The HotAPI host could not be resolved.") from error
+    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+        raise ValueError("HotAPI URLs may not resolve to a private or reserved address.")
+    return url
+
+
+def hotapi_key(value: Any) -> str:
+    key = str(value or os.environ.get("HOTAPI_KEY") or "").strip()
+    if not key:
+        raise ValueError("Add a HotAPI key in Horde Studio Settings first.")
+    if len(key) > 1000 or any(char in key for char in "\r\n"):
+        raise ValueError("The HotAPI key is invalid.")
+    return key
+
+
+def hotapi_json_request(url: str, key: str, *, method: str = "GET", payload: Any = None,
+                        timeout: int = 120) -> dict[str, Any]:
+    safe_hotapi_url(url, api=True)
+    status, _, data = json_request(url, method=method, headers={
+        "Authorization": f"Bearer {key}",
+        "User-Agent": "HordeStudio/17.0 VideoAdventures/2",
+    }, payload=payload, timeout=timeout)
+    if not 200 <= status < 300:
+        detail = data.get("error") or data.get("message") or data.get("raw") if isinstance(data, dict) else data
+        if isinstance(detail, dict):
+            detail = detail.get("message") or detail.get("code") or detail
+        safe_detail = str(detail or "unknown provider error")[:1200]
+        raise RuntimeError(f"HotAPI request failed ({status}): {safe_detail}")
+    if not isinstance(data, dict):
+        raise RuntimeError("HotAPI returned an invalid JSON response.")
+    return data
+
+
+def hotapi_upload_image(data_url: str, key: str) -> str:
+    match = re.fullmatch(r"data:image/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)", data_url, re.I)
+    if not match:
+        raise ValueError("The HotAPI continuity frame must be a JPEG, PNG or WebP data URL.")
+    raw = base64.b64decode(match.group(2), validate=True)
+    if len(raw) > 10 * 1024 * 1024:
+        raise ValueError("The HotAPI continuity frame exceeds the 10 MB upload limit.")
+    subtype = match.group(1).lower()
+    extension = "jpg" if subtype == "jpeg" else subtype
+    boundary = "----HordeStudio" + secrets.token_hex(16)
+    prefix = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"continuity.{extension}\"\r\n"
+              f"Content-Type: image/{subtype}\r\n\r\n").encode()
+    body = prefix + raw + f"\r\n--{boundary}--\r\n".encode()
+    status, _, response = http_request("https://api.hotapi.ai/v1/uploads", method="POST", headers={
+        "Authorization": f"Bearer {key}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Accept": "application/json",
+        "User-Agent": "HordeStudio/17.0 VideoAdventures/2",
+    }, body=body, timeout=90)
+    try:
+        data = json.loads(response.decode("utf-8")) if response else {}
+    except (UnicodeDecodeError, ValueError):
+        data = {}
+    if not 200 <= status < 300:
+        raise RuntimeError(f"HotAPI image upload failed ({status}): {str(data.get('error') or data.get('message') or 'unknown error')[:800]}")
+    url = str(data.get("url") or "")
+    safe_hotapi_url(url)
+    return url
+
+
+def hotapi_output_video_url(output: Any) -> str:
+    """Accept documented and model-specific HotAPI output envelopes."""
+    preferred = ("video_url", "videoUrl", "url", "mp4_url", "mp4Url")
+    if isinstance(output, dict):
+        for key in preferred:
+            value = output.get(key)
+            if isinstance(value, str) and value.startswith("https://"):
+                return value
+            if isinstance(value, dict):
+                nested = hotapi_output_video_url(value)
+                if nested:
+                    return nested
+        for value in output.values():
+            nested = hotapi_output_video_url(value)
+            if nested:
+                return nested
+    elif isinstance(output, list):
+        for value in output:
+            nested = hotapi_output_video_url(value)
+            if nested:
+                return nested
+    return ""
+
+
+def download_hotapi_video(url: str, media_id: str) -> tuple[Path, int]:
+    safe_hotapi_url(url)
+    VIDEO_WORLD_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    target = VIDEO_WORLD_MEDIA_DIR / f"{media_id}.mp4"
+    temporary = VIDEO_WORLD_MEDIA_DIR / f"{media_id}.partial"
+    request = urllib.request.Request(url, headers={
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.1",
+        "User-Agent": "Mozilla/5.0 HordeStudio/17.0",
+    })
+    total = 0
+    try:
+        with urllib.request.urlopen(request, timeout=240) as response, temporary.open("wb") as output:
+            safe_hotapi_url(response.geturl())
+            content_type = str(response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if content_type and not content_type.startswith("video/") and content_type != "application/octet-stream":
+                raise RuntimeError(f"HotAPI returned a non-video asset ({content_type}).")
+            declared = int(response.headers.get("Content-Length") or 0)
+            if declared > MAX_VIDEO_BYTES:
+                raise RuntimeError("Generated video exceeds Horde Studio's 160 MB safety limit.")
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_VIDEO_BYTES:
+                    raise RuntimeError("Generated video exceeds Horde Studio's 160 MB safety limit.")
+                output.write(chunk)
+        if total < 1024:
+            raise RuntimeError("HotAPI returned an empty or incomplete video.")
+        temporary.replace(target)
+        return target, total
+    finally:
+        if temporary.exists():
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+
+
+def _hotapi_video_request(model: str, prompt: str, image_url: str, duration: int,
+                          resolution: str, aspect_ratio: str, seed: int,
+                          uploaded_image_url: str = "") -> tuple[str, dict[str, Any], int, str]:
+    if model == "minimax-h3-spicy":
+        compact_prompt = prompt if len(prompt) <= 2000 else prompt[:1400] + "\n\n" + prompt[-580:]
+        actual_resolution = "768p" if resolution in {"768P", "1080P"} else "480p"
+        payload: dict[str, Any] = {
+            "prompt": compact_prompt, "duration_seconds": max(5, min(15, duration)),
+            "resolution": actual_resolution,
+            "ratio": aspect_ratio if aspect_ratio in {"16:9", "9:16", "1:1"} else "16:9",
+            "seed": seed,
+        }
+        if image_url:
+            payload["image_url"] = image_url
+        return f"https://api.hotapi.ai/v1/{model}", payload, payload["duration_seconds"], actual_resolution
+
+    if model in {"seedance-2.0-fast-spicy", "seedance-2.0-spicy", "seedance-2.5-spicy"}:
+        maximum = 30 if model == "seedance-2.5-spicy" else 15
+        actual_duration = max(4, min(maximum, duration))
+        actual_resolution = "720p" if resolution in {"768P", "1080P"} else "480p"
+        mode = "image-to-video" if image_url else "text-to-video"
+        payload = {
+            "prompt": prompt[:12000], "duration_seconds": actual_duration,
+            "resolution": actual_resolution, "generate_audio": True, "seed": seed,
+        }
+        if image_url:
+            payload["image_url"] = uploaded_image_url
+        elif model == "seedance-2.5-spicy":
+            payload["ratio"] = aspect_ratio
+        return f"https://api.hotapi.ai/v1/{model}/{mode}", payload, actual_duration, actual_resolution
+    raise ValueError("That HotAPI spicy renderer is not supported by this Horde Studio build.")
+
+
+def generate_hotapi_video(body: dict[str, Any], on_model: Any = None, on_task: Any = None,
+                          is_cancelled: Any = None) -> dict[str, Any]:
+    key = hotapi_key(body.get("apiKey"))
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("A spicy shot prompt is required.")
+    duration = max(5, min(15, int(body.get("duration") or 5)))
+    resolution = str(body.get("resolution") or "480P").upper()
+    if resolution not in {"480P", "768P", "1080P"}:
+        raise ValueError("Video resolution must be 480P, 768P or 1080P.")
+    aspect_ratio = str(body.get("aspectRatio") or "16:9")
+    if aspect_ratio not in {"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}:
+        raise ValueError("Unsupported Video Adventure aspect ratio.")
+    seed = int(body.get("seed") or secrets.randbelow(2_000_000_000))
+    image_data_url = str(body.get("imageDataUrl") or "").strip()
+    if image_data_url and (len(image_data_url) > 12 * 1024 * 1024 or not re.match(
+            r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", image_data_url, re.I)):
+        raise ValueError("The HotAPI continuity frame is invalid or exceeds 12 MB.")
+    models: list[str] = []
+    requested = body.get("models") if isinstance(body.get("models"), list) else []
+    for raw in requested[:4] or ["minimax-h3-spicy"]:
+        model = str(raw or "").strip()
+        if model in HOTAPI_VIDEO_RENDERERS and model not in models:
+            models.append(model)
+    if not models:
+        raise ValueError("Choose at least one supported HotAPI spicy renderer.")
+    uploaded_image_url = ""
+    attempts: list[dict[str, str]] = []
+    last_error: Any = None
+    for model in models:
+        if callable(is_cancelled) and is_cancelled():
+            raise RuntimeError("HotAPI generation was cancelled.")
+        if callable(on_model):
+            on_model(model)
+        try:
+            if image_data_url and model != "minimax-h3-spicy" and not uploaded_image_url:
+                uploaded_image_url = hotapi_upload_image(image_data_url, key)
+            endpoint, payload, actual_duration, actual_resolution = _hotapi_video_request(
+                model, prompt, image_data_url, duration, resolution, aspect_ratio, seed, uploaded_image_url)
+            task = hotapi_json_request(endpoint, key, method="POST", payload=payload, timeout=90)
+            task_id = str(task.get("id") or "")
+            if not task_id:
+                raise RuntimeError("HotAPI did not return a task ID.")
+            if callable(on_task):
+                on_task(task_id)
+            deadline = time.monotonic() + 15 * 60
+            while time.monotonic() < deadline:
+                if callable(is_cancelled) and is_cancelled():
+                    try:
+                        hotapi_json_request(f"https://api.hotapi.ai/v1/tasks/{urllib.parse.quote(task_id)}", key,
+                                            method="DELETE", timeout=30)
+                    except Exception:
+                        pass
+                    raise RuntimeError("HotAPI generation was cancelled.")
+                task = hotapi_json_request(f"https://api.hotapi.ai/v1/tasks/{urllib.parse.quote(task_id)}",
+                                           key, timeout=45)
+                status = str(task.get("status") or "").lower()
+                if status == "succeeded":
+                    break
+                if status in {"failed", "cancelled"}:
+                    error = task.get("error") if isinstance(task.get("error"), dict) else {}
+                    raise RuntimeError(str(error.get("message") or error.get("code") or f"task {status}"))
+                time.sleep(1.2)
+            else:
+                raise RuntimeError("HotAPI video generation timed out after fifteen minutes.")
+            video_url = hotapi_output_video_url(task.get("output"))
+            if not video_url:
+                raise RuntimeError("HotAPI completed the request without a video URL.")
+            media_id = secrets.token_hex(16)
+            _, size = download_hotapi_video(video_url, media_id)
+            attempts.append({"model": model, "status": "completed"})
+            credits = int(task.get("actual_credits_cost") or task.get("estimated_credits_cost") or 0)
+            return {
+                "ok": True, "provider": "hotapi", "model": model, "requestId": task_id,
+                "mediaId": media_id, "mediaUrl": f"/video-world-media/{media_id}.mp4",
+                "bytes": size, "duration": actual_duration, "resolution": actual_resolution,
+                "seed": seed, "attempts": attempts, "actualCost": credits / 1000,
+                "inferenceSeconds": max(0, int(task.get("completed_at") or 0) - int(task.get("started_at") or 0)),
+            }
+        except Exception as error:
+            last_error = error
+            attempts.append({"model": model, "status": "failed", "error": str(error)[:300]})
+    raise RuntimeError("All configured HotAPI spicy renderers failed. " + " | ".join(
+        f"{attempt['model']}: {attempt.get('error', 'failed')}" for attempt in attempts)) from last_error
+
+
+def _hotapi_video_job_public(job: dict[str, Any]) -> dict[str, Any]:
+    return {key: job.get(key) for key in ("jobId", "status", "createdAt", "updatedAt", "result", "error",
+                                           "currentModel", "remoteTaskId")}
+
+
+def submit_hotapi_video_job(body: dict[str, Any]) -> dict[str, Any]:
+    key = hotapi_key(body.get("apiKey"))
+    job_id = secrets.token_hex(16)
+    now = int(time.time() * 1000)
+    job = {"jobId": job_id, "status": "queued", "createdAt": now, "updatedAt": now,
+           "result": None, "error": "", "currentModel": "", "remoteTaskId": "", "_apiKey": key}
+    with HOTAPI_VIDEO_JOBS_LOCK:
+        cutoff = now - (24 * 60 * 60 * 1000)
+        for stale_id in [key_id for key_id, value in HOTAPI_VIDEO_JOBS.items()
+                         if int(value.get("updatedAt") or 0) < cutoff]:
+            HOTAPI_VIDEO_JOBS.pop(stale_id, None)
+        HOTAPI_VIDEO_JOBS[job_id] = job
+
+    def cancelled() -> bool:
+        with HOTAPI_VIDEO_JOBS_LOCK:
+            return job["status"] == "cancelled"
+
+    def run() -> None:
+        with HOTAPI_VIDEO_JOBS_LOCK:
+            if job["status"] == "cancelled":
+                return
+            job.update(status="running", updatedAt=int(time.time() * 1000))
+        try:
+            result = generate_hotapi_video(
+                body,
+                on_model=lambda model: _update_hotapi_job(job, currentModel=model),
+                on_task=lambda task_id: _update_hotapi_job(job, remoteTaskId=task_id),
+                is_cancelled=cancelled,
+            )
+            with HOTAPI_VIDEO_JOBS_LOCK:
+                if job["status"] == "cancelled":
+                    media_id = str(result.get("mediaId") or "")
+                    if re.fullmatch(r"[a-f0-9]{32}", media_id):
+                        (VIDEO_WORLD_MEDIA_DIR / f"{media_id}.mp4").unlink(missing_ok=True)
+                    return
+                job.update(status="completed", result=result, updatedAt=int(time.time() * 1000))
+        except Exception as error:
+            with HOTAPI_VIDEO_JOBS_LOCK:
+                if job["status"] != "cancelled":
+                    job.update(status="failed", error=str(error), updatedAt=int(time.time() * 1000))
+
+    threading.Thread(target=run, name=f"hotapi-video-{job_id[:8]}", daemon=True).start()
+    return _hotapi_video_job_public(job)
+
+
+def _update_hotapi_job(job: dict[str, Any], **values: Any) -> None:
+    with HOTAPI_VIDEO_JOBS_LOCK:
+        job.update(**values, updatedAt=int(time.time() * 1000))
+
+
+def get_hotapi_video_job(job_id: str) -> dict[str, Any]:
+    with HOTAPI_VIDEO_JOBS_LOCK:
+        job = HOTAPI_VIDEO_JOBS.get(job_id)
+        if not job:
+            raise KeyError("Spicy video job was not found. The local bridge may have restarted.")
+        return _hotapi_video_job_public(job)
+
+
+def cancel_hotapi_video_job(job_id: str) -> dict[str, Any]:
+    remote_task_id = ""
+    key = ""
+    with HOTAPI_VIDEO_JOBS_LOCK:
+        job = HOTAPI_VIDEO_JOBS.get(job_id)
+        if not job:
+            raise KeyError("Spicy video job was not found.")
+        if job["status"] in {"queued", "running"}:
+            remote_task_id = str(job.get("remoteTaskId") or "")
+            key = str(job.get("_apiKey") or "")
+            job.update(status="cancelled", updatedAt=int(time.time() * 1000),
+                       error="Cancelled locally. HotAPI refunds only if upstream work has not started.")
+        result = _hotapi_video_job_public(job)
+    if remote_task_id and key:
+        try:
+            hotapi_json_request(f"https://api.hotapi.ai/v1/tasks/{urllib.parse.quote(remote_task_id)}",
+                                key, method="DELETE", timeout=30)
+        except Exception:
+            pass
+    return result
+
+
+def test_hotapi_connection(body: dict[str, Any]) -> dict[str, Any]:
+    key = hotapi_key(body.get("apiKey"))
+    data = hotapi_json_request("https://api.hotapi.ai/v1/models?limit=100", key, timeout=25)
+    models = data.get("data") if isinstance(data.get("data"), list) else data.get("models")
+    return {"ok": True, "provider": "hotapi", "modelsVisible": len(models) if isinstance(models, list) else 0}
 
 
 def loopback_base_url(value: Any, default_port: int) -> str:
@@ -3030,9 +3237,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
         try:
             if self.serve_app_file(parsed.path):
                 return
+            if parsed.path == "/maps/settings":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Maps settings are loopback-only."})
+                return self.respond(200, maps_settings_status())
             if parsed.path == "/health":
                 return self.respond(200, {"ok": True, "service": "Horde Studio MCP Bridge", "version": 2,
                                           "build": BRIDGE_BUILD, "appInstance": APP_INSTANCE_ID,
+                                          "capabilities": {"magnificReferenceImport": 1},
                                           "alwaysOn": always_on_runtime.status(),
                                           "multiplayer": {"running": bool(multiplayer_runtime.server),
                                                           "port": multiplayer_runtime.port,
@@ -3041,15 +3253,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 query = urllib.parse.parse_qs(parsed.query)
                 body = {key: values[0] for key, values in query.items() if values}
                 return self.respond(200, multiplayer_runtime.state(body))
-            if parsed.path in {"/sync/status", "/sync/snapshot", "/sync/history"}:
-                query = urllib.parse.parse_qs(parsed.query)
-                device_id = query.get("deviceId", [""])[0]
-                label = query.get("label", [""])[0]
-                return self.respond(200, shared_library_store.status(
-                    device_id, label,
-                    include_snapshot=parsed.path == "/sync/snapshot",
-                    include_history=parsed.path == "/sync/history",
-                ))
             if parsed.path == "/always-on/status":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Always-on control is loopback-only."})
@@ -3059,6 +3262,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Video Adventure generation is loopback-only."})
                 return self.respond(200, get_fal_video_job(job_match.group(1)))
+            hotapi_job_match = re.fullmatch(r"/hotapi/video/jobs/([a-f0-9]{32})", parsed.path)
+            if hotapi_job_match:
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Spicy Video Adventure generation is loopback-only."})
+                return self.respond(200, get_hotapi_video_job(hotapi_job_match.group(1)))
             if parsed.path == "/providers":
                 return self.respond(200, {"providers": [provider_status(key) for key in PROVIDERS]})
             if parsed.path == "/oauth/callback":
@@ -3088,6 +3296,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self.respond(403, {"error": "Origin not allowed."})
         try:
             parsed_path = urllib.parse.urlparse(self.path).path
+            if parsed_path == "/maps/settings":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Maps settings are loopback-only."})
+                return self.respond(200, update_maps_settings(self.read_json()))
+            if parsed_path in {"/maps/search", "/maps/route"}:
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Maps access is loopback-only."})
+                return self.respond(200, maps_request(parsed_path.rsplit("/", 1)[-1], self.read_json()))
             if parsed_path == "/shutdown":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Server shutdown is loopback-only."})
@@ -3149,14 +3365,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return self.respond(200, always_on_runtime.pause(str(body.get("reason") or "paused by user")))
             if parsed_path == "/always-on/stop":
                 return self.respond(200, always_on_runtime.stop())
-            if parsed_path == "/sync/push":
-                status, payload = shared_library_store.push(self.read_json())
-                return self.respond(status, payload)
-            if parsed_path == "/sync/restore":
-                status, payload = shared_library_store.restore(self.read_json())
-                return self.respond(status, payload)
-            if parsed_path == "/sync/compact":
-                return self.respond(200, shared_library_store.compact())
             if parsed_path == "/local-image/comfy/generate":
                 body = self.read_json()
                 return self.respond(200, {"image": comfy_generate(body)})
@@ -3171,10 +3379,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Fal image generation is loopback-only."})
                 return self.respond(200, generate_fal_image(self.read_json()))
-            if parsed_path == "/fal/models":
-                if not self.client_is_loopback():
-                    return self.respond(403, {"error": "Fal catalog access is loopback-only."})
-                return self.respond(200, list_fal_models(self.read_json()))
             if parsed_path == "/fal/video/jobs":
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Video Adventure generation is loopback-only."})
@@ -3192,6 +3396,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not self.client_is_loopback():
                     return self.respond(403, {"error": "Video Adventure media deletion is loopback-only."})
                 return self.respond(200, delete_fal_videos(self.read_json()))
+            if parsed_path == "/hotapi/video/jobs":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Spicy Video Adventure generation is loopback-only."})
+                return self.respond(202, submit_hotapi_video_job(self.read_json()))
+            hotapi_cancel_match = re.fullmatch(r"/hotapi/video/jobs/([a-f0-9]{32})/cancel", parsed_path)
+            if hotapi_cancel_match:
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "Spicy Video Adventure generation is loopback-only."})
+                return self.respond(200, cancel_hotapi_video_job(hotapi_cancel_match.group(1)))
+            if parsed_path == "/hotapi/video/test":
+                if not self.client_is_loopback():
+                    return self.respond(403, {"error": "HotAPI connection testing is loopback-only."})
+                return self.respond(200, test_hotapi_connection(self.read_json()))
             if parsed_path == "/media/fetch":
                 body = self.read_json()
                 return self.respond(200, {"image": download_image(safe_remote_image_url(body.get("url")))})
@@ -3240,8 +3457,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 arguments = body.get("arguments")
                 if not tool or not isinstance(arguments, dict):
                     return self.respond(400, {"error": "tool and arguments are required."})
+                if action == "generate" and provider_id == "higgsfield":
+                    arguments = prepare_higgsfield_references(arguments)
+                if action == "generate" and provider_id == "magnific":
+                    arguments = prepare_magnific_references(arguments)
                 result = call_tool(provider_id, tool, arguments)
                 if action == "generate":
+                    if provider_id == "magnific":
+                        result = wait_magnific_image(result)
+                    if provider_id == "higgsfield":
+                        result = wait_higgsfield_image(result)
                     image, source = result_image(result)
                     return self.respond(200, {"image": image, "source": source})
                 return self.respond(200, {"result": result})
@@ -3256,36 +3481,51 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     configured_port = PORT
-    server = None
-    for candidate in range(configured_port, configured_port + 20):
-        select_runtime_port(candidate)
-        app_url = f"http://{HOST}:{PORT}/"
+    select_runtime_port(configured_port)
+    app_url = f"http://{HOST}:{PORT}/"
+    try:
+        server = ThreadingHTTPServer((LISTEN_HOST, PORT), BridgeHandler)
+    except OSError as error:
+        if error.errno not in {errno.EADDRINUSE, 48, 98, 10048}:
+            raise
         try:
-            server = ThreadingHTTPServer((LISTEN_HOST, PORT), BridgeHandler)
-            break
-        except OSError as error:
-            if error.errno not in {errno.EADDRINUSE, 48, 98, 10048}:
-                raise
+            status, _, raw = http_request(app_url + "health", timeout=3)
+            health = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            health, status = {}, 0
+        is_horde_bridge = status == 200 and health.get("service") == "Horde Studio MCP Bridge"
+        same_release = is_horde_bridge \
+            and health.get("appInstance") == APP_INSTANCE_ID \
+            and health.get("build") == BRIDGE_BUILD
+        if same_release:
+            print(f"This Horde Studio release is already running on {app_url}")
+            if "--open" in sys.argv:
+                import webbrowser
+                webbrowser.open(app_url)
+            return
+        if not is_horde_bridge:
+            raise RuntimeError(
+                f"Horde Studio must use its stable storage address {app_url}, but another application owns that port. "
+                "Close that application or set HORDE_SERVER_PORT to one fixed alternative port."
+            ) from error
+        # Portable releases used to move to the next free port when an older
+        # copy was running. Browser databases are origin-scoped, so that looked
+        # exactly like every World had reset. Replace the old local bridge and
+        # keep the stable origin instead.
+        status, _, _ = http_request(app_url + "shutdown", method="POST", body=b"{}", timeout=3)
+        if status != 200:
+            raise RuntimeError(f"Could not stop the older Horde Studio process on {app_url}.") from error
+        deadline = time.time() + 5
+        while True:
             try:
-                status, _, raw = http_request(app_url + "health", timeout=3)
-                health = json.loads(raw.decode("utf-8")) if raw else {}
-            except Exception:
-                health, status = {}, 0
-            same_release = status == 200 \
-                and health.get("service") == "Horde Studio MCP Bridge" \
-                and health.get("appInstance") == APP_INSTANCE_ID \
-                and health.get("build") == BRIDGE_BUILD
-            if same_release:
-                print(f"This Horde Studio release is already running on {app_url}")
-                if "--open" in sys.argv:
-                    import webbrowser
-                    webbrowser.open(app_url)
-                return
-            # An older release, a different extracted copy, or another app owns
-            # this port. Never open it and pretend it is the current build.
-            continue
-    if server is None:
-        raise RuntimeError("Horde Studio could not find a free local port between 43127 and 43146.")
+                server = ThreadingHTTPServer((LISTEN_HOST, PORT), BridgeHandler)
+                break
+            except OSError as retry_error:
+                if time.time() >= deadline:
+                    raise RuntimeError(
+                        f"The older Horde Studio process did not release {app_url}. Close it and launch again."
+                    ) from retry_error
+                time.sleep(0.1)
     app_url = f"http://{HOST}:{PORT}/"
     listen_info = f"{LISTEN_HOST}:{PORT}" if LISTEN_HOST != HOST else str(PORT)
     print(f"Horde Studio bridge listening on {listen_info}")

@@ -246,8 +246,38 @@
 
     HordeLabs.registerTask('world_micro_frame', {
         mode: 'worlds', minimumTier: 'micro', maxInputChars: 3600, maxOutputTokens: 96,
-        system: `You are a tiny semantic sensor inside a deterministic world engine. Read only the supplied player text and candidate lists. Identify the player's own completed or attempted action; quoted speech is not a physical action. Select IDs only from the supplied allowlists. Prefer an explicit later action over an ambiguous earlier phrase. Return exact evidence copied from the player text. Never narrate, invent facts, calculate routes, calculate travel time, or assume an arrival. Use blank IDs and intent "other" rather than guess.`,
-        embeddedSystem: `Classify one player action. Output exactly one short pipe-separated line and nothing else:\nMWF|actorId|intent|destinationId|-|phase|outfitOperation|durationMinutes|confidencePercent|exact evidence\nUse IDs copied from the input lists. actorId is usually player. intent is move, look, speak, interact, outfit, wait, inspect, combat, ooc, or other. phase is intended, attempted, in_progress, or completed. Use - for blank IDs. Confidence is 0 to 100. Evidence must be copied exactly from text. Quoted speech is not movement. Never explain.`,
+        system: `You are a tiny semantic sensor inside a deterministic world engine. Read only the supplied player text and candidate lists. Identify the player's own completed or attempted action; quoted speech is not a physical action. In roleplay prose, present/progressive action declarations such as "I head to X", "I'm walking to X", and "I turn to head out to X" are completed moves unless the player explicitly says they intend, try, are stopped, or fail. Select IDs only from the supplied allowlists. Prefer an explicit later action over an ambiguous earlier phrase. Return exact evidence copied from the player text. Never narrate, invent facts, calculate routes, calculate travel time, or assume an arrival. Use blank IDs and intent "other" rather than guess.`,
+        embeddedSystem: `Classify one player action. Output exactly one short pipe-separated line and nothing else:\nMWF|actorId|intent|destinationId|-|phase|outfitOperation|durationMinutes|confidencePercent|exact evidence\nUse IDs copied from the input lists. actorId is usually player. intent is move, look, speak, interact, outfit, wait, inspect, combat, ooc, or other. phase is intended, attempted, in_progress, or completed. RP action declarations like "I head", "I'm walking", or "I turn to head out" are completed unless explicitly intended, attempted, stopped, or failed. Use - for blank IDs. Confidence is 0 to 100. Evidence must be copied exactly from text. Quoted speech is not movement. Never explain.`,
+        // Needle's context is capped at 2,200 characters. Slicing a generic JSON
+        // envelope could leave malformed JSON and cut off the allowlists. This
+        // compact capsule is always syntactically complete and keeps both the
+        // beginning and end of long roleplay input, where the final action often
+        // appears after dialogue.
+        needleInput(envelope) {
+            const rawText = String(envelope.text || '');
+            const text = rawText.length <= 1100
+                ? rawText : `${rawText.slice(0, 700)} … ${rawText.slice(-380)}`;
+            const locations = (Array.isArray(envelope.locations) ? envelope.locations : [])
+                .map(item => `${String(item.id || '').slice(0, 80)}=${String(item.name || '').slice(0, 100)}`);
+            const actors = (Array.isArray(envelope.actors) ? envelope.actors : [])
+                .map(item => `${String(item.id || '').slice(0, 80)}=${String(item.name || '').slice(0, 100)}`);
+            const header = `TEXT:\n${text}\nCURRENT:${String(envelope.currentLocationId || '').slice(0, 80)}\n`;
+            let actorList = '';
+            for (const entry of actors) {
+                const addition = `${actorList ? '|' : ''}${entry}`;
+                if (actorList.length + addition.length > 420) break;
+                actorList += addition;
+            }
+            const actorLine = `ACTORS:${actorList}\n`;
+            const remaining = Math.max(0, 2180 - header.length - actorLine.length - 10);
+            let locationLine = 'LOCATIONS:';
+            for (const entry of locations) {
+                const addition = `${locationLine.endsWith(':') ? '' : '|'}${entry}`;
+                if (locationLine.length + addition.length > remaining) break;
+                locationLine += addition;
+            }
+            return `${header}${actorLine}${locationLine}`;
+        },
         parseOutput: compactWorldFrame,
         schema: object({
             actorId: string(),

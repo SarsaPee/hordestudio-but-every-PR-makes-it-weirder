@@ -43,10 +43,8 @@
         'w-visual-art-style': 'A short style label added to generated visual prompts to keep World artwork coherent.',
         'w-visual-art-direction': 'The shared visual bible for generated locations and portraits: medium, palette, era, framing, costume and exclusions.',
         'w-visual-map-skin-generate': 'Generate a decorative map texture using this World’s image provider. It never changes routes or location data.',
-        'w-visual-new-image-provider': 'Choose the provider used to create a new portrait, location image or map skin from text. It does not alter the narrator’s text provider.',
-        'w-visual-new-image-model': 'The text-to-image model used for fresh World artwork. It receives the compiled visual brief and framing, but no existing image.',
-        'w-visual-revision-image-provider': 'Choose the provider used only when revising an existing generated image. Use “New Image Pipeline” to reuse the fresh-image provider.',
-        'w-visual-revision-image-model': 'Optional reference-image model for revisions. Leave it blank to reuse the new-image model when it supports image references; otherwise choose a reference-capable model.',
+        'w-visual-image-provider': 'Select only the provider used for this World’s generated artwork. The DM text model can remain on another provider.',
+        'w-visual-image-model': 'Image model used for World map skins, locations and portraits. Compatibility is read from the selected provider when available.',
         'w-visual-background-dim': 'Darken location artwork behind text. Higher values improve readability but hide more of the image.',
         'w-visual-panel-opacity': 'Set narrative-card opacity. Higher values improve contrast; lower values reveal more background artwork.',
         'w-sandbox-enabled': 'Enable persistent sandbox simulation systems such as factions, growth, conflict, law and seasons.',
@@ -150,10 +148,10 @@
         'global-custom-headers': 'Optional JSON object of additional request headers. Treat these as secrets: they follow Remember Keys and are excluded from exports.',
         'test-custom-conn-btn': 'Calls BASE_URL/models with the current key and headers without saving them first.',
         'test-bedrock-conn-btn': 'Verify the Bedrock API key and region by loading that region’s compatible model catalog.',
-        'remember-api-key': 'Persist API keys in this browser profile. Portable Horde exports and Full Backup files exclude keys; your personal local Shared Library mirror transfers them between your own instances.',
+        'remember-api-key': 'Persist API keys in this browser profile. Keys are never included in Horde exports or backups.',
         'global-local-generation-timeout': 'Maximum idle time for a local World generation. The timer resets whenever data arrives; zero disables automatic cancellation.',
         'global-embedding-url': 'Optional separate OpenAI-compatible server used only for vector embeddings. Leave blank to use the active text provider.',
-        'global-embedding-key': 'Optional bearer token for the separate embedding server. It is excluded from portable exports and Full Backup files, but included in your personal local Shared Library mirror.',
+        'global-embedding-key': 'Optional bearer token for the separate embedding server. It is excluded from backups and exports.',
         'global-embedding-model': 'Embedding model sent to the dedicated embedding server or, when no separate URL is set, the active text provider.',
         'test-embedding-conn-btn': 'Send one real embedding request and verify that the server returns a usable vector.',
         'global-local-tts-url': 'Dedicated OpenAI-compatible local speech base URL, normally ending in /v1. This does not change the text provider.',
@@ -237,9 +235,6 @@
     }
 
     function explanationFor(element) {
-        // Provider routing is an operational editor, not guided form input.
-        // Keep it free of automatic nearby-hint and title tooltips.
-        if (element.closest?.('#world-sidecar-openrouter-routing')) return '';
         return valueHelp(element)
             || HELP_BY_ID[element.id]
             || clean(element.getAttribute('data-help'))

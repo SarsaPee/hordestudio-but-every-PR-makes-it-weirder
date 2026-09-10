@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${1:-16.7.0}"
+VERSION="${1:-17.4.0}"
 ROOT_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 BUILD_DIR=$(mktemp -d)
 APP_DIR="$BUILD_DIR/Horde Studio"
@@ -18,6 +18,12 @@ mkdir -p "$APP_DIR" "$OUTPUT_DIR"
 for file in \
   index.html \
   app.js \
+  vh-world-engine.js \
+  vh-activity-engine.js \
+  vh-conversation-engine.js \
+  vh-simulation-core.js \
+  vh-host-worker.js \
+  video-worlds.js \
   style.css \
   presets.js \
   boot-diagnostics.js \
@@ -48,59 +54,6 @@ do
   cp "$ROOT_DIR/$file" "$APP_DIR/"
 done
 
-# Pass 0 adds pristine stock 17.0 Worlds as a same-document mode. Ship only
-# its generated runtime and stylesheet; source maps and pristine reference
-# trees remain development/provenance material.
-mkdir -p "$APP_DIR/experiences/stock-worlds-17-pass0"
-cp "$ROOT_DIR/experiences/stock-worlds-17-pass0/runtime.js" \
-  "$ROOT_DIR/experiences/stock-worlds-17-pass0/style.css" \
-  "$APP_DIR/experiences/stock-worlds-17-pass0/"
-
-# Pass 1 begins the mechanical relocation of the accepted Experimental Worlds
-# implementation. Ship the relocated runtime, never the old reference tree.
-mkdir -p "$APP_DIR/experiences/experimental-worlds/runtime" \
-  "$APP_DIR/host-adapters/experimental-worlds"
-cp "$ROOT_DIR/experiences/experimental-worlds/runtime/sidecar-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/experimental-runtime-compat.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/experimental-vector-memory.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-message-input.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/dossier-claims.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-studio-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-play-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-session-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-intelligence-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-protocol-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/runtime/experimental-worlds-repository.js" \
-  "$APP_DIR/experiences/experimental-worlds/runtime/"
-mkdir -p "$APP_DIR/experiences/experimental-worlds/mechanics" \
-  "$APP_DIR/experiences/experimental-worlds/visuals" \
-  "$APP_DIR/experiences/experimental-worlds/scenepulse" \
-  "$APP_DIR/experiences/experimental-worlds/styles"
-cp "$ROOT_DIR/experiences/experimental-worlds/mechanics/world-mechanics.js" \
-  "$APP_DIR/experiences/experimental-worlds/mechanics/"
-cp "$ROOT_DIR/experiences/experimental-worlds/visuals/world-portrait-prompt.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-media-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-provider-core.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/visuals/world-visual-editor-core.js" \
-  "$APP_DIR/experiences/experimental-worlds/visuals/"
-cp "$ROOT_DIR/host-adapters/experimental-worlds/visual-media-host-adapter.js" \
-  "$ROOT_DIR/host-adapters/experimental-worlds/experimental-worlds-host-adapter.js" \
-  "$ROOT_DIR/host-adapters/experimental-worlds/experimental-worlds-state-adapter.js" \
-  "$APP_DIR/host-adapters/experimental-worlds/"
-cp "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js" \
-  "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js" \
-  "$APP_DIR/experiences/experimental-worlds/scenepulse/"
-cp "$ROOT_DIR/experiences/experimental-worlds/styles/scene-pulse-worlds.css" \
-  "$ROOT_DIR/experiences/experimental-worlds/styles/experimental-worlds-isolated.css" \
-  "$ROOT_DIR/experiences/experimental-worlds/styles/world-visuals-and-sidecar.css" \
-  "$APP_DIR/experiences/experimental-worlds/styles/"
-# The native Source Runtime dynamically imports its pinned local ScenePulse
-# source modules. Keep that licensed vendor tree in the portable build; it is
-# runtime code, not an alternate Horde installation or development worktree.
-mkdir -p "$APP_DIR/scenepulse"
-cp -R "$ROOT_DIR/scenepulse/vendor" "$APP_DIR/scenepulse/"
-
 # Built-in humans follow the same boot path as the rest of the application.
 # Packaging must copy both definitions and must never rewrite them into inline
 # scripts (which CSP correctly blocks). Treat either missing file as a fatal
@@ -117,6 +70,7 @@ fi
 
 # Internet multiplayer is bring-your-own relay. Ship the small auditable Worker
 # source and setup guide so portable users are not dependent on this repository.
+
 mkdir -p "$APP_DIR/docs"
 cp "$ROOT_DIR/docs/multiplayer.md" "$APP_DIR/docs/"
 cp -R "$ROOT_DIR/multiplayer-relay" "$APP_DIR/"

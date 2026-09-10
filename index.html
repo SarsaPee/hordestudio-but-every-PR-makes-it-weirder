@@ -10,19 +10,10 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260909-experimental-worlds-pass0-v1">
-    <!-- Pinned ScenePulse component order is deliberately imported whole. -->
-    <link id="experimental-scenepulse-vendor-style" rel="stylesheet" href="experiences/experimental-worlds/scenepulse/vendor/ScenePulse/style.css?v=6.27.20-2888d0d" disabled>
-    <link id="experimental-scenepulse-host-style" rel="stylesheet" href="experiences/experimental-worlds/styles/scene-pulse-worlds.css?v=20260910-pass1-scenepulse-v2" disabled>
-    <!-- Visuals, outfits, Scene Inspector and Sidecar presentation belong to
-         Experimental Worlds, not the host or stock Worlds stylesheet. -->
-    <link id="experimental-worlds-visual-style" rel="stylesheet" href="experiences/experimental-worlds/styles/world-visuals-and-sidecar.css?v=20260910-pass1-world-visuals-v2" disabled>
-    <link id="experimental-worlds-private-style" rel="stylesheet" href="experiences/experimental-worlds/styles/experimental-worlds-isolated.css?v=20260910-pass1-private-css-v1" disabled>
+    <link rel="stylesheet" href="style.css?v=20260908-reply-cleanup">
 </head>
 <body>
 <div id="app">
-
-    <button id="global-sidebar-toggle" class="global-sidebar-toggle-btn" type="button" title="Show or hide sidebar" aria-label="Show or hide sidebar">‹</button>
 
     <!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
     <aside class="sidebar">
@@ -36,13 +27,9 @@
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0116 0v2"/></svg>
                 Virtual Human
             </button>
-            <button class="nav-item" data-view="stockWorlds" id="nav-stock-worlds-btn">
+            <button class="nav-item" data-view="worlds" id="nav-worlds-btn">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                 Worlds
-            </button>
-            <button class="nav-item experimental-worlds-nav-item" data-view="worlds" id="nav-worlds-btn" title="Open Experimental Worlds">
-                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zM2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-                <span>Experimental Worlds</span><span class="experimental-worlds-nav-badge">EXPERIMENTAL</span>
             </button>
             <button class="nav-item video-world-nav-item" data-view="videoWorlds" id="nav-video-worlds-btn" type="button" title="Create and play persistent generated films">
                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9z"/></svg>
@@ -177,18 +164,13 @@
             </div>
         </section>
 
-        <!-- Pass 0: pristine stock 17.0 Worlds, mounted in this document. -->
-        <section id="stock-worlds-pass0-view" class="view hidden stock-worlds-pass0-host" aria-label="Worlds">
-            <div id="stock-worlds-pass0-mount"></div>
-        </section>
-
-        <!-- ────────── EXPERIMENTAL WORLDS VIEW (authoritative custom runtime) ────────── -->
-        <section id="worlds-view" class="view hidden landing-view experimental-worlds-view">
+        <!-- ────────── WORLDS VIEW ────────── -->
+        <section id="worlds-view" class="view hidden landing-view">
             <div class="landing-shell">
             <header class="page-header landing-hero">
                 <div class="landing-hero-copy">
                     <span class="vh-eyebrow">Persistent simulation spaces</span>
-                    <h1 class="page-title">Experimental Worlds <span class="experimental-worlds-heading-badge">EXPERIMENTAL</span></h1>
+                    <h1 class="page-title">Worlds</h1>
                     <p class="page-subtitle">Enter a living setting or build an expansive, persistent RPG engine.</p>
                 </div>
                 <div class="header-actions landing-actions">
@@ -220,13 +202,13 @@
                     <div class="landing-hero-copy">
                         <span class="vh-eyebrow">Playable generated film</span>
                         <h1 class="page-title">Video Adventures</h1>
-                        <p class="page-subtitle">Create a cinematic setting, take an action, and let each generated shot become the starting frame for the next.</p>
+                        <p class="page-subtitle">Create a cinematic story, preplan its decision tree as text, then film only the path you choose.</p>
                     </div>
                     <div class="header-actions landing-actions">
                         <button id="create-video-world-btn" class="btn btn-primary">+ Create Video Adventure</button>
                     </div>
                 </header>
-                <div class="video-world-alpha-note"><strong>First draft</strong><span>Video Adventures have their own library and timelines. They do not read or modify regular World saves.</span></div>
+                <div class="video-world-alpha-note"><strong>Story-first play</strong><span>The Director preplans coherent choices as inexpensive text. The opening and each selected branch are rendered on demand; unused branches cost nothing. Video Adventures remain separate from regular World saves.</span></div>
                 <div id="video-world-grid" class="char-grid"></div>
             </div>
         </section>
@@ -276,19 +258,38 @@
                         <button id="video-world-test-director" class="btn btn-ghost" type="button">Test Director</button>
                         <div id="video-world-director-status" class="video-world-director-status" aria-live="polite">Not tested.</div>
                         <button id="video-world-open-ai-settings" class="btn btn-ghost btn-small" type="button">Configure text provider</button>
+                        <span class="vh-eyebrow video-world-section-label">STORY BLOCK</span>
+                        <label class="form-field"><span>Preplanned story size</span><select id="video-world-story-depth" class="form-select"><option value="1">Short · 4 planned beats</option><option value="2">Standard · 13 planned beats</option></select></label>
+                        <p class="video-world-helper">The Director writes this complete decision tree as inexpensive text before play. Horde renders only the opening and each branch you actually choose—unused branches never become paid videos.</p>
+                        <div id="video-world-block-cost-preview" class="video-world-cost-preview"></div>
                         <span class="vh-eyebrow video-world-section-label">PRODUCTION</span>
-                        <label class="form-field"><span>Primary video renderer</span><select id="video-world-renderer-primary" class="form-select"><option value="minimax/h3-max">MiniMax H3 Max · dialogue · fast</option><option value="alibaba/wan-3.0">Wan 3.0 · audio · resilient</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast · native audio</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime · higher fidelity</option></select></label>
-                        <label class="form-field"><span>Fallback renderer</span><select id="video-world-renderer-fallback" class="form-select"><option value="alibaba/wan-3.0">Wan 3.0 · recommended after H3</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option><option value="">No automatic fallback</option></select></label>
-                        <label class="form-field"><span>Second fallback <small>optional</small></span><select id="video-world-renderer-fallback-2" class="form-select"><option value="">None</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0">Wan 3.0</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option></select></label>
-                        <p class="video-world-helper">The fallback retries the same Director beat and continuity frame when the primary renderer rejects or fails. Fal may bill upstream work accepted before a fallback begins.</p>
+                        <label class="form-field"><span>Character reference handling</span><select id="video-world-reference-strategy" class="form-select"><option value="auto">Smart auto · recommended</option><option value="direct">Direct H3 / Wan references · fastest</option><option value="keyframe">Build identity anchor frame · most compatible</option></select></label>
+                        <p class="video-world-helper">Smart auto uses native multi-reference video for H3 or Wan, and creates one composed anchor image only when the selected route needs it. Anchor images are made for openings or new cast entrances—not every shot—and currently add about $0.08.</p>
+                        <label class="form-field"><span>Content route</span><select id="video-world-content-route" class="form-select"><option value="standard">Standard · Fal only</option><option value="standard_then_spicy">Smart spicy fallback · Fal, then HotAPI</option><option value="spicy_first">Spicy from the start · HotAPI only</option></select></label>
+                        <div id="video-world-content-route-note" class="video-world-helper video-world-route-note"></div>
+                        <div id="video-world-standard-renderers" class="video-world-renderer-group">
+                            <strong>Standard path · Fal</strong>
+                            <label class="form-field"><span>Primary renderer</span><select id="video-world-renderer-primary" class="form-select"><option value="minimax/h3-max">MiniMax H3 Max · dialogue · fast</option><option value="alibaba/wan-3.0">Wan 3.0 · audio · resilient</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast · native audio</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime · higher fidelity</option></select></label>
+                            <label class="form-field"><span>Fallback renderer</span><select id="video-world-renderer-fallback" class="form-select"><option value="alibaba/wan-3.0">Wan 3.0 · recommended after H3</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option><option value="">No automatic fallback</option></select></label>
+                            <label class="form-field"><span>Second fallback <small>optional</small></span><select id="video-world-renderer-fallback-2" class="form-select"><option value="">None</option><option value="fal-ai/ltx-2.3/fast">LTX-2.3 Fast</option><option value="alibaba/wan-3.0">Wan 3.0</option><option value="alibaba/wan-3.0-prime">Wan 3.0 Prime</option><option value="minimax/h3-max">MiniMax H3 Max</option></select></label>
+                        </div>
+                        <div id="video-world-spicy-renderers" class="video-world-renderer-group hidden">
+                            <strong>Spicy path · HotAPI</strong>
+                            <label class="form-field"><span>Primary spicy renderer</span><select id="video-world-spicy-primary" class="form-select"><option value="minimax-h3-spicy">MiniMax H3 Spicy · best value · $0.08/s</option><option value="seedance-2.0-fast-spicy">Seedance 2.0 Fast Spicy · slower · $0.112/s</option><option value="seedance-2.0-spicy">Seedance 2.0 Spicy · premium · $0.14/s</option><option value="seedance-2.5-spicy">Seedance 2.5 Spicy · slowest/premium · $0.206/s</option></select></label>
+                            <label class="form-field"><span>Spicy fallback</span><select id="video-world-spicy-fallback" class="form-select"><option value="seedance-2.0-fast-spicy">Seedance 2.0 Fast Spicy · $0.112/s</option><option value="minimax-h3-spicy">MiniMax H3 Spicy · $0.08/s</option><option value="seedance-2.0-spicy">Seedance 2.0 Spicy · $0.14/s</option><option value="seedance-2.5-spicy">Seedance 2.5 Spicy · $0.206/s</option><option value="">None</option></select></label>
+                            <label class="form-field"><span>Second spicy fallback</span><select id="video-world-spicy-fallback-2" class="form-select"><option value="">None</option><option value="minimax-h3-spicy">MiniMax H3 Spicy · $0.08/s</option><option value="seedance-2.0-fast-spicy">Seedance 2.0 Fast Spicy · $0.112/s</option><option value="seedance-2.0-spicy">Seedance 2.0 Spicy · $0.14/s</option><option value="seedance-2.5-spicy">Seedance 2.5 Spicy · $0.206/s</option></select></label>
+                            <p class="video-world-helper">HotAPI adds no platform refusal layer, but upstream behavior can still vary. Seedance 2.0 and 2.5 generate synchronized audio and preserve continuity; they cost more and commonly take longer. Spicy routes are for stories involving consenting adults.</p>
+                        </div>
                         <label class="form-field"><span>Resolution</span><select id="video-world-resolution" class="form-select"><option value="480P">480p · economical</option><option value="768P">768p / 720p · higher fidelity</option></select></label>
                         <label class="form-field"><span>Shot duration</span><select id="video-world-duration" class="form-select"><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option></select></label>
                         <label class="form-field"><span>Aspect ratio</span><select id="video-world-aspect" class="form-select"><option value="16:9">16:9 · cinematic</option><option value="21:9">21:9 · ultrawide</option><option value="4:3">4:3 · classic</option><option value="1:1">1:1 · square</option><option value="9:16">9:16 · vertical</option></select></label>
-                        <label class="vh-test-check video-world-safety-toggle"><input id="video-world-safety-checker" type="checkbox" checked><span>Fal safety checker</span></label>
-                        <p class="video-world-helper">On by default. Both this adventure switch and the global Fal switch must be on to request optional checking. When either is off, Horde sends <code>enable_safety_checker: false</code> to supported endpoints. LTX Fast does not expose this option, and mandatory provider or model-level filters can still reject a request.</p>
+                        <div id="video-world-fal-safety-controls" class="video-world-fal-safety-controls">
+                            <label class="vh-test-check video-world-safety-toggle"><input id="video-world-safety-checker" type="checkbox" checked><span>Fal safety checker</span></label>
+                            <p class="video-world-helper">Applies only to the standard Fal path. When either this or the global switch is off, Horde sends <code>enable_safety_checker: false</code> where supported. Mandatory provider/model checks can still reject a request.</p>
+                        </div>
                         <label class="form-field"><span>Session spending limit</span><div class="video-world-money-input"><span>$</span><input id="video-world-budget" class="form-input" type="number" min="0.10" max="10000" step="0.25" value="5.00"></div></label>
                         <div id="video-world-cost-preview" class="video-world-cost-preview"></div>
-                        <div class="video-world-provider-note"><strong id="video-world-renderer-note">Renderers: Fal · H3 Max → Wan 3.0</strong><span>The Fal key stays in this browser session and is sent only to Horde's loopback bridge, which downloads completed clips locally.</span></div>
+                        <div class="video-world-provider-note"><strong id="video-world-renderer-note">Standard: Fal · H3 Max → Wan 3.0</strong><span>Fal and HotAPI keys stay in this browser session unless you opt into device storage. Horde sends them only through its loopback bridge and downloads completed clips locally.</span></div>
                     </aside>
                 </div>
             </div>
@@ -303,7 +304,7 @@
                 <div class="video-world-play-grid">
                     <main class="video-world-stage-panel">
                         <div id="video-world-stage" class="video-world-stage">
-                            <div id="video-world-stage-empty" class="video-world-stage-empty"><button id="video-world-stage-generate" type="button" aria-label="Film opening shot">▶</button><strong>Your opening shot is ready to film</strong><small>Select Film opening to generate picture and ambient sound.</small></div>
+                            <div id="video-world-stage-empty" class="video-world-stage-empty"><button id="video-world-stage-generate" type="button" aria-label="Plan story and film opening">▶</button><strong>Your adventure is ready to begin</strong><small>The Director will preplan the story tree, then Horde will film only the opening scene.</small></div>
                             <video id="video-world-player" class="hidden" controls playsinline preload="metadata"></video>
                             <video id="video-world-preloader" class="hidden" muted playsinline preload="auto" aria-hidden="true"></video>
                             <div id="video-world-generating" class="video-world-generating hidden"><span class="video-world-spinner"></span><strong id="video-world-generating-title">Filming shot…</strong><small id="video-world-generating-detail">Submitting to Fal</small><button id="video-world-cancel-generation" type="button">Cancel</button></div>
@@ -311,8 +312,8 @@
                         <div class="video-world-composer">
                             <label for="video-world-action" id="video-world-action-label">Opening shot</label>
                             <div id="video-world-choices" class="video-world-choices hidden" role="group" aria-label="Choose the next action"></div>
-                            <textarea id="video-world-action" class="form-textarea" rows="3" maxlength="3000" placeholder="Describe what you attempt or what should happen next..."></textarea>
-                            <div><span id="video-world-next-cost">Estimated shot: $0.00</span><button id="video-world-generate" class="btn btn-primary" type="button">Film opening</button></div>
+                            <textarea id="video-world-action" class="form-textarea" rows="3" maxlength="3000" placeholder="Describe the new direction for the next story block..."></textarea>
+                            <div><span id="video-world-next-cost">Estimated block: $0.00</span><button id="video-world-generate" class="btn btn-primary" type="button">Plan &amp; prepare</button></div>
                         </div>
                     </main>
                     <aside class="video-world-timeline-panel">
@@ -478,6 +479,24 @@
                         <!-- Dynamic buttons injected here -->
                     </div>
 
+                    <div id="chat-attachment-tray" class="chat-attachment-tray hidden" aria-live="polite"></div>
+                    <div id="chat-capability-bar" class="chat-capability-bar hidden" aria-label="Chat capabilities">
+                        <button id="chat-attach-btn" class="chat-capability-btn hidden" type="button" aria-haspopup="menu" aria-expanded="false">＋ Attach</button>
+                        <div id="chat-attach-menu" class="chat-attach-menu hidden" role="menu">
+                            <button type="button" data-chat-attachment="image" role="menuitem">🖼️ Image</button>
+                            <button type="button" data-chat-attachment="pdf" role="menuitem">📄 PDF</button>
+                            <button type="button" data-chat-attachment="audio" role="menuitem">🎙️ Audio</button>
+                            <button type="button" data-chat-attachment="video" role="menuitem">🎬 Video</button>
+                        </div>
+                        <button id="chat-web-btn" class="chat-capability-btn hidden" type="button" aria-pressed="false">⌕ Web</button>
+                        <button id="chat-image-mode-btn" class="chat-capability-btn hidden" type="button" aria-pressed="false">✦ Create image</button>
+                        <span id="chat-capability-note" class="chat-capability-note"></span>
+                    </div>
+                    <input id="chat-image-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden>
+                    <input id="chat-pdf-input" type="file" accept="application/pdf" multiple hidden>
+                    <input id="chat-audio-input" type="file" accept="audio/mpeg,audio/mp4,audio/wav,audio/webm,audio/ogg" multiple hidden>
+                    <input id="chat-video-input" type="file" accept="video/mp4,video/mpeg,video/quicktime,video/webm" multiple hidden>
+
                     <div class="input-row">
                         <textarea id="user-input" class="msg-input" placeholder="Type your message..." rows="1"></textarea>
                         <button id="send-btn" class="send-btn" type="button" disabled title="Send (Enter)" aria-label="Send message">
@@ -496,7 +515,7 @@
         </section>
 
         <!-- ────────── WORLD PLAY VIEW ────────── -->
-        <section id="world-play-view" class="view hidden experimental-worlds-view">
+        <section id="world-play-view" class="view hidden">
             <div class="world-play-container">
                 <!-- Main Narrative Column -->
                 <div class="world-narrative-col">
@@ -515,11 +534,10 @@
                                 <div class="session-selector-wrap">
                                     <select id="world-session-select" class="tool-select"></select>
                                     <button class="tool-btn" id="world-new-session-btn" title="New World Session">➕ New</button>
-                                    <button class="tool-btn" id="world-timeline-browser-btn" title="Inspect timelines and fork provenance">▤ Timelines</button>
                                     <button class="tool-btn" id="world-rename-session-btn" title="Rename Current Session">✏️ Rename</button>
                                     <button class="tool-btn tool-btn-danger" id="world-del-session-btn" type="button" title="Delete Current Session" aria-label="Delete current session">🗑️</button>
                                 </div>
-                                <span class="tool-btn" id="world-pipeline-status-btn" title="Active timeline pipeline">…</span>
+                                <div class="toolbar-divider"></div>
                                 
                                 <div id="world-context-meter-wrap" style="display:flex; align-items:center; gap:8px; background:var(--surface2); padding:4px 10px; border-radius:10px; border:1px solid var(--border);">
                                     <span style="font-size:0.6rem; color:var(--text-3); font-weight:800;">CTX</span>
@@ -539,11 +557,6 @@
                                 <button class="tool-btn" id="world-roll-btn" title="Roll Dice">🎲 Roll</button>
                                 <button class="tool-btn" id="world-continue-btn" title="DM continues without your input">⏩ Continue</button>
                                 <button class="tool-btn" id="world-session-zero-btn" title="Open session identity and story preferences">🎬 Session Setup</button>
-                                <button class="tool-btn" id="world-persona-btn" title="Create or assign the player persona for this timeline">👤 Persona</button>
-                                <button class="tool-btn" id="world-plan-sequence-btn" title="Plan and approve the next sequence">✦ New Sequence</button>
-                                <button class="tool-btn" id="world-close-sequence-btn" title="Close the current sequence and prepare its reconciliation">▣ Close Sequence</button>
-                                <button class="tool-btn world-v3-only" id="world-v3-end-scene-btn" title="End the current scene and create its scene card">🎬 End Scene</button>
-                                <button class="tool-btn world-v3-only" id="world-v3-gm-btn" title="Open a private line to the World GM">🧭 World GM</button>
                                 <button class="tool-btn" id="world-map-btn" title="Toggle Map View">🗺️ Map</button>
                                 <button class="tool-btn" id="world-reroll-btn" title="Reroll last DM response">🔄 Reroll</button>
                                 <button class="tool-btn world-more-btn" id="world-more-btn" type="button" aria-expanded="false">••• More</button>
@@ -568,10 +581,6 @@
                     <div class="messages-wrap" id="world-messages-container">
                         <!-- Narrative and Dialogue -->
                     </div>
-                    <section id="world-sidecar-conversation" class="hidden" style="margin:0 16px 10px; border:1px solid var(--border); border-radius:10px; background:var(--surface2); overflow:hidden;">
-                        <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; font-size:0.75rem; font-weight:800; color:var(--text-2); border-bottom:1px solid var(--border);"><span>🎭 Sidecar conversation <span style="font-weight:400; color:var(--text-3);">Out of world — does not advance the scene</span></span><button class="tool-btn" id="world-close-sidecar-conversation" type="button" title="Return to narrator mode" style="margin-left:auto; padding:4px 8px; font-size:.66rem;">← Return to Narrator</button></div>
-                        <div id="world-sidecar-conversation-log" style="max-height:240px; overflow:auto; padding:10px;"></div>
-                    </section>
                     <!-- DM Typing Indicator (persistent, outside messages container) -->
                     <div id="world-dm-typing" style="display:none; padding: 8px 16px; align-items:center; gap:10px;">
                         <div style="display:flex; gap:4px; align-items:center;">
@@ -581,10 +590,8 @@
                         </div>
                         <span style="font-size:0.8rem; color:var(--text-3); font-style:italic;" id="world-dm-typing-label">DM is writing...</span>
                     </div>
-                    <button id="world-scroll-bottom-btn" class="world-scroll-bottom-btn hidden" type="button" title="Scroll to latest" aria-label="Scroll to latest message">↓</button>
                     <div class="input-wrap">
                         <div class="input-row">
-                            <div id="world-message-resize-handle" class="world-message-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Drag up or down to resize message input" tabindex="0" title="Drag up or down to resize message input"></div>
                             <textarea id="world-user-input" class="msg-input" placeholder="What do you do?..." rows="1"></textarea>
                             <button id="world-send-btn" class="send-btn" type="button" aria-label="Send message">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -594,13 +601,7 @@
                 </div>
 
                 <!-- Status & Info Column -->
-                <div class="world-status-resize-handle" id="world-status-resize-handle" title="Drag to resize the state window"></div>
                 <aside class="world-status-col">
-                    <div id="world-sidecar-workspace" class="world-sidecar-workspace hidden" aria-label="Scene Intelligence Workspace"></div>
-                    <div class="world-status-toolbar">
-                        <button id="world-status-columns-toggle" class="tool-btn" type="button" title="Toggle one or two state columns" aria-pressed="false">▦ 1 column</button>
-                    </div>
-                    <div class="hud-columns" id="world-status-columns">
                     <!-- Player HUD (Phase 2 RPG Mechanics) -->
                     <!-- World Time & Atmosphere -->
                     <section class="world-status-section" id="hud-section-clock" style="margin-top:0;">
@@ -695,7 +696,6 @@
                             <!-- Simulation state appears here -->
                         </div>
                     </section>
-                    </div>
                 </aside>
             </div>
         </section>
@@ -736,222 +736,8 @@
             </div>
         </div>
 
-        <div id="world-visual-editor-modal" class="modal-bg hidden">
-            <div class="modal modal-xl world-visual-editor" role="dialog" aria-labelledby="world-visual-editor-title">
-                <div class="modal-hd">
-                    <div>
-                        <span class="vh-eyebrow">WORLD VISUAL</span>
-                        <h2 id="world-visual-editor-title">Image editor</h2>
-                    </div>
-                    <div class="world-visual-editor-header-actions">
-                        <button class="btn btn-primary" id="world-visual-save-close" type="button">Save &amp; Close</button>
-                        <button class="tool-btn" id="world-visual-editor-close" type="button" aria-label="Close image editor without saving">&#10005;</button>
-                    </div>
-                </div>
-                <div class="modal-body world-visual-editor-body">
-                    <div class="world-visual-editor-preview-column">
-                        <div id="world-visual-crop-stage" class="world-visual-crop-stage">
-                            <img id="world-visual-crop-image" alt="Current world visual">
-                            <div id="world-visual-crop-guide" class="world-visual-crop-guide" aria-hidden="true"></div>
-                            <div id="world-visual-crop-empty" class="world-visual-crop-empty">Generate or upload an image to crop it.</div>
-                        </div>
-                        <div class="world-visual-variant-bar">
-                            <button class="tool-btn" id="world-visual-previous" type="button" aria-label="Previous image">&#8249;</button>
-                            <span id="world-visual-variant-count">No images</span>
-                            <button class="tool-btn" id="world-visual-next" type="button" aria-label="Next image">&#8250;</button>
-                            <select id="world-visual-variant-filter" class="form-select" aria-label="Filter character images by outfit" title="Show all character images or only images attached to one outfit"></select>
-                            <button class="tool-btn world-visual-export" id="world-visual-export" type="button">Export image</button>
-                        </div>
-                        <div id="world-visual-outfit-gallery" class="world-visual-outfit-gallery" hidden></div>
-                        <div class="world-visual-crop-controls">
-                            <input id="world-visual-crop-x" type="hidden" value="50">
-                            <input id="world-visual-crop-y" type="hidden" value="50">
-                            <label>Zoom <input id="world-visual-crop-zoom" type="range" min="50" max="300" value="100"></label>
-                        </div>
-                        <p class="form-hint">Generated images are stored whole at their provider aspect ratio. NPC profiles render as a 1:1 frame cropped from that source: drag and zoom to frame it, then Apply Crop saves the profile image while the full source stays editable. Crop &amp; Fill asks the revision model to outpaint missing frame areas instead of cutting the source.</p>
-                        <div id="world-visual-active-outfit" class="world-visual-active-outfit" hidden>
-                            <div class="world-visual-active-outfit-heading"><div class="form-label">Active outfits <span class="help-glyph" title="Select a tile to make that outfit active. Edit its title and clothing description here; those fields are also used by Sidecar and image generation.">?</span></div><span class="form-hint">Select, edit, or author an outfit</span></div>
-                            <div id="world-visual-active-outfit-list" class="world-visual-active-outfit-list"></div>
-                            <div class="world-visual-active-outfit-actions">
-                                <button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button>
-                                <button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="world-visual-editor-fields">
-                        <section class="world-visual-editor-panel world-visual-character-panel" aria-labelledby="world-visual-character-heading">
-                            <div id="world-visual-character-heading" class="world-visual-editor-panel-heading">
-                                <div><span class="form-label">Character</span><span class="form-hint">Identity and presentation fields that stay attached to this person.</span></div>
-                            </div>
-                        <div class="form-section">
-                            <label id="world-visual-primary-label" class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span id="world-visual-primary-label-text">Appearance &amp; public impression</span><span class="ai-field-actions" id="ai-visual-primary-actions"></span></label>
-                            <textarea id="world-visual-primary" class="form-textarea" rows="6"></textarea>
-                        </div>
-                        <div id="world-visual-identity-field" class="form-section hidden">
-                            <label class="form-label">Identity <span class="help-glyph" title="Stable per-character fields in the structured image vocabulary. They describe the person and never enter a visual brief or an outfit. Blank fields are omitted.">?</span></label>
-                            <div class="form-row">
-                                <div class="form-col"><label class="form-label">Gender</label><input id="world-visual-identity-gender" class="form-input" type="text" placeholder="woman…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Skin tone and texture</label><input id="world-visual-identity-skinToneAndTexture" class="form-input" type="text" placeholder="warm olive, freckled across the nose…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Shape and color</label><input id="world-visual-identity-shapeAndColor" class="form-input" type="text" placeholder="heart-shaped face, dark auburn bob…" autocomplete="off"></div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-col"><label class="form-label">Texture</label><input id="world-visual-identity-texture" class="form-input" type="text" placeholder="flyaway hair, chipped manicure…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Appearance details</label><input id="world-visual-identity-appearanceDetails" class="form-input" type="text" placeholder="laughter lines, a small scar above the left brow…" autocomplete="off"></div>
-                                <div class="form-col"><label class="form-label">Relative size</label><input id="world-visual-identity-relativeSize" class="form-input" type="text" placeholder="tall and lean…" autocomplete="off"></div>
-                            </div>
-                            <p class="form-hint">The person, not the photo. These stay with the character and never enter a visual brief.</p>
-                            <button class="tool-btn" id="world-visual-save-identity-reference" type="button" title="Save the selected generated image as a persistent identity reference for this character">Use selected image as identity reference</button>
-                        </div>
-                        </section>
-                        <section class="world-visual-editor-panel world-visual-profile-panel" aria-labelledby="world-visual-profile-heading">
-                            <div id="world-visual-profile-heading" class="world-visual-editor-panel-heading">
-                                <div><span class="form-label">Profile &amp; preset</span><span class="form-hint">Controls for this generated image profile. Save reusable visual briefs here.</span></div>
-                            </div>
-                        <div class="form-section">
-                            <label class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span>Authored image prompt</span><span class="ai-field-actions" id="ai-visual-prompt-actions"></span></label>
-                            <textarea id="world-visual-prompt" class="form-textarea" rows="6" placeholder="Specific visual direction, characteristic expression, environment and avoid instructions..."></textarea>
-                        </div>
-                        <div class="world-visual-generation-grid">
-                            <div id="world-visual-framing-field">
-                                <label class="form-label">Framing</label>
-                                <select id="world-visual-framing" class="form-select">
-                                    <option value="auto">Automatic and identity-aware</option>
-                                    <option value="close-up">Close-up</option>
-                                    <option value="waist-up">Waist-up</option>
-                                    <option value="three-quarter">Three-quarter</option>
-                                    <option value="full-body">Full-body</option>
-                                </select>
-                            </div>
-                            <div id="world-visual-outfit-field" class="hidden" style="display:none">
-                                <label class="form-label">Outfit <span class="help-glyph" title="Choose which authored outfit is worn for this generation. Gender and identity come from the dossier; clothing comes from this selection.">?</span></label>
-                                <select id="world-visual-outfit-select" class="form-select"></select>
-                            </div>
-                            <div id="world-visual-brief-field">
-                                <label class="form-label">Visual brief <span id="world-visual-brief-active" class="form-hint"></span></label>
-                                <select id="world-visual-brief-preset" class="form-select">
-                                    <option value="">Apply a visual brief…</option>
-                                </select>
-                            </div>
-                            <div id="world-visual-brief-save-field" class="world-visual-brief-save-field">
-                                <label class="form-label">Save preset as <span class="help-glyph" title="Saved briefs are global presets. Enter a new title to create another preset from the current fields; this does not overwrite the selected preset unless you use the same title.">?</span></label>
-                                <div class="world-visual-brief-save-row">
-                                    <input id="world-visual-brief-save-name" class="form-input" type="text" maxlength="100" placeholder="Preset - modified…" autocomplete="off">
-                                    <button class="tool-btn" id="world-visual-brief-save-as" type="button">Save as</button>
-                                </div>
-                            </div>
-                            <input id="world-visual-aspect" type="hidden" value="3:4">
-                            <div>
-                                <label class="form-label">Stored resolution</label>
-                                <select id="world-visual-resolution" class="form-select">
-                                    <option value="768">Compact - 768 px</option>
-                                    <option value="1200">Standard - 1200 px</option>
-                                    <option value="1600">High - 1600 px</option>
-                                    <option value="2048">Maximum - 2048 px</option>
-                                </select>
-                            </div>
-                        </div>
-                        </section>
-                        <section class="world-visual-editor-panel world-visual-staging-panel" aria-labelledby="world-visual-staging-heading">
-                            <div id="world-visual-staging-heading" class="world-visual-editor-panel-heading">
-                                <div><span class="form-label">Profile adjustments</span><span class="form-hint">Staging and instructions that change this profile only.</span></div>
-                            </div>
-                        <div id="world-visual-subject-field" class="form-section hidden">
-                            <label class="form-label">Staging <span class="help-glyph" title="Optional per-image staging for this character: how they stand, hold their face and act in THIS portrait. Clothing comes from the worn outfit instead. Blank fields are omitted.">?</span></label>
-                            <div class="form-row">
-                                <div class="form-col form-col-grow"><label class="form-label">Pose</label><input id="world-visual-subject-pose" class="form-input" type="text" placeholder="leaning on the reception desk…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Expression</label><input id="world-visual-subject-expression" class="form-input" type="text" placeholder="dazzling welcome…" autocomplete="off"></div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-col form-col-grow"><label class="form-label">Action</label><input id="world-visual-subject-action" class="form-input" type="text" placeholder="sliding a folder across…" autocomplete="off"></div>
-                                <div class="form-col"><label class="form-label">Orientation</label><input id="world-visual-subject-orientation" class="form-input" type="text" placeholder="facing the camera…" autocomplete="off"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Placement in frame</label><input id="world-visual-subject-location" class="form-input" type="text" placeholder="centered, desk in front…" autocomplete="off"></div>
-                            </div>
-                            <p class="form-hint">How they appear in this image only. What they wear comes from the outfit manager.</p>
-                        </div>
-                        <div id="world-visual-look-field" class="form-section hidden">
-                            <label class="form-label">Look / treatment <span class="help-glyph" title="How the image is rendered: lighting, colour, medium and photographic treatment. These are visual controls, not persistent Character facts.">?</span></label>
-                            <div class="form-row">
-                                <div class="form-col form-col-grow"><label class="form-label">Style medium</label><input id="world-visual-look-styleMedium" class="form-input" type="text" placeholder="35mm colour-negative photography…"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Lighting</label><input id="world-visual-look-lightingConditions" class="form-input" type="text" placeholder="soft winter daylight…"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Colour / mood</label><input id="world-visual-look-colorScheme" class="form-input" type="text" placeholder="charcoal, bottle green, warm timber…"></div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-col form-col-grow"><label class="form-label">Depth of field</label><input id="world-visual-look-depthOfField" class="form-input" type="text" placeholder="shallow, subject isolated…"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Focus</label><input id="world-visual-look-focus" class="form-input" type="text" placeholder="eyes and face tack sharp…"></div>
-                                <div class="form-col form-col-grow"><label class="form-label">Focal length</label><input id="world-visual-look-lensFocalLength" class="form-input" type="text" placeholder="85mm portrait lens…"></div>
-                            </div>
-                            <p class="form-hint">Advanced photographic fields remain Horde-authored and are compiled into broader provider language without being silently reconstructed.</p>
-                        </div>
-                        <div class="form-section">
-                            <label class="form-label">AI instruction <span class="help-glyph" title="Optional. When filled, every ✨ button in this editor honors it: write what you want and how, and the AI fills out the rest of the field from it. Empty means the buttons fill from world and transcript context.">?</span></label>
-                            <input id="world-visual-ai-instruction" class="form-input" type="text" maxlength="2000" placeholder="Wet trench coat, collar up, headlit from behind in the rain…" autocomplete="off">
-                        </div>
-                        <div class="form-section">
-                            <label class="form-label">Revision instruction</label>
-                            <textarea id="world-visual-correction" class="form-textarea" rows="3" placeholder="Make the makeup darker and keep everything else unchanged..."></textarea>
-                            <p class="form-hint">Revision sends this instruction plus the character, outfit and visual brief, so the new image keeps the established look. It does not resend earlier revision instructions.</p>
-                        </div>
-                        </section>
-                        <section id="world-visual-structured-panel" class="world-visual-editor-panel world-visual-structured-panel" aria-labelledby="world-visual-structured-heading">
-                            <div id="world-visual-structured-heading" class="world-visual-editor-panel-heading">
-                                <div><span class="form-label">Structured visual document</span><span class="form-hint">One Fal-shaped document drives every provider. Character, outfit, Framing and Look are views over these fields.</span></div>
-                                <div class="world-visual-document-tabs"><button type="button" class="tool-btn is-active" id="world-visual-document-form-tab">Structured</button><button type="button" class="tool-btn" id="world-visual-document-json-tab">Raw JSON</button></div>
-                            </div>
-                            <div id="world-visual-document-form" class="world-visual-document-form">
-                                <div class="world-visual-request-row"><label class="form-label">Describe the photo <span class="help-glyph" title="Natural-language authoring request. Compile creates a complete structured document; Refine applies a minimal change; Rebuild repairs accumulated drift.">?</span></label><textarea id="world-visual-structured-request" class="form-textarea" rows="3" placeholder="Sarah at a dive bar, full-body, holding a drink beside a sticker-covered pillar…"></textarea><div class="world-visual-request-actions"><button type="button" class="tool-btn" id="world-visual-structured-compile">Compile</button><button type="button" class="tool-btn" id="world-visual-structured-refine">Refine current</button><button type="button" class="tool-btn" id="world-visual-structured-rebuild">Rebuild</button></div></div>
-                                <details class="world-visual-structured-group" open><summary>Image Intent</summary><label class="form-label">Authored intent</label><textarea id="world-visual-structured-intent" class="form-textarea" rows="3"></textarea><label class="form-label">Context</label><input id="world-visual-structured-context" class="form-input" type="text"></details>
-                                <details class="world-visual-structured-group" open><summary>Objects <span id="world-visual-object-count" class="form-hint"></span></summary><div id="world-visual-structured-objects"></div><button type="button" class="tool-btn" id="world-visual-add-object">+ Add object</button></details>
-                                <details class="world-visual-structured-group" open><summary>Background setting</summary><textarea id="world-visual-structured-background" class="form-textarea" rows="2"></textarea></details>
-                                <details class="world-visual-structured-group"><summary>Lighting</summary><div class="world-visual-grid-3"><label class="form-label">Conditions<input id="world-visual-structured-lighting-conditions" class="form-input" type="text"></label><label class="form-label">Direction<input id="world-visual-structured-lighting-direction" class="form-input" type="text"></label><label class="form-label">Shadows<input id="world-visual-structured-lighting-shadows" class="form-input" type="text"></label></div></details>
-                                <details class="world-visual-structured-group"><summary>Aesthetics <span class="form-hint">Scores default to very high and are provider metadata, not ordinary controls.</span></summary><label class="form-label">Composition<textarea id="world-visual-structured-composition" class="form-textarea" rows="2"></textarea></label><div class="world-visual-grid-2"><label class="form-label">Colour scheme<input id="world-visual-structured-color" class="form-input" type="text"></label><label class="form-label">Mood / atmosphere<input id="world-visual-structured-mood" class="form-input" type="text"></label></div></details>
-                                <details class="world-visual-structured-group"><summary>Photographic characteristics</summary><div class="world-visual-grid-2"><label class="form-label">Depth of field<input id="world-visual-structured-depth" class="form-input" type="text"></label><label class="form-label">Focus<input id="world-visual-structured-focus" class="form-input" type="text"></label><label class="form-label">Camera angle<input id="world-visual-structured-camera" class="form-input" type="text"></label><label class="form-label">Lens focal length<input id="world-visual-structured-lens" class="form-input" type="text"></label></div></details>
-                                <details class="world-visual-structured-group"><summary>Style / treatment</summary><div class="world-visual-grid-2"><label class="form-label">Style medium<input id="world-visual-structured-style-medium" class="form-input" type="text"></label><label class="form-label">Artistic style<textarea id="world-visual-structured-artistic-style" class="form-textarea" rows="2"></textarea></label></div></details>
-                                <details class="world-visual-structured-group"><summary>Provider controls</summary><div class="world-visual-grid-2"><label class="form-label">Aspect ratio<input id="world-visual-structured-aspect" class="form-input" type="text" value="3:4"></label><label class="form-label">Resolution<select id="world-visual-structured-resolution" class="form-select"><option value="768">768 px</option><option value="1200">1200 px</option><option value="1600">1600 px</option><option value="2048">2048 px</option></select></label><label class="form-label">Seed<input id="world-visual-structured-seed" class="form-input" type="number" min="0" step="1" placeholder="Random"></label><label class="form-label">Sync mode<select id="world-visual-structured-sync" class="form-select"><option value="">Provider default</option><option value="true">true</option><option value="false">false</option></select></label></div></details>
-                            </div>
-                            <div id="world-visual-document-json" class="world-visual-document-json" hidden><label class="form-label">Structured JSON <span class="help-glyph" title="This is the same document as the structured editor. Invalid JSON cannot become active.">?</span></label><textarea id="world-visual-raw-json" class="form-textarea" rows="28" spellcheck="false"></textarea><button type="button" class="tool-btn" id="world-visual-apply-json">Apply JSON revision</button><p id="world-visual-json-status" class="form-hint"></p></div>
-                        </section>
-                    </div>
-                </div>
-                <div class="modal-ft world-visual-editor-actions">
-                    <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
-                    <button class="btn btn-ghost" id="world-visual-crop-fill" type="button" title="Use the revision image pipeline to outpaint missing areas into the selected final aspect ratio">Crop &amp; Fill</button>
-                    <button class="btn btn-ghost" id="world-visual-refine-prompt" type="button" title="Have the AI apply the revision instruction to the prompt fields below — nothing is generated until you press Generate new">Refine prompt</button>
-                    <button class="btn btn-ghost" id="world-visual-4d" type="button" title="Diagnose why the provider misunderstood the authored image and propose a field-level correction">Increase 4D 3D 3D 3D 3</button>
-                    <button class="btn btn-ghost" id="world-visual-revise" type="button" title="Send the current image plus the revision instruction to the edit model">Refine image</button>
-                    <button class="btn btn-primary" id="world-visual-regenerate" type="button">Generate new</button>
-                </div>
-            </div>
-        </div>
-
-        <div id="world-outfit-manager-modal" class="modal-bg hidden">
-            <div class="modal">
-                <div class="modal-hd">
-                    <h3 id="world-outfit-manager-title">Outfits</h3>
-                    <button class="modal-x" id="world-outfit-manager-close" type="button" aria-label="Close">×</button>
-                </div>
-                <div class="modal-bd">
-                    <div class="form-section">
-                        <label class="form-label">Wardrobe <span class="help-glyph" title="Each outfit is a named wardrobe state. Its description feeds image generation and Sidecar continuity; images generated while it is worn stay attached to this outfit. Identity and visual briefs remain separate.">?</span></label>
-                        <div id="world-outfit-list"></div>
-                    </div>
-                    <div class="form-section">
-                        <label class="form-label">Add or edit an outfit</label>
-                        <div class="form-row">
-                            <div class="form-col"><label class="form-label">Name</label><input id="world-outfit-name" class="form-input" type="text" maxlength="60" placeholder="Reception blues…" autocomplete="off"></div>
-                            <div class="form-col form-col-grow"><label class="form-label">Description <span class="form-hint">(what the generator receives as clothing)</span></label><input id="world-outfit-description" class="form-input" type="text" maxlength="600" placeholder="Teal satin blouse, charcoal slacks, silver stud earrings…" autocomplete="off"></div>
-                        </div>
-                        <div class="form-row" style="gap:10px; align-items:end;">
-                            <div class="form-col form-col-grow"><label class="form-label">AI instruction <span class="form-hint">(optional, for the ✨ button)</span></label><input id="world-outfit-instruction" class="form-input" type="text" maxlength="2000" placeholder="Something she'd wear to a gallery opening in the rain…" autocomplete="off"></div>
-                            <button class="btn btn-ghost" id="world-outfit-ai" type="button">✨ Design with AI</button>
-                            <button class="btn btn-primary" id="world-outfit-add" type="button">Save outfit</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-<!-- ────────── WORLD STUDIO VIEW ────────── -->
-        <section id="world-studio-view" class="view hidden experimental-worlds-view">
+        <!-- ────────── WORLD STUDIO VIEW ────────── -->
+        <section id="world-studio-view" class="view hidden">
             <div class="studio-wrap">
                 <div class="studio-nav">
                     <div class="studio-tabs">
@@ -960,15 +746,15 @@
                         <button class="world-studio-tab" data-tab="w-visuals">Visuals</button>
                         <button class="world-studio-tab" data-tab="w-locations">Locations</button>
                         <button class="world-studio-tab" data-tab="w-entities">People</button>
-                                <button class="world-studio-tab" data-tab="w-items">Items</button>
-                        <button class="world-studio-tab" data-tab="w-travel" data-sidecar-feature="travel">Travel & Vehicles</button>
-                                <button class="world-studio-tab" data-tab="w-factions">Factions</button>
+                        <button class="world-studio-tab" data-tab="w-items">Items</button>
+                        <button class="world-studio-tab" data-tab="w-factions">Factions</button>
                         <button class="world-studio-tab" data-tab="w-sandbox">Sandbox</button>
                         <button class="world-studio-tab" data-tab="w-lore">Global Lore</button>
                         <button class="world-studio-tab" data-tab="w-note">Author's Note</button>
                         <button class="world-studio-tab" data-tab="w-ai">AI Config</button>
                         <button class="world-studio-tab" data-tab="w-hud">HUD & Stats</button>
                         <button class="world-studio-tab" data-tab="w-visual-map">World Architect</button>
+                        <button class="world-studio-tab" data-tab="w-architect-agent" style="color:var(--accent); font-weight:700;">✦ Architect Agent</button>
                         <button class="world-studio-tab" data-tab="w-builder" style="color:var(--accent); font-weight:700;">✨ AI Builder</button>
                     </div>
                     <div class="studio-nav-actions">
@@ -992,12 +778,12 @@
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-sandbox"><span>04</span><strong>Starting lives</strong><small>Define who players can begin as, including world-specific skills and perks.</small></button>
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-ai"><span>05</span><strong>Rules &amp; models</strong><small>Choose narrative-only play or optional RPG rules, checks and model behavior.</small></button>
                             <button type="button" class="creator-overview-card" data-world-studio-target="w-visuals"><span>06</span><strong>Presentation</strong><small>Add optional banners, room art, portraits and visual styling.</small></button>
+                            <button type="button" class="creator-overview-card" data-companion-studio-target="cs-chat-style"><span>05</span><strong>Chat style</strong><small>Fine-tune voice, conversational habits and example exchanges.</small></button>
                             <details class="creator-advanced-card">
                                 <summary>Advanced world systems</summary>
-                                <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
+                                <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-architect-agent">Architect Agent</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
                             </details>
                         </div>
-                        <section id="w-overview-sidecar-migration" class="world-overview-sidecar-migration hidden" aria-live="polite"></section>
                     </div>
                     <!-- World Basics -->
                     <div id="tab-w-basics" class="studio-panel hidden">
@@ -1068,7 +854,7 @@
                             <div class="world-visual-settings-grid">
                                 <label class="world-visual-toggle-card">
                                     <input id="w-visual-enabled" type="checkbox">
-                                    <span><strong>Enable visual presentation</strong><small>New Experimental Worlds begin Cinematic. Classic remains available when needed.</small></span>
+                                    <span><strong>Enable visual presentation</strong><small>Existing and imported worlds stay Classic until enabled.</small></span>
                                 </label>
                                 <label class="world-visual-toggle-card">
                                     <input id="w-visual-player-override" type="checkbox" checked>
@@ -1117,8 +903,8 @@
                             </div>
                             <div class="form-row">
                                 <div class="form-col">
-                                    <label class="form-label">New image provider <span class="help-glyph" title="Used when generating a new portrait, location visual or map skin from text alone. This pipeline never requires an existing image.">?</span></label>
-                                    <select id="w-visual-new-image-provider" class="form-select">
+                                    <label class="form-label">Image Provider</label>
+                                    <select id="w-visual-image-provider" class="form-select">
                                         <option value="inherit">Use provider from Settings</option>
                                         <option value="openrouter">OpenRouter</option>
                                         <option value="gptproto">GPTProto</option>
@@ -1127,124 +913,16 @@
                                     </select>
                                 </div>
                                 <div class="form-col form-col-grow">
-                                    <label class="form-label">New image model <span class="help-glyph" title="The text-to-image model used for a fresh visual. It receives the compiled world, character and framing prompt, but no source image.">?</span></label>
+                                    <label class="form-label">Default Image Model</label>
                                     <div class="smart-input-row">
                                         <div class="searchable-dropdown-wrap" style="flex:1; min-width:0;">
-                                            <input id="w-visual-new-image-model" type="search" class="form-input" value="google/gemini-3.1-flash-lite-image" placeholder="Search text-to-image models…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-new-image-model-results" aria-expanded="false">
-                                            <div id="w-visual-new-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Text-to-image models"></div>
+                                            <input id="w-visual-image-model" type="search" class="form-input" value="google/gemini-3.1-flash-lite-image" placeholder="Search compatible image models…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-image-model-results" aria-expanded="false">
+                                            <div id="w-visual-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Compatible image models"></div>
                                         </div>
-                                        <button id="w-visual-new-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
+                                        <button id="w-visual-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
                                     </div>
-                                    <p id="w-visual-new-image-model-status" class="form-hint" aria-live="polite">Loading compatible image models…</p>
-                                    <p class="form-hint">Fresh visual generation uses this model only. Select from the live provider catalog; an exact custom ID is also accepted.</p>
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-col">
-                                    <label class="form-label">Revision image provider <span class="help-glyph" title="Used only by Refine image. It receives the selected existing image plus your revision instruction, so choose a provider with image-reference support.">?</span></label>
-                                    <select id="w-visual-revision-image-provider" class="form-select">
-                                        <option value="same_as_new">Use New Image Pipeline</option>
-                                        <option value="inherit">Use provider from Settings</option>
-                                        <option value="openrouter">OpenRouter</option>
-                                        <option value="gptproto">GPTProto</option>
-                                        <option value="nanogpt">NanoGPT</option>
-                                        <option value="fal">Fal</option>
-                                    </select>
-                                </div>
-                                <div class="form-col form-col-grow">
-                                    <label class="form-label">Revision image model <span class="help-glyph" title="The reference-capable model used when revising an existing world image. It receives only the revision instruction and selected image, not the fresh-generation pipeline.">?</span></label>
-                                    <div class="smart-input-row">
-                                        <div class="searchable-dropdown-wrap" style="flex:1; min-width:0;">
-                                            <input id="w-visual-revision-image-model" type="search" class="form-input" value="" placeholder="Leave blank to use the new-image model…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-revision-image-model-results" aria-expanded="false">
-                                            <div id="w-visual-revision-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Reference-capable image models"></div>
-                                        </div>
-                                        <button id="w-visual-revision-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
-                                    </div>
-                                    <p id="w-visual-revision-image-model-status" class="form-hint" aria-live="polite">Loading reference-capable image models…</p>
-                                    <p class="form-hint">Leave blank to reuse the new-image model when it supports source-image revision. Otherwise choose a reference-capable model here. A revision always requires an existing selected image and a written instruction.</p>
-                                </div>
-                            </div>
-                            <div id="w-visual-fal-advanced" class="form-row hidden">
-                                <div class="form-col form-col-grow">
-                                    <label class="form-label">Fal · Advanced Request Settings <span class="help-glyph" title="These optional request settings apply whenever either the new-image or revision pipeline uses Fal. Unsupported settings are omitted rather than guessed.">?</span></label>
-                                    <div class="form-row">
-                                        <div class="form-col"><label class="form-label">safety_tolerance</label><input id="w-visual-fal-safety-tolerance" class="form-input" type="number" min="0" max="100" step="any" placeholder="5" autocomplete="off"></div>
-                                        <div class="form-col"><label class="form-label">enable_safety_checker</label><select id="w-visual-fal-enable-safety-checker" class="form-select"><option value="">Blank — omit this field</option><option value="true">true — request safety checking</option><option value="false">false — request no safety checking</option></select></div>
-                                        <div class="form-col"><label class="form-label">Pinned seed <span class="form-hint">(optional)</span></label><input id="w-visual-fal-seed" class="form-input" type="number" min="0" max="2147483647" step="1" placeholder="Blank — randomize every call" autocomplete="off"></div>
-                                    </div>
-                                    <p class="form-hint">Optional Fal request parameters; blank fields are omitted so the endpoint default applies. Some models use <code>safety_tolerance</code>; Seedream uses <code>enable_safety_checker</code>. Every image call otherwise rolls a fresh random seed so the same prompt never collapses into the same image — pin a seed only when you want repeatable results. Fal may still enforce safety checking when an account is not authorised to disable it.</p>
-                                </div>
-                            </div>
-                            <div id="w-visual-image-guide" class="form-row">
-                                <div class="form-col form-col-grow">
-                                    <label class="form-label">Visual Briefs <span class="help-glyph" title="Optional authored image direction shared by every world visual. Blank fields are always omitted. Fibo models receive this as their native structured prompt; every other model receives the same fields compiled into prompt text.">?</span></label>
-                                    <div class="form-row" style="gap:10px; align-items:end;">
-                                        <div class="form-col">
-                                            <label class="form-label">Saved briefs</label>
-                                            <select id="w-visual-guide-preset" class="form-select"><option value="">No saved briefs yet</option></select>
-                                        </div>
-                                        <div class="form-col">
-                                            <label class="form-label">Brief name</label>
-                                            <input id="w-visual-guide-preset-name" class="form-input" type="text" maxlength="80" placeholder="85mm low-key portrait…" autocomplete="off">
-                                        </div>
-                                        <div class="form-col">
-                                            <label class="form-label">Aspect</label>
-                                            <select id="w-visual-guide-preset-aspect" class="form-select">
-                                                <option value="">—</option>
-                                                <option value="1:1">1:1 Square</option>
-                                                <option value="2:3">2:3 Tall portrait</option>
-                                                <option value="3:2">3:2 Portrait</option>
-                                                <option value="3:4">3:4 Portrait</option>
-                                                <option value="4:3">4:3 Landscape</option>
-                                                <option value="4:5">4:5 Tall</option>
-                                                <option value="5:4">5:4 Wide</option>
-                                                <option value="16:9">16:9 Wide</option>
-                                                <option value="9:16">9:16 Vertical</option>
-                                            </select>
-                                        </div>
-                                        <div class="form-col">
-                                            <label class="form-label">Framing</label>
-                                            <select id="w-visual-guide-preset-framing" class="form-select">
-                                                <option value="">—</option>
-                                                <option value="auto">Automatic</option>
-                                                <option value="close-up">Close-up</option>
-                                                <option value="waist-up">Waist-up</option>
-                                                <option value="three-quarter">Three-quarter</option>
-                                                <option value="full-body">Full-body</option>
-                                            </select>
-                                        </div>
-                                        <button class="btn btn-ghost" id="w-visual-guide-preset-save" type="button">Save brief</button>
-                                        <button class="btn btn-ghost" id="w-visual-guide-preset-delete" type="button">Delete</button>
-                                    </div>
-                                    <div>
-                                        <label class="form-label">Brief description <span class="form-hint">(what this look is for)</span></label>
-                                        <input id="w-visual-guide-preset-description" class="form-input" type="text" maxlength="800" placeholder="Quiet office realism: straight-on, 85mm, low-key window light…" autocomplete="off">
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-col form-col-grow"><label class="form-label">Style medium</label><input data-image-guide-field="styleMedium" class="form-input" type="text" placeholder="cinematic photograph, oil sketch…" autocomplete="off"></div>
-                                        <div class="form-col form-col-grow"><label class="form-label">Artistic style</label><input data-image-guide-field="artisticStyle" class="form-input" type="text" placeholder="grounded photorealism…" autocomplete="off"></div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-col form-col-grow"><label class="form-label">Lighting conditions</label><input data-image-guide-field="lightingConditions" class="form-input" type="text" placeholder="low-key, overcast window light…" autocomplete="off"></div>
-                                        <div class="form-col form-col-grow"><label class="form-label">Lighting direction</label><input data-image-guide-field="lightingDirection" class="form-input" type="text" placeholder="side-lit from camera left…" autocomplete="off"></div>
-                                        <div class="form-col form-col-grow"><label class="form-label">Shadows</label><input data-image-guide-field="lightingShadows" class="form-input" type="text" placeholder="soft, filled…" autocomplete="off"></div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-col form-col-grow"><label class="form-label">Composition</label><input data-image-guide-field="composition" class="form-input" type="text" placeholder="full-frame head-and-shoulders…" autocomplete="off"></div>
-                                        <div class="form-col form-col-grow"><label class="form-label">Color scheme</label><input data-image-guide-field="colorScheme" class="form-input" type="text" placeholder="desaturated teal and amber…" autocomplete="off"></div>
-                                        <div class="form-col form-col-grow"><label class="form-label">Mood and atmosphere</label><input data-image-guide-field="moodAtmosphere" class="form-input" type="text" placeholder="quiet, clinical…" autocomplete="off"></div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-col"><label class="form-label">Depth of field</label><input data-image-guide-field="depthOfField" class="form-input" type="text" placeholder="shallow…" autocomplete="off"></div>
-                                        <div class="form-col"><label class="form-label">Focus</label><input data-image-guide-field="focus" class="form-input" type="text" placeholder="tack-sharp on the eyes…" autocomplete="off"></div>
-                                        <div class="form-col"><label class="form-label">Camera angle</label><input data-image-guide-field="cameraAngle" class="form-input" type="text" placeholder="straight-on, slightly low…" autocomplete="off"></div>
-                                        <div class="form-col"><label class="form-label">Lens focal length</label><input data-image-guide-field="lensFocalLength" class="form-input" type="text" placeholder="85mm…" autocomplete="off"></div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-col form-col-grow"><label class="form-label">Background setting</label><input data-image-guide-field="backgroundSetting" class="form-input" type="text" placeholder="blurred office interior, wet street at night…" autocomplete="off"></div>
-                                        <div class="form-col form-col-grow"><label class="form-label">Context</label><input data-image-guide-field="context" class="form-input" type="text" placeholder="reusable identity portrait, not a scene still…" autocomplete="off"></div>
-                                    </div>
-                                    <p class="form-hint">A visual brief owns everything that changes HOW the photo looks — lighting, mood, camera, style, aspect, framing. Everything that changes WHAT is in the photo stays with the character. Blank fields are omitted. Fibo models receive a brief natively as a structured prompt; other models receive it as prompt text.</p>
+                                    <p id="w-visual-image-model-status" class="form-hint" aria-live="polite">Loading compatible image models…</p>
+                                    <p class="form-hint">Nano Banana 2 Lite is recommended. Select from the live provider catalog; an exact custom ID is still accepted for newly released models.</p>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -1296,40 +974,13 @@
                         <div class="panel-header">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <h2>Items &amp; Objects</h2>
-                                <div style="display:flex; gap:8px;"><button id="add-vehicle-btn" class="btn btn-ghost" data-sidecar-feature="vehicle-authoring">+ Vehicle</button><button id="add-item-btn" class="btn btn-primary">+ New Item</button></div>
+                                <button id="add-item-btn" class="btn btn-primary">+ New Item</button>
                             </div>
                             <p>Keep possessions, evidence, equipment and notable objects separate from the cast. Items still use stable canon links.</p>
                         </div>
                         <div class="form-body" id="w-items-list" style="display:flex; flex-direction:column; gap:16px;"></div>
                         <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
-                            <div style="display:flex; width:100%; gap:8px;"><button id="add-vehicle-btn-bottom" class="btn btn-ghost" data-sidecar-feature="vehicle-authoring" style="flex:1; border:1px dashed var(--border);">+ Vehicle</button><button id="add-item-btn-bottom" class="btn btn-ghost" style="flex:1; border: 1px dashed var(--border);">+ New Item</button></div>
-                        </div>
-                    </div>
-
-                    <!-- Traversal and vehicle authoring -->
-                    <div id="tab-w-travel" class="studio-panel hidden" data-sidecar-feature="travel">
-                        <div class="panel-header">
-                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-                                <div>
-                                    <h2>Travel &amp; Vehicles</h2>
-                                    <p>Author the traversal methods that are legal in this world and inspect the vehicle entities and runtime journeys that use them. Point-to-point is permissive across eligible spatial anchors; Route-based requires the ordered stops authored below.</p>
-                                </div>
-                                <button id="add-traversal-method-btn" class="btn btn-primary">+ Traversal method</button>
-                            </div>
-                        </div>
-                        <div class="form-body" style="display:flex; flex-direction:column; gap:18px;">
-                            <section>
-                                <div class="world-inspector-section-head"><h3 style="margin:0;">Traversal methods</h3><span class="form-hint">Vehicles never become map rooms. Pickup and drop-off resolve upward to an eligible building, street/path, area, region, or transit space.</span></div>
-                                <div id="w-traversal-methods-list" style="display:flex; flex-direction:column; gap:12px;"></div>
-                            </section>
-                            <section>
-                                <div class="world-inspector-section-head"><h3 style="margin:0;">Vehicle registry</h3><span class="form-hint">Persistent vehicles retain their entity identity and parked anchor. Rideshares/taxis are created as temporary runtime containers for a journey.</span></div>
-                                <div id="w-vehicles-list" style="display:flex; flex-direction:column; gap:12px;"></div>
-                            </section>
-                            <section>
-                                <div class="world-inspector-section-head"><h3 style="margin:0;">Active and recent journeys</h3><span class="form-hint">This is runtime state for the selected world’s timelines, not authored locations.</span></div>
-                                <div id="w-journeys-list" style="display:flex; flex-direction:column; gap:8px;"></div>
-                            </section>
+                            <button id="add-item-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Item</button>
                         </div>
                     </div>
 
@@ -1433,14 +1084,6 @@
                             <p>Control model and creative parameters for this world.</p>
                         </div>
                         <div class="form-body">
-                            <div class="form-section world-state-pipeline-card">
-                                <span class="vh-eyebrow">STATE PIPELINE</span>
-                                <label class="form-label">Canonical state authority <span class="help-glyph" title="Sidecar is the sole Experimental Worlds state pipeline. It reads the Narrator’s authored turn and commits the only canonical receipt.">?</span></label>
-                                <select id="w-sidecar-mode" class="form-select">
-                                    <option value="sidecar">Sidecar · canonical authority</option>
-                                </select>
-                                <p id="w-state-pipeline-hint" class="form-hint"></p>
-                            </div>
                             <!-- Model Selection -->
                             <div class="form-section">
                                 <label class="form-label">Model ID <span class="form-hint">(selected provider)</span></label>
@@ -1449,14 +1092,13 @@
                                         <input type="text" id="w-studio-model" class="form-input search-dropdown-input" placeholder="Use the default model from Settings" autocomplete="off">
                                         <div id="w-studio-model-results" class="searchable-dropdown-results hidden"></div>
                                     </div>
-                                    <button id="w-fetch-model-btn" class="btn btn-ghost" title="Refresh the available model list from the text provider selected in Settings" style="white-space: nowrap; flex-shrink: 0;">Fetch models</button>
+                                    <button id="w-fetch-model-btn" class="btn btn-ghost" title="Fetch model info from the selected provider" style="white-space: nowrap; flex-shrink: 0;">Fetch Data</button>
                                 </div>
                                 <p class="form-hint">Leave blank to follow the default text provider and model from Settings. Choosing a model here deliberately pins only this World.</p>
                             </div>
-                            <div id="world-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                             <!-- World Agent: off-screen simulation with genuine invention -->
-                            <div id="w-inline-legacy-settings" class="form-section world-kernel-card" data-pipeline-settings="inline_legacy">
+                            <div class="form-section world-kernel-card">
                                 <div class="world-kernel-card-head">
                                     <div>
                                         <span class="vh-eyebrow">WORLD KERNEL</span>
@@ -1486,81 +1128,8 @@
                                             <option value="never">Never repair · freeze uncertain state</option>
                                         </select>
                                     </div>
-                                    <label class="vh-test-check world-kernel-compact-toggle"><input type="checkbox" id="w-kernel-compact-tools"> Compact tool contract</label>
+                                    <label class="vh-test-check world-kernel-compact-toggle"><input type="checkbox" id="w-kernel-compact-tools" checked> Compact tool contract</label>
                                 </div>
-                                    <div style="margin-top:12px;"><button id="w-inline-legacy-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button></div>
-                            </div>
-
-                            <div id="w-sidecar-authority-settings" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
-                                <span class="vh-eyebrow">SIDECAR AUTHORITY</span>
-                                <h3 style="margin:4px 0 6px; font-size:1rem;">Narrator + Sidecar</h3>
-                                <p class="form-hint">The Narrator writes visible prose and a handoff. Sidecar is the only canonical state authority: it reads that evidence and commits one validated receipt. Legacy repair and classifier paths do not run.</p>
-                                <details id="w-sidecar-settings" class="form-section" data-sidecar-feature="sidecar-configuration" style="margin:14px 0 0; padding:12px; border:1px solid var(--border); border-radius:8px;">
-                                    <summary style="cursor:pointer;" title="Controls the model that reads and reconciles the Narrator’s authored turn. Match Narrator uses the world model and routing."><strong>Sidecar settings</strong></summary>
-                                    <p class="form-hint">Sidecar reads an authored turn, then submits one canonical receipt. These settings do not change the Narrator’s visible prose.</p>
-                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-inherit-narrator" checked> Use Narrator model and routing</label>
-                                    <div id="w-sidecar-override-config" class="sidecar-provider-model-row" style="margin-top:10px;">
-                                        <div><label class="form-label">Provider <span class="help-glyph" title="The service used for Sidecar’s own requests when it is not sharing the Narrator’s provider.">?</span></label><select id="w-sidecar-provider" class="form-select"><option value="openrouter">OpenRouter</option><option value="gptproto">GPTProto</option><option value="nanogpt">NanoGPT</option><option value="nvidia">NVIDIA NIM</option><option value="bedrock">AWS Bedrock</option><option value="custom">Custom OpenAI-compatible API</option><option value="local">Local / self-hosted</option></select></div>
-                                        <div><label class="form-label">Model <span class="help-glyph" title="Fetch models to load the selected provider’s available model IDs. This model runs Sidecar’s evidence pass, canonical receipt, and question repairs.">?</span></label><div style="display:flex; gap:8px;"><div class="searchable-dropdown-wrap" style="flex:1; min-width:0;"><input id="w-sidecar-model" type="search" class="form-input" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-sidecar-model-results" aria-expanded="false" placeholder="Fetch models or type an exact model ID"><div id="w-sidecar-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Sidecar provider model suggestions"></div></div><button id="w-sidecar-fetch-model-btn" type="button" class="btn btn-ghost">Fetch models</button></div><div id="w-sidecar-model-status" class="form-hint"></div></div>
-                                        <div id="w-sidecar-provider-connection-hint" class="form-hint sidecar-provider-connection-hint"></div>
-                                    </div>
-                                    <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden" data-sidecar-feature="sidecar-configuration"></div>
-                                    <div id="w-sidecar-config-grid" class="world-kernel-config-grid" style="margin-top:10px;">
-                                        <div style="grid-column:1 / -1;"><label class="vh-test-check" title="Runs the ScenePulse-inspired semantic evidence pass before canonical Sidecar reconciliation. Disable it to fall back to direct handoff reconciliation without changing the rest of Sidecar."><input type="checkbox" id="w-sidecar-reader-enabled" checked> Enable semantic reader</label><p class="form-hint">When disabled, Sidecar reconciles the Narrator handoff directly. Inline Legacy is unaffected.</p></div>
-                                        <div style="grid-column:1 / -1;"><label class="vh-test-check" title="Inherit the global Reader Profile. Turn this off to tune this world’s timeout, refresh cadence and lookup limits without changing other worlds."><input type="checkbox" id="w-sidecar-reader-profile-inherit" checked> Use global Reader Profile</label></div>
-                                        <div><label class="form-label">Reader timeout <span class="help-glyph" title="Maximum time allowed for one semantic reader request before fallback reconciliation is used.">?</span></label><input id="w-sidecar-reader-timeout" type="number" class="form-input" min="10" max="900" step="10" value="120"></div>
-                                        <div><label class="form-label">Full refresh cadence <span class="help-glyph" title="Every N reader turns, request a complete envelope instead of only changed fields.">?</span></label><input id="w-sidecar-reader-refresh" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
-                                        <div><label class="form-label">Max reader lookups <span class="help-glyph" title="Upper bound on read-only world lookup tool calls for one reader pass.">?</span></label><input id="w-sidecar-reader-tools" type="number" class="form-input" min="0" max="12" step="1" value="3"></div>
-                                        <div><label class="form-label">Reader provider override <span class="help-glyph" title="Blank inherits the Narrator provider. This only routes the read-only Reader pass.">?</span></label><input id="w-sidecar-reader-provider" class="form-input" placeholder="Blank = Narrator provider"></div>
-                                        <div><label class="form-label">Reader model override <span class="help-glyph" title="Blank inherits the Narrator model. This only routes the read-only Reader pass.">?</span></label><input id="w-sidecar-reader-model" class="form-input" placeholder="Blank = Narrator model"></div>
-                                        <div><label class="form-label">Reader max tokens <span class="help-glyph" title="Output budget for the structured scene reading. Blank uses the adaptive default.">?</span></label><input id="w-sidecar-reader-profile-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive"></div>
-                                        <div><label class="form-label">Reader context budget <span class="help-glyph" title="Maximum bounded evidence payload supplied to the Reader.">?</span></label><input id="w-sidecar-reader-context-budget" type="number" class="form-input" min="4000" max="120000" step="1000" value="24000"></div>
-                                        <div><label class="form-label">Reader lookup payload <span class="help-glyph" title="Maximum payload returned by all read-only world lookup tools.">?</span></label><input id="w-sidecar-reader-lookup-budget" type="number" class="form-input" min="1000" max="100000" step="1000" value="12000"></div>
-                                        <div><label class="form-label">Reader reasoning <span class="help-glyph" title="Reader-only reasoning control. Match Narrator is the normal default.">?</span></label><select id="w-sidecar-reader-reasoning" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div>
-                                        <div><label class="form-label">Reader reasoning effort <span class="help-glyph" title="Independent reader reasoning effort when supported by its provider.">?</span></label><select id="w-sidecar-reader-reasoning-effort" class="form-select"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-                                        <div><label class="form-label">Reader retry policy <span class="help-glyph" title="Bounded retries are inside one Reader stage only; a retry never regenerates Narrator prose.">?</span></label><select id="w-sidecar-reader-retry" class="form-select"><option value="bounded">Bounded retry</option><option value="none">No automatic Reader retry</option></select></div>
-                                        <div><label class="form-label">Reasoning <span class="help-glyph" title="Match Narrator uses the world reasoning toggle and effort. If an optional-reasoning request hits its output limit, Sidecar retries once without optional reasoning.">?</span></label><select id="w-sidecar-reasoning-mode" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div>
-                                        <div id="w-sidecar-reasoning-effort-row"><label class="form-label">Reasoning effort <span class="help-glyph" title="Auto uses the Narrator effort. Higher effort improves analysis but consumes more output budget.">?</span></label><select id="w-sidecar-reasoning-effort" class="form-select"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-                                        <div><label class="form-label">Reader tokens <span class="help-glyph" title="Output budget for the read-only evidence pass. Leave blank to use its adaptive 3,000-token default.">?</span></label><input id="w-sidecar-reader-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive default · 3,000"></div>
-                                        <div><label class="form-label">Receipt tokens <span class="help-glyph" title="Output budget for the canonical reconciliation receipt. Leave blank to use its adaptive 6,000-token default.">?</span></label><input id="w-sidecar-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive default · 6,000"></div>
-                                        <div><label class="form-label">Trace history <span class="help-glyph" title="Maximum saved Sidecar request/response traces when trace capture is enabled.">?</span></label><input id="w-sidecar-trace-count" type="number" class="form-input" min="1" max="200" step="1" value="20"></div>
-                                    </div>
-                                    <label class="vh-test-check" style="display:flex; margin-top:10px;" title="Stores complete Sidecar prompts and provider replies in this world. Disable this unless you are diagnosing a pipeline issue."><input type="checkbox" id="w-sidecar-debug"> Retain unabridged prompt/reply traces</label>
-                                </details>
-                                <details class="form-section" data-sidecar-feature="memory-consolidation" style="margin:14px 0 0; padding:12px; border:1px solid var(--border); border-radius:8px;">
-                                    <summary style="cursor:pointer;" title="Controls Sidecar’s source-pinned Turn → Episode → Scene → Sequence work. Raw turns remain available until a valid replacement exists; cognition is generated only from character-specific perception coverage."><strong>Memory &amp; consolidation</strong></summary>
-                                    <p class="form-hint">Global controls are the default. The global consolidation provider/model, token budget, temperature and reasoning settings are used here too; turn off inheritance only when this world needs a different cadence, active verbatim window, retrieval depth, or provider throttle.</p>
-                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-memory-inherit" checked> Use global memory and consolidation controls</label>
-                                    <div id="w-sidecar-memory-grid" class="world-kernel-config-grid" style="margin-top:10px;">
-                                        <div><label class="form-label">Episode size <span class="help-glyph" title="How many committed Sidecar turns become one objective, source-pinned Episode.">?</span></label><input id="w-sidecar-episode-size" type="number" class="form-input" min="1" max="20" step="1" value="5"></div>
-                                        <div><label class="form-label">Episode cadence <span class="help-glyph" title="How many new turns must accumulate before Episode work begins.">?</span></label><input id="w-sidecar-episode-cadence" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
-                                        <div><label class="form-label">Active verbatim turns <span class="help-glyph" title="Newest raw turn pairs kept in the narrator context even after a successful Episode replacement exists.">?</span></label><input id="w-sidecar-verbatim-window" type="number" class="form-input" min="0" max="30" step="1" value="5"></div>
-                                        <div><label class="form-label">Recall entries <span class="help-glyph" title="Maximum semantic memories selected for a narrator turn before normal context budgeting applies.">?</span></label><input id="w-sidecar-retrieval-limit" type="number" class="form-input" min="1" max="24" step="1" value="8"></div>
-                                        <div><label class="form-label">Parallel jobs <span class="help-glyph" title="Maximum total asynchronous consolidation jobs for this world.">?</span></label><input id="w-sidecar-job-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="6"></div>
-                                        <div><label class="form-label">Per-provider jobs <span class="help-glyph" title="Maximum simultaneous jobs sent to the same provider/model pair.">?</span></label><input id="w-sidecar-provider-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="2"></div>
-                                    </div>
-                                    <div id="w-sidecar-memory-status" class="form-hint" style="margin-top:10px;"></div>
-                                </details>
-                                <p id="w-sidecar-mode-hint" class="form-hint" style="margin:12px 0 0;"></p>
-                                <div id="w-sidecar-migration-report" class="form-hint" style="margin-top:8px;"></div>
-                                <div id="w-sidecar-migration-controls" style="display:flex; gap:8px; margin-top:10px;"><button id="w-sidecar-migrate-btn" type="button" class="btn btn-primary">Review &amp; migrate this world</button><button id="w-sidecar-restore-backup" type="button" class="btn btn-ghost hidden">Restore latest Inline backup</button></div>
-                            </div>
-
-                            <div id="w-roleplay-os-section" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
-                                <span class="vh-eyebrow">NARRATOR ROLEPLAY OS</span>
-                                <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin:4px 0 6px; flex-wrap:wrap;">
-                                    <h3 style="margin:0; font-size:1rem;">Freaky Frankenstein 5.4 &middot; Agent Gating</h3>
-                                    <span id="w-roleplay-os-state" class="form-hint" style="margin:0;"></span>
-                                </div>
-                                <p class="form-hint">The FF stack is the Narrator behaviour framework in Sidecar mode. Sections resolve from the pinned source preset verbatim through the preset&#39;s own gating; Horde compiles the engine-managed &lt;context&gt; block and agent data. Only the competing state backend is excluded &mdash; state_mode is pinned to AGENTS.</p>
-                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;">
-                                    <select id="w-roleplay-os-source" class="form-select" style="max-width:360px;" title="Installed Roleplay OS source presets. FF versions coexist; this world pins one."></select>
-                                    <button id="w-roleplay-os-import-btn" type="button" class="btn btn-ghost" style="font-size:0.75rem; padding:4px 10px;" title="Install a Marinara preset export into the installation-level source registry and pin this world to it.">+ Import source preset</button>
-                                    <input type="file" id="w-roleplay-os-file-input" hidden accept=".json">
-                                </div>
-                                <div id="w-roleplay-os-source-info" class="form-hint" style="margin-top:6px;"></div>
-                                <div id="w-roleplay-os-choices" style="margin-top:12px;"></div>
-                                <div id="w-roleplay-os-migration" style="margin-top:10px;"></div>
                             </div>
 
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
@@ -1569,12 +1138,10 @@
                                     🌍 Background World Agent
                                 </label>
                                 <div class="form-hint" style="margin-top: 8px;">
-                                    Disabled by default. This is a background proposal writer, not an autonomous world mutator: it may suggest
-                                    off-screen developments from established world state on its configured cadence or a scene change. In Sidecar
-                                    worlds every result is a visible proposal packet. Sidecar may refine or reject it, and the author reviews any
-                                    consequential change in the World GM conversation before it can become canonical.
+                                    The local kernel advances schedules and known consequences without an API call. This optional agent
+                                    runs after a response only when future momentum is running low, inventing grounded off-screen developments.
+                                    It shapes the world only — it can never move, harm, or reward your character.
                                 </div>
-                                <label class="vh-test-check" style="margin-top:10px;"><input type="checkbox" id="w-agent-proposal-only"> Store proposals for review (also enforced in Sidecar mode)</label>
                                 <div style="display:flex; gap:12px; margin-top:12px;">
                                     <div style="flex:0 0 140px;">
                                         <label class="form-label" style="font-size:0.75rem;">Earliest interval</label>
@@ -1588,11 +1155,10 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div id="world-agent-openrouter-routing" class="openrouter-routing-host hidden"></div>
                             </div>
 
                             <!-- System Presets (Modular) -->
-                            <div id="w-legacy-preset-section" class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
+                            <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
                                     <label class="form-label" style="margin:0;">World / DM Preset</label>
                                     <div style="display:flex; gap:8px;">
@@ -1932,6 +1498,43 @@
                         </div>
                     </div>
 
+                    <!-- Existing-world authoring agent -->
+                    <div id="tab-w-architect-agent" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>✦ World Architect Agent</h2>
+                            <p>Expand or refine this world conversationally. The agent stages typed changes for review; it never rewrites the live world behind your back.</p>
+                        </div>
+                        <div class="form-body world-architect-agent-layout">
+                            <section class="world-architect-request-card">
+                                <div class="world-architect-quick-actions" aria-label="Common World Architect requests">
+                                    <button type="button" data-world-architect-quick="Add playable locations with sensible containment and connections.">Add places</button>
+                                    <button type="button" data-world-architect-quick="Add new characters with homes, personalities, schedules and private goals.">Add characters</button>
+                                    <button type="button" data-world-architect-quick="Find thin records and add missing useful detail without replacing authored writing.">Flesh things out</button>
+                                    <button type="button" data-world-architect-quick="Connect inaccessible locations and repair the travel graph without changing intentional one-way routes.">Connect the map</button>
+                                    <button type="button" data-world-architect-quick="Add factions, memberships and meaningful relationships supported by the setting.">Build society</button>
+                                </div>
+                                <label class="form-label" for="w-architect-request">What should change?</label>
+                                <textarea id="w-architect-request" class="form-textarea" rows="7" placeholder="For example: Add 100 rooms across the existing city. Distribute them sensibly inside current buildings, make every room reachable, and add recurring staff where the fiction needs them."></textarea>
+                                <div class="world-architect-controls">
+                                    <label><span>Scope</span><select id="w-architect-scope" class="form-select"><option value="whole">Whole world</option><option value="locations">Places &amp; map</option><option value="people">People &amp; society</option><option value="lore">Lore &amp; setting</option></select></label>
+                                    <label><span>Change policy</span><select id="w-architect-policy" class="form-select"><option value="add_only">Add only</option><option value="fill_gaps" selected>Fill gaps</option><option value="allow_edits">Allow safe edits</option></select></label>
+                                    <label><span>Detail</span><select id="w-architect-detail" class="form-select"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="deep">Deep</option></select></label>
+                                    <label><span>Batch size</span><select id="w-architect-batch-size" class="form-select"><option value="8">8 records</option><option value="12" selected>12 records</option><option value="20">20 records</option></select></label>
+                                </div>
+                                <div class="world-architect-model-row">
+                                    <label><span>Structured model <small>optional</small></span><input id="w-architect-model" class="form-input" list="w-architect-model-options" placeholder="Use audits &amp; calibration model"></label>
+                                    <datalist id="w-architect-model-options"></datalist>
+                                    <button id="w-architect-refresh-models" class="btn btn-ghost" type="button">↻ Models</button>
+                                </div>
+                                <p id="w-architect-model-status" class="form-hint">Uses the same structured-model fallback as calibration. No generation starts until you approve a plan.</p>
+                                <button id="w-architect-plan-btn" class="btn btn-primary btn-full" type="button">Plan changes</button>
+                            </section>
+                            <section id="w-architect-job" class="world-architect-job" aria-live="polite">
+                                <div class="world-architect-empty"><strong>No staged job</strong><p>Describe an expansion or repair. Horde will show assumptions, batches and expected calls before generating anything.</p></div>
+                            </section>
+                        </div>
+                    </div>
+
                     <!-- World AI Builder -->
                     <div id="tab-w-builder" class="studio-panel hidden">
                         <div class="panel-header">
@@ -2183,7 +1786,6 @@
                                     <button id="fetch-model-btn" class="btn btn-ghost" title="Fetch model info from the selected provider" style="white-space: nowrap; flex-shrink: 0;">Fetch Data</button>
                                 </div>
                             </div>
-                            <div id="character-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                             <!-- System Presets -->
                             <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
@@ -2225,6 +1827,42 @@
                                     <span class="model-info-params-label" style="font-size:0.75rem; color:var(--text-2); font-weight:500; display:block; margin-bottom:8px;">Supported Fine-Tuning Parameters:</span>
                                     <div class="model-info-params-list" id="model-info-params-list" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
                                 </div>
+                            </div>
+
+                            <div class="form-section chat-creator-capabilities">
+                                <div class="chat-creator-capabilities-head">
+                                    <div>
+                                        <h3>Player capabilities</h3>
+                                        <p class="form-hint">Optional. Enable only the media and tools that belong in this character experience. Horde still checks the active provider and model before showing them to players.</p>
+                                    </div>
+                                    <span id="studio-chat-capability-status" class="mini-tag">Text only</span>
+                                </div>
+                                <div class="chat-creator-capability-grid">
+                                    <label class="vh-test-check"><input id="studio-chat-image-upload" type="checkbox"><span><strong>Image upload</strong><small>Let players show the character photos and images.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-pdf-upload" type="checkbox"><span><strong>PDF upload</strong><small>Let players attach documents for the character to read.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-audio-upload" type="checkbox"><span><strong>Audio upload</strong><small>Let compatible models hear a voice note or recording.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-video-upload" type="checkbox"><span><strong>Video upload</strong><small>Let compatible models inspect a short video clip.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-web-search" type="checkbox"><span><strong>Web search</strong><small>Allow optional live, cited search when the provider supports it.</small></span></label>
+                                    <label class="vh-test-check"><input id="studio-chat-image-generation" type="checkbox"><span><strong>Image generation</strong><small>Add an explicit Create image mode to the composer.</small></span></label>
+                                </div>
+                                <div id="studio-chat-image-generation-settings" class="chat-image-generation-settings hidden">
+                                    <div>
+                                        <label class="form-label" for="studio-chat-image-provider">Image provider</label>
+                                        <select id="studio-chat-image-provider" class="form-select">
+                                            <option value="inherit">Use text provider</option>
+                                            <option value="openrouter">OpenRouter</option>
+                                            <option value="gptproto">GPTProto</option>
+                                            <option value="nanogpt">NanoGPT</option>
+                                            <option value="fal">Fal</option>
+                                            <option value="local">Local / self-hosted</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label" for="studio-chat-image-model">Image model</label>
+                                        <input id="studio-chat-image-model" class="form-input" type="text" placeholder="Blank uses the provider default">
+                                    </div>
+                                </div>
+                                <p id="studio-chat-capability-hint" class="form-hint">Fetch model data above to verify which uploads the selected model accepts.</p>
                             </div>
 
                             <!-- Reasoning Section -->
@@ -2610,6 +2248,7 @@
                     <div class="studio-tabs">
                         <button class="companion-studio-tab active" data-tab="cs-overview">Overview</button>
                         <button class="companion-studio-tab" data-tab="cs-identity">Identity</button>
+                        <button class="companion-studio-tab" data-tab="cs-chat-style">Chat style</button>
                         <button class="companion-studio-tab" data-tab="cs-mind">Inner Life</button>
                         <button class="companion-studio-tab" data-tab="cs-life">Active Life</button>
                         <button class="companion-studio-tab" data-tab="cs-social">Social Media</button>
@@ -2635,6 +2274,22 @@
                             <button type="button" class="creator-overview-card" data-companion-studio-target="cs-life"><span>03</span><strong>Active life</strong><small>Build routines, commitments, friends and autonomous life events.</small></button>
                             <button type="button" class="creator-overview-card" data-companion-studio-target="cs-models"><span>04</span><strong>Conversation brain</strong><small>Choose text models and reasoning independently from media providers.</small></button>
                             <details class="creator-advanced-card"><summary>Optional media &amp; voice</summary><div><button type="button" data-companion-studio-target="cs-social">Social Media</button><button type="button" data-companion-studio-target="cs-video">Video &amp; Clips</button><button type="button" data-companion-studio-target="cs-voice">Photos &amp; Voice</button></div></details>
+                        </div>
+                    </div>
+                    <div id="tab-cs-chat-style" class="studio-panel hidden"><div id="cs-voice-builder" class="form-section"></div>
+                        <div class="panel-header"><h2>Chat style</h2><p>Shape how this person participates in a conversation. Their feelings and situation still influence how they speak.</p></div>
+                        <div class="form-body">
+                            <div class="form-section"><label class="form-label" for="cs-texting-style">Writing voice</label>
+                                <textarea id="cs-texting-style" class="form-textarea" rows="3" placeholder="Mostly lowercase, dry humour, occasional fragments; more careful punctuation when upset."></textarea></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-length">Usual reply length</label>
+                                <select id="cs-chat-length" class="form-select"><option value="adaptive">Adapt to the conversation</option><option value="brief">Usually brief</option><option value="expansive">More expressive</option></select></div>
+                            <div class="form-section"><label class="form-label" for="cs-conversation-style">Conversational habits</label>
+                                <textarea id="cs-conversation-style" class="form-textarea" rows="4" placeholder="Offers her own opinions. Follows up on plans. Teases when comfortable. Shares small details from established activities; doesn't just comment on everything I say."></textarea></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-examples">Example exchanges</label>
+                                <textarea id="cs-chat-examples" class="form-textarea" rows="6" placeholder="Player: cafe or park?&#10;Her: cafe. i need caffeine before i pretend to be outdoorsy&#10;&#10;Player: long day?&#10;Her: yeah. tell me something completely unrelated to work"></textarea>
+                                <p class="form-hint">Examples teach rhythm and voice. They are not added as memories or copied as scripted replies.</p></div>
+                            <div class="form-section"><label class="form-label" for="cs-chat-avoid">Habits to avoid</label>
+                                <textarea id="cs-chat-avoid" class="form-textarea" rows="3" placeholder="Repeating my message back, therapy language, a question at the end of every reply, constant compliments."></textarea></div>
                         </div>
                     </div>
                     <!-- Identity -->
@@ -2693,6 +2348,9 @@
                             <div class="form-section">
                                 <label class="form-label">Personality</label>
                                 <textarea id="cs-personality" class="form-textarea" rows="5" placeholder="Warm but guarded until she trusts you. Sarcastic when nervous. Loves late-night conversations, hates being kept waiting."></textarea>
+                                <label class="form-label" for="cs-behavior-examples">Behavior examples <span class="optional">optional</span></label>
+                                <textarea id="cs-behavior-examples" class="form-textarea" rows="4" placeholder="When busy: leaves messages unread, then returns with context.&#10;When hurt: gets brief instead of explaining immediately.&#10;When wrong: cools off, then apologizes directly.&#10;When excited: sends two short messages and a link."></textarea>
+                                <p class="form-hint">Concrete reactions teach the human more reliably than a long list of adjectives.</p>
                             </div>
                             <div class="form-section">
                                 <label class="form-label">Backstory</label>
@@ -2708,10 +2366,7 @@
                                     <textarea id="cs-social-world" class="form-textarea" rows="3" placeholder="Where they live, family, friends, coworkers, pets, recurring tensions..."></textarea>
                                 </div>
                             </div>
-                            <div class="form-section">
-                                <label class="form-label">Texting Style</label>
-                                <textarea id="cs-texting-style" class="form-textarea" rows="3" placeholder="lowercase, double-texts when excited, uses 'lol' and 'omg' unironically, rarely uses full stops"></textarea>
-                            </div>
+
                         </div>
                     </div>
 
@@ -3099,6 +2754,12 @@
                                 <p id="cs-life-generator-status" class="form-hint" aria-live="polite">Generate with the selected model, or start manually with a local editable template. The simulator uses a simple fallback routine until either path is saved.</p>
                                 <div id="cs-life-editor" class="vh-life-editor hidden"></div>
                                 <div id="cs-life-overview" class="vh-life-overview hidden"></div>
+                                <details class="form-section"><summary>Recurring place references</summary>
+                                    <p class="form-hint">References belong to saved recurring locations. Add or rename locations in Places; use fixed room roles and the linked location selector here. Removing a card keeps the location and its routes. Photos combine the base identity, previous photo and matching room images. Generating a reference uses image-provider credits.</p>
+                                    <div id="cs-photo-locations"></div><button type="button" id="cs-photo-location-add" class="btn btn-ghost">Add place reference</button>
+                                </details>
+
+<div id="cs-world-systems"></div>
                             </section>
                         </div>
                     </div>
@@ -3338,7 +2999,7 @@
                             <div>
                                 <span class="vh-eyebrow">Runtime</span>
                                 <h2>AI &amp; Models</h2>
-                                <p>Choose the brain behind this virtual human. This model writes messages, makes social decisions, updates mood, and decides when photos or voice notes feel natural.</p>
+                                <p>Choose how this virtual human thinks. The conversation model expresses and records immediate feelings. A private observer adds evidence-backed memory and understanding after the reply.</p>
                             </div>
                             <div class="vh-model-header-actions">
                                 <button id="cs-unlock-all-params" class="btn btn-ghost" type="button" title="Show every control even when the provider catalog does not advertise it.">🔓 Unlock all parameters</button>
@@ -3396,6 +3057,30 @@
                                     <p class="form-hint">For models the provider catalog does not list yet. The ID is sent exactly as entered.</p>
                                 </div>
                                 <input id="cs-text-model-custom" class="form-input" type="text" placeholder="provider/model-id">
+                            </section>
+
+                            <section class="vh-ai-config-section">
+                                <div class="vh-ai-config-heading">
+                                    <div>
+                                        <span class="vh-model-kicker">Cognition architecture</span>
+                                        <h3>Separate voice from memory</h3>
+                                        <p class="form-hint">Recommended. Immediate feelings accompany the reply; a private observer then enriches memory and understanding without counting the same emotional reaction twice.</p>
+                                    </div>
+                                </div>
+                                <label class="toggle-row vh-config-toggle">
+                                    <input type="checkbox" id="cs-separated-cognition" class="toggle-checkbox" checked>
+                                    <span class="toggle-switch"></span>
+                                    <span>
+                                        <strong>Use a separate State Observer</strong>
+                                        <small>Turn this off only for compatibility with an older single-call setup.</small>
+                                    </span>
+                                </label>
+                                <div id="cs-observer-model-row" class="vh-config-field">
+                                    <label class="form-label" for="cs-observer-model">Observer model ID <span class="optional">optional</span></label>
+                                    <input id="cs-observer-model" class="form-input" type="text" list="cs-observer-model-options" placeholder="Blank = Life Architect or conversation model">
+                                    <datalist id="cs-observer-model-options"></datalist>
+                                    <p id="cs-observer-model-hint" class="form-hint">Use a small, fast model with reliable tool/JSON output. It never writes dialogue. The Life Architect remains responsible for schedules and off-screen life.</p>
+                                </div>
                             </section>
 
                             <section class="vh-ai-config-section">
@@ -3577,6 +3262,9 @@
                                             <option value="anime">Cinematic Anime</option>
                                         </select>
                                     </div>
+                                    <label class="form-label">Personal photo direction<textarea id="cs-photo-direction" class="form-textarea" rows="4" placeholder="e.g. Playful expressions, tilted framing, candid movement, subtle bloom and motion softness. Rarely poses with a straight face."></textarea></label><label class="form-label">Keep follow-up photo continuity within (minutes; 0 disables)<input id="cs-photo-continuity-minutes" class="form-input" type="number" min="0" max="360" value="90"></label>
+                                    <label class="form-label"><input type="checkbox" id="cs-photo-large-breasts"> Large breasts</label>
+                                    <p class="form-hint">Reinforce bust size in character photos, including when using an identity reference.</p>
                                     <p class="form-hint" id="cs-photo-style-description">Believable phone-camera realism with the small flaws real snapshots keep.</p>
                                 </div>
                                 <div class="vh-photo-style-control">
@@ -3840,6 +3528,7 @@
 
         <!-- ────────── COMPANION CHAT (the actual texting thread) ────────── -->
         <section id="companion-chat-view" class="view hidden">
+            <dialog id="cc-gift-dialog" class="companion-gift-dialog"><button type="button" id="cc-gift-close" class="btn btn-ghost" aria-label="Close gifts">Close</button><div id="cc-life-actions"></div></dialog>
             <div class="companion-chat-header">
                 <button id="companion-chat-back-btn" class="companion-header-btn" title="Back to Virtual Human" aria-label="Back to Virtual Human">‹</button>
                 <div class="companion-chat-avatar-wrap">
@@ -3915,6 +3604,10 @@
                 </details>
             </div>
             <div class="companion-chat-context">
+                <label class="companion-persona-picker" for="cc-persona-select">Your profile
+                    <select id="cc-persona-select" aria-label="Your active persona for this chat"></select>
+                </label>
+                <details id="cc-profile-details"></details>
                 <span id="cc-mood-badge">mood: —</span>
                 <span class="companion-context-separator">•</span>
                 <span id="cc-agency-status">responds when messaged</span>
@@ -3942,6 +3635,7 @@
                 <small id="companion-typing-label">typing…</small>
             </div>
             <div class="companion-composer">
+                <button id="cc-gift-open" class="companion-icon-btn" type="button" title="Gifts and simulated cash" aria-label="Gifts and simulated cash">🎁</button>
                 <button id="companion-emoji-btn" class="companion-icon-btn" title="Emoji">＋</button>
                 <button id="companion-photo-request-btn" class="companion-icon-btn" title="Send your photo to this virtual human" aria-label="Send your photo to this virtual human">▧</button>
                 <button id="companion-voice-request-btn" class="companion-icon-btn" title="Send a voice note" aria-label="Send a voice note">🎙</button>
@@ -3984,31 +3678,6 @@
         </div>
 
     </main>
-</div>
-
-<!-- Timeline browser / fork provenance -->
-<div id="world-timeline-browser-overlay" class="modal-bg hidden">
-    <div class="modal modal-lg" style="height:78vh; max-height:760px; display:flex; flex-direction:column;">
-        <div class="modal-hd"><h2>Timeline branches</h2><button id="close-world-timeline-browser-btn" class="modal-close" type="button" aria-label="Close timeline browser">✕</button></div>
-        <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px;">
-            <p class="form-hint">Every timeline is a canonical branch. Forks copy the selected committed state and retain immutable source provenance; they do not merge or rewrite the source timeline.</p>
-            <div id="world-timeline-browser-list" style="display:flex; flex-direction:column; gap:10px;"></div>
-        </div>
-        <div class="modal-ft"><button id="close-world-timeline-browser-ft-btn" class="btn btn-ghost">Close</button></div>
-    </div>
-</div>
-
-<!-- Sidecar migration wizard -->
-<div id="sidecar-migration-wizard-overlay" class="modal-bg hidden">
-    <div class="modal modal-lg">
-        <div class="modal-hd"><h2>⇄ Migrate timelines to Sidecar</h2><button id="close-sidecar-migration-wizard-btn" class="modal-close" type="button" aria-label="Close migration wizard">✕</button></div>
-        <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
-            <p class="form-hint">Choose which Inline Legacy timelines to migrate. Raw roleplay and canonical receipts are preserved; only derived vector/episodic caches are rebuilt. Each selected timeline receives a rollback backup.</p>
-            <div id="sidecar-migration-wizard-list" style="display:flex; flex-direction:column; gap:8px;"></div>
-            <div id="sidecar-migration-wizard-status" class="form-hint" style="margin-top:12px;" aria-live="polite"></div>
-        </div>
-        <div class="modal-ft" style="display:flex; justify-content:space-between; gap:8px;"><button id="sidecar-migration-select-all-btn" class="btn btn-ghost" type="button">Select all</button><div style="display:flex; gap:8px;"><button id="cancel-sidecar-migration-btn" class="btn btn-ghost" type="button">Cancel</button><button id="run-sidecar-migration-btn" class="btn btn-primary" type="button">Back up &amp; migrate selected</button></div></div>
-    </div>
 </div>
 
 <!-- ═══════════════════════ MODALS ═══════════════════════ -->
@@ -4064,10 +3733,6 @@
                 <div id="global-default-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
             </div>
             <p class="form-hint">This catalog follows the provider selected above—even before you save. If the platform does not expose <code>/models</code>, type its exact model ID.</p>
-            <div id="global-openrouter-routing" class="openrouter-routing-host hidden" data-settings-keywords="openrouter provider routing fallback throughput latency price coreweave"></div>
-            <label class="form-label" style="margin-top:16px">Cloud generation idle timeout (seconds)</label>
-            <input type="number" id="global-cloud-generation-timeout" class="form-input" min="0" max="600" step="15" value="45">
-            <p class="form-hint">How long Worlds waits with no bytes received from a cloud provider before aborting a generation. The timer resets whenever streaming data arrives — this is idle time, not total time. Raise this if you use a reasoning/thinking model that can sit silent before its first token. Use <code>0</code> to disable it.</p>
             <div id="local-provider-fields" style="display:none; margin-top:12px; padding:12px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
                 <label class="form-label">Local Server URL</label>
                 <input type="text" id="global-local-url" class="form-input" placeholder="http://localhost:11434/v1">
@@ -4081,14 +3746,14 @@
                 <div id="local-conn-result" style="margin-top:8px; font-size:0.78rem; line-height:1.5;"></div>
                 <div id="file-protocol-warning" style="display:none; margin-top:10px; padding:10px 12px; background:rgba(230,57,70,0.08); border:1px solid var(--red); border-radius:8px; font-size:0.78rem; line-height:1.5;">
                     🛑 <b>Heads-up:</b> Horde Studio is open as a <code>file://</code> page. Chrome/Edge block these pages from reaching localhost servers and starting the Embedded Tiny Brain worker because the page has a null origin.<br>
-                    Fix: close this tab and run the included <code>Start Horde Studio</code> launcher for your OS. Use the <code>http://127.0.0.1:43127</code> page it opens.
+                    Fix: close this tab and run the included <code>Start Horde Studio</code> launcher for your OS. Use the <code>http://localhost:42069</code> page it opens.
                 </div>
                 <p class="form-hint" style="margin-top:8px;">Still failing? Hard-refresh (Cmd/Ctrl+Shift+R) — browsers cache the app aggressively.</p>
             </div>
                 </div>
             </section>
 
-            <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember">
+            <section class="settings-section" data-settings-section="accounts" data-settings-keywords="connections credentials api keys openrouter gptproto nanogpt nvidia nim aws bedrock custom headers security remember maps google places geography">
                 <div class="settings-section-head"><span class="settings-section-kicker">Cloud access</span><h3>Connections</h3><p>Connect only what you use. Your active text provider opens first; image providers stay independent.</p></div>
                 <div class="settings-provider-grid">
             <details id="openrouter-key-block" class="settings-provider-card" data-provider="openrouter">
@@ -4133,6 +3798,15 @@
                 <label class="vh-test-check" style="margin-top:10px;"><input id="global-fal-safety-checker" type="checkbox" checked><span>Request Fal safety checking by default</span></label>
                 <p class="form-hint">Turning this off sends a model’s documented safety flag only where that endpoint supports one. Fal account authorization and mandatory provider/model checks still apply.</p>
                 <p class="form-hint">The rate fields estimate spending and enforce each Video Adventure's session limit; Fal remains the billing authority. Your key is sent only to Horde Studio's local bridge, never embedded in a Video Adventure or backup.</p>
+            </details>
+            <details class="settings-provider-card settings-provider-card-wide" data-provider="hotapi">
+                <summary><span class="settings-provider-mark">HOT</span><span><strong>HotAPI</strong><small>Opt-in spicy video · Video Adventures</small></span><span class="settings-provider-state">Configure</span></summary>
+                <label class="form-label" for="global-hotapi-key">API key</label>
+                <input type="password" id="global-hotapi-key" class="form-input" placeholder="hk_live_..." autocomplete="off">
+                <button id="test-hotapi-conn-btn" class="btn btn-ghost" type="button">Test HotAPI connection</button>
+                <div id="hotapi-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite">Not tested yet.</div>
+                <p class="form-hint">Used only when a Video Adventure selects Smart spicy fallback or Spicy from the start. Horde sends the key through its local bridge, downloads finished clips locally, and never places it in an adventure or backup.</p>
+                <p class="form-hint">HotAPI is pay-as-you-go. MiniMax H3 Spicy starts at $0.08/second; Seedance 2.0 Fast at $0.112, Seedance 2.0 at $0.14, and Seedance 2.5 at $0.206 for 480p. Provider pricing remains authoritative.</p>
             </details>
             <details id="nanogpt-key-block" class="settings-provider-card" data-provider="nanogpt">
                 <summary><span class="settings-provider-mark">NG</span><span><strong>NanoGPT</strong><small>Text · images · speech</small></span><span class="settings-provider-state">Configure</span></summary>
@@ -4182,6 +3856,28 @@
                 <button id="test-custom-conn-btn" class="btn btn-ghost" type="button">Test connection</button>
                 <div id="custom-conn-result" class="form-hint" style="margin-top:8px;" aria-live="polite"></div>
             </details>
+            <details class="settings-disclosure-card" id="maps-settings-card">
+                <summary class="settings-disclosure-summary"><span><small>Real locations</small><strong>Maps &amp; places</strong></span></summary>
+                <div class="settings-disclosure-body">
+                    <label class="form-label" for="global-maps-provider">Place search &amp; routing provider</label>
+                    <select class="form-select" id="global-maps-provider"><option value="google">Google Maps</option><option value="openrouteservice">openrouteservice (free key)</option></select>
+                    <p class="form-hint">Provider selection applies to search, previews and automatic journey estimates. There is no automatic fallback to another provider.</p>
+                    <label class="form-label" for="global-openroute-key">openrouteservice API key</label>
+                    <input id="global-openroute-key" type="password" class="form-input" autocomplete="off" spellcheck="false" placeholder="Paste your HeiGIT / openrouteservice key">
+                    <button id="save-openroute-key" type="button" class="btn btn-primary">Save openrouteservice key</button>
+                    <button id="remove-openroute-key" type="button" class="btn btn-ghost">Remove openrouteservice key</button>
+                    <p id="openroute-key-status" class="form-hint" aria-live="polite">Open this panel to check configuration.</p>
+                    <p class="form-hint">Walking, cycling and driving routes; transit uses your authored times unless you explicitly select Google. <a href="https://account.heigit.org/" target="_blank" rel="noopener noreferrer">Get a free API key</a> · <a href="https://account.heigit.org/info/plans" target="_blank" rel="noopener noreferrer">Usage limits</a></p>
+                    <label class="form-label" for="global-google-maps-key">Google Maps API key</label>
+                    <input id="global-google-maps-key" type="password" class="form-input" autocomplete="off" spellcheck="false" placeholder="Paste a new key to save or replace it">
+                    <p class="form-hint">Enable Places API (New) and Routes API in your Google project. Billing is required. This key is saved by your local launcher, outside browser backups. Saving does not call Google.</p>
+                    <button id="save-google-maps-key" class="btn btn-primary" type="button">Save Maps key</button>
+                    <button id="remove-google-maps-key" class="btn btn-ghost" type="button">Remove saved key</button>
+                    <button id="refresh-google-maps-key" class="btn btn-ghost" type="button">Check setup</button>
+                    <p id="google-maps-key-status" class="form-hint" aria-live="polite">Check setup to see whether a key is configured.</p>
+                    <p class="form-hint">Use this under VH Studio → Active Life → Recurring places. <a href="https://developers.google.com/maps/documentation/routes/get-api-key" target="_blank" rel="noopener noreferrer">Google setup instructions</a></p>
+                </div>
+            </details>
             <div id="cloud-key-storage-block" class="settings-security-row">
                 <label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:0.8rem; color:var(--text-2); cursor:pointer;">
                     <input type="checkbox" id="remember-api-key"> Remember cloud API keys on this device
@@ -4201,7 +3897,7 @@
                 </div>
                 <label class="form-label" for="global-mcp-bridge-url">Local bridge</label>
                 <div class="mcp-bridge-row">
-                    <input id="global-mcp-bridge-url" class="form-input" value="http://127.0.0.1:43127" spellcheck="false">
+                    <input id="global-mcp-bridge-url" class="form-input" value="http://localhost:42069" spellcheck="false">
                     <button id="test-mcp-bridge-btn" class="btn btn-ghost" type="button">Test</button>
                 </div>
                 <p class="form-hint">Start Horde Studio with <code>Start Horde Studio.command</code>. OAuth tokens remain in the localhost bridge and are never placed in this page or exported.</p>
@@ -4323,44 +4019,6 @@
                 <div class="settings-inline-actions"><button id="always-on-refresh-btn" class="btn btn-ghost" type="button">Check runtime</button><button id="always-on-stop-btn" class="btn btn-ghost" type="button">Stop &amp; forget credentials</button></div>
                 <div id="always-on-status-text" class="form-hint" aria-live="polite"></div>
             </section>
-            <section class="mcp-settings-card" aria-labelledby="shared-library-sync-title">
-                <div class="mcp-settings-head">
-                    <div>
-                        <span class="vh-eyebrow">Local-first recovery</span>
-                        <h3 id="shared-library-sync-title">Live State Backups &amp; Sync</h3>
-                    </div>
-                </div>
-                <p class="form-hint">Horde keeps its working copy in this browser, then publishes versioned recovery points to this Mac. These local backups work without Tailscale; Tailscale only lets another device reach the same history. API keys, embedding caches, and local service URLs stay on the device that owns them.</p>
-                <label class="form-label" for="shared-library-device-label">This device</label>
-                <input id="shared-library-device-label" class="form-input" maxlength="80" placeholder="Mac browser">
-                <div class="mcp-provider-grid" style="margin-top:10px;">
-                    <button id="shared-library-pull-btn" class="btn btn-ghost" type="button">Pull latest</button>
-                    <button id="shared-library-push-btn" class="btn btn-primary" type="button">Publish this device</button>
-                    <button id="shared-library-check-btn" class="btn btn-ghost" type="button">Check devices</button>
-                </div>
-                <div id="shared-library-sync-status" class="form-hint" aria-live="polite"></div>
-                <div class="form-hint" style="margin-top:14px;">Automatic backups only publish changed state. Manual Publish remains immediate.</div>
-                <label class="switch-row" style="margin-top:8px;"><input id="shared-library-periodic-enabled" type="checkbox" checked> <span>Snapshot every</span></label>
-                <div class="mcp-provider-grid" style="margin-top:6px; grid-template-columns:minmax(0, 1fr) auto; align-items:center;">
-                    <input id="shared-library-interval-minutes" class="form-input" type="number" min="1" max="1440" value="5">
-                    <span class="form-hint">minutes</span>
-                </div>
-                <label class="switch-row" style="margin-top:10px;"><input id="shared-library-after-assistant-enabled" type="checkbox"> <span>Also snapshot after assistant responses</span></label>
-                <div class="mcp-provider-grid" style="margin-top:6px; grid-template-columns:minmax(0, 1fr) auto; align-items:center;">
-                    <input id="shared-library-assistant-turn-interval" class="form-input" type="number" min="1" max="100" value="5" disabled>
-                    <span class="form-hint">assistant turns</span>
-                </div>
-                <label class="switch-row" style="margin-top:10px;"><input id="shared-library-after-every-change-enabled" type="checkbox"> <span>Also snapshot after every chat, Virtual Human, or World change</span></label>
-                <div class="form-hint" style="margin-top:14px;">Recovery points keep the previous 12 real publishes. Restoring one first archives the current shared state.</div>
-                <label class="form-label" for="shared-library-history-select" style="margin-top:8px;">Recovery point</label>
-                <select id="shared-library-history-select" class="form-input" disabled>
-                    <option value="">No recovery points yet</option>
-                </select>
-                <div class="mcp-provider-grid" style="margin-top:10px;">
-                    <button id="shared-library-history-refresh-btn" class="btn btn-ghost" type="button">Refresh recovery points</button>
-                    <button id="shared-library-restore-btn" class="btn btn-ghost" type="button" disabled>Restore selected</button>
-                </div>
-            </section>
             <section class="mcp-settings-card" aria-labelledby="local-tts-settings-title">
                 <div class="mcp-settings-head"><div><span class="vh-eyebrow">OpenAI-compatible speech</span><h3 id="local-tts-settings-title">Local Neural TTS</h3></div></div>
                 <label class="form-label">Server Base URL</label>
@@ -4425,33 +4083,6 @@
                             <div id="global-consolidation-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
                         </div>
                         <span class="form-hint">Fast, cheap model used for background episodic archiving. Runs automatically every 8 turns. Gemini Flash is recommended. On a local provider, use one of your local models (defaults to your Default Model).</span>
-                        <div class="form-row" style="margin-top:14px;">
-                            <div class="form-col"><label class="form-label">Consolidation max tokens</label><input id="global-consolidation-max-tokens" type="number" class="form-input" min="300" max="12000" step="100" value="1400"></div>
-                            <div class="form-col"><label class="form-label">Temperature</label><input id="global-consolidation-temperature" type="number" class="form-input" min="0" max="2" step="0.05" value="0"></div>
-                            <label class="vh-test-check" style="align-self:end;"><input id="global-consolidation-reasoning" type="checkbox"> Enable reasoning</label>
-                        </div>
-                        <div class="form-row" style="margin-top:10px;">
-                            <div class="form-col"><label class="form-label">Chunk size (turns)</label><input id="global-episode-chunk-turns" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
-                            <div class="form-col"><label class="form-label">Chunk cadence (turns)</label><input id="global-episode-cadence-turns" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
-                            <div class="form-col"><label class="form-label">Verbatim overlap</label><input id="global-verbatim-turn-window" type="number" class="form-input" min="0" max="30" step="1" value="5"></div>
-                        </div>
-                        <div class="form-row" style="margin-top:10px;">
-                            <div class="form-col"><label class="form-label">Background jobs</label><input id="global-consolidation-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="6"></div>
-                            <div class="form-col"><label class="form-label">Per-provider jobs</label><input id="global-background-provider-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="2"></div>
-                            <div class="form-col"><label class="form-label">Embedding cache entries</label><input id="global-embedding-cache-limit" type="number" class="form-input" min="100" max="100000" step="100" value="10000"></div>
-                        </div>
-                        <div class="form-row" style="margin-top:10px;">
-                            <div class="form-col"><label class="form-label">Pressure watch threshold</label><input id="global-context-pressure-watch" type="number" class="form-input" min="1" max="98" value="45"></div>
-                            <div class="form-col"><label class="form-label">Pressure refresh threshold</label><input id="global-context-pressure-refresh" type="number" class="form-input" min="2" max="100" value="70"></div>
-                        </div>
-                        <details class="form-section" style="margin-top:14px; padding:10px; border:1px solid var(--border); border-radius:8px;"><summary style="cursor:pointer;"><strong>Sidecar Reader Profile</strong> <span class="help-glyph" title="Controls the ScenePulse-informed semantic evidence pass. It produces derived evidence only; Sidecar remains the canonical mutation authority.">?</span></summary>
-                            <p class="form-hint">This profile is inherited by Sidecar worlds unless a world override is selected. It controls reader routing, bounded lookups, refresh cadence and failure behaviour independently of the Narrator.</p>
-                            <div class="form-row" style="margin-top:10px;"><div class="form-col"><label class="form-label">Provider override</label><input id="global-sidecar-reader-provider" class="form-input" placeholder="Blank = Narrator provider"></div><div class="form-col"><label class="form-label">Model override</label><input id="global-sidecar-reader-model" class="form-input" placeholder="Blank = Narrator model"></div></div>
-                            <div class="form-row" style="margin-top:10px;"><div class="form-col"><label class="form-label">Reader max tokens</label><input id="global-sidecar-reader-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive"></div><div class="form-col"><label class="form-label">Timeout (seconds)</label><input id="global-sidecar-reader-timeout" type="number" class="form-input" min="10" max="900" step="10" value="120"></div><div class="form-col"><label class="form-label">Full refresh cadence</label><input id="global-sidecar-reader-refresh" type="number" class="form-input" min="1" max="50" step="1" value="5"></div></div>
-                            <div class="form-row" style="margin-top:10px;"><div class="form-col"><label class="form-label">Max lookup calls</label><input id="global-sidecar-reader-tools" type="number" class="form-input" min="0" max="12" step="1" value="3"></div><div class="form-col"><label class="form-label">Lookup payload limit</label><input id="global-sidecar-reader-lookup-budget" type="number" class="form-input" min="1000" max="100000" step="1000" value="12000"></div><div class="form-col"><label class="form-label">Context budget</label><input id="global-sidecar-reader-context-budget" type="number" class="form-input" min="4000" max="120000" step="1000" value="24000"></div></div>
-                            <div class="form-row" style="margin-top:10px;"><div class="form-col"><label class="form-label">Reasoning mode</label><select id="global-sidecar-reader-reasoning" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div><div class="form-col"><label class="form-label">Retry policy</label><select id="global-sidecar-reader-retry" class="form-select"><option value="bounded">Bounded retry</option><option value="none">No retry</option></select></div></div>
-                        </details>
-                        <p class="form-hint">These are global defaults inherited by Sidecar Episode, cognition, and location jobs. Raw turns stay available; the verbatim window is only the recent window injected alongside summaries.</p>
                         <label class="form-label" style="margin-top:12px;">Separate Embedding Server URL (optional)</label>
                         <input type="text" id="global-embedding-url" class="form-input" placeholder="http://127.0.0.1:11435/v1">
                         <label class="form-label" style="margin-top:8px;">Embedding Server API Key (optional)</label>
@@ -4502,9 +4133,6 @@
                     <button id="backup-all-btn" class="btn btn-ghost btn-full">💾 Export Full Backup</button>
                     <button id="restore-all-btn" class="btn btn-ghost btn-full">📂 Restore Backup</button>
                     <input type="file" id="restore-all-input" accept=".json,.hordebackup" style="display:none;">
-                </div>
-                <div class="settings-danger-zone"><div><strong>Experimental Worlds acknowledgement</strong><span>Require the Experimental Worlds warning again. This never deletes Experimental Worlds data.</span></div>
-                <button id="reset-experimental-worlds-ack-btn" class="btn btn-ghost btn-full" type="button">Reset acknowledgement</button>
                 </div>
                 <div class="settings-danger-zone"><div><strong>Hard reset</strong><span>Deletes every local character, World, conversation and setting.</span></div>
                 <button id="purge-data-btn" class="btn btn-danger btn-full">⚠️ Purge All Data (Hard Reset)</button>
@@ -4589,16 +4217,6 @@
                     </details>
                     <details class="persona-editor-section">
                         <summary>Additional roleplay notes</summary>
-                        <div style="display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap;">
-                            <button id="persona-generate-btn" class="btn btn-ghost" type="button">✨ Generate from current world</button>
-                            <select id="persona-generation-provider" class="form-select" style="width:150px;">
-                                <option value="inherit">Global provider</option><option value="openrouter">OpenRouter</option><option value="gptproto">GPTProto</option><option value="nanogpt">NanoGPT</option><option value="nvidia">NVIDIA</option><option value="bedrock">AWS Mantle</option><option value="custom">Custom</option><option value="local">Local</option>
-                            </select>
-                            <input id="persona-generation-model" class="form-input" style="flex:1; min-width:180px;" placeholder="Use global narrator model">
-                            <input id="persona-generation-max-tokens" class="form-input" style="width:120px;" type="number" min="500" max="5000" step="100" value="5000" title="Maximum persona draft tokens">
-                            <label class="vh-test-check" style="white-space:nowrap;"><input id="persona-generation-reasoning" type="checkbox"> Low reasoning</label>
-                        </div>
-                        <div id="persona-generation-status" class="form-hint" style="margin-top:6px;" aria-live="polite">Provider may inherit global Settings or use a dedicated provider; model and budget may be overridden here.</div>
                         <textarea id="persona-desc" class="form-textarea" style="min-height:140px; resize:vertical; margin-top:12px;" placeholder="Voice, history, preferences or other details that should inform play..."></textarea>
                     </details>
 
@@ -4821,7 +4439,6 @@
                         <button id="fetch-room-model-btn" class="btn btn-ghost" title="Fetch model info" style="white-space: nowrap; flex-shrink: 0; padding: 4px 12px;">Fetch Data</button>
                     </div>
                 </div>
-                <div id="room-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                 <div style="display:flex; flex-direction:column; justify-content:space-between; background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -5108,12 +4725,7 @@
             <div style="display:flex; border-bottom:1px solid var(--border2); padding-bottom:8px; gap:16px;">
                 <button id="vector-tab-episodic" class="tab-btn active-tab" style="background:none; border:none; color:var(--accent); font-weight:bold; cursor:pointer; padding:4px 8px; font-size:0.9rem;">📚 Story Continuity</button>
                 <button id="vector-tab-biography" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">📖 Character Bio & Lore</button>
-                <button id="vector-tab-cognition" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">🗣 NPC Cognition</button>
-                <button id="vector-tab-locations" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">⌖ Locations</button>
-                <button id="vector-tab-unresolved" class="tab-btn" style="background:none; border:none; color:var(--text-3); font-weight:normal; cursor:pointer; padding:4px 8px; font-size:0.9rem;">⌁ Unresolved Places</button>
             </div>
-            <select id="vector-character-filter" class="form-select hidden" aria-label="Character cognition filter"><option value="">All characters</option></select>
-            <div id="vector-memory-status" class="form-hint" aria-live="polite"></div>
             
             <!-- Cosine Similarity Test Playground -->
             <div style="background:var(--surface2); border:1px solid var(--border); padding:12px; border-radius:8px; display:flex; flex-direction:column; gap:10px;">
@@ -5130,11 +4742,7 @@
             </div>
         </div>
         <div class="modal-ft" style="display:flex; justify-content:space-between; align-items:center;">
-            <div style="display:flex; gap:8px;">
-                <button id="force-archive-now-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">⚡ Force Archive Now</button>
-                <button id="vectorize-listed-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">Vectorize listed</button>
-                <button id="vector-delete-all-btn" class="btn btn-ghost" style="color:var(--red); border-color:var(--red);">Delete listed</button>
-            </div>
+            <button id="force-archive-now-btn" class="btn btn-ghost" style="color:var(--accent); border-color:var(--accent);">⚡ Force Archive Now</button>
             <button id="close-vector-memory-ft-btn" class="btn btn-ghost">Close</button>
         </div>
     </div>
@@ -5191,10 +4799,6 @@
         </div>
         <div class="modal-body" style="flex:1; overflow-y:auto;">
             <p class="form-hint" style="margin-bottom:12px;">Rules run top-to-bottom on each message. <b>Find</b> is a regex (plain, or <code>/pattern/flags</code>). <b>Replace</b> supports <code>$1</code>…<code>$9</code> capture groups and <code>{{match}}</code>. Target picks what the rule touches.</p>
-            <div style="display:flex; gap:8px; margin-bottom:14px;">
-                <select id="regex-suite-select" class="form-select" style="flex:1;"></select>
-                <button id="install-regex-suite-btn" class="btn btn-ghost" type="button" disabled>Install suite</button>
-            </div>
             <div id="regex-list" style="display:flex; flex-direction:column; gap:10px;"></div>
             <button id="add-regex-btn" class="btn btn-ghost btn-full" style="margin-top:14px;">+ Add Regex Script</button>
         </div>
@@ -5231,9 +4835,6 @@
                     <label class="form-label">Player Persona for this timeline</label>
                     <select id="sz-persona-select" class="form-select"></select>
                     <p class="form-hint">This selection is saved on this timeline. Changing the global active Persona later will not silently replace it.</p>
-                    <label class="form-label" style="margin-top:10px;">Controlled character</label>
-                    <select id="sz-controlled-entity" class="form-select"><option value="player">Create / control this player character</option></select>
-                    <p class="form-hint">Choose an established character to play them in this sequence. Their dossier remains canonical; the selected Persona is a portrayal snapshot, not a live overwrite.</p>
                 </div>
                 <div id="sz-persona-preview" class="session-persona-preview">No Persona selected. The Starting Life will be the only identity source.</div>
                 <label id="sz-life-seed-option" class="sandbox-toggle-card session-life-seed-option">
@@ -5600,35 +5201,16 @@
 <script src="labs-core.js?v=20260822-v161"></script>
 <script src="labs-tasks.js?v=20260822-v161"></script>
 <script src="labs-guide.js?v=20260822-v161"></script>
-<script src="help-system.js?v=20260905-v1700-visual-pipelines-v1"></script>
+    <script src="help-system.js?v=20260908-reply-cleanup"></script>
 <script src="labs-ui.js?v=20260822-v161"></script>
 <script src="rpg-mechanics.js?v=20260823-v166-rpg-release"></script>
-<script src="multiplayer-engine.js?v=20260823-v166-rpg-release"></script>
-<script src="multiplayer.js?v=20260823-v166-rpg-release"></script>
-<script src="host-adapters/experimental-worlds/visual-media-host-adapter.js?v=20260910-pass1-visual-media-adapter-v2"></script>
-<script src="host-adapters/experimental-worlds/experimental-worlds-host-adapter.js?v=20260910-pass1-host-adapter-v4"></script>
-<script src="host-adapters/experimental-worlds/experimental-worlds-state-adapter.js?v=20260910-pass1-state-adapter-v1"></script>
-<script src="experiences/experimental-worlds/runtime/experimental-runtime-compat.js?v=20260910-pass1-private-compat-v3"></script>
-<script src="experiences/experimental-worlds/runtime/experimental-vector-memory.js?v=20260910-pass1-vector-memory-v1"></script>
-<script src="experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js?v=20260910-pass1-private-rpg-v1"></script>
-<script src="experiences/experimental-worlds/runtime/world-message-input.js?v=20260910-pass1-private-composer-v1"></script>
-<script src="experiences/experimental-worlds/runtime/dossier-claims.js?v=20260910-pass1-dossier-claims-v2"></script>
-<script src="experiences/experimental-worlds/mechanics/world-mechanics.js?v=20260910-pass1-mechanics-v2"></script>
-<script src="experiences/experimental-worlds/visuals/world-portrait-prompt.js?v=20260910-pass1-visuals-v2"></script>
-<script src="experiences/experimental-worlds/visuals/world-visual-media-core.js?v=20260910-pass1-visual-media-v3"></script>
-<script src="experiences/experimental-worlds/visuals/world-visual-provider-core.js?v=20260910-pass1-visual-provider-v2"></script>
-<script src="experiences/experimental-worlds/visuals/world-visual-editor-core.js?v=20260910-pass1-world-visual-editor-v2"></script>
-<script src="experiences/experimental-worlds/runtime/world-studio-core.js?v=20260910-pass1-world-studio-core-v2"></script>
-<script src="experiences/experimental-worlds/runtime/world-play-core.js?v=20260910-pass1-owner-guard-v10"></script>
-<script src="experiences/experimental-worlds/runtime/world-session-core.js?v=20260910-pass1-world-session-core-v2"></script>
-<script src="experiences/experimental-worlds/runtime/world-intelligence-core.js?v=20260910-pass1-world-intelligence-core-v1"></script>
-<script src="video-worlds.js?v=20260902-fal-media-alpha8"></script>
-  <script src="experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js?v=20260910-pass1-scenepulse-v1"></script>
-  <script src="experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js?v=20260910-pass1-scenepulse-v3"></script>
-<script src="experiences/stock-worlds-17-pass0/runtime.js?v=20260910-pass1-stock-exact-v15"></script>
-<script src="experiences/experimental-worlds/runtime/world-protocol-core.js?v=20260910-pass1-world-protocol-core-v10"></script>
-<script src="experiences/experimental-worlds/runtime/experimental-worlds-repository.js?v=20260910-pass1-repository-v1"></script>
-<script src="experiences/experimental-worlds/runtime/sidecar-core.js?v=20260910-pass1-sidecar-core-v1"></script>
-  <script src="app.js?v=20260910-experimental-worlds-pass1-bootstrap-v10"></script>
+<script src="multiplayer-engine.js?v=20260902-v171"></script>
+<script src="multiplayer.js?v=20260902-v171"></script>
+<script src="video-worlds.js?v=20260902-v171"></script>
+    <script src="vh-conversation-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-activity-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-world-engine.js?v=20260908-reply-cleanup"></script>
+    <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
+    <script src="app.js?v=20260908-reply-cleanup"></script>
 </body>
 </html>
