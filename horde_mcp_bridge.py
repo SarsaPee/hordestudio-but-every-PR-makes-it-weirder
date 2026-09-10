@@ -178,7 +178,8 @@ STATIC_MEDIA_ROOTS = (
     # this explicit tree is needed for the one integrated Horde runtime to
     # serve the vendor CSS and the narrow Horde bridge.  The same resolved-
     # path containment check below prevents arbitrary workspace exposure.
-    ("/scenepulse/", APP_DIR / "scenepulse"),
+    ("/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/",
+     APP_DIR / "experiences" / "experimental-worlds" / "scenepulse" / "vendor" / "ScenePulse"),
 )
 
 if os.name == "nt":
