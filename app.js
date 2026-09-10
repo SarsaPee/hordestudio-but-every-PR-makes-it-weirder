@@ -1642,8 +1642,10 @@ function validateBackupData(value) {
     requireArray(value.rooms, 'Backup rooms', { optional: true, max: 1000 });
     requireArray(value.systemPresets, 'Backup presets', { optional: true, max: 1000 });
     requireArray(value.worlds, 'Backup worlds', { optional: true, max: 1000 });
+    requirePlainObject(value.worldRecoverySnapshots, 'Backup World recovery snapshots', { optional: true });
     requireArray(value.videoWorlds, 'Backup Video Adventures', { optional: true, max: 1000 });
     requireArray(value.companions, 'Backup Virtual Humans', { optional: true, max: 1000 });
+    requireArray(value.labsDiagnostics, 'Backup Labs diagnostics', { optional: true, max: 100 });
     (value.characters || []).forEach((item, index) => validateCharacterData(item, `Backup character ${index + 1}`));
     (value.rooms || []).forEach((item, index) => validateRoomData(item, `Backup room ${index + 1}`));
     (value.personas || []).forEach((item, index) => {
@@ -1654,6 +1656,15 @@ function validateBackupData(value) {
         requireSafeId(item.id, `Backup persona ${index + 1} id`, { optional: true });
     });
     (value.worlds || []).forEach((item, index) => validateWorldData(item, `Backup world ${index + 1}`));
+    if (Object.keys(value.worldRecoverySnapshots || {}).length > 30) {
+        throw new Error('Backup has too many World recovery snapshots');
+    }
+    Object.entries(value.worldRecoverySnapshots || {}).forEach(([worldId, snapshot]) => {
+        requireSafeId(worldId, 'Backup World recovery snapshot id');
+        requirePlainObject(snapshot, `Backup World recovery snapshot ${worldId}`);
+        requireString(snapshot.reason, `Backup World recovery snapshot ${worldId} reason`, { optional: true, max: 500 });
+        if (snapshot.world !== undefined) validateWorldData(snapshot.world, `Backup recovered world ${worldId}`);
+    });
     (value.videoWorlds || []).forEach((item, index) => {
         requirePlainObject(item, `Backup Video Adventure ${index + 1}`);
         requireSafeId(item.id, `Backup Video Adventure ${index + 1} id`);
@@ -11808,8 +11819,9 @@ async function serializeHostBackupPayload() {
         rooms: state.rooms,
         theme: state.theme,
         systemPresets: state.systemPresets,
-            regexScripts: state.regexScripts,
+        regexScripts: state.regexScripts,
         worlds: state.worlds,
+        worldRecoverySnapshots: state.worldRecoverySnapshots,
         worldInstances: state.worldInstances,
         activeWorldId: state.activeWorldId,
         videoWorlds: state.videoWorlds,
@@ -11819,6 +11831,7 @@ async function serializeHostBackupPayload() {
         companionThreads: state.companionThreads,
         companionTimelines: state.companionTimelines,
         activeCompanionId: state.activeCompanionId,
+        labsDiagnostics: state.labsDiagnostics,
         companionVideoAssets,
         chatAssets
     };
@@ -11857,11 +11870,13 @@ async function applyHostBackupPayload(data) {
     if (data.activeVideoWorldId === undefined) data.activeVideoWorldId = null;
     if (data.globalSettings) data.globalSettings = redactGlobalSettingsCredentials(data.globalSettings);
     if (data.chatContinuities === undefined) data.chatContinuities = {};
+    if (data.worldRecoverySnapshots === undefined) data.worldRecoverySnapshots = {};
+    if (data.labsDiagnostics === undefined) data.labsDiagnostics = [];
     const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
         'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
-        'worlds', 'worldInstances', 'activeWorldId', 'companions',
+        'worlds', 'worldRecoverySnapshots', 'worldInstances', 'activeWorldId', 'companions',
         'companionThreads', 'companionTimelines', 'activeCompanionId',
-        'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
+        'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId', 'labsDiagnostics'];
     keys.forEach(key => { if (data[key] !== undefined) state[key] = data[key]; });
     for (const [assetId, source] of Object.entries(data.companionVideoAssets || {})) {
         if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
