@@ -110,8 +110,11 @@ const visualStyleStart = acceptedStyle.lastIndexOf('/* ─── WORLD ENGINE �
 const visualStyleEnd = acceptedStyle.indexOf('/* ScenePulse-inspired in-place Scene Intelligence Workspace.', visualStyleStart);
 assert(visualStyleStart >= 0 && visualStyleEnd > visualStyleStart, 'Pass-0 visual/Sidecar stylesheet source unit is present');
 const relocatedVisualStyles = fs.readFileSync('experiences/experimental-worlds/styles/world-visuals-and-sidecar.css', 'utf8');
-assert.equal(relocatedVisualStyles.trimEnd(), acceptedStyle.slice(visualStyleStart, visualStyleEnd).trimEnd(),
-    'visual, outfit, Scene Inspector and Sidecar styles differ from the Pass-0 oracle');
+const pass0VisualStyles = acceptedStyle.slice(visualStyleStart, visualStyleEnd).trimEnd();
+assert(relocatedVisualStyles.startsWith(pass0VisualStyles),
+    'the original visual, outfit, Scene Inspector and Sidecar CSS must remain byte-identical at the Experimental stylesheet head');
+assert(relocatedVisualStyles.includes('Pass 1 mechanical CSS closure'),
+    'the complete World Engine CSS closure is not recorded as Experimental-owned');
 assert(html.includes('experiences/experimental-worlds/styles/world-visuals-and-sidecar.css'),
     'relocated visual and Sidecar stylesheet is registered by the same document');
 

@@ -1147,3 +1147,13 @@ body:has(#world-sidecar-workspace > #sp-panel[data-horde-source-runtime="true"])
 #sp-thought-panel.sp-tp-ghost-mode .sp-tp-header { opacity:.15; transition:opacity .2s; }
 #sp-thought-panel.sp-tp-ghost-mode:hover .sp-tp-header { opacity:1; }
 @media (max-width:700px) { #sp-thought-panel { left:8px !important; width:calc(100vw - 16px) !important; max-height:55vh; } .world-sidecar-workspace .spw-demo-ribbon,.world-sidecar-workspace .spw-live-ribbon { display:none; } }
+
+/* First-use acknowledgement: mode-owned presentation in the single Horde
+   document. It is an overlay, never another bootstrap or navigation target. */
+.experimental-worlds-ack-overlay { position:fixed; inset:0; z-index:1600; display:grid; place-items:center; padding:20px; background:rgba(5,7,13,.72); backdrop-filter:blur(6px); }
+.experimental-worlds-ack-dialog { width:min(620px,100%); max-height:calc(100vh - 40px); overflow:auto; padding:26px; border:1px solid rgba(132,103,218,.48); border-radius:16px; background:linear-gradient(145deg,#1f1d30,#141722); box-shadow:0 28px 90px rgba(0,0,0,.58); color:#e7e5f4; }
+.experimental-worlds-ack-dialog h2 { margin:10px 0 12px; color:#faf9ff; font-size:1.55rem; }
+.experimental-worlds-ack-dialog p { color:#c9c6dc; line-height:1.55; }
+.experimental-worlds-ack-check { display:flex; gap:10px; align-items:flex-start; margin:20px 0; color:#f1eff9; line-height:1.45; cursor:pointer; }
+.experimental-worlds-ack-check input { width:18px; height:18px; margin-top:2px; accent-color:#9275ea; }
+.experimental-worlds-ack-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }

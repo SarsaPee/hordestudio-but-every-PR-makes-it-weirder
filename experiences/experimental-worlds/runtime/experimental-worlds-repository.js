@@ -162,8 +162,20 @@
         return { recovered: true, ...(await applyStagedRestore()) };
     }
     async function migrationJournal() { return await get('migrationJournal') || null; }
+    async function destroyForExplicitGlobalPurge() {
+        // Only the host's explicit confirmed global purge calls this. Normal
+        // startup and normal World deletion can never clear this authority.
+        if (db) { db.close(); db = null; }
+        await new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(DB_NAME);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error || new Error('Experimental Worlds database deletion failed'));
+            request.onblocked = () => reject(new Error('Close other Horde Studio tabs and try again'));
+        });
+    }
     global.ExperimentalWorldsRepository = Object.freeze({
         DB_NAME, init, get, setMany, removeMany, snapshot, writeSnapshot, stageLegacyImport,
-        stageRestore, applyStagedRestore, recoverInterruptedRestore, migrationJournal, digest
+        stageRestore, applyStagedRestore, recoverInterruptedRestore, migrationJournal, digest,
+        destroyForExplicitGlobalPurge
     });
 })(window);

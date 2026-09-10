@@ -174,6 +174,17 @@ const HordeDB = {
             transaction.onabort = () => reject(transaction.error || new Error(`Deleting ${key} was aborted`));
         });
     },
+    async deleteMultiple(keys) {
+        if (!this.db) throw new Error('Database is not initialized');
+        await new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            keys.forEach(key => store.delete(key));
+            transaction.oncomplete = resolve;
+            transaction.onerror = () => reject(transaction.error || new Error('Unable to remove application records'));
+            transaction.onabort = () => reject(transaction.error || new Error('Removing application records was aborted'));
+        });
+    },
     async setMultiple(kvMap) {
         if (!this.db) throw new Error('Database is not initialized');
         return new Promise((resolve, reject) => {
@@ -2136,6 +2147,9 @@ let state = {
     // migration backups include this registry.
     roleplayOSSources: [],
     globalSettings: {
+        // This is deliberately opt-in. It grants access to the mode only;
+        // disabling it never alters separately-owned Experimental records.
+        experimentalWorldsAcknowledged: false,
         defaultModel: 'deepseek/deepseek-v4-flash',
         openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
         bedrockRegion: 'us-east-1',
@@ -3034,6 +3048,10 @@ function repairLoadedState() {
         labs: window.HordeLabs ? window.HordeLabs.normalizeConfig({}) : { enabled: false, policies: { chat: 'off', worlds: 'off', humans: 'off' } },
         ...loadedGlobalSettings
     };
+    // The old navigation had no acknowledgement. A truthy legacy flag is not
+    // evidence that the new warning was read, so it cannot bypass this gate.
+    state.globalSettings.experimentalWorldsAcknowledged = state.globalSettings.experimentalWorldsAcknowledged === true
+        && Number(state.globalSettings.experimentalWorldsAcknowledgementRevision) === 1;
     if (migrateExpiredFalLaunchRates) {
         state.globalSettings.falRate480 = 0.05;
         state.globalSettings.falRate768 = 0.08;
@@ -3246,7 +3264,13 @@ function captureWorkspaceState() {
 
 function applyWorkspaceState(raw) {
     if (!isPlainObject(raw)) return;
-    state.view = validWorkspaceView(raw.view) ? raw.view : state.view;
+    const requestedView = validWorkspaceView(raw.view) ? raw.view : state.view;
+    // A previous workspace can remember the last Experimental screen, but it
+    // must not bypass the first-use acknowledgement after an update or fresh
+    // profile. This only chooses the ordinary library; no mode data is touched.
+    state.view = ['worlds', 'worldStudio', 'worldPlay'].includes(requestedView)
+        && !state.globalSettings?.experimentalWorldsAcknowledged
+        ? 'library' : requestedView;
     ['activeCharId', 'activeRoomId', 'editingCharId', 'activeWorldId',
         'lastWorldStudioId', 'lastWorldStudioTab', 'activeVideoWorldId',
         'editingVideoWorldId', 'activeCompanionId', 'editingCompanionId',
@@ -4228,6 +4252,38 @@ async function saveState() {
     } finally {
         saveStateInFlight = null;
     }
+}
+
+// The only destructive part of the one-time ownership transition. It runs
+// only after the Experimental repository has retained and checksummed the
+// complete host preimage. Its journal makes repeat startup a no-op and leaves
+// the original records recoverable without allowing stock startup to discover
+// or normalize them again.
+async function finalizeExperimentalLegacyCutover() {
+    const repository = window.ExperimentalWorldsRepository;
+    const journal = await repository?.migrationJournal?.();
+    if (!journal || journal.status === 'legacy-host-records-removed') return false;
+    if (journal.status !== 'staged-and-verified' || !journal.legacyPreimage || !journal.stagedDigest) return false;
+    const restored = await repository.snapshot();
+    const restoredDigest = await repository.digest({
+        worlds: restored.worlds, worldInstances: restored.worldInstances,
+        activeWorldId: restored.activeWorldId, worldRecoverySnapshots: restored.worldRecoverySnapshots,
+        worldMediaAssets: restored.worldMediaAssets
+    });
+    // The original staged bytes need not equal a later normal save, but the
+    // repository must still be readable and the immutable source preimage must
+    // be intact before removing the active host copies.
+    if (!restored.worlds.length && journal.legacyPreimage.worlds?.length) {
+        throw new Error('Experimental Worlds migration readback is incomplete; host records were retained.');
+    }
+    await HordeDB.deleteMultiple(['worlds', 'worldRecoverySnapshots', 'worldInstances', 'activeWorldId', 'worldMediaAssets']);
+    await repository.setMany({ migrationJournal: {
+        ...journal,
+        status: 'legacy-host-records-removed',
+        legacyHostRecordsRemovedAt: new Date().toISOString(),
+        finalReadbackDigest: restoredDigest
+    } });
+    return true;
 }
 
 function globalSettingsForDevicePersistence(settings = state.globalSettings) {
@@ -7124,7 +7180,14 @@ function setupLibraryFilters() {
 // --- Navigation ---
 function setupNavigation() {
     navBtns.forEach(btn => {
-        if (btn.dataset.view) btn.onclick = () => switchView(btn.dataset.view);
+        if (!btn.dataset.view) return;
+        btn.onclick = () => {
+            if (btn.dataset.view === 'worlds') {
+                void requestExperimentalWorldsEntry();
+                return;
+            }
+            switchView(btn.dataset.view);
+        };
     });
 
     const homeButton = document.getElementById('sidebar-home-btn');
@@ -7144,6 +7207,61 @@ function setupNavigation() {
             createNewWorld();
         };
     }
+}
+
+// Experimental Worlds remains an ordinary same-document view, but it is
+// default-off on a fresh profile. The acknowledgement is explicit and
+// reversible: it never migrates or deletes its repository.
+function requestExperimentalWorldsEntry() {
+    if (state.globalSettings?.experimentalWorldsAcknowledged) {
+        switchView('worlds');
+        return Promise.resolve();
+    }
+    return new Promise(resolve => {
+        document.getElementById('experimental-worlds-ack-overlay')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'experimental-worlds-ack-overlay';
+        overlay.className = 'experimental-worlds-ack-overlay';
+        overlay.innerHTML = `
+            <section class="experimental-worlds-ack-dialog" role="dialog" aria-modal="true" aria-labelledby="experimental-worlds-ack-title">
+                <span class="experimental-worlds-heading-badge">EXPERIMENTAL</span>
+                <h2 id="experimental-worlds-ack-title">Experimental Worlds</h2>
+                <p>This is an alternative Worlds mode under active development. Features may not work, things may break, and behavior can change quickly. Updates may break saved worlds.</p>
+                <p>Keep full backups, especially for stories and characters you care about. If something breaks, tell us what happened in the Horde Studio Discord and share only worlds or backups you are comfortable making public.</p>
+                <label class="experimental-worlds-ack-check"><input type="checkbox" id="experimental-worlds-ack-check"> I understand that this mode is experimental and my saved worlds may become incompatible or break.</label>
+                <div class="experimental-worlds-ack-actions"><button type="button" class="btn btn-ghost" data-action="not-now">Not now</button><button type="button" class="btn btn-primary" data-action="enable" disabled>Enable Experimental Worlds</button></div>
+            </section>`;
+        const close = () => { overlay.remove(); resolve(); };
+        const checkbox = overlay.querySelector('#experimental-worlds-ack-check');
+        const enable = overlay.querySelector('[data-action="enable"]');
+        let timer = null;
+        checkbox.onchange = () => {
+            clearInterval(timer);
+            enable.disabled = true;
+            if (!checkbox.checked) { enable.textContent = 'Enable Experimental Worlds'; return; }
+            let remaining = 5;
+            enable.textContent = `Enable Experimental Worlds (${remaining})`;
+            timer = setInterval(() => {
+                remaining -= 1;
+                if (remaining > 0) { enable.textContent = `Enable Experimental Worlds (${remaining})`; return; }
+                clearInterval(timer);
+                enable.textContent = 'Enable Experimental Worlds';
+                enable.disabled = false;
+            }, 1000);
+        };
+        overlay.querySelector('[data-action="not-now"]').onclick = close;
+        enable.onclick = async () => {
+            if (enable.disabled || !checkbox.checked) return;
+            state.globalSettings.experimentalWorldsAcknowledged = true;
+            state.globalSettings.experimentalWorldsAcknowledgementRevision = 1;
+            await saveState();
+            close();
+            switchView('worlds');
+        };
+        overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+        document.body.append(overlay);
+        checkbox.focus();
+    });
 }
 
 function switchView(viewName) {
@@ -12229,6 +12347,14 @@ function setupGlobalSettings() {
     const backupBtn = document.getElementById('backup-all-btn');
     if (backupBtn) backupBtn.onclick = exportFullBackup;
 
+    const resetExperimentalAcknowledgement = document.getElementById('reset-experimental-worlds-ack-btn');
+    if (resetExperimentalAcknowledgement) resetExperimentalAcknowledgement.onclick = async () => {
+        state.globalSettings.experimentalWorldsAcknowledged = false;
+        delete state.globalSettings.experimentalWorldsAcknowledgementRevision;
+        await saveState();
+        showToast('Experimental Worlds acknowledgement reset. Its saved Worlds remain unchanged.', 'success');
+    };
+
     const restoreBtn = document.getElementById('restore-all-btn');
     const restoreInput = document.getElementById('restore-all-input');
     if (restoreBtn && restoreInput) {
@@ -12451,6 +12577,7 @@ function purgeAllData() {
         try {
             localStorage.clear();
             await window.StockWorlds17Pass0?.purgeState?.();
+            await window.ExperimentalWorldsRepository?.destroyForExplicitGlobalPurge?.();
             HordeDB.close();
             await new Promise((resolve, reject) => {
                 const request = indexedDB.deleteDatabase(DB_NAME);
