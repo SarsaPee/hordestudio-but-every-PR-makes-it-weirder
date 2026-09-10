@@ -1,5 +1,6 @@
 # Sorted Experimental Worlds domain files. Excludes adapters, registration,
 # migrations, tests, evidence, docs and packaging by design.
+experiences/experimental-worlds/experimental-worlds-shell.html
 experiences/experimental-worlds/mechanics/world-mechanics.js
 experiences/experimental-worlds/runtime/dossier-claims.js
 experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js

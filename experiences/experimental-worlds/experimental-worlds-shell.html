@@ -1,0 +1,1991 @@
+<!-- Experimental Worlds shell: mechanically relocated from the accepted 17.0 split.
+     Its identifiers and contents intentionally remain unchanged. -->
+<!-- ────────── EXPERIMENTAL WORLDS VIEW (authoritative custom runtime) ────────── -->
+        <section id="worlds-view" class="view hidden landing-view experimental-worlds-view">
+            <div class="landing-shell">
+            <header class="page-header landing-hero">
+                <div class="landing-hero-copy">
+                    <span class="vh-eyebrow">Persistent simulation spaces</span>
+                    <h1 class="page-title">Experimental Worlds <span class="experimental-worlds-heading-badge">EXPERIMENTAL</span></h1>
+                    <p class="page-subtitle">Enter a living setting or build an expansive, persistent RPG engine.</p>
+                </div>
+                <div class="header-actions landing-actions">
+                    <button id="import-world-btn" class="btn btn-ghost">Import World</button>
+                    <button id="create-new-world-btn" class="btn btn-primary">+ Create New World</button>
+                </div>
+            </header>
+
+            <div class="filter-bar landing-toolbar">
+                <div class="filter-group">
+                    <input type="text" id="world-search" class="filter-input" placeholder="Search worlds...">
+                </div>
+                <div class="landing-summary" aria-live="polite">
+                    <span><strong id="world-visible-count">0</strong> shown</span>
+                    <span><strong id="world-total-count">0</strong> total</span>
+                </div>
+            </div>
+            
+            <div id="world-grid" class="char-grid">
+                <!-- Worlds rendered here -->
+            </div>
+            </div>
+        </section>
+
+        
+
+<!-- ────────── WORLD PLAY VIEW ────────── -->
+        <section id="world-play-view" class="view hidden experimental-worlds-view">
+            <div class="world-play-container">
+                <!-- Main Narrative Column -->
+                <div class="world-narrative-col">
+                    <header class="chat-header">
+                        <div class="chat-who">
+                            <div class="chat-avatar world-header-avatar" id="world-dm-avatar">🌐</div>
+                            <div>
+                                <div class="chat-name" id="world-dm-name">Untitled World</div>
+                                <div id="world-active-name" style="font-size:0.65rem; color:var(--red); font-weight:800; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;">Living World</div>
+                                <div id="world-model-name" class="chat-model-badge" style="opacity:0.7;">Model: None</div>
+                            </div>
+                        </div>
+                        <div class="chat-toolbar world-toolbar">
+                            <!-- Row 1: Primary Controls & Context -->
+                            <div class="world-toolbar-row world-toolbar-primary">
+                                <div class="session-selector-wrap">
+                                    <select id="world-session-select" class="tool-select"></select>
+                                    <button class="tool-btn" id="world-new-session-btn" title="New World Session">➕ New</button>
+                                    <button class="tool-btn" id="world-timeline-browser-btn" title="Inspect timelines and fork provenance">▤ Timelines</button>
+                                    <button class="tool-btn" id="world-rename-session-btn" title="Rename Current Session">✏️ Rename</button>
+                                    <button class="tool-btn tool-btn-danger" id="world-del-session-btn" type="button" title="Delete Current Session" aria-label="Delete current session">🗑️</button>
+                                </div>
+                                <span class="tool-btn" id="world-pipeline-status-btn" title="Active timeline pipeline">…</span>
+                                
+                                <div id="world-context-meter-wrap" style="display:flex; align-items:center; gap:8px; background:var(--surface2); padding:4px 10px; border-radius:10px; border:1px solid var(--border);">
+                                    <span style="font-size:0.6rem; color:var(--text-3); font-weight:800;">CTX</span>
+                                    <div style="width:50px; height:4px; background:var(--bg); border-radius:2px; overflow:hidden;">
+                                        <div id="world-context-fill" style="width:0%; height:100%; background:var(--success); transition:all 0.3s;"></div>
+                                    </div>
+                                    <span id="world-context-label" style="font-size:0.65rem; color:var(--text-2); font-family:monospace; min-width:55px; text-align:right;">0/8k</span>
+                                </div>
+                                
+                                <button class="tool-btn" id="world-studio-btn" title="Open World in Studio">⚙️ Studio</button>
+                                <button class="tool-btn world-hud-toggle" id="world-hud-toggle" title="Show or hide world status">◫ HUD</button>
+                                <button class="tool-btn tool-btn-danger" id="world-exit-btn" title="Exit World">✕ Exit</button>
+                            </div>
+
+                            <!-- Row 2: Secondary / Narrative Tools -->
+                            <div class="world-toolbar-row world-toolbar-secondary">
+                                <button class="tool-btn" id="world-roll-btn" title="Roll Dice">🎲 Roll</button>
+                                <button class="tool-btn" id="world-continue-btn" title="DM continues without your input">⏩ Continue</button>
+                                <button class="tool-btn" id="world-session-zero-btn" title="Open session identity and story preferences">🎬 Session Setup</button>
+                                <button class="tool-btn" id="world-persona-btn" title="Create or assign the player persona for this timeline">👤 Persona</button>
+                                <button class="tool-btn" id="world-plan-sequence-btn" title="Plan and approve the next sequence">✦ New Sequence</button>
+                                <button class="tool-btn" id="world-close-sequence-btn" title="Close the current sequence and prepare its reconciliation">▣ Close Sequence</button>
+                                <button class="tool-btn world-v3-only" id="world-v3-end-scene-btn" title="End the current scene and create its scene card">🎬 End Scene</button>
+                                <button class="tool-btn world-v3-only" id="world-v3-gm-btn" title="Open a private line to the World GM">🧭 World GM</button>
+                                <button class="tool-btn" id="world-map-btn" title="Toggle Map View">🗺️ Map</button>
+                                <button class="tool-btn" id="world-reroll-btn" title="Reroll last DM response">🔄 Reroll</button>
+                                <button class="tool-btn world-more-btn" id="world-more-btn" type="button" aria-expanded="false">••• More</button>
+                                <div class="world-more-actions" id="world-more-actions">
+                                    <button class="tool-btn" id="world-toggle-headers-btn" title="Toggle Message Metadata">👁️ Metadata</button>
+                                    <button class="tool-btn" id="world-presentation-btn" title="Switch between Classic and Cinematic presentation">🎨 View</button>
+                                    <button class="tool-btn" id="world-system-btn" title="Inject System Instruction">🖥️ System</button>
+                                    <button class="tool-btn" id="world-mechanics-toggle-btn" title="Pause or restore optional RPG mechanics without deleting character data">⚙ Mechanics</button>
+                                    <button class="tool-btn" id="world-summarize-btn" title="Summarize World History">✨ Summarize</button>
+                                    <button class="tool-btn" id="world-open-vector-memory-btn" title="Inspect World Vector Memories">🧠 Memory</button>
+                                    <button class="tool-btn" id="world-download-btn" title="Download Transcript">💾 Save</button>
+                                    <button class="tool-btn tool-btn-danger" id="world-clear-btn" title="Clear World History">🗑️ Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+                    <div id="world-vector-fallback-banner" class="fallback-banner hidden">
+                        <span class="banner-icon">⚠️</span>
+                        <span class="banner-text">OpenRouter Embeddings API failed (or credit exhausted). Using primitive keyword-matching fallback for world narrative memory.</span>
+                        <button class="banner-close" data-dismiss-fallback="world-vector-fallback-banner" type="button" aria-label="Dismiss notice">✕</button>
+                    </div>
+                    <div class="messages-wrap" id="world-messages-container">
+                        <!-- Narrative and Dialogue -->
+                    </div>
+                    <section id="world-sidecar-conversation" class="hidden" style="margin:0 16px 10px; border:1px solid var(--border); border-radius:10px; background:var(--surface2); overflow:hidden;">
+                        <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; font-size:0.75rem; font-weight:800; color:var(--text-2); border-bottom:1px solid var(--border);"><span>🎭 Sidecar conversation <span style="font-weight:400; color:var(--text-3);">Out of world — does not advance the scene</span></span><button class="tool-btn" id="world-close-sidecar-conversation" type="button" title="Return to narrator mode" style="margin-left:auto; padding:4px 8px; font-size:.66rem;">← Return to Narrator</button></div>
+                        <div id="world-sidecar-conversation-log" style="max-height:240px; overflow:auto; padding:10px;"></div>
+                    </section>
+                    <!-- DM Typing Indicator (persistent, outside messages container) -->
+                    <div id="world-dm-typing" style="display:none; padding: 8px 16px; align-items:center; gap:10px;">
+                        <div style="display:flex; gap:4px; align-items:center;">
+                            <div class="thinking-dot"></div>
+                            <div class="thinking-dot"></div>
+                            <div class="thinking-dot"></div>
+                        </div>
+                        <span style="font-size:0.8rem; color:var(--text-3); font-style:italic;" id="world-dm-typing-label">DM is writing...</span>
+                    </div>
+                    <button id="world-scroll-bottom-btn" class="world-scroll-bottom-btn hidden" type="button" title="Scroll to latest" aria-label="Scroll to latest message">↓</button>
+                    <div class="input-wrap">
+                        <div class="input-row">
+                            <div id="world-message-resize-handle" class="world-message-resize-handle" role="separator" aria-orientation="horizontal" aria-label="Drag up or down to resize message input" tabindex="0" title="Drag up or down to resize message input"></div>
+                            <textarea id="world-user-input" class="msg-input" placeholder="What do you do?..." rows="1"></textarea>
+                            <button id="world-send-btn" class="send-btn" type="button" aria-label="Send message">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status & Info Column -->
+                <div class="world-status-resize-handle" id="world-status-resize-handle" title="Drag to resize the state window"></div>
+                <aside class="world-status-col">
+                    <div id="world-sidecar-workspace" class="world-sidecar-workspace hidden" aria-label="Scene Intelligence Workspace"></div>
+                    <div class="world-status-toolbar">
+                        <button id="world-status-columns-toggle" class="tool-btn" type="button" title="Toggle one or two state columns" aria-pressed="false">▦ 1 column</button>
+                    </div>
+                    <div class="hud-columns" id="world-status-columns">
+                    <!-- Player HUD (Phase 2 RPG Mechanics) -->
+                    <!-- World Time & Atmosphere -->
+                    <section class="world-status-section" id="hud-section-clock" style="margin-top:0;">
+                        <div class="world-card" style="text-align:center; padding:15px; background: linear-gradient(135deg, var(--surface2), var(--bg));">
+                            <div id="world-clock-display" style="font-size:1.6rem; font-family:'Outfit',sans-serif; font-weight:700; color:var(--accent);">8:00 AM</div>
+                            <div id="world-time-period" style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; letter-spacing:1px; margin-top:4px; margin-bottom:8px;">Daylight</div>
+                            <div id="world-weather-display" style="font-size:0.8rem; color:var(--text-2); margin-bottom:8px; cursor:pointer;" title="Click to change the weather"></div>
+                            <button id="w-hud-adjust-time-btn" class="tool-btn" style="font-size:0.65rem; padding: 4px 8px; border: 1px dashed var(--accent); color:var(--text-1);">Adjust Clock</button>
+                        </div>
+                    </section>
+
+                    <section class="world-status-section">
+                        <h3>Current Location</h3>
+                        <div id="world-loc-card" class="world-card">
+                            <h4 id="world-loc-name" style="margin-bottom:8px; font-family:'Outfit',sans-serif;">Unknown</h4>
+                            <p id="world-loc-desc" style="font-size:0.85rem; color:var(--text-2); line-height:1.4;">Waiting to enter...</p>
+                        </div>
+                    </section>
+
+                    <section class="world-status-section">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3 style="margin:0;">Character</h3>
+                            <div style="display:flex; gap:5px;">
+                                <button id="edit-player-stats-btn" class="tool-btn" style="font-size:0.65rem; padding:2px 6px;">Stats</button>
+                                <button id="edit-outfit-btn" class="tool-btn" style="font-size:0.65rem; padding:2px 6px;">Outfit</button>
+                            </div>
+                        </div>
+                        <div id="world-stats-container" style="display:flex; flex-direction:column; gap:8px;">
+                            <!-- Dynamic stats here -->
+                        </div>
+                        <div id="world-outfit-card" class="world-card" style="margin-top:10px; border-left: 3px solid var(--accent);">
+                            <div style="font-size:0.65rem; color:var(--text-3); text-transform:uppercase; font-weight:700; margin-bottom:4px;">Current Outfit</div>
+                            <div id="world-outfit-content" style="font-size:0.85rem; line-height:1.4;">Nothing specified.</div>
+                        </div>
+                    </section>
+
+                    <section class="world-status-section" id="hud-section-ledger">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3 style="margin:0;">World Ledger</h3>
+                            <button id="edit-ledger-btn" class="tool-btn" style="font-size:0.7rem; padding:2px 6px;">Edit</button>
+                        </div>
+                        <div id="world-ledger-card" class="world-card" style="max-height:150px; overflow-y:auto; border-left: 3px solid var(--red);">
+                            <div id="world-ledger-content" style="font-size:0.8rem; color:var(--text-2); line-height:1.5; font-style:italic; white-space: pre-wrap;">No milestones recorded yet.</div>
+                        </div>
+                        <div id="world-ledger-status" style="margin-top:5px; font-size:0.62rem; color:var(--text-3);"></div>
+                    </section>
+
+                    <section class="world-status-section">
+                        <h3>Exits & Surroundings</h3>
+                        <div id="world-exits-list" style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px;"></div>
+                        <div id="world-inventory-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
+                        <div id="world-present-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+                    </section>
+
+                    <section class="world-status-section" id="hud-section-quests">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3 style="margin:0;">Active Quests</h3>
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <span id="quest-count" class="mini-tag">0</span>
+                                <button id="quest-manage-btn" class="tool-btn quest-manage-btn" type="button">Manage</button>
+                            </div>
+                        </div>
+                        <div id="world-quest-list" style="display:flex; flex-direction:column; gap:8px;">
+                            <!-- Quests here -->
+                        </div>
+                    </section>
+
+                    <section class="world-status-section" id="hud-section-secrets" style="display:none;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3 style="margin:0;">Secrets Uncovered</h3>
+                            <span id="secret-count" class="mini-tag">0</span>
+                        </div>
+                        <div id="world-secrets-list" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+                    </section>
+
+                    <section class="world-status-section" id="hud-section-threads">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3 style="margin:0;">Story Threads</h3>
+                            <span id="thread-count" class="mini-tag">0</span>
+                        </div>
+                        <div id="world-thread-list" style="display:flex; flex-direction:column; gap:8px;">
+                            <!-- Open narrative threads here -->
+                        </div>
+                    </section>
+
+                    <section class="world-status-section" id="hud-section-living-world">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h3 style="margin:0;">Living World</h3>
+                            <span id="living-world-count" class="mini-tag">0</span>
+                        </div>
+                        <div id="world-living-world-list" style="display:flex; flex-direction:column; gap:8px;">
+                            <!-- Simulation state appears here -->
+                        </div>
+                    </section>
+                    </div>
+                </aside>
+            </div>
+        </section>
+
+        <!-- ────────── WORLD MAP MODAL ────────── -->
+        <div id="world-check-modal" class="modal-bg hidden">
+            <div class="modal world-check-modal" role="dialog" aria-labelledby="world-check-title">
+                <div class="modal-hd">
+                    <div><span class="vh-eyebrow">AUTHORITATIVE CHECK</span><h2 id="world-check-title">Roll the dice</h2></div>
+                    <button class="tool-btn" id="close-world-check-modal" type="button" aria-label="Close check dialog">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div id="world-check-pending-note" class="world-check-pending-note hidden"></div>
+                    <div class="world-check-form-grid">
+                        <div class="world-check-label-field"><label class="form-label">What is being attempted?</label><input id="world-check-label" class="form-input" maxlength="120" placeholder="Sneak past the guards"></div>
+                        <div><label class="form-label">Relevant stat</label><select id="world-check-stat" class="form-select"><option value="">No stat</option></select></div>
+                        <div><label class="form-label">Difficulty</label><input id="world-check-difficulty" type="number" class="form-input" min="2" max="30"></div>
+                        <div><label class="form-label">Situation modifier</label><input id="world-check-modifier" type="number" class="form-input" min="-5" max="5" value="0"></div>
+                    </div>
+                    <div id="world-check-preview" class="world-check-preview">Choose the check, then roll. The result becomes canonical before the DM narrates it.</div>
+                </div>
+                <div class="modal-ft">
+                    <button class="btn btn-ghost" id="cancel-world-check">Cancel</button>
+                    <button class="btn btn-primary" id="confirm-world-check">🎲 Roll &amp; continue</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="map-modal" class="modal-bg hidden">
+            <div class="modal modal-xl world-map-modal">
+                <div class="modal-hd">
+                    <h2>World Map Visualization</h2>
+                    <button class="tool-btn" id="close-map-modal" type="button" aria-label="Close map">✕</button>
+                </div>
+                <div id="map-container" class="world-map-container">
+                    <!-- Semantic world map is rendered here -->
+                </div>
+            </div>
+        </div>
+
+        <div id="world-visual-editor-modal" class="modal-bg hidden">
+            <div class="modal modal-xl world-visual-editor" role="dialog" aria-labelledby="world-visual-editor-title">
+                <div class="modal-hd">
+                    <div>
+                        <span class="vh-eyebrow">WORLD VISUAL</span>
+                        <h2 id="world-visual-editor-title">Image editor</h2>
+                    </div>
+                    <div class="world-visual-editor-header-actions">
+                        <button class="btn btn-primary" id="world-visual-save-close" type="button">Save &amp; Close</button>
+                        <button class="tool-btn" id="world-visual-editor-close" type="button" aria-label="Close image editor without saving">&#10005;</button>
+                    </div>
+                </div>
+                <div class="modal-body world-visual-editor-body">
+                    <div class="world-visual-editor-preview-column">
+                        <div id="world-visual-crop-stage" class="world-visual-crop-stage">
+                            <img id="world-visual-crop-image" alt="Current world visual">
+                            <div id="world-visual-crop-guide" class="world-visual-crop-guide" aria-hidden="true"></div>
+                            <div id="world-visual-crop-empty" class="world-visual-crop-empty">Generate or upload an image to crop it.</div>
+                        </div>
+                        <div class="world-visual-variant-bar">
+                            <button class="tool-btn" id="world-visual-previous" type="button" aria-label="Previous image">&#8249;</button>
+                            <span id="world-visual-variant-count">No images</span>
+                            <button class="tool-btn" id="world-visual-next" type="button" aria-label="Next image">&#8250;</button>
+                            <select id="world-visual-variant-filter" class="form-select" aria-label="Filter character images by outfit" title="Show all character images or only images attached to one outfit"></select>
+                            <button class="tool-btn world-visual-export" id="world-visual-export" type="button">Export image</button>
+                        </div>
+                        <div id="world-visual-outfit-gallery" class="world-visual-outfit-gallery" hidden></div>
+                        <div class="world-visual-crop-controls">
+                            <input id="world-visual-crop-x" type="hidden" value="50">
+                            <input id="world-visual-crop-y" type="hidden" value="50">
+                            <label>Zoom <input id="world-visual-crop-zoom" type="range" min="50" max="300" value="100"></label>
+                        </div>
+                        <p class="form-hint">Generated images are stored whole at their provider aspect ratio. NPC profiles render as a 1:1 frame cropped from that source: drag and zoom to frame it, then Apply Crop saves the profile image while the full source stays editable. Crop &amp; Fill asks the revision model to outpaint missing frame areas instead of cutting the source.</p>
+                        <div id="world-visual-active-outfit" class="world-visual-active-outfit" hidden>
+                            <div class="world-visual-active-outfit-heading"><div class="form-label">Active outfits <span class="help-glyph" title="Select a tile to make that outfit active. Edit its title and clothing description here; those fields are also used by Sidecar and image generation.">?</span></div><span class="form-hint">Select, edit, or author an outfit</span></div>
+                            <div id="world-visual-active-outfit-list" class="world-visual-active-outfit-list"></div>
+                            <div class="world-visual-active-outfit-actions">
+                                <button class="tool-btn" id="world-visual-apply-outfit" type="button" title="Ask the refinement model to replace the current clothing with this outfit, then generate a new image">Apply outfit</button>
+                                <button class="tool-btn" id="world-visual-new-outfit" type="button" title="Create a blank outfit on the character and select it">+ New outfit</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="world-visual-editor-fields">
+                        <section class="world-visual-editor-panel world-visual-character-panel" aria-labelledby="world-visual-character-heading">
+                            <div id="world-visual-character-heading" class="world-visual-editor-panel-heading">
+                                <div><span class="form-label">Character</span><span class="form-hint">Identity and presentation fields that stay attached to this person.</span></div>
+                            </div>
+                        <div class="form-section">
+                            <label id="world-visual-primary-label" class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span id="world-visual-primary-label-text">Appearance &amp; public impression</span><span class="ai-field-actions" id="ai-visual-primary-actions"></span></label>
+                            <textarea id="world-visual-primary" class="form-textarea" rows="6"></textarea>
+                        </div>
+                        <div id="world-visual-identity-field" class="form-section hidden">
+                            <label class="form-label">Identity <span class="help-glyph" title="Stable per-character fields in the structured image vocabulary. They describe the person and never enter a visual brief or an outfit. Blank fields are omitted.">?</span></label>
+                            <div class="form-row">
+                                <div class="form-col"><label class="form-label">Gender</label><input id="world-visual-identity-gender" class="form-input" type="text" placeholder="woman…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Skin tone and texture</label><input id="world-visual-identity-skinToneAndTexture" class="form-input" type="text" placeholder="warm olive, freckled across the nose…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Shape and color</label><input id="world-visual-identity-shapeAndColor" class="form-input" type="text" placeholder="heart-shaped face, dark auburn bob…" autocomplete="off"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col"><label class="form-label">Texture</label><input id="world-visual-identity-texture" class="form-input" type="text" placeholder="flyaway hair, chipped manicure…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Appearance details</label><input id="world-visual-identity-appearanceDetails" class="form-input" type="text" placeholder="laughter lines, a small scar above the left brow…" autocomplete="off"></div>
+                                <div class="form-col"><label class="form-label">Relative size</label><input id="world-visual-identity-relativeSize" class="form-input" type="text" placeholder="tall and lean…" autocomplete="off"></div>
+                            </div>
+                            <p class="form-hint">The person, not the photo. These stay with the character and never enter a visual brief.</p>
+                            <button class="tool-btn" id="world-visual-save-identity-reference" type="button" title="Save the selected generated image as a persistent identity reference for this character">Use selected image as identity reference</button>
+                        </div>
+                        </section>
+                        <section class="world-visual-editor-panel world-visual-profile-panel" aria-labelledby="world-visual-profile-heading">
+                            <div id="world-visual-profile-heading" class="world-visual-editor-panel-heading">
+                                <div><span class="form-label">Profile &amp; preset</span><span class="form-hint">Controls for this generated image profile. Save reusable visual briefs here.</span></div>
+                            </div>
+                        <div class="form-section">
+                            <label class="form-label" style="display:flex; align-items:center; justify-content:space-between; gap:8px;"><span>Authored image prompt</span><span class="ai-field-actions" id="ai-visual-prompt-actions"></span></label>
+                            <textarea id="world-visual-prompt" class="form-textarea" rows="6" placeholder="Specific visual direction, characteristic expression, environment and avoid instructions..."></textarea>
+                        </div>
+                        <div class="world-visual-generation-grid">
+                            <div id="world-visual-framing-field">
+                                <label class="form-label">Framing</label>
+                                <select id="world-visual-framing" class="form-select">
+                                    <option value="auto">Automatic and identity-aware</option>
+                                    <option value="close-up">Close-up</option>
+                                    <option value="waist-up">Waist-up</option>
+                                    <option value="three-quarter">Three-quarter</option>
+                                    <option value="full-body">Full-body</option>
+                                </select>
+                            </div>
+                            <div id="world-visual-outfit-field" class="hidden" style="display:none">
+                                <label class="form-label">Outfit <span class="help-glyph" title="Choose which authored outfit is worn for this generation. Gender and identity come from the dossier; clothing comes from this selection.">?</span></label>
+                                <select id="world-visual-outfit-select" class="form-select"></select>
+                            </div>
+                            <div id="world-visual-brief-field">
+                                <label class="form-label">Visual brief <span id="world-visual-brief-active" class="form-hint"></span></label>
+                                <select id="world-visual-brief-preset" class="form-select">
+                                    <option value="">Apply a visual brief…</option>
+                                </select>
+                            </div>
+                            <div id="world-visual-brief-save-field" class="world-visual-brief-save-field">
+                                <label class="form-label">Save preset as <span class="help-glyph" title="Saved briefs are global presets. Enter a new title to create another preset from the current fields; this does not overwrite the selected preset unless you use the same title.">?</span></label>
+                                <div class="world-visual-brief-save-row">
+                                    <input id="world-visual-brief-save-name" class="form-input" type="text" maxlength="100" placeholder="Preset - modified…" autocomplete="off">
+                                    <button class="tool-btn" id="world-visual-brief-save-as" type="button">Save as</button>
+                                </div>
+                            </div>
+                            <input id="world-visual-aspect" type="hidden" value="3:4">
+                            <div>
+                                <label class="form-label">Stored resolution</label>
+                                <select id="world-visual-resolution" class="form-select">
+                                    <option value="768">Compact - 768 px</option>
+                                    <option value="1200">Standard - 1200 px</option>
+                                    <option value="1600">High - 1600 px</option>
+                                    <option value="2048">Maximum - 2048 px</option>
+                                </select>
+                            </div>
+                        </div>
+                        </section>
+                        <section class="world-visual-editor-panel world-visual-staging-panel" aria-labelledby="world-visual-staging-heading">
+                            <div id="world-visual-staging-heading" class="world-visual-editor-panel-heading">
+                                <div><span class="form-label">Profile adjustments</span><span class="form-hint">Staging and instructions that change this profile only.</span></div>
+                            </div>
+                        <div id="world-visual-subject-field" class="form-section hidden">
+                            <label class="form-label">Staging <span class="help-glyph" title="Optional per-image staging for this character: how they stand, hold their face and act in THIS portrait. Clothing comes from the worn outfit instead. Blank fields are omitted.">?</span></label>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Pose</label><input id="world-visual-subject-pose" class="form-input" type="text" placeholder="leaning on the reception desk…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Expression</label><input id="world-visual-subject-expression" class="form-input" type="text" placeholder="dazzling welcome…" autocomplete="off"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Action</label><input id="world-visual-subject-action" class="form-input" type="text" placeholder="sliding a folder across…" autocomplete="off"></div>
+                                <div class="form-col"><label class="form-label">Orientation</label><input id="world-visual-subject-orientation" class="form-input" type="text" placeholder="facing the camera…" autocomplete="off"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Placement in frame</label><input id="world-visual-subject-location" class="form-input" type="text" placeholder="centered, desk in front…" autocomplete="off"></div>
+                            </div>
+                            <p class="form-hint">How they appear in this image only. What they wear comes from the outfit manager.</p>
+                        </div>
+                        <div id="world-visual-look-field" class="form-section hidden">
+                            <label class="form-label">Look / treatment <span class="help-glyph" title="How the image is rendered: lighting, colour, medium and photographic treatment. These are visual controls, not persistent Character facts.">?</span></label>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Style medium</label><input id="world-visual-look-styleMedium" class="form-input" type="text" placeholder="35mm colour-negative photography…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Lighting</label><input id="world-visual-look-lightingConditions" class="form-input" type="text" placeholder="soft winter daylight…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Colour / mood</label><input id="world-visual-look-colorScheme" class="form-input" type="text" placeholder="charcoal, bottle green, warm timber…"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col form-col-grow"><label class="form-label">Depth of field</label><input id="world-visual-look-depthOfField" class="form-input" type="text" placeholder="shallow, subject isolated…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Focus</label><input id="world-visual-look-focus" class="form-input" type="text" placeholder="eyes and face tack sharp…"></div>
+                                <div class="form-col form-col-grow"><label class="form-label">Focal length</label><input id="world-visual-look-lensFocalLength" class="form-input" type="text" placeholder="85mm portrait lens…"></div>
+                            </div>
+                            <p class="form-hint">Advanced photographic fields remain Horde-authored and are compiled into broader provider language without being silently reconstructed.</p>
+                        </div>
+                        <div class="form-section">
+                            <label class="form-label">AI instruction <span class="help-glyph" title="Optional. When filled, every ✨ button in this editor honors it: write what you want and how, and the AI fills out the rest of the field from it. Empty means the buttons fill from world and transcript context.">?</span></label>
+                            <input id="world-visual-ai-instruction" class="form-input" type="text" maxlength="2000" placeholder="Wet trench coat, collar up, headlit from behind in the rain…" autocomplete="off">
+                        </div>
+                        <div class="form-section">
+                            <label class="form-label">Revision instruction</label>
+                            <textarea id="world-visual-correction" class="form-textarea" rows="3" placeholder="Make the makeup darker and keep everything else unchanged..."></textarea>
+                            <p class="form-hint">Revision sends this instruction plus the character, outfit and visual brief, so the new image keeps the established look. It does not resend earlier revision instructions.</p>
+                        </div>
+                        </section>
+                        <section id="world-visual-structured-panel" class="world-visual-editor-panel world-visual-structured-panel" aria-labelledby="world-visual-structured-heading">
+                            <div id="world-visual-structured-heading" class="world-visual-editor-panel-heading">
+                                <div><span class="form-label">Structured visual document</span><span class="form-hint">One Fal-shaped document drives every provider. Character, outfit, Framing and Look are views over these fields.</span></div>
+                                <div class="world-visual-document-tabs"><button type="button" class="tool-btn is-active" id="world-visual-document-form-tab">Structured</button><button type="button" class="tool-btn" id="world-visual-document-json-tab">Raw JSON</button></div>
+                            </div>
+                            <div id="world-visual-document-form" class="world-visual-document-form">
+                                <div class="world-visual-request-row"><label class="form-label">Describe the photo <span class="help-glyph" title="Natural-language authoring request. Compile creates a complete structured document; Refine applies a minimal change; Rebuild repairs accumulated drift.">?</span></label><textarea id="world-visual-structured-request" class="form-textarea" rows="3" placeholder="Sarah at a dive bar, full-body, holding a drink beside a sticker-covered pillar…"></textarea><div class="world-visual-request-actions"><button type="button" class="tool-btn" id="world-visual-structured-compile">Compile</button><button type="button" class="tool-btn" id="world-visual-structured-refine">Refine current</button><button type="button" class="tool-btn" id="world-visual-structured-rebuild">Rebuild</button></div></div>
+                                <details class="world-visual-structured-group" open><summary>Image Intent</summary><label class="form-label">Authored intent</label><textarea id="world-visual-structured-intent" class="form-textarea" rows="3"></textarea><label class="form-label">Context</label><input id="world-visual-structured-context" class="form-input" type="text"></details>
+                                <details class="world-visual-structured-group" open><summary>Objects <span id="world-visual-object-count" class="form-hint"></span></summary><div id="world-visual-structured-objects"></div><button type="button" class="tool-btn" id="world-visual-add-object">+ Add object</button></details>
+                                <details class="world-visual-structured-group" open><summary>Background setting</summary><textarea id="world-visual-structured-background" class="form-textarea" rows="2"></textarea></details>
+                                <details class="world-visual-structured-group"><summary>Lighting</summary><div class="world-visual-grid-3"><label class="form-label">Conditions<input id="world-visual-structured-lighting-conditions" class="form-input" type="text"></label><label class="form-label">Direction<input id="world-visual-structured-lighting-direction" class="form-input" type="text"></label><label class="form-label">Shadows<input id="world-visual-structured-lighting-shadows" class="form-input" type="text"></label></div></details>
+                                <details class="world-visual-structured-group"><summary>Aesthetics <span class="form-hint">Scores default to very high and are provider metadata, not ordinary controls.</span></summary><label class="form-label">Composition<textarea id="world-visual-structured-composition" class="form-textarea" rows="2"></textarea></label><div class="world-visual-grid-2"><label class="form-label">Colour scheme<input id="world-visual-structured-color" class="form-input" type="text"></label><label class="form-label">Mood / atmosphere<input id="world-visual-structured-mood" class="form-input" type="text"></label></div></details>
+                                <details class="world-visual-structured-group"><summary>Photographic characteristics</summary><div class="world-visual-grid-2"><label class="form-label">Depth of field<input id="world-visual-structured-depth" class="form-input" type="text"></label><label class="form-label">Focus<input id="world-visual-structured-focus" class="form-input" type="text"></label><label class="form-label">Camera angle<input id="world-visual-structured-camera" class="form-input" type="text"></label><label class="form-label">Lens focal length<input id="world-visual-structured-lens" class="form-input" type="text"></label></div></details>
+                                <details class="world-visual-structured-group"><summary>Style / treatment</summary><div class="world-visual-grid-2"><label class="form-label">Style medium<input id="world-visual-structured-style-medium" class="form-input" type="text"></label><label class="form-label">Artistic style<textarea id="world-visual-structured-artistic-style" class="form-textarea" rows="2"></textarea></label></div></details>
+                                <details class="world-visual-structured-group"><summary>Provider controls</summary><div class="world-visual-grid-2"><label class="form-label">Aspect ratio<input id="world-visual-structured-aspect" class="form-input" type="text" value="3:4"></label><label class="form-label">Resolution<select id="world-visual-structured-resolution" class="form-select"><option value="768">768 px</option><option value="1200">1200 px</option><option value="1600">1600 px</option><option value="2048">2048 px</option></select></label><label class="form-label">Seed<input id="world-visual-structured-seed" class="form-input" type="number" min="0" step="1" placeholder="Random"></label><label class="form-label">Sync mode<select id="world-visual-structured-sync" class="form-select"><option value="">Provider default</option><option value="true">true</option><option value="false">false</option></select></label></div></details>
+                            </div>
+                            <div id="world-visual-document-json" class="world-visual-document-json" hidden><label class="form-label">Structured JSON <span class="help-glyph" title="This is the same document as the structured editor. Invalid JSON cannot become active.">?</span></label><textarea id="world-visual-raw-json" class="form-textarea" rows="28" spellcheck="false"></textarea><button type="button" class="tool-btn" id="world-visual-apply-json">Apply JSON revision</button><p id="world-visual-json-status" class="form-hint"></p></div>
+                        </section>
+                    </div>
+                </div>
+                <div class="modal-ft world-visual-editor-actions">
+                    <button class="btn btn-ghost" id="world-visual-apply-crop" type="button">Apply Crop</button>
+                    <button class="btn btn-ghost" id="world-visual-crop-fill" type="button" title="Use the revision image pipeline to outpaint missing areas into the selected final aspect ratio">Crop &amp; Fill</button>
+                    <button class="btn btn-ghost" id="world-visual-refine-prompt" type="button" title="Have the AI apply the revision instruction to the prompt fields below — nothing is generated until you press Generate new">Refine prompt</button>
+                    <button class="btn btn-ghost" id="world-visual-4d" type="button" title="Diagnose why the provider misunderstood the authored image and propose a field-level correction">Increase 4D 3D 3D 3D 3</button>
+                    <button class="btn btn-ghost" id="world-visual-revise" type="button" title="Send the current image plus the revision instruction to the edit model">Refine image</button>
+                    <button class="btn btn-primary" id="world-visual-regenerate" type="button">Generate new</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="world-outfit-manager-modal" class="modal-bg hidden">
+            <div class="modal">
+                <div class="modal-hd">
+                    <h3 id="world-outfit-manager-title">Outfits</h3>
+                    <button class="modal-x" id="world-outfit-manager-close" type="button" aria-label="Close">×</button>
+                </div>
+                <div class="modal-bd">
+                    <div class="form-section">
+                        <label class="form-label">Wardrobe <span class="help-glyph" title="Each outfit is a named wardrobe state. Its description feeds image generation and Sidecar continuity; images generated while it is worn stay attached to this outfit. Identity and visual briefs remain separate.">?</span></label>
+                        <div id="world-outfit-list"></div>
+                    </div>
+                    <div class="form-section">
+                        <label class="form-label">Add or edit an outfit</label>
+                        <div class="form-row">
+                            <div class="form-col"><label class="form-label">Name</label><input id="world-outfit-name" class="form-input" type="text" maxlength="60" placeholder="Reception blues…" autocomplete="off"></div>
+                            <div class="form-col form-col-grow"><label class="form-label">Description <span class="form-hint">(what the generator receives as clothing)</span></label><input id="world-outfit-description" class="form-input" type="text" maxlength="600" placeholder="Teal satin blouse, charcoal slacks, silver stud earrings…" autocomplete="off"></div>
+                        </div>
+                        <div class="form-row" style="gap:10px; align-items:end;">
+                            <div class="form-col form-col-grow"><label class="form-label">AI instruction <span class="form-hint">(optional, for the ✨ button)</span></label><input id="world-outfit-instruction" class="form-input" type="text" maxlength="2000" placeholder="Something she'd wear to a gallery opening in the rain…" autocomplete="off"></div>
+                            <button class="btn btn-ghost" id="world-outfit-ai" type="button">✨ Design with AI</button>
+                            <button class="btn btn-primary" id="world-outfit-add" type="button">Save outfit</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+<!-- ────────── WORLD STUDIO VIEW ────────── -->
+        <section id="world-studio-view" class="view hidden experimental-worlds-view">
+            <div class="studio-wrap">
+                <div class="studio-nav">
+                    <div class="studio-tabs">
+                        <button class="world-studio-tab active" data-tab="w-overview">Overview</button>
+                        <button class="world-studio-tab" data-tab="w-basics">Basics</button>
+                        <button class="world-studio-tab" data-tab="w-visuals">Visuals</button>
+                        <button class="world-studio-tab" data-tab="w-locations">Locations</button>
+                        <button class="world-studio-tab" data-tab="w-entities">People</button>
+                                <button class="world-studio-tab" data-tab="w-items">Items</button>
+                        <button class="world-studio-tab" data-tab="w-travel" data-sidecar-feature="travel">Travel & Vehicles</button>
+                                <button class="world-studio-tab" data-tab="w-factions">Factions</button>
+                        <button class="world-studio-tab" data-tab="w-sandbox">Sandbox</button>
+                        <button class="world-studio-tab" data-tab="w-lore">Global Lore</button>
+                        <button class="world-studio-tab" data-tab="w-note">Author's Note</button>
+                        <button class="world-studio-tab" data-tab="w-ai">AI Config</button>
+                        <button class="world-studio-tab" data-tab="w-hud">HUD & Stats</button>
+                        <button class="world-studio-tab" data-tab="w-visual-map">World Architect</button>
+                        <button class="world-studio-tab" data-tab="w-builder" style="color:var(--accent); font-weight:700;">✨ AI Builder</button>
+                    </div>
+                    <div class="studio-nav-actions">
+                        <button id="save-world-btn" class="btn btn-success btn-full">Save World</button>
+                        <button id="save-play-world-btn" class="btn btn-primary btn-full">Save &amp; Enter World</button>
+                        <button id="open-scheduler-btn" class="btn btn-ghost btn-full" style="color:var(--accent);">🕒 NPC Schedules</button>
+                        <button id="run-world-audit-btn" class="btn btn-ghost btn-full" style="color:var(--red);">🔍 World Audit</button>
+                        <button id="export-world-btn" class="btn btn-ghost btn-full">Export .horde_world</button>
+                        <button id="close-world-studio-btn" class="btn btn-ghost btn-full">Exit Studio</button>
+                        <button id="delete-world-btn" class="btn btn-danger btn-full">Delete World</button>
+                    </div>
+                </div>
+
+                <div class="studio-content-wrap">
+                    <div id="tab-w-overview" class="studio-panel">
+                        <div class="panel-header"><h2>Build your world</h2><p>Start with the essentials. Open advanced systems only when the world needs them.</p></div>
+                        <div class="form-body creator-overview-grid">
+                            <button type="button" class="creator-overview-card primary" data-world-studio-target="w-basics"><span>01</span><strong>Identity &amp; opening</strong><small>Name the world, define its narrator and write the opening scene.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-locations"><span>02</span><strong>Places</strong><small>Create locations, exits, homes and the physical shape of play.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-entities"><span>03</span><strong>People &amp; cast</strong><small>Add persistent characters with identities, knowledge, relationships and schedules.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-sandbox"><span>04</span><strong>Starting lives</strong><small>Define who players can begin as, including world-specific skills and perks.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-ai"><span>05</span><strong>Rules &amp; models</strong><small>Choose narrative-only play or optional RPG rules, checks and model behavior.</small></button>
+                            <button type="button" class="creator-overview-card" data-world-studio-target="w-visuals"><span>06</span><strong>Presentation</strong><small>Add optional banners, room art, portraits and visual styling.</small></button>
+                            <details class="creator-advanced-card">
+                                <summary>Advanced world systems</summary>
+                                <div><button type="button" data-world-studio-target="w-items">Items &amp; objects</button><button type="button" data-world-studio-target="w-factions">Factions</button><button type="button" data-world-studio-target="w-lore">Lore</button><button type="button" data-world-studio-target="w-note">Author's Note</button><button type="button" data-world-studio-target="w-hud">HUD &amp; Stats</button><button type="button" data-world-studio-target="w-visual-map">World Architect</button><button type="button" data-world-studio-target="w-builder">AI Builder</button></div>
+                            </details>
+                        </div>
+                        <section id="w-overview-sidecar-migration" class="world-overview-sidecar-migration hidden" aria-live="polite"></section>
+                    </div>
+                    <!-- World Basics -->
+                    <div id="tab-w-basics" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div class="world-basics-header-row">
+                                <div>
+                                    <h2>World Identity & Narrator</h2>
+                                    <p>Set the world's identity, overarching rules and narrative voice.</p>
+                                </div>
+                                <div class="studio-token-counter">
+                                    <span id="w-studio-token-count" style="font-weight:bold; color:var(--accent);">0</span> tokens
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-body">
+                            <div class="world-identity-grid">
+                                <div class="form-col world-banner-column">
+                                    <label class="form-label">World Banner</label>
+                                    <div class="img-uploader" id="w-banner-upload-area">
+                                        <input type="file" id="w-banner-input" hidden accept="image/*">
+                                        <div class="img-preview" id="w-banner-preview">
+                                            <span>Click to upload</span>
+                                        </div>
+                                    </div>
+                                    <p class="form-hint image-upload-hint">JPEG, PNG or WebP up to 25 MB. Automatically resized and normalized for the world card and play background.</p>
+                                </div>
+                                <div class="form-col world-identity-fields">
+                                    <div class="form-section">
+                                        <label class="form-label" for="w-studio-name">World Name</label>
+                                        <input type="text" id="w-studio-name" class="form-input" placeholder="e.g. Neo-Tokyo 2099">
+                                    </div>
+                                    <div class="form-section">
+                                        <label class="form-label" for="w-studio-desc">Short Description</label>
+                                        <textarea id="w-studio-desc" class="form-textarea" rows="3" placeholder="A brief summary for the library..."></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="form-section">
+                                <label class="form-label">Dungeon Master Persona / Global Rules</label>
+                                <textarea id="w-studio-dm-prompt" class="form-textarea" rows="10" placeholder="Describe how the DM should narrate, the tone of the world, and any global rules (e.g. Magic is rare)."></textarea>
+                            </div>
+
+                            <div class="form-section">
+                                <label class="form-label">Intro Message (optional)</label>
+                                <p class="form-hint" style="margin-bottom:8px;">The exact opening narration shown when a new session begins. Leave empty to let the AI improvise the opening scene.</p>
+                                <textarea id="w-studio-intro" class="form-textarea" rows="6" placeholder="e.g. Rain hammers the tin roof of the way-station as you shake the road dust from your coat. Dusty Hollow has no sheriff tonight — and everyone inside knows it..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Optional visual presentation layer -->
+                    <div id="tab-w-visuals" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                                <div>
+                                    <h2>World Presentation</h2>
+                                    <p>Skin the experience without changing simulation state. Classic mode always remains available.</p>
+                                </div>
+                                <span id="w-visual-media-summary" class="mini-tag">0 assets</span>
+                            </div>
+                        </div>
+                        <div class="form-body">
+                            <div class="world-visual-callout">
+                                <strong>Portable by design</strong>
+                                <span>Uploaded and generated images are normalized, deduplicated and embedded in world exports and full backups.</span>
+                            </div>
+                            <div class="world-visual-settings-grid">
+                                <label class="world-visual-toggle-card">
+                                    <input id="w-visual-enabled" type="checkbox">
+                                    <span><strong>Enable visual presentation</strong><small>New Experimental Worlds begin Cinematic. Classic remains available when needed.</small></span>
+                                </label>
+                                <label class="world-visual-toggle-card">
+                                    <input id="w-visual-player-override" type="checkbox" checked>
+                                    <span><strong>Let players switch view</strong><small>Players may return to Classic for accessibility or performance.</small></span>
+                                </label>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col">
+                                    <label class="form-label">Recommended Experience</label>
+                                    <select id="w-visual-mode" class="form-select">
+                                        <option value="classic">Classic Reader</option>
+                                        <option value="cinematic">Cinematic</option>
+                                    </select>
+                                </div>
+                                <div class="form-col">
+                                    <label class="form-label">Art Style</label>
+                                    <select id="w-visual-art-style" class="form-select">
+                                        <option value="cinematic">Cinematic realism</option>
+                                        <option value="painted_fantasy">Painted fantasy</option>
+                                        <option value="graphic_novel">Graphic novel</option>
+                                        <option value="sitcom_2000s">2000s sitcom</option>
+                                        <option value="anime_vn">Anime visual novel</option>
+                                        <option value="retro_rpg">Retro RPG</option>
+                                        <option value="parchment">Parchment & ink</option>
+                                        <option value="horror">Dark horror</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-section">
+                                <label class="form-label">Art Bible / Prompt Appendix</label>
+                                <textarea id="w-visual-art-direction" class="form-textarea" rows="5" placeholder="Keep every portrait and location visually consistent: era, medium, palette, camera language, costume rules, exclusions..."></textarea>
+                            </div>
+                            <div class="world-media-editor">
+                                <div id="w-visual-map-skin-preview" class="world-media-preview">No map skin</div>
+                                <div>
+                                    <label class="form-label">Interactive Map Skin</label>
+                                    <p class="form-hint" style="margin:0 0 8px;">A decorative texture beneath the live map. Locations and routes remain interactive world data.</p>
+                                    <div class="world-media-actions">
+                                        <input id="w-visual-map-skin-input" type="file" accept="image/*" hidden>
+                                        <button id="w-visual-map-skin-upload" class="tool-btn" type="button">Upload</button>
+                                        <button id="w-visual-map-skin-generate" class="tool-btn" type="button">✨ Generate</button>
+                                        <button id="w-visual-map-skin-clear" class="tool-btn" type="button">Clear</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col">
+                                    <label class="form-label">New image provider <span class="help-glyph" title="Used when generating a new portrait, location visual or map skin from text alone. This pipeline never requires an existing image.">?</span></label>
+                                    <select id="w-visual-new-image-provider" class="form-select">
+                                        <option value="inherit">Use provider from Settings</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                        <option value="gptproto">GPTProto</option>
+                                        <option value="nanogpt">NanoGPT</option>
+                                        <option value="fal">Fal</option>
+                                    </select>
+                                </div>
+                                <div class="form-col form-col-grow">
+                                    <label class="form-label">New image model <span class="help-glyph" title="The text-to-image model used for a fresh visual. It receives the compiled world, character and framing prompt, but no source image.">?</span></label>
+                                    <div class="smart-input-row">
+                                        <div class="searchable-dropdown-wrap" style="flex:1; min-width:0;">
+                                            <input id="w-visual-new-image-model" type="search" class="form-input" value="google/gemini-3.1-flash-lite-image" placeholder="Search text-to-image models…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-new-image-model-results" aria-expanded="false">
+                                            <div id="w-visual-new-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Text-to-image models"></div>
+                                        </div>
+                                        <button id="w-visual-new-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
+                                    </div>
+                                    <p id="w-visual-new-image-model-status" class="form-hint" aria-live="polite">Loading compatible image models…</p>
+                                    <p class="form-hint">Fresh visual generation uses this model only. Select from the live provider catalog; an exact custom ID is also accepted.</p>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col">
+                                    <label class="form-label">Revision image provider <span class="help-glyph" title="Used only by Refine image. It receives the selected existing image plus your revision instruction, so choose a provider with image-reference support.">?</span></label>
+                                    <select id="w-visual-revision-image-provider" class="form-select">
+                                        <option value="same_as_new">Use New Image Pipeline</option>
+                                        <option value="inherit">Use provider from Settings</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                        <option value="gptproto">GPTProto</option>
+                                        <option value="nanogpt">NanoGPT</option>
+                                        <option value="fal">Fal</option>
+                                    </select>
+                                </div>
+                                <div class="form-col form-col-grow">
+                                    <label class="form-label">Revision image model <span class="help-glyph" title="The reference-capable model used when revising an existing world image. It receives only the revision instruction and selected image, not the fresh-generation pipeline.">?</span></label>
+                                    <div class="smart-input-row">
+                                        <div class="searchable-dropdown-wrap" style="flex:1; min-width:0;">
+                                            <input id="w-visual-revision-image-model" type="search" class="form-input" value="" placeholder="Leave blank to use the new-image model…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-visual-revision-image-model-results" aria-expanded="false">
+                                            <div id="w-visual-revision-image-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Reference-capable image models"></div>
+                                        </div>
+                                        <button id="w-visual-revision-refresh-models" class="tool-btn" type="button" title="Refresh the selected provider's model catalog">↻ Refresh</button>
+                                    </div>
+                                    <p id="w-visual-revision-image-model-status" class="form-hint" aria-live="polite">Loading reference-capable image models…</p>
+                                    <p class="form-hint">Leave blank to reuse the new-image model when it supports source-image revision. Otherwise choose a reference-capable model here. A revision always requires an existing selected image and a written instruction.</p>
+                                </div>
+                            </div>
+                            <div id="w-visual-fal-advanced" class="form-row hidden">
+                                <div class="form-col form-col-grow">
+                                    <label class="form-label">Fal · Advanced Request Settings <span class="help-glyph" title="These optional request settings apply whenever either the new-image or revision pipeline uses Fal. Unsupported settings are omitted rather than guessed.">?</span></label>
+                                    <div class="form-row">
+                                        <div class="form-col"><label class="form-label">safety_tolerance</label><input id="w-visual-fal-safety-tolerance" class="form-input" type="number" min="0" max="100" step="any" placeholder="5" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">enable_safety_checker</label><select id="w-visual-fal-enable-safety-checker" class="form-select"><option value="">Blank — omit this field</option><option value="true">true — request safety checking</option><option value="false">false — request no safety checking</option></select></div>
+                                        <div class="form-col"><label class="form-label">Pinned seed <span class="form-hint">(optional)</span></label><input id="w-visual-fal-seed" class="form-input" type="number" min="0" max="2147483647" step="1" placeholder="Blank — randomize every call" autocomplete="off"></div>
+                                    </div>
+                                    <p class="form-hint">Optional Fal request parameters; blank fields are omitted so the endpoint default applies. Some models use <code>safety_tolerance</code>; Seedream uses <code>enable_safety_checker</code>. Every image call otherwise rolls a fresh random seed so the same prompt never collapses into the same image — pin a seed only when you want repeatable results. Fal may still enforce safety checking when an account is not authorised to disable it.</p>
+                                </div>
+                            </div>
+                            <div id="w-visual-image-guide" class="form-row">
+                                <div class="form-col form-col-grow">
+                                    <label class="form-label">Visual Briefs <span class="help-glyph" title="Optional authored image direction shared by every world visual. Blank fields are always omitted. Fibo models receive this as their native structured prompt; every other model receives the same fields compiled into prompt text.">?</span></label>
+                                    <div class="form-row" style="gap:10px; align-items:end;">
+                                        <div class="form-col">
+                                            <label class="form-label">Saved briefs</label>
+                                            <select id="w-visual-guide-preset" class="form-select"><option value="">No saved briefs yet</option></select>
+                                        </div>
+                                        <div class="form-col">
+                                            <label class="form-label">Brief name</label>
+                                            <input id="w-visual-guide-preset-name" class="form-input" type="text" maxlength="80" placeholder="85mm low-key portrait…" autocomplete="off">
+                                        </div>
+                                        <div class="form-col">
+                                            <label class="form-label">Aspect</label>
+                                            <select id="w-visual-guide-preset-aspect" class="form-select">
+                                                <option value="">—</option>
+                                                <option value="1:1">1:1 Square</option>
+                                                <option value="2:3">2:3 Tall portrait</option>
+                                                <option value="3:2">3:2 Portrait</option>
+                                                <option value="3:4">3:4 Portrait</option>
+                                                <option value="4:3">4:3 Landscape</option>
+                                                <option value="4:5">4:5 Tall</option>
+                                                <option value="5:4">5:4 Wide</option>
+                                                <option value="16:9">16:9 Wide</option>
+                                                <option value="9:16">9:16 Vertical</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-col">
+                                            <label class="form-label">Framing</label>
+                                            <select id="w-visual-guide-preset-framing" class="form-select">
+                                                <option value="">—</option>
+                                                <option value="auto">Automatic</option>
+                                                <option value="close-up">Close-up</option>
+                                                <option value="waist-up">Waist-up</option>
+                                                <option value="three-quarter">Three-quarter</option>
+                                                <option value="full-body">Full-body</option>
+                                            </select>
+                                        </div>
+                                        <button class="btn btn-ghost" id="w-visual-guide-preset-save" type="button">Save brief</button>
+                                        <button class="btn btn-ghost" id="w-visual-guide-preset-delete" type="button">Delete</button>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Brief description <span class="form-hint">(what this look is for)</span></label>
+                                        <input id="w-visual-guide-preset-description" class="form-input" type="text" maxlength="800" placeholder="Quiet office realism: straight-on, 85mm, low-key window light…" autocomplete="off">
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col form-col-grow"><label class="form-label">Style medium</label><input data-image-guide-field="styleMedium" class="form-input" type="text" placeholder="cinematic photograph, oil sketch…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Artistic style</label><input data-image-guide-field="artisticStyle" class="form-input" type="text" placeholder="grounded photorealism…" autocomplete="off"></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col form-col-grow"><label class="form-label">Lighting conditions</label><input data-image-guide-field="lightingConditions" class="form-input" type="text" placeholder="low-key, overcast window light…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Lighting direction</label><input data-image-guide-field="lightingDirection" class="form-input" type="text" placeholder="side-lit from camera left…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Shadows</label><input data-image-guide-field="lightingShadows" class="form-input" type="text" placeholder="soft, filled…" autocomplete="off"></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col form-col-grow"><label class="form-label">Composition</label><input data-image-guide-field="composition" class="form-input" type="text" placeholder="full-frame head-and-shoulders…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Color scheme</label><input data-image-guide-field="colorScheme" class="form-input" type="text" placeholder="desaturated teal and amber…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Mood and atmosphere</label><input data-image-guide-field="moodAtmosphere" class="form-input" type="text" placeholder="quiet, clinical…" autocomplete="off"></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col"><label class="form-label">Depth of field</label><input data-image-guide-field="depthOfField" class="form-input" type="text" placeholder="shallow…" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">Focus</label><input data-image-guide-field="focus" class="form-input" type="text" placeholder="tack-sharp on the eyes…" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">Camera angle</label><input data-image-guide-field="cameraAngle" class="form-input" type="text" placeholder="straight-on, slightly low…" autocomplete="off"></div>
+                                        <div class="form-col"><label class="form-label">Lens focal length</label><input data-image-guide-field="lensFocalLength" class="form-input" type="text" placeholder="85mm…" autocomplete="off"></div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-col form-col-grow"><label class="form-label">Background setting</label><input data-image-guide-field="backgroundSetting" class="form-input" type="text" placeholder="blurred office interior, wet street at night…" autocomplete="off"></div>
+                                        <div class="form-col form-col-grow"><label class="form-label">Context</label><input data-image-guide-field="context" class="form-input" type="text" placeholder="reusable identity portrait, not a scene still…" autocomplete="off"></div>
+                                    </div>
+                                    <p class="form-hint">A visual brief owns everything that changes HOW the photo looks — lighting, mood, camera, style, aspect, framing. Everything that changes WHAT is in the photo stays with the character. Blank fields are omitted. Fibo models receive a brief natively as a structured prompt; other models receive it as prompt text.</p>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col">
+                                    <label class="form-label">Accent</label>
+                                    <input id="w-visual-accent" type="color" value="#E63946" class="form-input" style="height:44px; padding:5px;">
+                                </div>
+                                <div class="form-col form-col-grow">
+                                    <label class="form-label">Background Darkness <span id="w-visual-dim-value">68%</span></label>
+                                    <input id="w-visual-background-dim" type="range" min="0" max="95" value="68" style="width:100%;">
+                                    <label class="form-label" style="margin-top:12px;">Narrative Panel Opacity <span id="w-visual-opacity-value">88%</span></label>
+                                    <input id="w-visual-panel-opacity" type="range" min="35" max="100" value="88" style="width:100%;">
+                                </div>
+                            </div>
+                            <p class="form-hint">Location backgrounds and NPC portraits are managed on their existing Location and Entity cards. Missing media always falls back safely.</p>
+                        </div>
+                    </div>
+
+                    <!-- Locations -->
+                    <div id="tab-w-locations" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>Locations & Map</h2>
+                            <p>Browse regions and compact location cards. Open a place only when you need its full map, simulation or visual record.</p>
+                        </div>
+                        <div class="form-body" id="w-locations-list" style="display:flex; flex-direction:column; gap:16px;">
+                            <!-- Locations rendered here -->
+                        </div>
+                    </div>
+
+                    <!-- People -->
+                    <div id="tab-w-entities" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <h2>People</h2>
+                                <button id="add-entity-btn" class="btn btn-primary">+ New Person</button>
+                            </div>
+                            <p>Search the cast, browse by household or organization, and open one human record at a time.</p>
+                        </div>
+                        <div class="form-body" id="w-entities-list" style="display:flex; flex-direction:column; gap:16px;">
+                            <!-- Entities rendered here -->
+                        </div>
+                        <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
+                            <button id="add-entity-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Person</button>
+                        </div>
+                    </div>
+
+                    <!-- Items -->
+                    <div id="tab-w-items" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <h2>Items &amp; Objects</h2>
+                                <div style="display:flex; gap:8px;"><button id="add-vehicle-btn" class="btn btn-ghost" data-sidecar-feature="vehicle-authoring">+ Vehicle</button><button id="add-item-btn" class="btn btn-primary">+ New Item</button></div>
+                            </div>
+                            <p>Keep possessions, evidence, equipment and notable objects separate from the cast. Items still use stable canon links.</p>
+                        </div>
+                        <div class="form-body" id="w-items-list" style="display:flex; flex-direction:column; gap:16px;"></div>
+                        <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
+                            <div style="display:flex; width:100%; gap:8px;"><button id="add-vehicle-btn-bottom" class="btn btn-ghost" data-sidecar-feature="vehicle-authoring" style="flex:1; border:1px dashed var(--border);">+ Vehicle</button><button id="add-item-btn-bottom" class="btn btn-ghost" style="flex:1; border: 1px dashed var(--border);">+ New Item</button></div>
+                        </div>
+                    </div>
+
+                    <!-- Traversal and vehicle authoring -->
+                    <div id="tab-w-travel" class="studio-panel hidden" data-sidecar-feature="travel">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                                <div>
+                                    <h2>Travel &amp; Vehicles</h2>
+                                    <p>Author the traversal methods that are legal in this world and inspect the vehicle entities and runtime journeys that use them. Point-to-point is permissive across eligible spatial anchors; Route-based requires the ordered stops authored below.</p>
+                                </div>
+                                <button id="add-traversal-method-btn" class="btn btn-primary">+ Traversal method</button>
+                            </div>
+                        </div>
+                        <div class="form-body" style="display:flex; flex-direction:column; gap:18px;">
+                            <section>
+                                <div class="world-inspector-section-head"><h3 style="margin:0;">Traversal methods</h3><span class="form-hint">Vehicles never become map rooms. Pickup and drop-off resolve upward to an eligible building, street/path, area, region, or transit space.</span></div>
+                                <div id="w-traversal-methods-list" style="display:flex; flex-direction:column; gap:12px;"></div>
+                            </section>
+                            <section>
+                                <div class="world-inspector-section-head"><h3 style="margin:0;">Vehicle registry</h3><span class="form-hint">Persistent vehicles retain their entity identity and parked anchor. Rideshares/taxis are created as temporary runtime containers for a journey.</span></div>
+                                <div id="w-vehicles-list" style="display:flex; flex-direction:column; gap:12px;"></div>
+                            </section>
+                            <section>
+                                <div class="world-inspector-section-head"><h3 style="margin:0;">Active and recent journeys</h3><span class="form-hint">This is runtime state for the selected world’s timelines, not authored locations.</span></div>
+                                <div id="w-journeys-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+                            </section>
+                        </div>
+                    </div>
+
+                    <!-- Factions -->
+                    <div id="tab-w-factions" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <h2>Factions & Powers</h2>
+                                <button id="add-faction-btn" class="btn btn-primary">+ New Faction</button>
+                            </div>
+                            <p>The organised powers of your world — who holds ground, what they want, and how they regard each other. Every session starts from what you set here, then diverges as the world turns.</p>
+                        </div>
+                        <div class="form-body" id="w-factions-list" style="display:flex; flex-direction:column; gap:16px;">
+                            <!-- Factions rendered here -->
+                        </div>
+                        <div style="padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
+                            <button id="add-faction-btn-bottom" class="btn btn-ghost" style="width: 100%; border: 1px dashed var(--border);">+ New Faction</button>
+                        </div>
+                    </div>
+
+                    <!-- Reusable sandbox / social simulation authoring -->
+                    <div id="tab-w-sandbox" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                                <div>
+                                    <h2>Starting Lives & Living Society</h2>
+                                    <p>Let players begin as different people, then simulate the powers and pressures that keep moving beyond the current scene.</p>
+                                </div>
+                                <button id="add-world-origin-btn" class="btn btn-primary">+ Starting Life</button>
+                            </div>
+                        </div>
+                        <div class="form-body">
+                            <div class="sandbox-feature-grid">
+                                <label class="sandbox-toggle-card">
+                                    <input id="w-sandbox-enabled" type="checkbox">
+                                    <span><strong>Living society</strong><small>Settlement food, wealth, safety and unrest evolve over time.</small></span>
+                                </label>
+                                <label class="sandbox-toggle-card">
+                                    <input id="w-sandbox-politics" type="checkbox">
+                                    <span><strong>Politics & succession</strong><small>Power, legitimacy, claims, rulers and obligations matter.</small></span>
+                                </label>
+                                <label class="sandbox-toggle-card">
+                                    <input id="w-sandbox-conflict" type="checkbox">
+                                    <span><strong>Conflict & war</strong><small>Hostile factions can raid, mobilize and change territory.</small></span>
+                                </label>
+                                <label class="sandbox-toggle-card">
+                                    <input id="w-sandbox-law" type="checkbox">
+                                    <span><strong>Law & reputation</strong><small>Jurisdictions remember crimes, standing and wanted status.</small></span>
+                                </label>
+                                <label class="sandbox-toggle-card">
+                                    <input id="w-sandbox-seasons" type="checkbox">
+                                    <span><strong>Seasons & harvest</strong><small>Time of year changes food pressure, travel and prosperity.</small></span>
+                                </label>
+                                <label class="sandbox-toggle-card">
+                                    <input id="w-sandbox-growth" type="checkbox">
+                                    <span><strong>Procedural growth</strong><small>Generate grounded local developments from authored places and powers.</small></span>
+                                </label>
+                            </div>
+                            <div class="session-zero-grid sandbox-settings-row">
+                                <div class="form-col">
+                                    <label class="form-label">Simulation Scale</label>
+                                    <select id="w-sandbox-scale" class="form-select">
+                                        <option value="local">Local community</option>
+                                        <option value="regional">Region</option>
+                                        <option value="kingdom">Kingdom</option>
+                                        <option value="continent">Continent</option>
+                                    </select>
+                                </div>
+                                <div class="form-col">
+                                    <label class="form-label">Calendar</label>
+                                    <input id="w-sandbox-calendar" class="form-input" placeholder="e.g. Four seasonal quarters">
+                                </div>
+                                <div class="form-col">
+                                    <label class="form-label">Days per season</label>
+                                    <input id="w-sandbox-season-days" type="number" min="1" max="365" class="form-input" value="30">
+                                </div>
+                            </div>
+                            <div class="form-section">
+                                <label class="form-label">Simulation principles</label>
+                                <textarea id="w-sandbox-principles" class="form-textarea" rows="4" placeholder="What makes this society move? What can grow, collapse, change hands, or recover?"></textarea>
+                            </div>
+                            <div class="form-section">
+                                <div class="sandbox-section-heading">
+                                    <div>
+                                        <label class="form-label">Starting Lives</label>
+                                        <p class="form-hint">Each life may change the opening place, role, title, possessions, stats, faction, reputation, duties and opening scene. Save the world, enter it, then choose <strong>New Timeline</strong> to test a Starting Life; an existing timeline keeps the life it began with.</p>
+                                    </div>
+                                </div>
+                                <div id="w-world-origins-list" class="sandbox-origin-list"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- World AI Config (Full Parity) -->
+                    <div id="tab-w-ai" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <h2>AI Configuration</h2>
+                                <button id="w-unlock-all-params-btn" class="btn btn-ghost" style="font-size:0.7rem; padding:4px 8px; opacity:0.6;" title="Force show all parameters even if the model doesn't explicitly report supporting them.">🔓 Unlock All Params</button>
+                            </div>
+                            <p>Control model and creative parameters for this world.</p>
+                        </div>
+                        <div class="form-body">
+                            <div class="form-section world-state-pipeline-card">
+                                <span class="vh-eyebrow">STATE PIPELINE</span>
+                                <label class="form-label">Canonical state authority <span class="help-glyph" title="Sidecar is the sole Experimental Worlds state pipeline. It reads the Narrator’s authored turn and commits the only canonical receipt.">?</span></label>
+                                <select id="w-sidecar-mode" class="form-select">
+                                    <option value="sidecar">Sidecar · canonical authority</option>
+                                </select>
+                                <p id="w-state-pipeline-hint" class="form-hint"></p>
+                            </div>
+                            <!-- Model Selection -->
+                            <div class="form-section">
+                                <label class="form-label">Model ID <span class="form-hint">(selected provider)</span></label>
+                                <div style="display:flex; gap:10px; position:relative;">
+                                    <div class="searchable-dropdown-container" style="flex-grow:1; position:relative;">
+                                        <input type="text" id="w-studio-model" class="form-input search-dropdown-input" placeholder="Use the default model from Settings" autocomplete="off">
+                                        <div id="w-studio-model-results" class="searchable-dropdown-results hidden"></div>
+                                    </div>
+                                    <button id="w-fetch-model-btn" class="btn btn-ghost" title="Refresh the available model list from the text provider selected in Settings" style="white-space: nowrap; flex-shrink: 0;">Fetch models</button>
+                                </div>
+                                <p class="form-hint">Leave blank to follow the default text provider and model from Settings. Choosing a model here deliberately pins only this World.</p>
+                            </div>
+                            <div id="world-openrouter-routing" class="openrouter-routing-host hidden"></div>
+
+                            <!-- World Agent: off-screen simulation with genuine invention -->
+                            <div id="w-inline-legacy-settings" class="form-section world-kernel-card" data-pipeline-settings="inline_legacy">
+                                <div class="world-kernel-card-head">
+                                    <div>
+                                        <span class="vh-eyebrow">WORLD KERNEL</span>
+                                        <h3>One-call scene compiler</h3>
+                                    </div>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-kernel-enabled" checked> Enabled</label>
+                                </div>
+                                <p class="form-hint">Compiles a compact, authoritative scene packet instead of resending the whole world. Mechanics still resolve locally; model repairs and semantic-memory calls happen only when their selected policy requires them.</p>
+                                <div class="world-kernel-config-grid">
+                                    <div>
+                                        <label class="form-label">Scene location budget</label>
+                                        <input id="w-kernel-location-limit" type="number" class="form-input" min="8" max="80" value="24">
+                                        <p class="form-hint">Current, adjacent and explicitly referenced places are always prioritized.</p>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Memory retrieval</label>
+                                        <select id="w-kernel-memory-mode" class="form-select">
+                                            <option value="ledger">Canonical ledger · no embedding calls</option>
+                                            <option value="semantic">Semantic archives · extra background calls</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Missing receipt policy</label>
+                                        <select id="w-kernel-repair-mode" class="form-select">
+                                            <option value="adaptive">Adaptive · repair only likely canon changes</option>
+                                            <option value="always">Always repair</option>
+                                            <option value="never">Never repair · freeze uncertain state</option>
+                                        </select>
+                                    </div>
+                                    <label class="vh-test-check world-kernel-compact-toggle"><input type="checkbox" id="w-kernel-compact-tools"> Compact tool contract</label>
+                                </div>
+                                    <div style="margin-top:12px;"><button id="w-inline-legacy-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button></div>
+                            </div>
+
+                            <div id="w-sidecar-authority-settings" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
+                                <span class="vh-eyebrow">SIDECAR AUTHORITY</span>
+                                <h3 style="margin:4px 0 6px; font-size:1rem;">Narrator + Sidecar</h3>
+                                <p class="form-hint">The Narrator writes visible prose and a handoff. Sidecar is the only canonical state authority: it reads that evidence and commits one validated receipt. Legacy repair and classifier paths do not run.</p>
+                                <details id="w-sidecar-settings" class="form-section" data-sidecar-feature="sidecar-configuration" style="margin:14px 0 0; padding:12px; border:1px solid var(--border); border-radius:8px;">
+                                    <summary style="cursor:pointer;" title="Controls the model that reads and reconciles the Narrator’s authored turn. Match Narrator uses the world model and routing."><strong>Sidecar settings</strong></summary>
+                                    <p class="form-hint">Sidecar reads an authored turn, then submits one canonical receipt. These settings do not change the Narrator’s visible prose.</p>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-inherit-narrator" checked> Use Narrator model and routing</label>
+                                    <div id="w-sidecar-override-config" class="sidecar-provider-model-row" style="margin-top:10px;">
+                                        <div><label class="form-label">Provider <span class="help-glyph" title="The service used for Sidecar’s own requests when it is not sharing the Narrator’s provider.">?</span></label><select id="w-sidecar-provider" class="form-select"><option value="openrouter">OpenRouter</option><option value="gptproto">GPTProto</option><option value="nanogpt">NanoGPT</option><option value="nvidia">NVIDIA NIM</option><option value="bedrock">AWS Bedrock</option><option value="custom">Custom OpenAI-compatible API</option><option value="local">Local / self-hosted</option></select></div>
+                                        <div><label class="form-label">Model <span class="help-glyph" title="Fetch models to load the selected provider’s available model IDs. This model runs Sidecar’s evidence pass, canonical receipt, and question repairs.">?</span></label><div style="display:flex; gap:8px;"><div class="searchable-dropdown-wrap" style="flex:1; min-width:0;"><input id="w-sidecar-model" type="search" class="form-input" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="w-sidecar-model-results" aria-expanded="false" placeholder="Fetch models or type an exact model ID"><div id="w-sidecar-model-results" class="searchable-dropdown-results hidden" role="listbox" aria-label="Sidecar provider model suggestions"></div></div><button id="w-sidecar-fetch-model-btn" type="button" class="btn btn-ghost">Fetch models</button></div><div id="w-sidecar-model-status" class="form-hint"></div></div>
+                                        <div id="w-sidecar-provider-connection-hint" class="form-hint sidecar-provider-connection-hint"></div>
+                                    </div>
+                                    <div id="world-sidecar-openrouter-routing" class="openrouter-routing-host hidden" data-sidecar-feature="sidecar-configuration"></div>
+                                    <div id="w-sidecar-config-grid" class="world-kernel-config-grid" style="margin-top:10px;">
+                                        <div style="grid-column:1 / -1;"><label class="vh-test-check" title="Runs the ScenePulse-inspired semantic evidence pass before canonical Sidecar reconciliation. Disable it to fall back to direct handoff reconciliation without changing the rest of Sidecar."><input type="checkbox" id="w-sidecar-reader-enabled" checked> Enable semantic reader</label><p class="form-hint">When disabled, Sidecar reconciles the Narrator handoff directly. Inline Legacy is unaffected.</p></div>
+                                        <div style="grid-column:1 / -1;"><label class="vh-test-check" title="Inherit the global Reader Profile. Turn this off to tune this world’s timeout, refresh cadence and lookup limits without changing other worlds."><input type="checkbox" id="w-sidecar-reader-profile-inherit" checked> Use global Reader Profile</label></div>
+                                        <div><label class="form-label">Reader timeout <span class="help-glyph" title="Maximum time allowed for one semantic reader request before fallback reconciliation is used.">?</span></label><input id="w-sidecar-reader-timeout" type="number" class="form-input" min="10" max="900" step="10" value="120"></div>
+                                        <div><label class="form-label">Full refresh cadence <span class="help-glyph" title="Every N reader turns, request a complete envelope instead of only changed fields.">?</span></label><input id="w-sidecar-reader-refresh" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
+                                        <div><label class="form-label">Max reader lookups <span class="help-glyph" title="Upper bound on read-only world lookup tool calls for one reader pass.">?</span></label><input id="w-sidecar-reader-tools" type="number" class="form-input" min="0" max="12" step="1" value="3"></div>
+                                        <div><label class="form-label">Reader provider override <span class="help-glyph" title="Blank inherits the Narrator provider. This only routes the read-only Reader pass.">?</span></label><input id="w-sidecar-reader-provider" class="form-input" placeholder="Blank = Narrator provider"></div>
+                                        <div><label class="form-label">Reader model override <span class="help-glyph" title="Blank inherits the Narrator model. This only routes the read-only Reader pass.">?</span></label><input id="w-sidecar-reader-model" class="form-input" placeholder="Blank = Narrator model"></div>
+                                        <div><label class="form-label">Reader max tokens <span class="help-glyph" title="Output budget for the structured scene reading. Blank uses the adaptive default.">?</span></label><input id="w-sidecar-reader-profile-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive"></div>
+                                        <div><label class="form-label">Reader context budget <span class="help-glyph" title="Maximum bounded evidence payload supplied to the Reader.">?</span></label><input id="w-sidecar-reader-context-budget" type="number" class="form-input" min="4000" max="120000" step="1000" value="24000"></div>
+                                        <div><label class="form-label">Reader lookup payload <span class="help-glyph" title="Maximum payload returned by all read-only world lookup tools.">?</span></label><input id="w-sidecar-reader-lookup-budget" type="number" class="form-input" min="1000" max="100000" step="1000" value="12000"></div>
+                                        <div><label class="form-label">Reader reasoning <span class="help-glyph" title="Reader-only reasoning control. Match Narrator is the normal default.">?</span></label><select id="w-sidecar-reader-reasoning" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div>
+                                        <div><label class="form-label">Reader reasoning effort <span class="help-glyph" title="Independent reader reasoning effort when supported by its provider.">?</span></label><select id="w-sidecar-reader-reasoning-effort" class="form-select"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+                                        <div><label class="form-label">Reader retry policy <span class="help-glyph" title="Bounded retries are inside one Reader stage only; a retry never regenerates Narrator prose.">?</span></label><select id="w-sidecar-reader-retry" class="form-select"><option value="bounded">Bounded retry</option><option value="none">No automatic Reader retry</option></select></div>
+                                        <div><label class="form-label">Reasoning <span class="help-glyph" title="Match Narrator uses the world reasoning toggle and effort. If an optional-reasoning request hits its output limit, Sidecar retries once without optional reasoning.">?</span></label><select id="w-sidecar-reasoning-mode" class="form-select"><option value="inherit">Match Narrator</option><option value="enabled">Always on</option><option value="disabled">Do not request reasoning</option></select></div>
+                                        <div id="w-sidecar-reasoning-effort-row"><label class="form-label">Reasoning effort <span class="help-glyph" title="Auto uses the Narrator effort. Higher effort improves analysis but consumes more output budget.">?</span></label><select id="w-sidecar-reasoning-effort" class="form-select"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+                                        <div><label class="form-label">Reader tokens <span class="help-glyph" title="Output budget for the read-only evidence pass. Leave blank to use its adaptive 3,000-token default.">?</span></label><input id="w-sidecar-reader-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive default · 3,000"></div>
+                                        <div><label class="form-label">Receipt tokens <span class="help-glyph" title="Output budget for the canonical reconciliation receipt. Leave blank to use its adaptive 6,000-token default.">?</span></label><input id="w-sidecar-max-tokens" type="number" class="form-input" min="0" max="100000" step="100" placeholder="Adaptive default · 6,000"></div>
+                                        <div><label class="form-label">Trace history <span class="help-glyph" title="Maximum saved Sidecar request/response traces when trace capture is enabled.">?</span></label><input id="w-sidecar-trace-count" type="number" class="form-input" min="1" max="200" step="1" value="20"></div>
+                                    </div>
+                                    <label class="vh-test-check" style="display:flex; margin-top:10px;" title="Stores complete Sidecar prompts and provider replies in this world. Disable this unless you are diagnosing a pipeline issue."><input type="checkbox" id="w-sidecar-debug"> Retain unabridged prompt/reply traces</label>
+                                </details>
+                                <details class="form-section" data-sidecar-feature="memory-consolidation" style="margin:14px 0 0; padding:12px; border:1px solid var(--border); border-radius:8px;">
+                                    <summary style="cursor:pointer;" title="Controls Sidecar’s source-pinned Turn → Episode → Scene → Sequence work. Raw turns remain available until a valid replacement exists; cognition is generated only from character-specific perception coverage."><strong>Memory &amp; consolidation</strong></summary>
+                                    <p class="form-hint">Global controls are the default. The global consolidation provider/model, token budget, temperature and reasoning settings are used here too; turn off inheritance only when this world needs a different cadence, active verbatim window, retrieval depth, or provider throttle.</p>
+                                    <label class="vh-test-check"><input type="checkbox" id="w-sidecar-memory-inherit" checked> Use global memory and consolidation controls</label>
+                                    <div id="w-sidecar-memory-grid" class="world-kernel-config-grid" style="margin-top:10px;">
+                                        <div><label class="form-label">Episode size <span class="help-glyph" title="How many committed Sidecar turns become one objective, source-pinned Episode.">?</span></label><input id="w-sidecar-episode-size" type="number" class="form-input" min="1" max="20" step="1" value="5"></div>
+                                        <div><label class="form-label">Episode cadence <span class="help-glyph" title="How many new turns must accumulate before Episode work begins.">?</span></label><input id="w-sidecar-episode-cadence" type="number" class="form-input" min="1" max="50" step="1" value="5"></div>
+                                        <div><label class="form-label">Active verbatim turns <span class="help-glyph" title="Newest raw turn pairs kept in the narrator context even after a successful Episode replacement exists.">?</span></label><input id="w-sidecar-verbatim-window" type="number" class="form-input" min="0" max="30" step="1" value="5"></div>
+                                        <div><label class="form-label">Recall entries <span class="help-glyph" title="Maximum semantic memories selected for a narrator turn before normal context budgeting applies.">?</span></label><input id="w-sidecar-retrieval-limit" type="number" class="form-input" min="1" max="24" step="1" value="8"></div>
+                                        <div><label class="form-label">Parallel jobs <span class="help-glyph" title="Maximum total asynchronous consolidation jobs for this world.">?</span></label><input id="w-sidecar-job-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="6"></div>
+                                        <div><label class="form-label">Per-provider jobs <span class="help-glyph" title="Maximum simultaneous jobs sent to the same provider/model pair.">?</span></label><input id="w-sidecar-provider-concurrency" type="number" class="form-input" min="1" max="12" step="1" value="2"></div>
+                                    </div>
+                                    <div id="w-sidecar-memory-status" class="form-hint" style="margin-top:10px;"></div>
+                                </details>
+                                <p id="w-sidecar-mode-hint" class="form-hint" style="margin:12px 0 0;"></p>
+                                <div id="w-sidecar-migration-report" class="form-hint" style="margin-top:8px;"></div>
+                                <div id="w-sidecar-migration-controls" style="display:flex; gap:8px; margin-top:10px;"><button id="w-sidecar-migrate-btn" type="button" class="btn btn-primary">Review &amp; migrate this world</button><button id="w-sidecar-restore-backup" type="button" class="btn btn-ghost hidden">Restore latest Inline backup</button></div>
+                            </div>
+
+                            <div id="w-roleplay-os-section" class="form-section" data-pipeline-settings="sidecar" style="margin-top:20px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
+                                <span class="vh-eyebrow">NARRATOR ROLEPLAY OS</span>
+                                <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin:4px 0 6px; flex-wrap:wrap;">
+                                    <h3 style="margin:0; font-size:1rem;">Freaky Frankenstein 5.4 &middot; Agent Gating</h3>
+                                    <span id="w-roleplay-os-state" class="form-hint" style="margin:0;"></span>
+                                </div>
+                                <p class="form-hint">The FF stack is the Narrator behaviour framework in Sidecar mode. Sections resolve from the pinned source preset verbatim through the preset&#39;s own gating; Horde compiles the engine-managed &lt;context&gt; block and agent data. Only the competing state backend is excluded &mdash; state_mode is pinned to AGENTS.</p>
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                                    <select id="w-roleplay-os-source" class="form-select" style="max-width:360px;" title="Installed Roleplay OS source presets. FF versions coexist; this world pins one."></select>
+                                    <button id="w-roleplay-os-import-btn" type="button" class="btn btn-ghost" style="font-size:0.75rem; padding:4px 10px;" title="Install a Marinara preset export into the installation-level source registry and pin this world to it.">+ Import source preset</button>
+                                    <input type="file" id="w-roleplay-os-file-input" hidden accept=".json">
+                                </div>
+                                <div id="w-roleplay-os-source-info" class="form-hint" style="margin-top:6px;"></div>
+                                <div id="w-roleplay-os-choices" style="margin-top:12px;"></div>
+                                <div id="w-roleplay-os-migration" style="margin-top:10px;"></div>
+                            </div>
+
+                            <div class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
+                                <label class="form-label" style="display:flex; align-items:center; gap:8px; margin:0;">
+                                    <input type="checkbox" id="w-agent-enabled">
+                                    🌍 Background World Agent
+                                </label>
+                                <div class="form-hint" style="margin-top: 8px;">
+                                    Disabled by default. This is a background proposal writer, not an autonomous world mutator: it may suggest
+                                    off-screen developments from established world state on its configured cadence or a scene change. In Sidecar
+                                    worlds every result is a visible proposal packet. Sidecar may refine or reject it, and the author reviews any
+                                    consequential change in the World GM conversation before it can become canonical.
+                                </div>
+                                <label class="vh-test-check" style="margin-top:10px;"><input type="checkbox" id="w-agent-proposal-only"> Store proposals for review (also enforced in Sidecar mode)</label>
+                                <div style="display:flex; gap:12px; margin-top:12px;">
+                                    <div style="flex:0 0 140px;">
+                                        <label class="form-label" style="font-size:0.75rem;">Earliest interval</label>
+                                        <input type="number" id="w-agent-interval" class="form-input" min="8" max="200" step="1" value="24">
+                                    </div>
+                                    <div style="flex:1;">
+                                        <label class="form-label" style="font-size:0.75rem;">Model <span class="form-hint">(blank = this world's DM model; a cheaper one is fine)</span></label>
+                                        <div class="searchable-dropdown-wrap">
+                                            <input type="search" id="w-agent-model" class="form-input" placeholder="Search models · blank uses the DM model" autocomplete="off" role="combobox" aria-controls="w-agent-model-results" aria-expanded="false">
+                                            <div id="w-agent-model-results" class="searchable-dropdown-results hidden" role="listbox"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="world-agent-openrouter-routing" class="openrouter-routing-host hidden"></div>
+                            </div>
+
+                            <!-- System Presets (Modular) -->
+                            <div id="w-legacy-preset-section" class="form-section" style="margin-top: 20px; padding: 16px; background: var(--surface2); border-radius: var(--radius); border: 1px solid var(--border);">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+                                    <label class="form-label" style="margin:0;">World / DM Preset</label>
+                                    <div style="display:flex; gap:8px;">
+                                        <button id="w-fine-tune-preset-btn" class="btn btn-ghost" style="font-size: 0.75rem; padding: 4px 8px; display:none;">⚙️ Fine-Tune</button>
+                                        <button id="w-import-preset-btn" class="btn btn-ghost" style="font-size: 0.75rem; padding: 4px 8px;">+ Import Preset</button>
+                                    </div>
+                                    <input type="file" id="w-preset-file-input" hidden accept=".json">
+                                </div>
+                                <select id="w-studio-system-preset" class="form-select">
+                                    <option value="">None (Custom DM Persona Only)</option>
+                                    <!-- Options populated by JS -->
+                                </select>
+                                <div class="form-hint" style="margin-top: 8px;">Select a preset to modify the DM's narration style, logic, or behavior.</div>
+                            </div>
+
+                            <!-- Model Info Card -->
+                            <div id="w-model-info-card" class="model-info-card verification-card tier-weak hidden" style="margin-top: 15px;">
+                                <div class="model-info-header" style="margin-bottom:12px;">
+                                    <div>
+                                        <div class="model-info-name" id="w-model-info-name" style="font-size: 1rem; font-weight: 600; color: var(--text-1);">—</div>
+                                        <div class="model-info-id" id="w-model-info-id" style="font-size: 0.75rem; color: var(--text-3); font-family: monospace;">—</div>
+                                    </div>
+                                    <span id="w-model-verification-badge" class="verification-badge badge-weak">Unknown</span>
+                                </div>
+
+                                <div class="verification-details-grid" style="margin-bottom: 12px;">
+                                    <div id="w-model-detail-context" class="verification-detail-item">❓ Context: —</div>
+                                    <div id="w-model-detail-price" class="verification-detail-item">❓ Price: —</div>
+                                    <div id="w-model-detail-tools" class="verification-detail-item">❓ Tool Calling</div>
+                                    <div id="w-model-detail-json" class="verification-detail-item">❓ Structured JSON</div>
+                                </div>
+
+                                <div class="model-info-badges" id="w-model-info-badges" style="margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px;"></div>
+
+                                <div class="model-info-params" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px;">
+                                    <span class="model-info-params-label" style="font-size:0.75rem; color:var(--text-2); font-weight:500; display:block; margin-bottom:8px;">Supported Fine-Tuning Parameters:</span>
+                                    <div class="model-info-params-list" id="w-model-info-params-list" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+                                </div>
+                            </div>
+
+                            <!-- Reasoning Section -->
+                            <div id="w-reasoning-section" class="form-section ai-reasoning-section hidden" style="margin-top: 16px; border: 1px solid var(--border); border-radius: 12px; padding: 20px; background: linear-gradient(135deg, rgba(139,92,246,0.05), rgba(59,130,246,0.05));">
+                                <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+                                    <span style="font-size:1.2rem;">🧠</span>
+                                    <h3 style="margin:0; font-family:'Outfit',sans-serif; font-size:1rem; color:var(--text);">Reasoning / Thinking</h3>
+                                    <span class="model-badge model-badge-reasoning" style="margin-left:auto;">Model Supports Reasoning</span>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:14px;">
+                                    <label class="toggle-row" style="display:flex; align-items:center; gap:12px; cursor:pointer;">
+                                        <input type="checkbox" id="w-studio-reasoning" class="toggle-checkbox">
+                                        <span class="toggle-switch"></span>
+                                        <div>
+                                            <div style="font-weight:500; color:var(--text);">Enable Reasoning</div>
+                                            <div class="form-hint">Model will think step-by-step before responding.</div>
+                                        </div>
+                                    </label>
+                                    <div id="w-reasoning-effort-row" class="hidden">
+                                        <label class="form-label">Reasoning Effort</label>
+                                        <select id="w-studio-reasoning-effort" class="form-select">
+                                            <option value="auto">Auto (Recommended)</option>
+                                            <option value="low">Low (Fast, less depth)</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="high">High (Deep, more tokens)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <h3 style="margin: 24px 0 12px; font-size: 0.9rem; color: var(--red);">Sampling Parameters</h3>
+                            
+                            <!-- Dedicated Top Row for Context Size -->
+                            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                     <label class="form-label" style="margin:0; text-transform:uppercase; letter-spacing:0.05em; font-size:0.75rem; color:var(--text-muted, #8E8E93);">Context Size</label>
+                                     <span id="w-studio-context-size-val" style="font-family:monospace; font-size:0.85rem; font-weight:700; color:var(--red);">8,192</span>
+                                 </div>
+                                 <div style="display:flex; align-items:center; gap:12px; margin-top:2px;">
+                                     <input type="range" id="w-studio-context-size" min="2048" max="102400" step="1024" value="8192" class="form-range" style="flex:1; accent-color:var(--red); cursor:pointer;">
+                                 </div>
+                                 <span id="w-studio-context-size-badge" class="form-hint" style="color: var(--success); font-weight:600; font-size:0.75rem; display:block; margin-top:6px;">⚖️ Balanced (Recommended)</span>
+                            </div>
+
+                            <div class="form-row form-row-4">
+                                <div>
+                                    <label class="form-label">Temperature</label>
+                                    <input type="number" id="w-studio-temp" class="form-input" step="0.1" min="0" max="2" value="0.9">
+                                </div>
+                                <div>
+                                    <label class="form-label">Min P</label>
+                                    <input type="number" id="w-studio-min-p" class="form-input" step="0.01" min="0" max="1" value="0.0">
+                                </div>
+                                <div>
+                                    <label class="form-label">Top P</label>
+                                    <input type="number" id="w-studio-top-p" class="form-input" step="0.05" min="0" max="1" value="1.0">
+                                </div>
+                                <div>
+                                    <label class="form-label">Top K</label>
+                                    <input type="number" id="w-studio-top-k" class="form-input" step="1" min="0" max="500" value="0">
+                                </div>
+                                <div>
+                                    <label class="form-label">Freq Penalty</label>
+                                    <input type="number" id="w-studio-freq-penalty" class="form-input" step="0.1" min="-2" max="2" value="0.0">
+                                </div>
+                                <div>
+                                    <label class="form-label">Pres Penalty</label>
+                                    <input type="number" id="w-studio-pres-penalty" class="form-input" step="0.1" min="-2" max="2" value="0.0">
+                                </div>
+                                <div>
+                                    <label class="form-label">Rep Penalty</label>
+                                    <input type="number" id="w-studio-rep-penalty" class="form-input" step="0.1" min="0" max="2" value="1.0">
+                                </div>
+                                <div>
+                                    <label class="form-label">Max Tokens</label>
+                                    <input type="number" id="w-studio-max-tokens" class="form-input" value="2048">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- HUD & Stats -->
+                    <div id="tab-w-hud" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>HUD & Player Stats</h2>
+                            <p>Customize what the player sees during gameplay. Toggle HUD modules and define your own stats.</p>
+                        </div>
+                        <div class="form-body">
+                            <div class="form-section">
+                                <label class="form-label">HUD Modules (Toggle Visibility)</label>
+                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; background:var(--surface2); padding:15px; border-radius:8px;">
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" id="w-hud-show-clock" checked> World Clock & Turn
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" id="w-hud-show-quests" checked> Quest Tracker
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" id="w-hud-show-ledger" checked> Persistent Ledger
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" id="w-hud-show-inventory" checked> Inventory List
+                                    </label>
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer; color:var(--red); font-weight:700;">
+                                        <input type="checkbox" id="w-hud-enable-schedules"> Enable NPC Schedules
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <label class="form-label">Clock Engine Settings</label>
+                                <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:15px; background:var(--surface2); padding:15px; border-radius:8px;">
+                                    <div>
+                                        <label style="font-size:0.7rem; opacity:0.6;">Start Time (Hour 0-23)</label>
+                                        <input type="number" id="w-hud-start-time" class="form-input" value="8" min="0" max="23">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; opacity:0.6;">Start Minute (0-59)</label>
+                                        <input type="number" id="w-hud-start-minute" class="form-input" value="0" min="0" max="59">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; opacity:0.6;">Minutes per Turn</label>
+                                        <input type="number" id="w-hud-time-step" class="form-input" value="5">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; opacity:0.6;">Day 1 Weekday</label>
+                                        <select id="w-hud-start-weekday" class="form-select">
+                                            <option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+                                        </select>
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:10px; margin-top:20px;">
+                                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:0.85rem;">
+                                            <input type="checkbox" id="w-hud-show-days"> Show Day Count (Day 1, 2...)
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-section">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                    <label class="form-label" style="margin:0;">Custom Player Stats (HP, Gold, Reputation, etc.)</label>
+                                    <button id="add-world-stat-btn" class="tool-btn" style="padding:4px 10px;">+ Add Stat</button>
+                                </div>
+                                <div id="w-hud-stats-list" style="display:flex; flex-direction:column; gap:10px;">
+                                    <!-- Stats rendered here -->
+                                </div>
+                                <div class="form-hint" style="margin-top:10px;">Stats defined here appear in the HUD and are enforced by the rules engine. A maximum of 0 means uncapped.</div>
+                            </div>
+
+                            <div class="form-section">
+                                <label class="form-label">Authoritative Game Rules</label>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:15px; margin-bottom:15px;">
+                                    <div>
+                                        <label style="font-size:0.7rem; opacity:0.7;">Mechanical depth / rule pack</label>
+                                        <select id="w-rules-profile" class="form-select">
+                                            <option value="custom">Custom / Existing World</option>
+                                            <option value="pure_narrative">Off · Pure Narrative</option>
+                                            <option value="slice_of_life">Light · Slice of Life</option>
+                                            <option value="mystery">Mystery</option>
+                                            <option value="adventure">Adventure</option>
+                                            <option value="full_rpg">Full RPG Simulation</option>
+                                        </select>
+                                    </div>
+                                    <div id="w-rules-profile-description" class="form-hint" style="align-self:end; padding:10px 12px; background:var(--surface2); border-radius:8px;"></div>
+                                </div>
+                                <div id="w-rules-modules-grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; background:var(--surface2); padding:15px; border-radius:8px; margin-bottom:15px;">
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="stats"> Player stats</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="health"> Health & defeat</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="conditions"> Conditions & injuries</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="checks"> Dice checks</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="inventory"> Inventory</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="equipment"> Equipment &amp; item bonuses</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="commerce"> Money & commerce</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="quests"> Quest engine</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="relationships"> Relationship scores</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="schedules"> NPC schedules</label>
+                                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;"><input type="checkbox" data-rule-module="livingWorld"> Off-screen world simulation</label>
+                                </div>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:15px; background:var(--surface2); padding:15px; border-radius:8px;">
+                                    <div data-rule-detail="health">
+                                        <label style="font-size:0.7rem; opacity:0.7;">Vital / Health Stat</label>
+                                        <select id="w-rules-vital-stat" class="form-select"></select>
+                                    </div>
+                                    <div data-rule-detail="health">
+                                        <label style="font-size:0.7rem; opacity:0.7;">At Zero Health</label>
+                                        <select id="w-rules-zero-hp-mode" class="form-select">
+                                            <option value="fail_forward">Fail forward — incapacitation</option>
+                                            <option value="lethal">Lethal — timeline game over</option>
+                                        </select>
+                                    </div>
+                                    <div data-rule-detail="commerce">
+                                        <label style="font-size:0.7rem; opacity:0.7;">Currency Stat</label>
+                                        <select id="w-rules-currency-stat" class="form-select"></select>
+                                    </div>
+                                    <div data-rule-detail="equipment" style="grid-column:1/-1;">
+                                        <label style="font-size:0.7rem; opacity:0.7;">Equipment Slots</label>
+                                        <input id="w-rules-equipment-slots" class="form-input" placeholder="head, body, main-hand, off-hand, accessory">
+                                        <div class="form-hint">Weapons, armor, clothing and tools may add check, stat or skill bonuses while equipped.</div>
+                                        <div class="world-item-library-head"><strong>World item library</strong><button id="w-rules-add-item" class="btn btn-ghost btn-small" type="button">+ New item</button></div>
+                                        <div id="w-rules-item-catalog" class="world-item-catalog"></div>
+                                    </div>
+                                    <div data-rule-detail="commerce">
+                                        <label style="font-size:0.7rem; opacity:0.7;">Currency Name</label>
+                                        <input id="w-rules-currency-name" class="form-input" maxlength="60" placeholder="gold">
+                                    </div>
+                                </div>
+                                <div class="form-hint" style="margin-top:10px;">Core movement, memory, world canon, and NPC identity always remain active. Every mechanical module above is optional and can be changed later without deleting its saved data.</div>
+                            </div>
+
+                            <div class="form-section" data-rule-detail="checks">
+                                <div class="world-kernel-card-head">
+                                    <div>
+                                        <span class="vh-eyebrow">CHECK ENGINE</span>
+                                        <h3>Dice &amp; resolution</h3>
+                                    </div>
+                                </div>
+                                <p class="form-hint">The DM may request a canonical check and stop before the outcome. In player-roll mode the Roll button resolves that exact check, persists it across rerolls, and asks the DM to narrate the authoritative result.</p>
+                                <div class="world-kernel-config-grid">
+                                    <div><label class="form-label">Resolution</label><select id="w-dice-resolution" class="form-select"><option value="automatic">Engine rolls automatically</option><option value="player">Player rolls requested checks</option></select></div>
+                                    <div><label class="form-label">Base die</label><select id="w-dice-sides" class="form-select"><option value="20">d20</option><option value="12">d12</option><option value="10">d10</option><option value="6">d6</option></select></div>
+                                    <div><label class="form-label">Stat modifier</label><select id="w-dice-modifier-mode" class="form-select"><option value="per_stat">Per-stat mechanics (recommended)</option><option value="direct">Legacy direct value · clamped ±10</option><option value="ability">Legacy ability formula</option><option value="none">No stat modifier</option></select></div>
+                                    <div><label class="form-label">Default difficulty</label><input id="w-dice-default-difficulty" type="number" class="form-input" min="2" max="30" value="11"></div>
+                                    <div><label class="form-label">Roll visibility</label><select id="w-dice-visibility" class="form-select"><option value="visible">Visible to player</option><option value="hidden">Hidden GM roll</option><option value="player_triggered">Player-triggered</option></select></div>
+                                    <label class="vh-test-check"><input id="w-dice-criticals" type="checkbox" checked> Natural minimum/maximum are critical</label>
+                                </div>
+                            </div>
+
+                            <div class="form-section" id="w-player-capabilities-section">
+                                <div class="world-kernel-card-head">
+                                    <div>
+                                        <span class="vh-eyebrow">RULES &amp; PLAYER</span>
+                                        <h3>World-specific capabilities</h3>
+                                    </div>
+                                    <label class="vh-test-check"><input id="w-capabilities-customizable" type="checkbox" checked> Players may customize</label>
+                                </div>
+                                <p class="form-hint">These belong to this World, never to the reusable Persona. Use one entry per line: <strong>Name | description | point cost | roll modifier</strong>. The modifier is optional (+2 skills, +1 perks, −1 flaws by default).</p>
+                                <div class="world-capability-grid">
+                                    <div><label class="form-label">Skills</label><textarea id="w-capability-skills" class="form-textarea" rows="5" placeholder="Persuasion | Convince or negotiate | 1 | 2"></textarea></div>
+                                    <div><label class="form-label">Perks</label><textarea id="w-capability-perks" class="form-textarea" rows="5" placeholder="Noble birth | Access to court | 2 | 1"></textarea></div>
+                                    <div><label class="form-label">Flaws</label><textarea id="w-capability-flaws" class="form-textarea" rows="5" placeholder="Wanted | Law enforcement recognizes you | 1 | -1"></textarea></div>
+                                </div>
+                                <div class="world-kernel-config-grid" style="margin-top:12px;">
+                                    <div><label class="form-label">Starting point budget</label><input id="w-capability-budget" type="number" class="form-input" min="0" max="100" value="4"></div>
+                                    <label class="vh-test-check"><input id="w-progression-enabled" type="checkbox"> Enable capability progression</label>
+                                    <div><label class="form-label">Progression notes</label><input id="w-progression-method" class="form-input" maxlength="240" placeholder="Milestones, training, XP…"></div>
+                                </div>
+                            </div>
+                            <div class="form-section" id="w-consequence-policy-section">
+                                <div class="world-kernel-card-head">
+                                    <div><span class="vh-eyebrow">SIMULATION &amp; CONSEQUENCES</span><h3>Persistent outcomes</h3></div>
+                                    <label class="vh-test-check"><input id="w-consequences-enabled" type="checkbox" checked> Track consequences</label>
+                                </div>
+                                <p class="form-hint">Injuries, social fallout, legal trouble, losses and discoveries become explicit timeline records. They must escalate, decay or resolve causally instead of vanishing between messages.</p>
+                                <div class="world-kernel-config-grid">
+                                    <div><label class="form-label">Maximum active records</label><input id="w-consequences-max" type="number" class="form-input" min="10" max="300" value="120"></div>
+                                    <div><label class="form-label">Default escalation</label><input id="w-consequences-escalation" type="number" class="form-input" min="0" max="1000" value="4"><div class="form-hint">Turns before a severe unresolved outcome worsens. 0 disables.</div></div>
+                                    <div><label class="form-label">Default decay</label><input id="w-consequences-decay" type="number" class="form-input" min="0" max="1000" value="8"><div class="form-hint">Turns before a minor unresolved outcome begins fading. 0 disables.</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Visual Map -->
+                    <div id="tab-w-visual-map" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>Visual World Graph</h2>
+                            <p>Buildings contain their rooms and yards; streets, paths, and regions remain distinct. Select a location to edit its role, parent, floor, or exits.</p>
+                        </div>
+                        <div class="form-body">
+                            <div id="world-visual-canvas" class="world-visual-canvas"></div>
+                        </div>
+                    </div>
+
+                    <!-- Global Lore -->
+                    <div id="tab-w-lore" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>Global Lore & RAG</h2>
+                            <p>Upload a "World Bible" or define core lore entries for the DM.</p>
+                        </div>
+                        <div class="form-body">
+                            <div class="form-section">
+                                <label class="form-label">World Lore Entries</label>
+                                <div id="w-lore-list" class="lore-list"></div>
+                                <button id="add-w-lore-btn" class="btn btn-ghost btn-full" style="margin-top:10px;">+ Add Lore Entry</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- World Author's Note -->
+                    <div id="tab-w-note" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>World Author's Note</h2>
+                            <p>Direct instructions to the DM that are injected near the end of the context.</p>
+                        </div>
+                        <div class="form-body">
+                            <label class="form-label">Note Content</label>
+                            <textarea id="w-studio-note" class="form-textarea" rows="10" placeholder="e.g. Narrate with heavy focus on sensory details. Use archaic language. Ensure the player feels constantly watched."></textarea>
+                            <p class="form-hint" style="margin-top:12px;">This note is appended to the DM's instructions every turn, giving it high influence over the current narrative style.</p>
+                        </div>
+                    </div>
+
+                    <!-- World AI Builder -->
+                    <div id="tab-w-builder" class="studio-panel hidden">
+                        <div class="panel-header">
+                            <h2>✨ World AI Builder</h2>
+                            <p>Describe what kind of world, rooms, characters, and rules you want, and let the AI compile it all for you.</p>
+                        </div>
+                        <div class="form-body">
+                            <!-- Model Selection & Verification -->
+                            <div class="form-section">
+                                <label class="form-label">Select Generator Model</label>
+                                <div class="searchable-dropdown-wrap">
+                                    <input type="text" id="w-builder-model-search" class="form-input" placeholder="Type to search provider models..." autocomplete="off">
+                                    <div id="w-builder-model-results" class="searchable-dropdown-results hidden"></div>
+                                </div>
+                                <div id="w-builder-verification-card" class="verification-card tier-weak">
+                                    <div class="verification-header">
+                                        <span class="verification-title">🧠 Capability Assessment</span>
+                                        <span class="verification-badge badge-weak" id="w-builder-verification-badge">Checking...</span>
+                                    </div>
+                                    <div class="verification-details">
+                                        <div class="verification-detail-item" id="w-builder-detail-context">❓ Context: —</div>
+                                        <div class="verification-detail-item" id="w-builder-detail-price">❓ Price: —</div>
+                                        <div class="verification-detail-item" id="w-builder-detail-tools">❓ Tool Calling</div>
+                                        <div class="verification-detail-item" id="w-builder-detail-json">❓ Structured JSON</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Creative Dump Input -->
+                            <div class="form-section">
+                                <label class="form-label">Describe Your World in Detail</label>
+                                <textarea id="w-builder-prompt" class="form-textarea" rows="12" placeholder="Dump everything you want here! E.g. 'Build a cyberpunk dystopian metropolis called Neo-Chicago. There should be a neon-lit bar run by an ex-cop NPC, a high-tech corporate tower guarded by a combat drone, and an underground sewer system where hackers hide out. Add relevant lore about the corporate war...'"></textarea>
+                                <p class="form-hint" style="margin-top:8px;">Be as detailed, chaotic, or specific as you want. The builder handles connections, room designs, NPC attributes, and lorebooks automatically.</p>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="form-section" style="margin-top:20px;">
+                                <button id="w-builder-generate-btn" class="btn btn-success btn-full" style="padding:14px; font-size:1rem; font-weight:700;">✨ Build World</button>
+                            </div>
+
+                            <!-- Loading Progress Steps -->
+                            <div id="w-builder-progress-box" class="builder-progress-wrap hidden">
+                                <div class="progress-steps-list">
+                                    <div class="progress-step pending" id="w-step-analyze">
+                                        <span class="step-icon">1</span>
+                                        <span>Analyzing prompt description...</span>
+                                    </div>
+                                    <div class="progress-step pending" id="w-step-locations">
+                                        <span class="step-icon">2</span>
+                                        <span>Structuring rooms and connecting pathways...</span>
+                                    </div>
+                                    <div class="progress-step pending" id="w-step-entities">
+                                        <span class="step-icon">3</span>
+                                        <span>Populating NPCs and items...</span>
+                                    </div>
+                                    <div class="progress-step pending" id="w-step-lore">
+                                        <span class="step-icon">4</span>
+                                        <span>Fleshing out lorebooks and DM guidelines...</span>
+                                    </div>
+                                    <div class="progress-step pending" id="w-step-finalize">
+                                        <span class="step-icon">5</span>
+                                        <span>Finalizing and parsing world structure...</span>
+                                    </div>
+                                </div>
+                                <div id="w-builder-code-output" class="builder-code-output hidden"></div>
+                                <div id="w-builder-recovery-box" class="hidden" style="margin-top: 14px; background: rgba(230, 57, 70, 0.05); border: 1px dashed rgba(230, 57, 70, 0.4); padding: 16px; border-radius: 10px;">
+                                    <h4 style="color: var(--red); margin: 0 0 8px 0; font-family: 'Outfit', sans-serif; display: flex; align-items: center; gap: 8px;">
+                                        <span>⚠️ JSON Parsing Recovery</span>
+                                    </h4>
+                                    <p style="font-size: 0.8rem; color: var(--text-2); margin: 0 0 12px 0; line-height: 1.4;">
+                                        The AI generated your world, but there's a syntax error in the formatting. <strong>Don't panic and don't regenerate!</strong> You can edit the raw text below to fix the error, then click the button to parse & apply.
+                                    </p>
+                                    <div id="w-builder-error-diagnostic" class="hidden" style="margin-bottom: 14px; padding: 12px; background: rgba(230, 57, 70, 0.08); border: 1px solid rgba(230, 57, 70, 0.25); border-radius: 8px;"></div>
+                                    <textarea id="w-builder-recovery-textarea" class="form-textarea" rows="12" style="font-family: monospace; font-size: 0.75rem; background: #04040a; color: #00F5FF; border: 1px solid var(--border); width: 100%; box-sizing: border-box; resize: vertical; padding: 10px;"></textarea>
+                                    <button id="w-builder-recovery-reparse-btn" class="btn btn-success btn-full" style="margin-top: 12px; padding: 12px; font-weight: 700;">💾 Reparse & Apply World</button>
+                                </div>
+                            </div>
+
+                            <!-- Live Validation & Preview Box -->
+                            <div id="w-builder-preview-box" class="builder-preview-wrap hidden">
+                                <div class="builder-preview-header">
+                                    <div class="builder-preview-title">📋 Built World Summary</div>
+                                    <div id="w-builder-warning-container"></div>
+                                </div>
+                                <div class="builder-preview-body">
+                                    <div class="preview-grid">
+                                        <div class="preview-card">
+                                            <div class="preview-card-title">World Identity</div>
+                                            <div class="preview-card-desc" id="w-preview-identity">—</div>
+                                        </div>
+                                        <div class="preview-card">
+                                            <div class="preview-card-title">Locations Created</div>
+                                            <div class="preview-card-desc" id="w-preview-locations-count">—</div>
+                                        </div>
+                                        <div class="preview-card">
+                                            <div class="preview-card-title">Entities Created</div>
+                                            <div class="preview-card-desc" id="w-preview-entities-count">—</div>
+                                        </div>
+                                        <div class="preview-card">
+                                            <div class="preview-card-title">Lore Book Entries</div>
+                                            <div class="preview-card-desc" id="w-preview-lore-count">—</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="preview-action-row">
+                                    <button id="w-builder-apply-btn" class="btn btn-success" style="flex:1">Apply & Overwrite World</button>
+                                    <button id="w-builder-merge-btn" class="btn btn-primary" style="flex:1">Merge & Append to World</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ────────── STUDIO VIEW ────────── -->
+        
+
+<div id="world-timeline-browser-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg" style="height:78vh; max-height:760px; display:flex; flex-direction:column;">
+        <div class="modal-hd"><h2>Timeline branches</h2><button id="close-world-timeline-browser-btn" class="modal-close" type="button" aria-label="Close timeline browser">✕</button></div>
+        <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px;">
+            <p class="form-hint">Every timeline is a canonical branch. Forks copy the selected committed state and retain immutable source provenance; they do not merge or rewrite the source timeline.</p>
+            <div id="world-timeline-browser-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+        </div>
+        <div class="modal-ft"><button id="close-world-timeline-browser-ft-btn" class="btn btn-ghost">Close</button></div>
+    </div>
+</div>
+
+<div id="world-stats-modal-overlay" class="modal-bg hidden">
+    <div class="modal modal-md">
+        <div class="modal-hd">
+            <h2>🎭 Character Status</h2>
+            <button id="close-world-stats-btn" class="modal-close" type="button" aria-label="Close character stats">✕</button>
+        </div>
+        <div class="modal-body">
+            <div id="m-stats-guide" style="background:rgba(var(--accent-rgb),0.1); padding:12px; border-radius:8px; border-left:4px solid var(--accent); margin-bottom:16px;">
+                <p style="font-size:0.85rem; color:var(--text); line-height:1.4;">
+                    <strong>Dungeon Master Guide:</strong> These stats define your physical limits. The DM sees these values and uses them to determine the success of your actions.
+                </p>
+            </div>
+            <div class="modal-body-dynamic">
+                <!-- Stats inputs generated here -->
+            </div>
+        </div>
+        <div class="modal-ft" style="display:flex; justify-content:flex-end; gap:12px;">
+            <button id="cancel-world-stats-btn" class="btn btn-ghost">Cancel</button>
+            <button id="save-world-stats-btn" class="btn btn-primary">Update Stats</button>
+        </div>
+    </div>
+</div>
+
+<div id="world-quest-modal-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg">
+        <div class="modal-hd">
+            <h2>🧭 Quest Ledger</h2>
+            <button id="close-world-quest-btn" class="modal-close" type="button" aria-label="Close quest log">✕</button>
+        </div>
+        <div class="modal-body">
+            <input id="m-quest-id" type="hidden">
+            <div class="form-group">
+                <label class="form-label" for="m-quest-title">Quest title</label>
+                <input id="m-quest-title" class="form-input" maxlength="200" placeholder="e.g. Find the missing courier">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="m-quest-description">Description</label>
+                <textarea id="m-quest-description" class="form-textarea" rows="3" maxlength="1000" placeholder="What is the objective, and why does it matter?"></textarea>
+            </div>
+            <div class="quest-editor-grid">
+                <div class="form-group">
+                    <label class="form-label" for="m-quest-giver">Quest giver</label>
+                    <input id="m-quest-giver" class="form-input" maxlength="160" placeholder="NPC or faction">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="m-quest-status">Status</label>
+                    <select id="m-quest-status" class="form-select">
+                        <option value="active">Active</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                        <option value="abandoned">Abandoned</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="m-quest-objective">Add a manual objective (optional)</label>
+                <input id="m-quest-objective" class="form-input" maxlength="240" placeholder="A condition the DM or player will mark complete">
+            </div>
+            <div class="quest-editor-grid">
+                <div class="form-group">
+                    <label class="form-label" for="m-quest-reward-items">Reward items</label>
+                    <input id="m-quest-reward-items" class="form-input" maxlength="1000" placeholder="Silver key, healing potion">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="m-quest-reward-stats">Reward stats</label>
+                    <input id="m-quest-reward-stats" class="form-input" maxlength="1000" placeholder="gold: 50, xp: 100">
+                </div>
+            </div>
+            <div class="quest-manager-panel">
+                <div class="quest-manager-label">Tracked objectives</div>
+                <div id="m-quest-objectives" class="quest-manager-summary">No structured objectives yet.</div>
+            </div>
+            <div class="quest-manager-panel">
+                <div class="quest-manager-label">Reward status</div>
+                <div id="m-quest-rewards" class="quest-manager-summary">No material reward declared.</div>
+            </div>
+        </div>
+        <div class="modal-ft quest-manager-footer">
+            <button id="delete-world-quest-btn" class="btn btn-ghost quest-delete-btn" type="button">Delete Quest</button>
+            <div class="quest-manager-actions">
+                <button id="cancel-world-quest-btn" class="btn btn-ghost" type="button">Cancel</button>
+                <button id="save-world-quest-btn" class="btn btn-primary" type="button">Save Quest</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="world-outfit-modal-overlay" class="modal-bg hidden">
+    <div class="modal modal-md">
+        <div class="modal-hd">
+            <h2>👕 Update Outfit</h2>
+            <button id="close-world-outfit-btn" class="modal-close" type="button" aria-label="Close outfit editor">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:0.85rem; color:var(--text-2); margin-bottom:12px;">Describe what your character is currently wearing. The DM will use this for descriptions.</p>
+            <textarea id="m-outfit-content" class="form-textarea" rows="4" placeholder="e.g. A red t-shirt, blue jeans, and worn-out sneakers."></textarea>
+        </div>
+        <div class="modal-ft" style="display:flex; justify-content:flex-end; gap:12px;">
+            <button id="cancel-world-outfit-btn" class="btn btn-ghost">Cancel</button>
+            <button id="save-world-outfit-btn" class="btn btn-primary">Save Outfit</button>
+        </div>
+    </div>
+</div>
+
+<div id="world-ledger-modal-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg">
+        <div class="modal-hd">
+            <h2>📜 World Ledger (Chronicles)</h2>
+            <button id="close-world-ledger-btn" class="modal-close" type="button" aria-label="Close world ledger">✕</button>
+        </div>
+        <div class="modal-body">
+            <div style="background:rgba(255,140,66,0.1); padding:12px; border-radius:8px; border-left:4px solid #FF8C42; margin-bottom:16px;">
+                <p style="font-size:0.85rem; color:var(--text); line-height:1.4;">
+                    <strong>Persistent Memory:</strong> This ledger is the "Source of Truth" for your world. The DM refers to it to remember major plot points, NPC deaths, and past choices that have permanently altered the world state.
+                </p>
+            </div>
+            <textarea id="m-ledger-content" class="form-textarea" rows="12" placeholder="Record major milestones here (e.g. 'The King of Oakhaven is dead', 'Player found the Silver Key')..."></textarea>
+        </div>
+        <div class="modal-ft" style="display:flex; justify-content:flex-end; gap:12px;">
+            <button id="cancel-world-ledger-btn" class="btn btn-ghost">Cancel</button>
+            <button id="save-world-ledger-btn" class="btn btn-primary">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<div id="world-scheduler-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg" style="height: 85vh; display:flex; flex-direction:column;">
+        <div class="modal-hd">
+            <h2>NPC Schedule Architect</h2>
+            <button id="close-scheduler-btn" class="modal-close" type="button" aria-label="Close scheduler">✕</button>
+        </div>
+        <div class="modal-body" style="flex:1; overflow-y:auto; padding:20px;">
+            <p class="form-hint" style="margin-bottom:12px;">Define where your NPCs should be at specific times. The engine uses "Clock Step" to calculate the current time based on turn count. <b>Typos are prevented</b> by selecting from your existing location list.</p>
+            <button id="gen-all-schedules-btn" class="btn btn-ghost" style="margin-bottom:20px; color:var(--accent);">✨ Auto-Generate All Missing Schedules (AI)</button>
+            <div id="scheduler-npc-list" style="display:flex; flex-direction:column; gap:20px;">
+                <!-- Injected by JS -->
+            </div>
+        </div>
+        <div class="modal-ft">
+            <button id="save-scheduler-btn" class="btn btn-primary btn-full">Save Schedules</button>
+        </div>
+    </div>
+</div>
+
+<div id="world-session-zero-overlay" class="modal-bg hidden">
+    <div class="modal modal-md session-zero-modal" style="max-width:900px;">
+        <div class="modal-hd">
+            <h2>🎬 New Session Setup</h2>
+            <button id="close-session-zero-btn" class="modal-close" type="button" title="Close without saving" aria-label="Close new session setup without saving">✕</button>
+        </div>
+        <div class="modal-body">
+            <p class="form-hint" style="margin-bottom:16px;">Choose exactly who you are before the world is initialized. The selected Persona and Starting Life become the source for your home, household, routine and initial social circle.</p>
+            <div id="sz-persona-section" class="session-persona-panel">
+                <div>
+                    <label class="form-label">Player Persona for this timeline</label>
+                    <select id="sz-persona-select" class="form-select"></select>
+                    <p class="form-hint">This selection is saved on this timeline. Changing the global active Persona later will not silently replace it.</p>
+                    <label class="form-label" style="margin-top:10px;">Controlled character</label>
+                    <select id="sz-controlled-entity" class="form-select"><option value="player">Create / control this player character</option></select>
+                    <p class="form-hint">Choose an established character to play them in this sequence. Their dossier remains canonical; the selected Persona is a portrayal snapshot, not a live overwrite.</p>
+                </div>
+                <div id="sz-persona-preview" class="session-persona-preview">No Persona selected. The Starting Life will be the only identity source.</div>
+                <label id="sz-life-seed-option" class="sandbox-toggle-card session-life-seed-option">
+                    <input id="sz-life-seed-enabled" type="checkbox" checked>
+                    <span><strong>Initialize my active life</strong><small>Before the opening scene, create or connect a believable home, household, family, classmates/coworkers, friends, routines and relationships from the Persona and Starting Life.</small></span>
+                </label>
+                <div id="sz-life-seed-status" class="form-hint"></div>
+            </div>
+            <div id="sz-origin-section" class="form-section hidden">
+                <label class="form-label">Who are you in this world?</label>
+                <p class="form-hint">This is a real starting position, not a cosmetic class: it changes your home, possessions, status, allegiances, duties and opening situation.</p>
+                <div id="sz-origin-list" class="session-origin-list"></div>
+            </div>
+            <div id="sz-role-section" class="form-section hidden">
+                <div class="session-role-heading">
+                    <div><span class="vh-eyebrow">YOUR ROLE</span><h3>Make this life yours</h3></div>
+                    <span id="sz-points-status" class="mini-tag"></span>
+                </div>
+                <div class="session-zero-grid">
+                    <div class="form-col"><label class="form-label">Public identity</label><input id="sz-public-identity" class="form-input" maxlength="240" placeholder="How this world knows you"></div>
+                    <div class="form-col"><label class="form-label">Starting reputation</label><input id="sz-reputation" class="form-input" maxlength="240" placeholder="Unknown, respected, notorious…"></div>
+                </div>
+                <div id="sz-attribute-list" class="session-role-options"></div>
+                <div class="session-role-columns">
+                    <div><label class="form-label">Skills</label><div id="sz-skill-list" class="session-role-options"></div></div>
+                    <div><label class="form-label">Perks &amp; flaws</label><div id="sz-trait-list" class="session-role-options"></div></div>
+                    <div><label class="form-label">Starting equipment</label><div id="sz-equipment-list" class="session-role-options"></div></div>
+                </div>
+                <div id="sz-role-summary" class="session-role-summary"></div>
+            </div>
+            <div class="session-zero-grid">
+                <div class="form-col">
+                    <label class="form-label">Tone</label>
+                    <select id="sz-tone" class="form-select">
+                        <option value="">DM's choice</option>
+                        <option>Grim & serious</option>
+                        <option>Balanced — light and dark</option>
+                        <option>Lighthearted & fun</option>
+                        <option>Romantic</option>
+                        <option>Tense & creepy</option>
+                        <option>Epic & heroic</option>
+                    </select>
+                </div>
+                <div class="form-col">
+                    <label class="form-label">Story Focus</label>
+                    <select id="sz-focus" class="form-select">
+                        <option value="">DM's choice</option>
+                        <option>Exploration & discovery</option>
+                        <option>Intrigue & secrets</option>
+                        <option>Relationships & drama</option>
+                        <option>Action & danger</option>
+                        <option>Slice of life</option>
+                    </select>
+                </div>
+                <div class="form-col">
+                    <label class="form-label">Pacing</label>
+                    <select id="sz-pacing" class="form-select">
+                        <option value="">DM's choice</option>
+                        <option>Slow burn — let scenes breathe</option>
+                        <option>Steady</option>
+                        <option>Fast — keep things moving</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-section" style="margin-top:14px;">
+                <label class="form-label">Anything else? (optional)</label>
+                <textarea id="sz-notes" class="form-textarea" rows="3" placeholder="Themes you want tonight, things to avoid, a thread to pick up..."></textarea>
+            </div>
+        </div>
+        <div class="modal-ft modal-ft-row">
+            <span id="sz-save-status" class="session-zero-save-status" aria-live="polite"></span>
+            <button id="sz-skip-btn" class="btn btn-ghost">Skip</button>
+            <button id="sz-begin-btn" class="btn btn-primary" style="flex:1;">Begin Adventure</button>
+        </div>
+    </div>
+</div>
+
+<div id="world-audit-overlay" class="modal-bg hidden">
+    <div class="modal modal-lg world-audit-modal">
+        <div class="modal-hd">
+            <h2>World Health Check</h2>
+            <button id="close-audit-btn" class="modal-close" type="button" aria-label="Close world audit">✕</button>
+        </div>
+        <div class="modal-body" style="padding:20px;">
+            <div id="audit-results-container">
+                <div class="loading">Analyzing world references...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="world-clock-modal-overlay" class="modal-bg hidden">
+    <div class="modal modal-md">
+        <div class="modal-hd">
+            <h2>⏰ Adjust World Clock</h2>
+            <button id="close-world-clock-btn" class="modal-close" type="button" aria-label="Close world clock">✕</button>
+        </div>
+        <div class="modal-body">
+            <!-- Part 1: Shift Time (Minutes Offset) -->
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+                <h3 style="font-size: 0.9rem; font-family: 'Outfit', sans-serif; color: var(--accent); margin-top: 0; margin-bottom: 8px;">Shift Time Relatively</h3>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="flex: 1;">
+                        <label class="form-label" style="font-size: 0.7rem; margin-bottom: 4px;">Minutes Offset</label>
+                        <input type="number" id="m-clock-offset" class="form-input" value="0" placeholder="e.g. 60 or -30">
+                    </div>
+                    <button id="apply-clock-offset-btn" class="btn btn-ghost" style="margin-top: 18px; padding: 10px 14px;">Apply Shift</button>
+                </div>
+                <span class="form-hint" style="margin-top: 6px; display: block;">Use positive numbers to go forward (e.g. 60 for 1 hour), negative to go back.</span>
+            </div>
+
+            <!-- Part 2: Set Exact Date and Time -->
+            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 12px; padding: 16px;">
+                <h3 style="font-size: 0.9rem; font-family: 'Outfit', sans-serif; color: var(--accent); margin-top: 0; margin-bottom: 12px;">Set Exact Date & Time</h3>
+                
+                <div class="form-row" style="margin-bottom: 12px;">
+                    <div style="flex: 1;">
+                        <label class="form-label" style="font-size: 0.7rem; margin-bottom: 4px;">Day Number</label>
+                        <input type="number" id="m-clock-day" class="form-input" min="1" value="1">
+                    </div>
+                </div>
+
+                <div class="form-row form-row-4" style="grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                    <div>
+                        <label class="form-label" style="font-size: 0.7rem; margin-bottom: 4px;">Hour</label>
+                        <input type="number" id="m-clock-hour" class="form-input" min="1" max="12" value="8">
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size: 0.7rem; margin-bottom: 4px;">Minute</label>
+                        <input type="number" id="m-clock-minute" class="form-input" min="0" max="59" value="0">
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size: 0.7rem; margin-bottom: 4px;">AM / PM</label>
+                        <select id="m-clock-ampm" class="form-select">
+                            <option value="AM">AM</option>
+                            <option value="PM">PM</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-ft" style="display: flex; justify-content: flex-end; gap: 12px;">
+            <button id="cancel-world-clock-btn" class="btn btn-ghost">Cancel</button>
+            <button id="save-world-clock-btn" class="btn btn-primary">Set Exact Time</button>
+        </div>
+    </div>
+</div>
+
+<div id="world-multiplayer-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal world-party-modal" role="dialog" aria-modal="true" aria-labelledby="world-party-title">
+        <header class="world-party-head">
+            <div><span class="vh-eyebrow">MULTIPLAYER CAMPAIGN</span><h2 id="world-party-title">Create Multiplayer Campaign</h2><p id="world-party-subtitle">Create an independent online tabletop save from a template.</p></div>
+            <button id="world-party-close-btn" class="labs-close-btn" type="button" aria-label="Close multiplayer setup">✕</button>
+        </header>
+        <div class="world-party-body">
+            <section id="world-party-start" class="world-party-start">
+                <div class="world-party-transport" role="group" aria-label="Room connection type">
+                    <button id="world-party-transport-lan" class="active" type="button" data-party-transport="lan">LAN</button>
+                    <button id="world-party-transport-online" type="button" data-party-transport="online">Internet</button>
+                    <label id="world-party-relay-wrap" class="hidden"><span>Online room server</span><input id="world-party-relay-url" class="form-input" type="url" placeholder="https://horde-room-server.your-name.workers.dev"><button id="world-party-online-help" class="inline-help-link" type="button">How to set one up free</button></label>
+                </div>
+                <article class="world-party-choice world-party-host-choice">
+                    <span class="world-party-choice-icon">♛</span><div><h3 id="world-party-host-heading">Host this timeline</h3><p>Your browser owns the save and makes the only model call after everyone submits.</p></div>
+                    <label><span>Campaign name</span><input id="world-party-campaign-name" class="form-input" maxlength="80" placeholder="Friday night campaign"></label>
+                    <label><span>Rules system</span><select id="world-party-rules-preset" class="form-select"><option value="custom">System agnostic / custom</option><option value="d20">D20 fantasy</option><option value="cyberpunk-d10">Cyberpunk-style D10</option><option value="dice-pool">Dice pool</option><option value="narrative">Narrative / fiction first</option></select></label>
+                    <label><span>Mechanical depth</span><select id="world-party-mechanics-mode" class="form-select"><option value="off">Off · narrative inventory only</option><option value="light">Light · sheets, checks and gear bonuses</option><option value="full" selected>Full · progression, effects and requirements</option></select><small>Change this later without deleting character builds or items.</small></label>
+                    <label><span>Table rules / sourcebook guidance (optional)</span><textarea id="world-party-custom-rules" class="form-textarea" rows="3" maxlength="8000" placeholder="Paste the rules that matter for this campaign: dice notation, checks, combat, advancement, house rules…"></textarea><small>Use any tabletop system. Horde Studio does not force fantasy, classes, levels, or a particular kind of die.</small></label>
+                    <details class="mp-system-builder"><summary>Customize character mechanics</summary><div>
+                        <label><span>Attributes · comma separated</span><input id="world-party-attributes" class="form-input" placeholder="Strength, Dexterity, Wisdom…"></label>
+                        <label><span>Skills · comma separated</span><input id="world-party-skills" class="form-input" placeholder="Stealth, Medicine, Persuasion…"></label>
+                        <label><span>Resources · Name:max, one per line</span><textarea id="world-party-resources" class="form-textarea" rows="3" placeholder="HP:20&#10;Mana:8&#10;Stress:6"></textarea></label>
+                        <label><span>Equipment slots · comma separated</span><input id="world-party-slots" class="form-input" placeholder="Head, Body, Main hand, Off hand…"></label>
+                        <div class="mp-system-builder-row"><label><span>Default die</span><input id="world-party-die" class="form-input" placeholder="d20"></label><label><span>Base difficulty</span><input id="world-party-target" class="form-input" type="number" min="1" max="100" placeholder="10"></label><label><span>Progression</span><select id="world-party-progression" class="form-select"><option value="xp">XP & levels</option><option value="milestone">Milestones</option><option value="points">Advancement points</option></select></label></div>
+                        <small>These fields create real synchronized sheets and checks. Leave them blank to use the selected rules pack.</small>
+                    </div></details>
+                    <label><span>Your display name</span><input id="world-party-host-name" class="form-input" maxlength="48" value="Host"></label>
+                    <div id="world-party-host-persona" class="world-party-persona-summary"></div>
+                    <button id="world-party-host-btn" class="btn btn-primary" type="button">Create LAN room</button>
+                </article>
+                <article class="world-party-choice">
+                    <span class="world-party-choice-icon">↳</span><div><h3>Join a room</h3><p>Open the host’s invite link. Your action goes to the host—not to their API provider.</p></div>
+                    <label><span>Your display name</span><input id="world-party-join-name" class="form-input" maxlength="48" placeholder="Player name"></label>
+                    <label><span>LAN room code or Internet invite</span><input id="world-party-room-code" class="form-input" placeholder="ABC123 or HS1.…" autocapitalize="characters"></label>
+                    <button id="world-party-join-btn" class="btn btn-ghost" type="button">Join room</button>
+                </article>
+                <div class="world-party-boundary"><strong>Host-authoritative</strong><span>Every participant has a separate identity and turn. The host owns the save and provider key; the online room server only coordinates the shared room.</span></div>
+            </section>
+
+            <section id="world-party-room" class="world-party-room hidden">
+                <div class="world-party-roombar">
+                    <div><span id="world-party-role" class="world-party-role">HOST</span><strong id="world-party-room-title">Shared World</strong><small id="world-party-round-label">Round 1</small></div>
+                    <div id="world-party-host-actions" class="world-party-room-actions hidden"><button id="world-party-copy-btn" class="btn btn-ghost btn-small" type="button">Copy invite</button><button id="world-party-end-btn" class="btn btn-ghost btn-small" type="button">End room</button></div>
+                </div>
+                <div id="world-party-invite" class="world-party-invite hidden"><span>Invite link</span><code id="world-party-invite-url"></code></div>
+                <div class="world-party-grid">
+                    <aside><div class="pip-tool-heading"><span>TURN ORDER</span><strong id="world-party-player-count">0 players</strong></div><div id="world-party-players" class="world-party-players"></div></aside>
+                    <main>
+                        <div id="world-party-feed" class="world-party-feed"><div class="world-party-empty">The host’s shared transcript will appear here.</div></div>
+                        <div id="world-party-vote" class="world-party-vote hidden"></div>
+                        <div class="world-party-action-box">
+                            <label for="world-party-action">Your action this round</label>
+                            <textarea id="world-party-action" class="form-textarea" rows="3" maxlength="2000" placeholder="Wait for your turn, then describe one action…"></textarea>
+                            <div><span id="world-party-action-status">Waiting for room state…</span><button id="world-party-submit-btn" class="btn btn-primary" type="button">Submit turn</button></div>
+                        </div>
+                        <button id="world-party-commit-btn" class="btn btn-primary world-party-commit hidden" type="button">Commit party turn · run one API call</button>
+                    </main>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<div id="world-record-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal world-record-modal" role="dialog" aria-modal="true" aria-labelledby="world-record-title">
+        <div class="world-record-head">
+            <div class="world-record-heading">
+                <span id="world-record-kicker">WORLD DIRECTORY</span>
+                <h2 id="world-record-title">Record</h2>
+                <p id="world-record-subtitle"></p>
+            </div>
+            <button id="world-record-close" class="world-record-close" type="button" aria-label="Close inspector">✕</button>
+        </div>
+        <div id="world-record-tabs" class="world-record-tabs" aria-label="Inspector sections"></div>
+        <div id="world-record-body" class="world-record-body"></div>
+        <div class="world-record-footer">
+            <span id="world-record-reference-status">Changes update the shared world record immediately.</span>
+            <button id="world-record-done" class="btn btn-primary" type="button">Done</button>
+        </div>
+    </div>
+</div>
