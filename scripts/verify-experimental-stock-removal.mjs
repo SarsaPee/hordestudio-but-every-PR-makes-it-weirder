@@ -50,11 +50,16 @@ assert(!/location\.assign\s*\(/.test(html), 'the document must not switch applic
 assert(!/<iframe\b/i.test(html), 'Experimental Worlds must not be an iframe application');
 const privateRpg = html.indexOf('experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js');
 const privateCompat = html.indexOf('experiences/experimental-worlds/runtime/experimental-runtime-compat.js');
+const privateVectorMemory = html.indexOf('experiences/experimental-worlds/runtime/experimental-vector-memory.js');
 const firstExperimentalCore = html.indexOf('experiences/experimental-worlds/runtime/dossier-claims.js');
-assert(privateCompat >= 0 && privateRpg >= 0 && privateCompat < privateRpg && privateRpg < firstExperimentalCore,
-    'Experimental Worlds must load private utilities and pinned RPG mechanics before its dependent runtime');
+assert(privateCompat >= 0 && privateVectorMemory >= 0 && privateRpg >= 0
+    && privateCompat < privateVectorMemory && privateVectorMemory < privateRpg && privateRpg < firstExperimentalCore,
+    'Experimental Worlds must load its private utilities, cognition cache, and pinned RPG mechanics before dependent runtime');
 const runtimeCompat = readFileSync('experiences/experimental-worlds/runtime/experimental-runtime-compat.js', 'utf8');
 assert(runtimeCompat.includes('ExperimentalWorldsRuntime') && runtimeCompat.includes('abortAll'),
     'Experimental Worlds must own its generation, retry, and Reader request lifecycle');
+const vectorMemory = readFileSync('experiences/experimental-worlds/runtime/experimental-vector-memory.js', 'utf8');
+assert(vectorMemory.includes('experimentalVectorEmbeddingCache') && !vectorMemory.includes('HordeVectorMemory'),
+    'Experimental Worlds must own a separate embedding cache rather than reaching the host cache');
 
 console.log(`Experimental stock-removal guard passed for ${files.length} core files.`);
