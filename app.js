@@ -198,6 +198,22 @@ const HordeDB = {
             transaction.onabort = () => reject(transaction.error || new Error('Saving application data was aborted'));
         });
     },
+    // Restore uses one database transaction for the host partition: stale
+    // records are removed and the validated replacement is published together.
+    // This deliberately stays inside the ordinary upstream HordeStudioDB;
+    // Experimental Worlds has its own repository and is never enumerated here.
+    async replaceMultiple(keysToDelete, kvMap) {
+        if (!this.db) throw new Error('Database is not initialized');
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            keysToDelete.forEach(key => store.delete(key));
+            Object.entries(kvMap).forEach(([key, value]) => store.put(value, key));
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error || new Error('Unable to replace application records'));
+            transaction.onabort = () => reject(transaction.error || new Error('Replacing application records was aborted'));
+        });
+    },
     close() {
         if (this.db) this.db.close();
         this.db = null;
@@ -3449,6 +3465,17 @@ function restoreLastWorkspace() {
 
 async function loadState() {
     await HordeDB.init();
+    // Recover the host partition before ordinary startup reads it. A verified
+    // stage can be safely replayed; an invalid or incomplete stage is never
+    // treated as live state.
+    const interruptedHostRestore = await recoverInterruptedHostRestore();
+    if (interruptedHostRestore?.recovered) {
+        console.info('Recovered an interrupted host restore from its verified stage.');
+    }
+    const interruptedStockRestore = await window.StockWorlds17Pass0?.recoverInterruptedRestore?.();
+    if (interruptedStockRestore?.recovered) {
+        console.info('Recovered an interrupted stock Worlds restore from its verified stage.');
+    }
     await window.ExperimentalWorldsRepository?.init?.();
     // A power loss after a verified restore stage leaves the stage, not an
     // ambiguous half-applied World.  Recover it before any World startup or
@@ -12377,21 +12404,110 @@ function redactGlobalSettingsCredentials(settings) {
     return copy;
 }
 
+// Global recovery has three explicit owners: normal HordeStudioDB records,
+// the temporary Pass-0 stock Worlds repository, and Experimental Worlds.  The
+// host partition below intentionally excludes every World key: neither the
+// normal host writer nor a host restore is allowed to enumerate the two World
+// repositories by accident.
+const HOST_BACKUP_STATE_KEYS = Object.freeze([
+    'globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
+    'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts',
+    'roleplayOSSources', 'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId',
+    'companions', 'companionThreads', 'companionTimelines', 'activeCompanionId'
+]);
+const HOST_RESTORE_STAGE_KEY = '__horde_host_restore_stage_v1';
+const HOST_RESTORE_JOURNAL_KEY = '__horde_host_restore_journal_v1';
+
+function hostBackupPartitionFrom(source, companionVideoAssets = {}) {
+    const partition = {};
+    HOST_BACKUP_STATE_KEYS.forEach(key => { partition[key] = safeJsonClone(source?.[key]); });
+    partition.companionVideoAssets = safeJsonClone(companionVideoAssets || {});
+    return partition;
+}
+
+async function companionVideoAssetsFromIds(assetIds) {
+    const result = {};
+    for (const assetId of assetIds) {
+        const blob = await HordeDB.get(`companionVideoAsset:${assetId}`).catch(() => null);
+        if (blob instanceof Blob) result[assetId] = await blobAsDataUrl(blob);
+    }
+    return result;
+}
+
+function companionVideoAssetIds(source) {
+    return new Set((source?.companions || []).flatMap(companion =>
+        (companion.videoJobs || []).map(job => String(job.assetId || '')).filter(Boolean)));
+}
+
+async function currentHostBackupPartition() {
+    return hostBackupPartitionFrom(state, await companionVideoAssetsFromIds(companionVideoAssetIds(state)));
+}
+
+async function storedHostBackupPartition() {
+    const records = {};
+    for (const key of HOST_BACKUP_STATE_KEYS) records[key] = await HordeDB.get(key);
+    return hostBackupPartitionFrom(records,
+        await companionVideoAssetsFromIds(companionVideoAssetIds(records)));
+}
+
+async function stageHostRestore(hostPartition) {
+    const stagedPartition = hostBackupPartitionFrom(hostPartition, hostPartition?.companionVideoAssets);
+    const preimage = await storedHostBackupPartition();
+    const digest = window.ExperimentalWorldsRepository?.digest;
+    if (!digest) throw new Error('Backup coordinator is unavailable for host restore staging.');
+    const stageDigest = await digest(stagedPartition);
+    await HordeDB.setMultiple({
+        [HOST_RESTORE_STAGE_KEY]: { partition: stagedPartition, digest: stageDigest, stagedAt: new Date().toISOString() },
+        [HOST_RESTORE_JOURNAL_KEY]: {
+            version: 1, status: 'staged', at: new Date().toISOString(), preimage,
+            preimageDigest: await digest(preimage), stageDigest
+        }
+    });
+    const staged = await HordeDB.get(HOST_RESTORE_STAGE_KEY);
+    if (!staged || staged.digest !== stageDigest || await digest(staged.partition) !== stageDigest) {
+        throw new Error('Host restore stage failed verification; active host data was not replaced.');
+    }
+    return staged;
+}
+
+async function applyStagedHostRestore() {
+    const stage = await HordeDB.get(HOST_RESTORE_STAGE_KEY);
+    const journal = await HordeDB.get(HOST_RESTORE_JOURNAL_KEY);
+    const digest = window.ExperimentalWorldsRepository?.digest;
+    if (!stage || !journal || journal.status !== 'staged') throw new Error('No verified host restore stage is available.');
+    if (!digest || await digest(stage.partition) !== stage.digest) throw new Error('Host restore stage checksum changed before apply.');
+    const restoredAssets = {};
+    for (const [assetId, source] of Object.entries(stage.partition.companionVideoAssets || {})) {
+        if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) throw new Error(`Host restore media ${assetId} is invalid.`);
+        restoredAssets[`companionVideoAsset:${assetId}`] = await fetch(source).then(response => response.blob());
+    }
+    const staleAssetKeys = Object.keys(journal.preimage?.companionVideoAssets || {}).map(assetId => `companionVideoAsset:${assetId}`);
+    const records = {};
+    HOST_BACKUP_STATE_KEYS.forEach(key => { records[key] = safeJsonClone(stage.partition[key]); });
+    Object.assign(records, restoredAssets);
+    await HordeDB.replaceMultiple(staleAssetKeys, records);
+    const readback = await storedHostBackupPartition();
+    const readbackDigest = await digest(readback);
+    if (readbackDigest !== stage.digest) throw new Error('Host restore readback did not match its verified stage; the preimage remains in the recovery journal.');
+    await HordeDB.setMultiple({ [HOST_RESTORE_JOURNAL_KEY]: {
+        ...journal, status: 'applied-and-verified', appliedAt: new Date().toISOString(), readbackDigest
+    } });
+    await HordeDB.delete(HOST_RESTORE_STAGE_KEY);
+    return { partition: readback, readbackDigest };
+}
+
+async function recoverInterruptedHostRestore() {
+    const stage = await HordeDB.get(HOST_RESTORE_STAGE_KEY);
+    const journal = await HordeDB.get(HOST_RESTORE_JOURNAL_KEY);
+    if (!stage || !journal || journal.status !== 'staged') return { recovered: false };
+    return { recovered: true, ...(await applyStagedHostRestore()) };
+}
+
 async function makeFullBackupManifest(payload) {
     const digest = window.ExperimentalWorldsRepository?.digest;
     if (!digest) throw new Error('Experimental Worlds backup coordinator is unavailable.');
     const partitions = [
-        ['host', {
-            globalSettings: payload.globalSettings, characters: payload.characters, chats: payload.chats,
-            chatContinuities: payload.chatContinuities, activeSessionId: payload.activeSessionId,
-            personas: payload.personas, activePersonaId: payload.activePersonaId, rooms: payload.rooms,
-            theme: payload.theme, systemPresets: payload.systemPresets, regexScripts: payload.regexScripts,
-            roleplayOSSources: payload.roleplayOSSources, videoWorlds: payload.videoWorlds,
-            videoWorldSessions: payload.videoWorldSessions, activeVideoWorldId: payload.activeVideoWorldId,
-            companions: payload.companions, companionThreads: payload.companionThreads,
-            companionTimelines: payload.companionTimelines, activeCompanionId: payload.activeCompanionId,
-            companionVideoAssets: payload.companionVideoAssets
-        }],
+        ['host', hostBackupPartitionFrom(payload, payload.companionVideoAssets)],
         ['experimentalWorlds', payload.experimentalWorlds],
         ['stockWorlds17Pass0', payload.stockWorlds17Pass0]
     ];
@@ -12414,17 +12530,7 @@ async function verifyFullBackupManifest(data) {
             throw new Error(`Backup ${name} checksum does not match its manifest.`);
         }
     }
-    const host = {
-        globalSettings: data.globalSettings, characters: data.characters, chats: data.chats,
-        chatContinuities: data.chatContinuities, activeSessionId: data.activeSessionId,
-        personas: data.personas, activePersonaId: data.activePersonaId, rooms: data.rooms,
-        theme: data.theme, systemPresets: data.systemPresets, regexScripts: data.regexScripts,
-        roleplayOSSources: data.roleplayOSSources, videoWorlds: data.videoWorlds,
-        videoWorldSessions: data.videoWorldSessions, activeVideoWorldId: data.activeVideoWorldId,
-        companions: data.companions, companionThreads: data.companionThreads,
-        companionTimelines: data.companionTimelines, activeCompanionId: data.activeCompanionId,
-        companionVideoAssets: data.companionVideoAssets
-    };
+    const host = hostBackupPartitionFrom(data, data.companionVideoAssets);
     if (typeof expected.get('host') !== 'string' || await window.ExperimentalWorldsRepository.digest(host) !== expected.get('host')) {
         throw new Error('Backup host-data checksum does not match its manifest.');
     }
@@ -12432,13 +12538,7 @@ async function verifyFullBackupManifest(data) {
 
 async function exportFullBackup() {
     (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
-    const companionVideoAssets = {};
-    const assetIds = new Set((state.companions || []).flatMap(companion =>
-        (companion.videoJobs || []).map(job => String(job.assetId || '')).filter(Boolean)));
-    for (const assetId of assetIds) {
-        const blob = await HordeDB.get(`companionVideoAsset:${assetId}`).catch(() => null);
-        if (blob instanceof Blob) companionVideoAssets[assetId] = await blobAsDataUrl(blob);
-    }
+    const companionVideoAssets = await companionVideoAssetsFromIds(companionVideoAssetIds(state));
     if (!window.StockWorlds17Pass0) {
         throw new Error('Cannot create a complete backup: stock Worlds 17.0 is unavailable.');
     }
@@ -12522,28 +12622,26 @@ function importFullBackup(file) {
                         worldRecoverySnapshots: data.worldRecoverySnapshots || {},
                         worldMediaAssets: data.worldMediaAssets || {}
                     };
+                    const hostPartition = hostBackupPartitionFrom(data, data.companionVideoAssets);
+                    // Stage every persistence owner before applying any of
+                    // them. The preimages are journalled in their own
+                    // repositories, so an interruption can replay a verified
+                    // stage on the next load rather than mixing generations.
+                    await stageHostRestore(hostPartition);
                     const stagedExperimentalRestore = await window.ExperimentalWorldsRepository.stageRestore(experimentalSnapshot);
-                    const keys = ['globalSettings', 'characters', 'chats', 'chatContinuities', 'activeSessionId',
-                        'personas', 'activePersonaId', 'rooms', 'theme', 'systemPresets', 'regexScripts', 'roleplayOSSources',
-                        'companions',
-                        'companionThreads', 'companionTimelines', 'activeCompanionId',
-                        'videoWorlds', 'videoWorldSessions', 'activeVideoWorldId'];
-                    keys.forEach(k => { if (data[k] !== undefined) state[k] = data[k]; });
-                    for (const [assetId, source] of Object.entries(data.companionVideoAssets || {})) {
-                        if (!/^data:video\/[a-z0-9.+-]+;base64,/i.test(source)) continue;
-                        const blob = await fetch(source).then(response => response.blob());
-                        await HordeDB.set(`companionVideoAsset:${assetId}`, blob);
-                    }
-                    if (data.stockWorlds17Pass0 !== undefined) {
-                        await window.StockWorlds17Pass0.importState(data.stockWorlds17Pass0);
-                    } else {
-                        // A pre-Pass-0 backup represents the complete older
-                        // application state. Replace the temporary stock domain
-                        // with its pristine seeded state rather than retaining
-                        // unrelated stock sessions from the current profile.
-                        await window.StockWorlds17Pass0.purgeState();
-                    }
+                    const stockSnapshot = data.stockWorlds17Pass0 || {
+                        schemaVersion: 1, database: 'HordeStudioStockWorlds17Pass0DB',
+                        worlds: [], worldInstances: {}, activeWorldId: null,
+                        worldRecoverySnapshots: {}, stockSettings: {}, worldMediaAssets: {}
+                    };
+                    await window.StockWorlds17Pass0.stageRestore(stockSnapshot);
+                    // Each owner has a verified stage before the first active
+                    // record is changed. A power loss now causes loadState to
+                    // replay the remaining stages deterministically.
+                    await window.StockWorlds17Pass0.applyStagedRestore();
                     const appliedExperimentalRestore = await window.ExperimentalWorldsRepository.applyStagedRestore();
+                    const appliedHostRestore = await applyStagedHostRestore();
+                    HOST_BACKUP_STATE_KEYS.forEach(key => { state[key] = appliedHostRestore.partition[key]; });
                     state.worlds = appliedExperimentalRestore.snapshot.worlds || [];
                     state.worldInstances = appliedExperimentalRestore.snapshot.worldInstances || {};
                     state.activeWorldId = appliedExperimentalRestore.snapshot.activeWorldId || null;
