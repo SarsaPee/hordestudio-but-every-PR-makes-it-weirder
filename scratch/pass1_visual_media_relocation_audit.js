@@ -68,7 +68,10 @@ const relocatedPlay = fs.readFileSync('experiences/experimental-worlds/runtime/w
 const acceptedPlay = acceptedApp.slice(playStart, playEnd)
     .replace("            })),\n            ...(window.StockWorlds17Pass0?.listMultiplayerSources?.() || [])", '            }))')
     .replace("        if (state.view === 'stockWorlds') {\n            const stockContext = window.StockWorlds17Pass0?.currentMultiplayerContext?.();\n            if (stockContext) return stockContext;\n        }\n", '')
-    .replace("    if (context.stockWorlds17Pass0) {\n        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;\n    }", "    // This runtime owns Experimental Worlds only. Stock Worlds has its own\n    // multiplayer source surface; no stock record or helper can cross this\n    // boundary into an Experimental campaign.\n    if (context.stockWorlds17Pass0) return null;");
+    // Stock dispatch is a host boundary. The Experimental core accepts only
+    // its own World context and must not carry either the stock marker or a
+    // stock runtime call.
+    .replace("    if (context.stockWorlds17Pass0) {\n        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;\n    }\n", '');
 const restoredPlay = relocatedPlay
     // Explicit Pass-1 lifecycle seam: provider work captures Experimental
     // ownership and cannot publish after a mode/world/timeline/restore change.
@@ -78,7 +81,7 @@ const restoredPlay = relocatedPlay
     .replace('        turnOwner = captureExperimentalTurnOwner(world, sess);\n', '')
     .replace(/^\s*assertExperimentalTurnOwner\(turnOwner\);\n/gm, '');
 assert.equal(restoredPlay.trimEnd(), acceptedPlay.trimEnd(),
-    'World Play core differs from the Pass-0 oracle beyond stock-removal and explicit late-result ownership seams');
+    'World Play core differs from the Pass-0 oracle beyond host-owned stock dispatch and explicit late-result ownership seams');
 assert(relocatedPlay.includes('captureExperimentalTurnOwner') && relocatedPlay.includes('assertExperimentalTurnOwner'),
     'Experimental World Play must capture and validate owner identity around provider completion');
 assert(!relocatedPlay.includes('StockWorlds17Pass0'),
