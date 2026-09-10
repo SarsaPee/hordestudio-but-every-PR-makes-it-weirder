@@ -20,7 +20,7 @@ changed.
 | F18 specialist graduation | Pending | seeded candidate required | Not yet browser-tested. | Mocked provider |
 | F19 five relationship meters including zero/decrease | Pending | synthetic fixture required | Not yet browser-tested. | Provider-independent |
 | F20 relationship metadata | Pending | synthetic fixture required | Not yet browser-tested. | Provider-independent |
-| Rewind/resend and delayed-result ownership | Pending | deterministic delayed transport | Not yet browser-tested. | Mocked provider |
+| Rewind/resend and delayed-result ownership | Implemented; browser proof pending | `927ef0b`, deterministic delayed transport required | Each ordinary Experimental provider turn now captures mode, World, timeline, epoch, restore generation and effective model/provider settings. Navigation aborts the foreground request and every state-commit route rejects a mismatched owner. Rewind/resend and delayed-response browser proof remain required. | Mocked provider |
 | Cross-domain save/reload isolation | Passed save half; deletion/media pending | isolated `127.0.0.1:43142`, `PASS1 EXPERIMENTAL DISPOSABLE` and `PASS1 STOCK DISPOSABLE` | Created and saved a disposable World through each real editor. Experimental showed five records while stock showed five independently (the other domain's synthetic record was absent). A browser-native stock delete confirmation could not be accepted by the available automation; no deletion was claimed. Media remains pending. | Provider-independent |
 
 ## Baseline defect discipline
