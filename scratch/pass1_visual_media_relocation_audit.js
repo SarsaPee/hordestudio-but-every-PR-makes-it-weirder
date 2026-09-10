@@ -112,6 +112,14 @@ assert.equal(relocatedVisualStyles.trimEnd(), acceptedStyle.slice(visualStyleSta
 assert(html.includes('experiences/experimental-worlds/styles/world-visuals-and-sidecar.css'),
     'relocated visual and Sidecar stylesheet is registered by the same document');
 
+const scenePulseStyleStart = acceptedStyle.indexOf('/* ScenePulse-inspired in-place Scene Intelligence Workspace.');
+assert(scenePulseStyleStart >= 0, 'Pass-0 ScenePulse/Sidecar stylesheet source unit is present');
+const relocatedScenePulseStyles = fs.readFileSync('experiences/experimental-worlds/styles/scene-pulse-worlds.css', 'utf8');
+assert(relocatedScenePulseStyles.includes(acceptedStyle.slice(scenePulseStyleStart).trimEnd()),
+    'the complete Pass-0 ScenePulse/Sidecar/Thoughts stylesheet tail is Experimental-owned');
+assert(!fs.readFileSync('style.css', 'utf8').includes('/* ScenePulse-inspired in-place Scene Intelligence Workspace.'),
+    'the host stylesheet no longer retains the relocated ScenePulse/Sidecar/Thoughts CSS');
+
 const visualEditorStart = acceptedApp.indexOf('const WORLD_VISUAL_ASPECTS');
 const visualEditorEnd = acceptedApp.indexOf('// --- Voice notes and calls', visualEditorStart);
 assert(visualEditorStart >= 0 && visualEditorEnd > visualEditorStart, 'Pass-0 visual editor source unit is present');
