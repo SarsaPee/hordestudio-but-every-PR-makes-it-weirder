@@ -1185,6 +1185,7 @@ let state = {
     chatContinuities: {}, // continuityId -> durable structured RP memory
     activeSessionId: {}, // sessionId -> activeSessionId
     editingChar: null,
+    editingCharId: null,
     editingRoom: null,
     editingLoreIdx: null,
     libFilter: {
@@ -1203,6 +1204,12 @@ let state = {
     activeWorldId: null,
     worldInstances: {}, // worldId -> current state
     editingWorld: null,
+    lastWorldStudioId: null,
+    lastWorldStudioTab: null,
+    lastStudioTab: null,
+    lastCompanionStudioTab: null,
+    settingsOpen: false,
+    settingsSection: 'models',
     // Video Adventures are a separate product surface and persistence graph. They
     // intentionally share no definitions, sessions or canonical state with Worlds.
     videoWorlds: [],
@@ -2004,9 +2011,193 @@ function repairLoadedState() {
     });
 }
 
+// Keep the user's place in the application independently of the larger state
+// snapshot. Model/catalog refreshes may require a document reload, but that is
+// not permission to abandon an unsaved World or Virtual Human editor.
+const WORKSPACE_STATE_MIRROR_KEY = 'horde_workspace_state_v2';
+const WORKSPACE_STATE_VERSION = 2;
+let workspaceRestoring = false;
+let workspacePersistTimer = null;
+let pendingWorkspaceState = null;
+
+function validWorkspaceView(value) {
+    return ['library', 'chat', 'studio', 'worlds', 'worldStudio', 'worldPlay',
+        'videoWorlds', 'videoWorldStudio', 'videoWorldPlay', 'companions',
+        'companionStudio', 'companionChat', 'multiplayer', 'multiplayerSession', 'pip'].includes(value);
+}
+
+function workspaceString(value) {
+    return typeof value === 'string' && value.length <= 200 ? value : null;
+}
+
+function captureWorkspaceState() {
+    return {
+        version: WORKSPACE_STATE_VERSION,
+        savedAt: Date.now(),
+        view: validWorkspaceView(state.view) ? state.view : 'library',
+        activeCharId: workspaceString(state.activeCharId),
+        activeRoomId: workspaceString(state.activeRoomId),
+        editingCharId: workspaceString(state.editingChar?.id || state.editingCharId),
+        activeWorldId: workspaceString(state.activeWorldId),
+        activeWorldSessionId: workspaceString(state.activeWorldId
+            ? state.worldInstances?.[state.activeWorldId]?.activeSessionId : null),
+        lastWorldStudioId: workspaceString(state.lastWorldStudioId),
+        lastWorldStudioTab: workspaceString(state.lastWorldStudioTab),
+        activeVideoWorldId: workspaceString(state.activeVideoWorldId),
+        editingVideoWorldId: workspaceString(state.editingVideoWorldId),
+        activeCompanionId: workspaceString(state.activeCompanionId),
+        editingCompanionId: workspaceString(state.editingCompanionId),
+        lastStudioTab: workspaceString(state.lastStudioTab),
+        lastCompanionStudioTab: workspaceString(state.lastCompanionStudioTab),
+        settingsOpen: state.settingsOpen === true,
+        settingsSection: SETTINGS_SECTION_LABELS?.[state.settingsSection]
+            ? state.settingsSection : activeSettingsSection
+    };
+}
+
+function applyWorkspaceState(raw) {
+    if (!isPlainObject(raw)) return;
+    state.view = validWorkspaceView(raw.view) ? raw.view : state.view;
+    ['activeCharId', 'activeRoomId', 'editingCharId', 'activeWorldId',
+        'lastWorldStudioId', 'lastWorldStudioTab', 'activeVideoWorldId',
+        'editingVideoWorldId', 'activeCompanionId', 'editingCompanionId',
+        'lastStudioTab', 'lastCompanionStudioTab'].forEach(key => {
+        if (raw[key] !== undefined) state[key] = workspaceString(raw[key]);
+    });
+    if (raw.settingsOpen !== undefined) state.settingsOpen = raw.settingsOpen === true;
+    if (SETTINGS_SECTION_LABELS?.[raw.settingsSection]) {
+        state.settingsSection = raw.settingsSection;
+        activeSettingsSection = raw.settingsSection;
+    }
+}
+
+function readWorkspaceStateMirror() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(WORKSPACE_STATE_MIRROR_KEY) || 'null');
+        return isPlainObject(raw) && Number(raw.version) === WORKSPACE_STATE_VERSION ? raw : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function writeWorkspaceStateMirror(snapshot = captureWorkspaceState()) {
+    try { localStorage.setItem(WORKSPACE_STATE_MIRROR_KEY, JSON.stringify(snapshot)); }
+    catch (_) { /* IndexedDB remains the durable copy. */ }
+    return snapshot;
+}
+
+async function persistWorkspaceState(snapshot = captureWorkspaceState()) {
+    writeWorkspaceStateMirror(snapshot);
+    if (HordeDB.db) await HordeDB.set('workspaceStateV2', snapshot);
+    pendingWorkspaceState = snapshot;
+}
+
+function persistWorkspaceSoon() {
+    if (workspaceRestoring) return;
+    const snapshot = writeWorkspaceStateMirror();
+    clearTimeout(workspacePersistTimer);
+    workspacePersistTimer = setTimeout(() => {
+        persistWorkspaceState(snapshot).catch(error => console.warn('Could not preserve the current workspace:', error));
+    }, 80);
+}
+
+window.addEventListener('pagehide', () => {
+    if (!workspaceRestoring) writeWorkspaceStateMirror();
+});
+
+async function loadWorkspaceState() {
+    const mirror = readWorkspaceStateMirror();
+    let stored = null;
+    try { stored = await HordeDB.get('workspaceStateV2'); }
+    catch (_) { /* The immediate mirror still preserves a refresh. */ }
+    return [mirror, stored].filter(isPlainObject)
+        .sort((a, b) => (Number(b.savedAt) || 0) - (Number(a.savedAt) || 0))[0] || null;
+}
+
+function workspaceEntityExists(list, id) {
+    return !!id && Array.isArray(list) && list.some(item => item && item.id === id);
+}
+
+function restoreLastWorkspace() {
+    const lastView = state.view;
+    const lastWorldTab = state.lastWorldStudioTab;
+    const lastWorldSessionId = workspaceString(pendingWorkspaceState?.activeWorldSessionId);
+    const lastStudioTab = state.lastStudioTab;
+    const lastCompanionTab = state.lastCompanionStudioTab;
+    const lastWorldStudioId = state.lastWorldStudioId;
+    workspaceRestoring = true;
+    try {
+        if (lastView === 'worldPlay' && workspaceEntityExists(state.worlds, state.activeWorldId)) {
+            enterWorld(state.activeWorldId, lastWorldSessionId);
+            return;
+        }
+        if (lastView === 'worldStudio') {
+            const worldId = workspaceEntityExists(state.worlds, lastWorldStudioId)
+                ? lastWorldStudioId
+                : (workspaceEntityExists(state.worlds, state.activeWorldId) ? state.activeWorldId : null);
+            if (worldId) {
+                openWorldStudio(worldId);
+                document.querySelector(`.world-studio-tab[data-tab="${lastWorldTab || 'w-overview'}"]`)?.click();
+            } else switchView('worlds');
+            return;
+        }
+        if (lastView === 'studio') {
+            const characterId = workspaceEntityExists(state.characters, state.editingCharId)
+                ? state.editingCharId : state.activeCharId;
+            if (workspaceEntityExists(state.characters, characterId)) {
+                state.activeCharId = characterId;
+                editCharacter(characterId);
+                switchView('studio');
+                if (lastStudioTab) document.querySelector(`#studio-view .studio-tab[data-tab="${lastStudioTab}"]`)?.click();
+            } else switchView('library');
+            return;
+        }
+        if (lastView === 'companionStudio') {
+            const companionId = workspaceEntityExists(state.companions, state.editingCompanionId)
+                ? state.editingCompanionId
+                : (workspaceEntityExists(state.companions, state.activeCompanionId) ? state.activeCompanionId : null);
+            if (companionId) {
+                openCompanionStudio(companionId);
+                if (lastCompanionTab) activateCompanionStudioTab(lastCompanionTab);
+            } else switchView('companions');
+            return;
+        }
+        if (lastView === 'chat') {
+            if (workspaceEntityExists(state.characters, state.activeCharId) || workspaceEntityExists(state.rooms, state.activeRoomId)) {
+                switchView('chat');
+            } else switchView('library');
+            return;
+        }
+        if (lastView === 'companionChat') {
+            if (workspaceEntityExists(state.companions, state.activeCompanionId)) switchView('companionChat');
+            else switchView('companions');
+            return;
+        }
+        if (lastView === 'videoWorldStudio' || lastView === 'videoWorldPlay') {
+            const worldId = lastView === 'videoWorldStudio' ? state.editingVideoWorldId : state.activeVideoWorldId;
+            if (workspaceEntityExists(state.videoWorlds, worldId)) {
+                if (lastView === 'videoWorldStudio') state.editingVideoWorldId = worldId;
+                state.activeVideoWorldId = worldId;
+                switchView(lastView);
+            } else switchView('videoWorlds');
+            return;
+        }
+        if (lastView && views[lastView]) {
+            switchView(lastView);
+            return;
+        }
+        switchView('library');
+    } finally {
+        workspaceRestoring = false;
+        persistWorkspaceSoon();
+    }
+}
+
 async function loadState() {
     await HordeDB.init();
     await HordeVectorMemory.init();
+    pendingWorkspaceState = await loadWorkspaceState();
+    applyWorkspaceState(pendingWorkspaceState);
     // Shipped worlds are authored against the same schema users migrate to.
     // Do this at startup (after the whole script has initialized) rather than
     // baking a second, divergent compatibility format into starter content.
@@ -2642,6 +2833,10 @@ let saveStateQueued = false;
 
 async function persistStateSnapshot() {
     const savingWorldMedia = worldMediaDirty;
+    // A catalog refresh is also a persistence point. Carry the editor route
+    // with it so a reload returns to the exact authoring surface the user was
+    // working in, rather than defaulting to Settings or the library.
+    const workspaceSnapshot = captureWorkspaceState();
     try {
         (state.companions || []).forEach(companion => persistCompanionRuntime(companion));
         // Keep heavy image payloads out of the world manifest that is rewritten
@@ -2693,6 +2888,7 @@ async function persistStateSnapshot() {
             worldRecoverySnapshots: state.worldRecoverySnapshots,
             worldInstances: state.worldInstances,
             activeWorldId: state.activeWorldId,
+            workspaceStateV2: workspaceSnapshot,
             videoWorlds: state.videoWorlds,
             videoWorldSessions: state.videoWorldSessions,
             activeVideoWorldId: state.activeVideoWorldId,
@@ -2713,6 +2909,7 @@ async function persistStateSnapshot() {
             worldMediaDirty = false;
         }
         await HordeDB.setMultiple(records);
+        pendingWorkspaceState = workspaceSnapshot;
         lastPersistedWorldManifests = safeJsonClone(storedWorlds);
         writeGlobalSettingsMirror(records.globalSettings);
         window.HordeRollingRecovery?.notePersisted?.();
@@ -4982,9 +5179,11 @@ async function init() {
     });
     
     renderLibrary();
-    
-    switchView('library');
-    if (!hasApiCredentials() && !state.falApiKey) showGlobalSettings();
+    // Restore the last editor or play surface before deciding whether Settings
+    // should be visible. A missing key must never steal focus from an author
+    // returning from a model-catalog refresh.
+    restoreLastWorkspace();
+    if (state.settingsOpen) showGlobalSettings();
     applyGlobalStyles();
     applyTheme();
     setupCustomizeModal();
@@ -5228,6 +5427,7 @@ function setupNavigation() {
 
 function switchView(viewName) {
     state.view = viewName;
+    persistWorkspaceSoon();
     
     // Update Nav Buttons
     const navParent = {
@@ -5639,6 +5839,8 @@ function setupStudioTabs() {
             tab.classList.add('active');
             const target = document.getElementById(`tab-${tab.dataset.tab}`);
             if (target) target.classList.remove('hidden');
+            state.lastStudioTab = tab.dataset.tab || null;
+            persistWorkspaceSoon();
         };
     });
     document.querySelectorAll('[data-chat-studio-target]').forEach(button => {
@@ -6172,7 +6374,10 @@ function createNewCharacter() {
 
 function editCharacter(id) {
     const char = state.characters.find(c => c.id === id);
+    if (!char) return;
     state.editingChar = JSON.parse(JSON.stringify(char)); // Deep clone
+    state.editingCharId = char.id;
+    persistWorkspaceSoon();
     loadStudioData();
     document.querySelector('#studio-view .studio-tab[data-tab="overview"]')?.click();
 }
@@ -10971,6 +11176,8 @@ function activateSettingsSection(sectionId, options = {}) {
     const search = document.getElementById('settings-search-input');
     const validId = SETTINGS_SECTION_LABELS[sectionId] ? sectionId : 'models';
     activeSettingsSection = validId;
+    state.settingsSection = validId;
+    persistWorkspaceSoon();
     if (options.clearSearch !== false && search) search.value = '';
     if (content) content.classList.remove('is-searching');
     document.querySelectorAll('[data-settings-section]').forEach(section => {
@@ -12098,6 +12305,10 @@ function purgeAllData() {
 function showGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) {
+        state.settingsOpen = true;
+        state.settingsSection = SETTINGS_SECTION_LABELS[state.settingsSection]
+            ? state.settingsSection : activeSettingsSection;
+        persistWorkspaceSoon();
         modal.classList.remove('hidden');
         const settingsSearch = document.getElementById('settings-search-input');
         if (settingsSearch) settingsSearch.value = '';
@@ -12200,6 +12411,8 @@ function showGlobalSettings() {
 function hideGlobalSettings() {
     const modal = document.getElementById('modal-overlay');
     if (modal) modal.classList.add('hidden');
+    state.settingsOpen = false;
+    persistWorkspaceSoon();
 }
 
 // --- Feedback ---
@@ -13067,6 +13280,8 @@ function setupWorldStudioTabs() {
             // makes a perfectly editable starter look read-only. Build only the
             // panel the author actually opens.
             renderWorldStudioPanel(target);
+            state.lastWorldStudioTab = target;
+            persistWorkspaceSoon();
         };
     });
     document.querySelectorAll('[data-world-studio-target]').forEach(button => {
@@ -13478,6 +13693,8 @@ function openWorldStudio(worldId = null) {
         // Proposals belong to the world they were generated for.
         if (calibrationPassState && calibrationPassState.worldId !== worldId) calibrationPassState = null;
         state.editingWorld = JSON.parse(JSON.stringify(world));
+        state.lastWorldStudioId = worldId;
+        persistWorkspaceSoon();
     }
 
     const w = state.editingWorld;
@@ -43717,6 +43934,7 @@ function renderIncludedHumansCatalog() {
 
 function openCompanionStudio(id) {
     state.editingCompanionId = id;
+    persistWorkspaceSoon();
     renderCompanionStudioForm();
     activateCompanionStudioTab('cs-overview');
 }
@@ -43804,6 +44022,8 @@ function setupCompanionStudioTabs() {
 }
 
 function activateCompanionStudioTab(tabName) {
+    state.lastCompanionStudioTab = tabName || null;
+    persistWorkspaceSoon();
     document.querySelectorAll('.companion-studio-tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
     });
