@@ -7,7 +7,7 @@
     function directFileError() {
         const error = new Error(
             'Embedded Tiny Brain cannot run from a file:// page because browsers block Web Workers from the null file origin. ' +
-            'Close this tab and run “Start Horde Studio” from the app folder, then use the http://127.0.0.1:43127 page it opens.'
+            'Close this tab and run “Start Horde Studio” from the app folder, then use the http://localhost:42069 page it opens.'
         );
         error.code = 'HORDE_FILE_WORKER_BLOCKED';
         return error;

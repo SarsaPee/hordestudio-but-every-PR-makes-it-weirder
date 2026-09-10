@@ -13,7 +13,7 @@
     const EMBEDDED_MARKER_KEY = 'horde_labs_embedded_model_v1';
     const NEEDLE_MARKER_KEY = 'horde_labs_needle2_v1';
 
-    const FILE_RUNTIME_MESSAGE = 'Embedded Tiny Brain needs Horde Studio’s local app server. Close this file:// tab and run “Start Horde Studio” from the app folder, then install it from the http://127.0.0.1:43127 page that opens.';
+    const FILE_RUNTIME_MESSAGE = 'Embedded Tiny Brain needs Horde Studio’s local app server. Close this file:// tab and run “Start Horde Studio” from the app folder, then install it from the http://localhost:42069 page that opens.';
 
     function embeddedMarker() {
         try {

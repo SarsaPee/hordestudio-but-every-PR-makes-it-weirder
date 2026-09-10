@@ -1115,6 +1115,7 @@ let state = {
     customHeaders: '',
     globalSettings: {
         defaultModel: 'deepseek/deepseek-v4-flash',
+        openRouterRouting: { order: [], allowFallbacks: true, fallbackSort: 'throughput' },
         bedrockRegion: 'us-east-1',
         bedrockBaseUrl: '',
         customProviderName: 'Custom API',
@@ -1838,6 +1839,9 @@ function repairLoadedState() {
     }
     state.globalSettings.falPricingVersion = 2;
     state.globalSettings.defaultModel = typeof state.globalSettings.defaultModel === 'string' ? state.globalSettings.defaultModel.slice(0, 500) : 'deepseek/deepseek-v4-flash';
+    state.globalSettings.openRouterRouting = window.HordeOpenRouterRouting?.normalize(
+        state.globalSettings.openRouterRouting
+    ) || { order: [], allowFallbacks: true, fallbackSort: 'throughput' };
     // Blank is meaningful here: it means "fall back to the world's own model".
     state.globalSettings.structuredModel = typeof state.globalSettings.structuredModel === 'string'
         ? state.globalSettings.structuredModel.trim().slice(0, 200) : '';
@@ -11060,6 +11064,7 @@ function setupGlobalSettings() {
     document.getElementById('global-settings-btn').onclick = showGlobalSettings;
     document.getElementById('close-modal-btn').onclick = hideGlobalSettings;
     setupSettingsNavigation();
+    window.HordeOpenRouterRouting?.setup?.();
     document.getElementById('stop-horde-server-btn').onclick = () => {
         showConfirmModal(
             'Stop Horde Studio server?',
@@ -11115,6 +11120,8 @@ function setupGlobalSettings() {
         if (state.customApiKey) sessionStorage.setItem('horde_custom_api_key', state.customApiKey);
         else sessionStorage.removeItem('horde_custom_api_key');
         state.globalSettings.defaultModel = document.getElementById('global-default-model').value.trim().slice(0, 500);
+        state.globalSettings.openRouterRouting = window.HordeOpenRouterRouting?.readGlobal?.()
+            || { order: [], allowFallbacks: true, fallbackSort: 'throughput' };
         state.globalSettings.editFontSize = Math.max(10, Math.min(32, parseInt(document.getElementById('edit-font-size').value) || 15));
         state.globalSettings.editFontColor = cssColor(document.getElementById('edit-font-color').value, '#ffffff');
         state.globalSettings.editBgColor = cssColor(document.getElementById('edit-bg-color').value, '#2b2b36');
@@ -11912,6 +11919,7 @@ function showGlobalSettings() {
             ? state.globalSettings.apiProvider : 'openrouter';
         document.getElementById('global-api-provider').value = provider;
         refreshSettingsProviderCards(provider);
+        window.HordeOpenRouterRouting?.openGlobalPanel?.();
         document.getElementById('global-local-url').value = state.globalSettings.localBaseUrl || '';
         document.getElementById('global-local-key').value = state.globalSettings.localApiKey || '';
         document.getElementById('global-local-generation-timeout').value = String(
