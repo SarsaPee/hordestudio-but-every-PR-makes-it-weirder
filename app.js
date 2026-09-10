@@ -154,6 +154,24 @@ const HordeDB = {
             request.onerror = () => reject(request.error || transaction.error || new Error(`Unable to read ${key}`));
         });
     },
+    // This is intentionally migration-only. Ordinary startup reads explicit
+    // upstream keys and never enumerates an Experimental Worlds record.
+    async snapshotAll() {
+        if (!this.db) throw new Error('Database is not initialized');
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([STORE_NAME], 'readonly');
+            const request = transaction.objectStore(STORE_NAME).openCursor();
+            const records = {};
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) { resolve(records); return; }
+                records[String(cursor.key)] = safeJsonClone(cursor.value);
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error || transaction.error || new Error('Unable to snapshot application records'));
+            transaction.onerror = () => reject(transaction.error || new Error('Unable to snapshot application records'));
+        });
+    },
     async set(key, value) {
         if (!this.db) throw new Error('Database is not initialized');
         return new Promise((resolve, reject) => {
@@ -3662,14 +3680,23 @@ async function loadState() {
         });
         state.worldInstances = hasExperimentalAuthority ? experimentalStored.worldInstances : (await HordeDB.get('worldInstances') || {});
         if (!hasExperimentalAuthority && window.ExperimentalWorldsRepository) {
+            // Capture the exact legacy host before the only destructive
+            // migration step. This full preimage is recovery provenance, not
+            // an Experimental runtime input; it is never opened by normal
+            // startup or included in portable backups.
+            const legacyHostPreimage = await HordeDB.snapshotAll();
             const staged = await window.ExperimentalWorldsRepository.stageLegacyImport({
                 worlds: state.worlds,
                 worldInstances: state.worldInstances,
                 activeWorldId: state.activeWorldId || storedActiveWorldId,
                 worldRecoverySnapshots: state.worldRecoverySnapshots,
                 worldMediaAssets: storedWorldMedia
-            });
-            if (staged.imported) console.info('Experimental Worlds legacy records staged and verified; legacy preimage retained.');
+            }, legacyHostPreimage);
+            if (staged.imported) {
+                const cutOver = await finalizeExperimentalLegacyCutover();
+                if (!cutOver) throw new Error('Experimental Worlds migration did not complete its verified ownership cutover; legacy World records were retained.');
+                console.info('Experimental Worlds legacy records staged, read back, and removed from the active host authority.');
+            }
         }
         state.videoWorlds = await HordeDB.get('videoWorlds') || [];
         state.videoWorldSessions = await HordeDB.get('videoWorldSessions') || {};
@@ -4287,7 +4314,12 @@ async function finalizeExperimentalLegacyCutover() {
     const repository = window.ExperimentalWorldsRepository;
     const journal = await repository?.migrationJournal?.();
     if (!journal || journal.status === 'legacy-host-records-removed') return false;
-    if (journal.status !== 'staged-and-verified' || !journal.legacyPreimage || !journal.stagedDigest) return false;
+    if (journal.status !== 'staged-and-verified' || !journal.legacyPreimage || !journal.stagedDigest
+        || !journal.legacyHostPreimage || !journal.legacyHostPreimageDigest) return false;
+    const preservedHostDigest = await repository.digest(journal.legacyHostPreimage);
+    if (preservedHostDigest !== journal.legacyHostPreimageDigest) {
+        throw new Error('Experimental Worlds migration host preimage checksum changed; legacy World records were retained.');
+    }
     const restored = await repository.snapshot();
     const restoredDigest = await repository.digest({
         worlds: restored.worlds, worldInstances: restored.worldInstances,

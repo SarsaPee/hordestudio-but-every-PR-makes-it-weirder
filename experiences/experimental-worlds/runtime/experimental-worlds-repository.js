@@ -111,15 +111,21 @@
         }
         return actualDigest;
     }
-    async function stageLegacyImport(legacy) {
+    async function stageLegacyImport(legacy, legacyHostPreimage = {}) {
         const current = await snapshot();
         if (current.worlds.length || await get('migrationJournal')) return { imported: false, snapshot: current };
         const preimage = snapshotData(legacy);
         const staged = await writeSnapshot(preimage, 'legacy-import-stage');
         const stagedDigest = await verifiedSnapshot(preimage, 'legacy import');
+        const hostPreimage = clone(legacyHostPreimage || {});
         await setMany({ migrationJournal: {
             version: 1, status: 'staged-and-verified', at: new Date().toISOString(),
             legacyPreimage: preimage, legacyPreimageDigest: await digest(preimage),
+            // This exact host snapshot is immutable recovery provenance for
+            // the one-time World ownership move. It is deliberately not part
+            // of snapshot(), normal startup, or portable backup manifests.
+            legacyHostPreimage: hostPreimage,
+            legacyHostPreimageDigest: await digest(hostPreimage),
             stagedDigest, importedGeneration: staged.generation
         } });
         return { imported: true, snapshot: staged };
