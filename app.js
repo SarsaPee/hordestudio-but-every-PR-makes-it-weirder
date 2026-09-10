@@ -4039,6 +4039,38 @@ async function getOpenRouterModels(force = false) {
     return openRouterModels;
 }
 
+// Model names are commonly remembered as separate family and version words
+// (for example "flash 3.8" rather than the catalog's "Gemini 3.8 Flash").
+// Treat whitespace as an AND query so the order the author remembers does not
+// determine whether a model is discoverable.
+function modelSearchTerms(query) {
+    return String(query || '').toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+}
+
+function matchesModelSearch(candidate, query) {
+    const terms = modelSearchTerms(query);
+    if (!terms.length) return true;
+    const text = typeof candidate === 'string'
+        ? candidate
+        : [candidate?.name, candidate?.label, candidate?.id, candidate?.value, candidate?.description, candidate?.meta]
+            .filter(Boolean).join(' ');
+    const searchable = text.toLocaleLowerCase();
+    return terms.every(term => searchable.includes(term));
+}
+
+function compareModelPickerAlphabetically(left, right) {
+    const leftName = String(left?.name || left?.label || left?.id || left?.value || '');
+    const rightName = String(right?.name || right?.label || right?.id || right?.value || '');
+    return leftName.localeCompare(rightName, undefined, { sensitivity: 'base', numeric: true })
+        || String(left?.id || left?.value || '').localeCompare(String(right?.id || right?.value || ''), undefined, {
+            sensitivity: 'base', numeric: true
+        });
+}
+
+function alphabetizeModelPicker(models) {
+    return [...(Array.isArray(models) ? models : [])].sort(compareModelPickerAlphabetically);
+}
+
 function verifyModelCapabilities(model, prefix) {
     const badge = document.getElementById(prefix + 'builder-verification-badge');
     const card = document.getElementById(prefix + 'builder-verification-card');
@@ -4158,14 +4190,7 @@ async function setupSearchableDropdown(prefix) {
     function renderResults(models, query) {
         resultsDiv.innerHTML = '';
         
-        let filtered = models;
-        if (query) {
-            const q = query.toLowerCase();
-            filtered = models.filter(m => 
-                m.id.toLowerCase().includes(q) || 
-                m.name.toLowerCase().includes(q)
-            );
-        }
+        const filtered = alphabetizeModelPicker(models).filter(model => matchesModelSearch(model, query));
 
         const displayList = filtered.slice(0, 50);
 
@@ -4226,14 +4251,7 @@ async function setupConfigSearchableDropdown(prefix) {
     function renderResults(models, query) {
         resultsDiv.innerHTML = '';
         
-        let filtered = models;
-        if (query) {
-            const q = query.toLowerCase();
-            filtered = models.filter(m => 
-                m.id.toLowerCase().includes(q) || 
-                m.name.toLowerCase().includes(q)
-            );
-        }
+        const filtered = alphabetizeModelPicker(models).filter(model => matchesModelSearch(model, query));
 
         const displayList = filtered.slice(0, 50);
 
@@ -14715,8 +14733,8 @@ async function renderWorldVisualModelSearch(world, force = false) {
     }
     if (renderId !== worldVisualModelSearchRenderId || state.editingWorld?.id !== world.id) return;
     const query = input.value.trim().toLowerCase();
-    const matches = models.filter(model => !query
-        || `${model.name || ''} ${model.id || ''}`.toLowerCase().includes(query)).slice(0, 60);
+    const matches = alphabetizeModelPicker(models)
+        .filter(model => matchesModelSearch(model, query)).slice(0, 60);
     const options = matches.map(model => ({
         value: model.id,
         label: model.name || model.id,
@@ -41161,9 +41179,7 @@ function rankCompanionImageModels(models, providerId = state.globalSettings.apiP
         price: Array.isArray(model.pricing)
             ? (Number(model.pricing.find(line => line?.billable === 'output_image' && line?.unit === 'image')?.cost_usd) || null)
             : null
-    })).sort((a, b) =>
-        Number(b.supportsReference === true) - Number(a.supportsReference === true)
-        || (a.price ?? 999) - (b.price ?? 999));
+    })).sort(compareModelPickerAlphabetically);
 }
 
 function modelSupportsImageReferences(model) {
@@ -43646,8 +43662,7 @@ function setupCompanionSearchableFields() {
             value: model.id,
             label: model.name,
             meta: `${model.id}${model.supportsTools ? ' · tools' : ''}`
-        }))].filter(option =>
-            !query || `${option.label} ${option.meta}`.toLowerCase().includes(query)).slice(0, 60);
+        }))].filter(option => matchesModelSearch(option, query)).slice(0, 60);
         renderCompanionSearchResults(builderResults, options, option => {
             builderInput.value = option.value;
             setCompanionSearchOpen(builderInput, builderResults, false);
@@ -43682,7 +43697,7 @@ function setupCompanionSearchableFields() {
             label: model.name,
             meta: `${model.id}${model.supportsJSON ? ' · structured output' : ''}`
         }))].filter(option =>
-            !query || `${option.label} ${option.meta}`.toLowerCase().includes(query)
+            matchesModelSearch(option, query)
         ).slice(0, 60);
         renderCompanionSearchResults(lifeBuilderResults, options, option => {
             lifeBuilderInput.value = option.value;
@@ -43863,7 +43878,7 @@ function setupCatalogModelSearchFields() {
                 }).map(model => ({ id: model.id, name: model.name || model.id }))
                 : rankCompanionTextModels(rawModels);
             const query = input.value.trim().toLowerCase();
-            const options = [
+            const options = alphabetizeModelPicker([
                 ...(definition.blankLabel ? [{ value: '', label: definition.blankLabel, meta: 'Automatic' }] : []),
                 ...models.map(model => ({
                     value: model.id,
@@ -43871,8 +43886,7 @@ function setupCatalogModelSearchFields() {
                     meta: model.id,
                     model: definition.rich ? model : null
                 }))
-            ].filter(option =>
-                !query || `${option.label} ${option.meta}`.toLowerCase().includes(query)).slice(0, 60);
+            ]).filter(option => matchesModelSearch(option, query)).slice(0, 60);
             renderCompanionSearchResults(results, options, option => {
                 input.value = option.value;
                 setCompanionSearchOpen(input, results, false);
@@ -45342,16 +45356,11 @@ function rankCompanionTextModels(models) {
                 maxOutput: Number(model?.top_provider?.max_completion_tokens) || 0
             };
         })
-        .sort((a, b) =>
-            Number(b.supportsTools) - Number(a.supportsTools)
-            || Number(b.supportsJSON) - Number(a.supportsJSON)
-            || (a.promptPrice ?? Number.POSITIVE_INFINITY) - (b.promptPrice ?? Number.POSITIVE_INFINITY)
-            || a.name.localeCompare(b.name))
+        .sort(compareModelPickerAlphabetically)
         .slice(0, 500);
 }
 
-function rankCompanionObserverModels(models) {
-    return [...(Array.isArray(models) ? models : [])].sort((left, right) => {
+function compareCompanionObserverRecommendation(left, right) {
         const structuredLeft = Number(left.supportsTools) + Number(left.supportsJSON);
         const structuredRight = Number(right.supportsTools) + Number(right.supportsJSON);
         const size = model => {
@@ -45361,8 +45370,11 @@ function rankCompanionObserverModels(models) {
         return structuredRight - structuredLeft
             || (left.promptPrice ?? Number.POSITIVE_INFINITY) - (right.promptPrice ?? Number.POSITIVE_INFINITY)
             || size(left) - size(right)
-            || left.name.localeCompare(right.name);
-    });
+            || compareModelPickerAlphabetically(left, right);
+}
+
+function rankCompanionObserverModels(models) {
+    return alphabetizeModelPicker(models);
 }
 
 function updateCompanionObserverModelOptions(companion, catalog = companionTextModelCatalog) {
@@ -45370,10 +45382,11 @@ function updateCompanionObserverModelOptions(companion, catalog = companionTextM
     const hint = document.getElementById('cs-observer-model-hint');
     if (!input || !hint) return;
     const ranked = rankCompanionObserverModels(catalog);
-    const recommended = ranked.find(model => model.supportsTools || model.supportsJSON) || ranked[0] || null;
+    const recommended = [...ranked].sort(compareCompanionObserverRecommendation)
+        .find(model => model.supportsTools || model.supportsJSON) || ranked[0] || null;
     if (!companion.observerModel && recommended) input.placeholder = `Recommended: ${recommended.id}`;
     hint.textContent = recommended
-        ? `Recommended for private state: ${recommended.name}. Structured-output models are ranked first, then lower input cost and size. Blank inherits the Life Architect or conversation model.`
+        ? `Recommended for private state: ${recommended.name}. The list is alphabetical; capability badges show structured-output support. Blank inherits the Life Architect or conversation model.`
         : 'Use a small, fast model with reliable tool/JSON output. Blank inherits the Life Architect or conversation model.';
     const results = document.getElementById('cs-observer-model-results');
     if (results && !results.classList.contains('hidden')) {
@@ -45386,9 +45399,8 @@ function renderCompanionObserverModelResults(companion, open = true) {
     const results = document.getElementById('cs-observer-model-results');
     if (!input || !results || !companion) return;
     const query = String(input.value || '').trim().toLowerCase();
-    const ranked = rankCompanionObserverModels(companionTextModelCatalog).filter(model =>
-        !query || `${model.name} ${model.id} ${model.description}`.toLowerCase().includes(query)
-    ).slice(0, 80);
+    const ranked = rankCompanionObserverModels(companionTextModelCatalog)
+        .filter(model => matchesModelSearch(model, query)).slice(0, 80);
     const items = [
         { value: '', label: 'Use Life Architect or conversation model', meta: 'Automatic' },
         ...ranked.map(model => ({ value: model.id, label: model.name || model.id, meta: model.id, model }))
@@ -45497,9 +45509,7 @@ function renderCompanionTextModelResults(companion) {
     const search = document.getElementById('cs-text-model-search');
     if (!results) return;
     const query = String(search?.value || '').trim().toLowerCase();
-    const matches = companionTextModelCatalog.filter(model =>
-        !query || `${model.name} ${model.id} ${model.description}`.toLowerCase().includes(query)
-    );
+    const matches = companionTextModelCatalog.filter(model => matchesModelSearch(model, query));
     const visible = matches.slice(0, 100);
     if (!visible.length) {
         results.innerHTML = '<div class="vh-model-empty">No text models match this search. Try a provider name, family, or exact model ID.</div>';
