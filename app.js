@@ -3409,6 +3409,10 @@ function restoreLastWorkspace() {
 
 async function loadState() {
     await HordeDB.init();
+    await window.ExperimentalWorldsRepository?.init?.();
+    const experimentalStored = await window.ExperimentalWorldsRepository?.snapshot?.() || null;
+    const experimentalJournal = await window.ExperimentalWorldsRepository?.migrationJournal?.() || null;
+    const hasExperimentalAuthority = !!(experimentalJournal || experimentalStored?.worlds?.length);
     await HordeVectorMemory.init();
     pendingWorkspaceState = await loadWorkspaceState();
     applyWorkspaceState(pendingWorkspaceState);
@@ -3563,9 +3567,9 @@ async function loadState() {
         state.systemPresets = await HordeDB.get('systemPresets') || [];
         state.roleplayOSSources = normalizeRoleplayOSSourceRegistry(await HordeDB.get('roleplayOSSources') || []);
         state.regexScripts = await HordeDB.get('regexScripts') || [];
-        state.worlds = await HordeDB.get('worlds') || [];
+        state.worlds = hasExperimentalAuthority ? experimentalStored.worlds : (await HordeDB.get('worlds') || []);
         lastPersistedWorldManifests = safeJsonClone(state.worlds);
-        const storedActiveWorldId = await HordeDB.get('activeWorldId') || null;
+        const storedActiveWorldId = hasExperimentalAuthority ? experimentalStored.activeWorldId : (await HordeDB.get('activeWorldId') || null);
         // A valid last World from the workspace snapshot is the proper
         // reload target. Only fall back to the legacy ID when that newer
         // selection is absent or no longer exists, so a physical reload of a
@@ -3574,15 +3578,25 @@ async function loadState() {
             && workspaceEntityExists(state.worlds, storedActiveWorldId)) {
             state.activeWorldId = storedActiveWorldId;
         }
-        state.worldRecoverySnapshots = await HordeDB.get('worldRecoverySnapshots') || {};
+        state.worldRecoverySnapshots = hasExperimentalAuthority ? experimentalStored.worldRecoverySnapshots : (await HordeDB.get('worldRecoverySnapshots') || {});
         if (!isPlainObject(state.worldRecoverySnapshots)) state.worldRecoverySnapshots = {};
-        const storedWorldMedia = await HordeDB.get('worldMediaAssets') || {};
+        const storedWorldMedia = hasExperimentalAuthority ? experimentalStored.worldMediaAssets : (await HordeDB.get('worldMediaAssets') || {});
         state.worlds.forEach(world => {
             const separateAssets = Array.isArray(storedWorldMedia[world.id]) ? storedWorldMedia[world.id] : null;
             if (separateAssets) world.mediaAssets = separateAssets;
             else if ((world.mediaAssets || []).length) worldMediaDirty = true; // migrate early embedded builds
         });
-        state.worldInstances = await HordeDB.get('worldInstances') || {};
+        state.worldInstances = hasExperimentalAuthority ? experimentalStored.worldInstances : (await HordeDB.get('worldInstances') || {});
+        if (!hasExperimentalAuthority && window.ExperimentalWorldsRepository) {
+            const staged = await window.ExperimentalWorldsRepository.stageLegacyImport({
+                worlds: state.worlds,
+                worldInstances: state.worldInstances,
+                activeWorldId: state.activeWorldId || storedActiveWorldId,
+                worldRecoverySnapshots: state.worldRecoverySnapshots,
+                worldMediaAssets: storedWorldMedia
+            });
+            if (staged.imported) console.info('Experimental Worlds legacy records staged and verified; legacy preimage retained.');
+        }
         state.videoWorlds = await HordeDB.get('videoWorlds') || [];
         state.videoWorldSessions = await HordeDB.get('videoWorldSessions') || {};
         state.activeVideoWorldId = await HordeDB.get('activeVideoWorldId') || null;
@@ -4134,6 +4148,21 @@ async function persistStateSnapshot() {
             // the coalesced follow-up pass will preserve that newer payload.
             worldMediaDirty = false;
         }
+        const previousExperimental = await window.ExperimentalWorldsRepository?.snapshot?.();
+        await window.ExperimentalWorldsRepository?.writeSnapshot?.({
+            worlds: storedWorlds,
+            worldRecoverySnapshots: state.worldRecoverySnapshots,
+            worldInstances: state.worldInstances,
+            activeWorldId: state.activeWorldId,
+            worldMediaAssets: savingWorldMedia ? records.worldMediaAssets : (previousExperimental?.worldMediaAssets || {})
+        }, 'host-save');
+        // Experimental World records have their own authority. Do not let the
+        // normal Horde writer enumerate, normalize or overwrite them.
+        delete records.worlds;
+        delete records.worldRecoverySnapshots;
+        delete records.worldInstances;
+        delete records.activeWorldId;
+        delete records.worldMediaAssets;
         await HordeDB.setMultiple(records);
         pendingWorkspaceState = workspaceSnapshot;
         lastPersistedWorldManifests = safeJsonClone(storedWorlds);

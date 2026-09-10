@@ -65,5 +65,25 @@
         await setMany(next);
         return next;
     }
-    global.ExperimentalWorldsRepository = Object.freeze({ DB_NAME, init, get, setMany, snapshot, writeSnapshot });
+    function canonical(value) { return JSON.stringify(value); }
+    async function stageLegacyImport(legacy) {
+        const current = await snapshot();
+        if (current.worlds.length || await get('migrationJournal')) return { imported: false, snapshot: current };
+        const preimage = clone(legacy);
+        const staged = await writeSnapshot(legacy, 'legacy-import-stage');
+        const readback = await snapshot();
+        if (canonical({ ...readback, generation: undefined, lastWrite: undefined })
+            !== canonical({ ...staged, generation: undefined, lastWrite: undefined })) {
+            throw new Error('Experimental Worlds staged import did not read back exactly; legacy records were left untouched.');
+        }
+        await setMany({ migrationJournal: {
+            version: 1, status: 'staged-and-verified', at: new Date().toISOString(),
+            legacyPreimage: preimage, importedGeneration: staged.generation
+        } });
+        return { imported: true, snapshot: staged };
+    }
+    async function migrationJournal() { return await get('migrationJournal') || null; }
+    global.ExperimentalWorldsRepository = Object.freeze({
+        DB_NAME, init, get, setMany, snapshot, writeSnapshot, stageLegacyImport, migrationJournal
+    });
 })(window);
