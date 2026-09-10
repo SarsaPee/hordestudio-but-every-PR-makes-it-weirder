@@ -8,8 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const { app } = require('./app_source.js');
 
 // Lexer-aware span matcher: skips strings, template literals, line/block
 // comments, and regex literals (the naive quote-only scanner used by older

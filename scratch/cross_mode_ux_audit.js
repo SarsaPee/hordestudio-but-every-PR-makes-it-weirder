@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { app } = require('./app_source.js');
 
 const html = fs.readFileSync('index.html', 'utf8');
 const css = fs.readFileSync('style.css', 'utf8');
-const app = fs.readFileSync('app.js', 'utf8');
 let passed = 0;
 function test(name, check) {
     check();
@@ -100,8 +100,8 @@ test('large worlds use searchable card directories and full-record modals', () =
 test('World Studio creates canonical people instead of storing click events as entity types', () => {
     assert(app.includes("document.getElementById('add-entity-btn').onclick = () => addWorldEntity('npc')"));
     assert(app.includes("document.getElementById('add-entity-btn-bottom').onclick = () => addWorldEntity('npc')"));
-    assert(app.includes("const entityType = type === 'item' ? 'item' : 'npc'"));
-    assert(app.includes("entity.type = ['item', 'object', 'prop'].includes(authoredType) ? 'item' : 'npc'"));
+    assert(app.includes("const entityType = ['item', 'vehicle'].includes(type) ? type : 'npc'"));
+    assert(app.includes("entity.type = ['item', 'object', 'prop'].includes(authoredType) ? 'item' : authoredType === 'vehicle' ? 'vehicle' : 'npc'"));
     assert(!app.includes("document.getElementById('add-entity-btn').onclick = addWorldEntity"));
 });
 
@@ -115,7 +115,7 @@ test('world inspectors use explicit tab ownership instead of DOM position guesse
 test('world references use stable canonical ids behind editable names', () => {
     assert(app.includes('function normalizeWorldDirectoryData('));
     assert(app.includes('record.targetLocationId = target.id'));
-    assert(app.includes('value="${escapeHTML(location.id)}"'));
+    assert(app.includes('value="${experimentalEscapeHTML(location.id)}"'));
     assert(app.includes('function removeWorldLocationRecord('));
 });
 

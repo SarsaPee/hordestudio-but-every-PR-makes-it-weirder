@@ -8,7 +8,9 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+// Pass 1 relocated the semantic map with the Experimental World Studio.
+// Keep this stress test anchored to the owning source, not the host bootstrap.
+const app = fs.readFileSync(path.join(root, 'experiences', 'experimental-worlds', 'runtime', 'world-studio-core.js'), 'utf8');
 const start = app.indexOf('const WORLD_MAP_TYPES');
 const end = app.indexOf('function focusWorldLocationCard', start);
 assert(start >= 0 && end > start, 'Semantic map engine source was not found');

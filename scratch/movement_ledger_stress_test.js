@@ -7,8 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { performance } = require('node:perf_hooks');
-
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const { app } = require('./app_source.js');
 
 function functionSource(name) {
     const start = app.indexOf(`function ${name}(`);
@@ -81,7 +80,7 @@ const context = {
     RegExp,
     JSON,
     parseInt,
-    showToast(message) { toasts.push(message); },
+    ExperimentalWorldsHost: { notify(message) { toasts.push(message); } },
     rollForScenePopulation() {},
     normalizePlayerRulesState() { return { status: 'active', conditions: [] }; },
     resolveNpcId(world, ref) {
@@ -99,8 +98,8 @@ const context = {
         return world.locations.find(location =>
             location.id.toLowerCase() === query || location.name.toLowerCase() === query) || null;
     },
-    isPlainObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); },
-    safeJsonClone(value) { return JSON.parse(JSON.stringify(value)); },
+    experimentalIsPlainObject(value) { return !!value && typeof value === 'object' && !Array.isArray(value); },
+    experimentalSafeJsonClone(value) { return JSON.parse(JSON.stringify(value)); },
     bumpMemoryEpoch() {}
 };
 vm.createContext(context);

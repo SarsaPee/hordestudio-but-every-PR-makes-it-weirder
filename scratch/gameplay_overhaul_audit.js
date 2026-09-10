@@ -3,10 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const { app } = require('./app_source.js');
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '..', 'style.css'), 'utf8');
+const experimentalIntelligenceSource = fs.readFileSync(path.join(__dirname, '..', 'experiences', 'experimental-worlds', 'runtime', 'world-intelligence-core.js'), 'utf8');
 
 function functionSource(name) {
     const start = app.indexOf(`function ${name}(`);
@@ -40,8 +40,8 @@ test('snapshots contain only timeline-owned dynamic characters', () => {
     const end = app.indexOf('function addWorldMessage', start);
     const context = {
         structuredClone, JSON,
-        safeJsonClone: value => JSON.parse(JSON.stringify(value)),
-        isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+        experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value)),
+        experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
         bumpMemoryEpoch() {}
     };
     vm.runInNewContext(`${app.slice(start, end)}\nthis.captureWorldTurnState = captureWorldTurnState; this.restoreWorldTurnState = restoreWorldTurnState;`, context);
@@ -80,7 +80,7 @@ test('pending rolls are queued, block later actions and use engine identities', 
 test('resources are not rollable by default and custom stat mechanics are editable', () => {
     const start = app.indexOf('function worldStatRollConfig');
     const end = app.indexOf('function worldRuleProfileDescription', start);
-    const context = { isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value) };
+    const context = { experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value) };
     vm.runInNewContext(`${app.slice(start, end)}\nthis.config = worldStatRollConfig;`, context);
     assert.equal(context.config({ id: 'hp', name: 'Health' }).enabled, false);
     assert.equal(context.config({ id: 'cash', name: 'Cash' }).enabled, false);
@@ -92,7 +92,7 @@ test('resources are not rollable by default and custom stat mechanics are editab
 
 test('hard reset reseeds authored systems and invalidates background work', () => {
     const source = functionSource('resetWorldTimeline');
-    assert(source.includes('scheduledEvents: safeJsonClone'));
+    assert(source.includes('scheduledEvents: experimentalSafeJsonClone'));
     assert(source.includes('turnEvents: []'));
     assert(source.includes('worldTurnReceipts: []'));
     assert(source.includes('pendingChecks: []'));
@@ -102,7 +102,9 @@ test('hard reset reseeds authored systems and invalidates background work', () =
 });
 
 test('late World Agent responses cannot enter a changed timeline', () => {
-    const source = functionSource('runWorldAgent');
+    const start = experimentalIntelligenceSource.indexOf('async function runWorldAgent');
+    assert(start >= 0, 'Experimental World Agent source must remain mode-owned');
+    const source = experimentalIntelligenceSource.slice(start, experimentalIntelligenceSource.indexOf('\n}', start) + 2);
     assert(source.includes('const startEpoch'));
     assert(source.includes('timelineStillExists'));
     assert(source.includes('discarded stale World Agent response'));
@@ -110,9 +112,9 @@ test('late World Agent responses cannot enter a changed timeline', () => {
 
 test('lore supports delimiter-free keywords with token boundaries', () => {
     const context = { Set, RegExp, String };
-    const start = app.indexOf('function parseLoreKeywords');
-    const end = app.indexOf('async function buildContext', start);
-    vm.runInNewContext(`${app.slice(start, end)}\nthis.parse = parseLoreKeywords; this.matches = loreKeywordMatches;`, context);
+    const start = app.indexOf('global.experimentalParseLoreKeywords');
+    const end = app.indexOf('global.experimentalRenderSearchResults', start);
+    vm.runInNewContext(`const global = this;\n${app.slice(start, end)}\nthis.parse = experimentalParseLoreKeywords; this.matches = experimentalLoreKeywordMatches;`, context);
     assert.deepEqual(Array.from(context.parse('succession crown queen prince')), ['succession', 'crown', 'queen', 'prince']);
     assert.equal(context.matches('the queen arrived', 'queen'), true);
     assert.equal(context.matches('a sequence began', 'queen'), false);

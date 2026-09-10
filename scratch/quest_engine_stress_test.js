@@ -6,16 +6,16 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { app } = require('./app_source.js');
 
 const root = path.resolve(__dirname, '..');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const start = app.indexOf("const QUEST_STATUSES = new Set(");
 const end = app.indexOf('async function createNewWorldSession', start);
 assert(start >= 0 && end > start, 'Quest engine source block not found');
 
 const context = {
     console,
-    showToast() {},
+    ExperimentalWorldsHost: { notify() {} },
     __questModules: {
         stats: true, health: true, conditions: true, checks: true,
         inventory: true, commerce: true, quests: true, relationships: true,
@@ -24,8 +24,12 @@ const context = {
     normalizeWorldGameRules() {
         return { modules: context.__questModules };
     },
-    isPlainObject(value) {
+    experimentalIsPlainObject(value) {
         return value !== null && typeof value === 'object' && !Array.isArray(value);
+    },
+    scenePulseQuestUrgency(value) {
+        const urgency = String(value || '').trim().toLowerCase();
+        return ['critical', 'high', 'moderate', 'low', 'resolved'].includes(urgency) ? urgency : 'moderate';
     },
     getLocationRef(world, query) {
         const key = String(query || '').trim().toLowerCase();

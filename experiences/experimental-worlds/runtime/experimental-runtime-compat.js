@@ -117,6 +117,24 @@
         return fallback;
     };
 
+    // World lore is evaluated inside the Experimental prompt compiler.  Keep
+    // the exact existing tokenization and boundary semantics private so a
+    // future host Chat/lore change cannot change World recall.
+    global.experimentalParseLoreKeywords = function experimentalParseLoreKeywords(value) {
+        const text = String(value || '').trim();
+        if (!text) return [];
+        const parts = /[,;\n|]/.test(text)
+            ? text.split(/[,;\n|]+/)
+            : (text.match(/"[^"]+"|'[^']+'|[^\s]+/g) || []);
+        return [...new Set(parts.map(item => item.replace(/^['"]|['"]$/g, '').trim().toLowerCase()).filter(Boolean))].slice(0, 80);
+    };
+
+    global.experimentalLoreKeywordMatches = function experimentalLoreKeywordMatches(haystack, keyword) {
+        const escaped = String(keyword || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (!escaped) return false;
+        return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(haystack);
+    };
+
     // This is the existing Horde markdown treatment copied into the private
     // Experimental closure.  World narration therefore keeps its authored
     // rendering behaviour when ordinary Chat is absent.

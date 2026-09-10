@@ -6325,8 +6325,8 @@ async function executeWorldTurn(commandOrReroll = null) {
         ].join(' ').toLowerCase();
         world.lorebook.forEach(entry => {
             if (!entry.keyword || !entry.text) return;
-            const keywords = parseLoreKeywords(entry.keyword);
-            if (keywords.some(keyword => loreKeywordMatches(combinedContext, keyword))) {
+            const keywords = experimentalParseLoreKeywords(entry.keyword);
+            if (keywords.some(keyword => experimentalLoreKeywordMatches(combinedContext, keyword))) {
                 relevantLore += `\n[LORE: ${entry.keyword}] ${entry.text}`;
             }
         });

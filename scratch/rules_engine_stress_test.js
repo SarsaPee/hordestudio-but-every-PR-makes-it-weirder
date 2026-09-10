@@ -6,8 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-
-const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const { app } = require('./app_source.js');
 
 function functionSource(name) {
     const start = app.indexOf(`function ${name}(`);
@@ -58,11 +57,11 @@ const context = {
         },
         getElementById(id) { return context.__controls[id] || null; }
     },
-    isPlainObject(value) {
+    experimentalIsPlainObject(value) {
         return !!value && typeof value === 'object' && !Array.isArray(value);
     },
-    cssColor(value, fallback) { return String(value || fallback); },
-    showToast(message) { toasts.push(message); },
+    experimentalCssColor(value, fallback) { return String(value || fallback); },
+    ExperimentalWorldsHost: { notify(message) { toasts.push(message); } },
     queueEngineEvent(session, text) {
         session.engineEvents = session.engineEvents || [];
         if (!session.engineEvents.includes(text)) session.engineEvents.push(text);
