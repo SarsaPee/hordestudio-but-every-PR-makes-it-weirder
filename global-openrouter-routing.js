@@ -65,6 +65,9 @@ const OPENROUTER_ROUTE_CHAINS = Object.freeze({
     // still the right *preference*; it is a background scope, so fallbacks are
     // force-enabled and a foreign structured model relaxes the pin anyway.
     receiptRepair: ['receiptRepair', 'world', 'global'],
+    // Virtual Human conversation traffic may pin a route for that person
+    // without changing the shared Settings policy.
+    companion: ['companion', 'global'],
     utility: ['availability']
 });
 
@@ -82,6 +85,9 @@ function storedOpenRouterRoutingForLink(link, owner) {
     }
     if (link === 'receiptRepair') {
         return normalizeOpenRouterRouting(owner?.receiptRepairRouting, { allowNull: true });
+    }
+    if (link === 'companion') {
+        return normalizeOpenRouterRouting(owner?.openRouterRouting, { allowNull: true });
     }
     if (link === 'worldAgent') {
         return normalizeOpenRouterRouting(owner?.worldAgent?.openRouterRouting, { allowNull: true });
@@ -101,7 +107,7 @@ function effectiveOpenRouterRouting(owner = null, scope = 'default') {
     for (const link of chain) {
         // Owner-scoped links are unavailable on ownerless calls; skip to the
         // next link rather than collapsing straight to global.
-        if (!owner && ['world', 'worldAgent', 'sidecar', 'receiptRepair'].includes(link)) continue;
+        if (!owner && ['world', 'worldAgent', 'sidecar', 'receiptRepair', 'companion'].includes(link)) continue;
         const resolved = storedOpenRouterRoutingForLink(link, owner);
         if (resolved) return resolved;
     }
@@ -171,6 +177,13 @@ function openRouterRoutingPanelDefinition(scope) {
             owner: () => null,
             stored: () => state.globalSettings.openRouterRouting
         },
+        companion: {
+            hostId: 'cs-openrouter-routing',
+            modelId: 'cs-text-model',
+            inheritLabel: 'Inherit global routing',
+            owner: () => getCompanion(state.editingCompanionId),
+            stored: () => getCompanion(state.editingCompanionId)?.openRouterRouting
+        },
         character: {
             hostId: 'character-openrouter-routing',
             modelId: 'studio-model',
@@ -226,6 +239,10 @@ function openRouterRoutingModel(scope) {
     const definition = openRouterRoutingPanelDefinition(scope);
     const selected = String(document.getElementById(definition?.modelId)?.value || '').trim();
     if (selected) return selected;
+    if (scope === 'companion') {
+        const companion = definition?.owner?.();
+        return String(companion?.model || state.globalSettings.defaultModel || '').trim();
+    }
     if (scope === 'worldAgent') {
         return String(document.getElementById('w-studio-model')?.value
             || state.editingWorld?.model || state.globalSettings.defaultModel || '').trim();
@@ -247,6 +264,8 @@ function openRouterRoutingVisible(scope) {
     }
     const selected = scope === 'global'
         ? document.getElementById('global-api-provider')?.value
+        : scope === 'companion'
+            ? companionTextProviderId(openRouterRoutingPanelDefinition(scope)?.owner?.())
         : scope === 'sidecar'
             ? (document.getElementById('w-sidecar-provider')?.value || state.globalSettings.apiProvider)
             : state.globalSettings.apiProvider;
@@ -290,6 +309,27 @@ function readOpenRouterRoutingPanel(scope) {
         ...draft.routing,
         model: openRouterRoutingModel(scope)
     });
+}
+
+// The Virtual Human editor keeps its draft live in the current companion just
+// like its other studio controls. It is persisted only when the user saves the
+// human, never by writing through to the shared Settings route.
+function persistOpenRouterRoutingDraft(scope) {
+    if (scope !== 'companion') return;
+    const owner = openRouterRoutingPanelDefinition(scope)?.owner?.();
+    if (owner) owner.openRouterRouting = readOpenRouterRoutingPanel(scope);
+}
+
+function markOpenRouterRoutingModelChanged(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    if (!draft) return;
+    draft.endpoints = [];
+    draft.endpointsLoaded = false;
+    draft.tests.clear();
+    draft.status = 'Model changed. Refresh Providers to update endpoint metadata.';
+    draft.statusKind = 'warn';
+    persistOpenRouterRoutingDraft(scope);
+    renderOpenRouterRoutingPanel(scope);
 }
 
 function openRouterRoutingDraftValue(scope) {
@@ -469,6 +509,7 @@ function addOpenRouterProvider(scope, slug) {
         draft.routing.order.push(clean);
     }
     draft.search = '';
+    persistOpenRouterRoutingDraft(scope);
     renderOpenRouterRoutingPanel(scope);
 }
 
@@ -481,6 +522,7 @@ function moveOpenRouterProvider(scope, sourceSlug, targetSlug) {
     if (from < 0 || to < 0) return;
     order.splice(to, 0, order.splice(from, 1)[0]);
     draft.routing.order = order;
+    persistOpenRouterRoutingDraft(scope);
     renderOpenRouterRoutingPanel(scope);
 }
 
@@ -541,16 +583,19 @@ function renderOpenRouterRoutingPanel(scope) {
         draft.inherit = inherit.checked;
         if (!draft.inherit) draft.routing = normalizeOpenRouterRouting(openRouterRoutingParent(scope));
         draft.tests.clear();
+        persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
     };
     const fallback = host.querySelector('[data-or-fallback]');
     if (fallback) fallback.onchange = () => {
         draft.routing.allowFallbacks = fallback.checked;
+        persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
     };
     const sort = host.querySelector('[data-or-sort]');
     if (sort) sort.onchange = () => {
         draft.routing.fallbackSort = OPENROUTER_ROUTING_SORTS.includes(sort.value) ? sort.value : 'throughput';
+        persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
     };
     const search = host.querySelector('[data-or-search]');
@@ -570,6 +615,7 @@ function renderOpenRouterRoutingPanel(scope) {
         button.onclick = () => {
             draft.routing.order = draft.routing.order.filter(slug => slug !== button.dataset.orRemove);
             if (!draft.routing.order.length) draft.routing.allowFallbacks = true;
+            persistOpenRouterRoutingDraft(scope);
             renderOpenRouterRoutingPanel(scope);
         };
     });
@@ -699,19 +745,11 @@ function renderAllOpenRouterRoutingPanels() {
 function setupOpenRouterRouting() {
     const provider = document.getElementById('global-api-provider');
     if (provider) provider.addEventListener('change', renderAllOpenRouterRoutingPanels);
-    ['global', 'character', 'room', 'world', 'worldAgent'].forEach(scope => {
+    ['global', 'character', 'room', 'world', 'worldAgent', 'companion'].forEach(scope => {
         const definition = openRouterRoutingPanelDefinition(scope);
         const modelInput = document.getElementById(definition?.modelId);
         if (modelInput) modelInput.addEventListener('change', () => {
-            const draft = openRouterRoutingDrafts.get(scope);
-            if (draft) {
-                draft.endpoints = [];
-                draft.endpointsLoaded = false;
-                draft.tests.clear();
-                draft.status = 'Model changed. Refresh Providers to update endpoint metadata.';
-                draft.statusKind = 'warn';
-                renderOpenRouterRoutingPanel(scope);
-            }
+            markOpenRouterRoutingModelChanged(scope);
         });
     });
 }
@@ -758,6 +796,9 @@ function openGlobalOpenRouterRoutingPanel() {
 window.HordeOpenRouterRouting = Object.freeze({
     setup: setupOpenRouterRouting,
     openGlobalPanel: openGlobalOpenRouterRoutingPanel,
+    initialize: initializeOpenRouterRoutingPanel,
+    read: readOpenRouterRoutingPanel,
+    modelChanged: markOpenRouterRoutingModelChanged,
     readGlobal: () => readOpenRouterRoutingPanel('global') || normalizeOpenRouterRouting(null),
     apply: applyOpenRouterRouting,
     normalize: normalizeOpenRouterRouting,

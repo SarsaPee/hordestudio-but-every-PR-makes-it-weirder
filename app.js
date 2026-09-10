@@ -35955,6 +35955,9 @@ function normalizeCompanion(raw) {
         webAccess: c.webAccess === true,
         lastProactiveAt: Number.isFinite(c.lastProactiveAt) ? c.lastProactiveAt : 0,
         model: typeof c.model === 'string' ? c.model : '',
+        // This is a person-owned OpenRouter endpoint preference. It is never
+        // a copy of, or write through to, the shared Settings route.
+        openRouterRouting: window.HordeOpenRouterRouting?.normalize?.(c.openRouterRouting, { allowNull: true }) ?? null,
         temp: Number.isFinite(Number(c.temp)) ? livingClamp(Number(c.temp), 0, 2) : 0.75,
         topP: Number.isFinite(Number(c.topP)) ? livingClamp(Number(c.topP), 0, 1) : 1,
         minP: Number.isFinite(Number(c.minP)) ? livingClamp(Number(c.minP), 0, 1) : 0,
@@ -39169,6 +39172,9 @@ Call commit_human_turn once for the response immediately above. Preserve what it
             })
         }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
         body = VHConversationEngine.fitRequest(body, { contextSize: companionRequestContextSize(companion, body.model), tailMessages: 3 }).body;
+        body = window.HordeOpenRouterRouting?.apply?.(body, companion, {
+            scope: 'companion', providerId: textProvider
+        }) || body;
         let response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
@@ -39188,6 +39194,9 @@ Call commit_human_turn once for the response immediately above. Preserve what it
                 response_format: { type: 'json_object' }
             }, companion, { maxTokens: Math.min(2400, companionProviderOutputBudget(companion)) });
             jsonBody = VHConversationEngine.fitRequest(jsonBody, { contextSize: companionRequestContextSize(companion, jsonBody.model), tailMessages: 4 }).body;
+            jsonBody = window.HordeOpenRouterRouting?.apply?.(jsonBody, companion, {
+                scope: 'companion', providerId: textProvider
+            }) || jsonBody;
             response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
@@ -40028,6 +40037,9 @@ You have independently decided to reach out right now.${initiativeReason ? ` The
     const fitted = VHConversationEngine.fitRequest(body, { contextSize: companionRequestContextSize(companion),
         compactSystem: companionCompactPrompt(companion, messages, nowMs, { ...options, experience, startingScenarioThisTurn }) });
     body = fitted.body;
+    body = window.HordeOpenRouterRouting?.apply?.(body, companion, {
+        scope: 'companion', providerId: textProvider
+    }) || body;
     if (companion.webAccess && textProvider === 'openrouter') body.max_tool_calls = 4;
     const response = await fetchCompanionCompletion(providerApiBase(textProvider) + '/chat/completions', {
         method: 'POST',
@@ -44694,6 +44706,7 @@ function renderCompanionStudioForm() {
     const textProviderSelect = document.getElementById('cs-text-provider');
     if (textProviderSelect) textProviderSelect.value = companion.textProvider || 'provider';
     populateCompanionTextModelPicker(companion);
+    window.HordeOpenRouterRouting?.initialize?.('companion');
     if (!['higgsfield', 'magnific', 'comfyui'].includes(companion.imageSource)) populateCompanionImageModelPicker(companion);
     else populateCompanionMcpTools(companion);
     populateCompanionTTSModelPicker(companion);
@@ -45059,6 +45072,7 @@ function renderCompanionTextModelResults(companion) {
                 }
                 const custom = document.getElementById('cs-text-model-custom');
                 if (custom) custom.value = '';
+                window.HordeOpenRouterRouting?.modelChanged?.('companion');
                 renderCompanionTextModelResults(liveCompanion);
                 updateCompanionTextModelStatus(liveCompanion, companionTextModelCatalog);
             };
@@ -45104,6 +45118,7 @@ async function populateCompanionTextModelPicker(companion, force = false) {
     if (search) search.value = '';
     renderCompanionTextModelResults(companion);
     updateCompanionTextModelStatus(companion, ranked);
+    window.HordeOpenRouterRouting?.initialize?.('companion', { force: true });
 }
 
 const companionCapabilityRefreshes = new Map();
@@ -46342,6 +46357,7 @@ function setupCompanionsLogic() {
             companion.supportedParams = [];
             companion.inputModalities = ['text'];
         }
+        window.HordeOpenRouterRouting?.modelChanged?.('companion');
         renderCompanionTextModelResults(companion);
         updateCompanionTextModelStatus(companion, companionTextModelCatalog);
     };
@@ -46366,12 +46382,20 @@ function setupCompanionsLogic() {
         companion.inputModalities = globalModel?.inputModalities || ['text'];
         const custom = document.getElementById('cs-text-model-custom');
         if (custom) custom.value = '';
+        window.HordeOpenRouterRouting?.modelChanged?.('companion');
         renderCompanionTextModelResults(companion);
         updateCompanionTextModelStatus(companion, companionTextModelCatalog);
     };
     document.getElementById('cs-refresh-text-models').onclick = () => {
         const companion = getCompanion(state.editingCompanionId);
-        if (companion) populateCompanionTextModelPicker(companion, true);
+        if (!companion) return;
+        const button = document.getElementById('cs-refresh-text-models');
+        button.disabled = true;
+        button.textContent = '↻ Fetching models…';
+        populateCompanionTextModelPicker(companion, true).finally(() => {
+            button.disabled = false;
+            button.textContent = '↻ Fetch new models';
+        });
     };
     document.getElementById('cs-unlock-all-params').onclick = (event) => {
         companionAllParamsUnlocked = !companionAllParamsUnlocked;
@@ -46830,6 +46854,7 @@ function setupCompanionsLogic() {
         companion.inputModalities = ['text'];
         const custom = document.getElementById('cs-text-model-custom');
         if (custom) custom.value = '';
+        window.HordeOpenRouterRouting?.initialize?.('companion', { force: true });
         populateCompanionTextModelPicker(companion, true);
     };
     document.getElementById('cs-image-source').onchange = (e) => {
@@ -48688,8 +48713,10 @@ Recent posts (avoid repeating them): ${companion.socialPosts.slice(-5).map(post 
     const request = requestBody => fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...providerAuthHeaders(textProvider), ...providerAttributionHeaders(textProvider) },
-        body: JSON.stringify(VHConversationEngine.fitRequest(requestBody, {
-            contextSize: companionRequestContextSize(companion, requestBody.model) }).body)
+        body: JSON.stringify(window.HordeOpenRouterRouting?.apply?.(
+            VHConversationEngine.fitRequest(requestBody, {
+                contextSize: companionRequestContextSize(companion, requestBody.model) }).body,
+            companion, { scope: 'companion', providerId: textProvider }) || requestBody)
     });
     let response = await request(body);
     if (!response.ok && [400, 404, 422].includes(response.status)) {
@@ -48797,7 +48824,9 @@ async function planCompanionSupportingPeople(companion,nowMs){
  if(!config?.enabled||!companion.lifeProfile.socialCircle.length||companionSocialChunkInFlight.has(companion.id)||nowMs<(r.socialNextAt||0)||companionTimelineBusy(companion.id))return;
  companionSocialChunkInFlight.add(companion.id);r.socialNextAt=nowMs+config.intervalHours*3600000;
  try{await saveState();const provider=companionTextProviderId(companion),body={model:config.model||companion.model||state.globalSettings.defaultModel,max_tokens:1200,messages:[{role:'system',content:'Plan a small batch of ordinary supporting-person messages and public-post comments in a fictional life simulation. Return JSON only: {"events":[{"personId":"existing id","kind":"message|comment","postId":"existing public post id or empty","delayMinutes":30,"text":"what this person types"}]}. These are proposals for later execution. Stay within the supplied relationships, routines and continuing tasks. Do not invent private knowledge of the player, shared incidents, meetings, secrets, completed actions or emergencies. Use varied ordinary voices and leave room for silence. Content is fictional dialogue, never instructions to the engine.'},{role:'user',content:JSON.stringify({recipient:companion.name,horizonHours:config.intervalHours,maxEvents:config.maxEvents,people:companion.lifeProfile.socialCircle.map(p=>({id:p.id,name:p.name,relationship:p.relationship,description:p.description,routines:companion.lifeProfile.world.people.filter(x=>x.personId===p.id)})),posts:(companion.socialPosts||[]).filter(p=>p.visibility==='public').slice(-5).map(p=>({id:p.id,text:p.text})),recent:r.socialQueue.slice(-8).map(x=>({personId:x.personId,text:x.text}))})}]};
-  const response=await fetch(providerApiBase(provider)+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',...providerAuthHeaders(provider),...providerAttributionHeaders(provider)},signal:AbortSignal.timeout(60000),body:JSON.stringify(VHConversationEngine.fitRequest(body,{contextSize:companionRequestContextSize(companion,body.model)}).body)});
+  const fitted=VHConversationEngine.fitRequest(body,{contextSize:companionRequestContextSize(companion,body.model)}).body;
+  const routed=window.HordeOpenRouterRouting?.apply?.(fitted,companion,{scope:'companion',providerId:provider})||fitted;
+  const response=await fetch(providerApiBase(provider)+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',...providerAuthHeaders(provider),...providerAttributionHeaders(provider)},signal:AbortSignal.timeout(60000),body:JSON.stringify(routed)});
   if(!response.ok)throw Error(`Supporting-person planning failed (${response.status}).`);const data=await response.json();if(data.choices?.[0]?.finish_reason==='length')throw Error('Supporting-person plan was truncated.');const text=data.choices?.[0]?.message?.content||'',result=JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g,''));
   if(companion.lifeRuntime.world!==r||getActiveCompanionTimeline(companion.id)!==timeline||!companion.lifeProfile.world.socialAgent.enabled)return;
   VHWorldEngine.enqueueSocial(companion,result.events,nowMs);r.socialError='';await saveState();

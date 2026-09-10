@@ -3004,7 +3004,7 @@
                             </div>
                             <div class="vh-model-header-actions">
                                 <button id="cs-unlock-all-params" class="btn btn-ghost" type="button" title="Show every control even when the provider catalog does not advertise it.">🔓 Unlock all parameters</button>
-                                <button id="cs-refresh-text-models" class="btn btn-ghost" type="button">↻ Refresh catalog</button>
+                                <button id="cs-refresh-text-models" class="btn btn-ghost" type="button" title="Fetch the current OpenRouter model catalog and refresh capability, context, and price metadata.">↻ Fetch new models</button>
                             </div>
                         </div>
                         <div class="form-body vh-models-body">
@@ -3051,6 +3051,9 @@
                                 <div id="cs-text-model-results" class="vh-model-results" role="listbox" aria-label="Conversation models"></div>
                                 <div id="cs-text-model-status" class="form-hint vh-model-status" aria-live="polite">Loading text models from the selected provider…</div>
                             </div>
+
+                            <!-- Select or refresh a conversation model first, then route that model. -->
+                            <div id="cs-openrouter-routing" class="openrouter-routing-host hidden"></div>
 
                             <section class="vh-custom-model">
                                 <div>
@@ -5238,7 +5241,7 @@
 <script src="vh-simulation-core.js?v=20260908-reply-cleanup"></script>
 <script src="backup-domain-coordinator.js?v=17.4.0-backup-domains-1"></script>
 <script src="rolling-recovery.js?v=17.4.0-rolling-recovery-1"></script>
-<script src="global-openrouter-routing.js?v=17.4.0-global-routing-2"></script>
-    <script src="app.js?v=17.4.0-global-recovery-4"></script>
+<script src="global-openrouter-routing.js?v=17.4.0-global-routing-3"></script>
+    <script src="app.js?v=17.4.0-global-recovery-5"></script>
 </body>
 </html>
