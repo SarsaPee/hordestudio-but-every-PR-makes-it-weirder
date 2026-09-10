@@ -63,6 +63,7 @@ mkdir -p "$APP_DIR/experiences/experimental-worlds/runtime" \
 cp "$ROOT_DIR/experiences/experimental-worlds/runtime/sidecar-core.js" \
   "$ROOT_DIR/experiences/experimental-worlds/runtime/dossier-claims.js" \
   "$ROOT_DIR/experiences/experimental-worlds/runtime/world-studio-core.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-play-core.js" \
   "$APP_DIR/experiences/experimental-worlds/runtime/"
 mkdir -p "$APP_DIR/experiences/experimental-worlds/mechanics" \
   "$APP_DIR/experiences/experimental-worlds/visuals" \

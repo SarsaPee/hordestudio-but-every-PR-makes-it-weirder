@@ -116,6 +116,7 @@ STATIC_FILES = {
     "/experiences/stock-worlds-17-pass0/style.css": ("experiences/stock-worlds-17-pass0/style.css", "text/css"),
     "/experiences/experimental-worlds/runtime/sidecar-core.js": ("experiences/experimental-worlds/runtime/sidecar-core.js", "text/javascript"),
     "/experiences/experimental-worlds/runtime/world-studio-core.js": ("experiences/experimental-worlds/runtime/world-studio-core.js", "text/javascript"),
+    "/experiences/experimental-worlds/runtime/world-play-core.js": ("experiences/experimental-worlds/runtime/world-play-core.js", "text/javascript"),
     "/experiences/experimental-worlds/runtime/dossier-claims.js": ("experiences/experimental-worlds/runtime/dossier-claims.js", "text/javascript"),
     "/experiences/experimental-worlds/mechanics/world-mechanics.js": ("experiences/experimental-worlds/mechanics/world-mechanics.js", "text/javascript"),
     "/experiences/experimental-worlds/visuals/world-portrait-prompt.js": ("experiences/experimental-worlds/visuals/world-portrait-prompt.js", "text/javascript"),
