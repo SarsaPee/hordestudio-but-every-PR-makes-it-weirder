@@ -5,6 +5,16 @@ source tag `checkpoint/experimental-worlds-dual-inplace-17.0`, not on file
 adjacency alone. A row is marked relocated only after its source body is moved
 and browser-proved in the same application.
 
+## Stock-removal independence invariant
+
+Pass 1 is incomplete until Experimental Worlds can run with
+`experiences/stock-worlds-17-pass0/runtime.js` and its stylesheet absent. No
+Experimental source, CSS, persistence, DOM root, event handler or lifecycle
+may require a stock-World helper or selector. A current Horde host service is
+allowed only through the narrow Experimental host adapter; equivalent World
+semantics are copied into the Experimental-owned runtime rather than shared
+with stock Worlds. This deliberately permits temporary duplication.
+
 | Source unit | Relocated destination | Behavioural owner | Host dependencies traced | Lifecycle / persistence | Status |
 | --- | --- | --- | --- | --- | --- |
 | Integrated Sidecar protocol, Sequence/Scene/Take hierarchy, Reader candidate model, memory graph, traversal/journeys | `experiences/experimental-worlds/runtime/sidecar-core.js` | Experimental Worlds | `normalizeRoleplayOSConfig`, `isPlainObject`, `safeJsonClone`; all are currently resolved from the one host bootstrap and will be adapter-bound before the final core manifest | Mutates only the supplied Experimental World/timeline records; no listeners, timers, database, or provider transport | Relocated byte-for-byte from the Pass-0 source unit; browser reloaded |
@@ -36,3 +46,9 @@ The in-place World library/studio/play engine, World editor/renderers (such as
 lifecycle still reside in `app.js`. They remain Pass-1 work, not an implicit
 claim that the boundary is complete. Each will be relocated with its complete
 dependency closure, then compared against the Pass-0 browser oracle.
+
+The corresponding World-only CSS remains in `style.css` except for the
+already-relocated native ScenePulse stylesheet. It must be moved alongside its
+renderer into Experimental-owned styles and scoped to the Experimental mount.
+Shared host tokens and controls stay host-owned; stock World selectors never
+become an Experimental dependency.

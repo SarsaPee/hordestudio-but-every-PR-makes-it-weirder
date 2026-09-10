@@ -35,6 +35,17 @@ Pass-0 implementation and evidence are recorded in
 
 ## Pass 1: detach the working Experimental mode
 
+- [ ] Satisfy the **stock-removal independence invariant**: with the stock
+  Worlds runtime and stylesheet excluded, Experimental Worlds still loads and
+  runs from its own code, styles, data model, renderers, media semantics,
+  Sidecar, ScenePulse, jobs, and lifecycle. It may use only explicitly
+  versioned host-adapter services (for example provider transport, generic
+  media primitives, navigation and global settings), never a stock-World
+  helper, store, renderer, stylesheet, DOM root, listener or bootstrap.
+- [ ] Where the accepted custom system and stock Worlds need equivalent code,
+  preserve an Experimental-owned copy rather than retaining an implicit shared
+  World dependency. Duplication is intentional during this split; later
+  convergence is a separate, explicitly approved task.
 - [ ] Relocate the working custom implementation mechanically into
   mode-owned source without redesigning it.
 - [ ] Trace and classify complete dependency closures by behavioral owner.
