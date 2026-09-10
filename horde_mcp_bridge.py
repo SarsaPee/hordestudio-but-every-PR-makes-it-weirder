@@ -120,6 +120,7 @@ STATIC_FILES = {
     "/experiences/experimental-worlds/runtime/world-session-core.js": ("experiences/experimental-worlds/runtime/world-session-core.js", "text/javascript"),
     "/experiences/experimental-worlds/runtime/world-intelligence-core.js": ("experiences/experimental-worlds/runtime/world-intelligence-core.js", "text/javascript"),
     "/experiences/experimental-worlds/runtime/world-protocol-core.js": ("experiences/experimental-worlds/runtime/world-protocol-core.js", "text/javascript"),
+    "/experiences/experimental-worlds/runtime/experimental-worlds-repository.js": ("experiences/experimental-worlds/runtime/experimental-worlds-repository.js", "text/javascript"),
     "/experiences/experimental-worlds/runtime/dossier-claims.js": ("experiences/experimental-worlds/runtime/dossier-claims.js", "text/javascript"),
     "/experiences/experimental-worlds/mechanics/world-mechanics.js": ("experiences/experimental-worlds/mechanics/world-mechanics.js", "text/javascript"),
     "/experiences/experimental-worlds/visuals/world-portrait-prompt.js": ("experiences/experimental-worlds/visuals/world-portrait-prompt.js", "text/javascript"),
