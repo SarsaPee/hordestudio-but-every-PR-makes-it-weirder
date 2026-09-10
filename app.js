@@ -52,7 +52,7 @@ const HordeDB = {
     async set(key, value) {
         // Canonical records must participate in revision checks even when a
         // subsystem writes one key. Immutable assets and caches are independent.
-        if (!/^(?:embedding_cache|labsDiagnostics|chatAsset:|companionVideoAsset:)/.test(key)) {
+        if (!/^(?:embedding_cache|labsDiagnostics|openRouterRoutingMetadataV1|chatAsset:|companionVideoAsset:)/.test(key)) {
             return this.setMultiple({ [key]: value });
         }
         if (!this.db) throw new Error('Database is not initialized');
@@ -967,7 +967,15 @@ function companionImageProviderId(companion) {
 
 /** Turn opaque fetch failures into actionable guidance (esp. local CORS/PNA). */
 function humanizeApiError(err, providerId = state.globalSettings.apiProvider) {
-    const msg = err?.message || String(err);
+    let msg = err?.message || String(err);
+    // OpenAI-compatible gateways frequently return their useful reason as a
+    // JSON response body. Keep the user-facing error precise instead of
+    // collapsing an actionable 401/429/provider rejection into a generic
+    // connection failure in Virtual Human's delayed-reply loop.
+    try {
+        const parsed = JSON.parse(msg);
+        msg = parsed?.error?.message || parsed?.message || msg;
+    } catch (_) {}
     const provider = normalizedProviderId(providerId);
     if (provider === 'nanogpt' && /invalid session/i.test(msg)) {
         return 'NanoGPT rejected the credential used for generation. Its model catalog is public, so a catalog-only test can still pass with a missing, stale or non-API credential. Create or copy an API key from NanoGPT (sk-nano-… or a legacy UUID), paste it in Settings → Connections, run the live connection test, then Save Settings.';
@@ -2272,6 +2280,11 @@ function restoreLastWorkspace() {
 
 async function loadState() {
     await HordeDB.init();
+    // Provider endpoint metadata is a shared, non-secret host cache. Load it
+    // before any World or Virtual Human routing panel can render; credentials
+    // remain in their dedicated session/device storage and are never cached
+    // with this catalogue.
+    await window.HordeOpenRouterRouting?.loadMetadataCache?.();
     await HordeVectorMemory.init();
     pendingWorkspaceState = await loadWorkspaceState();
     applyWorkspaceState(pendingWorkspaceState);
@@ -49563,12 +49576,17 @@ async function processCompanionAgency(nowMs = Date.now()) {
             } catch (error) {
                 // Restore a single retry gate for the batch. The model will
                 // still receive every now-read message on the retry.
+                const failure = humanizeApiError(error, companionTextProviderId(companion))
+                    .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]').slice(0, 500);
                 readableBatch.forEach(message => {
                     message.awaitingReply = true;
                     message.replyDueAt = nowMs + 2 * 60 * 1000;
+                    message.deliveryError = failure;
                 });
                 console.error('Deferred companion reply failed:', error);
-                if (state.activeCompanionId === companion.id) showToast('Reply delayed by a connection error. It will retry.', 'error');
+                if (state.activeCompanionId === companion.id) {
+                    showToast(`Reply delayed: ${failure}. It will retry.`, 'error');
+                }
             } finally {
                 companionAgencyInFlight.delete(companion.id);
                 if (state.activeCompanionId === companion.id) setCompanionTyping(false);

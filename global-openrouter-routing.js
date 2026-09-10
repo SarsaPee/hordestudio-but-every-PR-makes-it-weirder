@@ -13,6 +13,10 @@ const OPENROUTER_ROUTING_SORTS = Object.freeze(['throughput', 'latency', 'price'
 // this module owns the two metadata requests made by every routing surface.
 const OPENROUTER_PROVIDER_API = 'https://openrouter.ai/api/v1/providers';
 const OPENROUTER_ENDPOINT_API = 'https://openrouter.ai/api/v1/models';
+const OPENROUTER_ROUTING_METADATA_CACHE_KEY = 'openRouterRoutingMetadataV1';
+const OPENROUTER_ROUTING_METADATA_CACHE_VERSION = 2;
+const OPENROUTER_ROUTING_METADATA_MAX_MODELS = 120;
+const OPENROUTER_ROUTING_METADATA_MAX_ENDPOINTS = 120;
 const DEFAULT_OPENROUTER_ROUTING = Object.freeze({
     order: Object.freeze([]),
     allowFallbacks: true,
@@ -182,6 +186,106 @@ let openRouterProviderCatalog = [];
 let openRouterProviderCatalogFetchedAt = 0;
 const openRouterEndpointCatalogs = new Map();
 const openRouterRoutingDrafts = new Map();
+let openRouterRoutingMetadataCacheLoaded = false;
+let openRouterRoutingMetadataSave = Promise.resolve();
+
+function finiteMetadataNumber(value) {
+    // JSON serialisation represents an unavailable metric as null.  It is not
+    // a zero-latency/zero-throughput measurement. Keep that distinction when
+    // the advisory cache is restored; the live endpoint mapper remains the
+    // single authority for fresh responses.
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeOpenRouterEndpointMetadata(raw) {
+    const slug = String(raw?.slug || '').trim();
+    if (!isValidOpenRouterProviderSlug(slug)) return null;
+    const pricing = isPlainObject(raw?.pricing) ? raw.pricing : {};
+    return {
+        slug,
+        name: String(raw?.name || slug).trim().slice(0, 200) || slug,
+        // Keep the native pricing object opaque: it is provider metadata, not
+        // an Experimental/World schema, and the renderer already understands
+        // OpenRouter's documented pricing fields.
+        pricing: safeJsonClone(pricing),
+        latency: finiteMetadataNumber(raw?.latency),
+        throughput: finiteMetadataNumber(raw?.throughput),
+        uptime: finiteMetadataNumber(raw?.uptime),
+        status: raw?.status === undefined ? null : raw.status
+    };
+}
+
+function openRouterRoutingMetadataSnapshot() {
+    const endpointCatalogs = [...openRouterEndpointCatalogs.entries()]
+        .filter(([model, entry]) => typeof model === 'string' && model.length <= 240
+            && Array.isArray(entry?.endpoints) && Number.isFinite(Number(entry?.fetchedAt)))
+        .sort((left, right) => Number(right[1].fetchedAt) - Number(left[1].fetchedAt))
+        .slice(0, OPENROUTER_ROUTING_METADATA_MAX_MODELS)
+        .map(([model, entry]) => ({
+            model,
+            fetchedAt: Number(entry.fetchedAt),
+            endpoints: entry.endpoints.map(normalizeOpenRouterEndpointMetadata)
+                .filter(Boolean).slice(0, OPENROUTER_ROUTING_METADATA_MAX_ENDPOINTS)
+        }));
+    return {
+        version: OPENROUTER_ROUTING_METADATA_CACHE_VERSION,
+        savedAt: Date.now(),
+        providerCatalogFetchedAt: openRouterProviderCatalogFetchedAt,
+        providers: openRouterProviderCatalog.map(provider => ({
+            slug: provider.slug,
+            name: provider.name
+        })).slice(0, 300),
+        endpointCatalogs
+    };
+}
+
+function persistOpenRouterRoutingMetadata() {
+    // Serialise cache writes so two rapid Refresh buttons cannot persist an
+    // older snapshot after the newer response. Failure is non-fatal: a future
+    // refresh can repopulate this advisory cache.
+    openRouterRoutingMetadataSave = openRouterRoutingMetadataSave
+        .catch(() => {})
+        .then(async () => {
+            if (!HordeDB?.db) return;
+            await HordeDB.set(OPENROUTER_ROUTING_METADATA_CACHE_KEY, openRouterRoutingMetadataSnapshot());
+        })
+        .catch(error => console.warn('Could not persist OpenRouter endpoint metadata:', error));
+    return openRouterRoutingMetadataSave;
+}
+
+async function loadOpenRouterRoutingMetadataCache() {
+    if (openRouterRoutingMetadataCacheLoaded) return;
+    openRouterRoutingMetadataCacheLoaded = true;
+    let cached;
+    try {
+        cached = await HordeDB.get(OPENROUTER_ROUTING_METADATA_CACHE_KEY);
+    } catch (error) {
+        console.warn('Could not load OpenRouter endpoint metadata cache:', error);
+        return;
+    }
+    if (!isPlainObject(cached) || Number(cached.version) !== OPENROUTER_ROUTING_METADATA_CACHE_VERSION) return;
+    const providers = (Array.isArray(cached.providers) ? cached.providers : [])
+        .map(provider => ({
+            slug: String(provider?.slug || '').trim(),
+            name: String(provider?.name || provider?.slug || '').trim()
+        })).filter(provider => isValidOpenRouterProviderSlug(provider.slug));
+    if (providers.length) {
+        openRouterProviderCatalog = providers;
+        openRouterProviderCatalogFetchedAt = Math.max(0, Number(cached.providerCatalogFetchedAt) || 0);
+    }
+    (Array.isArray(cached.endpointCatalogs) ? cached.endpointCatalogs : [])
+        .slice(0, OPENROUTER_ROUTING_METADATA_MAX_MODELS).forEach(entry => {
+            const model = String(entry?.model || '').trim();
+            const fetchedAt = Number(entry?.fetchedAt);
+            if (!model.includes('/') || model.length > 240 || !Number.isFinite(fetchedAt)) return;
+            const endpoints = (Array.isArray(entry?.endpoints) ? entry.endpoints : [])
+                .map(normalizeOpenRouterEndpointMetadata).filter(Boolean)
+                .slice(0, OPENROUTER_ROUTING_METADATA_MAX_ENDPOINTS);
+            openRouterEndpointCatalogs.set(model, { endpoints, fetchedAt });
+        });
+}
 
 function openRouterRoutingPanelDefinition(scope) {
     const definitions = {
@@ -329,16 +433,22 @@ function initializeOpenRouterRoutingPanel(scope, { force = true } = {}) {
     }
     const stored = normalizeOpenRouterRouting(definition.stored(), { allowNull: scope !== 'global' });
     const inherit = scope !== 'global' && stored === null;
+    // Endpoint metadata is shared, non-secret browser state.  A panel should
+    // immediately show the last successful read for its selected model after a
+    // reload; Refresh remains the explicit action that asks OpenRouter again.
+    const model = openRouterRoutingModel(scope);
+    const cachedEndpoints = openRouterEndpointCatalogs.get(model);
+    const hasCachedEndpoints = Array.isArray(cachedEndpoints?.endpoints);
     openRouterRoutingDrafts.set(scope, {
         inherit,
         routing: normalizeOpenRouterRouting(stored || openRouterRoutingParent(scope)),
         search: '',
-        endpointModel: '',
-        endpoints: [],
-        endpointsLoaded: false,
+        endpointModel: hasCachedEndpoints ? model : '',
+        endpoints: hasCachedEndpoints ? cachedEndpoints.endpoints.map(endpoint => ({ ...endpoint })) : [],
+        endpointsLoaded: hasCachedEndpoints,
         loading: false,
-        status: '',
-        statusKind: '',
+        status: hasCachedEndpoints ? 'Saved endpoint metadata is available. Refresh Providers to check for current routing data.' : '',
+        statusKind: hasCachedEndpoints ? 'ok' : '',
         tests: new Map()
     });
     renderOpenRouterRoutingPanel(scope);
@@ -471,6 +581,7 @@ async function fetchOpenRouterProviderCatalog({ force = false } = {}) {
         name: String(row?.name || row?.slug || '').trim()
     })).filter(row => isValidOpenRouterProviderSlug(row.slug));
     openRouterProviderCatalogFetchedAt = Date.now();
+    void persistOpenRouterRoutingMetadata();
     return openRouterProviderCatalog;
 }
 
@@ -495,6 +606,7 @@ async function fetchOpenRouterModelEndpoints(model, { force = false } = {}) {
         status: row?.status
     })).filter(row => isValidOpenRouterProviderSlug(row.slug));
     openRouterEndpointCatalogs.set(cleanModel, { endpoints, fetchedAt: Date.now() });
+    void persistOpenRouterRoutingMetadata();
     return endpoints;
 }
 
@@ -945,6 +1057,7 @@ window.HordeOpenRouterRouting = Object.freeze({
     apply: applyOpenRouterRouting,
     normalize: normalizeOpenRouterRouting,
     install: installOpenRouterRoutingFetchHook,
+    loadMetadataCache: loadOpenRouterRoutingMetadataCache,
     // Support-only evidence surface. It returns no credentials and never
     // persists raw endpoint responses.
     diagnoseEndpointAuth: diagnoseOpenRouterModelEndpointAuth,
