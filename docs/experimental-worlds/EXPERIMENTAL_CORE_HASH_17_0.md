@@ -5,9 +5,9 @@ checkpoint. It is deliberately a working freeze, not the checkpoint tag: the
 remaining browser acceptance and controlled data-cutover evidence must still
 pass before `checkpoint/experimental-worlds-native-17.0` may be created.
 
-- Source revision: `107607a` (`integration/experimental-worlds-three-pass`)
+- Source revision: `0524dd1` (`integration/experimental-worlds-three-pass`)
 - Manifest: `docs/experimental-worlds/experimental-core-manifest.txt`
-- SHA-256: `502902e871549df864d99fa9ed42ad4d2ba3ac10778d02f2bd29f21dc5968573`
+- SHA-256: `70879822536ae999febf98ae2528c9bf74312ded38020a3dbe62a6f0930e1015`
 - Generator: `node scripts/hash-experimental-core.mjs <revision>`
 
 The generator hashes the sorted manifest paths and their exact Git blobs. It
