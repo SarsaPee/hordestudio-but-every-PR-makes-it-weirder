@@ -1,13 +1,11 @@
-# Experimental Worlds core hash — Pass 1 working freeze
+# Experimental Worlds core hash — pre-17.4 integration freeze
 
-This records the reproducible core boundary before its native-17.0 acceptance
-checkpoint. It is deliberately a working freeze, not the checkpoint tag: the
-remaining browser acceptance and controlled data-cutover evidence must still
-pass before `checkpoint/experimental-worlds-native-17.0` may be created.
+This records the reproducible immutable Experimental boundary immediately
+before reconstruction around the native 17.4 host.
 
-- Source revision: `43c77ef` (`integration/experimental-worlds-three-pass`)
+- Source revision: `a1822ab` (`integration/horde-studio-17.4-experimental-worlds`)
 - Manifest: `docs/experimental-worlds/experimental-core-manifest.txt`
-- SHA-256: `6953be2649731e8733a371587138af94faaf3523fa6cdc00257a8257aaf58f34`
+- SHA-256: `b69d6729e00be0921522529d2cbcbb523163baebac2351a4b6a486d92fa59716`
 - Generator: `node scripts/hash-experimental-core.mjs <revision>`
 
 The generator hashes the sorted manifest paths and their exact Git blobs. It
@@ -20,6 +18,8 @@ folder. This working revision also closes the last discovered ambient lore and
 plain-object helper lookups with exact private copies, and replaces direct
 host model-catalog variable reads with the explicit adapter seam, so those source moves
 are part of the documented Experimental boundary rather than hidden host
-dependencies. Any subsequent core-byte change requires a new authorized
-domain change; the later 17.4 pass must adapt only the excluded host-facing
-seam.
+dependencies. The adjacent mutable integration manifest is
+`experimental-integration-manifest.txt`; its baseline SHA-256 is
+`e308976f934b004414450f63b2f2de98ddeb4f5b87316ad7f8b00bf8ea5abc78`.
+Any subsequent core-byte change requires a separately authorized Experimental
+change and a new freeze before host integration can resume.

@@ -17,4 +17,4 @@ for (const path of paths) {
     header.writeUInt32BE(name.length, 0); header.writeUInt32BE(bytes.length, 4);
     hash.update(header); hash.update(name); hash.update(bytes);
 }
-console.log(`${revision} ${hash.digest('sha256')}`);
+console.log(`${revision} ${hash.digest('hex')}`);
