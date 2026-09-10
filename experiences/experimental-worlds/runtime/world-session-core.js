@@ -1869,7 +1869,7 @@ function normalizeWorldSandboxConfig(world) {
     const factionIds = new Set((world.factions || []).map(faction => faction.id));
     const used = new Set();
     world.startingLives = (Array.isArray(world.startingLives) ? world.startingLives : [])
-        .filter(isPlainObject).slice(0, 40).map((life, index) => {
+        .filter(experimentalIsPlainObject).slice(0, 40).map((life, index) => {
             let id = String(life.id || livingId('origin', life.name || index)).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
             while (used.has(id)) id = `${id}_${index + 1}`;
             used.add(id);
@@ -1997,8 +1997,8 @@ function normalizeAuthoredWorld(world) {
     if (!world) return world;
     // A hand-edited or truncated file can carry holes in these arrays, and a
     // hole is not a place or a person — every pass below would throw on it.
-    world.locations = (Array.isArray(world.locations) ? world.locations : []).filter(isPlainObject);
-    world.entities = (Array.isArray(world.entities) ? world.entities : []).filter(isPlainObject);
+    world.locations = (Array.isArray(world.locations) ? world.locations : []).filter(experimentalIsPlainObject);
+    world.entities = (Array.isArray(world.entities) ? world.entities : []).filter(experimentalIsPlainObject);
     normalizeWorldPresentation(world);
     const validMediaIds = new Set(world.mediaAssets.map(asset => asset.id));
     if (world.presentation.mapSkinAssetId && !validMediaIds.has(world.presentation.mapSkinAssetId)) {
@@ -2758,7 +2758,7 @@ function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = '
     home = home || getLocationRef(world, origin?.startLocationId || sess.playerLocation);
     const idMap = new Map();
     const seededPeople = [];
-    const rawPeople = (Array.isArray(plan.people) ? plan.people : []).filter(isPlainObject).slice(0, 16);
+    const rawPeople = (Array.isArray(plan.people) ? plan.people : []).filter(experimentalIsPlainObject).slice(0, 16);
     rawPeople.forEach((raw, index) => {
         const existing = raw.existing_npc_id ? world.entities.find(entity => entity.id === raw.existing_npc_id && entity.type === 'npc' && isVisibleToSession(entity, sess)) : null;
         const key = String(raw.id || `person_${index + 1}`);

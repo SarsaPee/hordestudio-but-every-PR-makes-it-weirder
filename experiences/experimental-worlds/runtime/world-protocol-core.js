@@ -4125,7 +4125,7 @@ function recordSidecarReaderProposals(world, sess, readerPacket, turnRecord, sna
 // candidate graduation chooses to use it.
 function scenePulseCharacterEvidenceForCandidate(readerPacket, candidate = {}) {
     const scenePulse = readerPacket?.semanticInterpretation?.scenePulse || readerPacket?.scenePulse || {};
-    const characters = Array.isArray(scenePulse?.characters) ? scenePulse.characters.filter(isPlainObject).slice(0, 80) : [];
+    const characters = Array.isArray(scenePulse?.characters) ? scenePulse.characters.filter(experimentalIsPlainObject).slice(0, 80) : [];
     if (!characters.length) return null;
     const candidateIds = new Set([
         candidate?.candidateId, candidate?.characterId, candidate?.subjectRef,
@@ -4212,8 +4212,8 @@ function scenePulseCharacterCardHistory(protocol, candidateId = '') {
 
 function scenePulseCharacterCandidatesFromCards(readerPacket, protocol, turnRecord, snapshotId = '', rawCandidates = []) {
     const scenePulse = readerPacket?.semanticInterpretation?.scenePulse || readerPacket?.scenePulse || {};
-    const cards = Array.isArray(scenePulse?.characters) ? scenePulse.characters.filter(isPlainObject).slice(0, 80) : [];
-    const rawIds = new Set((Array.isArray(rawCandidates) ? rawCandidates : []).filter(isPlainObject).flatMap(candidate => [
+    const cards = Array.isArray(scenePulse?.characters) ? scenePulse.characters.filter(experimentalIsPlainObject).slice(0, 80) : [];
+    const rawIds = new Set((Array.isArray(rawCandidates) ? rawCandidates : []).filter(experimentalIsPlainObject).flatMap(candidate => [
         candidate.candidateId, candidate.candidate_id, candidate.characterId, candidate.character_id,
         candidate.id, candidate.subjectRef, candidate.subject_ref
     ]).map(value => String(value || '').trim()).filter(Boolean));
@@ -4301,7 +4301,7 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
         settlementId: turnRecord.settlementId || '',
     }) || [];
     const sourceCards = new Map((readerPacket?.semanticInterpretation?.scenePulse?.characters || readerPacket?.scenePulse?.characters || [])
-        .filter(isPlainObject).map(card => [scenePulseCharacterCardIdentity(card), card]).filter(([identity]) => identity));
+        .filter(experimentalIsPlainObject).map(card => [scenePulseCharacterCardIdentity(card), card]).filter(([identity]) => identity));
     // Include earlier source-derived candidates so their stable source card
     // keeps collecting settled evidence on a later delta without overwriting
     // a promotion/match decision with a new `derived` status.
@@ -4957,7 +4957,7 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
 // an apparent inner thought for them.
 function scenePulseCharacterCognitionBridge(scenePulse = {}, suppliedIntelligence = [], defaults = {}) {
     const source = experimentalIsPlainObject(scenePulse) ? scenePulse : {};
-    const cards = Array.isArray(source.characters) ? source.characters.filter(isPlainObject).slice(0, 80) : [];
+    const cards = Array.isArray(source.characters) ? source.characters.filter(experimentalIsPlainObject).slice(0, 80) : [];
     const entries = Array.isArray(suppliedIntelligence) ? suppliedIntelligence.map(item => experimentalSafeJsonClone(item)) : [];
     const controlledId = String(defaults?.controlledEntityId || '').trim();
     const normalizedPresence = value => {
@@ -6363,7 +6363,7 @@ function parseSidecarHierarchyOutput(content) {
 function parseSidecarCognitionOutput(content) {
     const parsed = experimentalSafeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
     if (!experimentalIsPlainObject(parsed)) return null;
-    const memories = (Array.isArray(parsed.memories) ? parsed.memories : []).filter(isPlainObject).slice(0, 16)
+    const memories = (Array.isArray(parsed.memories) ? parsed.memories : []).filter(experimentalIsPlainObject).slice(0, 16)
         .map(memory => ({
             text: String(memory.text || '').trim().slice(0, 3000),
             epistemicStatus: ['self_action', 'direct_observation', 'disclosure', 'interpretation', 'belief', 'influence']

@@ -3710,7 +3710,7 @@ function parseStructuredChatMemory(rawText) {
             const parsed = JSON.parse(fenced.slice(firstBrace, lastBrace + 1));
             const summary = String(parsed.summary || '').trim();
             const memories = (Array.isArray(parsed.memories) ? parsed.memories : []).slice(0, 16)
-                .filter(isPlainObject).map(memory => ({
+                .filter(experimentalIsPlainObject).map(memory => ({
                     type: CHAT_MEMORY_TYPES.has(memory.type) ? memory.type : 'fact',
                     key: String(memory.key || '').slice(0, 240),
                     text: String(memory.text || '').slice(0, 4000),

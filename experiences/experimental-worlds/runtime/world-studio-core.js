@@ -2938,8 +2938,8 @@ function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
     // Older exports sometimes used parallel people/items/places collections.
     // Fold them into the canonical arrays without discarding the source fields
     // until the replacement has validated successfully.
-    const legacyPlaces = Array.isArray(world.places) ? world.places.filter(isPlainObject) : [];
-    world.locations = (Array.isArray(world.locations) ? world.locations : []).filter(isPlainObject);
+    const legacyPlaces = Array.isArray(world.places) ? world.places.filter(experimentalIsPlainObject) : [];
+    world.locations = (Array.isArray(world.locations) ? world.locations : []).filter(experimentalIsPlainObject);
     if (legacyPlaces.length) {
         world.locations.push(...legacyPlaces.map(place => ({ ...place })));
         note('Locations', `Moved ${legacyPlaces.length} legacy place${legacyPlaces.length === 1 ? '' : 's'} into the location directory.`, legacyPlaces.length);
@@ -2947,10 +2947,10 @@ function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
     const legacyPeople = [
         ...(Array.isArray(world.people) ? world.people : []),
         ...(Array.isArray(world.npcs) ? world.npcs : [])
-    ].filter(isPlainObject).map(person => ({ ...person, type: 'npc' }));
+    ].filter(experimentalIsPlainObject).map(person => ({ ...person, type: 'npc' }));
     const legacyItems = (Array.isArray(world.items) ? world.items : [])
-        .filter(isPlainObject).map(item => ({ ...item, type: 'item' }));
-    world.entities = (Array.isArray(world.entities) ? world.entities : []).filter(isPlainObject);
+        .filter(experimentalIsPlainObject).map(item => ({ ...item, type: 'item' }));
+    world.entities = (Array.isArray(world.entities) ? world.entities : []).filter(experimentalIsPlainObject);
     if (legacyPeople.length || legacyItems.length) {
         world.entities.push(...legacyPeople, ...legacyItems);
         if (legacyPeople.length) note('People', `Moved ${legacyPeople.length} legacy character${legacyPeople.length === 1 ? '' : 's'} into People.`, legacyPeople.length);
@@ -2961,7 +2961,7 @@ function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
         ...(Array.isArray(world.groups) ? world.groups : []),
         ...(Array.isArray(world.households) ? world.households.map(group => ({ ...group, type: 'household' })) : []),
         ...(Array.isArray(world.families) ? world.families.map(group => ({ ...group, type: 'family' })) : [])
-    ].filter(isPlainObject);
+    ].filter(experimentalIsPlainObject);
     world.groups = legacyGroups;
 
     // IDs are stable links. Keep the first valid occurrence and give missing or
@@ -2987,7 +2987,7 @@ function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
     assignIds(world.groups, 'grp', 'groups');
 
     // Build first-class geography from every legacy region label.
-    world.regions = (Array.isArray(world.regions) ? world.regions : []).filter(isPlainObject);
+    world.regions = (Array.isArray(world.regions) ? world.regions : []).filter(experimentalIsPlainObject);
     assignIds(world.regions, 'reg', 'regions');
     const regionByName = new Map(world.regions.map(region => [String(region.name || '').trim().toLowerCase(), region]));
     let createdRegions = 0;
@@ -3162,7 +3162,7 @@ function upgradeBundledWorldDefinition(world) {
 function normalizeWorldDirectoryData(world) {
     if (!world) return world;
     world.regions = (Array.isArray(world.regions) ? world.regions : [])
-        .filter(isPlainObject).map((region, index) => ({
+        .filter(experimentalIsPlainObject).map((region, index) => ({
             id: String(region.id || `reg_${worldDirectorySlug(region.name, String(index + 1))}`).slice(0, 100),
             name: String(region.name || 'Unnamed region').slice(0, 120),
             description: String(region.description || '').slice(0, 1200),
@@ -3200,7 +3200,7 @@ function normalizeWorldDirectoryData(world) {
     });
 
     world.groups = (Array.isArray(world.groups) ? world.groups : [])
-        .filter(isPlainObject).map((group, index) => ({
+        .filter(experimentalIsPlainObject).map((group, index) => ({
             id: String(group.id || `grp_${worldDirectorySlug(group.name, String(index + 1))}`).slice(0, 100),
             name: String(group.name || 'Unnamed group').slice(0, 120),
             type: ['household', 'family', 'organization', 'crew', 'other'].includes(group.type) ? group.type : 'household',
