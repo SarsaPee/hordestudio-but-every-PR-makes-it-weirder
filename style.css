@@ -274,6 +274,40 @@ body {
 
 .hidden { display: none !important; }
 
+/* Global navigation preference recovered from the pre-17.4 host. It owns
+   only the app shell; every current 17.4 experience keeps its own layout. */
+#app .sidebar {
+  overflow: hidden;
+  transition: width .18s ease, padding .18s ease, opacity .18s ease, border-color .18s ease;
+}
+#app.sidebar-collapsed .sidebar {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  border-right-color: transparent;
+  pointer-events: none;
+}
+.global-sidebar-toggle-btn {
+  position: fixed;
+  top: 26px;
+  left: calc(var(--sidebar-w) - 14px);
+  z-index: 80;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border2);
+  border-radius: 50%;
+  background: var(--surface2);
+  color: var(--text-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  transition: left .18s ease, background .15s ease, color .15s ease, transform .18s ease;
+}
+.global-sidebar-toggle-btn:hover { background: var(--surface3); color: var(--text); }
+#app.sidebar-collapsed .global-sidebar-toggle-btn { left: 10px; transform: rotate(180deg); }
+
 /* ─── SIDEBAR ─── */
 .sidebar {
   width: var(--sidebar-w);

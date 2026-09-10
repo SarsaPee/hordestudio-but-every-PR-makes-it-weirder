@@ -4824,7 +4824,25 @@ function labsSocialContext(result) {
 }
 
 // --- Initialization ---
+function applyPersistedSidebarState() {
+    try {
+        document.getElementById('app')?.classList.toggle(
+            'sidebar-collapsed', localStorage.getItem('hordeSidebarCollapsed') === 'true');
+    } catch (_) { /* localStorage may be unavailable. */ }
+}
+
+function initGlobalSidebarToggle() {
+    const button = document.getElementById('global-sidebar-toggle');
+    if (!button) return;
+    button.onclick = () => {
+        const collapsed = document.getElementById('app')?.classList.toggle('sidebar-collapsed');
+        try { localStorage.setItem('hordeSidebarCollapsed', String(Boolean(collapsed))); } catch (_) { /* localStorage may be unavailable. */ }
+    };
+}
+
 async function init() {
+    applyPersistedSidebarState();
+    initGlobalSidebarToggle();
     // Ask the browser to protect our IndexedDB from storage-pressure eviction
     if (navigator.storage && navigator.storage.persist) {
         navigator.storage.persist().catch(() => {});
