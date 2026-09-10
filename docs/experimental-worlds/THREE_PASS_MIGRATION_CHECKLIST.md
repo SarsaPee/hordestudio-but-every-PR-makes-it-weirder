@@ -31,7 +31,8 @@ checkpoint conflicts with this checklist, this checklist wins.
 
 Pass-0 implementation and evidence are recorded in
 `STOCK_WORLDS_17_PASS0_IMPORT_MAP.md`, `CUSTOMIZATION_INVENTORY.md`, and
-`PASS0_ACCEPTANCE_LEDGER.md`. Pass 1 has not begun.
+`PASS0_ACCEPTANCE_LEDGER.md`. Pass 1 is active; Pass 2 is explicitly out of
+scope until the native 17.0 boundary and acceptance checkpoint exist.
 
 ## Pass 1: detach the working Experimental mode
 
