@@ -1,0 +1,12 @@
+# Sorted mutable host/integration surfaces. These are intentionally excluded
+# from the immutable Experimental core hash.
+app.js
+experiences/experimental-worlds/runtime/experimental-worlds-repository.js
+horde_mcp_bridge.py
+host-adapters/experimental-worlds/experimental-worlds-host-adapter.js
+host-adapters/experimental-worlds/experimental-worlds-state-adapter.js
+host-adapters/experimental-worlds/visual-media-host-adapter.js
+index.html
+scripts/build-portable.sh
+start-horde-studio.sh
+style.css
