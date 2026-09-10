@@ -5,6 +5,7 @@ experiences/experimental-worlds/runtime/dossier-claims.js
 experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js
 experiences/experimental-worlds/runtime/sidecar-core.js
 experiences/experimental-worlds/runtime/world-intelligence-core.js
+experiences/experimental-worlds/runtime/world-message-input.js
 experiences/experimental-worlds/runtime/world-play-core.js
 experiences/experimental-worlds/runtime/world-protocol-core.js
 experiences/experimental-worlds/runtime/world-session-core.js

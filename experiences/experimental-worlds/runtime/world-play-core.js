@@ -912,10 +912,10 @@ function setupWorldPlayLogic() {
     const input = document.getElementById('world-user-input');
     const resizeHandle = document.getElementById('world-message-resize-handle');
     if (input) {
-        input.addEventListener('input', () => resizeWorldMessageInput(input));
-        input.addEventListener('change', () => resizeWorldMessageInput(input));
+        input.addEventListener('input', () => resizeExperimentalWorldMessageInput(input));
+        input.addEventListener('change', () => resizeExperimentalWorldMessageInput(input));
     }
-    installWorldMessageResizeHandle(input, resizeHandle);
+    installExperimentalWorldMessageResizeHandle(input, resizeHandle);
 
     const sendWorldInput = async () => {
         if (worldTurnInProgress) {
@@ -931,7 +931,7 @@ function setupWorldPlayLogic() {
         const text = input.value.trim();
         if (!text) return;
         worldTurnInProgress = true;
-        resetWorldMessageInput(input);
+        resetExperimentalWorldMessageInput(input);
         sendBtn.classList.add('stop');
         sendBtn.innerHTML = '⏹';
         const typing = document.getElementById('world-dm-typing');
@@ -5297,7 +5297,7 @@ function appendWorldMessageUI(msg, index = null) {
             if (restoredInput) {
                 restoredInput.value = editedText;
                 restoredInput.dispatchEvent(new Event('input', { bubbles: true }));
-                resizeWorldMessageInput(restoredInput);
+                resizeExperimentalWorldMessageInput(restoredInput);
                 restoredInput.focus();
             }
             ExperimentalWorldsHost.notify('Timeline rewound. Review the draft, then send it to continue from here.', 'success');
@@ -6250,7 +6250,7 @@ async function executeWorldTurn(commandOrReroll = null) {
 
         turnSnapshot = captureWorldTurnState(world, sess);
         historyStartLength = sess.history.length;
-        if (!command) resetWorldMessageInput();
+        if (!command) resetExperimentalWorldMessageInput();
 
         // ⏩ Continue: silent directive — no user bubble, no movement detection
         if (command === "continue") {

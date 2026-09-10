@@ -21,7 +21,7 @@ for (const file of files) {
 const ownedRuntime = files.filter(file => /\/(?:runtime|visuals|mechanics)\//.test(file));
 const hostStateLeak = /\bstate\.(?:worlds|worldInstances|activeWorldId|worldRecoverySnapshots|editingWorld|lastWorldStudioId|lastWorldStudioTab)\b/;
 const hostWholeSave = /\bsaveState\s*\(/;
-const ambientExperimentalRuntime = /\b(?:HordeSidecar(?:Hooks|Mode|Timeline|Promotion|Traversal|MemoryGraph|Reader|ReaderBackfill)|HordeRpgMechanics|worldMediaDirty)\b|(?<![.\w])switchView\s*\(/;
+const ambientExperimentalRuntime = /\b(?:HordeSidecar(?:Hooks|Mode|Timeline|Promotion|Traversal|MemoryGraph|Reader|ReaderBackfill)|HordeRpgMechanics|worldMediaDirty|resizeWorldMessageInput|resetWorldMessageInput|setWorldMessageInputManualHeight|installWorldMessageResizeHandle)\b|(?<![.\w])switchView\s*\(/;
 for (const file of ownedRuntime) {
     const source = readFileSync(file, 'utf8');
     assert(!hostStateLeak.test(source), `${file} reaches Experimental World state through the host object`);

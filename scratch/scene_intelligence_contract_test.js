@@ -264,7 +264,7 @@ vm.runInNewContext(`${stageStoryIdea}; stageScenePulseStoryIdea({ direction: { t
     isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     document: { getElementById: id => id === 'world-user-input' ? stagedStoryIdeaComposer : null },
     Event: class Event { constructor(type, options) { this.type = type; this.options = options; } },
-    resizeWorldMessageInput() {},
+    resizeExperimentalWorldMessageInput() {},
     ExperimentalWorldsHost: { notify() {} }
 });
 assert.match(stagedStoryIdeaComposer.value, /^\[OOC: Take the story in an exploratory direction — "Line check"\. Test the repaired cider line\.\]$/, 'the native Exploratory card must produce grammatical OOC text before it reaches the World composer');

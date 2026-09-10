@@ -8131,7 +8131,7 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
     if (inject && worldTurnInProgress) throw new Error('The current World turn is still generating.');
     input.value = text;
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    resizeWorldMessageInput(input);
+    resizeExperimentalWorldMessageInput(input);
     input.focus();
     if (!inject) {
         ExperimentalWorldsHost.notify('Story direction pasted into the World draft — edit and send when ready.', 'success');
