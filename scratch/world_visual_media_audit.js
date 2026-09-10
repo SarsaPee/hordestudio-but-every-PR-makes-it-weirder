@@ -2,7 +2,10 @@ const fs = require('fs');
 
 const app = fs.readFileSync('app.js', 'utf8');
 const experimentalVisuals = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-media-core.js', 'utf8');
-const runtime = `${app}\n${experimentalVisuals}`;
+const visualEditor = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-editor-core.js', 'utf8');
+const worldStudio = fs.readFileSync('experiences/experimental-worlds/runtime/world-studio-core.js', 'utf8');
+const worldPlay = fs.readFileSync('experiences/experimental-worlds/runtime/world-play-core.js', 'utf8');
+const runtime = `${app}\n${experimentalVisuals}\n${visualEditor}\n${worldStudio}\n${worldPlay}`;
 const html = fs.readFileSync('index.html', 'utf8');
 const css = fs.readFileSync('style.css', 'utf8');
 let passed = 0;
@@ -20,22 +23,23 @@ check('world visuals are versioned, default to Classic and retire Visual Novel',
 check('media assets are embedded data rather than expiring URLs',
     experimentalVisuals.includes('World media must be embedded image data so exported worlds remain portable.'));
 check('media payload is separated from frequently rewritten world manifests',
-    app.includes('mediaAssets: []') && app.includes('records.worldMediaAssets'));
+    runtime.includes('mediaAssets: []') && runtime.includes('ExperimentalWorldsRepository?.writeSnapshot')
+    && runtime.includes('worldMediaAssets'));
 check('separate media payload is reattached before loaded worlds are repaired',
-    app.indexOf("const storedWorldMedia = await HordeDB.get('worldMediaAssets')")
-        < app.lastIndexOf('repairLoadedState();'));
+    runtime.indexOf("const storedWorldMedia = await ExperimentalWorldsRepository?.readSnapshot('worldMediaAssets')")
+        < runtime.lastIndexOf('repairLoadedState();'));
 check('portable world exports carry a versioned embedded media manifest',
-    app.includes("exportedWorld._format = 'horde-world'")
-    && app.includes('exportedWorld._mediaManifest'));
+    runtime.includes("exportedWorld._format = 'horde-world'")
+    && runtime.includes('exportedWorld._mediaManifest'));
 check('world and full-backup import limits account for visual worlds',
     (app.match(/512 \* 1024 \* 1024/g) || []).length >= 2);
 check('assets deduplicate and orphaned replacements can be pruned',
     experimentalVisuals.includes('function worldMediaHash(data)') && experimentalVisuals.includes('function pruneWorldMediaAssets(world)'));
 check('location backgrounds and NPC portraits have upload and generation controls',
-    app.includes('generateWorldLocationBackground') && app.includes('generateWorldNpcPortrait')
+    runtime.includes('generateWorldLocationBackground') && runtime.includes('generateWorldNpcPortrait')
     && html.includes('World Presentation'));
 check('map skins decorate rather than replace the semantic map',
-    app.includes('generateWorldMapSkin') && app.includes('renderSemanticWorldMap(container'));
+    runtime.includes('generateWorldMapSkin') && runtime.includes('renderSemanticWorldMap(container'));
 check('play backgrounds are selected from canonical player location state',
     runtime.includes("world.locations.find(location => location.id === sess.playerLocation)")
     && runtime.includes('worldMediaSource(world, visualLocation?.visuals?.backgroundAssetId)'));

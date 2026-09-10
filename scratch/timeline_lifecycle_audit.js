@@ -8,8 +8,9 @@ const { app, functionSource } = require('./app_source.js');
 
 const context = {
     state: { activeWorldId: 'world-a', worldInstances: { 'world-a': { activeSessionId: 'root', sessions: [] } } },
+    ExperimentalWorldsState: null,
     safeJsonClone: value => JSON.parse(JSON.stringify(value)),
-    saveState: async () => { context.saves++; },
+    ExperimentalWorldsHost: { persist: async () => { context.saves++; } },
     saves: 0,
     createNewWorldSession: async () => {
         context.created++;
@@ -19,6 +20,7 @@ const context = {
     },
     created: 0
 };
+context.ExperimentalWorldsState = context.state;
 vm.createContext(context);
 vm.runInContext([
     functionSource('timelineForkLineage'),
@@ -59,11 +61,11 @@ vm.runInContext([
         'new timelines must normalize as Sidecar independently of legacy world metadata');
     assert.match(functionSource('getCurrentWorldSession'), /\.\.\.\(options\.newWorld === true \? \{ sidecar: \{ schemaVersion: 1, mode: 'sidecar' \} \} : \{\}\)/,
         'a newly entered world instance must persist Sidecar before ordinary normalization');
-    assert.match(functionSource('forkCurrentWorldTimeline'), /fork\.sidecar = \{ \.\.\.\(isPlainObject\(fork\.sidecar\) \? fork\.sidecar : \{\}\), mode: 'sidecar' \}/,
+    assert.match(functionSource('forkCurrentWorldTimeline'), /fork\.sidecar = \{ \.\.\.\(experimentalIsPlainObject\(fork\.sidecar\) \? fork\.sidecar : \{\}\), mode: 'sidecar' \}/,
         'a newly created fork must use Sidecar when its world is configured for Sidecar');
     assert.match(functionSource('enterWorld'), /getCurrentWorldSession\(\{ newWorld: isNewInstance \}\)/,
         'a newly created world instance must seed Sidecar before first setup');
-    assert.match(functionSource('enterWorld'), /inst\.activeSessionId = sessionId;\s*saveState\(\)\.catch/,
+    assert.match(functionSource('enterWorld'), /inst\.activeSessionId = sessionId;\s*ExperimentalWorldsHost\.persist\(\)\.catch/,
         'entering a selected hub timeline must persist the active timeline');
     assert.match(functionSource('renderWorldTimelineBrowser'), /timeline-delete-btn/,
         'timeline browser must expose deletion for every timeline');

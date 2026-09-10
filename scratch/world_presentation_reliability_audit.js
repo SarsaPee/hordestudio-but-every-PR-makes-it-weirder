@@ -5,6 +5,8 @@ process.env.HORDE_TEST_SOURCE_FILES = 'experiences/experimental-worlds/visuals/w
 const { buildContext } = require('./app_source.js');
 
 const app = fs.readFileSync('app.js', 'utf8');
+const worldStudio = fs.readFileSync('experiences/experimental-worlds/runtime/world-studio-core.js', 'utf8');
+const experimentalRuntime = `${app}\n${worldStudio}`;
 const css = fs.readFileSync('style.css', 'utf8');
 const html = fs.readFileSync('index.html', 'utf8');
 let passed = 0;
@@ -16,8 +18,8 @@ function test(name, fn) {
 
 test('presentation normalization preserves live editor references', () => {
     const context = {
-        isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-        cssColor: (value, fallback) => value || fallback,
+        experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+        experimentalCssColor: (value, fallback) => value || fallback,
         livingClamp: (value, min, max) => Math.max(min, Math.min(max, Number(value))),
         WORLD_MEDIA_ASSET_LIMIT: 10000
     };
@@ -45,11 +47,11 @@ test('image response decoder accepts dedicated and nested provider shapes', () =
 
 test('pronoun-tagged lines keep discourse focus instead of stealing a name from dialogue', () => {
     const context = {
-        parseHordeMarkdown: value => String(value),
+        experimentalParseHordeMarkdown: value => String(value),
         worldMediaSource: () => '',
-        cssColor: value => value || '#e63946',
-        escapeHTML: value => String(value),
-        cssUrl: value => value
+        experimentalCssColor: value => value || '#e63946',
+        experimentalEscapeHTML: value => String(value),
+        experimentalCssUrl: value => value
     };
     buildContext(vm, ['renderWorldNarrativeHtml'], context);
     const world = {
@@ -68,11 +70,11 @@ test('pronoun-tagged lines keep discourse focus instead of stealing a name from 
 
 test('ambiguous dialogue stays prose instead of receiving a false portrait', () => {
     const context = {
-        parseHordeMarkdown: value => String(value),
+        experimentalParseHordeMarkdown: value => String(value),
         worldMediaSource: () => '',
-        cssColor: value => value || '#e63946',
-        escapeHTML: value => String(value),
-        cssUrl: value => value
+        experimentalCssColor: value => value || '#e63946',
+        experimentalEscapeHTML: value => String(value),
+        experimentalCssUrl: value => value
     };
     buildContext(vm, ['renderWorldNarrativeHtml'], context);
     const world = { entities: [
@@ -91,12 +93,10 @@ test('world identity layout has explicit non-collapsing columns', () => {
 });
 
 test('the fixed-label map visual generator restores its button in a finally block', () => {
-    // The accepted Pass-0 source has two UI generators with this exact label;
-    // the broader visual pipeline uses specific labels. Keep the assertion at
-    // the observed baseline rather than mistaking an old test expectation for
-    // a migration regression.
-    assert.equal((app.match(/button\.textContent = 'Generating…';/g) || []).length, 2);
-    assert.equal((app.match(/finally \{\s*button\.disabled = false;\s*button\.textContent = '✨ Generate';/g) || []).length, 1);
+    // The fixed-label map-skin generator lives in the relocated studio core.
+    // Other visual controls restore their captured original labels.
+    assert.equal((experimentalRuntime.match(/button\.textContent = 'Generating…';/g) || []).length, 1);
+    assert.equal((experimentalRuntime.match(/finally \{\s*button\.disabled = false;\s*button\.textContent = '✨ Generate';/g) || []).length, 1);
 });
 
 console.log(`\n${passed} world-presentation reliability checks passed.`);

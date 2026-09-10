@@ -32,7 +32,7 @@ test('World Studio preserves blank inheritance rather than materializing the def
 });
 
 test('World gameplay resolves an inherited model at request time', () => {
-    assert.match(app, /const modelId\s*=\s*world\.model\s*\|\|\s*state\.globalSettings\.defaultModel/);
+    assert.match(app, /const modelId\s*=\s*world\.model\s*\|\|\s*ExperimentalWorldsState\.globalSettings\.defaultModel/);
     assert.match(app, /model:\s*modelId,[\s\S]{0,500}?messages:\s*sanitizeMessagesForProvider/);
 });
 
