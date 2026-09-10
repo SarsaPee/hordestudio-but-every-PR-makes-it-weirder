@@ -26371,6 +26371,10 @@ async function generateWorldMapSkin(world) {
         return { payload: readback, readbackDigest };
     }
     async function recoverInterruptedRestore() {
+        // Startup calls recovery before this runtime has mounted, so its
+        // private database must be opened explicitly rather than assuming a
+        // prior World view established the connection.
+        await HordeDB.init();
         const stage = await HordeDB.get(RESTORE_STAGE_KEY);
         const journal = await HordeDB.get(RESTORE_JOURNAL_KEY);
         if (!stage || !journal || journal.status !== 'staged') return { recovered: false };
