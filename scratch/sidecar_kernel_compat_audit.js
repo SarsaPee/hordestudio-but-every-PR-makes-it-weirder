@@ -1,9 +1,9 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { app } = require('./app_source.js');
 
 const root = path.join(__dirname, '..');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 assert.match(app, /memoryMode: \['ledger', 'semantic'\]\.includes\(raw\.memoryMode\) \? raw\.memoryMode : 'semantic'/,

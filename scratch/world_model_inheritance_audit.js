@@ -1,9 +1,8 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const { buildContext } = require('./app_source.js');
+const { app, buildContext, functionSource } = require('./app_source.js');
 
-const app = fs.readFileSync('app.js', 'utf8');
 const html = fs.readFileSync('index.html', 'utf8');
 
 let passed = 0;
@@ -23,16 +22,11 @@ test('bundled Worlds do not pin provider-specific text models', () => {
 });
 
 test('new Worlds inherit Settings until deliberately pinned', () => {
-    const start = app.indexOf('function createNewWorld()');
-    const end = app.indexOf('function setupWorldStudioTabs()', start);
-    assert(start >= 0 && end > start);
-    assert.match(app.slice(start, end), /model:\s*''/);
+    assert.match(functionSource('createNewWorld'), /model:\s*''/);
 });
 
 test('World Studio preserves blank inheritance rather than materializing the default', () => {
-    const start = app.indexOf('function openWorldStudio(');
-    const end = app.indexOf('async function saveWorld()', start);
-    const source = app.slice(start, end);
+    const source = functionSource('openWorldStudio');
     assert.match(source, /worldModelInput\.value\s*=\s*w\.model\s*\|\|\s*''/);
     assert.match(html, /Leave blank to follow the default text provider and model from Settings/);
 });

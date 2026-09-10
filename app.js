@@ -3490,7 +3490,7 @@ async function loadState() {
     if (interruptedHostRestore?.recovered) {
         console.info('Recovered an interrupted host restore from its verified stage.');
     }
-    const interruptedStockRestore = await window.StockWorlds17Pass0?.recoverInterruptedRestore?.();
+    const interruptedStockRestore = await recoverInterruptedStockWorldsPass0Restore();
     if (interruptedStockRestore?.recovered) {
         console.info('Recovered an interrupted stock Worlds restore from its verified stage.');
     }
@@ -12453,6 +12453,12 @@ const HOST_BACKUP_STATE_KEYS = Object.freeze([
 ]);
 const HOST_RESTORE_STAGE_KEY = '__horde_host_restore_stage_v1';
 const HOST_RESTORE_JOURNAL_KEY = '__horde_host_restore_journal_v1';
+// The temporary stock 17.0 World runtime is a byte-reproducible import of the
+// clean local source. Restore staging belongs to this global coordinator, not
+// inside that imported runtime, so global recovery can stage every partition
+// without altering stock World semantics.
+const STOCK_WORLDS_PASS0_RESTORE_STAGE_KEY = '__horde_stock_worlds17_pass0_restore_stage_v1';
+const STOCK_WORLDS_PASS0_RESTORE_JOURNAL_KEY = '__horde_stock_worlds17_pass0_restore_journal_v1';
 
 function hostBackupPartitionFrom(source, companionVideoAssets = {}) {
     const partition = {};
@@ -12537,6 +12543,63 @@ async function recoverInterruptedHostRestore() {
     const journal = await HordeDB.get(HOST_RESTORE_JOURNAL_KEY);
     if (!stage || !journal || journal.status !== 'staged') return { recovered: false };
     return { recovered: true, ...(await applyStagedHostRestore()) };
+}
+
+function stockWorldsPass0Payload(value) {
+    if (!isPlainObject(value) || !Array.isArray(value.worlds) || !isPlainObject(value.worldInstances || {})) {
+        throw new Error('Invalid Pass-0 stock Worlds backup payload');
+    }
+    return safeJsonClone(value);
+}
+
+async function stageStockWorldsPass0Restore(payload) {
+    const stock = window.StockWorlds17Pass0;
+    const digest = window.ExperimentalWorldsRepository?.digest;
+    if (!stock || !digest) throw new Error('Stock Worlds recovery coordinator is unavailable.');
+    const next = stockWorldsPass0Payload(payload);
+    const preimage = await stock.exportState();
+    const stageDigest = await digest(next);
+    await HordeDB.setMultiple({
+        [STOCK_WORLDS_PASS0_RESTORE_STAGE_KEY]: { payload: next, digest: stageDigest, stagedAt: new Date().toISOString() },
+        [STOCK_WORLDS_PASS0_RESTORE_JOURNAL_KEY]: {
+            version: 1, status: 'staged', at: new Date().toISOString(), preimage,
+            preimageDigest: await digest(preimage), stageDigest
+        }
+    });
+    const staged = await HordeDB.get(STOCK_WORLDS_PASS0_RESTORE_STAGE_KEY);
+    if (!staged || staged.digest !== stageDigest || await digest(staged.payload) !== stageDigest) {
+        throw new Error('Stock Worlds restore stage failed verification; active data was not replaced.');
+    }
+    return staged;
+}
+
+async function applyStagedStockWorldsPass0Restore() {
+    const stock = window.StockWorlds17Pass0;
+    const digest = window.ExperimentalWorldsRepository?.digest;
+    const stage = await HordeDB.get(STOCK_WORLDS_PASS0_RESTORE_STAGE_KEY);
+    const journal = await HordeDB.get(STOCK_WORLDS_PASS0_RESTORE_JOURNAL_KEY);
+    if (!stock || !digest || !stage || !journal || journal.status !== 'staged') {
+        throw new Error('No verified stock Worlds restore stage is available.');
+    }
+    if (await digest(stage.payload) !== stage.digest) throw new Error('Stock Worlds restore stage checksum changed before apply.');
+    await stock.importState(stage.payload);
+    const readback = await stock.exportState();
+    const readbackDigest = await digest(readback);
+    if (readbackDigest !== stage.digest) {
+        throw new Error('Stock Worlds restore readback did not match its verified stage; the preimage remains in the recovery journal.');
+    }
+    await HordeDB.setMultiple({ [STOCK_WORLDS_PASS0_RESTORE_JOURNAL_KEY]: {
+        ...journal, status: 'applied-and-verified', appliedAt: new Date().toISOString(), readbackDigest
+    } });
+    await HordeDB.delete(STOCK_WORLDS_PASS0_RESTORE_STAGE_KEY);
+    return { payload: readback, readbackDigest };
+}
+
+async function recoverInterruptedStockWorldsPass0Restore() {
+    const stage = await HordeDB.get(STOCK_WORLDS_PASS0_RESTORE_STAGE_KEY);
+    const journal = await HordeDB.get(STOCK_WORLDS_PASS0_RESTORE_JOURNAL_KEY);
+    if (!stage || !journal || journal.status !== 'staged') return { recovered: false };
+    return { recovered: true, ...(await applyStagedStockWorldsPass0Restore()) };
 }
 
 async function makeFullBackupManifest(payload) {
@@ -12670,11 +12733,11 @@ function importFullBackup(file) {
                         worlds: [], worldInstances: {}, activeWorldId: null,
                         worldRecoverySnapshots: {}, stockSettings: {}, worldMediaAssets: {}
                     };
-                    await window.StockWorlds17Pass0.stageRestore(stockSnapshot);
+                    await stageStockWorldsPass0Restore(stockSnapshot);
                     // Each owner has a verified stage before the first active
                     // record is changed. A power loss now causes loadState to
                     // replay the remaining stages deterministically.
-                    await window.StockWorlds17Pass0.applyStagedRestore();
+                    await applyStagedStockWorldsPass0Restore();
                     const appliedExperimentalRestore = await window.ExperimentalWorldsRepository.applyStagedRestore();
                     const appliedHostRestore = await applyStagedHostRestore();
                     HOST_BACKUP_STATE_KEYS.forEach(key => { state[key] = appliedHostRestore.partition[key]; });

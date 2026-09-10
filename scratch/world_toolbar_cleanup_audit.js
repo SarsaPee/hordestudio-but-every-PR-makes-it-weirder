@@ -5,9 +5,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { app } = require('./app_source.js');
 
 const root = path.join(__dirname, '..');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const retired = [
     'world-conversation-mode',

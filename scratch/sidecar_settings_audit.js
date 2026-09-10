@@ -1,9 +1,9 @@
 const assert = require('assert');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
+const { app } = require('./app_source.js');
 
 const root = path.join(__dirname, '..');
-const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
 const helpSystem = fs.readFileSync(path.join(root, 'help-system.js'), 'utf8');

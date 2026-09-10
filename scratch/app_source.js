@@ -33,12 +33,25 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const repositoryRoot = path.join(__dirname, '..');
+// Pass 1 relocated the Experimental Worlds implementation out of app.js.
+// Audit extraction must now model the real page's host bootstrap plus the
+// manifest-pinned native mode, rather than falsely reporting moved functions
+// as missing. The manifest is deliberately the same source of truth used for
+// the reproducible Experimental core hash.
+const experimentalCoreManifest = path.join(repositoryRoot, 'docs', 'experimental-worlds', 'experimental-core-manifest.txt');
+const experimentalCoreFiles = fs.readFileSync(experimentalCoreManifest, 'utf8')
+    .split(/\r?\n/)
+    .map(value => value.trim())
+    .filter(value => value && !value.startsWith('#'))
+    .filter(value => value.endsWith('.js'))
+    .map(value => path.join(repositoryRoot, value));
 const additionalSourceFiles = String(process.env.HORDE_TEST_SOURCE_FILES || '')
     .split(path.delimiter)
     .map(value => value.trim())
     .filter(Boolean)
-    .map(value => path.join(__dirname, '..', value));
-const app = [path.join(__dirname, '..', 'app.js'), ...additionalSourceFiles]
+    .map(value => path.join(repositoryRoot, value));
+const app = [path.join(repositoryRoot, 'app.js'), ...experimentalCoreFiles, ...additionalSourceFiles]
     .map(file => fs.readFileSync(file, 'utf8'))
     .join('\n');
 

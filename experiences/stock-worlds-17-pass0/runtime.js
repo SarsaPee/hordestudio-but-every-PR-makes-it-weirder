@@ -26314,73 +26314,6 @@ async function generateWorldMapSkin(world) {
         });
     }
 
-    // Global backup stages this temporary Pass-0 repository before applying
-    // any owner. These records are recovery metadata, not stock World state;
-    // normal Worlds startup neither reads nor migrates them.
-    const RESTORE_STAGE_KEY = '__stock_worlds17_pass0_restore_stage_v1';
-    const RESTORE_JOURNAL_KEY = '__stock_worlds17_pass0_restore_journal_v1';
-    function canonicalRestoreValue(value) {
-        if (value === null) return 'null';
-        if (Array.isArray(value)) return `[${value.map(canonicalRestoreValue).join(',')}]`;
-        if (typeof value === 'object') {
-            return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalRestoreValue(value[key])}`).join(',')}}`;
-        }
-        return JSON.stringify(value);
-    }
-    async function restoreDigest(value) {
-        const bytes = new TextEncoder().encode(canonicalRestoreValue(value));
-        const hash = await global.crypto.subtle.digest('SHA-256', bytes);
-        return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
-    }
-    function validateRestorePayload(payload) {
-        if (!isPlainObject(payload) || !Array.isArray(payload.worlds) || !isPlainObject(payload.worldInstances || {})) {
-            throw new Error('Invalid Pass-0 stock Worlds backup payload');
-        }
-    }
-    async function stageRestore(payload) {
-        validateRestorePayload(payload);
-        const next = safeJsonClone(payload);
-        const preimage = await exportState();
-        const stageDigest = await restoreDigest(next);
-        await HordeDB.setMultiple({
-            [RESTORE_STAGE_KEY]: { payload: next, digest: stageDigest, stagedAt: new Date().toISOString() },
-            [RESTORE_JOURNAL_KEY]: {
-                version: 1, status: 'staged', at: new Date().toISOString(), preimage,
-                preimageDigest: await restoreDigest(preimage), stageDigest
-            }
-        });
-        const staged = await HordeDB.get(RESTORE_STAGE_KEY);
-        if (!staged || staged.digest !== stageDigest || await restoreDigest(staged.payload) !== stageDigest) {
-            throw new Error('Stock Worlds restore stage failed verification; active data was not replaced.');
-        }
-        return staged;
-    }
-    async function applyStagedRestore() {
-        const stage = await HordeDB.get(RESTORE_STAGE_KEY);
-        const journal = await HordeDB.get(RESTORE_JOURNAL_KEY);
-        if (!stage || !journal || journal.status !== 'staged') throw new Error('No verified stock Worlds restore stage is available.');
-        if (await restoreDigest(stage.payload) !== stage.digest) throw new Error('Stock Worlds restore stage checksum changed before apply.');
-        await importState(stage.payload);
-        const readback = await exportState();
-        const readbackDigest = await restoreDigest(readback);
-        if (readbackDigest !== stage.digest) throw new Error('Stock Worlds restore readback did not match its verified stage; the preimage remains in the recovery journal.');
-        await HordeDB.setMultiple({ [RESTORE_JOURNAL_KEY]: {
-            ...journal, status: 'applied-and-verified', appliedAt: new Date().toISOString(), readbackDigest
-        } });
-        await HordeDB.delete(RESTORE_STAGE_KEY);
-        return { payload: readback, readbackDigest };
-    }
-    async function recoverInterruptedRestore() {
-        // Startup calls recovery before this runtime has mounted, so its
-        // private database must be opened explicitly rather than assuming a
-        // prior World view established the connection.
-        await HordeDB.init();
-        const stage = await HordeDB.get(RESTORE_STAGE_KEY);
-        const journal = await HordeDB.get(RESTORE_JOURNAL_KEY);
-        if (!stage || !journal || journal.status !== 'staged') return { recovered: false };
-        return { recovered: true, ...(await applyStagedRestore()) };
-    }
-
     async function importState(payload) {
         if (!isPlainObject(payload) || !Array.isArray(payload.worlds) || !isPlainObject(payload.worldInstances || {})) {
             throw new Error('Invalid Pass-0 stock Worlds backup payload');
@@ -26470,9 +26403,6 @@ async function generateWorldMapSkin(world) {
         unmount,
         quiesceForImport,
         exportState,
-        stageRestore,
-        applyStagedRestore,
-        recoverInterruptedRestore,
         importState,
         purgeState,
         ready,
