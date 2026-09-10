@@ -174,12 +174,12 @@
         return entry;
     }
     function normalizeReaderCandidate(raw = {}, defaults = {}) {
-        const source = isPlainObject(raw) ? raw : {};
+        const source = experimentalIsPlainObject(raw) ? raw : {};
         const typeMap = { character: 'character', entity: 'character', npc: 'character', location: 'location', local_space: 'location', space: 'location', outfit: 'outfit', clothing: 'outfit', prop: 'prop', item: 'prop', vehicle: 'vehicle', relationship: 'relationship', thread: 'thread', quest: 'thread' };
         const candidateType = typeMap[String(source.candidateType || source.candidate_type || source.type || 'entity').toLowerCase()] || 'entity';
         const statusValues = ['derived', 'matched', 'unresolved', 'proposed', 'accepted', 'rejected', 'superseded', 'stale', 'retired', 'promoted'];
         const rawStatus = String(source.lifecycleStatus || source.lifecycle_status || source.status || 'derived').toLowerCase();
-        const evidence = Array.isArray(source.evidence) ? source.evidence.slice(0, 24).map(item => isPlainObject(item) ? safeJsonClone(item) : { text: String(item || '').slice(0, 1000) }) : [];
+        const evidence = Array.isArray(source.evidence) ? source.evidence.slice(0, 24).map(item => experimentalIsPlainObject(item) ? experimentalSafeJsonClone(item) : { text: String(item || '').slice(0, 1000) }) : [];
         const label = String(source.label || source.name || source.title || source.role || '').trim().slice(0, 240);
         const candidateId = String(source.candidateId || source.candidate_id || '').trim().slice(0, 180);
         return {
@@ -197,7 +197,7 @@
             parentCandidateId: String(source.parentCandidateId || source.parent_candidate_id || '').slice(0, 180),
             parentCanonicalId: String(source.parentCanonicalId || source.parent_canonical_id || source.parentLocationId || '').slice(0, 180),
             presence: String(source.presence || source.presenceState || '').slice(0, 40),
-            details: isPlainObject(source.details) ? safeJsonClone(source.details) : {},
+            details: experimentalIsPlainObject(source.details) ? experimentalSafeJsonClone(source.details) : {},
             clothingDescription: String(source.clothingDescription || source.clothing_description || '').slice(0, 1800),
             individualGarments: Array.isArray(source.individualGarments || source.individual_garments) ? (source.individualGarments || source.individual_garments).map(item => String(item || '').slice(0, 180)).filter(Boolean).slice(0, 24) : [],
             visibleCondition: String(source.visibleCondition || source.visible_condition || '').slice(0, 600),
@@ -211,7 +211,7 @@
             attemptId: String(source.attemptId || defaults.attemptId || '').slice(0, 180),
             evidence,
             lastSeenAt: String(source.lastSeenAt || source.last_seen_at || new Date().toISOString()).slice(0, 40),
-            promotionProvenance: isPlainObject(source.promotionProvenance || source.promotion_provenance) ? safeJsonClone(source.promotionProvenance || source.promotion_provenance) : null
+            promotionProvenance: experimentalIsPlainObject(source.promotionProvenance || source.promotion_provenance) ? experimentalSafeJsonClone(source.promotionProvenance || source.promotion_provenance) : null
         };
     }
 
@@ -270,7 +270,7 @@
     function reconcileVehicleEvents(protocol,world,receipt,options={}){const state=traversalState(protocol);if(!state)return[];const changes=[];(receipt?.events||[]).forEach(event=>{if(event?.type!=='movement'||event?.movement_mode!=='vehicle')return;const actorId=clean(event.actor_id,160),vehicleId=clean(event.vehicle_id||event.vehicleId,160),status=clean(event.status,40)||'completed';if(['intended','attempted','in_progress'].includes(status)){let journey=state.journeys.find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey){journey=createJourney(protocol,world,{vehicleId,originId:event.from_location_id||options.playerLocationId,destinationId:event.to_location_id||'',occupants:[actorId],source:'narrator_handoff',evidence:event.evidence||event.cause||'',runtimeKind:vehicleId?'':'rideshare'});if(journey?.id)changes.push({type:'journey_prepared',journeyId:journey.id});}return;}if(status!=='completed')return;const journey=[...state.journeys].reverse().find(item=>item.status!=='completed'&&item.occupants.includes(actorId)&&(!vehicleId||item.vehicleEntityId===vehicleId));if(!journey)return;journey.status='completed';journey.completedAt=stamp();journey.destinationAnchorId=clean(event.to_location_id||journey.destinationAnchorId,160);if(journey.vehicleEntityId){const vehicle=(world.entities||[]).find(entity=>entity.id===journey.vehicleEntityId),data=normalizeVehicle(vehicle);if(data)data.parkedAnchorId=journey.destinationAnchorId||data.parkedAnchorId;}else if(journey.runtimeContainer){state.recentRuntimeContainers.push({...journey.runtimeContainer,departedAt:stamp(),journeyId:journey.id});state.recentRuntimeContainers=state.recentRuntimeContainers.slice(-20);}changes.push({type:'journey_completed',journeyId:journey.id});});return changes;}
     function graph(protocol){if(!protocol)return null;const prior=object(protocol.memoryGraph)?protocol.memoryGraph:{};protocol.memoryGraph={schemaVersion:1,worldHistory:Array.isArray(prior.worldHistory)?prior.worldHistory:[],episodes:Array.isArray(prior.episodes)?prior.episodes:[],scenes:Array.isArray(prior.scenes)?prior.scenes:[],sequences:Array.isArray(prior.sequences)?prior.sequences:[],cognition:Array.isArray(prior.cognition)?prior.cognition:[],locationReferences:Array.isArray(prior.locationReferences)?prior.locationReferences:[],lastEpisodeTurnCount:Math.max(0,Number(prior.lastEpisodeTurnCount)||0),...prior};return protocol.memoryGraph;}
     function jobs(protocol){if(!protocol)return[];if(!Array.isArray(protocol.jobs))protocol.jobs=[];return protocol.jobs;}
-    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record){if(turn.readerEnvelope){record.readerEnvelope=safeJsonClone(turn.readerEnvelope);record.readerSnapshotId=clean(turn.readerSnapshotId,160);record.readerRefreshedAt=stamp();record.provenance={...(record.provenance||{}),readerSnapshotId:record.readerSnapshotId};}return record;}record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],readerSnapshotId:clean(turn.readerSnapshotId,160),readerEnvelope:turn.readerEnvelope?safeJsonClone(turn.readerEnvelope):null,provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id,readerSnapshotId:clean(turn.readerSnapshotId,160)}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
+    function recordMemoryTurn(protocol,turn){const memory=graph(protocol);if(!memory||!turn?.id)return null;let record=memory.worldHistory.find(item=>item.turnId===turn.id);if(record){if(turn.readerEnvelope){record.readerEnvelope=experimentalSafeJsonClone(turn.readerEnvelope);record.readerSnapshotId=clean(turn.readerSnapshotId,160);record.readerRefreshedAt=stamp();record.provenance={...(record.provenance||{}),readerSnapshotId:record.readerSnapshotId};}return record;}record={id:identifier('world_history'),kind:'world_history',turnId:turn.id,sequenceId:clean(turn.sequenceId,160),sceneId:clean(turn.sceneId,160),status:turn.status==='superseded'?'superseded':'active',createdAt:stamp(),narration:clean(turn.narration,24000),sceneReading:clean(turn.handoff,6000),text:clean(turn.narration,24000),timelineMessageId:clean(turn.timelineMessageId,160),sourceMessageIds:Array.isArray(turn.sourceMessageIds)?turn.sourceMessageIds.map(id=>clean(id,160)).filter(Boolean):[],readerSnapshotId:clean(turn.readerSnapshotId,160),readerEnvelope:turn.readerEnvelope?experimentalSafeJsonClone(turn.readerEnvelope):null,provenance:{source:'committed_sidecar_turn',receipt:turn.receipt?.turn_id||turn.id,readerSnapshotId:clean(turn.readerSnapshotId,160)}};memory.worldHistory.push(record);memory.worldHistory=memory.worldHistory.slice(-2000);return record;}
     /* Bring pre-Sidecar visible narration into the same source-pinned graph.
        This is deliberately an evidence import, not a retroactive receipt: it
        never invents a handoff, state update, cognition, or scene boundary.
@@ -285,7 +285,7 @@
             // Failed or pending Sidecar processing is authored evidence, not a
             // settled memory source. Leave it pinned to its downstream retry
             // record instead of importing it into the active graph.
-            const backstage = isPlainObject(message?.sidecarBackstage) ? message.sidecarBackstage : null;
+            const backstage = experimentalIsPlainObject(message?.sidecarBackstage) ? message.sidecarBackstage : null;
             if (backstage && backstage.status !== 'committed') { skipped++; return; }
             const narration=clean(message?.text||message?.content||'',24000); if(!narration){skipped++;return;}
             const messageId=clean(message?.id||`history_${index}`,160);

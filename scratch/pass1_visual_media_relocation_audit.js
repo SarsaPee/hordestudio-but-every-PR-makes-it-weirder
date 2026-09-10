@@ -14,6 +14,17 @@ const acceptedUnit = acceptedApp.slice(start, end);
 // comparing it to the Pass-0 behavioral oracle; this does not hide a changed
 // World reducer, prompt, renderer, or schema body.
 const restoreHostContract = source => [
+    ['experimentalIsPlainObject', 'isPlainObject'],
+    ['experimentalSafeJsonClone', 'safeJsonClone'],
+    ['experimentalEscapeHTML', 'escapeHTML'],
+    ['experimentalCssUrl', 'cssUrl'],
+    ['experimentalDisplayInitials', 'displayInitials'],
+    ['experimentalNormalizePersona', 'normalizePersona'],
+    ['experimentalPersonaPromptText', 'personaPromptText'],
+    ['experimentalExtractJSON', 'extractJSON'],
+    ['experimentalSafeParseJSONRepair', 'safeParseJSONRepair'],
+    ['experimentalNormalizeUploadedImage', 'normalizeUploadedImage'],
+    ['experimentalOptimizeImage', 'optimizeImage'],
     ['ExperimentalWorldsHost.navigate', 'switchView'],
     ['ExperimentalWorldsHost.markMediaChanged()', 'worldMediaDirty = true'],
     ['ExperimentalWorldsHost.mediaDirty()', 'worldMediaDirty'],
@@ -64,10 +75,23 @@ const restoreExperimentalWarning = source => source.replace(
     /ExperimentalWorldsHost\.worldLoadWarning\(world\.id\) \? `<div class="world-library-warning">Needs repair · \$\{escapeHTML\(ExperimentalWorldsHost\.worldLoadWarning\(world\.id\)\)\}<\/div>` : ''/g,
     "worldLoadWarnings.has(world.id) ? `<div class=\"world-library-warning\">Needs repair · ${escapeHTML(worldLoadWarnings.get(world.id))}</div>` : ''"
 ).replace('restoreWorldMediaDirty(previousWorldMediaDirty);', 'worldMediaDirty = previousWorldMediaDirty;');
+const restorePrivateUtilities = source => [
+    ['experimentalIsPlainObject', 'isPlainObject'],
+    ['experimentalSafeJsonClone', 'safeJsonClone'],
+    ['experimentalEscapeHTML', 'escapeHTML'],
+    ['experimentalCssUrl', 'cssUrl'],
+    ['experimentalDisplayInitials', 'displayInitials'],
+    ['experimentalNormalizePersona', 'normalizePersona'],
+    ['experimentalPersonaPromptText', 'personaPromptText'],
+    ['experimentalExtractJSON', 'extractJSON'],
+    ['experimentalSafeParseJSONRepair', 'safeParseJSONRepair'],
+    ['experimentalNormalizeUploadedImage', 'normalizeUploadedImage'],
+    ['experimentalOptimizeImage', 'optimizeImage']
+].reduce((next, [from, to]) => next.replaceAll(from, to), source);
 
 const relocatedPath = 'experiences/experimental-worlds/visuals/world-visual-media-core.js';
 const relocated = fs.readFileSync(relocatedPath, 'utf8');
-const restored = relocated
+const restored = restorePrivateUtilities(relocated)
     .replace('normalizeImageGuidePresets(ExperimentalWorldsVisualMediaHost.globalSettings().imageGuidePresets)', 'normalizeImageGuidePresets(state.globalSettings.imageGuidePresets)')
     .replace('if (removed) ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if (removed && (state.worlds || []).includes(world)) worldMediaDirty = true;')
     .replace('ExperimentalWorldsVisualMediaHost.markWorldMediaChanged(world);', 'if ((state.worlds || []).includes(world)) worldMediaDirty = true;');
@@ -88,7 +112,7 @@ assert(providerStart >= 0 && providerEnd > providerStart, 'Pass-0 visual provide
 const acceptedProviderUnit = acceptedApp.slice(providerStart, providerEnd);
 const relocatedProvider = fs.readFileSync('experiences/experimental-worlds/visuals/world-visual-provider-core.js', 'utf8');
 assert.equal(
-    compareSource(restoreHostContract(relocatedProvider)
+    compareSource(restorePrivateUtilities(restoreHostContract(relocatedProvider))
         .replace('normalizedProviderId(ExperimentalWorldsVisualMediaHost.globalSettings().apiProvider)', 'normalizedProviderId(state.globalSettings.apiProvider)')),
     compareSource(acceptedProviderUnit),
     'visual provider core differs from the Pass-0 oracle only at the explicit effective-settings seam'

@@ -29,7 +29,7 @@ function openWorldCheckModal() {
     const modifier = document.getElementById('world-check-modifier');
     stat.innerHTML = '<option value="">No stat</option>' + (world.hudConfig?.stats || [])
         .filter(item => worldStatRollConfig(item).enabled)
-        .map(item => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name || item.id)} · ${escapeHTML(String(sess.playerStats?.[item.id] ?? item.value ?? 0))}</option>`).join('');
+        .map(item => `<option value="${experimentalEscapeHTML(item.id)}">${experimentalEscapeHTML(item.name || item.id)} · ${experimentalEscapeHTML(String(sess.playerStats?.[item.id] ?? item.value ?? 0))}</option>`).join('');
     label.value = pending?.label || '';
     stat.value = pending?.stat_id || '';
     difficulty.value = pending?.difficulty || dice.defaultDifficulty;
@@ -38,7 +38,7 @@ function openWorldCheckModal() {
     const note = document.getElementById('world-check-pending-note');
     note.classList.toggle('hidden', !pending);
     note.innerHTML = pending
-        ? `<strong>The DM requested this check.</strong><br>${escapeHTML(pending.label)} · d${dice.sides} vs ${escapeHTML(String(pending.difficulty))}. Its result will be locked into the timeline and survives rerolls.`
+        ? `<strong>The DM requested this check.</strong><br>${experimentalEscapeHTML(pending.label)} · d${dice.sides} vs ${experimentalEscapeHTML(String(pending.difficulty))}. Its result will be locked into the timeline and survives rerolls.`
         : '<strong>Player-initiated check.</strong> Define an uncertain action before it is narrated. The roll is resolved first, so the DM receives the real result instead of inventing one.';
     document.getElementById('world-check-title').textContent = pending ? 'Resolve requested check' : 'Create a check';
     document.getElementById('confirm-world-check').textContent = `🎲 Roll d${dice.sides} & continue`;
@@ -169,7 +169,7 @@ function renderMultiplayerHub() {
             const sourceLabel = campaign.source?.domainLabel
                 ? `${campaign.source.domainLabel} · ${campaign.source?.name || 'Original campaign'}`
                 : campaign.source?.name || 'Original campaign';
-            return `<button class="multiplayer-campaign-card" type="button" data-mp-campaign="${escapeHTML(campaign.id)}"><span class="multiplayer-campaign-mark">${escapeHTML(displayInitials(campaign.name))}</span><span><strong>${escapeHTML(campaign.name)}</strong><small>${escapeHTML(system)} · ${players} saved player${players === 1 ? '' : 's'} · ${escapeHTML(sourceLabel)}</small></span><span>Host again →</span></button>`;
+            return `<button class="multiplayer-campaign-card" type="button" data-mp-campaign="${experimentalEscapeHTML(campaign.id)}"><span class="multiplayer-campaign-mark">${experimentalEscapeHTML(experimentalDisplayInitials(campaign.name))}</span><span><strong>${experimentalEscapeHTML(campaign.name)}</strong><small>${experimentalEscapeHTML(system)} · ${players} saved player${players === 1 ? '' : 's'} · ${experimentalEscapeHTML(sourceLabel)}</small></span><span>Host again →</span></button>`;
         }).join('') : '<div class="multiplayer-campaign-empty"><strong>No multiplayer campaigns yet</strong><span>Choose a template below to create one. Its save will remain separate from single-player.</span></div>';
         campaignList.querySelectorAll('[data-mp-campaign]').forEach(button => {
             button.onclick = () => ExperimentalWorldsHost.prepareMultiplayerCampaign(button.dataset.mpCampaign, {
@@ -188,11 +188,11 @@ function renderMultiplayerHub() {
         button.type = 'button';
         button.className = 'multiplayer-source-card';
         button.dataset.multiplayerSourceKey = source.sourceKey || `${source.type}:${source.id}`;
-        const imageStyle = source.image ? ` style="background-image:url('${cssUrl(source.image)}')"` : '';
+        const imageStyle = source.image ? ` style="background-image:url('${experimentalCssUrl(source.image)}')"` : '';
         const sourceDescription = source.domainLabel
             ? `${source.domainLabel} · ${source.description}`
             : source.description;
-        button.innerHTML = `<span class="multiplayer-source-avatar"${imageStyle}>${source.image ? '' : escapeHTML(displayInitials(source.name))}</span><span><strong>${escapeHTML(source.name)}</strong><small>${escapeHTML(sourceDescription)}</small></span>`;
+        button.innerHTML = `<span class="multiplayer-source-avatar"${imageStyle}>${source.image ? '' : experimentalEscapeHTML(experimentalDisplayInitials(source.name))}</span><span><strong>${experimentalEscapeHTML(source.name)}</strong><small>${experimentalEscapeHTML(sourceDescription)}</small></span>`;
         button.onclick = () => ExperimentalWorldsHost.prepareMultiplayerSource(source, {
             transport: multiplayerHubTransport,
             relayUrl: document.getElementById('multiplayer-relay-url')?.value || ''
@@ -258,7 +258,7 @@ function currentMultiplayerPersona() {
     const sessionPersonaId = inWorld ? getCurrentWorldSession()?.personaId : '';
     const persona = ExperimentalWorldsHost.currentMultiplayerPersona(sessionPersonaId);
     if (!persona) return {};
-    const normalized = normalizePersona(persona);
+    const normalized = experimentalNormalizePersona(persona);
     return {
         name: normalized.name, pronouns: normalized.pronouns,
         appearance: normalized.appearance, publicIdentity: normalized.publicIdentity,
@@ -330,9 +330,9 @@ function parseMultiplayerReceipt(rawText) {
         try { receipt = JSON.parse(candidate); break; } catch (_) {}
     }
     if (!receipt) {
-        try { receipt = extractJSON(raw); } catch (_) {}
+        try { receipt = experimentalExtractJSON(raw); } catch (_) {}
     }
-    if (!receipt) receipt = safeParseJSONRepair(raw);
+    if (!receipt) receipt = experimentalSafeParseJSONRepair(raw);
     if (receipt && typeof receipt === 'object' && !Array.isArray(receipt)) return receipt;
 
     // Preserve genuine prose that preceded a broken state block, but never expose
@@ -488,18 +488,18 @@ function applyMultiplayerSnapshot(context, snapshot, type) {
     stats.innerHTML = (hud.stats || []).map(stat => {
         const ranged = Number(stat.max) > Number(stat.min);
         const fill = ranged ? Math.max(0, Math.min(100, ((Number(stat.value) - Number(stat.min)) / (Number(stat.max) - Number(stat.min))) * 100)) : 0;
-        return `<div class="world-card" style="padding:8px 12px"><div style="display:flex;justify-content:space-between"><span>${escapeHTML(stat.name)}</span><strong>${escapeHTML(String(stat.value))}${Number(stat.max) > 0 ? ` / ${escapeHTML(String(stat.max))}` : ''}</strong></div>${ranged ? `<div class="world-stat-track"><span style="width:${fill}%;background:${cssColor(stat.color)}"></span></div>` : ''}</div>`;
+        return `<div class="world-card" style="padding:8px 12px"><div style="display:flex;justify-content:space-between"><span>${experimentalEscapeHTML(stat.name)}</span><strong>${experimentalEscapeHTML(String(stat.value))}${Number(stat.max) > 0 ? ` / ${experimentalEscapeHTML(String(stat.max))}` : ''}</strong></div>${ranged ? `<div class="world-stat-track"><span style="width:${fill}%;background:${cssColor(stat.color)}"></span></div>` : ''}</div>`;
     }).join('') || '<div class="world-card" style="padding:8px 12px;color:var(--text-3)">No meters configured.</div>';
     document.getElementById('world-outfit-content').textContent = hud.outfit || 'Not specified.';
     document.getElementById('world-ledger-content').textContent = hud.ledger || 'No public milestones recorded yet.';
     document.getElementById('world-ledger-status').textContent = 'Synchronized from the host.';
     const inventory = document.getElementById('world-inventory-list');
-    inventory.innerHTML = (hud.inventory || []).map(item => `<span class="inv-chip"><span class="inv-chip-name">${escapeHTML(globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || item)}</span></span>`).join('') || '<span style="color:var(--text-3);font-size:.8rem">Empty</span>';
+    inventory.innerHTML = (hud.inventory || []).map(item => `<span class="inv-chip"><span class="inv-chip-name">${experimentalEscapeHTML(globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || item)}</span></span>`).join('') || '<span style="color:var(--text-3);font-size:.8rem">Empty</span>';
     const present = document.getElementById('world-present-list');
-    present.innerHTML = (hud.present || []).map(name => `<div class="world-present-npc" style="padding:8px;background:var(--surface2);border-radius:6px">${escapeHTML(name)}</div>`).join('') || '<div style="color:var(--text-3);font-size:.8rem">No one here</div>';
+    present.innerHTML = (hud.present || []).map(name => `<div class="world-present-npc" style="padding:8px;background:var(--surface2);border-radius:6px">${experimentalEscapeHTML(name)}</div>`).join('') || '<div style="color:var(--text-3);font-size:.8rem">No one here</div>';
     document.getElementById('world-exits-list').innerHTML = '<div style="color:var(--text-3);font-size:.75rem">Travel is resolved through the shared party turn.</div>';
     const quests = document.getElementById('world-quest-list');
-    quests.innerHTML = (hud.quests || []).map(quest => `<div class="world-card" style="padding:8px 10px"><strong>${escapeHTML(quest.title)}</strong></div>`).join('') || '<div style="color:var(--text-3);font-size:.75rem">No active quests.</div>';
+    quests.innerHTML = (hud.quests || []).map(quest => `<div class="world-card" style="padding:8px 10px"><strong>${experimentalEscapeHTML(quest.title)}</strong></div>`).join('') || '<div style="color:var(--text-3);font-size:.75rem">No active quests.</div>';
     document.getElementById('quest-count').textContent = (hud.quests || []).length;
     renderRemoteMultiplayerHistory('world-messages-container', snapshot.history, 'world');
 }
@@ -966,8 +966,8 @@ function setupWorldPlayLogic() {
                 const div = document.createElement('div');
                 div.style.marginBottom = '12px';
                 div.innerHTML = `
-                    <label class="form-label">${escapeHTML(s.name)}</label>
-                    <input type="number" class="form-input m-stat-input" data-id="${escapeHTML(s.id)}" value="${escapeHTML(String(val))}" min="${escapeHTML(String(s.min ?? 0))}" ${s.max > 0 ? `max="${escapeHTML(String(s.max))}"` : ''}>
+                    <label class="form-label">${experimentalEscapeHTML(s.name)}</label>
+                    <input type="number" class="form-input m-stat-input" data-id="${experimentalEscapeHTML(s.id)}" value="${experimentalEscapeHTML(String(val))}" min="${experimentalEscapeHTML(String(s.min ?? 0))}" ${s.max > 0 ? `max="${experimentalEscapeHTML(String(s.max))}"` : ''}>
                 `;
                 body.appendChild(div);
             });
@@ -1354,7 +1354,7 @@ function resetWorldTimeline(world, sess) {
         threads: [],
         engineEvents: [],
         bonusTimeMinutes: 0,
-        scheduledEvents: safeJsonClone(Array.isArray(world.scheduledEvents) ? world.scheduledEvents : []),
+        scheduledEvents: experimentalSafeJsonClone(Array.isArray(world.scheduledEvents) ? world.scheduledEvents : []),
         locationStates: seedLocationStatesFromWorld(world),
         npcRelationships: seedRelationshipsFromWorld(world),
         npcScheduleOverrides: {},
@@ -1596,7 +1596,7 @@ const WORLD_RULE_PROFILES = Object.freeze({
 });
 
 function normalizeWorldKernelConfig(world) {
-    const raw = isPlainObject(world?.kernel) ? world.kernel : {};
+    const raw = experimentalIsPlainObject(world?.kernel) ? world.kernel : {};
     const config = {
         enabled: raw.enabled !== false,
         sceneLocationLimit: Math.max(8, Math.min(80, parseInt(raw.sceneLocationLimit) || 24)),
@@ -1609,8 +1609,8 @@ function normalizeWorldKernelConfig(world) {
 }
 
 function normalizeWorldDiceConfig(world) {
-    if (world) world.gameRules = isPlainObject(world.gameRules) ? world.gameRules : {};
-    const raw = isPlainObject(world?.gameRules?.dice) ? world.gameRules.dice : {};
+    if (world) world.gameRules = experimentalIsPlainObject(world.gameRules) ? world.gameRules : {};
+    const raw = experimentalIsPlainObject(world?.gameRules?.dice) ? world.gameRules.dice : {};
     const sides = [6, 10, 12, 20].includes(parseInt(raw.sides)) ? parseInt(raw.sides) : 20;
     const requestedVisibility = ['visible', 'hidden', 'player_triggered'].includes(raw.visibility) ? raw.visibility
         : (raw.resolution === 'player' ? 'player_triggered' : 'visible');
@@ -1633,7 +1633,7 @@ function normalizeWorldDiceConfig(world) {
 }
 
 function normalizeWorldCapabilityEntry(raw, index, kind) {
-    const value = typeof raw === 'string' ? { name: raw } : (isPlainObject(raw) ? raw : {});
+    const value = typeof raw === 'string' ? { name: raw } : (experimentalIsPlainObject(raw) ? raw : {});
     const name = String(value.name || value.label || '').trim().slice(0, 100);
     if (!name) return null;
     const id = String(value.id || `${kind}_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || index + 1}`)
@@ -1673,14 +1673,14 @@ function resolveWorldCheckCapability(world, sess, requested) {
     ];
     const definition = all.find(entry => entry.id.toLowerCase() === key || entry.name.toLowerCase() === key);
     if (!definition) return null;
-    const identity = isPlainObject(sess?.playerIdentity) ? sess.playerIdentity : {};
+    const identity = experimentalIsPlainObject(sess?.playerIdentity) ? sess.playerIdentity : {};
     const selected = definition.kind === 'skill' ? identity.skills
         : definition.kind === 'perk' ? identity.perks : identity.flaws;
     const owns = (Array.isArray(selected) ? selected : []).some(value => {
         const selectedKey = String(value || '').trim().toLowerCase();
         return selectedKey === definition.id.toLowerCase() || selectedKey === definition.name.toLowerCase();
     });
-    const ranks = isPlainObject(identity.capabilityRanks) ? identity.capabilityRanks : {};
+    const ranks = experimentalIsPlainObject(identity.capabilityRanks) ? identity.capabilityRanks : {};
     const rank = owns ? Math.max(1, Math.min(10, parseInt(ranks[definition.id] ?? ranks[definition.name]) || 1)) : 0;
     return {
         ...definition,
@@ -1692,8 +1692,8 @@ function resolveWorldCheckCapability(world, sess, requested) {
 
 function normalizeWorldCapabilities(world) {
     if (!world) return { customizable: true, startingPointBudget: 4, skills: [], perks: [], flaws: [], progression: { enabled: false, method: '' } };
-    world.gameRules = isPlainObject(world.gameRules) ? world.gameRules : {};
-    const raw = isPlainObject(world.gameRules.capabilities) ? world.gameRules.capabilities : {};
+    world.gameRules = experimentalIsPlainObject(world.gameRules) ? world.gameRules : {};
+    const raw = experimentalIsPlainObject(world.gameRules.capabilities) ? world.gameRules.capabilities : {};
     const authoredSkills = Array.isArray(raw.skills) ? raw.skills : [];
     const authoredPerks = Array.isArray(raw.perks) ? raw.perks : [];
     const authoredFlaws = Array.isArray(raw.flaws) ? raw.flaws : [];
@@ -1724,7 +1724,7 @@ function normalizeWorldCapabilities(world) {
 }
 
 function worldStatRollConfig(stat) {
-    const raw = isPlainObject(stat?.roll) ? stat.roll : {};
+    const raw = experimentalIsPlainObject(stat?.roll) ? stat.roll : {};
     const resourceLike = /(?:hp|health|armor|armour|gold|coin|cash|money|xp|experience|level|stress|hunger|thirst|energy|stamina|mana|currency)/i
         .test(`${stat?.id || ''} ${stat?.name || ''}`);
     return {
@@ -1745,10 +1745,10 @@ function worldRuleProfileDescription(profileId) {
 
 function applyWorldRuleProfile(world, profileId) {
     if (!world || !WORLD_RULE_PROFILES[profileId]) return normalizeWorldGameRules(world);
-    world.gameRules = isPlainObject(world.gameRules) ? world.gameRules : {};
+    world.gameRules = experimentalIsPlainObject(world.gameRules) ? world.gameRules : {};
     world.gameRules.profileId = profileId;
     world.gameRules.modules = { ...WORLD_RULE_PROFILES[profileId].modules };
-    world.hudConfig = isPlainObject(world.hudConfig) ? world.hudConfig : {};
+    world.hudConfig = experimentalIsPlainObject(world.hudConfig) ? world.hudConfig : {};
     world.hudConfig.enableSchedules = !!world.gameRules.modules.schedules;
     world.hudConfig.showQuests = !!world.gameRules.modules.quests;
     world.hudConfig.showInventory = !!world.gameRules.modules.inventory;
@@ -1766,10 +1766,10 @@ function normalizeWorldGameRules(world) {
             currencyName: 'coin'
         };
     }
-    world.hudConfig = isPlainObject(world.hudConfig) ? world.hudConfig : {};
+    world.hudConfig = experimentalIsPlainObject(world.hudConfig) ? world.hudConfig : {};
     world.hudConfig.stats = Array.isArray(world.hudConfig.stats) ? world.hudConfig.stats : [];
     const usedIds = new Set();
-    world.hudConfig.stats = world.hudConfig.stats.filter(stat => isPlainObject(stat)).map((stat, index) => {
+    world.hudConfig.stats = world.hudConfig.stats.filter(stat => experimentalIsPlainObject(stat)).map((stat, index) => {
         let id = String(stat.id || `stat_${index + 1}`).trim().slice(0, 80) || `stat_${index + 1}`;
         let suffix = 2;
         const baseId = id;
@@ -1780,7 +1780,7 @@ function normalizeWorldGameRules(world) {
         if (max > 0 && max < min) max = min;
         let value = Number.isFinite(Number(stat.value)) ? Number(stat.value) : 0;
         value = Math.max(min, max > 0 ? Math.min(max, value) : value);
-        const hadRollConfig = isPlainObject(stat.roll);
+        const hadRollConfig = experimentalIsPlainObject(stat.roll);
         const roll = worldStatRollConfig({ ...stat, id });
         return {
             ...stat,
@@ -1795,8 +1795,8 @@ function normalizeWorldGameRules(world) {
     });
 
     const stats = world.hudConfig.stats;
-    const raw = isPlainObject(world.gameRules) ? world.gameRules : {};
-    const diceRaw = isPlainObject(raw.dice) ? { ...raw.dice } : {};
+    const raw = experimentalIsPlainObject(world.gameRules) ? world.gameRules : {};
+    const diceRaw = experimentalIsPlainObject(raw.dice) ? { ...raw.dice } : {};
     const legacyModules = {
         stats: true,
         health: true,
@@ -1815,7 +1815,7 @@ function normalizeWorldGameRules(world) {
         ? requestedProfileId : 'custom';
     const profileDefaults = profileId !== 'custom'
         ? WORLD_RULE_PROFILES[profileId].modules : legacyModules;
-    const rawModules = isPlainObject(raw.modules) ? raw.modules : {};
+    const rawModules = experimentalIsPlainObject(raw.modules) ? raw.modules : {};
     const modules = Object.fromEntries(WORLD_RULE_MODULE_KEYS.map(key => [
         key,
         typeof rawModules[key] === 'boolean' ? rawModules[key] : !!profileDefaults[key]
@@ -1858,10 +1858,10 @@ function normalizeWorldGameRules(world) {
         equipmentSlots: [...new Set((Array.isArray(raw.equipmentSlots) ? raw.equipmentSlots : ['head', 'body', 'main-hand', 'off-hand', 'accessory'])
             .map(slot => String(slot || '').trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean))].slice(0, 30),
         itemCatalog: rpgMechanics ? rpgMechanics.normalizeInventory(raw.itemCatalog) : (Array.isArray(raw.itemCatalog) ? raw.itemCatalog : []),
-        pausedMechanicalModules: isPlainObject(raw.pausedMechanicalModules)
+        pausedMechanicalModules: experimentalIsPlainObject(raw.pausedMechanicalModules)
             ? Object.fromEntries(WORLD_OPTIONAL_RPG_MODULE_KEYS.map(key => [key, !!raw.pausedMechanicalModules[key]])) : null,
         dice: diceRaw,
-        capabilities: isPlainObject(raw.capabilities) ? raw.capabilities : {},
+        capabilities: experimentalIsPlainObject(raw.capabilities) ? raw.capabilities : {},
         consequences: {
             enabled: raw.consequences?.enabled !== false,
             maxActive: Math.max(10, Math.min(300, parseInt(raw.consequences?.maxActive) || 120)),
@@ -1878,7 +1878,7 @@ function normalizeWorldGameRules(world) {
 function normalizePlayerRulesState(world, sess) {
     if (!world || !sess) return null;
     const rules = normalizeWorldGameRules(world);
-    if (!isPlainObject(sess.playerState)) sess.playerState = {};
+    if (!experimentalIsPlainObject(sess.playerState)) sess.playerState = {};
     const playerState = sess.playerState;
     if (!['active', 'incapacitated', 'dead'].includes(playerState.status)) playerState.status = 'active';
     playerState.defeatCount = Math.max(0, parseInt(playerState.defeatCount) || 0);
@@ -1895,11 +1895,11 @@ function normalizePlayerRulesState(world, sess) {
             return globalThis.ExperimentalWorldsRpgMechanics.findItem(catalog, value) || value;
         }));
     }
-    sess.equipment = isPlainObject(sess.equipment) ? sess.equipment : {};
+    sess.equipment = experimentalIsPlainObject(sess.equipment) ? sess.equipment : {};
     rules.equipmentSlots.forEach(slot => { if (!(slot in sess.equipment)) sess.equipment[slot] = null; });
     const validItemIds = new Set((sess.inventory || []).map(item => item?.id).filter(Boolean));
     Object.keys(sess.equipment).forEach(slot => { if (sess.equipment[slot] && !validItemIds.has(sess.equipment[slot])) sess.equipment[slot] = null; });
-    if (!isPlainObject(sess.pendingCheck)) sess.pendingCheck = null;
+    if (!experimentalIsPlainObject(sess.pendingCheck)) sess.pendingCheck = null;
 
     const vitalDef = (world.hudConfig?.stats || []).find(stat => stat.id === rules.vitalStatId);
     const vitalValue = vitalDef ? Number(sess.playerStats?.[vitalDef.id] ?? vitalDef.value) : null;
@@ -1939,7 +1939,7 @@ async function toggleWorldOptionalRpg() {
         WORLD_OPTIONAL_RPG_MODULE_KEYS.forEach(key => { rules.modules[key] = false; });
         ExperimentalWorldsHost.notify('RPG mechanics paused. Stats, builds and items remain saved.', 'info');
     } else {
-        const restore = isPlainObject(rules.pausedMechanicalModules)
+        const restore = experimentalIsPlainObject(rules.pausedMechanicalModules)
             ? rules.pausedMechanicalModules : WORLD_RULE_PROFILES.adventure.modules;
         WORLD_OPTIONAL_RPG_MODULE_KEYS.forEach(key => { rules.modules[key] = !!restore[key]; });
         ExperimentalWorldsHost.notify('RPG mechanics restored for this world.', 'success');
@@ -1958,7 +1958,7 @@ function effectiveWorldStatValue(world, sess, stat) {
 
 function applyPlayerStatChanges(world, sess, changes, options = {}) {
     const result = { success: false, applied: [], rejected: [], defeat: null, recovered: false };
-    if (!world || !sess || !isPlainObject(changes)) {
+    if (!world || !sess || !experimentalIsPlainObject(changes)) {
         result.rejected.push({ reason: 'invalid_stat_changes' });
         return result;
     }
@@ -2242,10 +2242,10 @@ function performAuthoritativeChecks(world, sess, checks) {
         if (dice.resolution === 'player' && !Number.isFinite(Number(raw?.provided_roll)) && raw?.force_resolve !== true) {
             const pendingRequest = {
                 id: checkId, label, stat_id: definition?.id || '', capability_id: capability?.id || '', modifier: situationalModifier,
-                difficulty, failure_cost: isPlainObject(raw?.failure_cost)
+                difficulty, failure_cost: experimentalIsPlainObject(raw?.failure_cost)
                     ? JSON.parse(JSON.stringify(raw.failure_cost)) : null,
-                on_success: isPlainObject(raw?.on_success) ? safeJsonClone(raw.on_success) : null,
-                on_failure: isPlainObject(raw?.on_failure) ? safeJsonClone(raw.on_failure) : null,
+                on_success: experimentalIsPlainObject(raw?.on_success) ? experimentalSafeJsonClone(raw.on_success) : null,
+                on_failure: experimentalIsPlainObject(raw?.on_failure) ? experimentalSafeJsonClone(raw.on_failure) : null,
                 requestedTurn: turn, requestedAt: Date.now()
             };
             if (!Array.isArray(sess.pendingChecks)) sess.pendingChecks = [];
@@ -2283,9 +2283,9 @@ function performAuthoritativeChecks(world, sess, checks) {
             sides: dice.sides,
             critical: criticalSuccess ? 'success' : criticalFailure ? 'failure' : ''
         };
-        if (!success && isPlainObject(raw?.failure_cost)) {
+        if (!success && experimentalIsPlainObject(raw?.failure_cost)) {
             const cost = raw.failure_cost;
-            const statPreview = isPlainObject(cost.stat_changes)
+            const statPreview = experimentalIsPlainObject(cost.stat_changes)
                 ? applyPlayerStatChanges(world, sess, cost.stat_changes, { dryRun: true })
                 : { success: true, rejected: [] };
             const requestedItems = (Array.isArray(cost.inventory_remove) ? cost.inventory_remove : []).slice(0, 20);
@@ -2306,7 +2306,7 @@ function performAuthoritativeChecks(world, sess, checks) {
                 };
             } else {
                 result.failureCost = { applied: true };
-                if (isPlainObject(cost.stat_changes) && Object.keys(cost.stat_changes).length) {
+                if (experimentalIsPlainObject(cost.stat_changes) && Object.keys(cost.stat_changes).length) {
                     result.failureCost.stats = applyPlayerStatChanges(world, sess, cost.stat_changes, {
                         cause: String(cost.cause || `Failed check: ${label}`).slice(0, 240)
                     });
@@ -2347,8 +2347,8 @@ function applyWorldCapabilityProgress(world, sess, updates) {
     if (!progression.enabled) return updates.slice(0, 20).map(raw => ({
         capabilityId: String(raw?.capability_id || '').slice(0, 80), success: false, reason: 'progression_disabled'
     }));
-    sess.playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
-    sess.playerIdentity.capabilityRanks = isPlainObject(sess.playerIdentity.capabilityRanks)
+    sess.playerIdentity = experimentalIsPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
+    sess.playerIdentity.capabilityRanks = experimentalIsPlainObject(sess.playerIdentity.capabilityRanks)
         ? sess.playerIdentity.capabilityRanks : {};
     updates.slice(0, 20).forEach(raw => {
         const capability = resolveWorldCheckCapability(world, sess, raw?.capability_id);
@@ -2429,12 +2429,12 @@ function makeQuestId(sess, title = 'quest', requestedId = '') {
 }
 
 function normalizeQuestRewards(rawRewards) {
-    const raw = isPlainObject(rawRewards) ? rawRewards : {};
+    const raw = experimentalIsPlainObject(rawRewards) ? rawRewards : {};
     const items = [...new Set((Array.isArray(raw.items) ? raw.items : [])
         .map(item => String(item || '').trim().slice(0, 160))
         .filter(Boolean))].slice(0, 100);
     const stats = {};
-    if (isPlainObject(raw.stats || raw.stat_changes)) {
+    if (experimentalIsPlainObject(raw.stats || raw.stat_changes)) {
         Object.entries(raw.stats || raw.stat_changes).slice(0, 100).forEach(([key, value]) => {
             const amount = Number(value);
             if (!key || !Number.isFinite(amount) || !amount) return;
@@ -2450,7 +2450,7 @@ function normalizeQuestRewards(rawRewards) {
 }
 
 function normalizeQuestObjective(rawObjective, index = 0, usedIds = new Set()) {
-    const raw = isPlainObject(rawObjective) ? rawObjective : { text: String(rawObjective || '') };
+    const raw = experimentalIsPlainObject(rawObjective) ? rawObjective : { text: String(rawObjective || '') };
     const text = String(raw.text || raw.description || raw.target || `Objective ${index + 1}`).trim().slice(0, 240);
     const baseId = String(raw.id || `obj_${questTextKey(text).replace(/\s+/g, '_').slice(0, 36) || index + 1}`).slice(0, 80);
     let id = baseId;
@@ -2480,7 +2480,7 @@ function normalizeQuestState(world, sess) {
     if (!sess) return [];
     const rawQuests = Array.isArray(sess.quests) ? sess.quests.slice(0, 500) : [];
     const usedIds = new Set();
-    sess.quests = rawQuests.filter(quest => isPlainObject(quest)).map((quest, index) => {
+    sess.quests = rawQuests.filter(quest => experimentalIsPlainObject(quest)).map((quest, index) => {
         const title = String(quest.title || `Quest ${index + 1}`).trim().slice(0, 200);
         const baseId = String(quest.id || makeQuestId({ quests: [...usedIds].map(id => ({ id })) }, title)).slice(0, 80);
         let id = baseId;
@@ -2512,7 +2512,7 @@ function normalizeQuestState(world, sess) {
             // Horde's normal quest UI; they only let later source edits reach
             // the same World quest without name-guessing.
             scenePulseUrgency: scenePulseQuestUrgency(quest.scenePulseUrgency || ''),
-            scenePulseLink: isPlainObject(quest.scenePulseLink) ? {
+            scenePulseLink: experimentalIsPlainObject(quest.scenePulseLink) ? {
                 sourceKeys: [...new Set((Array.isArray(quest.scenePulseLink.sourceKeys) ? quest.scenePulseLink.sourceKeys : [])
                     .map(value => String(value || '').trim())
                     .filter(value => /^[A-Za-z]+Quests:[a-z0-9 ]{1,180}$/.test(value)))].slice(-32),
@@ -2676,7 +2676,7 @@ function applyQuestUpdates(world, sess, updates) {
     normalizeQuestState(world, sess);
     if (!Array.isArray(updates)) return evaluateQuestProgress(world, sess);
     updates.slice(0, 100).forEach(rawUpdate => {
-        if (!isPlainObject(rawUpdate)) return;
+        if (!experimentalIsPlainObject(rawUpdate)) return;
         let quest = findSessionQuest(sess, rawUpdate.id, rawUpdate.title);
         if (!quest) {
             const title = String(rawUpdate.title || '').trim().slice(0, 200);
@@ -2707,7 +2707,7 @@ function applyQuestUpdates(world, sess, updates) {
         if (rawUpdate.rewards !== undefined && !quest.rewardsGranted) quest.rewards = normalizeQuestRewards(rawUpdate.rewards);
         if (Array.isArray(rawUpdate.objectives)) {
             rawUpdate.objectives.slice(0, 100).forEach((rawObjective, objectiveIndex) => {
-                if (!isPlainObject(rawObjective)) return;
+                if (!experimentalIsPlainObject(rawObjective)) return;
                 let objective = quest.objectives.find(item =>
                     (rawObjective.id && questTextKey(item.id) === questTextKey(rawObjective.id))
                     || (rawObjective.text && questTextKey(item.text) === questTextKey(rawObjective.text)));
@@ -2975,12 +2975,12 @@ function reparentTimelineDescendants(sessions, removedTimeline) {
             deletedAt: new Date().toISOString()
         };
         if (parentLineage) {
-            session.forkedFrom = safeJsonClone(parentLineage);
+            session.forkedFrom = experimentalSafeJsonClone(parentLineage);
         } else {
             delete session.forkedFrom;
         }
         if (session.sidecar?.migration) {
-            if (parentLineage) session.sidecar.migration.forkedFrom = safeJsonClone(parentLineage);
+            if (parentLineage) session.sidecar.migration.forkedFrom = experimentalSafeJsonClone(parentLineage);
             else delete session.sidecar.migration.forkedFrom;
             session.sidecar.migration.reparentedFrom = detachedFrom;
         }
@@ -3029,23 +3029,23 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     // the existing timeline toolbar immediately afterwards.
     const name = options.useDefaultName ? defaultName : prompt('Name this timeline fork:', defaultName);
     if (name === null) return;
-    const fork = safeJsonClone(source);
+    const fork = experimentalSafeJsonClone(source);
     fork.id = `wsess_${Date.now()}`;
     fork.name = String(name || '').trim() || defaultName;
     fork.createdAt = new Date().toISOString();
     const forkLineage = { sessionId: source.id, turnCount: requestedTurn, createdAt: fork.createdAt };
-    fork.forkedFrom = safeJsonClone(forkLineage);
+    fork.forkedFrom = experimentalSafeJsonClone(forkLineage);
     // A fork created now is a new timeline, not an imported legacy timeline.
     // It may retain its source history, but all future turns must use the
     // world’s Sidecar pipeline when Sidecar is configured in Studio.
     if (world.sidecarConfig?.mode === 'sidecar') {
-        fork.sidecar = { ...(isPlainObject(fork.sidecar) ? fork.sidecar : {}), mode: 'sidecar' };
+        fork.sidecar = { ...(experimentalIsPlainObject(fork.sidecar) ? fork.sidecar : {}), mode: 'sidecar' };
     }
     if (requestedTurn < maxTurn) {
         const dmTurns = fork.history.map((message, index) => ({ message, index })).filter(item => item.message.role === 'dm' && Array.isArray(item.message.versionSnapshots));
         const selected = requestedTurn === 0 ? (dmTurns[0] || null) : (dmTurns[requestedTurn - 1] || null);
         if (selected) {
-            const snapshot = safeJsonClone(requestedTurn === 0
+            const snapshot = experimentalSafeJsonClone(requestedTurn === 0
                 ? selected.message.turnSnapshot
                 : (selected.message.versionSnapshots[selected.message.currentVersion ?? selected.message.versionSnapshots.length - 1] || selected.message.versionSnapshots.at(-1)));
             if (snapshot) {
@@ -3058,7 +3058,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
                 // Fork lineage belongs to the wrapper, not historical state,
                 // so put it back after the restore rather than letting a
                 // pre-fork snapshot erase the branch's identity.
-                fork.forkedFrom = safeJsonClone(forkLineage);
+                fork.forkedFrom = experimentalSafeJsonClone(forkLineage);
                 fork.createdAt = forkLineage.createdAt;
                 fork.history = fork.history.slice(0, requestedTurn === 0 ? selected.index : selected.index + 1);
                 fork.turnCount = requestedTurn;
@@ -3069,7 +3069,7 @@ async function forkCurrentWorldTimeline(sourceSessionId = null, targetTurnCount 
     if (protocol) {
         protocol.migration = {
             ...(protocol.migration || {}),
-            forkedFrom: safeJsonClone(forkLineage),
+            forkedFrom: experimentalSafeJsonClone(forkLineage),
             ...(world.sidecarConfig?.mode === 'sidecar' ? { forkCreatedAfterSidecarDefault: true } : {})
         };
         protocol.packet = buildSidecarScenePacket(world, fork);
@@ -3093,10 +3093,10 @@ function renderWorldTimelineBrowser() {
         const selected = session.id === activeId;
         const source = fork ? sessions.find(candidate => candidate.id === fork.sessionId) : null;
         return `<div class="world-inspector-section" style="padding:14px; border:1px solid ${selected ? 'var(--accent)' : 'var(--border)'}; border-radius:10px;">
-            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;"><div><strong>${escapeHTML(session.name || session.id)}</strong>${selected ? ' <span class="model-badge">ACTIVE</span>' : ''}<div class="form-hint">${escapeHTML(session.id)} · ${Number(session.turnCount || 0)} committed turn${Number(session.turnCount || 0) === 1 ? '' : 's'}</div></div><button class="tool-btn timeline-select-btn" data-session-id="${escapeHTML(session.id)}">${selected ? 'Selected' : 'Select'}</button></div>
-            <div class="form-hint" style="margin-top:8px;">${fork ? `Fork of <strong>${escapeHTML(source?.name || fork.sessionId)}</strong> at committed turn ${Number(fork.turnCount || 0)} · ${escapeHTML(fork.createdAt || '')}` : 'Root timeline · no fork parent'}</div>
-            <div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap;"><label class="form-hint">Fork after turn <input class="form-input timeline-fork-turn" data-session-id="${escapeHTML(session.id)}" type="number" min="0" max="${Number(session.turnCount || 0)}" value="${Number(session.turnCount || 0)}" style="width:80px; display:inline-block; padding:4px 6px;"></label><button class="tool-btn timeline-fork-btn" data-session-id="${escapeHTML(session.id)}">⑂ Fork this revision</button><button class="tool-btn tool-btn-danger timeline-delete-btn" data-session-id="${escapeHTML(session.id)}">🗑 Delete timeline</button>${fork ? '<span class="form-hint">Source history is immutable; child forks remain available if this timeline is deleted.</span>' : '<span class="form-hint">Root timeline. Child forks remain available if this timeline is deleted.</span>'}</div>
-            <div class="timeline-delete-confirm hidden" data-session-id="${escapeHTML(session.id)}" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:9px; padding:8px 10px; border:1px solid var(--warning); border-radius:7px; background:rgba(245,158,11,.08); font-size:.76rem; color:var(--text-2);"><span>Delete this timeline? Child forks will remain as independent timelines.</span><button type="button" class="timeline-delete-yes btn btn-primary" data-session-id="${escapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">Yes</button><button type="button" class="timeline-delete-no btn btn-ghost" data-session-id="${escapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">No</button></div>
+            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;"><div><strong>${experimentalEscapeHTML(session.name || session.id)}</strong>${selected ? ' <span class="model-badge">ACTIVE</span>' : ''}<div class="form-hint">${experimentalEscapeHTML(session.id)} · ${Number(session.turnCount || 0)} committed turn${Number(session.turnCount || 0) === 1 ? '' : 's'}</div></div><button class="tool-btn timeline-select-btn" data-session-id="${experimentalEscapeHTML(session.id)}">${selected ? 'Selected' : 'Select'}</button></div>
+            <div class="form-hint" style="margin-top:8px;">${fork ? `Fork of <strong>${experimentalEscapeHTML(source?.name || fork.sessionId)}</strong> at committed turn ${Number(fork.turnCount || 0)} · ${experimentalEscapeHTML(fork.createdAt || '')}` : 'Root timeline · no fork parent'}</div>
+            <div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap;"><label class="form-hint">Fork after turn <input class="form-input timeline-fork-turn" data-session-id="${experimentalEscapeHTML(session.id)}" type="number" min="0" max="${Number(session.turnCount || 0)}" value="${Number(session.turnCount || 0)}" style="width:80px; display:inline-block; padding:4px 6px;"></label><button class="tool-btn timeline-fork-btn" data-session-id="${experimentalEscapeHTML(session.id)}">⑂ Fork this revision</button><button class="tool-btn tool-btn-danger timeline-delete-btn" data-session-id="${experimentalEscapeHTML(session.id)}">🗑 Delete timeline</button>${fork ? '<span class="form-hint">Source history is immutable; child forks remain available if this timeline is deleted.</span>' : '<span class="form-hint">Root timeline. Child forks remain available if this timeline is deleted.</span>'}</div>
+            <div class="timeline-delete-confirm hidden" data-session-id="${experimentalEscapeHTML(session.id)}" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:9px; padding:8px 10px; border:1px solid var(--warning); border-radius:7px; background:rgba(245,158,11,.08); font-size:.76rem; color:var(--text-2);"><span>Delete this timeline? Child forks will remain as independent timelines.</span><button type="button" class="timeline-delete-yes btn btn-primary" data-session-id="${experimentalEscapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">Yes</button><button type="button" class="timeline-delete-no btn btn-ghost" data-session-id="${experimentalEscapeHTML(session.id)}" style="padding:4px 9px; font-size:.72rem;">No</button></div>
         </div>`;
     }).join('') : '<div class="form-hint">No timelines exist yet. Create a new timeline from Session Setup.</div>';
     host.querySelectorAll('.timeline-select-btn').forEach(button => button.onclick = async () => {
@@ -3181,7 +3181,7 @@ function renderSessionRoleSetup(world, sess, persona) {
     const lifeSkills = byName(life?.skills);
     const lifePerks = byName(life?.perks);
     const lifeFlaws = byName(life?.flaws);
-    const option = (entry, checked, prefix = '') => `<label class="session-role-option"><input type="checkbox" value="${escapeHTML(prefix + entry.name)}" ${checked ? 'checked' : ''} ${capabilities.customizable ? '' : 'disabled'}><span><strong>${escapeHTML(entry.name)}</strong>${entry.description ? `<small>${escapeHTML(entry.description)}</small>` : ''}</span><b>${prefix ? '+' : '−'}${entry.cost}</b></label>`;
+    const option = (entry, checked, prefix = '') => `<label class="session-role-option"><input type="checkbox" value="${experimentalEscapeHTML(prefix + entry.name)}" ${checked ? 'checked' : ''} ${capabilities.customizable ? '' : 'disabled'}><span><strong>${experimentalEscapeHTML(entry.name)}</strong>${entry.description ? `<small>${experimentalEscapeHTML(entry.description)}</small>` : ''}</span><b>${prefix ? '+' : '−'}${entry.cost}</b></label>`;
     document.getElementById('sz-skill-list').innerHTML = capabilities.skills.length
         ? capabilities.skills.map(entry => option(entry, lifeSkills.has(entry.name.toLowerCase()))).join('')
         : '<span class="form-hint">This World defines no selectable skills.</span>';
@@ -3189,7 +3189,7 @@ function renderSessionRoleSetup(world, sess, persona) {
         .concat(capabilities.flaws.map(entry => option(entry, lifeFlaws.has(entry.name.toLowerCase()), 'flaw:'))).join('')
         || '<span class="form-hint">This World defines no perks or flaws.</span>';
     document.getElementById('sz-equipment-list').innerHTML = (life?.inventory || []).length
-        ? life.inventory.map(item => `<label class="session-role-option"><input type="checkbox" value="${escapeHTML(item)}" checked ${capabilities.customizable ? '' : 'disabled'}><span>${escapeHTML(item)}</span></label>`).join('')
+        ? life.inventory.map(item => `<label class="session-role-option"><input type="checkbox" value="${experimentalEscapeHTML(item)}" checked ${capabilities.customizable ? '' : 'disabled'}><span>${experimentalEscapeHTML(item)}</span></label>`).join('')
         : '<span class="form-hint">No optional starting equipment.</span>';
 
     const attributeList = document.getElementById('sz-attribute-list');
@@ -3198,7 +3198,7 @@ function renderSessionRoleSetup(world, sess, persona) {
         ? `<label class="form-label">Attributes</label>${rollable.map(stat => {
             const baseline = Number(life?.statOverrides?.[stat.id] ?? stat.value) || 0;
             const max = stat.max > 0 ? stat.max : baseline + capabilities.startingPointBudget;
-            return `<label class="session-role-option"><span><strong>${escapeHTML(stat.name)}</strong><small>${stat.min}–${max}</small></span><input class="form-input" data-stat-id="${escapeHTML(stat.id)}" data-base="${baseline}" type="number" min="${stat.min}" max="${max}" value="${baseline}" ${capabilities.customizable ? '' : 'disabled'}></label>`;
+            return `<label class="session-role-option"><span><strong>${experimentalEscapeHTML(stat.name)}</strong><small>${stat.min}–${max}</small></span><input class="form-input" data-stat-id="${experimentalEscapeHTML(stat.id)}" data-base="${baseline}" type="number" min="${stat.min}" max="${max}" value="${baseline}" ${capabilities.customizable ? '' : 'disabled'}></label>`;
         }).join('')}` : '';
 
     const updateSummary = () => {
@@ -3214,7 +3214,7 @@ function renderSessionRoleSetup(world, sess, persona) {
         const points = document.getElementById('sz-points-status');
         points.textContent = capabilities.customizable ? `${remaining} point${Math.abs(remaining) === 1 ? '' : 's'} left` : 'Preset locked';
         points.style.color = remaining < 0 ? 'var(--red)' : '';
-        document.getElementById('sz-role-summary').innerHTML = `<strong>${escapeHTML(life?.name || 'Custom role')}</strong> · ${escapeHTML(selection.publicIdentity || life?.role || 'unwritten public identity')}<br>${selection.skills.length ? `Skills: ${escapeHTML(selection.skills.join(', '))}. ` : ''}${selection.perks.length ? `Perks: ${escapeHTML(selection.perks.join(', '))}. ` : ''}${selection.flaws.length ? `Flaws: ${escapeHTML(selection.flaws.join(', '))}. ` : ''}${selection.inventory.length ? `Equipment: ${escapeHTML(selection.inventory.join(', '))}.` : ''}`;
+        document.getElementById('sz-role-summary').innerHTML = `<strong>${experimentalEscapeHTML(life?.name || 'Custom role')}</strong> · ${experimentalEscapeHTML(selection.publicIdentity || life?.role || 'unwritten public identity')}<br>${selection.skills.length ? `Skills: ${experimentalEscapeHTML(selection.skills.join(', '))}. ` : ''}${selection.perks.length ? `Perks: ${experimentalEscapeHTML(selection.perks.join(', '))}. ` : ''}${selection.flaws.length ? `Flaws: ${experimentalEscapeHTML(selection.flaws.join(', '))}. ` : ''}${selection.inventory.length ? `Equipment: ${experimentalEscapeHTML(selection.inventory.join(', '))}.` : ''}`;
         return remaining;
     };
     section.querySelectorAll('input').forEach(input => input.addEventListener('input', updateSummary));
@@ -3263,17 +3263,17 @@ function openSessionZero(onDone) {
     // Do not borrow whichever reusable Persona happens to be globally active.
     const storedPersonaId = sess.personaId !== undefined ? sess.personaId : '';
     personaSelect.innerHTML = '<option value="">No Persona — use only the Starting Life</option>'
-        + ExperimentalWorldsHost.sharedPersonas().map(persona => `<option value="${escapeHTML(persona.id)}">${escapeHTML(persona.name || 'Unnamed Persona')}</option>`).join('');
+        + ExperimentalWorldsHost.sharedPersonas().map(persona => `<option value="${experimentalEscapeHTML(persona.id)}">${experimentalEscapeHTML(persona.name || 'Unnamed Persona')}</option>`).join('');
     personaSelect.value = ExperimentalWorldsHost.sharedPersonas().some(persona => persona.id === storedPersonaId) ? storedPersonaId : '';
     controlledEntitySelect.innerHTML = '<option value="player">Create / control this player character</option>'
         + (world?.entities || []).filter(entity => entity.type === 'npc').map(entity =>
-            `<option value="${escapeHTML(entity.id)}">Play ${escapeHTML(entity.name || entity.id)}</option>`).join('');
+            `<option value="${experimentalEscapeHTML(entity.id)}">Play ${experimentalEscapeHTML(entity.name || entity.id)}</option>`).join('');
     controlledEntitySelect.value = (sess.controlledEntityId && (world?.entities || []).some(entity => entity.id === sess.controlledEntityId))
         ? sess.controlledEntityId : 'player';
     const renderPersonaPreview = () => {
         const selected = ExperimentalWorldsHost.sharedPersonas().find(persona => persona.id === personaSelect.value);
-        personaPreview.textContent = selected && personaPromptText(selected).trim()
-            ? personaPromptText(selected)
+        personaPreview.textContent = selected && experimentalPersonaPromptText(selected).trim()
+            ? experimentalPersonaPromptText(selected)
             : 'No Persona selected. The Starting Life will be the only identity source.';
         renderSessionRoleSetup(world, sess, selected);
     };
@@ -3307,12 +3307,12 @@ function openSessionZero(onDone) {
                 card.type = 'button';
                 card.className = `session-origin-card${sess.originId === life.id ? ' selected' : ''}`;
                 card.innerHTML = `
-                    <span class="session-origin-icon">${escapeHTML(life.icon || '◈')}</span>
+                    <span class="session-origin-icon">${experimentalEscapeHTML(life.icon || '◈')}</span>
                     <span class="session-origin-copy">
-                        <span class="session-origin-meta">${escapeHTML(life.socialRank || 'wanderer')}${location ? ` · ${escapeHTML(location.name)}` : ''}</span>
-                        <strong>${escapeHTML(life.name)}</strong>
-                        <small>${escapeHTML(life.description || life.role || '')}</small>
-                        ${(life.skills?.length || life.perks?.length) ? `<small class="session-origin-capabilities">${escapeHTML([...(life.skills || []).slice(0, 3), ...(life.perks || []).slice(0, 2)].join(' · '))}</small>` : ''}
+                        <span class="session-origin-meta">${experimentalEscapeHTML(life.socialRank || 'wanderer')}${location ? ` · ${experimentalEscapeHTML(location.name)}` : ''}</span>
+                        <strong>${experimentalEscapeHTML(life.name)}</strong>
+                        <small>${experimentalEscapeHTML(life.description || life.role || '')}</small>
+                        ${(life.skills?.length || life.perks?.length) ? `<small class="session-origin-capabilities">${experimentalEscapeHTML([...(life.skills || []).slice(0, 3), ...(life.perks || []).slice(0, 2)].join(' · '))}</small>` : ''}
                     </span>`;
                 card.onclick = () => {
                     applyStartingLifeToSession(world, sess, life.id);
@@ -3398,7 +3398,7 @@ function openSessionZero(onDone) {
             return false;
         }
         const role = sessionRoleSelections(world, s);
-        s.playerIdentity = isPlainObject(s.playerIdentity) ? s.playerIdentity : {};
+        s.playerIdentity = experimentalIsPlainObject(s.playerIdentity) ? s.playerIdentity : {};
         s.playerIdentity.personaName = selectedPersona?.name || '';
         s.playerIdentity.age = selectedPersona?.age || '';
         s.playerIdentity.pronouns = selectedPersona?.pronouns || '';
@@ -3406,7 +3406,7 @@ function openSessionZero(onDone) {
         s.playerIdentity.publicIdentity = role.publicIdentity || selectedPersona?.publicIdentity || '';
         s.playerIdentity.reputation = role.reputation || selectedPersona?.reputation || '';
         if (controlledEntity) {
-            s.controlledEntitySnapshot = safeJsonClone(controlledEntity);
+            s.controlledEntitySnapshot = experimentalSafeJsonClone(controlledEntity);
             s.playerIdentity.personaName = controlledEntity.name || s.playerIdentity.personaName;
             s.playerIdentity.appearance = controlledEntity.description || s.playerIdentity.appearance;
             s.playerIdentity.publicIdentity = controlledEntity.name || s.playerIdentity.publicIdentity;
@@ -3420,7 +3420,7 @@ function openSessionZero(onDone) {
             s.inventory = [...role.inventory];
             Object.entries(role.stats).forEach(([id, value]) => { s.playerStats[id] = value; });
         }
-        s.personaSnapshot = selectedPersona ? normalizePersona(JSON.parse(JSON.stringify(selectedPersona))) : null;
+        s.personaSnapshot = selectedPersona ? experimentalNormalizePersona(JSON.parse(JSON.stringify(selectedPersona))) : null;
         s.personaBinding = {
             personaId: selectedPersona?.id || '',
             boundAt: new Date().toISOString(),
@@ -3506,23 +3506,23 @@ function openNpcDossier(npcId) {
     content.innerHTML = `
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
             <span class="mini-tag">${status === 'alive' ? '🟢 alive' : (status === 'dead' ? '☠️ dead' : '🚪 gone')}</span>
-            <span class="mini-tag">📍 ${escapeHTML(locName)}</span>
+            <span class="mini-tag">📍 ${experimentalEscapeHTML(locName)}</span>
             ${npc.isMajor ? '<span class="mini-tag">⭐ major</span>' : ''}
             ${npc.sessionOrigin ? '<span class="mini-tag" title="Created by the story in this timeline">✨ story-born</span>' : ''}
-            ${entState.relationshipToPlayer ? `<span class="mini-tag">🤝 ${escapeHTML(entState.relationshipToPlayer)}</span>` : ''}
-            ${npc.role ? `<span class="mini-tag">💼 ${escapeHTML(npc.role)}</span>` : ''}
-            ${entState.currentActivity ? `<span class="mini-tag">🕒 ${escapeHTML(entState.currentActivity)}</span>` : ''}
+            ${entState.relationshipToPlayer ? `<span class="mini-tag">🤝 ${experimentalEscapeHTML(entState.relationshipToPlayer)}</span>` : ''}
+            ${npc.role ? `<span class="mini-tag">💼 ${experimentalEscapeHTML(npc.role)}</span>` : ''}
+            ${entState.currentActivity ? `<span class="mini-tag">🕒 ${experimentalEscapeHTML(entState.currentActivity)}</span>` : ''}
         </div>
-        ${npc.description ? `<p style="font-size:0.85rem; color:var(--text-2); margin-bottom:12px;">${escapeHTML(npc.description)}</p>` : ''}
-        ${npc.persona ? `<div class="form-section"><label class="form-label">Personality</label><p style="font-size:0.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML(npc.persona)}</p></div>` : ''}
+        ${npc.description ? `<p style="font-size:0.85rem; color:var(--text-2); margin-bottom:12px;">${experimentalEscapeHTML(npc.description)}</p>` : ''}
+        ${npc.persona ? `<div class="form-section"><label class="form-label">Personality</label><p style="font-size:0.8rem; color:var(--text-2); white-space:pre-wrap;">${experimentalEscapeHTML(npc.persona)}</p></div>` : ''}
         ${dossierClaims.length ? `<div class="form-section">
             <label class="form-label">Evidence-backed dossier claims (${dossierClaims.length})</label>
             <p class="form-hint">Claims are reviewable interpretations or facts with provenance. They do not replace current location, inventory, conditions, or other reducer-owned state.</p>
             <div style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;">
                 ${dossierClaims.slice().reverse().map(claim => `<div style="background:var(--surface2); padding:8px 10px; border:1px solid var(--border); border-radius:8px;">
-                    <div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:0.75rem;">${escapeHTML(claim.fieldPath)}</strong><button class="tool-btn tool-btn-danger" style="font-size:10px; padding:2px 6px;" data-dossier-claim-dismiss="${escapeHTML(claim.id)}" title="Dismiss this claim">✕</button></div>
-                    <div style="font-size:0.76rem; color:var(--text-2); margin-top:3px; white-space:pre-wrap;">${escapeHTML(typeof claim.value === 'string' ? claim.value : JSON.stringify(claim.value))}</div>
-                    <div style="font-size:0.66rem; color:var(--text-3); margin-top:4px;">${escapeHTML(claim.maturity)} · ${Math.round((Number(claim.confidence) || 0) * 100)}% confidence · ${escapeHTML(claim.origin)}${claim.evidenceIds?.length ? ` · evidence: ${escapeHTML(claim.evidenceIds.join(', '))}` : ''}</div>
+                    <div style="display:flex; justify-content:space-between; gap:8px;"><strong style="font-size:0.75rem;">${experimentalEscapeHTML(claim.fieldPath)}</strong><button class="tool-btn tool-btn-danger" style="font-size:10px; padding:2px 6px;" data-dossier-claim-dismiss="${experimentalEscapeHTML(claim.id)}" title="Dismiss this claim">✕</button></div>
+                    <div style="font-size:0.76rem; color:var(--text-2); margin-top:3px; white-space:pre-wrap;">${experimentalEscapeHTML(typeof claim.value === 'string' ? claim.value : JSON.stringify(claim.value))}</div>
+                    <div style="font-size:0.66rem; color:var(--text-3); margin-top:4px;">${experimentalEscapeHTML(claim.maturity)} · ${Math.round((Number(claim.confidence) || 0) * 100)}% confidence · ${experimentalEscapeHTML(claim.origin)}${claim.evidenceIds?.length ? ` · evidence: ${experimentalEscapeHTML(claim.evidenceIds.join(', '))}` : ''}</div>
                 </div>`).join('')}
             </div>
         </div>` : ''}
@@ -3535,8 +3535,8 @@ function openNpcDossier(npcId) {
         </div>
         <div class="form-section">
             <label class="form-label">Current Goal (editable)</label>
-            <input type="text" id="dossier-goal" class="form-input" value="${escapeHTML(entState.goal || '')}" placeholder="What do they want? Leave empty for none — the DM will invent one when relevant.">
-            <input type="text" id="dossier-goal-why" class="form-input" style="margin-top:6px;" value="${escapeHTML(entState.goalMotivation || '')}" placeholder="Why they want it (optional)">
+            <input type="text" id="dossier-goal" class="form-input" value="${experimentalEscapeHTML(entState.goal || '')}" placeholder="What do they want? Leave empty for none — the DM will invent one when relevant.">
+            <input type="text" id="dossier-goal-why" class="form-input" style="margin-top:6px;" value="${experimentalEscapeHTML(entState.goalMotivation || '')}" placeholder="Why they want it (optional)">
             <div style="display:grid; grid-template-columns:1fr 130px; gap:8px; margin-top:8px; align-items:center;">
                 <label style="font-size:0.72rem; color:var(--text-3);">Progress <span id="dossier-goal-progress-val">${goalProgress}%</span>
                     <input type="range" id="dossier-goal-progress" min="0" max="100" value="${goalProgress}" style="width:100%;">
@@ -3547,7 +3547,7 @@ function openNpcDossier(npcId) {
                     </select>
                 </label>
             </div>
-            ${entState.goal ? `<div style="font-size:0.7rem; color:var(--text-3); margin-top:6px;">Status: ${escapeHTML(entState.goalStatus || 'active')}${entState.goalSteps?.length ? ` · Step ${Math.min((entState.goalStepIndex || 0) + 1, entState.goalSteps.length)}/${entState.goalSteps.length}: ${escapeHTML(entState.goalSteps[entState.goalStepIndex || 0])}` : ''}${entState.goalDeadlineTurn ? ` · Deadline: turn ${entState.goalDeadlineTurn}` : ''}</div>` : ''}
+            ${entState.goal ? `<div style="font-size:0.7rem; color:var(--text-3); margin-top:6px;">Status: ${experimentalEscapeHTML(entState.goalStatus || 'active')}${entState.goalSteps?.length ? ` · Step ${Math.min((entState.goalStepIndex || 0) + 1, entState.goalSteps.length)}/${entState.goalSteps.length}: ${experimentalEscapeHTML(entState.goalSteps[entState.goalStepIndex || 0])}` : ''}${entState.goalDeadlineTurn ? ` · Deadline: turn ${entState.goalDeadlineTurn}` : ''}</div>` : ''}
             <button id="dossier-save-goal" class="btn btn-ghost" style="margin-top:8px; font-size:0.75rem;">💾 Save Goal</button>
         </div>
         ${relationships.length ? `<div class="form-section">
@@ -3556,7 +3556,7 @@ function openNpcDossier(npcId) {
                 ${relationships.map(([key, rel]) => {
                     const otherId = key.split('|').find(id => id !== npc.id);
                     const other = world.entities.find(entity => entity.id === otherId);
-                    return `<div style="font-size:0.76rem; color:var(--text-2); background:var(--surface2); padding:7px 9px; border-radius:7px;">${escapeHTML(other?.name || otherId || 'Unknown')}: ${escapeHTML(String(rel.score))}${rel.label ? ` (${escapeHTML(rel.label)})` : ''}${rel.reason ? ` — ${escapeHTML(rel.reason)}` : ''}</div>`;
+                    return `<div style="font-size:0.76rem; color:var(--text-2); background:var(--surface2); padding:7px 9px; border-radius:7px;">${experimentalEscapeHTML(other?.name || otherId || 'Unknown')}: ${experimentalEscapeHTML(String(rel.score))}${rel.label ? ` (${experimentalEscapeHTML(rel.label)})` : ''}${rel.reason ? ` — ${experimentalEscapeHTML(rel.reason)}` : ''}</div>`;
                 }).join('')}
             </div>
         </div>` : ''}
@@ -3632,7 +3632,7 @@ function openNpcDossier(npcId) {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex; gap:8px; align-items:flex-start; background:var(--surface2); padding:8px 10px; border-radius:8px; border:1px solid var(--border);';
         row.innerHTML = `
-            <div style="flex:1; font-size:0.78rem; color:var(--text-2);">${escapeHTML(o.text || '')}${o.epistemicStatus ? ` <span style="font-size:0.65rem; color:var(--text-3);">(${escapeHTML(String(o.epistemicStatus).replace(/_/g, ' '))})</span>` : ''}${o.turn ? ` <span style="font-size:0.65rem; color:var(--text-3);">(turn ${escapeHTML(String(o.turn))})</span>` : ''}</div>
+            <div style="flex:1; font-size:0.78rem; color:var(--text-2);">${experimentalEscapeHTML(o.text || '')}${o.epistemicStatus ? ` <span style="font-size:0.65rem; color:var(--text-3);">(${experimentalEscapeHTML(String(o.epistemicStatus).replace(/_/g, ' '))})</span>` : ''}${o.turn ? ` <span style="font-size:0.65rem; color:var(--text-3);">(turn ${experimentalEscapeHTML(String(o.turn))})</span>` : ''}</div>
             <button class="tool-btn tool-btn-danger" style="font-size:10px; padding:2px 6px;" title="Delete this memory">✕</button>
         `;
         row.querySelector('button').onclick = async () => {
@@ -3712,7 +3712,7 @@ function renderWorldPlayState() {
     document.getElementById('world-active-name').textContent = 'Living world';
     const worldAvatar = document.getElementById('world-dm-avatar');
     if (worldAvatar) {
-        worldAvatar.style.backgroundImage = world.banner ? `url('${cssUrl(world.banner)}')` : '';
+        worldAvatar.style.backgroundImage = world.banner ? `url('${experimentalCssUrl(world.banner)}')` : '';
         worldAvatar.textContent = world.banner ? '' : '🌐';
         worldAvatar.title = world.banner ? `${world.name || 'World'} artwork` : 'World';
     }
@@ -3752,7 +3752,7 @@ function renderWorldPlayState() {
     else playView.style.removeProperty('--accent');
     if (background) {
         const dim = activePresentation ? presentation.backgroundDim / 100 : 0.75;
-        playView.style.backgroundImage = `linear-gradient(rgba(10,10,15,${dim}), rgba(10,10,15,${dim})), url('${cssUrl(background)}')`;
+        playView.style.backgroundImage = `linear-gradient(rgba(10,10,15,${dim}), rgba(10,10,15,${dim})), url('${experimentalCssUrl(background)}')`;
         playView.style.backgroundSize = 'cover';
         playView.style.backgroundPosition = visualLocation?.visuals?.backgroundPosition || 'center';
         playView.style.backgroundAttachment = 'local';
@@ -3774,7 +3774,7 @@ function renderWorldPlayState() {
             statusCard.style.borderLeft = `3px solid ${playerState.status === 'dead' ? 'var(--red)' : 'var(--warning, #FF8C42)'}`;
             statusCard.innerHTML = `
                 <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">Player State</div>
-                <div style="font-size:0.85rem; font-weight:800;">${playerState.status === 'dead' ? '☠️ GAME OVER' : playerState.status === 'incapacitated' ? '⚠️ INCAPACITATED' : 'ACTIVE'}${playerState.conditions.length ? ` · ${escapeHTML(playerState.conditions.join(', '))}` : ''}</div>`;
+                <div style="font-size:0.85rem; font-weight:800;">${playerState.status === 'dead' ? '☠️ GAME OVER' : playerState.status === 'incapacitated' ? '⚠️ INCAPACITATED' : 'ACTIVE'}${playerState.conditions.length ? ` · ${experimentalEscapeHTML(playerState.conditions.join(', '))}` : ''}</div>`;
             statsContainer.appendChild(statusCard);
         }
         // World mechanics (Annex A1/A2): player-visible approximate altered
@@ -3802,10 +3802,10 @@ function renderWorldPlayState() {
                 const mechPanel = window.HordeWorldMechanics.actorStatePanel(world, sess, actorInfo.id, mechRegistry);
                 (mechPanel.states || []).forEach(mechState => {
                     mechRows.push(`
-                        <div class="wm-state-row" data-actor="${escapeHTML(actorInfo.id)}" data-profile="${escapeHTML(mechState.profileKey)}" style="display:flex; align-items:center; gap:6px; margin:3px 0; font-size:0.8rem; flex-wrap:wrap;">
-                            <span style="min-width:56px; color:var(--text-3);">${escapeHTML(actorInfo.name)}</span>
-                            <strong>${escapeHTML(mechState.label)}</strong>
-                            <span style="color:var(--text-3);">~${mechState.effectiveDoseCount}${mechState.estimated ? ' (est.)' : ''} · ${escapeHTML(mechState.phase)} · ${escapeHTML(mechState.approximateLevel)} impairment${mechState.selfAssessmentReliability && mechState.selfAssessmentReliability !== 'unknown' ? ` · self-assessment: ${escapeHTML(mechState.selfAssessmentReliability)}` : ''}</span>
+                        <div class="wm-state-row" data-actor="${experimentalEscapeHTML(actorInfo.id)}" data-profile="${experimentalEscapeHTML(mechState.profileKey)}" style="display:flex; align-items:center; gap:6px; margin:3px 0; font-size:0.8rem; flex-wrap:wrap;">
+                            <span style="min-width:56px; color:var(--text-3);">${experimentalEscapeHTML(actorInfo.name)}</span>
+                            <strong>${experimentalEscapeHTML(mechState.label)}</strong>
+                            <span style="color:var(--text-3);">~${mechState.effectiveDoseCount}${mechState.estimated ? ' (est.)' : ''} · ${experimentalEscapeHTML(mechState.phase)} · ${experimentalEscapeHTML(mechState.approximateLevel)} impairment${mechState.selfAssessmentReliability && mechState.selfAssessmentReliability !== 'unknown' ? ` · self-assessment: ${experimentalEscapeHTML(mechState.selfAssessmentReliability)}` : ''}</span>
                             <button type="button" class="wm-dose-dec" title="Authorial input: one fewer dose — the engine recomputes the phase.">−</button>
                             <button type="button" class="wm-dose-inc" title="Authorial input: one more dose — the engine recomputes the phase.">+</button>
                             <button type="button" class="wm-state-clear" title="Authorial: resolve this state now.">×</button>
@@ -3821,17 +3821,17 @@ function renderWorldPlayState() {
                 <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">World Mechanics — approximate state (authorial controls)</div>
                 ${mechRows.length ? mechRows.join('') : '<div style="font-size:0.8rem; color:var(--text-3); padding:2px 0;">No tracked altered states on screen.</div>'}
                 <div style="display:flex; gap:4px; margin-top:6px; font-size:0.75rem; flex-wrap:wrap;">
-                    <select class="wm-add-actor">${mechActors.map(actorInfo => `<option value="${escapeHTML(actorInfo.id)}">${escapeHTML(actorInfo.name)}</option>`).join('')}</select>
-                    <select class="wm-add-profile">${mechProfiles.map(profile => `<option value="${escapeHTML(profile.key)}">${escapeHTML(profile.label || profile.key)}</option>`).join('')}</select>
-                    <select class="wm-add-phase">${(window.HordeWorldMechanics.ALTERED_PHASES || []).map(phase => `<option value="${escapeHTML(phase)}">${escapeHTML(phase)}</option>`).join('')}</select>
+                    <select class="wm-add-actor">${mechActors.map(actorInfo => `<option value="${experimentalEscapeHTML(actorInfo.id)}">${experimentalEscapeHTML(actorInfo.name)}</option>`).join('')}</select>
+                    <select class="wm-add-profile">${mechProfiles.map(profile => `<option value="${experimentalEscapeHTML(profile.key)}">${experimentalEscapeHTML(profile.label || profile.key)}</option>`).join('')}</select>
+                    <select class="wm-add-phase">${(window.HordeWorldMechanics.ALTERED_PHASES || []).map(phase => `<option value="${experimentalEscapeHTML(phase)}">${experimentalEscapeHTML(phase)}</option>`).join('')}</select>
                     <button type="button" class="wm-add-apply">Set</button>
                 </div>
                 ${gmProposals.length ? `
                 <div style="margin-top:6px; font-size:0.75rem;">
                     <div style="color:var(--text-3); text-transform:uppercase; font-size:0.65rem; font-weight:700;">Open GM proposals</div>
                     ${gmProposals.map(proposal => `
-                    <div class="wm-proposal" data-proposal="${escapeHTML(proposal.id)}" style="display:flex; gap:6px; align-items:center; margin:2px 0;">
-                        <span style="flex:1;">${escapeHTML(String(proposal.provenance || proposal.id).slice(0, 140))}</span>
+                    <div class="wm-proposal" data-proposal="${experimentalEscapeHTML(proposal.id)}" style="display:flex; gap:6px; align-items:center; margin:2px 0;">
+                        <span style="flex:1;">${experimentalEscapeHTML(String(proposal.provenance || proposal.id).slice(0, 140))}</span>
                         <button type="button" class="wm-proposal-approve">Approve & commit</button>
                     </div>`).join('')}
                 </div>` : ''}`;
@@ -3917,8 +3917,8 @@ function renderWorldPlayState() {
             div.style.background = 'var(--surface2)';
             div.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-size:0.75rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">${escapeHTML(stat.name)}</div>
-                    <div style="font-size:0.9rem; font-weight:700; color:${cssColor(stat.color)};">${escapeHTML(String(val))}${stat.max > 0 ? ` / ${escapeHTML(String(stat.max))}` : ''}${equipmentDelta ? ` <small title="Equipment bonus">(${equipmentDelta > 0 ? '+' : ''}${escapeHTML(String(equipmentDelta))} gear)</small>` : ''}</div>
+                    <div style="font-size:0.75rem; color:var(--text-3); text-transform:uppercase; font-weight:700;">${experimentalEscapeHTML(stat.name)}</div>
+                    <div style="font-size:0.9rem; font-weight:700; color:${cssColor(stat.color)};">${experimentalEscapeHTML(String(val))}${stat.max > 0 ? ` / ${experimentalEscapeHTML(String(stat.max))}` : ''}${equipmentDelta ? ` <small title="Equipment bonus">(${equipmentDelta > 0 ? '+' : ''}${experimentalEscapeHTML(String(equipmentDelta))} gear)</small>` : ''}</div>
                 </div>
                 ${hasRange ? `<div class="world-stat-track"><span style="width:${fillPercent}%; background:${cssColor(stat.color)};"></span></div>` : ''}`;
             statsContainer.appendChild(div);
@@ -4038,10 +4038,10 @@ function renderWorldPlayState() {
             const chip = document.createElement('span');
             chip.className = `inv-chip${equipped ? ' equipped' : ''}`;
             chip.innerHTML = `
-                <span class="inv-chip-name" title="${escapeHTML(detail || `Examine ${itemName}`)}">${escapeHTML(itemName)}${item?.quantity > 1 ? ` ×${item.quantity}` : ''}</span>
-                ${ruleModules.equipment && item?.slot ? `<button class="inv-chip-btn inv-chip-equip" title="${equipped ? 'Unequip' : `Equip in ${escapeHTML(item.slot)}`}">${equipped ? '◆' : '◇'}</button>` : ''}
-                <button class="inv-chip-btn" title="Use ${escapeHTML(itemName)}">▶</button>
-                <button class="inv-chip-btn inv-chip-drop" title="Drop ${escapeHTML(itemName)}">✕</button>
+                <span class="inv-chip-name" title="${experimentalEscapeHTML(detail || `Examine ${itemName}`)}">${experimentalEscapeHTML(itemName)}${item?.quantity > 1 ? ` ×${item.quantity}` : ''}</span>
+                ${ruleModules.equipment && item?.slot ? `<button class="inv-chip-btn inv-chip-equip" title="${equipped ? 'Unequip' : `Equip in ${experimentalEscapeHTML(item.slot)}`}">${equipped ? '◆' : '◇'}</button>` : ''}
+                <button class="inv-chip-btn" title="Use ${experimentalEscapeHTML(itemName)}">▶</button>
+                <button class="inv-chip-btn inv-chip-drop" title="Drop ${experimentalEscapeHTML(itemName)}">✕</button>
             `;
             const inputEl = document.getElementById('world-user-input');
             const sendIntent = (text) => {
@@ -4095,7 +4095,7 @@ function renderWorldPlayState() {
             const portrait = activePresentation ? worldNpcPortraitSource(world, npc) : '';
             if (activePresentation) {
                 const initials = String(npc.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
-                div.innerHTML = `<span class="world-present-npc-avatar" style="${portrait ? `background-image:url('${cssUrl(portrait)}')` : ''}">${portrait ? '' : escapeHTML(initials)}</span><span>${escapeHTML(npc.name)}</span>`;
+                div.innerHTML = `<span class="world-present-npc-avatar" style="${portrait ? `background-image:url('${experimentalCssUrl(portrait)}')` : ''}">${portrait ? '' : experimentalEscapeHTML(initials)}</span><span>${experimentalEscapeHTML(npc.name)}</span>`;
             } else {
                 div.textContent = npc.name;
             }
@@ -4195,7 +4195,7 @@ function renderWorldPlayState() {
     const weatherDisplay = document.getElementById('world-weather-display');
     if (weatherDisplay) {
         const cur = getWorldWeather(world, sess);
-        weatherDisplay.innerHTML = `${cur.emoji} ${escapeHTML(cur.label)}${sess.weatherOverride ? ' <span style="opacity:0.55; font-size:0.65rem;">(manual)</span>' : ''}`;
+        weatherDisplay.innerHTML = `${cur.emoji} ${experimentalEscapeHTML(cur.label)}${sess.weatherOverride ? ' <span style="opacity:0.55; font-size:0.65rem;">(manual)</span>' : ''}`;
         weatherDisplay.onclick = () => {
             weatherDisplay.onclick = null; // don't rebuild while the picker is open
             const sel = document.createElement('select');
@@ -4315,7 +4315,7 @@ function renderWorldPlayState() {
         const secretCount = document.getElementById('secret-count');
         if (secretCount) secretCount.textContent = revealed.length;
         secretsList.innerHTML = revealed.map(label =>
-            `<span class="mini-tag" style="border-color:var(--warning, #F4A261);">🔑 ${escapeHTML(label)}</span>`).join('');
+            `<span class="mini-tag" style="border-color:var(--warning, #F4A261);">🔑 ${experimentalEscapeHTML(label)}</span>`).join('');
     }
 
     // Story Threads (open narrative loops the DM registered)
@@ -4666,9 +4666,9 @@ function renderWorldDialogueCard(world, speaker, dialogue, className = 'world-np
     // An FF voice color tag, when present, wins over the entity's configured
     // dialogue color: the narrator issued it for this exact line.
     const color = cssColor(options.color || speaker?.visuals?.dialogueColor || 'var(--accent)');
-    return `<div class="${className}" data-speaker-id="${escapeHTML(speaker?.id || '')}" style="--speaker-color:${color}">
-        <span class="world-npc-dialogue-avatar" style="${portrait ? `background-image:url('${cssUrl(portrait)}')` : ''}">${portrait ? '' : escapeHTML(initials)}</span>
-        <span class="world-npc-dialogue-copy"><strong>${escapeHTML(speaker?.name || 'Unknown')}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
+    return `<div class="${className}" data-speaker-id="${experimentalEscapeHTML(speaker?.id || '')}" style="--speaker-color:${color}">
+        <span class="world-npc-dialogue-avatar" style="${portrait ? `background-image:url('${experimentalCssUrl(portrait)}')` : ''}">${portrait ? '' : experimentalEscapeHTML(initials)}</span>
+        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(speaker?.name || 'Unknown')}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
     </div>`;
 }
 
@@ -4766,8 +4766,8 @@ function renderWorldPlayerVoiceCard(sess, dialogue) {
     const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
     const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
     return `<div class="world-npc-dialogue world-player-dialogue" data-speaker-id="player" style="--speaker-color:${color}">
-        <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${cssUrl(avatar)}')` : ''}">${avatar ? '' : escapeHTML(initials)}</span>
-        <span class="world-npc-dialogue-copy"><strong>${escapeHTML(name)}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
+        <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${experimentalCssUrl(avatar)}')` : ''}">${avatar ? '' : experimentalEscapeHTML(initials)}</span>
+        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(name)}</strong><span>${parseHordeMarkdown(dialogue)}</span></span>
     </div>`;
 }
 
@@ -4918,31 +4918,31 @@ function renderWorldPlayerMessageHtml(sess, text) {
     const initials = String(name).split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'YOU';
     const color = cssColor(persona?.color || '#4A90E2', '#4A90E2');
     return `<div class="world-npc-dialogue world-player-dialogue" style="--speaker-color:${color}">
-        <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${cssUrl(avatar)}')` : ''}">${avatar ? '' : escapeHTML(initials)}</span>
-        <span class="world-npc-dialogue-copy"><strong>${escapeHTML(name)}</strong><span>${parseHordeMarkdown(text)}</span></span>
+        <span class="world-npc-dialogue-avatar" style="${avatar ? `background-image:url('${experimentalCssUrl(avatar)}')` : ''}">${avatar ? '' : experimentalEscapeHTML(initials)}</span>
+        <span class="world-npc-dialogue-copy"><strong>${experimentalEscapeHTML(name)}</strong><span>${parseHordeMarkdown(text)}</span></span>
     </div>`;
 }
 
 function renderSidecarRoleplayOSChain(turnRecord) {
-    const ff54 = turnRecord && isPlainObject(turnRecord.ff54) ? turnRecord.ff54 : null;
+    const ff54 = turnRecord && experimentalIsPlainObject(turnRecord.ff54) ? turnRecord.ff54 : null;
     if (!ff54) return '';
-    const os = isPlainObject(ff54.os) ? ff54.os : {};
-    const upstream = isPlainObject(os.upstream) ? os.upstream : null;
-    const choices = isPlainObject(ff54.choices) ? ff54.choices : {};
+    const os = experimentalIsPlainObject(ff54.os) ? ff54.os : {};
+    const upstream = experimentalIsPlainObject(os.upstream) ? os.upstream : null;
+    const choices = experimentalIsPlainObject(ff54.choices) ? ff54.choices : {};
     const enabled = Array.isArray(ff54.enabledSections) ? ff54.enabledSections : [];
     const disabled = Array.isArray(ff54.disabledSections) ? ff54.disabledSections : [];
-    const compilation = isPlainObject(ff54.compilation) ? ff54.compilation : null;
-    const temporal = turnRecord && isPlainObject(turnRecord.sceneHeader) ? turnRecord.sceneHeader : null;
+    const compilation = experimentalIsPlainObject(ff54.compilation) ? ff54.compilation : null;
+    const temporal = turnRecord && experimentalIsPlainObject(turnRecord.sceneHeader) ? turnRecord.sceneHeader : null;
     const evidence = turnRecord && Array.isArray(turnRecord.controlledCharacterEvidence) ? turnRecord.controlledCharacterEvidence : [];
-    const take = turnRecord && isPlainObject(turnRecord.provenance) ? Number(turnRecord.provenance.take) || 0 : 0;
+    const take = turnRecord && experimentalIsPlainObject(turnRecord.provenance) ? Number(turnRecord.provenance.take) || 0 : 0;
     const sourceLine = upstream
         ? `${upstream.presetName} · content hash ${String(upstream.contentHash || '').slice(0, 12)} · adapter v${upstream.adapter}`
         : 'Built-in adapted registry';
     const choiceChips = Object.keys(choices).filter(key => key !== 'state_mode')
-        .map(key => `<span>${escapeHTML(key)}: ${escapeHTML(Array.isArray(choices[key]) ? choices[key].join(', ') : String(choices[key]))}</span>`)
+        .map(key => `<span>${experimentalEscapeHTML(key)}: ${experimentalEscapeHTML(Array.isArray(choices[key]) ? choices[key].join(', ') : String(choices[key]))}</span>`)
         .join('');
-    const enabledList = enabled.map(section => `<li><b>${escapeHTML(section.name)}</b> · ${Number(section.chars) || 0} chars · ${escapeHTML(section.placement || 'system')}${section.reason ? ` · ${escapeHTML(section.reason)}` : ''}</li>`).join('');
-    const disabledList = disabled.map(section => `<li><b>${escapeHTML(section.name)}</b> · ${escapeHTML(section.reason || 'not enabled')}</li>`).join('');
+    const enabledList = enabled.map(section => `<li><b>${experimentalEscapeHTML(section.name)}</b> · ${Number(section.chars) || 0} chars · ${experimentalEscapeHTML(section.placement || 'system')}${section.reason ? ` · ${experimentalEscapeHTML(section.reason)}` : ''}</li>`).join('');
+    const disabledList = disabled.map(section => `<li><b>${experimentalEscapeHTML(section.name)}</b> · ${experimentalEscapeHTML(section.reason || 'not enabled')}</li>`).join('');
     const laneSummary = {};
     (compilation && Array.isArray(compilation.candidates) ? compilation.candidates : []).forEach(candidate => {
         const lane = String(candidate.lane || 'unknown');
@@ -4951,40 +4951,40 @@ function renderSidecarRoleplayOSChain(turnRecord) {
         else laneSummary[lane].dropped += 1;
     });
     const laneChips = Object.keys(laneSummary).sort().map(lane =>
-        `<span>${escapeHTML(lane)} · ${laneSummary[lane].kept}/${laneSummary[lane].kept + laneSummary[lane].dropped}${laneSummary[lane].kept ? ` · ${laneSummary[lane].chars} chars` : ''}</span>`).join('');
+        `<span>${experimentalEscapeHTML(lane)} · ${laneSummary[lane].kept}/${laneSummary[lane].kept + laneSummary[lane].dropped}${laneSummary[lane].kept ? ` · ${laneSummary[lane].chars} chars` : ''}</span>`).join('');
     const candidateLog = (compilation && Array.isArray(compilation.candidates) ? compilation.candidates : [])
         .map(candidate => `${candidate.kept ? 'kept ' : 'drop '} · ${candidate.lane} · ${candidate.label}${candidate.reason ? ' · ' + candidate.reason : ''}${candidate.clipped ? ' · clipped' : ''}`)
         .join('\n');
-    const evidenceList = evidence.map(item => `<li>${escapeHTML(String((item && item.evidence) || ''))} <i class="sidecar-os-provenance">· ${escapeHTML(String((item && item.provenance) || ''))}</i></li>`).join('');
+    const evidenceList = evidence.map(item => `<li>${experimentalEscapeHTML(String((item && item.evidence) || ''))} <i class="sidecar-os-provenance">· ${experimentalEscapeHTML(String((item && item.provenance) || ''))}</i></li>`).join('');
     const rawPrompt = String(ff54.prompt || '');
     const prefill = String(ff54.prefill || '');
     return `<section class="sidecar-backstage-section sidecar-os-chain">
-        <header><span>&#10694;</span><div><b>Narrator OS causal chain</b><small>${escapeHTML(os.name || 'Freaky Frankenstein 5.4')} · ${escapeHTML(sourceLine)}</small></div></header>
-        <div class="sidecar-backstage-chips"><span>${take ? `take ${take + 1}` : 'primary take'}</span><span>state backend ${escapeHTML(os.stateMode || 'AGENTS')}</span></div>
+        <header><span>&#10694;</span><div><b>Narrator OS causal chain</b><small>${experimentalEscapeHTML(os.name || 'Freaky Frankenstein 5.4')} · ${experimentalEscapeHTML(sourceLine)}</small></div></header>
+        <div class="sidecar-backstage-chips"><span>${take ? `take ${take + 1}` : 'primary take'}</span><span>state backend ${experimentalEscapeHTML(os.stateMode || 'AGENTS')}</span></div>
         ${choiceChips ? `<div class="sidecar-backstage-chips">${choiceChips}</div>` : ''}
         ${enabledList || disabledList ? `<details class="sidecar-backstage-raw"><summary>Sections manifest · ${enabled.length} resolved · ${disabled.length} not applied</summary><ul class="sidecar-os-list">${enabledList}${disabledList}</ul></details>` : ''}
-        ${compilation ? `<details class="sidecar-backstage-raw"><summary>Context compilation · ${compilation.includedCount}/${compilation.candidateCount} candidates · ${compilation.used}/${compilation.budget} chars</summary><div class="sidecar-backstage-chips">${laneChips}</div><details class="sidecar-backstage-raw"><summary>Candidate log</summary><pre>${escapeHTML(candidateLog)}</pre></details></details>` : ''}
+        ${compilation ? `<details class="sidecar-backstage-raw"><summary>Context compilation · ${compilation.includedCount}/${compilation.candidateCount} candidates · ${compilation.used}/${compilation.budget} chars</summary><div class="sidecar-backstage-chips">${laneChips}</div><details class="sidecar-backstage-raw"><summary>Candidate log</summary><pre>${experimentalEscapeHTML(candidateLog)}</pre></details></details>` : ''}
         ${renderSidecarTemporalBreakdown(temporal)}
         ${evidenceList ? `<details class="sidecar-backstage-raw"><summary>Controlled character evidence · ${evidence.length} item${evidence.length === 1 ? '' : 's'}</summary><ul class="sidecar-os-list">${evidenceList}</ul></details>` : ''}
-        ${rawPrompt ? `<details class="sidecar-backstage-raw"><summary>Raw narrator stack · ${rawPrompt.length} chars${prefill ? ` · assistant prefill ${prefill.length} chars` : ''}</summary><pre>${escapeHTML(rawPrompt)}</pre>${prefill ? `<pre>${escapeHTML(prefill)}</pre>` : ''}</details>` : ''}
+        ${rawPrompt ? `<details class="sidecar-backstage-raw"><summary>Raw narrator stack · ${rawPrompt.length} chars${prefill ? ` · assistant prefill ${prefill.length} chars` : ''}</summary><pre>${experimentalEscapeHTML(rawPrompt)}</pre>${prefill ? `<pre>${experimentalEscapeHTML(prefill)}</pre>` : ''}</details>` : ''}
     </section>`;
 }
 
 function renderSidecarTemporalBreakdown(temporal) {
-    if (!isPlainObject(temporal)) return '';
+    if (!experimentalIsPlainObject(temporal)) return '';
     const prev = temporal.previousTurnEnd || {};
     const jump = temporal.interTurnJump || {};
     const start = temporal.currentTurnStart || {};
     const elapsed = temporal.inTurnElapsed || {};
     const end = temporal.currentTurnEnd || {};
     const header = temporal.narratorHeader;
-    return `<details class="sidecar-backstage-raw"><summary>Two-phase temporal evidence · ${escapeHTML(String(prev.display || '—'))} → ${escapeHTML(String(start.display || '—'))} → ${escapeHTML(String(end.display || '—'))}</summary><ul class="sidecar-os-list">
-        <li><b>Prev committed end</b> ${escapeHTML(String(prev.display || '—'))}${prev.day ? ` · day ${escapeHTML(String(prev.day))}` : ''}</li>
-        <li><b>Inter-turn jump</b> ${escapeHTML(String(jump.minutes || 0))} min · ${escapeHTML(String(jump.status || 'none'))}${jump.basis ? ` · ${escapeHTML(String(jump.basis))}` : ''}</li>
-        <li><b>Beat start</b> ${escapeHTML(String(start.display || '—'))}${start.basis ? ` · ${escapeHTML(String(start.basis))}` : ''}</li>
-        <li><b>In-turn elapsed</b> ${escapeHTML(String(elapsed.minutes || 0))} min · ${escapeHTML(String(elapsed.status || 'none'))}${elapsed.basis ? ` · ${escapeHTML(String(elapsed.basis))}` : ''}</li>
-        <li><b>Beat end</b> ${escapeHTML(String(end.display || '—'))}${end.basis ? ` · ${escapeHTML(String(end.basis))}` : ''}</li>
-    </ul>${header && header.raw ? `<div class="sidecar-backstage-chips"><span>header: ${escapeHTML(String(header.raw).slice(0, 200))}</span></div>` : ''}</details>`;
+    return `<details class="sidecar-backstage-raw"><summary>Two-phase temporal evidence · ${experimentalEscapeHTML(String(prev.display || '—'))} → ${experimentalEscapeHTML(String(start.display || '—'))} → ${experimentalEscapeHTML(String(end.display || '—'))}</summary><ul class="sidecar-os-list">
+        <li><b>Prev committed end</b> ${experimentalEscapeHTML(String(prev.display || '—'))}${prev.day ? ` · day ${experimentalEscapeHTML(String(prev.day))}` : ''}</li>
+        <li><b>Inter-turn jump</b> ${experimentalEscapeHTML(String(jump.minutes || 0))} min · ${experimentalEscapeHTML(String(jump.status || 'none'))}${jump.basis ? ` · ${experimentalEscapeHTML(String(jump.basis))}` : ''}</li>
+        <li><b>Beat start</b> ${experimentalEscapeHTML(String(start.display || '—'))}${start.basis ? ` · ${experimentalEscapeHTML(String(start.basis))}` : ''}</li>
+        <li><b>In-turn elapsed</b> ${experimentalEscapeHTML(String(elapsed.minutes || 0))} min · ${experimentalEscapeHTML(String(elapsed.status || 'none'))}${elapsed.basis ? ` · ${experimentalEscapeHTML(String(elapsed.basis))}` : ''}</li>
+        <li><b>Beat end</b> ${experimentalEscapeHTML(String(end.display || '—'))}${end.basis ? ` · ${experimentalEscapeHTML(String(end.basis))}` : ''}</li>
+    </ul>${header && header.raw ? `<div class="sidecar-backstage-chips"><span>header: ${experimentalEscapeHTML(String(header.raw).slice(0, 200))}</span></div>` : ''}</details>`;
 }
 
 function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
@@ -4994,7 +4994,7 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
     const events = Array.isArray(receipt.events) ? receipt.events.slice(0, 8) : [];
     const changes = [
         ...(Array.isArray(receipt.entity_updates) ? receipt.entity_updates.map(change => change.activity || change.label || change.entity_id) : []),
-        ...(isPlainObject(receipt.state_updates) ? Object.entries(receipt.state_updates)
+        ...(experimentalIsPlainObject(receipt.state_updates) ? Object.entries(receipt.state_updates)
             .filter(([, value]) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && !value.length))
             .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`) : [])
     ].filter(Boolean).slice(0, 8);
@@ -5002,29 +5002,29 @@ function renderSidecarBackstageCard(backstage, turnNumber, turnRecord = null) {
     const reader = backstage.reader || null;
     const jobSummary = backstage.memoryJobs || null;
     const formatHandoff = handoff
-        ? escapeHTML(handoff).replace(/^(SCENE READING|ANSWER [^\n:]+|REQUEST|ACCEPTED PLAYER DETAILS)\s*:?[ \t]*(.*)$/gim, '<strong class="sidecar-backstage-label">$1</strong><span>$2</span>')
+        ? experimentalEscapeHTML(handoff).replace(/^(SCENE READING|ANSWER [^\n:]+|REQUEST|ACCEPTED PLAYER DETAILS)\s*:?[ \t]*(.*)$/gim, '<strong class="sidecar-backstage-label">$1</strong><span>$2</span>')
         : '';
     const failed = backstage.status === 'reconciliation_failed' || backstage.unresolved === true;
     const failureStage = String(backstage.failure?.stage || '').toLowerCase();
     const failureLabel = 'Scene update incomplete';
     const incompleteHandoff = backstage.handoffComplete === false;
     const roleplayOSChain = renderSidecarRoleplayOSChain(turnRecord);
-    const activeLocationLabel = isPlainObject(packet.activeLocation)
+    const activeLocationLabel = experimentalIsPlainObject(packet.activeLocation)
         ? `${packet.activeLocation.name || packet.activeLocation.id || 'Unknown'}${packet.activeLocation.id ? ` · ${packet.activeLocation.id}` : ''}`
         : String(packet.activeLocation || '');
     return `<details class="world-sidecar-backstage${failed ? ' sidecar-backstage-failed' : ''}" data-sidecar-turn="${Number(turnNumber) || 0}">
         <summary><span class="sidecar-backstage-mark">${failed ? '⚠' : '🎭'}</span><span><b>Backstage notes</b><small>Scene update${turnNumber ? ` · Turn ${turnNumber}` : ''}</small></span><i>${failed ? 'Scene needs attention' : 'Scene ready'}</i></summary>
         <div class="sidecar-backstage-body">
             ${handoff ? `<section class="sidecar-backstage-section sidecar-handoff"><header><span>✦</span><div><b>Story notes</b><small>What this beat sets up next.</small></div></header><div class="sidecar-handoff-copy">${formatHandoff}</div></section>` : ''}
-            ${reader ? (() => { const envelope = reader.readerEnvelope || {}; const presence = envelope.presence || {}; const changed = Array.isArray(reader.changedFields) ? reader.changedFields : []; const proposals = [...(envelope.durableProposals || []), ...(envelope.relationshipProposals || [])]; return `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Scene reading</b><small>${escapeHTML(reader.summary || (reader.valid === false ? 'No additional scene reading was available.' : 'A read of the current moment.'))}</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(reader.mode || envelope.snapshotMode || 'delta'))} scene update</span>${reader.readerSnapshotId ? `<span>${escapeHTML(reader.readerSnapshotId)}</span>` : ''}${reader.model ? `<span>${escapeHTML(reader.model)}</span>` : ''}${reader.provider ? `<span>${escapeHTML(reader.provider)}</span>` : ''}${changed.length ? `<span>${escapeHTML(changed.length)} changed field${changed.length === 1 ? '' : 's'}</span>` : ''}</div>${presence.active?.length || presence.nearby?.length || presence.audible?.length ? `<div class="sidecar-packet-grid">${presence.active?.length ? `<span><small>Active</small>${escapeHTML(JSON.stringify(presence.active))}</span>` : ''}${presence.nearby?.length ? `<span><small>Nearby</small>${escapeHTML(JSON.stringify(presence.nearby))}</span>` : ''}${presence.audible?.length ? `<span><small>Audible</small>${escapeHTML(JSON.stringify(presence.audible))}</span>` : ''}</div>` : ''}${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${escapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${proposals.length ? `<div class="form-hint">${escapeHTML(String(proposals.length))} proposed change${proposals.length === 1 ? '' : 's'} await review.</div>` : ''}${envelope.validationWarnings?.length ? `<div class="form-hint" style="color:var(--warning);">${escapeHTML(String(envelope.validationWarnings.length))} validation warning${envelope.validationWarnings.length === 1 ? '' : 's'}</div>` : ''}${reader.failure ? `<div class="form-hint">Scene reading detail: ${escapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${escapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>`; })() : ''}
+            ${reader ? (() => { const envelope = reader.readerEnvelope || {}; const presence = envelope.presence || {}; const changed = Array.isArray(reader.changedFields) ? reader.changedFields : []; const proposals = [...(envelope.durableProposals || []), ...(envelope.relationshipProposals || [])]; return `<section class="sidecar-backstage-section"><header><span>⌕</span><div><b>Scene reading</b><small>${experimentalEscapeHTML(reader.summary || (reader.valid === false ? 'No additional scene reading was available.' : 'A read of the current moment.'))}</small></div></header><div class="sidecar-backstage-chips"><span>${experimentalEscapeHTML(String(reader.mode || envelope.snapshotMode || 'delta'))} scene update</span>${reader.readerSnapshotId ? `<span>${experimentalEscapeHTML(reader.readerSnapshotId)}</span>` : ''}${reader.model ? `<span>${experimentalEscapeHTML(reader.model)}</span>` : ''}${reader.provider ? `<span>${experimentalEscapeHTML(reader.provider)}</span>` : ''}${changed.length ? `<span>${experimentalEscapeHTML(changed.length)} changed field${changed.length === 1 ? '' : 's'}</span>` : ''}</div>${presence.active?.length || presence.nearby?.length || presence.audible?.length ? `<div class="sidecar-packet-grid">${presence.active?.length ? `<span><small>Active</small>${experimentalEscapeHTML(JSON.stringify(presence.active))}</span>` : ''}${presence.nearby?.length ? `<span><small>Nearby</small>${experimentalEscapeHTML(JSON.stringify(presence.nearby))}</span>` : ''}${presence.audible?.length ? `<span><small>Audible</small>${experimentalEscapeHTML(JSON.stringify(presence.audible))}</span>` : ''}</div>` : ''}${Array.isArray(reader.reconciliationFocus) && reader.reconciliationFocus.length ? `<div class="sidecar-backstage-chips">${reader.reconciliationFocus.map(item => `<span>${experimentalEscapeHTML(typeof item === 'string' ? item : JSON.stringify(item))}</span>`).join('')}</div>` : ''}${proposals.length ? `<div class="form-hint">${experimentalEscapeHTML(String(proposals.length))} proposed change${proposals.length === 1 ? '' : 's'} await review.</div>` : ''}${envelope.validationWarnings?.length ? `<div class="form-hint" style="color:var(--warning);">${experimentalEscapeHTML(String(envelope.validationWarnings.length))} validation warning${envelope.validationWarnings.length === 1 ? '' : 's'}</div>` : ''}${reader.failure ? `<div class="form-hint">Scene reading detail: ${experimentalEscapeHTML(reader.failure.message || String(reader.failure))}</div>` : ''}<details class="sidecar-backstage-raw"><summary>Reader evidence</summary><pre>${experimentalEscapeHTML(JSON.stringify(reader, null, 2))}</pre></details></section>`; })() : ''}
             ${incompleteHandoff ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>Scene update was incomplete</b><small>Only what the visible scene supports was retained.</small></div></header></section>` : ''}
-            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${escapeHTML(failureLabel)}</b><small>${escapeHTML(backstage.failure?.message || 'The scene update did not finish.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Details</b><span>${escapeHTML(backstage.failure?.code || 'scene_update_incomplete')}${backstage.failure?.stage ? ` · ${escapeHTML(backstage.failure.stage)}` : ''}${backstage.failure?.finishReason ? ` · finish: ${escapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>What stayed safe</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'The incomplete update is held for World GM recovery.' : 'The narrated beat remains, and the scene stays at its last known state.')}</span></div><div><b>Recovery</b><span>${escapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Open World GM to resolve this update; the story response is not replayed.' : `Retry checks this same beat again${reader ? ' with its available scene reading' : ''}; the story response is not rewritten.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${backstage.failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${escapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
-            ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Scene update</b><small>${escapeHTML(receipt.summary || 'Updated from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${escapeHTML(event.label || event.type || 'Event')}</b><span>${escapeHTML(event.status || 'established')}${event.evidence ? ` · ${escapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${escapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
-            ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next beat</b><small>${escapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next story response receives this scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${escapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${escapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${escapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending update</small>${escapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
-            ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${escapeHTML(String(jobSummary.queued || 0))} queued</span><span>${escapeHTML(String(jobSummary.running || 0))} running</span><span>${escapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${escapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
-            ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${escapeHTML(String(backstage.questionCount))} open scene question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
+            ${failed ? `<section class="sidecar-backstage-section sidecar-reconciliation-failure"><header><span>!</span><div><b>${experimentalEscapeHTML(failureLabel)}</b><small>${experimentalEscapeHTML(backstage.failure?.message || 'The scene update did not finish.')}</small></div></header><div class="sidecar-backstage-list"><div><b>Details</b><span>${experimentalEscapeHTML(backstage.failure?.code || 'scene_update_incomplete')}${backstage.failure?.stage ? ` · ${experimentalEscapeHTML(backstage.failure.stage)}` : ''}${backstage.failure?.finishReason ? ` · finish: ${experimentalEscapeHTML(backstage.failure.finishReason)}` : ''}</span></div><div><b>What stayed safe</b><span>${experimentalEscapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'The incomplete update is held for World GM recovery.' : 'The narrated beat remains, and the scene stays at its last known state.')}</span></div><div><b>Recovery</b><span>${experimentalEscapeHTML(backstage.failure?.code === 'sidecar_commit_partial_failure' ? 'Open World GM to resolve this update; the story response is not replayed.' : `Retry checks this same beat again${reader ? ' with its available scene reading' : ''}; the story response is not rewritten.`)}</span></div></div>${turnRecord?.id ? `<div class="sidecar-recovery-actions">${backstage.failure?.code === 'sidecar_commit_partial_failure' ? '<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button>' : `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${experimentalEscapeHTML(turnRecord.id)}">Retry Scene Update</button>`}<button type="button" class="btn btn-ghost sidecar-open-backstage">Open Backstage</button></div>` : ''}</section>` : ''}
+            ${receipt && Object.keys(receipt).length ? `<section class="sidecar-backstage-section"><header><span>◈</span><div><b>Scene update</b><small>${experimentalEscapeHTML(receipt.summary || 'Updated from the authored beat.')}</small></div></header>${events.length ? `<div class="sidecar-backstage-list">${events.map(event => `<div><b>${experimentalEscapeHTML(event.label || event.type || 'Event')}</b><span>${experimentalEscapeHTML(event.status || 'established')}${event.evidence ? ` · ${experimentalEscapeHTML(String(event.evidence).slice(0, 220))}` : ''}</span></div>`).join('')}</div>` : ''}${changes.length ? `<div class="sidecar-backstage-chips">${changes.map(change => `<span>${experimentalEscapeHTML(String(change))}</span>`).join('')}</div>` : ''}</section>` : ''}
+            ${packet && Object.keys(packet).length ? `<section class="sidecar-backstage-section sidecar-next-beat"><header><span>→</span><div><b>Next beat</b><small>${experimentalEscapeHTML(packet.sceneState || packet.scene_state || packet.temporalContinuity || 'The next story response receives this scene view.')}</small></div></header><div class="sidecar-packet-grid">${packet.worldTime ? `<span><small>World time</small>${experimentalEscapeHTML(String(packet.worldTime))}</span>` : ''}${packet.activeLocation ? `<span><small>Location</small>${experimentalEscapeHTML(activeLocationLabel)}</span>` : ''}${Array.isArray(packet.activeCast) ? `<span><small>Active cast</small>${experimentalEscapeHTML(packet.activeCast.join(', '))}</span>` : ''}${Array.isArray(packet.reconciliationBacklog) && packet.reconciliationBacklog.length ? `<span><small>Pending update</small>${experimentalEscapeHTML(String(packet.reconciliationBacklog.length))} authored beat${packet.reconciliationBacklog.length === 1 ? '' : 's'}</span>` : ''}</div></section>` : ''}
+            ${jobSummary ? `<section class="sidecar-backstage-section"><header><span>◌</span><div><b>Memory work</b><small>Source-pinned background consolidation for this accepted turn.</small></div></header><div class="sidecar-backstage-chips"><span>${experimentalEscapeHTML(String(jobSummary.queued || 0))} queued</span><span>${experimentalEscapeHTML(String(jobSummary.running || 0))} running</span><span>${experimentalEscapeHTML(String(jobSummary.completed || 0))} completed</span>${jobSummary.failed ? `<span>${experimentalEscapeHTML(String(jobSummary.failed))} retry/blocked</span>` : ''}</div></section>` : ''}
+            ${backstage.questionCount ? `<div class="sidecar-backstage-questions">? ${experimentalEscapeHTML(String(backstage.questionCount))} open scene question${backstage.questionCount === 1 ? '' : 's'} — carried forward only while relevant.</div>` : ''}
             ${roleplayOSChain}
-            <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${escapeHTML(JSON.stringify({ status: backstage.status || null, handoffComplete: backstage.handoffComplete !== false, handoff: backstage.handoff || null, reader: backstage.reader || null, receipt: backstage.receipt || null, failure: backstage.failure || null, audit: backstage.audit || null, preFrame: backstage.preFrame || null, postFrame: backstage.postFrame || null, packet: backstage.packet || null }, null, 2))}</pre></details>
+            <details class="sidecar-backstage-raw"><summary>Technical record</summary><pre>${experimentalEscapeHTML(JSON.stringify({ status: backstage.status || null, handoffComplete: backstage.handoffComplete !== false, handoff: backstage.handoff || null, reader: backstage.reader || null, receipt: backstage.receipt || null, failure: backstage.failure || null, audit: backstage.audit || null, preFrame: backstage.preFrame || null, postFrame: backstage.postFrame || null, packet: backstage.packet || null }, null, 2))}</pre></details>
         </div>
     </details>`;
 }
@@ -5053,11 +5053,11 @@ function appendWorldMessageUI(msg, index = null) {
     const metaParts = [];
     if (msg.location) {
         const locObj = world ? world.locations.find(l => l.id === msg.location) : null;
-        metaParts.push(`📍 ${escapeHTML(locObj ? locObj.name : msg.location)}`);
+        metaParts.push(`📍 ${experimentalEscapeHTML(locObj ? locObj.name : msg.location)}`);
     }
-    if (msg.command) metaParts.push(`⚙️ ${escapeHTML(msg.command)}`);
+    if (msg.command) metaParts.push(`⚙️ ${experimentalEscapeHTML(msg.command)}`);
     if (versions.length > 1) metaParts.push(`🔄 take ${currentVersionIdx + 1}/${versions.length}`);
-    if (msg.ledgerEntry) metaParts.push(`📜 ${escapeHTML(msg.ledgerEntry)}`);
+    if (msg.ledgerEntry) metaParts.push(`📜 ${experimentalEscapeHTML(msg.ledgerEntry)}`);
     // Whether this turn's world state actually landed, and how. Without this a
     // model that narrates changes but never records them fails invisibly.
     if (msg.role === 'dm' && msg.stateSource) {
@@ -5073,11 +5073,11 @@ function appendWorldMessageUI(msg, index = null) {
                 ? 'state: no persistent change recorded (tool + text failsafe were available)'
                 : 'state: no persistent change recorded');
         if (msg.worldAudit) {
-            metaParts.push(`🧾 world v${escapeHTML(msg.worldAudit.version)}: ${escapeHTML(msg.worldAudit.accepted)} committed, ${escapeHTML(msg.worldAudit.informational)} tracked, ${escapeHTML(msg.worldAudit.rejected)} rejected`);
+            metaParts.push(`🧾 world v${experimentalEscapeHTML(msg.worldAudit.version)}: ${experimentalEscapeHTML(msg.worldAudit.accepted)} committed, ${experimentalEscapeHTML(msg.worldAudit.informational)} tracked, ${experimentalEscapeHTML(msg.worldAudit.rejected)} rejected`);
             if (!msg.worldAudit.castChecksum) metaParts.push('⚠️ ending cast checksum disagreed with canonical presence');
         }
         if (msg.narrativeAuditWarnings) {
-            metaParts.push(`⚠️ ${escapeHTML(msg.narrativeAuditWarnings)} prose/state contradiction${msg.narrativeAuditWarnings === 1 ? '' : 's'} frozen`);
+            metaParts.push(`⚠️ ${experimentalEscapeHTML(msg.narrativeAuditWarnings)} prose/state contradiction${msg.narrativeAuditWarnings === 1 ? '' : 's'} frozen`);
         }
         if (msg.callAudit?.foregroundTotal) {
             const extras = [];
@@ -5086,19 +5086,19 @@ function appendWorldMessageUI(msg, index = null) {
             if (msg.callAudit.narrativeFollowUp) extras.push('dice/tool narration');
             if (msg.callAudit.chronicleClassifier) extras.push('chronicle classifier');
             if (msg.callAudit.sidecar) extras.push('Sidecar reconciliation');
-            metaParts.push(`🧮 ${escapeHTML(msg.callAudit.foregroundTotal)} foreground model call${msg.callAudit.foregroundTotal === 1 ? '' : 's'}${extras.length ? ` · ${escapeHTML(extras.join(', '))}` : ' · scene kernel'}`);
+            metaParts.push(`🧮 ${experimentalEscapeHTML(msg.callAudit.foregroundTotal)} foreground model call${msg.callAudit.foregroundTotal === 1 ? '' : 's'}${extras.length ? ` · ${experimentalEscapeHTML(extras.join(', '))}` : ' · scene kernel'}`);
         }
         if (msg.narratedMove) {
-            metaParts.push(`📍 followed the prose to ${escapeHTML(msg.narratedMove)} (no location_id was recorded)`);
+            metaParts.push(`📍 followed the prose to ${experimentalEscapeHTML(msg.narratedMove)} (no location_id was recorded)`);
         }
         if (msg.missingPlace) {
-            metaParts.push(`🗺️ "${escapeHTML(msg.missingPlace)}" is not a location in this world — add it, or have the DM register it with location_introduced`);
+            metaParts.push(`🗺️ "${experimentalEscapeHTML(msg.missingPlace)}" is not a location in this world — add it, or have the DM register it with location_introduced`);
         }
         if (msg.narratedPresence?.length) {
-            metaParts.push(`👥 pulled into scene from the prose: ${escapeHTML(msg.narratedPresence.join(', '))}`);
+            metaParts.push(`👥 pulled into scene from the prose: ${experimentalEscapeHTML(msg.narratedPresence.join(', '))}`);
         }
         if (msg.narratedOutfit) {
-            metaParts.push(`👕 outfit read from the prose: ${escapeHTML(msg.narratedOutfit)} (no outfit_update was recorded)`);
+            metaParts.push(`👕 outfit read from the prose: ${experimentalEscapeHTML(msg.narratedOutfit)} (no outfit_update was recorded)`);
         }
         if (!msg.ledgerEntry) {
             metaParts.push(msg.ledgerStatus === 'classifier_empty'
@@ -5332,7 +5332,7 @@ function captureWorldTurnState(world, sess) {
     // are timeline-owned and therefore participate in rollback.
     const dynamicEntities = (world.entities || [])
         .filter(entity => entity?.sessionOrigin === sess.id);
-    return safeJsonClone({
+    return experimentalSafeJsonClone({
         schema: 2,
         session: sessionState,
         world: {
@@ -5428,13 +5428,13 @@ function invalidateSidecarDerivedAfterRestore(sess, activeTurnIds) {
 }
 
 function restoreWorldTurnState(world, sess, snapshot) {
-    if (!snapshot || !isPlainObject(snapshot) || !isPlainObject(snapshot.session) || !isPlainObject(snapshot.world)) return false;
+    if (!snapshot || !experimentalIsPlainObject(snapshot) || !experimentalIsPlainObject(snapshot.session) || !experimentalIsPlainObject(snapshot.world)) return false;
     const liveManualRevision = Number(sess.ledgerManualRevision) || 0;
     const liveLedgerRevision = Number(sess.ledgerRevision) || 0;
     const snapshotManualRevision = Number(snapshot.session.ledgerManualRevision) || 0;
     const liveManualLedger = String(sess.ledgerManualOverrideText ?? sess.ledger ?? '');
-    const liveLedgerDiagnostics = safeJsonClone(sess.ledgerDiagnostics || {});
-    const liveSidecarAudit = safeJsonClone(sess.sidecar || null);
+    const liveLedgerDiagnostics = experimentalSafeJsonClone(sess.ledgerDiagnostics || {});
+    const liveSidecarAudit = experimentalSafeJsonClone(sess.sidecar || null);
     // Pipeline migration is timeline infrastructure, not authored turn state.
     // An Inline snapshot taken before migration must never demote a migrated
     // timeline simply because a reroll/rewind restores that old turn snapshot.
@@ -5451,11 +5451,11 @@ function restoreWorldTurnState(world, sess, snapshot) {
     Object.keys(sess).forEach(key => {
         if (!['id', 'name', 'history', '_memEpoch', '_worldEpoch'].includes(key)) delete sess[key];
     });
-    Object.assign(sess, safeJsonClone(snapshot.session), preserved);
+    Object.assign(sess, experimentalSafeJsonClone(snapshot.session), preserved);
     // Canonical state follows the selected snapshot, but Sidecar turn/take
     // audit records must survive a reroll so superseded generations remain
     // inspectable instead of being erased with the selected world state.
-    if (liveSidecarAudit && isPlainObject(sess.sidecar)) {
+    if (liveSidecarAudit && experimentalIsPlainObject(sess.sidecar)) {
         const restoredTurns = Array.isArray(sess.sidecar.turns) ? sess.sidecar.turns : [];
         const combinedTurns = [...restoredTurns];
         (Array.isArray(liveSidecarAudit.turns) ? liveSidecarAudit.turns : []).forEach(turn => {
@@ -5489,7 +5489,7 @@ function restoreWorldTurnState(world, sess, snapshot) {
         : [];
     if (modernSnapshot) {
         world.entities = (world.entities || []).filter(entity => entity?.sessionOrigin !== sess.id);
-        world.entities.push(...safeJsonClone(snapshotDynamic));
+        world.entities.push(...experimentalSafeJsonClone(snapshotDynamic));
     }
     if (retainSidecarPipeline) {
         // Do this after canonical snapshot restoration so the snapshot remains
@@ -5499,8 +5499,8 @@ function restoreWorldTurnState(world, sess, snapshot) {
         if (protocol) {
             protocol.mode = 'sidecar';
             protocol.migration = {
-                ...(isPlainObject(protocol.migration) ? protocol.migration : {}),
-                ...(isPlainObject(liveSidecarAudit.migration) ? liveSidecarAudit.migration : {}),
+                ...(experimentalIsPlainObject(protocol.migration) ? protocol.migration : {}),
+                ...(experimentalIsPlainObject(liveSidecarAudit.migration) ? liveSidecarAudit.migration : {}),
                 pipelinePreservedAcrossRestoreAt: new Date().toISOString(),
                 restoreSnapshotMode: String(snapshot.session?.sidecar?.mode || 'none')
             };
@@ -6459,11 +6459,11 @@ async function executeWorldTurn(commandOrReroll = null) {
     const persona = getTimelinePersona(sess, world);
     const canonicalPlayer = worldControlledPlayerIdentity(world, sess);
     let personaContext = `\n\n[CONTROLLED PLAYER CHARACTER — AUTHORITATIVE]\nID: ${canonicalPlayer.id}\nName: ${canonicalPlayer.name}\n${canonicalPlayer.description ? `Established identity: ${canonicalPlayer.description}\n` : ''}${canonicalPlayer.portrayal ? `Established portrayal: ${canonicalPlayer.portrayal}\n` : ''}The user writes this character's dialogue, thoughts, decisions and consent. Never identify the player as an NPC, a globally active profile, or an author from unrelated context.`;
-    if (persona) personaContext += `\n\n[PLAYER PERSONA — TIMELINE-BOUND PORTRAYAL]\n${personaPromptText(persona)}\nThis is a portrayal of ${canonicalPlayer.name}; it never overrides the controlled character ID or canonical name.`;
+    if (persona) personaContext += `\n\n[PLAYER PERSONA — TIMELINE-BOUND PORTRAYAL]\n${experimentalPersonaPromptText(persona)}\nThis is a portrayal of ${canonicalPlayer.name}; it never overrides the controlled character ID or canonical name.`;
     else personaContext += `\n\n[PLAYER PERSONA]\nNo timeline persona is bound. Do not infer one from any global Persona, nearby NPC, or narrative history.`;
     const controlledEntity = worldControlledEntity(world, sess);
     if (controlledEntity) personaContext += `\n\n[CONTROLLED CHARACTER — PLAYABLE CANONICAL ENTITY]\nID: ${controlledEntity.id}\nName: ${controlledEntity.name}\nDossier: ${controlledEntity.description || ''}\nPortrayal: ${controlledEntity.persona || ''}\nThis is the entity the player controls for this sequence. Preserve their established knowledge and state; do not treat them as a generic player placeholder.`;
-    const playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
+    const playerIdentity = experimentalIsPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
     const worldCapabilities = normalizeWorldCapabilities(world);
     const describeSelectedCapabilities = (names, definitions) => (Array.isArray(names) ? names : []).map(name => {
         const key = String(name || '').toLowerCase();
@@ -6492,7 +6492,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     // Relationship Synchronizer: Cross-reference Persona with present NPCs
     if (persona && presentNPCs.length > 0) {
         let relNotes = "";
-        const pDesc = personaPromptText(persona).toLowerCase();
+        const pDesc = experimentalPersonaPromptText(persona).toLowerCase();
         presentNPCs.forEach(npc => {
             const npcName = (npc.name || "").toLowerCase();
             if (npcName && pDesc.includes(npcName)) {
@@ -7574,7 +7574,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         const worldStateTool = toolsConfig.find(tool => tool.function?.name === 'commit_world_turn');
         // Keep the native receipt schema available to downstream retries and
         // opening reconciliation without creating another tool definition.
-        window.__hordeCommitTool = safeJsonClone(worldStateTool);
+        window.__hordeCommitTool = experimentalSafeJsonClone(worldStateTool);
         const worldStateProperties = worldStateTool.function.parameters.properties;
         worldStateTool.function.description = `MANDATORY canonical receipt for every response. Propose actor-scoped events, complete ending scene/cast, entity activity, and enabled module updates (${WORLD_RULE_MODULE_KEYS.filter(key => ruleModules[key]).join(', ') || 'narrative core only'}).`;
         const removeToolFields = fields => fields.forEach(field => delete worldStateProperties[field]);
@@ -7626,7 +7626,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
 
         // Preserve the native schema for Sidecar's second foreground call, but
         // make the narrator completely tool-free in Sidecar mode.
-        const sidecarCommitTool = sidecarMode ? (safeJsonClone(worldStateTool) || sidecarCommitToolFor(world, sess)) : null;
+        const sidecarCommitTool = sidecarMode ? (experimentalSafeJsonClone(worldStateTool) || sidecarCommitToolFor(world, sess)) : null;
         if (sidecarMode) toolsConfig.splice(0, toolsConfig.length);
 
         const modelId = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
@@ -7698,7 +7698,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         if (sidecarMode) {
             logSidecarConsoleTrace('Narrator request', {
                 model: modelId,
-                request: safeJsonClone(requestBody)
+                request: experimentalSafeJsonClone(requestBody)
             });
         }
 
@@ -7892,7 +7892,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             logSidecarConsoleTrace('Narrator response', {
                 model: modelId,
                 assistant: fullText,
-                toolCalls: toolCalls.map(call => safeJsonClone(call))
+                toolCalls: toolCalls.map(call => experimentalSafeJsonClone(call))
             });
             // The Sidecar debug setting promises the complete two-call trail,
             // not merely the second reconciliation request. Keep the exact
@@ -7901,14 +7901,14 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             // presentation strips the handoff from visible prose.
             recordSidecarTrace(world, sess, {
                 kind: 'narrator', model: modelId,
-                request: safeJsonClone({
+                request: experimentalSafeJsonClone({
                     model: requestBody.model,
                     messages: requestBody.messages,
                     stream: requestBody.stream,
                     max_tokens: requestBody.max_tokens,
                     temperature: requestBody.temperature
                 }),
-                reply: { content: fullText, toolCalls: toolCalls.map(call => safeJsonClone(call)) }
+                reply: { content: fullText, toolCalls: toolCalls.map(call => experimentalSafeJsonClone(call)) }
             });
             const narratorOutput = extractSidecarNarratorHandoff(fullText);
             fullText = narratorOutput.narration;
@@ -8003,7 +8003,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                         responsePayload = { success: false, status: 'Secret not found' };
                     }
                 } else if (call.function.name === 'commit_world_turn') {
-                    const validEnvelope = isPlainObject(args.scene)
+                    const validEnvelope = experimentalIsPlainObject(args.scene)
                         && Array.isArray(args.events) && Array.isArray(args.entity_updates);
                     if (!validEnvelope) throw new Error('Turn receipt must include scene, events, and entity_updates.');
                     assertExperimentalTurnOwner(turnOwner);
@@ -8114,10 +8114,10 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                         call.function?.name === 'commit_world_turn');
                     let repairedReceipt = repairCall
                         ? parseWorldToolArguments(repairCall.function?.arguments || '{}')
-                        : safeParseJSONRepair(String(repairMessage.content || '')
+                        : experimentalSafeParseJSONRepair(String(repairMessage.content || '')
                             .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
                     if (!repairedReceipt) repairedReceipt = extractInlineWorldTurnReceipt(repairMessage.content || '');
-                    if (isPlainObject(repairedReceipt?.scene)
+                    if (experimentalIsPlainObject(repairedReceipt?.scene)
                         && Array.isArray(repairedReceipt.events)
                         && Array.isArray(repairedReceipt.entity_updates)) {
                         assertExperimentalTurnOwner(turnOwner);
@@ -8305,10 +8305,10 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                 if (finalRepairResponse.ok) {
                     const data = await finalRepairResponse.json();
                     const message = data.choices?.[0]?.message || {};
-                    let repaired = safeParseJSONRepair(String(message.content || '')
+                    let repaired = experimentalSafeParseJSONRepair(String(message.content || '')
                         .replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
                     if (!repaired) repaired = extractInlineWorldTurnReceipt(message.content || '');
-                    if (isPlainObject(repaired?.scene) && Array.isArray(repaired.events)
+                    if (experimentalIsPlainObject(repaired?.scene) && Array.isArray(repaired.events)
                         && Array.isArray(repaired.entity_updates)) {
                         assertExperimentalTurnOwner(turnOwner);
                         const committed = commitWorldTurnReceipt(world, sess, repaired, receiptContext, 'repair_receipt');

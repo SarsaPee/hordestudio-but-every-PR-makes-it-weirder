@@ -23,12 +23,14 @@ const hostStateLeak = /\bstate\.(?:worlds|worldInstances|activeWorldId|worldReco
 const hostWholeSave = /\bsaveState\s*\(/;
 const ambientExperimentalRuntime = /\b(?:HordeSidecar(?:Hooks|Mode|Timeline|Promotion|Traversal|MemoryGraph|Reader|ReaderBackfill)|HordeRpgMechanics|worldMediaDirty|resizeWorldMessageInput|resetWorldMessageInput|setWorldMessageInputManualHeight|installWorldMessageResizeHandle)\b|(?<![.\w])switchView\s*\(/;
 const hostExperienceLeak = /\bExperimentalWorldsState\.(?:characters|chats|personas|activePersonaId|activeSessionId|activeCharId|activeRoomId|rooms)\b|\bwindow\.HordeMultiplayer(?:Engine)?\b|\bgetCurrentSession\s*\(/;
+const hostUtilityLeak = /(?<![\w.])(?:escapeHTML|cssUrl|displayInitials|isPlainObject|safeJsonClone|normalizePersona|personaPromptText|extractJSON|safeParseJSONRepair|normalizeUploadedImage|optimizeImage)\s*\(/;
 for (const file of ownedRuntime) {
     const source = readFileSync(file, 'utf8');
     assert(!hostStateLeak.test(source), `${file} reaches Experimental World state through the host object`);
     assert(!hostWholeSave.test(source), `${file} reaches the host whole-state writer`);
     assert(!ambientExperimentalRuntime.test(source), `${file} reaches an ambient World runtime instead of its Experimental-owned implementation or adapter`);
     assert(!hostExperienceLeak.test(source), `${file} reaches a removed host experience instead of an optional adapter capability`);
+    assert(!hostUtilityLeak.test(source), `${file} reaches a host utility instead of Experimental Worlds' private compatibility copy`);
 }
 
 const adapter = readFileSync('host-adapters/experimental-worlds/experimental-worlds-host-adapter.js', 'utf8');
@@ -41,8 +43,9 @@ assert.equal((html.match(/<script[^>]+src="app\.js/g) || []).length, 1,
 assert(!/location\.assign\s*\(/.test(html), 'the document must not switch application location to enter Experimental Worlds');
 assert(!/<iframe\b/i.test(html), 'Experimental Worlds must not be an iframe application');
 const privateRpg = html.indexOf('experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js');
+const privateCompat = html.indexOf('experiences/experimental-worlds/runtime/experimental-runtime-compat.js');
 const firstExperimentalCore = html.indexOf('experiences/experimental-worlds/runtime/dossier-claims.js');
-assert(privateRpg >= 0 && privateRpg < firstExperimentalCore,
-    'Experimental Worlds must load its pinned RPG mechanics before its dependent runtime');
+assert(privateCompat >= 0 && privateRpg >= 0 && privateCompat < privateRpg && privateRpg < firstExperimentalCore,
+    'Experimental Worlds must load private utilities and pinned RPG mechanics before its dependent runtime');
 
 console.log(`Experimental stock-removal guard passed for ${files.length} core files.`);

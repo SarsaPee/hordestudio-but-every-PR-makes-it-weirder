@@ -11,14 +11,11 @@
 <script src="/host-adapters/experimental-worlds/experimental-worlds-host-adapter.js"></script>
 <script src="/host-adapters/experimental-worlds/experimental-worlds-state-adapter.js"></script>
 <script>
-window.escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
-window.cssUrl = value => String(value || '').replace(/["'()\\<>\n\r]/g, '');
-window.isPlainObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
-window.safeJsonClone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 window.ExperimentalWorldsHost.configure({persist:async()=>{},persistSharedContinuities:async()=>{},navigate:()=>{},markMediaChanged:()=>{},mediaDirty:()=>false,restoreMediaDirty:()=>{},worldLoadWarning:()=>'',notify:()=>{},confirmModal:()=>{}});
-window.ExperimentalWorldsStateAdapter.configure({readShared:key=>({globalSettings:{},systemPresets:[],roleplayOSSources:[],chatContinuities:[],characters:[],chats:{},personas:[],activePersonaId:'',activeSessionId:{},activeCharId:'',activeRoomId:'',rooms:[],theme:'dark',view:'worlds'})[key],writeShared:()=>{}});
+window.ExperimentalWorldsStateAdapter.configure({readShared:key=>({globalSettings:{},systemPresets:[],roleplayOSSources:[],chatContinuities:[],theme:'dark',view:'worlds'})[key],writeShared:()=>{}});
 window.ExperimentalWorldsStateAdapter.hydrate({worlds:[{id:'standalone-fixture',name:'Standalone Experimental Fixture',description:'A preserved Experimental Worlds fixture rendered without any other Horde experience.',locations:[],entities:[]}],worldInstances:{},activeWorldId:'',worldRecoverySnapshots:{},editingWorld:null,lastWorldStudioId:null,lastWorldStudioTab:null});
 </script>
+<script src="/experiences/experimental-worlds/runtime/experimental-runtime-compat.js"></script>
 <script src="/experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js"></script>
 <script src="/experiences/experimental-worlds/runtime/dossier-claims.js"></script>
 <script src="/experiences/experimental-worlds/mechanics/world-mechanics.js"></script>

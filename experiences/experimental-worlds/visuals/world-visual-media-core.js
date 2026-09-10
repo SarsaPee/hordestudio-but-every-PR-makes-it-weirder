@@ -21,7 +21,7 @@ const FAL_ADVANCED_REQUEST_FIELDS = Object.freeze([
 ]);
 
 function normalizeFalAdvancedSettings(raw) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const settings = {};
     FAL_ADVANCED_REQUEST_FIELDS.forEach(field => {
         const value = source[field.key];
@@ -55,7 +55,7 @@ function normalizeFalAdvancedSettings(raw) {
 function falAdvancedRequestBody(world) {
     // Request-body fragment for the world's authored fal overrides. Blank
     // fields are omitted so the endpoint default applies.
-    const presentation = isPlainObject(world?.presentation) ? world.presentation : {};
+    const presentation = experimentalIsPlainObject(world?.presentation) ? world.presentation : {};
     const settings = normalizeFalAdvancedSettings(presentation.falAdvancedSettings);
     const fragment = {};
     FAL_ADVANCED_REQUEST_FIELDS.forEach(field => {
@@ -69,7 +69,7 @@ function falAdvancedRequestFieldsFromBody(body) {
     // Generic forward of advanced fal fields from an image request body to
     // the bridge payload. Unknown or ill-typed values never travel.
     const forwarded = {};
-    if (!isPlainObject(body)) return forwarded;
+    if (!experimentalIsPlainObject(body)) return forwarded;
     FAL_ADVANCED_REQUEST_FIELDS.forEach(field => {
         const value = body[field.requestKey];
         if (field.type === 'boolean') {
@@ -105,7 +105,7 @@ const WORLD_IMAGE_GUIDE_FIELDS = Object.freeze([
 ]);
 
 function normalizeWorldImageGuide(raw) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const guide = {};
     WORLD_IMAGE_GUIDE_FIELDS.forEach(field => {
         guide[field.key] = String(source[field.key] || '').trim().slice(0, field.max);
@@ -169,7 +169,7 @@ const WORLD_IMAGE_FRAMING_FIELDS = Object.freeze([
 ]);
 
 function normalizeWorldImageIntent(raw, fallbackPrompt = '', fallbackContext = '') {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     return {
         authoredPrompt: String(source.authoredPrompt ?? fallbackPrompt ?? '').trim().slice(0, 12000),
         context: String(source.context ?? fallbackContext ?? '').trim().slice(0, 3000),
@@ -178,7 +178,7 @@ function normalizeWorldImageIntent(raw, fallbackPrompt = '', fallbackContext = '
 }
 
 function normalizeWorldImageFraming(raw, legacy = {}, subject = null) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const value = key => String(source[key] ?? legacy[key] ?? subject?.[key] ?? '').trim().slice(0, 1200);
     return {
         mode: value('mode') || value('framing') || 'auto',
@@ -194,7 +194,7 @@ function normalizeWorldImageFraming(raw, legacy = {}, subject = null) {
 }
 
 function normalizeWorldImageLook(raw, legacy = {}) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const look = {};
     [...WORLD_IMAGE_LOOK_NATIVE_FIELDS, ...WORLD_IMAGE_LOOK_ADVANCED_FIELDS].forEach(key => {
         look[key] = String(source[key] ?? legacy[key] ?? '').trim().slice(0, 1200);
@@ -203,8 +203,8 @@ function normalizeWorldImageLook(raw, legacy = {}) {
 }
 
 function resolvedWorldImageOutfit(subject = null) {
-    if (!isPlainObject(subject)) return null;
-    const outfit = isPlainObject(subject.outfit) ? subject.outfit : null;
+    if (!experimentalIsPlainObject(subject)) return null;
+    const outfit = experimentalIsPlainObject(subject.outfit) ? subject.outfit : null;
     const description = String(subject.outfitSnapshot || outfit?.description || subject.clothing || '').trim();
     if (!description) return null;
     return {
@@ -225,7 +225,7 @@ function sidecarReaderVisualProjection(world, sess, entityId = '') {
     const character = candidates.find(candidate => candidate.candidateType === 'character' && (!selectedId || String(candidate.canonicalMatchId || '') === selectedId));
     const outfit = candidates.find(candidate => candidate.candidateType === 'outfit' && (!selectedId || [candidate.wearerEntityId, candidate.details?.wearerEntityId, candidate.details?.characterEntityId, candidate.subjectEntityId].some(value => String(value || '') === selectedId)));
     const scene = envelope.scene || {};
-    const presence = Object.values(envelope.presence || {}).flat().filter(item => isPlainObject(item));
+    const presence = Object.values(envelope.presence || {}).flat().filter(item => experimentalIsPlainObject(item));
     const castEntry = presence.find(item => String(item?.entityId || item?.canonicalEntityId || item?.id || '') === selectedId) || null;
     const characterEvidence = candidates.filter(candidate => candidate.candidateType === 'character' && (!selectedId || String(candidate.canonicalMatchId || '') === selectedId));
     const outfitEvidence = candidates.filter(candidate => candidate.candidateType === 'outfit' && (!selectedId || [candidate.wearerEntityId, candidate.details?.wearerEntityId, candidate.details?.characterEntityId, candidate.subjectEntityId].some(value => String(value || '') === selectedId)));
@@ -298,7 +298,7 @@ function blankStructuredVisualDocument() {
 }
 
 function normalizeStructuredVisualDocument(raw) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const blank = blankStructuredVisualDocument();
     const doc = {
         ...blank,
@@ -309,7 +309,7 @@ function normalizeStructuredVisualDocument(raw) {
         artistic_style: String(source.artistic_style || '').trim().slice(0, 900)
     };
     ['lighting', 'aesthetics', 'photographic_characteristics'].forEach(section => {
-        const values = isPlainObject(source[section]) ? source[section] : {};
+        const values = experimentalIsPlainObject(source[section]) ? source[section] : {};
         Object.keys(blank[section]).forEach(key => {
             if (values[key] === undefined || values[key] === null) return;
             if (section === 'aesthetics' && (key === 'aesthetic_score' || key === 'preference_score')) {
@@ -319,11 +319,11 @@ function normalizeStructuredVisualDocument(raw) {
     });
     // text_render is deliberately opaque until the provider schema is verified.
     if (source.text_render !== undefined && source.text_render !== null) {
-        doc.text_render = safeJsonClone(source.text_render);
+        doc.text_render = experimentalSafeJsonClone(source.text_render);
     } else delete doc.text_render;
     const objects = Array.isArray(source.objects) ? source.objects.slice(0, STRUCTURED_VISUAL_MAX_OBJECTS) : [];
     doc.objects = objects.map(rawObject => {
-        const object = isPlainObject(rawObject) ? rawObject : {};
+        const object = experimentalIsPlainObject(rawObject) ? rawObject : {};
         const normalized = {};
         const fields = ['description', 'location', 'relationship', 'relative_size', 'shape_and_color',
             'texture', 'appearance_details', 'pose', 'expression', 'clothing', 'action', 'gender',
@@ -347,10 +347,10 @@ function newStructuredVisualObjectId(prefix = 'obj') {
 }
 
 function normalizeStructuredVisualObjectMetadata(raw, objectOrder = []) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const metadata = {};
     objectOrder.forEach((id, index) => {
-        const item = isPlainObject(source[id]) ? source[id] : {};
+        const item = experimentalIsPlainObject(source[id]) ? source[id] : {};
         const salience = STRUCTURED_VISUAL_OBJECT_SALIENCE.has(item.salience) ? item.salience : (index === 0 ? 'primary' : 'secondary');
         const kind = STRUCTURED_VISUAL_OBJECT_KINDS.has(item.kind) ? item.kind : (index === 0 ? 'subject' : 'scene_object');
         metadata[id] = {
@@ -424,7 +424,7 @@ function legacyStructuredVisualDocument(world, target, kind = '') {
 
 function ensureWorldVisualProject(world, target, kind = '') {
     if (!target) return null;
-    if (target.visuals && isPlainObject(target.visuals.visualProject)) {
+    if (target.visuals && experimentalIsPlainObject(target.visuals.visualProject)) {
         const project = target.visuals.visualProject;
         project.schemaVersion = STRUCTURED_VISUAL_DOCUMENT_SCHEMA_VERSION;
         project.target = visualProjectTarget(world, target, kind);
@@ -434,7 +434,7 @@ function ensureWorldVisualProject(world, target, kind = '') {
         if (project.objectOrder.length > project.structuredDocument.objects.length) project.objectOrder.length = project.structuredDocument.objects.length;
         project.hordeObjectMetadata = normalizeStructuredVisualObjectMetadata(project.hordeObjectMetadata, project.objectOrder);
         project.imageIntent = normalizeWorldImageIntent(project.imageIntent, '', '');
-        project.providerControls = isPlainObject(project.providerControls) ? project.providerControls : {};
+        project.providerControls = experimentalIsPlainObject(project.providerControls) ? project.providerControls : {};
         project.revisions = Array.isArray(project.revisions) ? project.revisions : [];
         return project;
     }
@@ -452,7 +452,7 @@ function ensureWorldVisualProject(world, target, kind = '') {
         },
         authoredRevisionId: '', activeRevisionId: '', revisions: []
     };
-    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    target.visuals = experimentalIsPlainObject(target.visuals) ? target.visuals : {};
     target.visuals.visualProject = project;
     return project;
 }
@@ -524,13 +524,13 @@ function deterministicGenericVisualPrompt(document, objectOrder = [], metadata =
 
 function composeWorldImageSpecification(world, subject = null, guideOverride = null, options = {}) {
     const guide = normalizeWorldImageGuide(guideOverride || worldImageGuide(world) || {});
-    const source = isPlainObject(subject) ? subject : {};
+    const source = experimentalIsPlainObject(subject) ? subject : {};
     const legacyFraming = {
         composition: guide.composition, cameraAngle: guide.cameraAngle,
         backgroundSetting: guide.backgroundSetting, framing: source.framing
     };
     const imageIntent = normalizeWorldImageIntent(source.imageIntent, source.authoredPrompt || source.imagePrompt, guide.context);
-    const sceneProjection = isPlainObject(source.sceneProjection) ? source.sceneProjection : null;
+    const sceneProjection = experimentalIsPlainObject(source.sceneProjection) ? source.sceneProjection : null;
     const sceneFraming = sceneProjection ? {
         ...(sceneProjection.pose ? { pose: sceneProjection.pose } : {}),
         ...(sceneProjection.expression ? { expression: sceneProjection.expression } : {}),
@@ -551,15 +551,15 @@ function composeWorldImageSpecification(world, subject = null, guideOverride = n
         texture: String(source.texture || '').trim().slice(0, 400),
         appearanceDetails: String(source.appearanceDetails || '').trim().slice(0, 700)
     };
-    let structuredDocument = isPlainObject(options.visualProject?.structuredDocument)
+    let structuredDocument = experimentalIsPlainObject(options.visualProject?.structuredDocument)
         ? normalizeStructuredVisualDocument(options.visualProject.structuredDocument)
-        : isPlainObject(source.structuredDocument)
+        : experimentalIsPlainObject(source.structuredDocument)
             ? normalizeStructuredVisualDocument(source.structuredDocument)
             : null;
     let objectOrder = Array.isArray(options.visualProject?.objectOrder)
         ? options.visualProject.objectOrder.slice(0, STRUCTURED_VISUAL_MAX_OBJECTS).map(String) : [];
-    let hordeObjectMetadata = isPlainObject(options.visualProject?.hordeObjectMetadata)
-        ? safeJsonClone(options.visualProject.hordeObjectMetadata) : {};
+    let hordeObjectMetadata = experimentalIsPlainObject(options.visualProject?.hordeObjectMetadata)
+        ? experimentalSafeJsonClone(options.visualProject.hordeObjectMetadata) : {};
     if (!structuredDocument) {
         const legacy = blankStructuredVisualDocument();
         legacy.short_description = String(imageIntent.authoredPrompt || character.visualDescription || '').trim().slice(0, 1200);
@@ -669,7 +669,7 @@ globalThis.HordeCanonicalImageComposer = Object.freeze({
 });
 
 function projectFiboResolvedState(resolved, current = {}) {
-    const raw = isPlainObject(resolved) ? resolved : {};
+    const raw = experimentalIsPlainObject(resolved) ? resolved : {};
     const next = { ...current };
     const direct = {
         'lighting.conditions': ['lighting', 'conditions', 'lightingConditions'],
@@ -691,7 +691,7 @@ function projectFiboResolvedState(resolved, current = {}) {
 }
 
 function projectFiboResolvedFraming(resolved, current = {}) {
-    const raw = isPlainObject(resolved) ? resolved : {};
+    const raw = experimentalIsPlainObject(resolved) ? resolved : {};
     const next = { ...current };
     if (raw.background_setting) next.backgroundSetting = String(raw.background_setting).slice(0, 1200);
     if (raw.aesthetics?.composition) next.shotComposition = String(raw.aesthetics.composition).slice(0, 1200);
@@ -722,7 +722,7 @@ function fiboStructuredImageGuide(world, subject = null, editInstruction = '', g
     // wording travels in the provider operation/envelope, never inside the
     // FIBO generation JSON itself.
     const request = composeWorldImageRequest(world, {
-        ...(isPlainObject(subject) ? subject : {}),
+        ...(experimentalIsPlainObject(subject) ? subject : {}),
         authoredPrompt: String(subject?.authoredPrompt || subject?.imagePrompt || '').trim(),
         outfitSnapshot: subject?.outfitSnapshot || subject?.clothing || ''
     }, guideOverride, { operation: editInstruction ? 'revise' : 'generate' });
@@ -742,7 +742,7 @@ const WORLD_VISUAL_IDENTITY_FIELDS = Object.freeze([
 ]);
 
 function normalizeWorldVisualIdentityGuide(raw) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const identity = {};
     WORLD_VISUAL_IDENTITY_FIELDS.forEach(field => {
         identity[field.key] = String(source[field.key] || '').trim().slice(0, field.max);
@@ -762,7 +762,7 @@ const WORLD_VISUAL_SUBJECT_FIELDS = Object.freeze([
 ]);
 
 function normalizeWorldVisualSubjectGuide(raw) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const subject = {};
     WORLD_VISUAL_SUBJECT_FIELDS.forEach(field => {
         subject[field.key] = String(source[field.key] || '').trim().slice(0, field.max);
@@ -780,7 +780,7 @@ function normalizeWorldOutfits(raw) {
     const outfits = [];
     const seen = new Set();
     list.forEach(entry => {
-        if (!isPlainObject(entry)) return;
+        if (!experimentalIsPlainObject(entry)) return;
         const id = String(entry.id || '').trim().slice(0, 80);
         const name = String(entry.name || '').trim().slice(0, 80) || 'Untitled outfit';
         const description = String(entry.description || '').trim().slice(0, 1200);
@@ -803,7 +803,7 @@ function worldOutfits(entity) {
 
 function createBlankWorldOutfit(entity, name = 'New outfit') {
     if (!entity || entity.type !== 'npc') return null;
-    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
     const outfits = worldOutfits(entity);
     if (outfits.length >= 30) return null;
     const outfit = {
@@ -863,7 +863,7 @@ function refreshWorldEntityPortraitPreview(container, world, entity) {
     const preview = container?.querySelector('.world-media-preview.is-portrait');
     if (!preview || !world || !entity) return;
     const source = worldNpcPortraitSource(world, entity);
-    preview.style.backgroundImage = source ? `url('${cssUrl(source)}')` : '';
+    preview.style.backgroundImage = source ? `url('${experimentalCssUrl(source)}')` : '';
     preview.textContent = source ? '' : (entity.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
 }
 
@@ -912,7 +912,7 @@ function worldOutfitForAsset(entity, assetId) {
 // being shown over the newly selected source.
 function selectWorldOutfit(world, entity, outfitId, { preferImage = true } = {}) {
     if (!entity || entity.type !== 'npc') return null;
-    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
     const outfit = worldOutfits(entity).find(entry => entry.id === String(outfitId || ''));
     if (!outfit) return null;
     entity.visuals.outfits = worldOutfits(entity);
@@ -931,7 +931,7 @@ function selectWorldOutfit(world, entity, outfitId, { preferImage = true } = {})
 
 function attachWorldVisualToOutfit(entity, assetId, outfitId = '') {
     if (!entity || entity.type !== 'npc' || !assetId) return null;
-    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
     const outfits = worldOutfits(entity);
     const selectedId = String(outfitId || '').trim()
         || String(entity.visuals.currentOutfitId || '').trim();
@@ -950,13 +950,13 @@ const WORLD_IMAGE_PRESET_FRAMINGS = Object.freeze(['auto', 'close-up', 'waist-up
 // title (its name) and a general description. Nothing that changes WHAT is
 // in the photo ever enters a preset — that stays with the character.
 function normalizeImageBriefPreset(raw) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const legacyGuide = normalizeWorldImageGuide(source);
     const category = source.category === 'framing' || source.category === 'look' ? source.category : 'look';
     return {
         ...legacyGuide,
         category,
-        framingSpec: isPlainObject(source.framing) ? normalizeWorldImageFraming(source.framing, legacyGuide) : normalizeWorldImageFraming({
+        framingSpec: experimentalIsPlainObject(source.framing) ? normalizeWorldImageFraming(source.framing, legacyGuide) : normalizeWorldImageFraming({
             mode: source.framing, shotComposition: legacyGuide.composition,
             cameraAngle: legacyGuide.cameraAngle, backgroundSetting: legacyGuide.backgroundSetting
         }, {}, {}),
@@ -964,7 +964,7 @@ function normalizeImageBriefPreset(raw) {
         description: String(source.description || '').trim().slice(0, 800),
         aspectRatio: WORLD_IMAGE_PRESET_ASPECTS.includes(String(source.aspectRatio || '')) ? String(source.aspectRatio) : '',
         framing: WORLD_IMAGE_PRESET_FRAMINGS.includes(String(source.framing || '')) ? String(source.framing) : '',
-        structuredPatch: isPlainObject(source.structuredPatch) ? safeJsonClone(source.structuredPatch) : null
+        structuredPatch: experimentalIsPlainObject(source.structuredPatch) ? experimentalSafeJsonClone(source.structuredPatch) : null
     };
 }
 
@@ -972,18 +972,18 @@ function normalizeImageBriefPreset(raw) {
 // into any world or selected for an individual visual. Old guide-only presets
 // upgrade in place.
 function normalizeImageGuidePresets(raw) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const presets = {};
     Object.entries(source).slice(0, 60).forEach(([name, value]) => {
         const label = String(name || '').trim().slice(0, 80);
-        if (label && isPlainObject(value)) presets[label] = normalizeImageBriefPreset(value);
+        if (label && experimentalIsPlainObject(value)) presets[label] = normalizeImageBriefPreset(value);
     });
     return presets;
 }
 
 function normalizeWorldPresentation(world) {
     if (!world || typeof world !== 'object') return null;
-    const raw = isPlainObject(world.presentation) ? world.presentation : {};
+    const raw = experimentalIsPlainObject(world.presentation) ? world.presentation : {};
     const mode = raw.mode === 'visual_novel' ? 'cinematic'
         : (['classic', 'cinematic'].includes(raw.mode) ? raw.mode : 'classic');
     // Preserve the object identity. World Studio controls keep a live reference
@@ -1029,7 +1029,7 @@ function normalizeWorldPresentation(world) {
     });
     world.presentation = raw;
     if (!Array.isArray(world.mediaAssets)) world.mediaAssets = [];
-    world.mediaAssets = world.mediaAssets.filter(asset => isPlainObject(asset)
+    world.mediaAssets = world.mediaAssets.filter(asset => experimentalIsPlainObject(asset)
         && typeof asset.id === 'string' && typeof asset.data === 'string').slice(0, WORLD_MEDIA_ASSET_LIMIT);
     return raw;
 }
@@ -1085,24 +1085,24 @@ function addWorldMediaAsset(world, data, kind, label = '', metadata = {}) {
         generated: metadata.generated === true,
         model: String(metadata.model || '').slice(0, 500),
         prompt: String(metadata.prompt || '').slice(0, 8000),
-        requestMetadata: isPlainObject(metadata.requestMetadata) ? safeJsonClone(metadata.requestMetadata) : null,
-        exactRequest: isPlainObject(metadata.exactRequest) ? safeJsonClone(metadata.exactRequest) : null,
-        resolvedStructuredPrompt: isPlainObject(metadata.resolvedStructuredPrompt)
-            ? safeJsonClone(metadata.resolvedStructuredPrompt) : null,
-        exactResolvedStructuredPrompt: isPlainObject(metadata.resolvedStructuredPrompt)
-            ? safeJsonClone(metadata.resolvedStructuredPrompt) : null,
-        providerResponseMetadata: isPlainObject(metadata.providerResponseMetadata)
-            ? safeJsonClone(metadata.providerResponseMetadata) : null,
-        authoredDocument: isPlainObject(metadata.authoredDocument)
-            ? safeJsonClone(metadata.authoredDocument) : null,
+        requestMetadata: experimentalIsPlainObject(metadata.requestMetadata) ? experimentalSafeJsonClone(metadata.requestMetadata) : null,
+        exactRequest: experimentalIsPlainObject(metadata.exactRequest) ? experimentalSafeJsonClone(metadata.exactRequest) : null,
+        resolvedStructuredPrompt: experimentalIsPlainObject(metadata.resolvedStructuredPrompt)
+            ? experimentalSafeJsonClone(metadata.resolvedStructuredPrompt) : null,
+        exactResolvedStructuredPrompt: experimentalIsPlainObject(metadata.resolvedStructuredPrompt)
+            ? experimentalSafeJsonClone(metadata.resolvedStructuredPrompt) : null,
+        providerResponseMetadata: experimentalIsPlainObject(metadata.providerResponseMetadata)
+            ? experimentalSafeJsonClone(metadata.providerResponseMetadata) : null,
+        authoredDocument: experimentalIsPlainObject(metadata.authoredDocument)
+            ? experimentalSafeJsonClone(metadata.authoredDocument) : null,
         resolvedOutputPolicy: String(metadata.resolvedOutputPolicy || '').slice(0, 80),
         visualProjectId: String(metadata.visualProjectId || '').slice(0, 160),
         visualRevisionId: String(metadata.visualRevisionId || '').slice(0, 160),
         resolvedContext: String(metadata.resolvedContext || '').slice(0, 3000),
-        outfitSnapshot: isPlainObject(metadata.outfitSnapshot) ? safeJsonClone(metadata.outfitSnapshot) : null,
+        outfitSnapshot: experimentalIsPlainObject(metadata.outfitSnapshot) ? experimentalSafeJsonClone(metadata.outfitSnapshot) : null,
         seed: Number.isInteger(metadata.seed) ? metadata.seed : null,
-        generationOutcome: isPlainObject(metadata.generationOutcome)
-            ? safeJsonClone(metadata.generationOutcome) : { transportStatus: 'completed', providerModeration: 'unknown', fulfillment: 'unknown', providerError: null, userMarkedMismatch: false },
+        generationOutcome: experimentalIsPlainObject(metadata.generationOutcome)
+            ? experimentalSafeJsonClone(metadata.generationOutcome) : { transportStatus: 'completed', providerModeration: 'unknown', fulfillment: 'unknown', providerError: null, userMarkedMismatch: false },
         entityId: String(metadata.entityId || '').slice(0, 160),
         outfitId: String(metadata.outfitId || '').slice(0, 160),
         sourceAssetId: String(metadata.sourceAssetId || '').slice(0, 160)

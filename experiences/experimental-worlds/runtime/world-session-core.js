@@ -329,7 +329,7 @@ function sessionNpcs(world, sess) {
 }
 
 function sessionLocations(world, sess) {
-    const extras = isPlainObject(sess?.dynamicExits) ? sess.dynamicExits : {};
+    const extras = experimentalIsPlainObject(sess?.dynamicExits) ? sess.dynamicExits : {};
     return (world.locations || []).filter(location => isVisibleToSession(location, sess)).map(location => {
         const added = Array.isArray(extras[location.id]) ? extras[location.id] : [];
         return added.length ? { ...location, exits: [...(Array.isArray(location.exits) ? location.exits : []), ...added] } : location;
@@ -342,7 +342,7 @@ function worldForSession(world, sess) {
 
 function addSessionDynamicExit(sess, fromLocationId, targetName) {
     if (!sess || !fromLocationId || !targetName) return;
-    if (!isPlainObject(sess.dynamicExits)) sess.dynamicExits = {};
+    if (!experimentalIsPlainObject(sess.dynamicExits)) sess.dynamicExits = {};
     const exits = Array.isArray(sess.dynamicExits[fromLocationId]) ? sess.dynamicExits[fromLocationId] : [];
     const wanted = `to ${String(targetName).trim()}`;
     if (!exits.some(exit => getExitTargetName(exit).toLowerCase() === String(targetName).trim().toLowerCase())) exits.push(wanted);
@@ -462,10 +462,10 @@ const CHECK_GUARDED_ACTION_FIELDS = Object.freeze([
 ]);
 
 function sanitizeCheckOutcomeActions(raw) {
-    if (!isPlainObject(raw)) return null;
+    if (!experimentalIsPlainObject(raw)) return null;
     const clean = {};
     CHECK_GUARDED_ACTION_FIELDS.forEach(field => {
-        if (raw[field] !== undefined) clean[field] = safeJsonClone(raw[field]);
+        if (raw[field] !== undefined) clean[field] = experimentalSafeJsonClone(raw[field]);
     });
     return Object.keys(clean).length ? clean : null;
 }
@@ -666,10 +666,10 @@ function processStructuredActions(args, explicitWorld = null, explicitSession = 
         ExperimentalWorldsHost.notify('Outfit Updated', 'info');
     }
 
-    if (isPlainObject(args.player_identity_update)) {
+    if (experimentalIsPlainObject(args.player_identity_update)) {
         const update = args.player_identity_update;
-        const identity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : (sess.playerIdentity = {});
-        if (!isPlainObject(sess.legalStanding)) sess.legalStanding = {};
+        const identity = experimentalIsPlainObject(sess.playerIdentity) ? sess.playerIdentity : (sess.playerIdentity = {});
+        if (!experimentalIsPlainObject(sess.legalStanding)) sess.legalStanding = {};
         const setText = (source, target, limit) => {
             if (update[source] !== undefined) identity[target] = String(update[source] || '').slice(0, limit);
         };
@@ -1231,7 +1231,7 @@ function processStructuredActions(args, explicitWorld = null, explicitSession = 
         capabilityProgressResults,
         conditionResults,
         moduleRejections,
-        playerState: safeJsonClone(normalizePlayerRulesState(world, sess))
+        playerState: experimentalSafeJsonClone(normalizePlayerRulesState(world, sess))
     };
 }
 
@@ -1253,7 +1253,7 @@ async function renderWorldMap() {
         const effectiveMode = ['classic', 'cinematic'].includes(sess?.presentationMode)
             ? sess.presentationMode : (presentation.enabled ? presentation.mode : 'classic');
         container.style.backgroundImage = mapSkin && effectiveMode !== 'classic'
-            ? `linear-gradient(rgba(8,8,12,.5),rgba(8,8,12,.5)),url('${cssUrl(mapSkin)}')` : 'none';
+            ? `linear-gradient(rgba(8,8,12,.5),rgba(8,8,12,.5)),url('${experimentalCssUrl(mapSkin)}')` : 'none';
         container.style.backgroundSize = 'cover';
         container.style.backgroundPosition = 'center';
         renderSemanticWorldMap(container, worldForSession(world, sess), {
@@ -1852,7 +1852,7 @@ function syncLocationStatesWithWorld(world, sess) {
  */
 function normalizeWorldSandboxConfig(world) {
     if (!world) return {};
-    const raw = isPlainObject(world.sandboxConfig) ? world.sandboxConfig : {};
+    const raw = experimentalIsPlainObject(world.sandboxConfig) ? world.sandboxConfig : {};
     world.sandboxConfig = {
         enabled: raw.enabled === true,
         scale: ['local', 'regional', 'kingdom', 'continent'].includes(raw.scale) ? raw.scale : 'regional',
@@ -1877,7 +1877,7 @@ function normalizeWorldSandboxConfig(world) {
                 ? life.startLocationId : (world.startLocationId || world.locations?.[0]?.id || '');
             const factionId = factionIds.has(life.factionId) ? life.factionId : '';
             const statOverrides = {};
-            if (isPlainObject(life.statOverrides)) {
+            if (experimentalIsPlainObject(life.statOverrides)) {
                 Object.entries(life.statOverrides).slice(0, 40).forEach(([key, value]) => {
                     if (Number.isFinite(Number(value))) statOverrides[String(key).slice(0, 80)] = Number(value);
                 });
@@ -1914,7 +1914,7 @@ function normalizeWorldSandboxConfig(world) {
                 // (applyCheckpoint). Rebuilding lives without this field
                 // silently disabled checkpoint initialization for imported
                 // mechanics worlds.
-                ...(isPlainObject(life.checkpointOverlay)
+                ...(experimentalIsPlainObject(life.checkpointOverlay)
                     ? { checkpointOverlay: life.checkpointOverlay } : {})
             };
         });
@@ -1958,11 +1958,11 @@ function seedWorldSocietyState(world) {
 function normalizeWorldSocietyState(world, sess) {
     const config = normalizeWorldSandboxConfig(world);
     if (!config.enabled) return null;
-    if (!isPlainObject(sess.society)) sess.society = seedWorldSocietyState(world);
+    if (!experimentalIsPlainObject(sess.society)) sess.society = seedWorldSocietyState(world);
     const seeded = seedWorldSocietyState(world);
-    if (!isPlainObject(sess.society.settlements)) sess.society.settlements = {};
+    if (!experimentalIsPlainObject(sess.society.settlements)) sess.society.settlements = {};
     Object.entries(seeded.settlements).forEach(([id, value]) => {
-        if (!isPlainObject(sess.society.settlements[id])) sess.society.settlements[id] = value;
+        if (!experimentalIsPlainObject(sess.society.settlements[id])) sess.society.settlements[id] = value;
     });
     Object.keys(sess.society.settlements).forEach(id => {
         if (!world.locations.some(location => location.id === id)) {
@@ -1988,8 +1988,8 @@ function normalizeWorldSocietyState(world, sess) {
     const seasonIndex = Math.floor(Math.max(0, time.days - 1) / config.seasonDays);
     sess.society.season = seasons[seasonIndex % seasons.length];
     sess.society.year = Math.floor(seasonIndex / seasons.length) + 1;
-    if (!isPlainObject(sess.playerIdentity)) sess.playerIdentity = {};
-    if (!isPlainObject(sess.legalStanding)) sess.legalStanding = {};
+    if (!experimentalIsPlainObject(sess.playerIdentity)) sess.playerIdentity = {};
+    if (!experimentalIsPlainObject(sess.legalStanding)) sess.legalStanding = {};
     return sess.society;
 }
 
@@ -2007,7 +2007,7 @@ function normalizeAuthoredWorld(world) {
 
     normalizeWorldShops(world);
     world.locations.forEach(location => {
-        if (!isPlainObject(location.visuals)) location.visuals = {};
+        if (!experimentalIsPlainObject(location.visuals)) location.visuals = {};
         location.visuals.backgroundAssetId = String(location.visuals.backgroundAssetId || '').slice(0, 160);
         location.visuals.backgroundPosition = String(location.visuals.backgroundPosition || 'center').slice(0, 80);
         if (location.visuals.backgroundAssetId && !validMediaIds.has(location.visuals.backgroundAssetId)) {
@@ -2024,7 +2024,7 @@ function normalizeAuthoredWorld(world) {
         }
     });
     world.entities.forEach(entity => {
-        if (!isPlainObject(entity.visuals)) entity.visuals = {};
+        if (!experimentalIsPlainObject(entity.visuals)) entity.visuals = {};
         entity.gender = String(entity.gender || '').trim().slice(0, 100);
         entity.visuals.portraitAssetId = String(entity.visuals.portraitAssetId || '').slice(0, 160);
         entity.visuals.portraitDisplayAssetId = String(entity.visuals.portraitDisplayAssetId || '').slice(0, 160);
@@ -2035,7 +2035,7 @@ function normalizeAuthoredWorld(world) {
             entity.visuals.framing, { framing: entity.visuals.portraitFraming }, entity.visuals.portraitSubjectGuide);
         entity.visuals.look = normalizeWorldImageLook(entity.visuals.look, world.presentation?.imageGuide || {});
         entity.identityReferences = (Array.isArray(entity.identityReferences) ? entity.identityReferences : [])
-            .filter(ref => isPlainObject(ref) && typeof ref.assetId === 'string')
+            .filter(ref => experimentalIsPlainObject(ref) && typeof ref.assetId === 'string')
             .filter(ref => validMediaIds.has(ref.assetId))
             .slice(0, 12)
             .map(ref => ({ assetId: String(ref.assetId).slice(0, 160),
@@ -2105,7 +2105,7 @@ const WORLD_KNOWLEDGE_SOURCES = new Set(['witnessed', 'told', 'public', 'suspect
 const WORLD_CONSEQUENCE_STATES = new Set(['created', 'active', 'escalating', 'decaying', 'resolved']);
 
 function normalizeNpcKnowledgeEntry(raw, defaults = {}) {
-    const item = typeof raw === 'string' ? { text: raw } : (isPlainObject(raw) ? raw : {});
+    const item = typeof raw === 'string' ? { text: raw } : (experimentalIsPlainObject(raw) ? raw : {});
     const sourceType = WORLD_KNOWLEDGE_SOURCES.has(item.sourceType || item.source)
         ? (item.sourceType || item.source) : (defaults.sourceType || 'unknown');
     const confidence = livingClamp(item.confidence == null
@@ -2158,7 +2158,7 @@ function normalizeWorldConsequences(world, sess) {
     const locationIds = new Set((world.locations || []).map(location => location.id));
     const entityIds = new Set((world.entities || []).map(entity => entity.id));
     sess.consequences = sess.consequences.slice(-300).map((raw, index) => {
-        const item = isPlainObject(raw) ? raw : { detail: String(raw || '') };
+        const item = experimentalIsPlainObject(raw) ? raw : { detail: String(raw || '') };
         const state = WORLD_CONSEQUENCE_STATES.has(item.state) ? item.state : 'created';
         const createdTurn = Math.max(1, parseInt(item.createdTurn) || 1);
         return {
@@ -2247,7 +2247,7 @@ function normalizeLivingWorldState(world, sess) {
     sess.pendingChecks = sess.pendingChecks
         .filter(item => item && typeof item === 'object' && !Array.isArray(item)).slice(0, 10);
     sess.pendingCheck = sess.pendingChecks[0] || null;
-    if (!isPlainObject(sess.lastTurnAudit)) sess.lastTurnAudit = null;
+    if (!experimentalIsPlainObject(sess.lastTurnAudit)) sess.lastTurnAudit = null;
     if (!Array.isArray(sess.playerSceneConditions)) sess.playerSceneConditions = [];
     if (typeof sess.playerActivity !== 'string') sess.playerActivity = '';
     // Shops, factions and society authored since this timeline began take effect
@@ -2260,7 +2260,7 @@ function normalizeLivingWorldState(world, sess) {
     if (!sess.locationStates || typeof sess.locationStates !== 'object' || Array.isArray(sess.locationStates)) sess.locationStates = {};
     if (!sess.npcRelationships || typeof sess.npcRelationships !== 'object' || Array.isArray(sess.npcRelationships)) sess.npcRelationships = {};
     if (!sess.npcScheduleOverrides || typeof sess.npcScheduleOverrides !== 'object' || Array.isArray(sess.npcScheduleOverrides)) sess.npcScheduleOverrides = {};
-    if (!isPlainObject(sess.dynamicExits)) sess.dynamicExits = {};
+    if (!experimentalIsPlainObject(sess.dynamicExits)) sess.dynamicExits = {};
     if (!Array.isArray(sess.factions)) sess.factions = [];
     if (!sess.economy || typeof sess.economy !== 'object' || Array.isArray(sess.economy)) sess.economy = {};
     if (!sess.economy.currency) sess.economy.currency = 'coin';
@@ -2552,8 +2552,8 @@ function worldControlledPlayerIdentity(world, sess) {
         locked: true,
         source: 'controlled_entity'
     };
-    const canonical = isPlainObject(world?.playerIdentity) ? world.playerIdentity : {};
-    const sessionIdentity = isPlainObject(sess?.playerIdentity) ? sess.playerIdentity : {};
+    const canonical = experimentalIsPlainObject(world?.playerIdentity) ? world.playerIdentity : {};
+    const sessionIdentity = experimentalIsPlainObject(sess?.playerIdentity) ? sess.playerIdentity : {};
     return {
         id: 'player',
         // World-owned identity is canon. A reusable global Persona is a
@@ -2567,7 +2567,7 @@ function worldControlledPlayerIdentity(world, sess) {
 }
 
 function getTimelinePersona(sess, world = null) {
-    const persona = isPlainObject(sess?.personaSnapshot)
+    const persona = experimentalIsPlainObject(sess?.personaSnapshot)
         ? sess.personaSnapshot
         : ExperimentalWorldsHost.sharedPersonas().find(item => item.id === String(sess?.personaId || '')) || null;
     if (!persona) return null;
@@ -2585,9 +2585,9 @@ async function bindPersonaToCurrentWorldTimeline(persona, options = {}) {
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return false;
-    const selected = persona ? normalizePersona(persona) : null;
+    const selected = persona ? experimentalNormalizePersona(persona) : null;
     sess.personaId = selected?.id || '';
-    sess.personaSnapshot = selected ? safeJsonClone(selected) : null;
+    sess.personaSnapshot = selected ? experimentalSafeJsonClone(selected) : null;
     sess.personaBinding = {
         personaId: selected?.id || '',
         boundAt: new Date().toISOString(),
@@ -2595,7 +2595,7 @@ async function bindPersonaToCurrentWorldTimeline(persona, options = {}) {
     };
     // Keep the canonical player name authoritative. Persona fields describe
     // presentation and voice; they never rename a locked world protagonist.
-    sess.playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
+    sess.playerIdentity = experimentalIsPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
     const identity = worldControlledPlayerIdentity(world, sess);
     if (identity.id === 'player' && !identity.locked && selected) {
         sess.playerIdentity.personaName = selected.name;
@@ -2730,13 +2730,13 @@ Disposition and relationship scores are -100..100. Generate 4-10 people, never a
     if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error?.message || response.statusText);
     const message = (await response.json())?.choices?.[0]?.message || {};
     const content = Array.isArray(message.content) ? message.content.map(part => part?.text || '').join(' ') : (message.content || message.reasoning || '');
-    const plan = extractJSON(String(content));
+    const plan = experimentalExtractJSON(String(content));
     if (!plan || !Array.isArray(plan.people) || plan.people.length < 1) throw new Error('Model returned no valid people array');
     return plan;
 }
 
 function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = 'model') {
-    const plan = isPlainObject(rawPlan) ? rawPlan : {};
+    const plan = experimentalIsPlainObject(rawPlan) ? rawPlan : {};
     const sourceText = `${persona?.text || ''} ${origin?.description || ''}`;
     let home = getLocationRef(world, plan.home?.location_id || plan.home?.name) || chooseTimelineHome(world, sourceText);
     const createdLocationIds = [];
@@ -2830,7 +2830,7 @@ function applyTimelineLifePlan(world, sess, persona, origin, rawPlan, source = '
         const key = relationshipKey(household[a].id, household[b].id);
         if (!sess.npcRelationships[key]) sess.npcRelationships[key] = { score: 65, label: 'household family', reason: 'They share a home and history.', lastChangedTurn: 0 };
     }
-    sess.playerIdentity = isPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
+    sess.playerIdentity = experimentalIsPlainObject(sess.playerIdentity) ? sess.playerIdentity : {};
     sess.playerIdentity.homeLocationId = home?.id || '';
     sess.playerIdentity.householdNpcIds = household.map(person => person.id);
     sess.playerIdentity.socialNpcIds = seededPeople.map(person => person.id);
@@ -2874,7 +2874,7 @@ async function initializeTimelineLife(world, sess, persona) {
  * prose or checkpoint IDs.
  */
 function formatStartingLifeOpening(world, life) {
-    if (!life || !isPlainObject(life)) return '';
+    if (!life || !experimentalIsPlainObject(life)) return '';
     const explicit = recoverStartingLifeIntro(world, life);
     if (explicit) return explicit;
     const location = getLocationRef(world, life.startLocationId);

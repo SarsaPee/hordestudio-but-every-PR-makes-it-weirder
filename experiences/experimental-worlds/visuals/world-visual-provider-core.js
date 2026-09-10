@@ -51,5 +51,5 @@ async function makeWorldVisualPortable(source, maxDimension, quality) {
             data = stable;
         }
     }
-    return optimizeImage(data, maxDimension, quality);
+    return experimentalOptimizeImage(data, maxDimension, quality);
 }

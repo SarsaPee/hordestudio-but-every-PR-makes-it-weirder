@@ -255,13 +255,13 @@ assert.match(readerPass, /Do not make a second graph-generation call/, 'the Read
 assert.match(readerPass, /SCENEPULSE STABLE RECORD IDENTITIES/, 'the first rich ScenePulse projection must require stable source record identities');
 assert.match(readerPass, /Every branch is exactly \{type, name, hook\}/, 'the Reader prompt must keep Story Idea category, title and hook distinct');
 const stageStoryIdea = lastFunction('stageScenePulseStoryIdea');
-assert.match(stageStoryIdea, /isPlainObject\(direction\)/, 'Story Idea source objects must be converted at the host boundary rather than coerced into the draft');
+assert.match(stageStoryIdea, /experimentalIsPlainObject\(direction\)/, 'Story Idea source objects must use the private Experimental compatibility copy rather than coerce into the draft');
 assert.ok(stageStoryIdea.includes("const article = /^[aeiou]/i.test(type) ? 'an' : 'a';"), 'Story Idea host staging must choose a grammatical source OOC article for every source category');
 assert.match(stageStoryIdea, /Take the story in \$\{article\} \$\{type\} direction/, 'Story Idea host staging must preserve the source OOC direction format');
 assert.doesNotMatch(stageStoryIdea, /const text = String\(direction \|\| ''\)/, 'Story Idea source objects must never produce [object Object] drafts');
 const stagedStoryIdeaComposer = { value: '', dispatchEvent() {}, focus() {} };
 vm.runInNewContext(`${stageStoryIdea}; stageScenePulseStoryIdea({ direction: { type: 'exploratory', name: 'Line check', hook: 'Test the repaired cider line.' } });`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     document: { getElementById: id => id === 'world-user-input' ? stagedStoryIdeaComposer : null },
     Event: class Event { constructor(type, options) { this.type = type; this.options = options; } },
     resizeExperimentalWorldMessageInput() {},
@@ -297,7 +297,7 @@ assert.match(app, /if \(options\.renderReview !== false\) renderWorldPlayState\(
 assert.match(lastFunction('refreshAcceptedScenePulseProjection', 'async function'), /renderReview: false/, 'foreground ScenePulse refreshes must use the atomic stage-and-accept route');
 assert.match(sidecarCore, /readerSnapshots: \[\], readerRefreshes: \[\]/, 'the Sidecar protocol must persist Reader refreshes until they are accepted or rejected');
 assert.match(sidecarCore, /'readerSnapshots','readerRefreshes','sceneProjections'/, 'the timeline normalizer must retain the Reader review ledger through refresh staging');
-assert.match(app, /rawEnvelope: safeJsonClone\(source\)/, 'each settled Reader snapshot must retain its exact compact packet beside its cumulative projection');
+assert.match(app, /rawEnvelope: experimentalSafeJsonClone\(source\)/, 'each settled Reader snapshot must retain its exact compact packet beside its cumulative projection');
 assert.match(snapshotRawEnvelope, /snapshot\?\.rawEnvelope/, 'the source handoff must prefer a snapshot-specific packet over the authored turn fallback');
 assert.match(acceptedReaderRefresh, /mode: replacesProjection \? 'full' : 'delta'/, 'a focused ScenePulse refresh must preserve compact-delta mode through acceptance');
 assert.match(acceptedReaderRefresh, /fullRefresh: replacesProjection/, 'only an explicitly full Reader reread may replace the settled projection');
@@ -443,7 +443,7 @@ assert.match(runtime, /dispatch\('apply-scenepulse-preset', \{ preset: preset \?
     'preset selection and clearing must cross a named host boundary rather than becoming a local-only browser state');
 assert.match(hostActionHandler, /detail\.action === 'apply-scenepulse-preset'/,
     'Horde must claim the source preset apply action');
-assert.match(app, /if \(!isPlainObject\(rawPreset\) \|\| !Object\.keys\(rawPreset\)\.length\)/,
+assert.match(app, /if \(!experimentalIsPlainObject\(rawPreset\) \|\| !Object\.keys\(rawPreset\)\.length\)/,
     'clearing a source preset must remove only its Reader-prompt overlay');
 assert.match(runtime, /debugInspector: 'ui\/debug-inspector\.js'/, 'source Debug Inspector must remain a lazy vendored surface');
 assert.match(runtime, /openDebugInspector\?\.\('activity'\)/, 'native toolbar diagnostics must call the upstream Debug Inspector');
@@ -619,8 +619,8 @@ assert.match(runtime, /targetSnapshotId: editedHandoff\.provenance\?\.snapshotId
 assert.match(runtime, /targetTurnId: editedHandoff\.provenance\?\.turnId \|\| ''/, 'a source save must preserve the selected authored turn identity');
 assert.match(sourceEdit, /applyScenePulseQuestEditTranslations/, 'a saved live Quest Journal action must translate through the explicit World boundary');
 assert.match(sourceEdit, /applyScenePulseRelationshipEditTranslations/, 'a saved live relationship action must use an explicit Horde translation');
-assert.match(sourceEdit, /edit\.questReview = safeJsonClone\(questTranslations\)/, 'a saved quest action must remain attached to its authored ScenePulse history node after reload');
-assert.match(sourceEdit, /edit\.relationshipReview = safeJsonClone\(relationshipTranslations\)/, 'a saved relationship action must remain attached to its authored ScenePulse history node after reload');
+assert.match(sourceEdit, /edit\.questReview = experimentalSafeJsonClone\(questTranslations\)/, 'a saved quest action must remain attached to its authored ScenePulse history node after reload');
+assert.match(sourceEdit, /edit\.relationshipReview = experimentalSafeJsonClone\(relationshipTranslations\)/, 'a saved relationship action must remain attached to its authored ScenePulse history node after reload');
 assert.match(questTranslations, /edit\.targetSnapshotId === 'fixture'/, 'fixture Quest Journal actions must remain fixture-local');
 assert.doesNotMatch(questTranslations, /!edit\?\.targetTurnId/, 'a settled snapshot must remain translatable when a historical Reader path has no parallel turn id');
 assert.match(questTranslations, /!edit\?\.targetSnapshotId \|\| edit\.targetSnapshotId === 'fixture'/, 'only fixture or unidentifiable Quest Journal edits may remain local');
@@ -725,7 +725,7 @@ assert.match(bridgeSave, /hasChatPanels: sourcePanels\.hasChatPanels/,
     'toolbar Save must preserve an intentional empty custom-panel schema');
 
 const persistedExplicitEmptySchema = vm.runInNewContext(`${sourcePreferenceNormalizer}\n${sourcePrefs}\n(() => {\n    const protocol = { workspaceUi: { scenePulseWorlds: { customPanels: [{ name: 'Prior panel', fields: [{ key: 'prior' }] }] } } };\n    void persistScenePulseSourceRuntimePreferences(protocol, {}, { customPanels: [{ name: 'Stale default', fields: [{ key: 'stale' }] }] }, [], true);\n    return protocol.workspaceUi.scenePulseWorlds.customPanels;\n})()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     protocolForSidecarTimeline: world => world,
     ExperimentalWorldsHost: { persist: async () => {} }
 });
@@ -819,7 +819,8 @@ const closedSceneCandidate = vm.runInNewContext(`${candidateEligibilitySource}\n
 assert.equal(closedSceneCandidate.ready, true, 'a closed source scene should be a valid review boundary for a local place');
 
 const candidateCharacterEvidenceContext = {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
 };
 const matchedScenePulseCharacter = vm.runInNewContext(`${candidateCharacterEvidence}\nscenePulseCharacterEvidenceForCandidate(${JSON.stringify({
     semanticInterpretation: { scenePulse: { characters: [
@@ -836,7 +837,8 @@ assert.equal(vm.runInNewContext(`${candidateCharacterEvidence}\nscenePulseCharac
     'ambiguous source character display names must never supply a graduation record');
 
 const sourceCardCandidateContext = {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
 };
 const sourceCardCandidate = vm.runInNewContext(`${[
     lastFunction('scenePulseCharacterCardIdentity'),
@@ -862,14 +864,17 @@ assert.equal(vm.runInNewContext(`${[
     'an explicitly canonical source card must not create a duplicate candidate bridge');
 
 assert.equal(vm.runInNewContext(`${controlledCandidatePredicate}\nscenePulseCandidateIsControlledCharacter(${JSON.stringify({ candidateType: 'character', candidateId: 'player_alex', label: 'Alex' })}, { id: 'player_alex', names: new Set(['alex']) })`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), Set
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), Set
 }), true, 'the controlled player must not surface as a ScenePulse graduation candidate');
 assert.equal(vm.runInNewContext(`${controlledCandidatePredicate}\nscenePulseCandidateIsControlledCharacter(${JSON.stringify({ candidateType: 'character', candidateId: 'cand_charlotte', label: 'Charlotte' })}, { id: 'player_alex', names: new Set(['alex']) })`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), Set
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), Set
 }), false, 'a scene NPC with another stable ID must remain reviewable');
 
 const candidatePromotionDraftContext = {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
 };
 const richPromotionDraft = vm.runInNewContext(`${lastFunction('scenePulseCandidatePromotionKind')}\n${candidatePromotionDraft}\nscenePulseCandidatePromotionDraft(${JSON.stringify({
     candidateType: 'character', label: 'Mira', scenePulseCharacter: matchedScenePulseCharacter
@@ -882,7 +887,7 @@ const promotedLocation = vm.runInNewContext(`${promotionLocation}\nconst locatio
     description: 'A rain-dark service court beneath the east viaduct.', region: 'Old Quarter', mapType: 'courtyard', floor: 'lower level', parentHint: 'loc_east_viaduct',
     scenePulseEvidence: [{ sourceTurnId: 'turn_8', detail: 'Mira crosses Lantern Court beneath the viaduct.' }]
 })});\nJSON.stringify({ outcome, location });`, {
-    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value))
 });
 const promotedLocationResult = JSON.parse(promotedLocation);
 assert.deepEqual(promotedLocationResult.outcome, { locationEvidence: true }, 'a location promotion must report its retained evidence outcome');
@@ -895,7 +900,7 @@ assert.deepEqual(promotedLocationEvidence, {
 assert.match(promotedLocationAt, /^\d{4}-\d{2}-\d{2}T/, 'location provenance must retain the promotion timestamp');
 
 const graphContext = {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
 };
 const normalizedGraph = vm.runInNewContext(`${graphNormalizer}\nnormalizeSidecarNpcRelationshipGraph(${JSON.stringify({
     roster: ['Mira', 'Oren'],
@@ -916,7 +921,7 @@ assert.equal(vm.runInNewContext(`${graphNormalizer}\nnormalizeSidecarNpcRelation
 
 const questDiffSource = [
     "const SCENEPULSE_QUEST_TIERS = Object.freeze(['mainQuests', 'sideQuests']);",
-    'const safeJsonClone = value => JSON.parse(JSON.stringify(value));',
+    'const experimentalSafeJsonClone = value => JSON.parse(JSON.stringify(value));',
     lastFunction('scenePulseQuestTextKey'),
     lastFunction('scenePulseQuestSourceKey'),
     lastFunction('scenePulseQuestUrgency'),
@@ -942,8 +947,8 @@ assert.deepEqual(JSON.parse(JSON.stringify(questDiff.map(change => ({ operation:
 const relationshipDiffSource = [
     "const SCENEPULSE_RELATIONSHIP_METERS = Object.freeze(['affection', 'trust', 'desire', 'stress', 'compatibility']);",
     "const SCENEPULSE_RELATIONSHIP_TEXT_FIELDS = Object.freeze(['name', 'relType', 'relPhase', 'timeTogether', 'milestone']);",
-    'const safeJsonClone = value => JSON.parse(JSON.stringify(value));',
-    'const isPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
+    'const experimentalSafeJsonClone = value => JSON.parse(JSON.stringify(value));',
+    'const experimentalIsPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
     lastFunction('scenePulseRelationshipSafeId'),
     lastFunction('scenePulseRelationshipMeter'),
     lastFunction('scenePulseRelationshipSourceEntry'),
@@ -971,8 +976,8 @@ assert.deepEqual(JSON.parse(JSON.stringify(relationshipDiff.map(change => ({ ope
 const relationshipApplySource = [
     "const SCENEPULSE_RELATIONSHIP_METERS = Object.freeze(['affection', 'trust', 'desire', 'stress', 'compatibility']);",
     "const SCENEPULSE_RELATIONSHIP_TEXT_FIELDS = Object.freeze(['name', 'relType', 'relPhase', 'timeTogether', 'milestone']);",
-    'const safeJsonClone = value => JSON.parse(JSON.stringify(value));',
-    'const isPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
+    'const experimentalSafeJsonClone = value => JSON.parse(JSON.stringify(value));',
+    'const experimentalIsPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
     lastFunction('scenePulseRelationshipSafeId'),
     lastFunction('scenePulseRelationshipMeter'),
     lastFunction('scenePulseRelationshipSourceEntry'),
@@ -1005,7 +1010,7 @@ assert.equal(relationshipApplyResult.links[0].targetEntityId, 'yvette', 'the sou
 
 const relationshipPromptSource = [
     "const SCENEPULSE_RELATIONSHIP_METERS = Object.freeze(['affection', 'trust', 'desire', 'stress', 'compatibility']);",
-    'const isPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
+    'const experimentalIsPlainObject = value => !!value && typeof value === \'object\' && !Array.isArray(value);',
     lastFunction('scenePulseRelationshipMeter'),
     relationshipPromptProjection
 ].join('\n');
@@ -1052,7 +1057,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(effectiveCustomPanelAuthority)), {
     authority: ['time', 'health', 'mana', 'reputation']
 }, 'one source schema resolver must preserve precedence and declare exactly the resulting Reader-adoptable keys');
 const sourceProfileSlotContext = {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
     expandScenePulseSourceMacros: (template, prior) => String(template).replace(/\{\{sp_topic\}\}/g, String(prior?.sceneTopic || ''))
 };
 const sourceProfileSlotEntries = vm.runInNewContext(`${lastFunction('scenePulseResolvedPromptSlotEntries')}\nscenePulseResolvedPromptSlotEntries(${JSON.stringify({ promptOverrides: { role: 'preset role', criticalRules: 'preset critical rules' } })}, ${JSON.stringify({ overrides: { role: 'profile role for {{sp_topic}}' } })}, ${JSON.stringify({ sceneTopic: 'the ferry crossing' })}, {})`, sourceProfileSlotContext);
@@ -1110,8 +1115,8 @@ assert.equal(
 );
 
 const scenePulseMergeContext = {
-    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
 };
 const mergeSource = [
     lastFunction('sidecarMergeReaderObject'),
@@ -1134,8 +1139,8 @@ assert.deepEqual(relationshipDeltaMerged.relationships[0], { relationshipId: 'ch
 // compact delta merge. The fixture renderer then decides whether that
 // accepted field supersedes its tutorial value.
 const readerEnvelopeContext = {
-    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
 };
 const readerEnvelopeSource = [
     lastFunction('sidecarReaderValue'),
@@ -1151,6 +1156,7 @@ const readerEnvelopeSource = [
     lastFunction('parseSidecarReaderOutput')
 ].join('\n');
 readerEnvelopeContext.safeParseJSONRepair = raw => { try { return JSON.parse(String(raw)); } catch (_) { return null; } };
+readerEnvelopeContext.experimentalSafeParseJSONRepair = readerEnvelopeContext.safeParseJSONRepair;
 const customPanelEnvelope = vm.runInNewContext(`${readerEnvelopeSource}\n(() => {\n    const base = normalizeSidecarReaderEnvelope({ mode: 'full', semantic_interpretation: { scenePulse: { health: 40 } } });\n    const patch = normalizeSidecarReaderEnvelope({ mode: 'delta', changed_fields: ['scenePulse.health'], semantic_interpretation: { scenePulse: { health: 64 } } });\n    const parsed = parseSidecarReaderOutput(JSON.stringify({ mode: 'full', semantic_interpretation: { scenePulse: { health: 64 } } }));\n    return { base, patch, merged: mergeSidecarReaderEnvelope(base, patch), parsed };\n})()`, readerEnvelopeContext);
 assert.equal(customPanelEnvelope.base.scenePulse.health, 40, 'a nested Sidecar full reading must retain a configured custom-panel field');
 assert.equal(customPanelEnvelope.patch.scenePulse.health, 64, 'a nested Sidecar custom-panel delta must retain its updated value');
@@ -1211,8 +1217,8 @@ const cognitionQueueSource = [
     lastFunction('queueSidecarTurnCognitionJobs')
 ].join('\n');
 const cardThoughtCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() => {\n    const protocol = { readerCandidates: [{ candidateId: 'cand_nia', candidateType: 'character', settlementStatus: 'settled' }] };\n    const turn = { id: 'turn_card', readerSnapshotId: 'snapshot_card', readerEnvelope: ${JSON.stringify(scenePulseCognitionEnvelope.cardOnly)}, sceneId: 'scene_card', sequenceId: 'sequence_card' };\n    const ids = queueSidecarTurnCognitionJobs({ entities: [] }, {}, protocol, turn);\n    return { ids, job: protocol.jobs[0] };\n})()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value)),
     window: { ExperimentalWorldsSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
 });
 assert.deepEqual(JSON.parse(JSON.stringify(cardThoughtCognitionJob.ids)), ['turn_cognition:turn_card:cand_nia'], 'a same-packet ScenePulse card thought must queue exactly one existing turn-cognition job');
@@ -1226,8 +1232,8 @@ const inPersonCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() =>
     const ids = queueSidecarTurnCognitionJobs({ entities: [{ id: 'npc_charlotte', type: 'npc', name: 'Charlotte' }] }, {}, protocol, turn);
     return { ids, job: protocol.jobs[0] };
 })()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value)),
     window: { ExperimentalWorldsSidecarMemoryGraph: { ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; } } }
 });
 assert.deepEqual(JSON.parse(JSON.stringify(inPersonCognitionJob.ids)), ['turn_cognition:turn_live_presence:npc_charlotte'], 'a declared in-person live Reader participant must enter the existing cognition queue');
@@ -1237,7 +1243,7 @@ const acceptedThoughtFallback = vm.runInNewContext(`${lastFunction('sidecarProje
     sourceTurnIds: ['turn_live_presence'],
     provisionalIntelligence: { sceneLocalImpression: { text: 'Nobody shows up in an ironed collar on a sodden Friday without a proper excuse.', confidence: 0.85 } }
 })})`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value)
 });
 assert.equal(acceptedThoughtFallback.length, 1, 'a settled ScenePulse thought must survive an optional cognition-model format failure');
 assert.equal(acceptedThoughtFallback[0].text, 'Nobody shows up in an ironed collar on a sodden Friday without a proper excuse.', 'the fallback must retain the exact accepted thought instead of synthesizing a new memory');
@@ -1248,8 +1254,8 @@ assert.deepEqual(JSON.parse(JSON.stringify(acceptedThoughtFallback[0].sourceTurn
 // the same turn. Its old cognition remains inspectable as superseded evidence;
 // its replacement job is pinned to the newly accepted Reader snapshot.
 const refreshedThoughtCognitionJob = vm.runInNewContext(`${cognitionQueueSource}\n(() => {\n    const original = ${JSON.stringify(scenePulseCognitionEnvelope.cardOnly)};\n    const refreshed = JSON.parse(JSON.stringify(original));\n    refreshed.characterIntelligence[0].sceneLocalImpression.text = 'The argument has turned dangerous; keep clear of the door.';\n    const protocol = {\n        readerCandidates: [{ candidateId: 'cand_nia', candidateType: 'character', settlementStatus: 'settled' }],\n        jobs: [{ id: 'turn_cognition:turn_card:cand_nia', type: 'turn_cognition', status: 'completed', turnId: 'turn_card', subjectRef: 'cand_nia', readerSnapshotId: 'snapshot_card' }],\n        memoryGraph: { cognition: [{ id: 'cognition_old', status: 'active', turnCognitionJobId: 'turn_cognition:turn_card:cand_nia', provenance: { readerSnapshotId: 'snapshot_card' } }] }\n    };\n    const turn = { id: 'turn_card', readerSnapshotId: 'snapshot_thought_refresh', readerEnvelope: refreshed, sceneId: 'scene_card', sequenceId: 'sequence_card' };\n    const ids = queueSidecarTurnCognitionJobs({ entities: [] }, {}, protocol, turn);\n    return { ids, oldJob: protocol.jobs[0], newJob: protocol.jobs[1], oldCognition: protocol.memoryGraph.cognition[0] };\n})()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value)),
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value)),
     window: { ExperimentalWorldsSidecarMemoryGraph: {
         ensureJobs: protocol => { protocol.jobs = protocol.jobs || []; return protocol.jobs; },
         graph: protocol => protocol.memoryGraph
@@ -1293,8 +1299,8 @@ const historicHumanProjection = vm.runInNewContext(`${humanHistorySource}\n(() =
     };
     return scenePulseHumanOverlay(protocol, handoff);
 })()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value))
 });
 assert.equal(historicHumanProjection.status, 'accepted_live', 'a historic human edit must not replace the newer accepted Reader scene by default');
 assert.deepEqual(JSON.parse(JSON.stringify(historicHumanProjection.history.map(entry => entry.id))), ['reader_1', 'human_historic', 'human_chain', 'reader_2'], 'historic ScenePulse saves must remain as ordered, selectable source-history nodes, including edits made from an authored successor');
@@ -1314,8 +1320,8 @@ const currentHumanProjection = vm.runInNewContext(`${humanHistorySource}\n(() =>
         id: 'reader_handoff', status: 'accepted_live', provenance: { snapshotId: 'reader_current', turnId: 'turn_current' }, scenePulse: { mainQuests: [] }, history: [{ id: 'reader_current', turnId: 'turn_current', scenePulse: { mainQuests: [] } }]
     });
 })()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value))
 });
 assert.equal(currentHumanProjection.status, 'accepted_human', 'the selected ScenePulse state must become an authored successor after a current source save');
 assert.equal(currentHumanProjection.questReview[0].operation, 'add', 'the current authored successor must immediately expose its exact Horde quest lifecycle outcome');
@@ -1333,8 +1339,8 @@ const chainedHumanProjection = vm.runInNewContext(`${humanHistorySource}\n(() =>
         id: 'reader_handoff', status: 'accepted_live', provenance: { snapshotId: 'reader_current', turnId: 'turn_current' }, scenePulse: { mainQuests: [] }, history: [{ id: 'reader_current', turnId: 'turn_current', scenePulse: { mainQuests: [] } }]
     });
 })()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value))
 });
 assert.equal(chainedHumanProjection.humanEdit.id, 'human_tip', 'a repeated source save must select the latest authored successor rather than its first ancestor');
 assert.equal(chainedHumanProjection.scenePulse.mainQuests[1].name, 'Latest source quest', 'the latest authored successor must remain the foreground ScenePulse state');
@@ -1355,8 +1361,8 @@ const persistedHumanActionProjection = vm.runInNewContext(`${humanHistorySource}
         scenePulse: { mainQuests: [] }, history: [{ id: 'reader_current', turnId: 'turn_current', scenePulse: { mainQuests: [] } }]
     });
 })()`, {
-    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
-    safeJsonClone: value => JSON.parse(JSON.stringify(value))
+    isPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value), experimentalIsPlainObject: value => !!value && typeof value === 'object' && !Array.isArray(value),
+    safeJsonClone: value => JSON.parse(JSON.stringify(value)), experimentalSafeJsonClone: value => JSON.parse(JSON.stringify(value))
 });
 assert.equal(persistedHumanActionProjection.questReview[0].id, 'persisted-action', 'a saved lifecycle action must survive even when the historic protocol projection is unavailable');
 

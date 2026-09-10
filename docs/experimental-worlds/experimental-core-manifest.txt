@@ -3,6 +3,7 @@
 experiences/experimental-worlds/mechanics/world-mechanics.js
 experiences/experimental-worlds/runtime/dossier-claims.js
 experiences/experimental-worlds/runtime/experimental-rpg-mechanics.js
+experiences/experimental-worlds/runtime/experimental-runtime-compat.js
 experiences/experimental-worlds/runtime/sidecar-core.js
 experiences/experimental-worlds/runtime/world-intelligence-core.js
 experiences/experimental-worlds/runtime/world-message-input.js

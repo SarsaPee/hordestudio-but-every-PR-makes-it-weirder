@@ -1,8 +1,8 @@
 function normalizeWorldTurnReceipt(world, sess, rawReceipt) {
-    const source = isPlainObject(rawReceipt?.receipt) ? rawReceipt.receipt
-        : isPlainObject(rawReceipt) ? rawReceipt : {};
-    const sceneSource = isPlainObject(source.scene) ? source.scene : {};
-    const stateUpdates = isPlainObject(source.state_updates) ? { ...source.state_updates } : {};
+    const source = experimentalIsPlainObject(rawReceipt?.receipt) ? rawReceipt.receipt
+        : experimentalIsPlainObject(rawReceipt) ? rawReceipt : {};
+    const sceneSource = experimentalIsPlainObject(source.scene) ? source.scene : {};
+    const stateUpdates = experimentalIsPlainObject(source.state_updates) ? { ...source.state_updates } : {};
     // Older providers may still return the established state fields at the
     // receipt root. Preserve those as proposals, but movement is validated
     // through actor-scoped events below and never trusted as a naked field.
@@ -22,17 +22,17 @@ function normalizeWorldTurnReceipt(world, sess, rawReceipt) {
                 ? sceneSource.present_character_ids : []).map(id => String(id || '').slice(0, 120)).filter(Boolean).slice(0, 80),
             nearby_character_ids: (Array.isArray(sceneSource.nearby_character_ids)
                 ? sceneSource.nearby_character_ids : []).map(id => String(id || '').slice(0, 120)).filter(Boolean).slice(0, 80),
-            nearby_character_context: isPlainObject(sceneSource.nearby_character_context)
+            nearby_character_context: experimentalIsPlainObject(sceneSource.nearby_character_context)
                 ? Object.fromEntries(Object.entries(sceneSource.nearby_character_context).slice(0, 80)
-                    .map(([id, value]) => [String(id || '').slice(0, 120), isPlainObject(value) ? {
+                    .map(([id, value]) => [String(id || '').slice(0, 120), experimentalIsPlainObject(value) ? {
                         mode: String(value.mode || 'nearby').slice(0, 40),
                         reason: String(value.reason || '').slice(0, 360)
                     } : {}])) : {},
             // World mechanics owns scene telemetry and boundary evidence;
             // normalization must not strip them before the engine reads them.
-            ...((window.HordeWorldMechanics?.isEnabled?.(world) && isPlainObject(sceneSource.telemetry))
+            ...((window.HordeWorldMechanics?.isEnabled?.(world) && experimentalIsPlainObject(sceneSource.telemetry))
                 ? { telemetry: sceneSource.telemetry } : {}),
-            ...((window.HordeWorldMechanics?.isEnabled?.(world) && isPlainObject(sceneSource.transition))
+            ...((window.HordeWorldMechanics?.isEnabled?.(world) && experimentalIsPlainObject(sceneSource.transition))
                 ? { transition: sceneSource.transition } : {})
         },
         events: (Array.isArray(source.events) ? source.events : []).slice(0, 100),
@@ -110,7 +110,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
     };
 
     receipt.events.forEach((rawEvent, index) => {
-        const event = isPlainObject(rawEvent) ? rawEvent : {};
+        const event = experimentalIsPlainObject(rawEvent) ? rawEvent : {};
         const type = WORLD_TURN_EVENT_TYPES.includes(event.type) ? event.type : 'other';
         const actorId = resolveWorldActorId(world, sess, event.actor_id);
         const status = ['intended', 'attempted', 'in_progress', 'completed', 'cancelled', 'failed']
@@ -128,7 +128,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
             // the declared mechanic-conditioned execution survive into the
             // committed event so the engine can validate them at commit.
             ...(window.HordeWorldMechanics?.isEnabled?.(world)
-                && isPlainObject(event.mechanic_conditioned_execution) ? {
+                && experimentalIsPlainObject(event.mechanic_conditioned_execution) ? {
                 actor_intention: String(event.actor_intention || '').slice(0, 300),
                 compensatory_strategy: (Array.isArray(event.compensatory_strategy) ? event.compensatory_strategy : [])
                     .map(value => String(value || '').slice(0, 60)).filter(Boolean).slice(0, 10),
@@ -374,7 +374,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
     });
 
     receipt.entity_updates.forEach((rawPatch, index) => {
-        const patch = isPlainObject(rawPatch) ? rawPatch : {};
+        const patch = experimentalIsPlainObject(rawPatch) ? rawPatch : {};
         const actorId = resolveWorldActorId(world, sess, patch.entity_id || patch.actor_id);
         if (!actorId) {
             rejectedEvents.push({ index, type: 'entity_update', reason: 'unknown_actor', actor_id: String(patch.entity_id || '') });
@@ -460,7 +460,7 @@ function applyWorldSceneNearbyContext(world, sess, scene, source = 'tool_call') 
     // checksum for the off-screen scene layer.
     if (source !== 'sidecar' && source !== 'sidecar_conversation') return [];
     const requested = Array.isArray(scene?.nearby_character_ids) ? scene.nearby_character_ids : [];
-    const context = isPlainObject(scene?.nearby_character_context) ? scene.nearby_character_context : {};
+    const context = experimentalIsPlainObject(scene?.nearby_character_context) ? scene.nearby_character_context : {};
     const physicallyPresent = new Set(buildWorldSceneFrame(world, sess).present_character_ids || []);
     const next = {};
     requested.forEach(ref => {
@@ -468,8 +468,8 @@ function applyWorldSceneNearbyContext(world, sess, scene, source = 'tool_call') 
         if (!id || id === 'player' || physicallyPresent.has(id)) return;
         const entity = sessionNpcs(world, sess).find(npc => npc.id === id);
         if (!entity || !isNpcActive(sess.entityStates?.[id])) return;
-        const details = isPlainObject(context[ref]) ? context[ref]
-            : (isPlainObject(context[id]) ? context[id] : {});
+        const details = experimentalIsPlainObject(context[ref]) ? context[ref]
+            : (experimentalIsPlainObject(context[id]) ? context[id] : {});
         next[id] = {
             mode: String(details.mode || 'nearby').slice(0, 40),
             reason: String(details.reason || '').slice(0, 360),
@@ -492,7 +492,7 @@ function applyWorldNpcOutfitPatches(world, sess, patches, source = 'tool_call') 
         const entity = (world.entities || []).find(item => item.id === patch.entity_id && item.type === 'npc');
         const description = String(patch.outfit || '').trim().slice(0, 1200);
         if (!entity || !description) return;
-        entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+        entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
         const outfits = worldOutfits(entity);
         const exact = outfits.find(outfit => outfit.description.toLowerCase() === description.toLowerCase());
         const named = String(patch.outfit_name || '').trim().slice(0, 80);
@@ -638,7 +638,7 @@ function recordWorldTurnCommit(world, sess, validation, actionResult, source = '
 // logical key with a different receipt is unsafe and must fail closed.
 function stableSidecarValue(value) {
     if (Array.isArray(value)) return value.map(stableSidecarValue);
-    if (isPlainObject(value)) return Object.keys(value).sort().reduce((result, key) => {
+    if (experimentalIsPlainObject(value)) return Object.keys(value).sort().reduce((result, key) => {
         if (value[key] !== undefined) result[key] = stableSidecarValue(value[key]);
         return result;
     }, {});
@@ -646,7 +646,7 @@ function stableSidecarValue(value) {
 }
 
 function sidecarReceiptFingerprint(receipt) {
-    const payload = safeJsonClone(receipt || {});
+    const payload = experimentalSafeJsonClone(receipt || {});
     // Provider-generated transport identifiers are not world operations. Strip
     // them so a safe downstream retry can reproduce the same transaction even
     // when the model chooses a fresh receipt turn ID; all authored summaries,
@@ -690,7 +690,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         if (incomplete && !recoveryAuthorized) {
             const blocked = new Error('A previous Sidecar commit is incomplete and must be recovered before progression can continue.');
             blocked.code = 'sidecar_incomplete_commit_blocked';
-            blocked.incompleteCommit = safeJsonClone(incomplete);
+            blocked.incompleteCommit = experimentalSafeJsonClone(incomplete);
             throw blocked;
         }
     }
@@ -725,7 +725,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
             source: 'sidecar',
             receiptTurnId: String(validation.receipt?.turn_id || ''),
             preparedAt: new Date().toISOString(),
-            receipt: safeJsonClone(rawReceipt)
+            receipt: experimentalSafeJsonClone(rawReceipt)
         };
         journal.push(preparedJournalEntry);
         sess.sidecarCommitJournal = journal.slice(-240);
@@ -877,8 +877,8 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
                     code: error?.code || 'sidecar_commit_partial_failure',
                     message: String(error?.message || error || 'Sidecar commit failed.')
                 },
-                receipt: safeJsonClone(rawReceipt),
-                validation: safeJsonClone(validation)
+                receipt: experimentalSafeJsonClone(rawReceipt),
+                validation: experimentalSafeJsonClone(validation)
             };
             sess.sidecarIncompleteCommit = incomplete;
             if (preparedJournalEntry) Object.assign(preparedJournalEntry, incomplete, { journaledAt: new Date().toISOString() });
@@ -902,7 +902,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
         }
         if (preparedJournalEntry) Object.assign(preparedJournalEntry, {
             status: 'committed', receiptTurnId: String(validation.receipt?.turn_id || ''),
-            committedAt: new Date().toISOString(), result: safeJsonClone(result)
+            committedAt: new Date().toISOString(), result: experimentalSafeJsonClone(result)
         });
         else sidecarCommitJournal(sess).push({
             identity: commitIdentity,
@@ -910,7 +910,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
             status: 'committed',
             receiptTurnId: String(validation.receipt?.turn_id || ''),
             committedAt: new Date().toISOString(),
-            result: safeJsonClone(result)
+            result: experimentalSafeJsonClone(result)
         });
         sess.sidecarCommitJournal = sess.sidecarCommitJournal.slice(-240);
         sess.sidecarIncompleteCommit = null;
@@ -982,10 +982,10 @@ function extractSidecarNarratorHandoff(value) {
 // receipt envelope, not a second reducer or mutation path. Once the normal
 // catalogue exists it remains the source of truth and replaces this shape.
 function sidecarCommitToolFor(world = null, sess = null) {
-    if (isPlainObject(window.__hordeCommitTool)
+    if (experimentalIsPlainObject(window.__hordeCommitTool)
         && window.__hordeCommitTool?.function?.name === 'commit_world_turn'
         && window.__hordeCommitTool?.function?.parameters) {
-        return safeJsonClone(window.__hordeCommitTool);
+        return experimentalSafeJsonClone(window.__hordeCommitTool);
     }
     return {
         type: 'function',
@@ -1258,7 +1258,7 @@ function deriveSidecarExplicitTimeSkip(handoff, clockEvidence, startAnchor) {
 // original language remains stored as the evidence, while the normalized
 // endpoint is used only by the clock reducer.
 function deriveSidecarReaderTemporalResolution(readerPacket, clockEvidence, temporal) {
-    const evidence = readerPacket?.valid === true && isPlainObject(readerPacket.timeEvidence)
+    const evidence = readerPacket?.valid === true && experimentalIsPlainObject(readerPacket.timeEvidence)
         ? readerPacket.timeEvidence : null;
     if (!evidence) return null;
     const resolution = String(evidence.resolution || evidence.status || '').toLowerCase();
@@ -1302,15 +1302,15 @@ function deriveSidecarReaderTemporalResolution(readerPacket, clockEvidence, temp
 }
 
 function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal, readerPacket = null) {
-    if (!isPlainObject(receipt)) return null;
-    const breakdown = isPlainObject(temporal)
+    if (!experimentalIsPlainObject(receipt)) return null;
+    const breakdown = experimentalIsPlainObject(temporal)
         ? temporal
         : deriveSidecarTwoPhaseTemporal(clockEvidence, null, handoff);
     receipt.events = (Array.isArray(receipt.events) ? receipt.events : [])
         .filter(event => String(event?.type || '').toLowerCase() !== 'time');
-    receipt.state_updates = isPlainObject(receipt.state_updates) ? receipt.state_updates : {};
+    receipt.state_updates = experimentalIsPlainObject(receipt.state_updates) ? receipt.state_updates : {};
     delete receipt.state_updates.time_skip_minutes;
-    const phaseSupported = phase => isPlainObject(phase) && phase.status === 'supported';
+    const phaseSupported = phase => experimentalIsPlainObject(phase) && phase.status === 'supported';
     let totalMinutes = 0;
     if (phaseSupported(breakdown.interTurnJump)) totalMinutes += Number(breakdown.interTurnJump.minutes) || 0;
     if (phaseSupported(breakdown.inTurnElapsed)) totalMinutes += Number(breakdown.inTurnElapsed.minutes) || 0;
@@ -1331,7 +1331,7 @@ function applySidecarTemporalAuthority(receipt, handoff, clockEvidence, temporal
             basis: readerResolution?.basis || 'two_phase_header_and_endpoints',
             header: breakdown.narratorHeader,
             statement: sidecarTemporalStatement(handoff),
-            readerResolution: readerResolution ? safeJsonClone(readerResolution) : null
+            readerResolution: readerResolution ? experimentalSafeJsonClone(readerResolution) : null
         };
     }
     return null;
@@ -1499,7 +1499,7 @@ function normalizeFF54Choices(raw) {
     // future upstream choices survive import, surface generically in the UI,
     // and gate whatever sections reference them. Shape validation only —
     // membership is decided by the installed source's own choiceBlocks.
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const choices = {};
     Object.keys(source).forEach(key => {
         const value = source[key];
@@ -1517,7 +1517,7 @@ function normalizeFF54Choices(raw) {
 }
 
 function normalizeRoleplayOSConfig(raw) {
-    const config = isPlainObject(raw) ? raw : {};
+    const config = experimentalIsPlainObject(raw) ? raw : {};
     return {
         id: FF54_AGENTIC_OS.id,
         name: FF54_AGENTIC_OS.name,
@@ -1526,11 +1526,11 @@ function normalizeRoleplayOSConfig(raw) {
         source: FF54_AGENTIC_OS.source,
         choices: normalizeFF54Choices(config.choices),
         sourceId: String(config.sourceId || '').slice(0, 120),
-        defaultsApplied: !isPlainObject(config.choices),
+        defaultsApplied: !experimentalIsPlainObject(config.choices),
         // Last choice reconciliation against a repointed source, kept visible
         // in the config surface until dismissed. Reconciliation itself never
         // silently resets a selection; the notes say exactly what moved.
-        lastMigration: isPlainObject(config.lastMigration) ? {
+        lastMigration: experimentalIsPlainObject(config.lastMigration) ? {
             at: String(config.lastMigration.at || '').slice(0, 40),
             sourceId: String(config.lastMigration.sourceId || '').slice(0, 120),
             notes: (Array.isArray(config.lastMigration.notes) ? config.lastMigration.notes : []).map(note => String(note || '').slice(0, 400)).slice(0, 24)
@@ -1549,7 +1549,7 @@ function normalizeRoleplayOSConfig(raw) {
 function normalizeFF54ChoiceBlocks(raw) {
     const blocks = Array.isArray(raw) ? raw : [];
     return blocks.slice(0, 64).map((block, index) => {
-        const source = isPlainObject(block) ? block : {};
+        const source = experimentalIsPlainObject(block) ? block : {};
         let options = source.options;
         if (typeof options === 'string') {
             try { options = JSON.parse(options); } catch (_) { options = []; }
@@ -1561,9 +1561,9 @@ function normalizeFF54ChoiceBlocks(raw) {
             displayMode: String(source.displayMode || 'buttons').slice(0, 40),
             sortOrder: parseInt(source.sortOrder, 10) || (index * 100),
             options: (Array.isArray(options) ? options : []).slice(0, 32).map(option => ({
-                id: String((isPlainObject(option) ? option.id : '') || '').slice(0, 80),
-                value: String((isPlainObject(option) ? option.value : '') || '').slice(0, 80),
-                label: String((isPlainObject(option) ? (option.label || option.value) : '') || '').slice(0, 200)
+                id: String((experimentalIsPlainObject(option) ? option.id : '') || '').slice(0, 80),
+                value: String((experimentalIsPlainObject(option) ? option.value : '') || '').slice(0, 80),
+                label: String((experimentalIsPlainObject(option) ? (option.label || option.value) : '') || '').slice(0, 200)
             })).filter(option => option.value)
         };
     }).filter(block => block.options.length);
@@ -1599,10 +1599,10 @@ function ff54DeriveSourceDefaults(choiceBlocks) {
 }
 
 function normalizeFF54SourcePreset(raw) {
-    if (!isPlainObject(raw)) return null;
-    const source = isPlainObject(raw.data) ? raw.data : raw;
-    const meta = isPlainObject(raw.data) && isPlainObject(raw.data.preset)
-        ? raw.data.preset : (isPlainObject(raw.preset) ? raw.preset : null);
+    if (!experimentalIsPlainObject(raw)) return null;
+    const source = experimentalIsPlainObject(raw.data) ? raw.data : raw;
+    const meta = experimentalIsPlainObject(raw.data) && experimentalIsPlainObject(raw.data.preset)
+        ? raw.data.preset : (experimentalIsPlainObject(raw.preset) ? raw.preset : null);
     const rawSections = Array.isArray(source.sections) ? source.sections
         : (Array.isArray(source.prompts) ? source.prompts
         : (Array.isArray(raw.sections) ? raw.sections : null));
@@ -1613,7 +1613,7 @@ function normalizeFF54SourcePreset(raw) {
         if (typeof marker === 'string') {
             try { marker = JSON.parse(marker); } catch (_) { marker = null; }
         }
-        marker = isPlainObject(marker) ? marker : null;
+        marker = experimentalIsPlainObject(marker) ? marker : null;
         // Registry round-trip: stored entries carry the already-extracted
         // marker identity, not the original markerConfig payload.
         const markerType = marker ? String(marker.type || '').slice(0, 60) : String(section.markerType || '').slice(0, 60);
@@ -1651,7 +1651,7 @@ function normalizeFF54SourcePreset(raw) {
             contentHash,
             sectionCount: sections.length,
             choiceBlockCount: choiceBlocks.length,
-            importedAt: String(raw.importedAt || (isPlainObject(raw.provenance) ? raw.provenance.importedAt : '') || new Date().toISOString()).slice(0, 40),
+            importedAt: String(raw.importedAt || (experimentalIsPlainObject(raw.provenance) ? raw.provenance.importedAt : '') || new Date().toISOString()).slice(0, 40),
             note: 'Author-imported upstream preset data, resolved verbatim. Exclusions by identity only: state_mode pinned to AGENTS, macro persistence (setvar/getvar) neutralized.'
         }
     };
@@ -1682,7 +1682,7 @@ function installRoleplayOSSource(raw) {
 // variables/values produce visible migration notes; the source default applies
 // only where the old selection no longer exists. Never a silent reset.
 function reconcileFF54WorldChoices(stored, sourcePreset) {
-    const storedChoices = isPlainObject(stored) ? stored : {};
+    const storedChoices = experimentalIsPlainObject(stored) ? stored : {};
     const blocks = sourcePreset && Array.isArray(sourcePreset.choiceBlocks) ? sourcePreset.choiceBlocks : [];
     const result = { choices: {}, migration: [] };
     Object.keys(storedChoices).forEach(variable => {
@@ -1724,7 +1724,7 @@ function worldRoleplayOS(world) {
         : (os.sourceId
             ? (registry.find(entry => entry.id === os.sourceId) || registry.find(entry => entry.presetId === os.sourceId) || null)
             : (registry.find(entry => /freaky frankenstein/i.test(entry.presetName)) || null));
-    const defaults = sourcePreset && isPlainObject(sourcePreset.defaults)
+    const defaults = sourcePreset && experimentalIsPlainObject(sourcePreset.defaults)
         ? sourcePreset.defaults : FF54_BUILT_IN_DEFAULTS;
     const effectiveChoices = { ...defaults, ...os.choices, state_mode: FF54_STATE_MODE_PIN };
     return { ...os, sourcePreset, choices: effectiveChoices };
@@ -2428,7 +2428,7 @@ function worldMechanicsRegistryFor(world) {
 }
 
 function compileFF54SidecarContext(world, sess, opt = {}) {
-    const packet = isPlainObject(opt.packet) ? opt.packet : {};
+    const packet = experimentalIsPlainObject(opt.packet) ? opt.packet : {};
     const rules = normalizeWorldGameRules(world);
     const ruleModules = (rules && rules.modules) || {};
     const budgetMax = Math.max(4000, parseInt(opt.budget, 10) || 14000);
@@ -2720,15 +2720,15 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
         sceneReading: sidecarHandoffSection(options.handoff, 'SCENE READING'),
         acceptedPlayerDetails: sidecarHandoffSection(options.handoff, 'ACCEPTED PLAYER DETAILS'),
         temporalStatement: sidecarTemporalStatement(options.handoff),
-        sceneHeader: safeJsonClone(options.sceneHeader || null),
+        sceneHeader: experimentalSafeJsonClone(options.sceneHeader || null),
         playerInput: String(options.playerInput || ''),
-        preFrame: safeJsonClone(options.preFrame || buildWorldSceneFrame(world, sess)),
-        preClock: safeJsonClone(options.preClock || buildSidecarClockEvidence(world, sess)),
+        preFrame: experimentalSafeJsonClone(options.preFrame || buildWorldSceneFrame(world, sess)),
+        preClock: experimentalSafeJsonClone(options.preClock || buildSidecarClockEvidence(world, sess)),
         model: String(options.model || ''),
         provider: String(options.provider || ''),
         takeId: String(options.takeId || `take_${options.takeIndex == null ? 0 : options.takeIndex}`),
         revisionId: String(options.revisionId || ''),
-        ff54: safeJsonClone(sess && sess.sidecar && sess.sidecar.ff54) || null,
+        ff54: experimentalSafeJsonClone(sess && sess.sidecar && sess.sidecar.ff54) || null,
         receipt: null,
         audit: null,
         failure: null,
@@ -2763,7 +2763,7 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
         // Preserve preceding attempts for Backstage/retry. Only the current
         // attempt's outcome is reset; a successful Reader result remains a
         // reusable artifact if Sidecar subsequently failed.
-        turnRecord.reader = options.readerPacketOverride ? safeJsonClone(options.readerPacketOverride) : (turnRecord.reader || null);
+        turnRecord.reader = options.readerPacketOverride ? experimentalSafeJsonClone(options.readerPacketOverride) : (turnRecord.reader || null);
         turnRecord.readerEnvelope = turnRecord.readerEnvelope || null;
         turnRecord.retryCount = (Number(turnRecord.retryCount) || 0) + 1;
     }
@@ -2772,14 +2772,14 @@ function beginSidecarTurnAttempt(world, sess, options = {}) {
     turnRecord.preCanonicalFingerprint = options.preCanonicalFingerprint || turnRecord.preCanonicalFingerprint || sidecarCanonicalCheckpointFingerprint(world, sess);
     turnRecord.preWorldStateVersion = Number(options.preWorldStateVersion ?? turnRecord.preWorldStateVersion ?? sess.worldStateVersion) || 0;
     turnRecord.currentAttemptId = attemptId;
-    turnRecord.attempts.push({ id: attemptId, status: 'pending', createdAt: new Date().toISOString(), logicalCommitIdentity: logicalIdentity, readerReused: !!options.readerPacketOverride, source: safeJsonClone({ narrationHash: turnRecord.authorialArtifact.narrationHash, handoffHash: turnRecord.authorialArtifact.handoffHash, playerInputHash: turnRecord.authorialArtifact.playerInputHash, preCanonicalFingerprint: turnRecord.preCanonicalFingerprint }) });
+    turnRecord.attempts.push({ id: attemptId, status: 'pending', createdAt: new Date().toISOString(), logicalCommitIdentity: logicalIdentity, readerReused: !!options.readerPacketOverride, source: experimentalSafeJsonClone({ narrationHash: turnRecord.authorialArtifact.narrationHash, handoffHash: turnRecord.authorialArtifact.handoffHash, playerInputHash: turnRecord.authorialArtifact.playerInputHash, preCanonicalFingerprint: turnRecord.preCanonicalFingerprint }) });
     turnRecord.attempts = turnRecord.attempts.slice(-24);
     if (!existing) {
         window.ExperimentalWorldsSidecarTimeline?.recordTurn(protocol, sess, turnRecord);
         protocol.turns.push(turnRecord);
         protocol.turns = protocol.turns.slice(-500);
     }
-    if (!isPlainObject(protocol.diagnostics)) protocol.diagnostics = {};
+    if (!experimentalIsPlainObject(protocol.diagnostics)) protocol.diagnostics = {};
     if (!Array.isArray(protocol.diagnostics.reconciliationAttempts)) protocol.diagnostics.reconciliationAttempts = [];
     protocol.diagnostics.reconciliationAttempts.push({
         turnId: turnRecord.id, attemptId, status: 'pending', createdAt: new Date().toISOString(),
@@ -2833,7 +2833,7 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
         provider: String(detail.provider || turnRecord?.provider || ''),
         model: String(detail.model || turnRecord?.model || ''),
         failedAt: new Date().toISOString(),
-        response: detail.response ? safeJsonClone(detail.response) : null
+        response: detail.response ? experimentalSafeJsonClone(detail.response) : null
     };
     if (turnRecord) {
         turnRecord.status = 'reconciliation_failed';
@@ -2841,7 +2841,7 @@ function failSidecarTurnAttempt(world, sess, attempt, error, detail = {}) {
         turnRecord.failure = failure;
         turnRecord.postFrame = buildWorldSceneFrame(world, sess);
         const currentAttempt = (turnRecord.attempts || []).find(item => item.id === turnRecord.currentAttemptId);
-        if (currentAttempt) Object.assign(currentAttempt, { status: 'failed', failedAt: failure.failedAt, failure: safeJsonClone(failure) });
+        if (currentAttempt) Object.assign(currentAttempt, { status: 'failed', failedAt: failure.failedAt, failure: experimentalSafeJsonClone(failure) });
         (protocol?.readerSnapshots || []).filter(snapshot => snapshot.turnId === turnRecord.id && snapshot.attemptId === turnRecord.currentAttemptId && snapshot.status === 'pending_reconciliation').forEach(snapshot => {
             snapshot.status = 'failed';
             snapshot.provenance = { ...(snapshot.provenance || {}), reconciliationFailure: failure.code };
@@ -2942,7 +2942,7 @@ function recordSidecarTemporalEvidence(world, sess, handoff, beforeClock, explic
             sourceMinuteOfDay: explicitEndpointEvidence.sourceMinuteOfDay,
             targetMinuteOfDay: explicitEndpointEvidence.targetMinuteOfDay,
             basis: explicitEndpointEvidence.basis || 'two_phase_header_and_endpoints',
-            readerResolution: safeJsonClone(explicitEndpointEvidence.readerResolution || null)
+            readerResolution: experimentalSafeJsonClone(explicitEndpointEvidence.readerResolution || null)
         } : null,
         beforeCanonicalMinutes: beforeClock?.currentTotalMinutes ?? null,
         afterCanonicalMinutes: afterClock.currentTotalMinutes,
@@ -3229,12 +3229,12 @@ function sidecarSupportsStructuredJson(provider, model, tracker = {}, profile = 
 // prevents a provider from rejecting the entire reconciliation request before
 // it can emit the native reducer call.
 function normalizeSidecarProviderSchema(schema) {
-    if (!isPlainObject(schema)) return schema;
+    if (!experimentalIsPlainObject(schema)) return schema;
     if (Array.isArray(schema.anyOf) && schema.anyOf.length) {
         // The only current union is the inventory item string/object form.
         // Prefer the object branch when available so named item metadata is
         // retained; the reducer still accepts the resulting object shape.
-        const preferred = schema.anyOf.find(item => isPlainObject(item) && item.type === 'object') || schema.anyOf[0];
+        const preferred = schema.anyOf.find(item => experimentalIsPlainObject(item) && item.type === 'object') || schema.anyOf[0];
         const normalized = normalizeSidecarProviderSchema(preferred);
         if (schema.description && normalized && !normalized.description) normalized.description = schema.description;
         return normalized;
@@ -3243,7 +3243,7 @@ function normalizeSidecarProviderSchema(schema) {
     const output = {};
     Object.entries(schema).forEach(([key, value]) => {
         if (!allowed.has(key)) return;
-        if (key === 'properties' && isPlainObject(value)) {
+        if (key === 'properties' && experimentalIsPlainObject(value)) {
             output.properties = Object.entries(value).reduce((properties, [name, child]) => {
                 properties[name] = normalizeSidecarProviderSchema(child);
                 return properties;
@@ -3263,7 +3263,7 @@ function normalizeSidecarProviderSchema(schema) {
 }
 
 function normalizeSidecarProviderTool(tool) {
-    const copy = safeJsonClone(tool);
+    const copy = experimentalSafeJsonClone(tool);
     if (copy?.function?.parameters) copy.function.parameters = normalizeSidecarProviderSchema(copy.function.parameters);
     return copy;
 }
@@ -3314,7 +3314,7 @@ function sidecarTokenLimitIncomplete(payload) {
 async function fetchSidecarCompletion(body, { provider, tracker, world, owner, scope = 'sidecar', signal, retryPolicy = 'bounded', forceWithoutReasoning = false } = {}) {
     const policy = sidecarReasoningPolicy(tracker, world);
     const request = async (withoutReasoning, forceCompactCommitTransport = false) => {
-        const payload = safeJsonClone(body);
+        const payload = experimentalSafeJsonClone(body);
         delete payload.reasoning;
         delete payload.reasoning_effort;
         applySidecarReasoning(payload, provider, tracker, world, { withoutReasoning });
@@ -3464,13 +3464,13 @@ function sidecarReaderReadOnlyProtocol(world, sess) {
     // operation and must not mutate canonical state merely by asking a
     // question. Normalize isolated copies so default fields are available
     // without creating a hidden write path.
-    const worldCopy = safeJsonClone(world || {});
-    const sessCopy = safeJsonClone(sess || {});
+    const worldCopy = experimentalSafeJsonClone(world || {});
+    const sessCopy = experimentalSafeJsonClone(sess || {});
     return window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(worldCopy, sessCopy) || null;
 }
 
 function runSidecarReadOnlyTool(world, sess, name, rawArgs) {
-    const args = isPlainObject(rawArgs) ? rawArgs : safeParseJSONRepair(String(rawArgs || '{}')) || {};
+    const args = experimentalIsPlainObject(rawArgs) ? rawArgs : experimentalSafeParseJSONRepair(String(rawArgs || '{}')) || {};
     if (name === 'get_world_entity') {
         const entity = sidecarCanonicalEntityRecord(world, sess, args.entity_id);
         return { found: !!entity, entity };
@@ -3556,16 +3556,16 @@ function retiredSidecarReaderV1ParseOutput(content, fallback = {}) {
     // not mistaken for an empty/invalid response.
     const normalizedContent = Array.isArray(content)
         ? content.map(part => typeof part === 'string' ? part : String(part?.text || part?.content || '')).filter(Boolean).join('\n')
-        : (isPlainObject(content) ? (content.text || content.content || '') : content);
+        : (experimentalIsPlainObject(content) ? (content.text || content.content || '') : content);
     const raw = String(normalizedContent || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-    const parsed = safeParseJSONRepair(raw);
-    if (!isPlainObject(parsed)) return {
+    const parsed = experimentalSafeParseJSONRepair(raw);
+    if (!experimentalIsPlainObject(parsed)) return {
         valid: false, summary: 'The Sidecar Reader returned no usable structured reading.',
         canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000)
     };
-    const interpretation = isPlainObject(parsed.semantic_interpretation)
+    const interpretation = experimentalIsPlainObject(parsed.semantic_interpretation)
         ? parsed.semantic_interpretation
-        : (isPlainObject(parsed.semanticInterpretation) ? parsed.semanticInterpretation : {});
+        : (experimentalIsPlainObject(parsed.semanticInterpretation) ? parsed.semanticInterpretation : {});
     const semanticInterpretation = {
         ...interpretation,
         scene: interpretation.scene || interpretation.scene_state || parsed.scene || parsed.scene_state || {},
@@ -3582,7 +3582,7 @@ function retiredSidecarReaderV1ParseOutput(content, fallback = {}) {
         mode: parsed.mode === 'full' ? 'full' : 'delta',
         changedFields: Array.isArray(parsed.changed_fields || parsed.changedFields) ? (parsed.changed_fields || parsed.changedFields).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
         summary: String(parsed.summary || parsed.scene_reading || '').slice(0, 6000),
-        canonicalReferences: isPlainObject(parsed.canonical_references || parsed.canonicalReferences) ? (parsed.canonical_references || parsed.canonicalReferences) : fallback,
+        canonicalReferences: experimentalIsPlainObject(parsed.canonical_references || parsed.canonicalReferences) ? (parsed.canonical_references || parsed.canonicalReferences) : fallback,
         semanticInterpretation,
         durableProposals: Array.isArray(semanticInterpretation.durableProposals)
             ? semanticInterpretation.durableProposals.slice(0, 40) : [],
@@ -3595,7 +3595,7 @@ function retiredSidecarReaderV1ParseOutput(content, fallback = {}) {
         proposedQuestions: Array.isArray(parsed.proposed_questions || parsed.proposedQuestions) ? (parsed.proposed_questions || parsed.proposedQuestions).slice(0, 12) : [],
         timeEvidence: parsed.time_evidence || parsed.timeEvidence || null,
         controlledCharacterEvidence: (Array.isArray(parsed.controlled_character_evidence || parsed.controlledCharacterEvidence) ? (parsed.controlled_character_evidence || parsed.controlledCharacterEvidence) : [])
-            .filter(item => isPlainObject(item)).slice(0, 12).map(item => ({
+            .filter(item => experimentalIsPlainObject(item)).slice(0, 12).map(item => ({
                 evidence: String(item.evidence || '').slice(0, 800),
                 provenance: ['user_explicit_action', 'user_explicit_dialogue', 'narrator_paraphrase', 'sidecar_interpretation', 'behavioural_pattern_inference'].includes(item.provenance) ? item.provenance : 'sidecar_interpretation'
             })),
@@ -3604,8 +3604,8 @@ function retiredSidecarReaderV1ParseOutput(content, fallback = {}) {
 }
 
 function retiredSidecarReaderV1NormalizeEnvelope(raw = {}, defaults = {}) {
-    const source = isPlainObject(raw) ? raw : {};
-    const cleanList = (value, limit = 40) => Array.isArray(value) ? value.slice(0, limit).map(item => isPlainObject(item) ? safeJsonClone(item) : String(item || '').slice(0, 800)) : [];
+    const source = experimentalIsPlainObject(raw) ? raw : {};
+    const cleanList = (value, limit = 40) => Array.isArray(value) ? value.slice(0, limit).map(item => experimentalIsPlainObject(item) ? experimentalSafeJsonClone(item) : String(item || '').slice(0, 800)) : [];
     return {
         schemaVersion: 1,
         profileRevision: String(source.profileRevision || defaults.profileRevision || 'reader-v1').slice(0, 100),
@@ -3618,11 +3618,11 @@ function retiredSidecarReaderV1NormalizeEnvelope(raw = {}, defaults = {}) {
         snapshotMode: source.snapshotMode === 'full' ? 'full' : 'delta',
         changedFields: Array.isArray(source.changedFields || source.changed_fields) ? (source.changedFields || source.changed_fields).map(item => String(item || '').slice(0, 120)).filter(Boolean).slice(0, 80) : [],
         refreshIndex: Math.max(0, Number(source.refreshIndex || defaults.refreshIndex) || 0),
-        temporal: isPlainObject(source.temporal) ? safeJsonClone(source.temporal) : { meaning: '', precision: 'unknown', source: '' },
-        canonicalReferences: isPlainObject(source.canonicalReferences) ? safeJsonClone(source.canonicalReferences) : {},
-        location: isPlainObject(source.location) ? safeJsonClone(source.location) : { activeLocationId: '', movement: [], evidence: '' },
-        presence: isPlainObject(source.presence) ? safeJsonClone(source.presence) : { active: [], nearby: [], audible: [], remote: [], mentioned: [], absent: [] },
-        scene: isPlainObject(source.scene) ? safeJsonClone(source.scene) : { topic: '', mood: '', tension: '', interactionStyle: '', sound: '', environment: '' },
+        temporal: experimentalIsPlainObject(source.temporal) ? experimentalSafeJsonClone(source.temporal) : { meaning: '', precision: 'unknown', source: '' },
+        canonicalReferences: experimentalIsPlainObject(source.canonicalReferences) ? experimentalSafeJsonClone(source.canonicalReferences) : {},
+        location: experimentalIsPlainObject(source.location) ? experimentalSafeJsonClone(source.location) : { activeLocationId: '', movement: [], evidence: '' },
+        presence: experimentalIsPlainObject(source.presence) ? experimentalSafeJsonClone(source.presence) : { active: [], nearby: [], audible: [], remote: [], mentioned: [], absent: [] },
+        scene: experimentalIsPlainObject(source.scene) ? experimentalSafeJsonClone(source.scene) : { topic: '', mood: '', tension: '', interactionStyle: '', sound: '', environment: '' },
         eventClaims: cleanList(source.eventClaims, 80),
         candidateStructures: cleanList(source.candidateStructures || source.candidate_structures || source.candidates, 80),
         durableProposals: cleanList(source.durableProposals, 40),
@@ -3631,11 +3631,11 @@ function retiredSidecarReaderV1NormalizeEnvelope(raw = {}, defaults = {}) {
         validationWarnings: cleanList(source.validationWarnings || source.warnings, 40),
         provisionalCognition: cleanList(source.provisionalCognition, 40),
         lookupProvenance: cleanList(source.lookupProvenance, 60),
-        semanticInterpretation: isPlainObject(source.semanticInterpretation) ? safeJsonClone(source.semanticInterpretation) : {},
+        semanticInterpretation: experimentalIsPlainObject(source.semanticInterpretation) ? experimentalSafeJsonClone(source.semanticInterpretation) : {},
         controlledCharacterEvidence: cleanList(source.controlledCharacterEvidence, 20),
         summary: String(source.summary || '').slice(0, 6000),
         reconciliationFocus: cleanList(source.reconciliationFocus, 30),
-        metadata: isPlainObject(source.metadata) ? safeJsonClone(source.metadata) : {}
+        metadata: experimentalIsPlainObject(source.metadata) ? experimentalSafeJsonClone(source.metadata) : {}
     };
 }
 
@@ -3701,7 +3701,7 @@ function retiredSidecarReaderV1AttachSnapshot(world, sess, turnRecord, packet, o
     const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: protocol.readerSnapshots.filter(item => item.status === 'active').at(-1)?.id || '' } };
     protocol.readerSnapshots.push(snapshot);
     protocol.readerSnapshots = protocol.readerSnapshots.slice(-200);
-    turnRecord.readerEnvelope = safeJsonClone(envelope);
+    turnRecord.readerEnvelope = experimentalSafeJsonClone(envelope);
     turnRecord.readerSnapshotId = snapshot.id;
     // Pending Reader evidence remains attempt-local. Publishing it into the
     // next-turn packet here would let an invalid/failed reconciliation leak
@@ -3720,11 +3720,11 @@ function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
     });
     snapshot.status = 'active'; snapshot.settlementStatus = 'settled'; snapshot.activatedAt = new Date().toISOString();
     snapshot.provenance = { ...(snapshot.provenance || {}), committedTurnId: turnId || snapshot.turnId };
-    protocol.sceneReader = safeJsonClone(snapshot.envelope);
+    protocol.sceneReader = experimentalSafeJsonClone(snapshot.envelope);
     const scene = (protocol.scenes || []).find(item => item.id === snapshot.sceneId);
     if (scene) {
         scene.readerSnapshotId = snapshot.id;
-        scene.readerState = safeJsonClone({ summary: snapshot.envelope.summary, scene: snapshot.envelope.scene, presence: snapshot.envelope.presence, temporal: snapshot.envelope.temporal, candidateStructures: snapshot.envelope.candidateStructures || [], nonCanonical: true });
+        scene.readerState = experimentalSafeJsonClone({ summary: snapshot.envelope.summary, scene: snapshot.envelope.scene, presence: snapshot.envelope.presence, temporal: snapshot.envelope.temporal, candidateStructures: snapshot.envelope.candidateStructures || [], nonCanonical: true });
     }
     return snapshot;
 }
@@ -3743,19 +3743,19 @@ function sidecarProjectionDisplayName(world, sess, hierarchy, ref = '') {
 
 function sidecarProjectionClaimText(value) {
     if (Array.isArray(value)) return value.map(sidecarProjectionClaimText).filter(Boolean).join(' · ');
-    if (isPlainObject(value)) return String(value.text || value.summary || value.description || value.value || '').trim();
+    if (experimentalIsPlainObject(value)) return String(value.text || value.summary || value.description || value.value || '').trim();
     return String(value || '').trim();
 }
 
 function sidecarProjectionPresenceEntries(values, mode, displayName) {
     return (Array.isArray(values) ? values : []).map(value => {
-        const raw = isPlainObject(value) ? value : { id: value };
+        const raw = experimentalIsPlainObject(value) ? value : { id: value };
         const id = String(raw.characterId || raw.character_id || raw.entityId || raw.entity_id || raw.id || raw.subjectRef || raw.subject_ref || '').trim();
         return {
             id, mode: String(raw.mode || mode || '').trim().toLowerCase(), name: String(raw.name || (id ? displayName(id) : raw.label || '')).trim(),
             location: String(raw.location || raw.locationId || raw.location_id || raw.localSpace || raw.local_space || '').trim(),
             channel: String(raw.channel || '').trim(), reason: String(raw.reason || raw.evidence || raw.relevanceReason || '').trim(),
-            source: safeJsonClone(raw)
+            source: experimentalSafeJsonClone(raw)
         };
     }).filter(entry => entry.id || entry.name);
 }
@@ -3799,7 +3799,7 @@ function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
         bySubject.set(key, {
             ...prior, id: intelligence.subjectRef || prior.id || '', name: intelligence.name || prior.name || displayName(intelligence.subjectRef),
             mode, location: intelligence.presence?.location || prior.location || '', channel: intelligence.presence?.channel || prior.channel || '',
-            reason: intelligence.relevance?.reason || prior.reason || '', intelligence: safeJsonClone(intelligence),
+            reason: intelligence.relevance?.reason || prior.reason || '', intelligence: experimentalSafeJsonClone(intelligence),
             candidateId: intelligence.candidateId || prior.candidateId || ''
         });
     });
@@ -3818,7 +3818,7 @@ function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
         const state = sess?.entityStates?.[person.id] || {};
         const intelligence = person.intelligence || null;
         return {
-            ...person, entityId: entity?.id || person.id || '', entity, candidate: null, state: safeJsonClone(state),
+            ...person, entityId: entity?.id || person.id || '', entity, candidate: null, state: experimentalSafeJsonClone(state),
             canonical: !!entity, activity: sidecarProjectionClaimText(intelligence?.activity) || String(state.currentActivity || state.activity || ''),
             emotionalPosture: intelligence?.emotionalPosture || [], attentionFocus: intelligence?.attentionFocus || [],
             apparentUnderstanding: intelligence?.apparentUnderstanding || [], noticed: intelligence?.noticed || [], likelyUnnoticed: intelligence?.likelyUnnoticed || [],
@@ -3833,14 +3833,14 @@ function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
     });
     const candidates = activeReaderCandidates(protocol, { sceneId: turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id || '' })
         .filter(candidate => !snapshot || !candidate.readerSnapshotId || candidate.readerSnapshotId === snapshot.id || candidate.sourceTurnIds?.includes(snapshot.turnId))
-        .map(candidate => safeJsonClone(candidate));
+        .map(candidate => experimentalSafeJsonClone(candidate));
     const candidateById = new Map(candidates.map(candidate => [String(candidate.candidateId || ''), candidate]));
     relevantPeople.forEach(person => { if (person.candidateId && candidateById.has(person.candidateId)) person.candidate = candidateById.get(person.candidateId); });
     const openQuestions = (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)
-        && (!question.sceneId || question.sceneId === (turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id))).map(question => safeJsonClone(question));
-    const environment = safeJsonClone(envelope?.environment || {});
-    const scene = safeJsonClone(envelope?.scene || {});
-    const temporal = safeJsonClone(envelope?.temporal || {});
+        && (!question.sceneId || question.sceneId === (turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id))).map(question => experimentalSafeJsonClone(question));
+    const environment = experimentalSafeJsonClone(envelope?.environment || {});
+    const scene = experimentalSafeJsonClone(envelope?.scene || {});
+    const temporal = experimentalSafeJsonClone(envelope?.temporal || {});
     const projection = {
         schemaVersion: 2, status: snapshot ? 'settled' : 'no_reader_data', id: `scene_projection:${snapshot?.id || turn?.id || 'none'}`,
         snapshotId: snapshot?.id || '', turnId: turn?.id || snapshot?.turnId || '', sceneId: turn?.sceneId || snapshot?.sceneId || hierarchy?.scene?.id || '',
@@ -3849,12 +3849,12 @@ function buildSidecarSceneProjection(world, sess, protocol, options = {}) {
             canonicalId: canonicalLocation?.id || '', name: canonicalLocation?.name || envelope?.location?.name || 'Unknown location',
             parentLocations: parents, localSpace: String(envelope?.location?.localSpace || envelope?.location?.local_space || '').trim(),
             authoredDescription: String(envelope?.location?.description || envelope?.location?.evidence || '').trim()
-        }, environment, scene, scenePulse: safeJsonClone(envelope?.scenePulse || {}), people: relevantPeople, candidateStructures: candidates,
-        relationships: safeJsonClone([...(envelope?.relationshipPostures || []), ...(envelope?.relationshipShifts || [])]),
-        canonicalRelationships: safeJsonClone(sess?.npcRelationships || {}), salientObjects: safeJsonClone(envelope?.salientObjects || []),
-        salientLocations: safeJsonClone(envelope?.salientLocations || []), pressures: safeJsonClone([...(envelope?.pressures || []), ...(envelope?.currentThreads || [])]),
-        questions: openQuestions, changes: safeJsonClone(envelope?.changes || []), unresolved: safeJsonClone(envelope?.unresolvedEvidence || []),
-        summary: String(envelope?.summary || '').trim(), coverage: safeJsonClone(envelope?.coverage || {}),
+        }, environment, scene, scenePulse: experimentalSafeJsonClone(envelope?.scenePulse || {}), people: relevantPeople, candidateStructures: candidates,
+        relationships: experimentalSafeJsonClone([...(envelope?.relationshipPostures || []), ...(envelope?.relationshipShifts || [])]),
+        canonicalRelationships: experimentalSafeJsonClone(sess?.npcRelationships || {}), salientObjects: experimentalSafeJsonClone(envelope?.salientObjects || []),
+        salientLocations: experimentalSafeJsonClone(envelope?.salientLocations || []), pressures: experimentalSafeJsonClone([...(envelope?.pressures || []), ...(envelope?.currentThreads || [])]),
+        questions: openQuestions, changes: experimentalSafeJsonClone(envelope?.changes || []), unresolved: experimentalSafeJsonClone(envelope?.unresolvedEvidence || []),
+        summary: String(envelope?.summary || '').trim(), coverage: experimentalSafeJsonClone(envelope?.coverage || {}),
         provenance: { readerSnapshotId: snapshot?.id || '', sourceTurnId: turn?.id || snapshot?.turnId || '', sourceTakeId: snapshot?.takeId || turn?.takeId || '', sourceRevisionId: snapshot?.envelope?.sourceRevisionId || turn?.revisionId || '' }
     };
     return projection;
@@ -3966,7 +3966,7 @@ function queueSidecarTurnCognitionJobs(world, sess, protocol, turnRecord, projec
             turnId: turnRecord.id, sourceTurnIds: [turnRecord.id], sceneId: turnRecord.sceneId || protocol.activeSceneId || '',
             sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', readerSnapshotId,
             characterId: canonicalEntity?.id || '', candidateId: candidate?.candidateId || intelligence.candidateId || '', subjectRef,
-            access: sidecarCognitionAccessForPresence(mode), perceptionEvidence: evidence, provisionalIntelligence: safeJsonClone(intelligence),
+            access: sidecarCognitionAccessForPresence(mode), perceptionEvidence: evidence, provisionalIntelligence: experimentalSafeJsonClone(intelligence),
             dependencies: [], priority: 'background', retryAt: '', diagnostics: [],
             provenance: { source: 'settled_reader_character_intelligence', sourceTurnId: turnRecord.id, readerSnapshotId: turnRecord.readerSnapshotId, subjectKind: canonicalEntity ? 'canonical_entity' : 'scene_candidate' }
         });
@@ -3985,9 +3985,9 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
     const turnRecord = options.turnRecord;
     const settlementId = sidecarSettlementIdentity(turnRecord, options.receipt);
     const existing = (protocol.settlements || []).find(entry => entry.id === settlementId);
-    if (existing?.status === 'settled') return { status: 'already_settled', settlement: existing, projection: safeJsonClone(protocol.sceneProjection || null), packet: protocol.packet || null };
+    if (existing?.status === 'settled') return { status: 'already_settled', settlement: existing, projection: experimentalSafeJsonClone(protocol.sceneProjection || null), packet: protocol.packet || null };
     const originalProtocol = sess.sidecar;
-    const draftSeed = safeJsonClone(protocol);
+    const draftSeed = experimentalSafeJsonClone(protocol);
     // All of the existing staging helpers resolve the protocol from the
     // session. Point them at an isolated draft for the publication window.
     sess.sidecar = draftSeed;
@@ -4000,7 +4000,7 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
         const now = new Date().toISOString();
         const stagedPacket = draftTurn.reader || options.readerPacket || {};
         draftTurn.settlementId = settlementId;
-        const stagedIntroductions = window.ExperimentalWorldsSidecarPromotion?.stageReceiptIntroductions(draft, safeJsonClone(options.introductionDraft || {}), {
+        const stagedIntroductions = window.ExperimentalWorldsSidecarPromotion?.stageReceiptIntroductions(draft, experimentalSafeJsonClone(options.introductionDraft || {}), {
             source: 'narrator_handoff', narration: options.narration || '', handoff: options.handoff || '', turnId: draftTurn.id
         }) || [];
         recordSidecarCoreAnswers(world, sess, options.handoff || '');
@@ -4023,9 +4023,9 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
             updateSidecarQuestion(world, sess, `reconcile.transport.${id}`, { status: 'resolved', resolutionType: 'later_sidecar_reconciliation', answer: `Reconciled by ${draftTurn.id}.`, provenance: { source: 'sidecar_receipt', turnId: draftTurn.id } });
         });
         draftTurn.status = 'active'; draftTurn.reconciliationStatus = 'committed'; draftTurn.committedAt = now;
-        draftTurn.receiptTurnId = String(options.receipt?.turn_id || ''); draftTurn.postFrame = safeJsonClone(options.postFrame || buildWorldSceneFrame(world, sess));
-        draftTurn.postClock = safeJsonClone(options.postClock || buildSidecarClockEvidence(world, sess)); draftTurn.receipt = safeJsonClone(options.receipt || {});
-        draftTurn.audit = safeJsonClone(options.committed?.audit || {}); draftTurn.explicitEndpointEvidence = safeJsonClone(options.explicitEndpointEvidence || null);
+        draftTurn.receiptTurnId = String(options.receipt?.turn_id || ''); draftTurn.postFrame = experimentalSafeJsonClone(options.postFrame || buildWorldSceneFrame(world, sess));
+        draftTurn.postClock = experimentalSafeJsonClone(options.postClock || buildSidecarClockEvidence(world, sess)); draftTurn.receipt = experimentalSafeJsonClone(options.receipt || {});
+        draftTurn.audit = experimentalSafeJsonClone(options.committed?.audit || {}); draftTurn.explicitEndpointEvidence = experimentalSafeJsonClone(options.explicitEndpointEvidence || null);
         draftTurn.provisionalIntroductions = stagedIntroductions.map(entry => entry.id); draftTurn.settledAttemptId = options.attemptId || draftTurn.currentAttemptId || '';
         draftTurn.readerProposalDrafts = null; draftTurn.readerCandidateDrafts = null; draftTurn.readerQuestionDrafts = null; draftTurn.settlementWarning = null;
         if (draftTurn.readerSnapshotId) activateSidecarReaderSnapshot(world, sess, draftTurn.readerSnapshotId, draftTurn.id);
@@ -4033,15 +4033,15 @@ function publishSidecarSettlement(world, sess, protocol, options = {}) {
         projection.settlementId = settlementId;
         (draft.sceneProjections || []).forEach(item => { if (item.status === 'active') { item.status = 'accepted_historical'; item.historicalAt = now; } });
         draft.sceneProjections = (draft.sceneProjections || []).filter(item => item.id !== projection.id);
-        draft.sceneProjections.push({ ...safeJsonClone(projection), status: 'active', settledAt: now });
+        draft.sceneProjections.push({ ...experimentalSafeJsonClone(projection), status: 'active', settledAt: now });
         draft.sceneProjections = draft.sceneProjections.slice(-400);
-        draft.sceneProjection = safeJsonClone(projection);
+        draft.sceneProjection = experimentalSafeJsonClone(projection);
         const settlement = { id: settlementId, status: 'settled', turnId: draftTurn.id, takeId: draftTurn.takeId || '', revisionId: draftTurn.revisionId || '', attemptId: draftTurn.settledAttemptId, readerSnapshotId: draftTurn.readerSnapshotId || '', receiptFingerprint: options.committed?.audit?.receiptFingerprint || '', receiptTurnId: draftTurn.receiptTurnId, publishedAt: now, projectionId: projection.id };
         draft.settlements = [...draft.settlements.filter(item => item.id !== settlementId), settlement].slice(-500);
         const currentAttempt = draftTurn.attempts?.find(item => item.id === (options.attemptId || draftTurn.currentAttemptId));
         if (currentAttempt) Object.assign(currentAttempt, { status: 'committed', committedAt: now, receiptFingerprint: settlement.receiptFingerprint, settlementId });
         const diagnostic = draft.diagnostics?.reconciliationAttempts?.find(item => item.turnId === draftTurn.id && (!options.attemptId || item.attemptId === options.attemptId));
-        if (diagnostic) Object.assign(diagnostic, { status: 'committed', committedAt: now, receiptTurnId: draftTurn.receiptTurnId, audit: safeJsonClone(options.committed?.audit), explicitEndpointEvidence: safeJsonClone(options.explicitEndpointEvidence || null), settlementId });
+        if (diagnostic) Object.assign(diagnostic, { status: 'committed', committedAt: now, receiptTurnId: draftTurn.receiptTurnId, audit: experimentalSafeJsonClone(options.committed?.audit), explicitEndpointEvidence: experimentalSafeJsonClone(options.explicitEndpointEvidence || null), settlementId });
         window.ExperimentalWorldsSidecarMemoryGraph?.recordTurn(draft, draftTurn);
         draftTurn.turnCognitionJobIds = queueSidecarTurnCognitionJobs(world, sess, draft, draftTurn, projection);
         queueSidecarSceneOutfitQuestions(world, sess, draftTurn);
@@ -4091,7 +4091,7 @@ function recordSidecarReaderProposals(world, sess, readerPacket, turnRecord, sna
     groups.forEach(([field, kind]) => {
         const values = Array.isArray(readerPacket?.[field]) ? readerPacket[field] : [];
         values.forEach((value, index) => {
-            const proposal = isPlainObject(value) ? safeJsonClone(value) : { summary: String(value || '') };
+            const proposal = experimentalIsPlainObject(value) ? experimentalSafeJsonClone(value) : { summary: String(value || '') };
             const summary = String(proposal.summary || proposal.fact || proposal.reason || proposal.prompt || proposal.question || '').trim().slice(0, 1600);
             if (!summary) return;
             const stable = `reader.${turnRecord.id}.${kind}.${index + 1}`.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 180);
@@ -4174,14 +4174,14 @@ function scenePulseCharacterEvidenceForCandidate(readerPacket, candidate = {}) {
 // canonical ID stays out of this bridge, and an id-less card stays ScenePulse
 // presentation only.
 function scenePulseCharacterCardIdentity(card = {}) {
-    const source = isPlainObject(card) ? card : {};
+    const source = experimentalIsPlainObject(card) ? card : {};
     return [source.candidateId, source.candidate_id, source.characterId,
         source.character_id, source.id, source.subjectRef, source.subject_ref]
         .map(value => String(value || '').trim()).find(Boolean) || '';
 }
 
 function scenePulseCharacterCardEvidence(card = {}, sourceTurnId = '', readerSnapshotId = '') {
-    const source = isPlainObject(card) ? card : {};
+    const source = experimentalIsPlainObject(card) ? card : {};
     const text = [source.role, source.immediateNeed, source.shortTermGoal,
         source.longTermGoal, source.notableDetails]
         .map(value => String(value || '').trim()).filter(Boolean).join(' · ').slice(0, 1800);
@@ -4200,7 +4200,7 @@ function scenePulseCharacterCardHistory(protocol, candidateId = '') {
         .map(snapshot => {
             const cards = Array.isArray(snapshot?.envelope?.scenePulse?.characters)
                 ? snapshot.envelope.scenePulse.characters : [];
-            const card = cards.find(item => isPlainObject(item)
+            const card = cards.find(item => experimentalIsPlainObject(item)
                 && scenePulseCharacterCardIdentity(item) === identity) || null;
             if (!card) return null;
             return {
@@ -4258,7 +4258,7 @@ function scenePulseControlledCharacterReference(world, sess) {
 }
 
 function scenePulseCandidateIsControlledCharacter(candidate = {}, controlled = {}) {
-    const source = isPlainObject(candidate) ? candidate : {};
+    const source = experimentalIsPlainObject(candidate) ? candidate : {};
     const type = String(source.candidateType || source.candidate_type || source.type || '').trim().toLowerCase();
     if (type && !['character', 'entity', 'npc', 'person'].includes(type)) return false;
     const controlledId = String(controlled?.id || '').trim();
@@ -4315,7 +4315,7 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
             // Preserve model-supplied candidate fields. The matching source
             // card fills only absent presentation details and stays clearly
             // marked as a same-packet ScenePulse observation.
-            const details = isPlainObject(candidate.details) ? candidate.details : {};
+            const details = experimentalIsPlainObject(candidate.details) ? candidate.details : {};
             candidate.details = {
                 ...details,
                 hair: details.hair || sourceCharacter.hair,
@@ -4326,7 +4326,7 @@ function recordSidecarReaderCandidates(world, sess, readerPacket, turnRecord, sn
                 notableDetails: details.notableDetails || sourceCharacter.notableDetails
             };
             candidate.clothingDescription = candidate.clothingDescription || sourceCharacter.outfit;
-            candidate.scenePulseCharacter = safeJsonClone(sourceCharacter);
+            candidate.scenePulseCharacter = experimentalSafeJsonClone(sourceCharacter);
         }
         if (sourceCard) {
             const history = scenePulseCharacterCardHistory(protocol, candidate.candidateId);
@@ -4401,7 +4401,7 @@ function validateSidecarReaderCoverage(packet, requiredSubjects = [], finishReas
 // resolve a prompt macro from the presentation fixture or Horde's registry:
 // those are useful visible fallbacks, not model evidence.
 function scenePulseSourceMacroValues(scenePulse = {}, profile = {}) {
-    const source = isPlainObject(scenePulse) ? scenePulse : {};
+    const source = experimentalIsPlainObject(scenePulse) ? scenePulse : {};
     const text = key => {
         const value = source[key];
         if (value === undefined || value === null) return '';
@@ -4409,7 +4409,7 @@ function scenePulseSourceMacroValues(scenePulse = {}, profile = {}) {
     };
     const characters = Array.isArray(source.characters) ? source.characters : [];
     const characterName = value => {
-        if (isPlainObject(value)) return String(value.name || value.displayName || value.id || '').trim();
+        if (experimentalIsPlainObject(value)) return String(value.name || value.displayName || value.id || '').trim();
         const raw = String(value || '').trim();
         const match = characters.find(item => String(item?.id || item?.characterId || item?.candidateId || '').trim() === raw);
         return String(match?.name || raw).trim();
@@ -4514,8 +4514,8 @@ function scenePulseCustomPanelSchemaFingerprint(schema = []) {
 }
 
 function scenePulseSourceProfilePromptContext(sourceProfile, priorScenePulse, readerProfile) {
-    if (!isPlainObject(sourceProfile)) return { instruction: '', overrides: {}, role: null, provenance: null };
-    const overrides = isPlainObject(sourceProfile.promptOverrides) ? sourceProfile.promptOverrides : {};
+    if (!experimentalIsPlainObject(sourceProfile)) return { instruction: '', overrides: {}, role: null, provenance: null };
+    const overrides = experimentalIsPlainObject(sourceProfile.promptOverrides) ? sourceProfile.promptOverrides : {};
     const systemPrompt = typeof sourceProfile.systemPrompt === 'string'
         ? expandScenePulseSourceMacros(sourceProfile.systemPrompt, priorScenePulse, readerProfile).slice(0, 24_000) : '';
     const schema = typeof sourceProfile.schema === 'string' ? sourceProfile.schema.slice(0, 24_000) : '';
@@ -4538,14 +4538,14 @@ function scenePulseSourceProfilePromptContext(sourceProfile, priorScenePulse, re
 // asked to refresh; they never make a sparse packet erase the foreground
 // source fixture or authorize arbitrary new field keys.
 function scenePulseSourceProfileFieldConfiguration(sourceProfile) {
-    const source = isPlainObject(sourceProfile) ? sourceProfile : {};
-    const booleanEntries = (value, allowed, limit = allowed.length) => Object.fromEntries(Object.entries(isPlainObject(value) ? value : {})
+    const source = experimentalIsPlainObject(sourceProfile) ? sourceProfile : {};
+    const booleanEntries = (value, allowed, limit = allowed.length) => Object.fromEntries(Object.entries(experimentalIsPlainObject(value) ? value : {})
         .filter(([key, enabled]) => allowed.includes(String(key)) && typeof enabled === 'boolean')
         .slice(0, limit)
         .map(([key, enabled]) => [String(key), enabled]));
     const panelKeys = ['dashboard', 'scene', 'quests', 'relationships', 'characters', 'storyIdeas'];
     const dashCardKeys = ['date', 'time', 'weather', 'temperature', 'location'];
-    const fieldToggles = Object.fromEntries(Object.entries(isPlainObject(source.fieldToggles) ? source.fieldToggles : {})
+    const fieldToggles = Object.fromEntries(Object.entries(experimentalIsPlainObject(source.fieldToggles) ? source.fieldToggles : {})
         .filter(([key, enabled]) => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(String(key)) && typeof enabled === 'boolean')
         .slice(0, 240)
         .map(([key, enabled]) => [String(key), enabled]));
@@ -4560,8 +4560,8 @@ function scenePulseSourceProfileFieldConfiguration(sourceProfile) {
 // The preset is advisory source configuration; the active Profile is the
 // explicit authoring surface and therefore wins for a shared slot key.
 function scenePulseResolvedPromptSlotEntries(sourcePreset, sourceProfileContext, priorScenePulse, readerProfile) {
-    const presetOverrides = isPlainObject(sourcePreset?.promptOverrides) ? sourcePreset.promptOverrides : {};
-    const profileOverrides = isPlainObject(sourceProfileContext?.overrides) ? sourceProfileContext.overrides : {};
+    const presetOverrides = experimentalIsPlainObject(sourcePreset?.promptOverrides) ? sourcePreset.promptOverrides : {};
+    const profileOverrides = experimentalIsPlainObject(sourceProfileContext?.overrides) ? sourceProfileContext.overrides : {};
     return Object.entries({ ...presetOverrides, ...profileOverrides })
         .filter(([slot, text]) => typeof slot === 'string' && typeof text === 'string' && text.trim())
         .map(([slot, text]) => [slot, expandScenePulseSourceMacros(text, priorScenePulse, readerProfile)]);
@@ -4596,7 +4596,7 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     // Merging a meter into an earlier text/list field would create a plausible
     // but invalid tracker value, so prefer the larger packet at this explicit
     // compatibility boundary and go back to compact deltas on the next turn.
-    const hasPriorReaderProjection = isPlainObject(options.priorReaderEnvelope) && Object.keys(options.priorReaderEnvelope).length > 0;
+    const hasPriorReaderProjection = experimentalIsPlainObject(options.priorReaderEnvelope) && Object.keys(options.priorReaderEnvelope).length > 0;
     const customPanelSchemaChanged = hasPriorReaderProjection && priorCustomPanelSchemaFingerprint !== customPanelSchemaFingerprint;
     const forceFull = options.forceFull === true || customPanelSchemaChanged;
     const readerHierarchy = readerProtocol && window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy?.(readerProtocol, sess, { createWhenMissing: false });
@@ -4668,7 +4668,7 @@ The user explicitly requested a fresh check of ${scenePulseSectionFocus} for thi
 ${JSON.stringify(requiredSubjects)}
 Return one concise characterIntelligence record for every listed subject BEFORE candidates, relationship details, or threads. A merely mentioned person may receive a terse coverage record, but a speaker, caller, active, nearby, audible, or remote interlocutor must receive the appropriate character-scoped reading. Put characterIntelligence near the start of semantic_interpretation. Do not enumerate unrelated absent registry characters. Keep every claim compact (normally one sentence, under 240 characters): a response that runs out of space before a relevant person is invalid.`;
     const sourcePreset = profile.scenePulsePreset || null;
-    const priorScenePulseForMacros = isPlainObject(options.priorReaderEnvelope?.scenePulse) ? options.priorReaderEnvelope.scenePulse : {};
+    const priorScenePulseForMacros = experimentalIsPlainObject(options.priorReaderEnvelope?.scenePulse) ? options.priorReaderEnvelope.scenePulse : {};
     const sourceProfileContext = scenePulseSourceProfilePromptContext(activeSourceProfile, priorScenePulseForMacros, profile);
     // A selected source Profile is the user's ScenePulse authoring choice.
     // Its slot edits override an advisory preset, but neither can displace
@@ -4690,7 +4690,7 @@ ${sourcePreset?.id
 These are ScenePulse source prompt-slot overrides. They refine the Reader's presentation projection only; they do not change Narrator selection, provider routing, World state, or authority. ScenePulse {{sp_*}} macros in these slots resolve only from the prior accepted ScenePulse projection; no tutorial fallback or Horde registry value is eligible. Apply the following overrides where compatible with the evidence, read-only, and compact-delta contracts below:\n${sourcePromptSlotEntries.map(([slot, text]) => `[${slot}]\n${String(text)}`).join('\n\n')}` : '';
     const sourceProfileFieldConfiguration = scenePulseSourceProfileFieldConfiguration(activeSourceProfile);
     const sourceProfileFieldConfigurationPresent = Object.values(sourceProfileFieldConfiguration)
-        .some(value => isPlainObject(value) && Object.keys(value).length);
+        .some(value => experimentalIsPlainObject(value) && Object.keys(value).length);
     const sourceProfileFieldInstruction = sourceProfileFieldConfigurationPresent ? `
 
 [SCENEPULSE SOURCE FIELD CONFIGURATION]
@@ -4734,10 +4734,10 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
             providerReportedUsage: readerUsage.reported
         };
         packet.metadata = {
-            ...(isPlainObject(packet.metadata) ? packet.metadata : {}),
+            ...(experimentalIsPlainObject(packet.metadata) ? packet.metadata : {}),
             scenePulseCustomPanelSchemaFingerprint: customPanelSchemaFingerprint,
             scenePulseCustomPanelCount: customPanelSchema.length,
-            scenePulseSourceProfile: safeJsonClone(sourceProfileContext.provenance)
+            scenePulseSourceProfile: experimentalSafeJsonClone(sourceProfileContext.provenance)
         };
         return packet;
     };
@@ -4757,7 +4757,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
     const finalResponseRound = maxRounds + 1;
     for (let round = 0; round <= finalResponseRound; round++) {
         const forceFinalReaderResponse = round === finalResponseRound;
-        const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: safeJsonClone(messages) };
+        const body = { model, stream: false, max_tokens: maxTokens, temperature: 0, messages: experimentalSafeJsonClone(messages) };
         if (!forceFinalReaderResponse) {
             body.tools = tools;
             body.tool_choice = 'auto';
@@ -4766,7 +4766,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         const useNativeJson = sidecarSupportsStructuredJson(provider, model, readerTracker, profile);
         if (useNativeJson) body.response_format = { type: 'json_object' };
         applySidecarReasoning(body, provider, readerTracker, world);
-        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt: readerPrompt, request: safeJsonClone(body) });
+        logSidecarConsoleTrace(`Reader request · round ${round + 1}`, { model, provider, maxTokens, prompt: readerPrompt, request: experimentalSafeJsonClone(body) });
         let response = await fetchSidecarCompletion(body, {
             provider, tracker: readerTracker, world, owner: { ...sidecarWorld, model, provider }, scope: 'sidecar_reader', signal: readerSignal, retryPolicy: profile.retryPolicy
         });
@@ -4788,7 +4788,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         recordReaderUsage(finalPayload);
         const choice = finalPayload?.choices?.[0] || {};
         const message = choice.message || {};
-        logSidecarConsoleTrace(`Reader response · round ${round + 1}`, { model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message) });
+        logSidecarConsoleTrace(`Reader response · round ${round + 1}`, { model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: experimentalSafeJsonClone(message) });
         recordSidecarTrace(world, sess, { kind: 'semantic_reader', round: round + 1, prompt: readerPrompt, reply: message, model, provider: finalPayload?.provider || provider, finishReason: choice.finish_reason || choice.native_finish_reason || '' });
         const availableTools = sidecarReadOnlyTools();
         // A provider cannot make another lookup on the final tool-free
@@ -4800,7 +4800,7 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
             const packet = parseSidecarReaderOutput(message.content, references, { controlledEntityId });
             packet.model = model; packet.provider = finalPayload?.provider || provider; packet.finishReason = choice.finish_reason || choice.native_finish_reason || ''; packet.rounds = round + 1;
             const coverage = validateSidecarReaderCoverage(packet, requiredSubjects, packet.finishReason);
-            packet.requiredCharacterSubjects = safeJsonClone(requiredSubjects);
+            packet.requiredCharacterSubjects = experimentalSafeJsonClone(requiredSubjects);
             packet.characterCoverage = coverage;
             if (!coverage.valid) {
                 packet.valid = false;
@@ -4830,13 +4830,13 @@ This is the active source Profile's dynamic panel, dashboard-card, and sub-field
         // never executed: the Reader surface is strictly read-only and an
         // unexpected write-capable name becomes an explicit unavailable-tool
         // result rather than a hidden mutation or a malformed tool transcript.
-        messages.push({ role: 'assistant', content: message.content || '', tool_calls: safeJsonClone(rawCalls) });
+        messages.push({ role: 'assistant', content: message.content || '', tool_calls: experimentalSafeJsonClone(rawCalls) });
         rawCalls.forEach(call => {
             const known = availableTools.some(tool => tool.function.name === call?.function?.name);
             const result = known
                 ? runSidecarReadOnlyTool(world, sess, call.function?.name, call.function?.arguments || '{}')
                 : { found: false, error: `Tool ${String(call?.function?.name || 'unknown')} is unavailable to the read-only Sidecar Reader.` };
-            lookupProvenance.push({ tool: call.function?.name || '', arguments: safeParseJSONRepair(String(call.function?.arguments || '{}')) || {}, found: result?.found === true, at: new Date().toISOString(), resultSummary: JSON.stringify(result).slice(0, 1400) });
+            lookupProvenance.push({ tool: call.function?.name || '', arguments: experimentalSafeParseJSONRepair(String(call.function?.arguments || '{}')) || {}, found: result?.found === true, at: new Date().toISOString(), resultSummary: JSON.stringify(result).slice(0, 1400) });
             messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         });
         if (round === maxRounds) {
@@ -4865,14 +4865,14 @@ function sidecarReaderValue(source, ...names) {
 
 function sidecarReaderClaim(raw, subjectRef = '') {
     if (typeof raw === 'string') raw = { text: raw };
-    if (!isPlainObject(raw)) return null;
+    if (!experimentalIsPlainObject(raw)) return null;
     const text = String(raw.text || raw.value || raw.summary || raw.impression || raw.thought || raw.description || '').trim().slice(0, 1800);
     if (!text) return null;
     const epistemicKind = ['authored_disclosure', 'observable_behaviour', 'perception_evidence', 'reader_inference', 'established_memory', 'unknown']
         .includes(String(raw.epistemicKind || raw.epistemic_kind || '').toLowerCase())
         ? String(raw.epistemicKind || raw.epistemic_kind).toLowerCase() : 'reader_inference';
     const evidence = Array.isArray(raw.evidence || raw.evidenceRefs || raw.evidence_refs)
-        ? (raw.evidence || raw.evidenceRefs || raw.evidence_refs).map(item => isPlainObject(item) ? safeJsonClone(item) : { excerpt: String(item || '').slice(0, 900) }).slice(0, 12)
+        ? (raw.evidence || raw.evidenceRefs || raw.evidence_refs).map(item => experimentalIsPlainObject(item) ? experimentalSafeJsonClone(item) : { excerpt: String(item || '').slice(0, 900) }).slice(0, 12)
         : (raw.evidence ? [{ excerpt: String(raw.evidence).slice(0, 900) }] : []);
     return {
         text, subjectRef: String(raw.subjectRef || raw.subject_ref || subjectRef || '').slice(0, 180),
@@ -4898,7 +4898,7 @@ function normalizeSidecarPresenceMode(value = '') {
 }
 
 function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const subjectRef = String(source.subjectRef || source.subject_ref || source.characterId || source.character_id || source.id || source.candidateId || source.candidate_id || '').slice(0, 180);
     const claimList = value => (Array.isArray(value) ? value : (value == null ? [] : [value]))
         .map(item => sidecarReaderClaim(item, subjectRef)).filter(Boolean).slice(0, 12);
@@ -4909,9 +4909,9 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
             if (!claim) return null;
             return { ...claim, targetRef: String(item.targetRef || item.target_ref || item.target || claim.targetRef || '').slice(0, 180) };
         }).filter(Boolean).slice(0, 20);
-    const coverage = isPlainObject(source.coverage) ? safeJsonClone(source.coverage) : {};
-    const rawPresence = isPlainObject(source.presence)
-        ? safeJsonClone(source.presence)
+    const coverage = experimentalIsPlainObject(source.coverage) ? experimentalSafeJsonClone(source.coverage) : {};
+    const rawPresence = experimentalIsPlainObject(source.presence)
+        ? experimentalSafeJsonClone(source.presence)
         : { mode: String(source.presence || source.presenceMode || source.presence_mode || '').slice(0, 40), location: String(source.location || source.position || '').slice(0, 300), channel: String(source.channel || '').slice(0, 80) };
     const presenceMode = normalizeSidecarPresenceMode(rawPresence.mode);
     return {
@@ -4919,9 +4919,9 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
         candidateId: String(source.candidateId || source.candidate_id || '').slice(0, 180),
         name: String(source.name || source.label || '').slice(0, 240),
         role: String(source.role || '').slice(0, 240),
-        relevance: isPlainObject(source.relevance) ? safeJsonClone(source.relevance) : { category: String(source.relevance || '').slice(0, 80), reason: String(source.relevanceReason || source.relevance_reason || '').slice(0, 800) },
+        relevance: experimentalIsPlainObject(source.relevance) ? experimentalSafeJsonClone(source.relevance) : { category: String(source.relevance || '').slice(0, 80), reason: String(source.relevanceReason || source.relevance_reason || '').slice(0, 800) },
         presence: { ...rawPresence, mode: presenceMode },
-        activity: scalar(source.activity), visibleState: isPlainObject(source.visibleState || source.visible_state) ? safeJsonClone(source.visibleState || source.visible_state) : {},
+        activity: scalar(source.activity), visibleState: experimentalIsPlainObject(source.visibleState || source.visible_state) ? experimentalSafeJsonClone(source.visibleState || source.visible_state) : {},
         emotionalPosture: claimList(source.emotionalPosture || source.emotional_posture),
         attentionFocus: claimList(source.attentionFocus || source.attention_focus),
         apparentUnderstanding: claimList(source.apparentUnderstanding || source.apparent_understanding || source.beliefs),
@@ -4930,7 +4930,7 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
         suspicionOrUncertainty: claimList(source.suspicionOrUncertainty || source.suspicion_or_uncertainty),
         interpersonalPostures: relationships,
         immediateObjectiveOrConcern: claimList(source.immediateObjectiveOrConcern || source.immediate_objective_or_concern || source.immediateNeed || source.immediate_need),
-        goals: isPlainObject(source.goals) ? safeJsonClone(source.goals) : {
+        goals: experimentalIsPlainObject(source.goals) ? experimentalSafeJsonClone(source.goals) : {
             immediateNeed: String(source.immediateNeed || source.immediate_need || '').slice(0, 800),
             shortTerm: String(source.shortTermGoal || source.short_term_goal || '').slice(0, 800),
             longTerm: String(source.longTermGoal || source.long_term_goal || '').slice(0, 800)
@@ -4956,17 +4956,17 @@ function normalizeSidecarCharacterIntelligence(raw = {}, defaults = {}) {
 // controlled character is also excluded even if a malformed packet includes
 // an apparent inner thought for them.
 function scenePulseCharacterCognitionBridge(scenePulse = {}, suppliedIntelligence = [], defaults = {}) {
-    const source = isPlainObject(scenePulse) ? scenePulse : {};
+    const source = experimentalIsPlainObject(scenePulse) ? scenePulse : {};
     const cards = Array.isArray(source.characters) ? source.characters.filter(isPlainObject).slice(0, 80) : [];
-    const entries = Array.isArray(suppliedIntelligence) ? suppliedIntelligence.map(item => safeJsonClone(item)) : [];
+    const entries = Array.isArray(suppliedIntelligence) ? suppliedIntelligence.map(item => experimentalSafeJsonClone(item)) : [];
     const controlledId = String(defaults?.controlledEntityId || '').trim();
     const normalizedPresence = value => {
-        const mode = String(isPlainObject(value) ? value.mode : value || '').trim().toLowerCase();
+        const mode = String(experimentalIsPlainObject(value) ? value.mode : value || '').trim().toLowerCase();
         return ['active', 'nearby', 'audible', 'remote'].includes(mode) ? mode : '';
     };
     const text = value => {
         if (Array.isArray(value)) return value.map(text).filter(Boolean).join(' ').slice(0, 1800);
-        if (isPlainObject(value)) return String(value.text || value.thought || value.value || value.summary || '').trim().slice(0, 1800);
+        if (experimentalIsPlainObject(value)) return String(value.text || value.thought || value.value || value.summary || '').trim().slice(0, 1800);
         return String(value || '').trim().slice(0, 1800);
     };
     const roster = Array.isArray(source.charactersPresent) ? source.charactersPresent : [];
@@ -4975,7 +4975,7 @@ function scenePulseCharacterCognitionBridge(scenePulse = {}, suppliedIntelligenc
         if (direct) return direct;
         const wantedName = String(name || '').trim().toLowerCase();
         const matched = roster.find(member => {
-            const value = isPlainObject(member) ? member : { id: member, name: member };
+            const value = experimentalIsPlainObject(member) ? member : { id: member, name: member };
             const id = String(value.characterId || value.character_id || value.candidateId || value.candidate_id || value.id || '').trim();
             const label = String(value.name || value.label || (typeof member === 'string' ? member : '')).trim().toLowerCase();
             return id === stableId || (!!wantedName && label === wantedName);
@@ -5012,7 +5012,7 @@ function scenePulseCharacterCognitionBridge(scenePulse = {}, suppliedIntelligenc
         const visibleState = Object.fromEntries([
             ['hair', card.hair], ['face', card.face], ['outfit', card.outfit], ['posture', card.posture],
             ['proximity', card.proximity], ['notableDetails', card.notableDetails], ['inventory', card.inventory]
-        ].filter(([, value]) => Array.isArray(value) ? value.length : text(value)).map(([key, value]) => [key, safeJsonClone(value)]));
+        ].filter(([, value]) => Array.isArray(value) ? value.length : text(value)).map(([key, value]) => [key, experimentalSafeJsonClone(value)]));
         const immediateNeed = text(card.immediateNeed || card.immediate_need);
         const sourceGoals = {
             immediateNeed,
@@ -5024,15 +5024,15 @@ function scenePulseCharacterCognitionBridge(scenePulse = {}, suppliedIntelligenc
             const entry = entries[index];
             let changed = false;
             if (!entry.sceneLocalImpression) { entry.sceneLocalImpression = sourceClaim; changed = true; }
-            if (!normalizedPresence(entry.presence) && presenceMode) { entry.presence = { ...(isPlainObject(entry.presence) ? entry.presence : {}), mode: presenceMode }; changed = true; }
+            if (!normalizedPresence(entry.presence) && presenceMode) { entry.presence = { ...(experimentalIsPlainObject(entry.presence) ? entry.presence : {}), mode: presenceMode }; changed = true; }
             if (!Array.isArray(entry.immediateObjectiveOrConcern) || !entry.immediateObjectiveOrConcern.length) {
                 if (immediateNeed) { entry.immediateObjectiveOrConcern = [sidecarReaderClaim({ text: immediateNeed, source: 'scenepulse_character_card' }, stableId)]; changed = true; }
             }
-            entry.goals = isPlainObject(entry.goals) ? entry.goals : {};
+            entry.goals = experimentalIsPlainObject(entry.goals) ? entry.goals : {};
             ['immediateNeed', 'shortTerm', 'longTerm'].forEach(key => {
                 if (!String(entry.goals[key] || '').trim() && sourceGoals[key]) { entry.goals[key] = sourceGoals[key]; changed = true; }
             });
-            entry.visibleState = isPlainObject(entry.visibleState) ? entry.visibleState : {};
+            entry.visibleState = experimentalIsPlainObject(entry.visibleState) ? entry.visibleState : {};
             Object.entries(visibleState).forEach(([key, value]) => {
                 if (entry.visibleState[key] === undefined || entry.visibleState[key] === null || entry.visibleState[key] === '') {
                     entry.visibleState[key] = value; changed = true;
@@ -5063,15 +5063,15 @@ function scenePulseCharacterCognitionBridge(scenePulse = {}, suppliedIntelligenc
 // the native source overlay: a graph may only name people the Reader itself
 // supplied in its explicitly declared source roster.
 function normalizeSidecarNpcRelationshipGraph(raw) {
-    if (!isPlainObject(raw)) return null;
+    if (!experimentalIsPlainObject(raw)) return null;
     const name = value => String(value || '').trim().replace(/\s+/g, ' ').slice(0, 180);
     const edgeTypes = new Set(['family', 'friend', 'ally', 'rival', 'antagonist', 'mentor', 'authority', 'lover', 'lust', 'acquaintance', 'unknown']);
     const roster = [...new Set((Array.isArray(raw.roster) ? raw.roster : (Array.isArray(raw.characters) ? raw.characters : []))
-        .map(item => name(isPlainObject(item) ? (item.name || item.label) : item))
+        .map(item => name(experimentalIsPlainObject(item) ? (item.name || item.label) : item))
         .filter(Boolean))].slice(0, 48);
     const rosterByLower = new Map(roster.map(item => [item.toLowerCase(), item]));
     const edges = (Array.isArray(raw.edges) ? raw.edges : []).map(item => {
-        if (!isPlainObject(item)) return null;
+        if (!experimentalIsPlainObject(item)) return null;
         const from = rosterByLower.get(name(item.from || item.source || item.subject).toLowerCase()) || '';
         const to = rosterByLower.get(name(item.to || item.target).toLowerCase()) || '';
         const type = String(item.type || item.kind || 'unknown').trim().toLowerCase();
@@ -5084,7 +5084,7 @@ function normalizeSidecarNpcRelationshipGraph(raw) {
         };
     }).filter(Boolean).slice(0, 30);
     const organizations = (Array.isArray(raw.organizations) ? raw.organizations : []).map(item => {
-        if (!isPlainObject(item)) return null;
+        if (!experimentalIsPlainObject(item)) return null;
         const members = [...new Set((Array.isArray(item.members) ? item.members : [])
             .map(member => rosterByLower.get(name(member).toLowerCase()) || '')
             .filter(Boolean))].slice(0, 48);
@@ -5105,10 +5105,10 @@ function normalizeSidecarNpcRelationshipGraph(raw) {
 // inferring people. This lives at the Reader boundary so the settled
 // projection, source renderer, history and comparison use the same shape.
 function normalizeSidecarScenePulseShape(raw = {}) {
-    const scenePulse = isPlainObject(raw) ? safeJsonClone(raw) : {};
+    const scenePulse = experimentalIsPlainObject(raw) ? experimentalSafeJsonClone(raw) : {};
     if (!Object.prototype.hasOwnProperty.call(scenePulse, 'witnesses')) return scenePulse;
     const rawWitnesses = scenePulse.witnesses;
-    const witnessText = value => isPlainObject(value)
+    const witnessText = value => experimentalIsPlainObject(value)
         ? String(value.name || value.label || value.text || value.value || '').trim()
         : String(value || '').trim();
     if (Array.isArray(rawWitnesses)) {
@@ -5121,8 +5121,8 @@ function normalizeSidecarScenePulseShape(raw = {}) {
 }
 
 function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
-    const source = isPlainObject(raw) ? raw : {};
-    const semantic = isPlainObject(source.semanticInterpretation || source.semantic_interpretation) ? (source.semanticInterpretation || source.semantic_interpretation) : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
+    const semantic = experimentalIsPlainObject(source.semanticInterpretation || source.semantic_interpretation) ? (source.semanticInterpretation || source.semantic_interpretation) : {};
     const supplied = Array.isArray(source.suppliedFields) ? source.suppliedFields : Object.keys(source);
     // Keep the nested source shape as provenance.  A delta can legitimately
     // contain a semantic_interpretation object whose individual dimensions
@@ -5136,14 +5136,14 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         const direct = sidecarReaderValue(source, ...names);
         return direct === undefined ? sidecarReaderValue(semantic, ...names) : direct;
     };
-    const cleanList = (input, limit = 40) => Array.isArray(input) ? input.slice(0, limit).map(item => isPlainObject(item) ? safeJsonClone(item) : String(item || '').slice(0, 800)) : [];
+    const cleanList = (input, limit = 40) => Array.isArray(input) ? input.slice(0, limit).map(item => experimentalIsPlainObject(item) ? experimentalSafeJsonClone(item) : String(item || '').slice(0, 800)) : [];
     const scenePulse = normalizeSidecarScenePulseShape(value('scenePulse', 'scene_pulse', 'scenepulse'));
     const characterInput = value('characterIntelligence', 'character_intelligence', 'characters') || [];
     const suppliedCharacterIntelligence = (Array.isArray(characterInput) ? characterInput : Object.values(characterInput || {}))
         .map(item => normalizeSidecarCharacterIntelligence(item, defaults)).filter(item => item.subjectRef || item.name || item.candidateId).slice(0, 48);
     const scenePulseCognition = scenePulseCharacterCognitionBridge(scenePulse, suppliedCharacterIntelligence, defaults);
     const characterIntelligence = scenePulseCognition.characterIntelligence;
-    const coverage = isPlainObject(value('coverage')) ? safeJsonClone(value('coverage')) : {};
+    const coverage = experimentalIsPlainObject(value('coverage')) ? experimentalSafeJsonClone(value('coverage')) : {};
     return {
         schemaVersion: 2,
         profileRevision: String(source.profileRevision || defaults.profileRevision || 'reader-v2').slice(0, 100),
@@ -5166,12 +5166,12 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         semanticSuppliedFields: [...new Set([...semanticSupplied.map(String), ...(scenePulseCognition.bridged ? ['characterIntelligence'] : [])])].slice(0, 140),
         requiredCharacterSubjects: cleanList(value('requiredCharacterSubjects', 'required_character_subjects'), 24),
         refreshIndex: Math.max(0, Number(source.refreshIndex || defaults.refreshIndex) || 0),
-        temporal: isPlainObject(value('temporal', 'timeEvidence', 'time_evidence')) ? safeJsonClone(value('temporal', 'timeEvidence', 'time_evidence')) : {},
-        canonicalReferences: isPlainObject(value('canonicalReferences', 'canonical_references')) ? safeJsonClone(value('canonicalReferences', 'canonical_references')) : {},
-        location: isPlainObject(value('location')) ? safeJsonClone(value('location')) : {},
-        presence: isPlainObject(value('presence')) ? safeJsonClone(value('presence')) : {},
-        environment: isPlainObject(value('environment')) ? safeJsonClone(value('environment')) : {},
-        scene: isPlainObject(value('scene')) ? safeJsonClone(value('scene')) : {},
+        temporal: experimentalIsPlainObject(value('temporal', 'timeEvidence', 'time_evidence')) ? experimentalSafeJsonClone(value('temporal', 'timeEvidence', 'time_evidence')) : {},
+        canonicalReferences: experimentalIsPlainObject(value('canonicalReferences', 'canonical_references')) ? experimentalSafeJsonClone(value('canonicalReferences', 'canonical_references')) : {},
+        location: experimentalIsPlainObject(value('location')) ? experimentalSafeJsonClone(value('location')) : {},
+        presence: experimentalIsPlainObject(value('presence')) ? experimentalSafeJsonClone(value('presence')) : {},
+        environment: experimentalIsPlainObject(value('environment')) ? experimentalSafeJsonClone(value('environment')) : {},
+        scene: experimentalIsPlainObject(value('scene')) ? experimentalSafeJsonClone(value('scene')) : {},
         // ScenePulse is a rich presentation contract.  Keep its source
         // fields beside (not in place of) Horde's settled scene envelope so
         // a later delta never has to flatten thoughts, quest detail, meters,
@@ -5201,15 +5201,15 @@ function normalizeSidecarReaderEnvelope(raw = {}, defaults = {}) {
         summary: String(value('summary', 'sceneReading', 'scene_reading') || '').slice(0, 6000),
         reconciliationFocus: cleanList(value('reconciliationFocus', 'reconciliation_focus'), 40),
         coverage,
-        metadata: isPlainObject(value('metadata')) ? safeJsonClone(value('metadata')) : {}
+        metadata: experimentalIsPlainObject(value('metadata')) ? experimentalSafeJsonClone(value('metadata')) : {}
     };
 }
 
 function parseSidecarReaderOutput(content, fallback = {}, defaults = {}) {
-    const normalizedContent = Array.isArray(content) ? content.map(part => typeof part === 'string' ? part : String(part?.text || part?.content || '')).filter(Boolean).join('\n') : (isPlainObject(content) ? (content.text || content.content || '') : content);
+    const normalizedContent = Array.isArray(content) ? content.map(part => typeof part === 'string' ? part : String(part?.text || part?.content || '')).filter(Boolean).join('\n') : (experimentalIsPlainObject(content) ? (content.text || content.content || '') : content);
     const raw = String(normalizedContent || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-    const parsed = safeParseJSONRepair(raw);
-    if (!isPlainObject(parsed)) return { valid: false, error: 'reader_invalid_json', summary: 'The Sidecar Reader returned no usable structured reading.', canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000) };
+    const parsed = experimentalSafeParseJSONRepair(raw);
+    if (!experimentalIsPlainObject(parsed)) return { valid: false, error: 'reader_invalid_json', summary: 'The Sidecar Reader returned no usable structured reading.', canonicalReferences: fallback, unresolved: [], proposedQuestions: [], raw: raw.slice(0, 12000) };
     const envelope = normalizeSidecarReaderEnvelope({ ...parsed, canonicalReferences: parsed.canonicalReferences || parsed.canonical_references || fallback }, defaults);
     const hasScene = Object.keys(envelope.scene || {}).length > 0 || Object.keys(envelope.location || {}).length > 0 || Object.keys(envelope.presence || {}).length > 0;
     // A configured ScenePulse custom-panel value is independently useful
@@ -5232,12 +5232,12 @@ function parseSidecarReaderOutput(content, fallback = {}, defaults = {}) {
 }
 
 function sidecarMergeReaderObject(previous = {}, incoming = {}, clear = []) {
-    const result = safeJsonClone(previous || {});
+    const result = experimentalSafeJsonClone(previous || {});
     Object.entries(incoming || {}).forEach(([key, value]) => {
         if (value === undefined) return;
         if (value === null || clear.includes(key)) delete result[key];
-        else if (isPlainObject(value) && isPlainObject(result[key])) result[key] = sidecarMergeReaderObject(result[key], value, []);
-        else result[key] = safeJsonClone(value);
+        else if (experimentalIsPlainObject(value) && experimentalIsPlainObject(result[key])) result[key] = sidecarMergeReaderObject(result[key], value, []);
+        else result[key] = experimentalSafeJsonClone(value);
     });
     clear.forEach(key => delete result[key]);
     return result;
@@ -5245,9 +5245,9 @@ function sidecarMergeReaderObject(previous = {}, incoming = {}, clear = []) {
 
 function sidecarMergeReaderRecords(previous = [], incoming = [], fields = {}) {
     const keyOf = fields.keyOf || (value => String(value?.id || value?.subjectRef || value?.candidateId || value?.label || ''));
-    const result = (previous || []).map(value => safeJsonClone(value));
+    const result = (previous || []).map(value => experimentalSafeJsonClone(value));
     (incoming || []).forEach(raw => {
-        const record = safeJsonClone(raw);
+        const record = experimentalSafeJsonClone(raw);
         const clearFields = Array.isArray(record?.clearFields) ? record.clearFields : [];
         if (record && typeof record === 'object') delete record.clearFields;
         const id = keyOf(record);
@@ -5268,7 +5268,7 @@ function sidecarMergeReaderRecords(previous = [], incoming = [], fields = {}) {
 }
 
 function sidecarScenePulseRecordKey(record, collection) {
-    const source = isPlainObject(record) ? record : {};
+    const source = experimentalIsPlainObject(record) ? record : {};
     const keys = collection === 'relationships'
         ? ['relationshipId', 'relationship_id', 'characterId', 'character_id', 'id', 'name']
         : collection === 'characters'
@@ -5280,7 +5280,7 @@ function sidecarScenePulseRecordKey(record, collection) {
 }
 
 function sidecarScenePulseStableIdentity(record, collection) {
-    const source = isPlainObject(record) ? record : {};
+    const source = experimentalIsPlainObject(record) ? record : {};
     const keys = collection === 'relationships'
         ? ['relationshipId', 'relationship_id', 'characterId', 'character_id', 'id']
         : collection === 'characters'
@@ -5292,7 +5292,7 @@ function sidecarScenePulseStableIdentity(record, collection) {
 }
 
 function sidecarScenePulseIdentityAliases(record) {
-    const source = isPlainObject(record) ? record : {};
+    const source = experimentalIsPlainObject(record) ? record : {};
     const raw = [source.name, ...(Array.isArray(source.aliases) ? source.aliases : []), ...(Array.isArray(source.previousNames) ? source.previousNames : [])];
     return [...new Set(raw.map(value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase()).filter(Boolean))];
 }
@@ -5320,8 +5320,8 @@ function sidecarScenePulseRevealMatchIndex(records = [], record = {}, collection
 // form at the reducer boundary, preserving the map key as the source record
 // identity.  The rendered source product still receives its native arrays.
 function sidecarScenePulseRecords(value, collection) {
-    if (Array.isArray(value)) return safeJsonClone(value);
-    if (!isPlainObject(value)) return [];
+    if (Array.isArray(value)) return experimentalSafeJsonClone(value);
+    if (!experimentalIsPlainObject(value)) return [];
     const identityField = collection === 'relationships'
         ? 'relationshipId'
         : collection === 'characters'
@@ -5330,8 +5330,8 @@ function sidecarScenePulseRecords(value, collection) {
                 ? 'branchId'
                 : 'questId';
     return Object.entries(value).map(([stableId, raw]) => {
-        if (!isPlainObject(raw)) return raw;
-        const record = safeJsonClone(raw);
+        if (!experimentalIsPlainObject(raw)) return raw;
+        const record = experimentalSafeJsonClone(raw);
         const explicitIdentity = record[identityField]
             || record[identityField.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)]
             || record.id;
@@ -5346,11 +5346,11 @@ function sidecarScenePulseRecords(value, collection) {
 // still need deterministic record-level merging. A relationship delta such
 // as {relationshipId, trust} must preserve milestone, stress, labels, etc.
 function sidecarMergeScenePulse(previous = {}, incoming = {}) {
-    const prior = isPlainObject(previous) ? previous : {};
-    const patch = isPlainObject(incoming) ? incoming : {};
+    const prior = experimentalIsPlainObject(previous) ? previous : {};
+    const patch = experimentalIsPlainObject(incoming) ? incoming : {};
     const clearFields = Array.isArray(patch.clearFields) ? patch.clearFields.map(String) : [];
     const replaceCollections = new Set(Array.isArray(patch.replaceCollections) ? patch.replaceCollections.map(String) : []);
-    const values = safeJsonClone(patch);
+    const values = experimentalSafeJsonClone(patch);
     delete values.clearFields;
     delete values.replaceCollections;
     const result = sidecarMergeReaderObject(prior, values, clearFields);
@@ -5364,10 +5364,10 @@ function sidecarMergeScenePulse(previous = {}, incoming = {}) {
         // always receives the current meter values it renders, while its
         // native history continues to derive the previous-turn marker.
         const records = collection === 'relationships' ? sourceRecords.map(raw => {
-            if (!isPlainObject(raw)) return raw;
-            const record = safeJsonClone(raw);
-            const deltas = isPlainObject(record.meterDeltas) ? record.meterDeltas
-                : (isPlainObject(record.meter_deltas) ? record.meter_deltas : null);
+            if (!experimentalIsPlainObject(raw)) return raw;
+            const record = experimentalSafeJsonClone(raw);
+            const deltas = experimentalIsPlainObject(record.meterDeltas) ? record.meterDeltas
+                : (experimentalIsPlainObject(record.meter_deltas) ? record.meter_deltas : null);
             if (!deltas) return record;
             delete record.meterDeltas;
             delete record.meter_deltas;
@@ -5385,7 +5385,7 @@ function sidecarMergeScenePulse(previous = {}, incoming = {}) {
             return record;
         }) : sourceRecords;
         result[collection] = replaceCollections.has(collection)
-            ? safeJsonClone(records).slice(0, 100)
+            ? experimentalSafeJsonClone(records).slice(0, 100)
             : sidecarMergeReaderRecords(base, records, {
                 keyOf: record => sidecarScenePulseRecordKey(record, collection),
                 findExistingIndex: (existing, record) => sidecarScenePulseRevealMatchIndex(existing, record, collection),
@@ -5393,7 +5393,7 @@ function sidecarMergeScenePulse(previous = {}, incoming = {}) {
             });
     });
     // Presence is a per-turn coverage assertion, not a patchable history.
-    if (Object.prototype.hasOwnProperty.call(patch, 'charactersPresent')) result.charactersPresent = safeJsonClone(patch.charactersPresent);
+    if (Object.prototype.hasOwnProperty.call(patch, 'charactersPresent')) result.charactersPresent = experimentalSafeJsonClone(patch.charactersPresent);
     return result;
 }
 
@@ -5401,10 +5401,10 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
     const prior = normalizeSidecarReaderEnvelope(previous || {}, options);
     const incoming = normalizeSidecarReaderEnvelope(delta || {}, options);
     if (!previous || incoming.snapshotMode === 'full') return incoming;
-    const raw = isPlainObject(delta) ? delta : {};
+    const raw = experimentalIsPlainObject(delta) ? delta : {};
     const provided = new Set(incoming.suppliedFields || Object.keys(raw));
     const semanticProvided = new Set(incoming.semanticSuppliedFields || []);
-    const merged = safeJsonClone(prior);
+    const merged = experimentalSafeJsonClone(prior);
     const fieldAliases = field => [field, field.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`)];
     const providedField = field => fieldAliases(field).some(name => provided.has(name) || semanticProvided.has(name)
         || Object.prototype.hasOwnProperty.call(raw.semanticInterpretation || raw.semantic_interpretation || {}, name));
@@ -5414,12 +5414,12 @@ function mergeSidecarReaderEnvelope(previous, delta, options = {}) {
     // NPC graph updates are intentionally whole-cache replacements.  A
     // partial edge patch would be less compact in practice and can leave a
     // stale tie visible after a name/roster change.
-    if (providedField('npcRelationshipGraph')) merged.npcRelationshipGraph = safeJsonClone(incoming.npcRelationshipGraph);
+    if (providedField('npcRelationshipGraph')) merged.npcRelationshipGraph = experimentalSafeJsonClone(incoming.npcRelationshipGraph);
     const arrayFields = ['characterIntelligence', 'requiredCharacterSubjects', 'relationshipPostures', 'relationshipShifts', 'eventClaims', 'candidateStructures', 'durableProposals', 'relationshipProposals', 'pressures', 'currentThreads', 'salientObjects', 'salientLocations', 'changes', 'unresolvedEvidence', 'validationWarnings', 'provisionalCognition', 'lookupProvenance', 'controlledCharacterEvidence', 'reconciliationFocus'];
     arrayFields.forEach(field => { if (providedField(field)) merged[field] = sidecarMergeReaderRecords(prior[field], incoming[field], { limit: field === 'characterIntelligence' ? 48 : 100 }); });
     const perSnapshotFields = new Set(['changedFields', 'clearFields', 'refreshIndex', 'baseSnapshotId', 'snapshotMode', 'sourceTurnId', 'sourceTakeId', 'sourceRevisionId', 'sourceAttemptId', 'visibleNarrationHash', 'handoffHash', 'profileRevision', 'promptRevision']);
     ['summary', ...perSnapshotFields].forEach(field => {
-        if (providedField(field) || perSnapshotFields.has(field)) merged[field] = safeJsonClone(incoming[field]);
+        if (providedField(field) || perSnapshotFields.has(field)) merged[field] = experimentalSafeJsonClone(incoming[field]);
     });
     // These describe this source packet, not cumulative state.  Carrying a
     // prior packet's field list forward makes a later sparse delta look as if
@@ -5456,7 +5456,7 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
         visibleNarrationHash: worldMediaHash(String(turnRecord.authorialArtifact?.narration ?? turnRecord.narration ?? '')),
         handoffHash: worldMediaHash(String(turnRecord.authorialArtifact?.handoff ?? turnRecord.handoff ?? '')),
         refreshIndex: Number(options.refreshIndex) || 0, snapshotMode: options.fullRefresh ? 'full' : (packet.mode === 'full' ? 'full' : 'delta'),
-        baseSnapshotId: previousSnapshot?.id || '', metadata: { ...(packet.metadata || {}), model: packet.model || '', provider: packet.provider || '', finishReason: packet.finishReason || '', rounds: packet.rounds || 1, scenePulsePreset: safeJsonClone(profile.scenePulsePreset || null), usage: safeJsonClone(packet.readerMetrics || {}), capturedAt: new Date().toISOString() }
+        baseSnapshotId: previousSnapshot?.id || '', metadata: { ...(packet.metadata || {}), model: packet.model || '', provider: packet.provider || '', finishReason: packet.finishReason || '', rounds: packet.rounds || 1, scenePulsePreset: experimentalSafeJsonClone(profile.scenePulsePreset || null), usage: experimentalSafeJsonClone(packet.readerMetrics || {}), capturedAt: new Date().toISOString() }
     }, { controlledEntityId });
     const envelope = mergeSidecarReaderEnvelope(previousSnapshot?.envelope || null, source, {
         profileRevision: profile.revision, promptRevision: profile.promptRevision,
@@ -5466,9 +5466,9 @@ function attachSidecarReaderSnapshot(world, sess, turnRecord, packet, options = 
     // envelope is deliberately cumulative so the source panel never shrinks
     // when a focused reread omits unrelated fields; Inspect and timeline
     // delta markers still need the small packet that produced this snapshot.
-    const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), attemptId: source.sourceAttemptId, turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, rawEnvelope: safeJsonClone(source), provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: previousSnapshot?.id || '' } };
+    const snapshot = { id: `reader_snapshot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`, status: 'pending_reconciliation', createdAt: new Date().toISOString(), attemptId: source.sourceAttemptId, turnId: turnRecord.id, takeId: turnRecord.takeId || '', sceneId: turnRecord.sceneId || protocol.activeSceneId || '', sequenceId: turnRecord.sequenceId || protocol.activeSequenceId || '', envelope, rawEnvelope: experimentalSafeJsonClone(source), provenance: { source: 'sidecar_semantic_reader', profileRevision: profile.revision, readerMode: envelope.snapshotMode, priorSnapshotId: previousSnapshot?.id || '' } };
     protocol.readerSnapshots.push(snapshot); protocol.readerSnapshots = protocol.readerSnapshots.slice(-400);
-    turnRecord.readerEnvelope = safeJsonClone(envelope); turnRecord.readerSnapshotId = snapshot.id;
+    turnRecord.readerEnvelope = experimentalSafeJsonClone(envelope); turnRecord.readerSnapshotId = snapshot.id;
     // Pending interpretation is audit/retry evidence only. Never publish it
     // through the active next-turn packet before Sidecar settles it.
     return snapshot;
@@ -5481,9 +5481,9 @@ function activateSidecarReaderSnapshot(world, sess, snapshotId, turnId = '') {
     protocol.readerSnapshots.forEach(item => { if (item.id !== snapshot.id && item.status === 'active') { item.status = 'accepted_historical'; item.historicalAt = new Date().toISOString(); } });
     snapshot.status = 'active'; snapshot.activatedAt = new Date().toISOString(); snapshot.settlementStatus = 'settled';
     snapshot.provenance = { ...(snapshot.provenance || {}), committedTurnId: turnId || snapshot.turnId };
-    protocol.sceneReader = safeJsonClone(snapshot.envelope);
+    protocol.sceneReader = experimentalSafeJsonClone(snapshot.envelope);
     const scene = (protocol.scenes || []).find(item => item.id === snapshot.sceneId);
-    if (scene) scene.readerState = safeJsonClone({ summary: snapshot.envelope.summary, scene: snapshot.envelope.scene, environment: snapshot.envelope.environment, presence: snapshot.envelope.presence, temporal: snapshot.envelope.temporal, characterIntelligence: snapshot.envelope.characterIntelligence, candidateStructures: snapshot.envelope.candidateStructures || [], nonCanonical: true, snapshotId: snapshot.id });
+    if (scene) scene.readerState = experimentalSafeJsonClone({ summary: snapshot.envelope.summary, scene: snapshot.envelope.scene, environment: snapshot.envelope.environment, presence: snapshot.envelope.presence, temporal: snapshot.envelope.temporal, characterIntelligence: snapshot.envelope.characterIntelligence, candidateStructures: snapshot.envelope.candidateStructures || [], nonCanonical: true, snapshotId: snapshot.id });
     return snapshot;
 }
 
@@ -5506,7 +5506,7 @@ function queueSidecarQuestion(world, sess, prompt, evidence = '', options = {}) 
         sceneId: options.sceneId || protocol.activeSceneId || '', sequenceId: options.sequenceId || protocol.activeSequenceId || '',
         revisionId: options.revisionId || '', resolutionType: '',
         attemptHistory: [], priorityHistory: [], answerProvenance: [], evidenceInspected: [], repairCallHistory: [], targetTransferHistory: [], finalResolution: null,
-        provenance: { source: options.source || 'sidecar', ...(isPlainObject(options.provenance) ? options.provenance : {}) }, createdAt: new Date().toISOString()
+        provenance: { source: options.source || 'sidecar', ...(experimentalIsPlainObject(options.provenance) ? options.provenance : {}) }, createdAt: new Date().toISOString()
     };
     protocol.questions.push(question);
     return question;
@@ -5518,7 +5518,7 @@ function recordSidecarQuestionAttempt(world, sess, questionId, attempt = {}) {
     if (!question) return null;
     question.attempts = (Number(question.attempts) || 0) + 1;
     if (!Array.isArray(question.attemptHistory)) question.attemptHistory = [];
-    question.attemptHistory.push({ at: new Date().toISOString(), ...safeJsonClone(attempt) });
+    question.attemptHistory.push({ at: new Date().toISOString(), ...experimentalSafeJsonClone(attempt) });
     question.attemptHistory = question.attemptHistory.slice(-20);
     return question;
 }
@@ -5539,7 +5539,7 @@ function updateSidecarQuestion(world, sess, questionId, patch = {}) {
     if (patch.status && ['open', 'resolved', 'deferred', 'expired', 'superseded'].includes(patch.status)) question.status = patch.status;
     if (patch.resolutionType) question.resolutionType = String(patch.resolutionType).slice(0, 120);
     if (patch.answer != null) question.answer = String(patch.answer).slice(0, 3000);
-    if (patch.provenance) question.answerProvenance = [...(question.answerProvenance || []), safeJsonClone(patch.provenance)].slice(-20);
+    if (patch.provenance) question.answerProvenance = [...(question.answerProvenance || []), experimentalSafeJsonClone(patch.provenance)].slice(-20);
     if (question.status !== 'open') { question.resolvedAt = question.resolvedAt || new Date().toISOString(); question.finalResolution = { status: question.status, resolutionType: question.resolutionType, answer: question.answer || '', at: question.resolvedAt }; }
     return question;
 }
@@ -5601,7 +5601,7 @@ async function runSidecarQuestionRepair(world, sess, questionId) {
     });
     if (!response.ok) throw new Error((await response.text()).slice(0, 500) || `Question repair failed (${response.status})`);
     assertExperimentalSidecarOwner(requestOwner);
-    const reply = (await response.json())?.choices?.[0]?.message?.content || '{}'; const parsed = safeParseJSONRepair(reply) || {};
+    const reply = (await response.json())?.choices?.[0]?.message?.content || '{}'; const parsed = experimentalSafeParseJSONRepair(reply) || {};
     recordSidecarQuestionAttempt(world, sess, question.id, { channel: 'explicit_repair', answer: parsed.answer || 'UNKNOWN', explanation: parsed.explanation || '' });
     question.repairCallHistory = [...(question.repairCallHistory || []), { at: new Date().toISOString(), model, answer: parsed.answer || 'UNKNOWN', explanation: String(parsed.explanation || '').slice(0, 800) }].slice(-12);
     question.answer = String(parsed.explanation || parsed.answer || 'UNKNOWN').slice(0, 3000); question.resolutionType = 'canonical_evidence_resolution'; question.provenance = { ...(question.provenance || {}), lastRepair: 'explicit_sidecar_repair' };
@@ -5693,7 +5693,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const handoff = String(authoredHandoff || '').trim();
     const narration = String(authoredNarration || '').trim();
     const playerInput = String(authoredPlayerInput || '');
-    const commitTool = safeJsonClone(options.commitTool);
+    const commitTool = experimentalSafeJsonClone(options.commitTool);
     const priorPacket = buildSidecarScenePacket(world, sess);
     const priorReconciliationEvidence = (window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess)?.turns || [])
         .filter(turn => ['reconciliation_pending', 'reconciliation_failed'].includes(turn.status))
@@ -5724,7 +5724,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     const existingTurnRecord = options.existingTurnRecord || null;
     const attempt = beginSidecarTurnAttempt(world, sess, {
         handoff, narration, playerInput,
-        sceneHeader: safeJsonClone(temporalBreakdown),
+        sceneHeader: experimentalSafeJsonClone(temporalBreakdown),
         preFrame, preClock: clockEvidence, model, provider,
         takeIndex: options.takeIndex, takeId: options.takeId, revisionId: options.revisionId,
         handoffComplete: options.handoffComplete !== false,
@@ -5748,8 +5748,8 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             raw: ''
         };
         recordSidecarTrace(world, sess, { kind: 'semantic_reader_disabled', model, provider });
-    } else if (options.readerPacketOverride && isPlainObject(options.readerPacketOverride)) {
-        readerPacket = safeJsonClone(options.readerPacketOverride);
+    } else if (options.readerPacketOverride && experimentalIsPlainObject(options.readerPacketOverride)) {
+        readerPacket = experimentalSafeJsonClone(options.readerPacketOverride);
         recordSidecarTrace(world, sess, { kind: 'semantic_reader_reused', model: readerModel, provider: readerProvider, sourceTurnId: attempt.turnRecord?.id || '' });
     } else try {
         options.onStage?.('reading');
@@ -5797,7 +5797,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     // that the author has left while the transport was in flight.
     assertExperimentalSidecarOwner(requestOwner);
     if (attempt.turnRecord) {
-        attempt.turnRecord.reader = safeJsonClone(readerPacket);
+        attempt.turnRecord.reader = experimentalSafeJsonClone(readerPacket);
         const readerIsProcessable = !readerPacket?.disabled && readerPacket?.valid !== false;
         // A Reader result reused after Sidecar failure remains audit evidence
         // for its old attempt. Attach a fresh pending snapshot for this new
@@ -5810,14 +5810,14 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         // Keep all Reader-derived records attempt-local until Sidecar commits.
         // The envelope is inspectable through Backstage, but no candidate,
         // question, proposal, or scene projection becomes active here.
-        attempt.turnRecord.readerProposalDrafts = readerIsProcessable ? safeJsonClone({
+        attempt.turnRecord.readerProposalDrafts = readerIsProcessable ? experimentalSafeJsonClone({
             durableProposals: readerPacket.durableProposals || [],
             relationshipProposals: readerPacket.relationshipProposals || [],
             unresolved: readerPacket.unresolved || []
         }) : null;
-        attempt.turnRecord.readerCandidateDrafts = readerIsProcessable ? safeJsonClone(readerPacket.candidateStructures || readerPacket.candidates || []) : null;
-        attempt.turnRecord.readerQuestionDrafts = readerIsProcessable ? safeJsonClone(readerPacket.proposedQuestions || []) : null;
-        attempt.turnRecord.controlledCharacterEvidence = readerIsProcessable ? safeJsonClone(readerPacket.controlledCharacterEvidence || []) : [];
+        attempt.turnRecord.readerCandidateDrafts = readerIsProcessable ? experimentalSafeJsonClone(readerPacket.candidateStructures || readerPacket.candidates || []) : null;
+        attempt.turnRecord.readerQuestionDrafts = readerIsProcessable ? experimentalSafeJsonClone(readerPacket.proposedQuestions || []) : null;
+        attempt.turnRecord.controlledCharacterEvidence = readerIsProcessable ? experimentalSafeJsonClone(readerPacket.controlledCharacterEvidence || []) : [];
         const currentAttempt = attempt.turnRecord.attempts?.find(item => item.id === attempt.attemptId);
         if (currentAttempt) currentAttempt.readerStatus = 'succeeded';
     }
@@ -5868,7 +5868,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
     logSidecarConsoleTrace('Reconciliation request', {
         model, provider, maxTokens, compactCommitTransport,
         prompt: sidecarPrompt,
-        request: safeJsonClone(body)
+        request: experimentalSafeJsonClone(body)
     });
     try {
         if (!commitTool?.function?.parameters) {
@@ -5892,7 +5892,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         logSidecarConsoleTrace('Reconciliation response', {
             model, provider: payload?.provider || provider,
             finishReason: choice.finish_reason || choice.native_finish_reason || '',
-            assistant: safeJsonClone(message)
+            assistant: experimentalSafeJsonClone(message)
         });
         let toolCall = (message.tool_calls || []).find(call => call?.function?.name === 'commit_world_turn')
             || (message.function_call?.name === 'commit_world_turn'
@@ -5923,7 +5923,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
             message = choice.message || {};
             logSidecarConsoleTrace('Reconciliation compact recovery response', {
                 model, provider: payload?.provider || provider,
-                finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: safeJsonClone(message)
+                finishReason: choice.finish_reason || choice.native_finish_reason || '', assistant: experimentalSafeJsonClone(message)
             });
             recordSidecarTrace(world, sess, {
                 kind: 'reconciliation_compact_recovery', prompt: compactCommitRecoveryBody.messages[0].content,
@@ -5949,7 +5949,7 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                 response: {
                     content: typeof message.content === 'string' ? message.content.slice(0, 12000) : message.content,
                     reasoning: String(message.reasoning || message.reasoning_content || '').slice(0, 16000),
-                    toolCalls: safeJsonClone(message.tool_calls || []),
+                    toolCalls: experimentalSafeJsonClone(message.tool_calls || []),
                     compactRecoveryAttempted
                 }
             };
@@ -5976,10 +5976,10 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         // Keep a post-commit-only draft instead: a failed/stale receipt must
         // leave no provisional entity or location behind.
         const introductionDraft = {
-            location_introduced: safeJsonClone(Array.isArray(receipt.location_introduced) ? receipt.location_introduced : []),
-            npc_introduced: safeJsonClone(Array.isArray(receipt.npc_introduced) ? receipt.npc_introduced : [])
+            location_introduced: experimentalSafeJsonClone(Array.isArray(receipt.location_introduced) ? receipt.location_introduced : []),
+            npc_introduced: experimentalSafeJsonClone(Array.isArray(receipt.npc_introduced) ? receipt.npc_introduced : [])
         };
-        const receiptForCommit = safeJsonClone(receipt);
+        const receiptForCommit = experimentalSafeJsonClone(receipt);
         delete receiptForCommit.location_introduced;
         delete receiptForCommit.npc_introduced;
         // Verify that the canonical checkpoint has not changed under this
@@ -6029,15 +6029,15 @@ async function runSidecarReconciliation(world, sess, options = {}) {
                 turnRecord.reconciliationStatus = 'canonical_committed_publication_incomplete';
                 turnRecord.committedAt = turnRecord.committedAt || new Date().toISOString();
                 turnRecord.receiptTurnId = String(receipt.turn_id || '');
-                turnRecord.receipt = safeJsonClone(receipt);
-                turnRecord.audit = safeJsonClone(committed.audit);
+                turnRecord.receipt = experimentalSafeJsonClone(receipt);
+                turnRecord.audit = experimentalSafeJsonClone(committed.audit);
                 turnRecord.incompleteSettlementAttemptId = attempt.attemptId;
                 turnRecord.settlementWarning = settlementWarning;
                 const diagnostic = protocol.diagnostics?.reconciliationAttempts?.find(item => item.turnId === turnRecord.id && item.attemptId === attempt.attemptId);
                 if (diagnostic) Object.assign(diagnostic, { status: 'canonical_committed_publication_incomplete', settlementWarning });
                 sess.sidecarDerivedSettlementIncomplete = {
                     turnId: turnRecord.id, attemptId: attempt.attemptId || '', receiptTurnId: String(receipt.turn_id || ''),
-                    receiptFingerprint: committed.audit?.receiptFingerprint || '', createdAt: new Date().toISOString(), error: safeJsonClone(settlementWarning)
+                    receiptFingerprint: committed.audit?.receiptFingerprint || '', createdAt: new Date().toISOString(), error: experimentalSafeJsonClone(settlementWarning)
                 };
                 return { committed, receipt, packet: protocol.packet || null, turnId: turnRecord.id, settlement: { status: 'incomplete', error: settlementWarning } };
             }
@@ -6074,8 +6074,8 @@ function recoverSidecarDerivedSettlement(world, sess, turn) {
         throw error;
     }
     const result = publishSidecarSettlement(world, sess, protocol, {
-        turnRecord: turn, receipt: safeJsonClone(turn.receipt), committed: { audit: safeJsonClone(turn.audit) },
-        introductionDraft: { location_introduced: safeJsonClone(turn.receipt.location_introduced || []), npc_introduced: safeJsonClone(turn.receipt.npc_introduced || []) },
+        turnRecord: turn, receipt: experimentalSafeJsonClone(turn.receipt), committed: { audit: experimentalSafeJsonClone(turn.audit) },
+        introductionDraft: { location_introduced: experimentalSafeJsonClone(turn.receipt.location_introduced || []), npc_introduced: experimentalSafeJsonClone(turn.receipt.npc_introduced || []) },
         narration: turn.authorialArtifact?.narration ?? turn.narration ?? '', handoff: turn.authorialArtifact?.handoff ?? turn.handoff ?? '',
         preClock: turn.preClock, explicitEndpointEvidence: turn.explicitEndpointEvidence || null, attemptId: turn.incompleteSettlementAttemptId || turn.currentAttemptId || '',
         postFrame: buildWorldSceneFrame(world, sess), postClock: buildSidecarClockEvidence(world, sess)
@@ -6125,7 +6125,7 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
     const reusableReaderSnapshot = (protocol.readerSnapshots || []).find(snapshot => snapshot.id === turn.readerSnapshotId
         && snapshot.turnId === turn.id && ['pending_reconciliation', 'failed'].includes(snapshot.status));
     const previousReader = reusableReaderSnapshot && turn.reader && turn.reader.valid !== false
-        ? safeJsonClone(turn.reader) : null;
+        ? experimentalSafeJsonClone(turn.reader) : null;
     try {
         const result = await runSidecarReconciliation(world, sess, {
             handoff: turn.handoff,
@@ -6282,7 +6282,7 @@ function acceptSidecarReaderRefresh(world, sess, refreshId) {
     const replacesProjection = refresh.provenance?.forceFull === true
         || String(refresh.envelope?.snapshotMode || refresh.envelope?.mode || '').toLowerCase() === 'full';
     const packet = {
-        ...safeJsonClone(refresh.envelope || {}), valid: true,
+        ...experimentalSafeJsonClone(refresh.envelope || {}), valid: true,
         mode: replacesProjection ? 'full' : 'delta', snapshotMode: replacesProjection ? 'full' : 'delta',
         model: refresh.provenance?.model || '', provider: refresh.provenance?.provider || '', finishReason: 'review_accepted'
     };
@@ -6305,10 +6305,10 @@ function acceptSidecarReaderRefresh(world, sess, refreshId) {
         if (item.status === 'active') { item.status = 'accepted_historical'; item.historicalAt = now; }
     });
     protocol.sceneProjections = (protocol.sceneProjections || []).filter(item => item.snapshotId !== snapshot.id);
-    protocol.sceneProjections.push({ ...safeJsonClone(projection), status: 'active', settledAt: now, refreshOf: refresh.id });
+    protocol.sceneProjections.push({ ...experimentalSafeJsonClone(projection), status: 'active', settledAt: now, refreshOf: refresh.id });
     protocol.sceneProjections = protocol.sceneProjections.slice(-400);
-    protocol.sceneProjection = safeJsonClone(projection);
-    turn.readerEnvelope = safeJsonClone(snapshot.envelope);
+    protocol.sceneProjection = experimentalSafeJsonClone(projection);
+    turn.readerEnvelope = experimentalSafeJsonClone(snapshot.envelope);
     turn.readerSnapshotId = snapshot.id;
     // The memory graph remains source-pinned to this authored turn, but its
     // derived Reader evidence must follow the explicitly accepted refresh.
@@ -6331,19 +6331,19 @@ function discardSidecarReaderRefresh(world, sess, refreshId) {
 
 function parseSidecarConversationResponse(content) {
     const raw = String(content || '').trim();
-    const parsed = safeParseJSONRepair(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-    if (!isPlainObject(parsed)) return { reply: raw || 'Sidecar did not return a usable reply.', resolutions: [], proposedReceipt: null, workspaceAction: 'none' };
+    const parsed = experimentalSafeParseJSONRepair(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!experimentalIsPlainObject(parsed)) return { reply: raw || 'Sidecar did not return a usable reply.', resolutions: [], proposedReceipt: null, workspaceAction: 'none' };
     return {
         reply: String(parsed.reply || '').trim() || 'I have recorded the discussion.',
         resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions.slice(0, 12) : [],
-        proposedReceipt: isPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null,
+        proposedReceipt: experimentalIsPlainObject(parsed.proposed_receipt) ? parsed.proposed_receipt : null,
         workspaceAction: ['none', 'close_scene', 'begin_sequence_plan', 'approve_sequence_plan', 'context_refresh'].includes(parsed.workspace_action) ? parsed.workspace_action : 'none'
     };
 }
 
 function parseSidecarEpisodeOutput(content) {
-    const parsed = safeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-    if (!isPlainObject(parsed) || !String(parsed.summary || '').trim()) return null;
+    const parsed = experimentalSafeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!experimentalIsPlainObject(parsed) || !String(parsed.summary || '').trim()) return null;
     return {
         summary: String(parsed.summary || '').trim().slice(0, 8000),
         objectiveHistory: String(parsed.objectiveHistory || parsed.objective_history || '').trim().slice(0, 8000),
@@ -6355,14 +6355,14 @@ function parseSidecarEpisodeOutput(content) {
 }
 
 function parseSidecarHierarchyOutput(content) {
-    const parsed = safeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-    if (!isPlainObject(parsed) || !String(parsed.summary || '').trim()) return null;
+    const parsed = experimentalSafeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!experimentalIsPlainObject(parsed) || !String(parsed.summary || '').trim()) return null;
     return { summary: String(parsed.summary).trim().slice(0, 12000), keyFacts: String(parsed.keyFacts || parsed.key_facts || '').trim().slice(0, 8000) };
 }
 
 function parseSidecarCognitionOutput(content) {
-    const parsed = safeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
-    if (!isPlainObject(parsed)) return null;
+    const parsed = experimentalSafeParseJSONRepair(String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
+    if (!experimentalIsPlainObject(parsed)) return null;
     const memories = (Array.isArray(parsed.memories) ? parsed.memories : []).filter(isPlainObject).slice(0, 16)
         .map(memory => ({
             text: String(memory.text || '').trim().slice(0, 3000),
@@ -6383,7 +6383,7 @@ function parseSidecarCognitionOutput(content) {
 // the accepted subject thought; generic episode cognition still requires its
 // own structured model output.
 function sidecarCognitionThoughtFallback(job = {}) {
-    const intelligence = isPlainObject(job?.provisionalIntelligence) ? job.provisionalIntelligence : {};
+    const intelligence = experimentalIsPlainObject(job?.provisionalIntelligence) ? job.provisionalIntelligence : {};
     const thought = sidecarProjectionClaimText(intelligence.sceneLocalImpression).slice(0, 3000);
     if (!thought) return [];
     const reportedConfidence = Number(intelligence?.sceneLocalImpression?.confidence);
@@ -6587,12 +6587,12 @@ async function backfillSidecarReaderSnapshots(world, sess, options = {}) {
         }
         protocol.readerBackfill.updatedAt = new Date().toISOString();
         await ExperimentalWorldsHost.persist();
-        options.onProgress?.(safeJsonClone(protocol.readerBackfill));
+        options.onProgress?.(experimentalSafeJsonClone(protocol.readerBackfill));
     }
     protocol.readerBackfill.status = protocol.readerBackfill.failed && !protocol.readerBackfill.completed ? 'failed' : 'completed';
     protocol.readerBackfill.completedAt = new Date().toISOString();
     await ExperimentalWorldsHost.persist();
-    return safeJsonClone(protocol.readerBackfill);
+    return experimentalSafeJsonClone(protocol.readerBackfill);
 }
 window.ExperimentalWorldsSidecarReaderBackfill = { run: backfillSidecarReaderSnapshots };
 
@@ -6702,7 +6702,7 @@ async function runSidecarBackgroundMemoryJobs(world, sess, options = {}) {
                     characterId: character.id, characterName: character.name, episodeId: episode?.id || '', turnCognitionJobId: turnScoped ? job.id : '', readerSnapshotId: job.readerSnapshotId || '', text: memory.text,
                     epistemicStatus: memory.epistemicStatus, importance: memory.importance, confidence: memory.confidence,
                     sourceTurnIds: memory.sourceTurnIds.length ? memory.sourceTurnIds : episode.sourceTurnIds,
-                    provenance: { source: turnScoped ? (output.fallback ? 'character_turn_cognition_reader_thought_fallback' : 'character_turn_cognition') : 'character_cognition_consolidation', access: job.access, perceptionEvidence: job.perceptionEvidence || '', sourceEpisodeId: episode?.id || '', sourceTurnIds: sourceIds, readerSnapshotId: job.readerSnapshotId || '', provisionalReaderInput: turnScoped ? safeJsonClone(job.provisionalIntelligence || null) : null }
+                    provenance: { source: turnScoped ? (output.fallback ? 'character_turn_cognition_reader_thought_fallback' : 'character_turn_cognition') : 'character_cognition_consolidation', access: job.access, perceptionEvidence: job.perceptionEvidence || '', sourceEpisodeId: episode?.id || '', sourceTurnIds: sourceIds, readerSnapshotId: job.readerSnapshotId || '', provisionalReaderInput: turnScoped ? experimentalSafeJsonClone(job.provisionalIntelligence || null) : null }
                 }));
                 graph.cognition = graph.cognition.slice(-4000);
                 await vectorizeSidecarMemoryRecords(graph.cognition.filter(record => record.turnCognitionJobId === job.id || (!turnScoped && record.episodeId === episode?.id && record.characterId === character.id)));
@@ -6815,7 +6815,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     };
     applySidecarReasoning(body, provider, tracker, world);
     const sidecarWorld = { ...world, model, provider, openRouterRouting: tracker.openRouterRouting || world.openRouterRouting };
-    logSidecarConsoleTrace('World GM request', { model, provider, request: safeJsonClone(body) });
+    logSidecarConsoleTrace('World GM request', { model, provider, request: experimentalSafeJsonClone(body) });
     const response = await fetchSidecarCompletion(body, {
         provider, tracker, world, owner: sidecarWorld, signal: options.signal
     });
@@ -6825,7 +6825,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     logSidecarConsoleTrace('World GM response', {
         model, provider: data?.provider || provider,
         finishReason: data?.choices?.[0]?.finish_reason || '',
-        assistant: safeJsonClone(data?.choices?.[0]?.message || {})
+        assistant: experimentalSafeJsonClone(data?.choices?.[0]?.message || {})
     });
     const result = parseSidecarConversationResponse(data?.choices?.[0]?.message?.content || '');
     const authorEntry = { id: `sidecar_author_${Date.now().toString(36)}`, role: 'user', text: String(userText || '').trim(), createdAt: new Date().toISOString() };
@@ -6844,7 +6844,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
                 allowIncompleteRecovery: explicitRecoveryIntent && !!recoveryOf,
                 recoveryOf
             }, 'sidecar_conversation');
-            sidecarEntry.commitAudit = safeJsonClone(commit.audit);
+            sidecarEntry.commitAudit = experimentalSafeJsonClone(commit.audit);
         } catch (error) {
             sidecarEntry.commitError = error.message || String(error);
             sidecarEntry.text += '\n\nI could not apply that refinement because it did not pass canonical validation. I left state unchanged.';
@@ -6899,7 +6899,7 @@ async function runSidecarConversation(world, sess, userText, options = {}) {
     protocol.conversations.push(authorEntry, sidecarEntry);
     protocol.conversations = protocol.conversations.slice(-200);
     protocol.refinements.push({ id: `refinement_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), userText: authorEntry.text,
-        source: 'direct_user_refinement', committed: !!commit, audit: commit ? safeJsonClone(commit.audit) : null });
+        source: 'direct_user_refinement', committed: !!commit, audit: commit ? experimentalSafeJsonClone(commit.audit) : null });
     protocol.refinements = protocol.refinements.slice(-200);
     protocol.packet = buildSidecarScenePacket(world, sess);
     recordSidecarTrace(world, sess, { kind: 'conversation', prompt, reply: data?.choices?.[0]?.message || {}, model, provider });
@@ -6938,19 +6938,19 @@ function renderSidecarConversation(world, sess) {
     const entries = (protocol?.conversations || []).slice(-80);
     const questionCards = (protocol?.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-20).map(question => `
         <details style="margin:0 0 8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.03);">
-            <summary style="cursor:pointer; font-size:.72rem; color:var(--warning);">Open question · ${escapeHTML(question.id)} · ${escapeHTML(question.priority || question.pressure || 'low')}${question.blocking ? ' · blocking' : ''}</summary>
-            <div style="font-size:.78rem; color:var(--text-2); margin-top:6px; white-space:pre-wrap;">${escapeHTML(question.prompt || '')}</div>
-            <div style="font-size:.68rem; color:var(--text-3); margin-top:5px;">Origin: ${escapeHTML(question.origin || '')} · Target: ${escapeHTML(question.target || '')} · Attempts: ${Number(question.attempts) || 0} · Relevance: ${escapeHTML(question.relevance || 'active_scene')}</div>
-            ${question.evidence ? `<div style="font-size:.68rem; color:var(--text-3); margin-top:4px;">Evidence: ${escapeHTML(question.evidence.slice(0, 600))}</div>` : ''}
-            ${question.priority === 'high' ? `<button class="tool-btn sidecar-question-repair" data-question-id="${escapeHTML(question.id)}" style="margin-top:6px;">Run narrow repair</button>` : ''}
+            <summary style="cursor:pointer; font-size:.72rem; color:var(--warning);">Open question · ${experimentalEscapeHTML(question.id)} · ${experimentalEscapeHTML(question.priority || question.pressure || 'low')}${question.blocking ? ' · blocking' : ''}</summary>
+            <div style="font-size:.78rem; color:var(--text-2); margin-top:6px; white-space:pre-wrap;">${experimentalEscapeHTML(question.prompt || '')}</div>
+            <div style="font-size:.68rem; color:var(--text-3); margin-top:5px;">Origin: ${experimentalEscapeHTML(question.origin || '')} · Target: ${experimentalEscapeHTML(question.target || '')} · Attempts: ${Number(question.attempts) || 0} · Relevance: ${experimentalEscapeHTML(question.relevance || 'active_scene')}</div>
+            ${question.evidence ? `<div style="font-size:.68rem; color:var(--text-3); margin-top:4px;">Evidence: ${experimentalEscapeHTML(question.evidence.slice(0, 600))}</div>` : ''}
+            ${question.priority === 'high' ? `<button class="tool-btn sidecar-question-repair" data-question-id="${experimentalEscapeHTML(question.id)}" style="margin-top:6px;">Run narrow repair</button>` : ''}
         </details>`).join('');
     const memoryJobs = (protocol?.jobs || []).filter(job => ['queued', 'dependency_waiting', 'running', 'blocked'].includes(job.status)).slice(-20);
-    const memoryJobCards = memoryJobs.length ? `<details style="margin:0 0 8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:rgba(108,92,231,.06);"><summary style="cursor:pointer; font-size:.72rem; color:var(--accent);">Memory pipeline · ${memoryJobs.length} pending or reviewable job${memoryJobs.length === 1 ? '' : 's'}</summary><div style="display:grid; gap:5px; margin-top:7px;">${memoryJobs.map(job => `<div style="font-size:.72rem; color:var(--text-2);"><b>${escapeHTML(String(job.type || '').replace(/_/g, ' '))}</b> · ${escapeHTML(job.status || '')}${job.characterId ? ` · ${escapeHTML(job.characterId)}` : ''}${job.episodeId ? ` · episode ${escapeHTML(job.episodeId)}` : ''}${job.diagnostics?.at(-1)?.error ? `<br><span style="color:var(--warning);">${escapeHTML(job.diagnostics.at(-1).error)}</span>` : ''}</div>`).join('')}</div></details>` : '';
+    const memoryJobCards = memoryJobs.length ? `<details style="margin:0 0 8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:rgba(108,92,231,.06);"><summary style="cursor:pointer; font-size:.72rem; color:var(--accent);">Memory pipeline · ${memoryJobs.length} pending or reviewable job${memoryJobs.length === 1 ? '' : 's'}</summary><div style="display:grid; gap:5px; margin-top:7px;">${memoryJobs.map(job => `<div style="font-size:.72rem; color:var(--text-2);"><b>${experimentalEscapeHTML(String(job.type || '').replace(/_/g, ' '))}</b> · ${experimentalEscapeHTML(job.status || '')}${job.characterId ? ` · ${experimentalEscapeHTML(job.characterId)}` : ''}${job.episodeId ? ` · episode ${experimentalEscapeHTML(job.episodeId)}` : ''}${job.diagnostics?.at(-1)?.error ? `<br><span style="color:var(--warning);">${experimentalEscapeHTML(job.diagnostics.at(-1).error)}</span>` : ''}</div>`).join('')}</div></details>` : '';
     const proposalCards = (protocol?.backgroundProposals || []).filter(proposal => ['pending_sidecar_review', 'author_approved', 'sidecar_reviewed'].includes(proposal.status)).slice(-12).map(proposal => `
         <div style="margin:0 0 9px; padding:9px; border-radius:7px; background:rgba(255,180,70,.08); border:1px solid var(--border);">
-            <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${escapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : proposal.status === 'sidecar_reviewed' ? `Sidecar reviewed · ${proposal.reviewOutcome || 'no automatic commit'}` : 'awaiting review')}</div>
-            <div style="font-size:.8rem; color:var(--text-2); white-space:pre-wrap;">${escapeHTML((proposal.summary || []).join('\n') || 'No readable proposal summary.')}</div>
-            <div style="display:flex; gap:6px; margin-top:7px; flex-wrap:wrap;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${escapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}${proposal.status !== 'sidecar_reviewed' ? `<button class="tool-btn sidecar-proposal-revise" data-proposal-id="${escapeHTML(proposal.id)}">Refine proposal</button><button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${escapeHTML(proposal.id)}">Dismiss</button>` : ''}</div>
+            <div style="font-size:.66rem; color:var(--warning); font-weight:800; text-transform:uppercase; margin-bottom:3px;">World Agent proposal · ${experimentalEscapeHTML(proposal.status === 'author_approved' ? 'approved for Sidecar review' : proposal.status === 'sidecar_reviewed' ? `Sidecar reviewed · ${proposal.reviewOutcome || 'no automatic commit'}` : 'awaiting review')}</div>
+            <div style="font-size:.8rem; color:var(--text-2); white-space:pre-wrap;">${experimentalEscapeHTML((proposal.summary || []).join('\n') || 'No readable proposal summary.')}</div>
+            <div style="display:flex; gap:6px; margin-top:7px; flex-wrap:wrap;">${proposal.status === 'pending_sidecar_review' ? `<button class="tool-btn sidecar-proposal-approve" data-proposal-id="${experimentalEscapeHTML(proposal.id)}">Approve for Sidecar</button>` : ''}${proposal.status !== 'sidecar_reviewed' ? `<button class="tool-btn sidecar-proposal-revise" data-proposal-id="${experimentalEscapeHTML(proposal.id)}">Refine proposal</button><button class="tool-btn tool-btn-danger sidecar-proposal-dismiss" data-proposal-id="${experimentalEscapeHTML(proposal.id)}">Dismiss</button>` : ''}</div>
         </div>`).join('');
     log.innerHTML = questionCards + memoryJobCards + proposalCards + entries.map(entry => {
         const author = entry.role === 'user';
@@ -7004,8 +7004,8 @@ function closeWorldSidecarInspector() {
 }
 
 function sidecarInspectorJson(value, fallback = 'Nothing has been recorded yet.') {
-    if (value == null) return `<div class="form-hint">${escapeHTML(fallback)}</div>`;
-    return `<pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:48vh; overflow:auto; margin:0; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text-2); font-size:.74rem;">${escapeHTML(JSON.stringify(value, null, 2))}</pre>`;
+    if (value == null) return `<div class="form-hint">${experimentalEscapeHTML(fallback)}</div>`;
+    return `<pre style="white-space:pre-wrap; overflow-wrap:anywhere; max-height:48vh; overflow:auto; margin:0; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text-2); font-size:.74rem;">${experimentalEscapeHTML(JSON.stringify(value, null, 2))}</pre>`;
 }
 
 function openWorldSidecarLine(workspace = {}) {
@@ -7044,10 +7044,10 @@ function updateSidecarReaderCandidate(world, sess, candidateId, action, canonica
         kind: 'scene_candidate_review_intent', action: ['promote', 'match', 'leave', 'ignore'].includes(action) ? action : 'review',
         candidateId: String(candidate.candidateId), candidateType: String(candidate.candidateType || ''),
         canonicalId: String(canonicalId || '').slice(0, 180),
-        sourceTurnIds: safeJsonClone(candidate.sourceTurnIds || []), readerSnapshotId: String(candidate.readerSnapshotId || ''),
+        sourceTurnIds: experimentalSafeJsonClone(candidate.sourceTurnIds || []), readerSnapshotId: String(candidate.readerSnapshotId || ''),
         expectedSceneId: String(candidate.sceneId || protocol.activeSceneId || ''),
         expectedCanonicalRevision: sidecarCanonicalCheckpointFingerprint(world, sess),
-        evidence: safeJsonClone(candidate.evidence || candidate.description || '')
+        evidence: experimentalSafeJsonClone(candidate.evidence || candidate.description || '')
     };
 }
 
@@ -7058,29 +7058,29 @@ function sidecarSceneProjectionMarkup(world, sess) {
     const latestTurn = (protocol?.turns || []).filter(turn => turn.status !== 'superseded').at(-1);
     const failedTurn = latestTurn && ['reconciliation_failed', 'reconciliation_pending'].includes(latestTurn.status) ? latestTurn : null;
     const incompleteCommit = sess?.sidecarIncompleteCommit || null;
-    const recoveryMarkup = failedTurn || incompleteCommit ? `<section class="sidecar-scene-recovery"><div><strong>${incompleteCommit ? 'Canonical commit incomplete' : 'Scene update incomplete'}</strong><span>${incompleteCommit ? 'Progression is blocked until the journaled commit is reviewed through World GM/native recovery.' : 'Narration is preserved while downstream interpretation is pending.'}</span></div><div class="sidecar-recovery-actions">${failedTurn && !incompleteCommit ? `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${escapeHTML(failedTurn.id)}">Retry Scene Update</button>` : ''}<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button></div></section>` : '';
+    const recoveryMarkup = failedTurn || incompleteCommit ? `<section class="sidecar-scene-recovery"><div><strong>${incompleteCommit ? 'Canonical commit incomplete' : 'Scene update incomplete'}</strong><span>${incompleteCommit ? 'Progression is blocked until the journaled commit is reviewed through World GM/native recovery.' : 'Narration is preserved while downstream interpretation is pending.'}</span></div><div class="sidecar-recovery-actions">${failedTurn && !incompleteCommit ? `<button type="button" class="btn btn-primary sidecar-retry-scene-update" data-sidecar-turn-id="${experimentalEscapeHTML(failedTurn.id)}">Retry Scene Update</button>` : ''}<button type="button" class="btn btn-ghost sidecar-open-world-gm">Open World GM</button></div></section>` : '';
     const candidates = activeReaderCandidates(protocol, { sceneId: packet?.activeScene?.id || protocol?.activeSceneId || '' }).slice(-120);
     const presence = reader.presence || {};
     const relationships = Array.isArray(reader.relationshipProposals) ? reader.relationshipProposals.slice(-20) : [];
     const list = (values, empty = 'None recorded.') => Array.isArray(values) && values.length ? values.map(value => {
-        const entry = isPlainObject(value) ? value : { id: value };
+        const entry = experimentalIsPlainObject(value) ? value : { id: value };
         const label = entry.name || entry.label || entry.id || 'Unnamed';
-        return `<li><strong>${escapeHTML(String(label))}</strong>${entry.reason ? ` <span class="form-hint">${escapeHTML(String(entry.reason))}</span>` : ''}</li>`;
-    }).join('') : `<li class="form-hint">${escapeHTML(empty)}</li>`;
+        return `<li><strong>${experimentalEscapeHTML(String(label))}</strong>${entry.reason ? ` <span class="form-hint">${experimentalEscapeHTML(String(entry.reason))}</span>` : ''}</li>`;
+    }).join('') : `<li class="form-hint">${experimentalEscapeHTML(empty)}</li>`;
     const relationshipMarkup = relationships.length ? relationships.map(item => {
-        const entry = isPlainObject(item) ? item : { summary: item };
+        const entry = experimentalIsPlainObject(item) ? item : { summary: item };
         const label = entry.label || entry.subject || entry.target || entry.relationship || 'Relationship proposal';
         const evidence = entry.evidence || entry.reason || entry.summary || '';
         const posture = entry.posture || entry.axis || entry.change || entry.delta || '';
-        return `<div class="sp-relationship-card sidecar-relationship-card"><div class="sp-relationship-header"><strong>${escapeHTML(String(label))}</strong>${posture ? `<span class="sp-relationship-meter">${escapeHTML(String(posture))}</span>` : ''}</div><div class="sp-relationship-evidence">${escapeHTML(String(evidence))}</div><small>Reader proposal · Sidecar review required</small></div>`;
+        return `<div class="sp-relationship-card sidecar-relationship-card"><div class="sp-relationship-header"><strong>${experimentalEscapeHTML(String(label))}</strong>${posture ? `<span class="sp-relationship-meter">${experimentalEscapeHTML(String(posture))}</span>` : ''}</div><div class="sp-relationship-evidence">${experimentalEscapeHTML(String(evidence))}</div><small>Reader proposal · Sidecar review required</small></div>`;
     }).join('') : `<div class="form-hint">No relationship changes proposed for this beat.</div>`;
     const candidateMarkup = candidates.length ? candidates.map(candidate => {
         const label = candidate.label || candidate.role || candidate.candidateType || 'Scene candidate';
         const detail = candidate.description || candidate.clothingDescription || candidate.visibleCondition || candidate.evidence || '';
         const status = candidate.status && !['active', 'proposed'].includes(candidate.status) ? ` · ${candidate.status}` : '';
-        return `<article class="sp-candidate-card sidecar-candidate-card"><header><strong>${escapeHTML(String(label))}</strong><span>${escapeHTML(String(candidate.candidateType || 'candidate'))}${escapeHTML(status)}</span></header><p>${escapeHTML(String(detail).slice(0, 700) || 'No additional evidence recorded.')}</p><small>${candidate.canonicalMatchId ? `Matched canonical ID: ${escapeHTML(candidate.canonicalMatchId)}` : 'Pre-canonical evidence · review required'}</small><div class="sidecar-candidate-actions"><button type="button" class="btn btn-ghost sidecar-candidate-match" data-candidate-id="${escapeHTML(String(candidate.candidateId || ''))}">Review match</button><button type="button" class="btn btn-ghost sidecar-candidate-promote" data-candidate-id="${escapeHTML(String(candidate.candidateId || ''))}">Review promotion</button><button type="button" class="btn btn-ghost sidecar-candidate-leave" data-candidate-id="${escapeHTML(String(candidate.candidateId || ''))}">Leave ephemeral</button></div></article>`;
+        return `<article class="sp-candidate-card sidecar-candidate-card"><header><strong>${experimentalEscapeHTML(String(label))}</strong><span>${experimentalEscapeHTML(String(candidate.candidateType || 'candidate'))}${experimentalEscapeHTML(status)}</span></header><p>${experimentalEscapeHTML(String(detail).slice(0, 700) || 'No additional evidence recorded.')}</p><small>${candidate.canonicalMatchId ? `Matched canonical ID: ${experimentalEscapeHTML(candidate.canonicalMatchId)}` : 'Pre-canonical evidence · review required'}</small><div class="sidecar-candidate-actions"><button type="button" class="btn btn-ghost sidecar-candidate-match" data-candidate-id="${experimentalEscapeHTML(String(candidate.candidateId || ''))}">Review match</button><button type="button" class="btn btn-ghost sidecar-candidate-promote" data-candidate-id="${experimentalEscapeHTML(String(candidate.candidateId || ''))}">Review promotion</button><button type="button" class="btn btn-ghost sidecar-candidate-leave" data-candidate-id="${experimentalEscapeHTML(String(candidate.candidateId || ''))}">Leave ephemeral</button></div></article>`;
     }).join('') : `<div class="form-hint">No pre-canonical scene candidates recorded.</div>`;
-    return `<div class="sidecar-scene-inspector"><div class="sp-toolbar sidecar-scene-toolbar"><span class="sp-brand-title"><span class="sp-brand-accent">SCENE</span> intelligence</span><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${failedTurn || incompleteCommit ? 'is-warning' : 'is-ready'}">${incompleteCommit ? 'Commit blocked' : failedTurn ? 'Update incomplete' : 'Reader current'}</span><button type="button" class="sp-toolbar-btn sidecar-scene-refresh" title="Refresh the current Scene Intelligence projection">↻</button></div>${recoveryMarkup}<div class="sidecar-scene-grid"><section class="sp-section sidecar-scene-card"><h3>Current scene</h3><div><strong>Location</strong><div>${escapeHTML(packet?.activeLocation?.name || 'Unknown')}</div></div><div><strong>World time</strong><div>${escapeHTML(packet?.worldTime || 'Unknown')}</div></div><div><strong>Scene state</strong><div>${escapeHTML(packet?.sceneState || 'No scene projection yet.')}</div></div></section><section class="sp-section sidecar-scene-card"><h3>Scene reading</h3><div class="sidecar-scene-reading">${escapeHTML(reader.summary || packet?.sceneReading || 'No reader summary yet.')}</div>${reader.scene ? `<div class="form-hint">${escapeHTML([reader.scene.topic, reader.scene.mood, reader.scene.tension, reader.scene.interactionStyle].filter(Boolean).join(' · ') || 'No additional scene signals.')}</div>` : ''}</section></div><div class="sidecar-scene-columns"><section class="sp-section sidecar-scene-card"><h3>Cast</h3><h4>Active</h4><ul>${list(presence.active || packet?.activeCast)}</ul><h4>Nearby</h4><ul>${list(presence.nearby || packet?.nearbyCast)}</ul><h4>Audible</h4><ul>${list(presence.audible)}</ul><h4>Mentioned</h4><ul>${list(presence.mentioned)}</ul></section><section class="sp-section sidecar-scene-card"><h3>Scene entities</h3>${candidateMarkup}</section></div><section class="sp-section sidecar-scene-card"><h3>Relationships</h3><div class="sidecar-relationship-list">${relationshipMarkup}</div></section><section class="sp-section sidecar-scene-card"><h3>Current pressures</h3><ul>${list(packet?.pendingQuestions, 'No open scene questions.')}</ul></section></div>`;
+    return `<div class="sidecar-scene-inspector"><div class="sp-toolbar sidecar-scene-toolbar"><span class="sp-brand-title"><span class="sp-brand-accent">SCENE</span> intelligence</span><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${failedTurn || incompleteCommit ? 'is-warning' : 'is-ready'}">${incompleteCommit ? 'Commit blocked' : failedTurn ? 'Update incomplete' : 'Reader current'}</span><button type="button" class="sp-toolbar-btn sidecar-scene-refresh" title="Refresh the current Scene Intelligence projection">↻</button></div>${recoveryMarkup}<div class="sidecar-scene-grid"><section class="sp-section sidecar-scene-card"><h3>Current scene</h3><div><strong>Location</strong><div>${experimentalEscapeHTML(packet?.activeLocation?.name || 'Unknown')}</div></div><div><strong>World time</strong><div>${experimentalEscapeHTML(packet?.worldTime || 'Unknown')}</div></div><div><strong>Scene state</strong><div>${experimentalEscapeHTML(packet?.sceneState || 'No scene projection yet.')}</div></div></section><section class="sp-section sidecar-scene-card"><h3>Scene reading</h3><div class="sidecar-scene-reading">${experimentalEscapeHTML(reader.summary || packet?.sceneReading || 'No reader summary yet.')}</div>${reader.scene ? `<div class="form-hint">${experimentalEscapeHTML([reader.scene.topic, reader.scene.mood, reader.scene.tension, reader.scene.interactionStyle].filter(Boolean).join(' · ') || 'No additional scene signals.')}</div>` : ''}</section></div><div class="sidecar-scene-columns"><section class="sp-section sidecar-scene-card"><h3>Cast</h3><h4>Active</h4><ul>${list(presence.active || packet?.activeCast)}</ul><h4>Nearby</h4><ul>${list(presence.nearby || packet?.nearbyCast)}</ul><h4>Audible</h4><ul>${list(presence.audible)}</ul><h4>Mentioned</h4><ul>${list(presence.mentioned)}</ul></section><section class="sp-section sidecar-scene-card"><h3>Scene entities</h3>${candidateMarkup}</section></div><section class="sp-section sidecar-scene-card"><h3>Relationships</h3><div class="sidecar-relationship-list">${relationshipMarkup}</div></section><section class="sp-section sidecar-scene-card"><h3>Current pressures</h3><ul>${list(packet?.pendingQuestions, 'No open scene questions.')}</ul></section></div>`;
 }
 
 // Human-facing Scene Intelligence render model.  This deliberately does not
@@ -7091,10 +7091,10 @@ function buildSidecarWorkspaceModel(world, sess, options = {}) {
     const protocol = protocolForSidecarTimeline(world, sess);
     if (!protocol) return null;
     const hierarchy = window.ExperimentalWorldsSidecarTimeline?.ensureHierarchy(protocol, sess, { createWhenMissing: false }) || {};
-    const rawUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    const rawUi = experimentalIsPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const workspaceUi = {
         view: ['scene', 'relationships', 'characters', 'history', 'thoughts', 'all-known'].includes(options.view || rawUi.view) ? (options.view || rawUi.view) : 'scene',
-        open: isPlainObject(rawUi.open) ? safeJsonClone(rawUi.open) : {},
+        open: experimentalIsPlainObject(rawUi.open) ? experimentalSafeJsonClone(rawUi.open) : {},
         selectedSnapshotId: String(options.snapshotId || rawUi.selectedSnapshotId || ''),
         historyMode: options.snapshotId ? true : rawUi.historyMode === true
     };
@@ -7107,7 +7107,7 @@ function buildSidecarWorkspaceModel(world, sess, options = {}) {
     const selectedTurn = (protocol.turns || []).find(turn => turn.id === selectedSnapshot?.turnId) || null;
     const projectionRecord = (protocol.sceneProjections || []).find(item => item.snapshotId === selectedSnapshot?.id)
         || (selectedSnapshot ? buildSidecarSceneProjection(world, sess, protocol, { snapshotId: selectedSnapshot.id, turn: selectedTurn }) : null);
-    const projection = projectionRecord ? safeJsonClone(projectionRecord) : null;
+    const projection = projectionRecord ? experimentalSafeJsonClone(projectionRecord) : null;
     const frame = selectedTurn?.postFrame || buildWorldSceneFrame(world, sess) || {};
     const clock = getWorldTimeData(world, sess);
     const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
@@ -7126,7 +7126,7 @@ function buildSidecarWorkspaceModel(world, sess, options = {}) {
     // reciprocal relationship record.
     const relevantSubjectIds = new Set(people.map(person => String(person.entityId || person.id || '')).filter(Boolean));
     const canonicalRelationships = Object.entries(projection?.canonicalRelationships || {}).filter(([id, value]) => {
-        const record = isPlainObject(value) ? value : {};
+        const record = experimentalIsPlainObject(value) ? value : {};
         const endpoints = [
             ...String(id || '').split('|').map(String),
             record.sourceNpcId, record.source_npc_id, record.sourceEntityId, record.source_entity_id,
@@ -7139,14 +7139,14 @@ function buildSidecarWorkspaceModel(world, sess, options = {}) {
         const uniqueEndpoints = [...new Set(endpoints)];
         return uniqueEndpoints.length >= 2 && uniqueEndpoints.every(endpoint => relevantSubjectIds.has(endpoint));
     }).map(([id, value]) => {
-        const record = isPlainObject(value) ? value : {};
+        const record = experimentalIsPlainObject(value) ? value : {};
         const participants = String(id || '').split('|').map(part => sidecarProjectionDisplayName(world, sess, hierarchy, part)).filter(Boolean);
         return {
             id: `canonical:${id}`, source: 'canonical', proposal: false,
             label: record.label || record.name || record.otherName || participants.join(' ↔ ') || id,
             posture: record.posture || record.status || record.affinity || record.trust || '',
             evidence: record.evidence || record.summary || record.notes || 'Canonical relationship record.',
-            raw: safeJsonClone(value)
+            raw: experimentalSafeJsonClone(value)
         };
     });
     const sceneRelationships = (projection?.relationships || []).map((record, index) => ({
@@ -7155,7 +7155,7 @@ function buildSidecarWorkspaceModel(world, sess, options = {}) {
         label: record?.label || [record?.subjectName || record?.subject, record?.targetName || record?.target].filter(Boolean).join(' → ') || 'Scene relationship posture',
         posture: record?.posture || record?.change || record?.axis || '',
         evidence: record?.evidence || record?.reason || record?.summary || 'Reader-derived scene posture; not a durable relationship mutation.',
-        raw: safeJsonClone(record)
+        raw: experimentalSafeJsonClone(record)
     }));
     const relationshipProposals = (selectedSnapshot?.envelope?.relationshipProposals || []).map((record, index) => ({
         id: String(record?.id || record?.proposalId || `proposal:${selectedSnapshot?.id || 'current'}:${index}`),
@@ -7163,12 +7163,12 @@ function buildSidecarWorkspaceModel(world, sess, options = {}) {
         label: record?.label || [record?.subjectName || record?.subject, record?.targetName || record?.target].filter(Boolean).join(' → ') || 'Relationship proposal',
         posture: record?.posture || record?.change || '',
         evidence: record?.evidence || record?.reason || record?.summary || 'Reader proposal awaiting Sidecar review.',
-        raw: safeJsonClone(record)
+        raw: experimentalSafeJsonClone(record)
     }));
     const relationships = [...canonicalRelationships, ...sceneRelationships, ...relationshipProposals];
-    const candidates = safeJsonClone(projection?.candidateStructures || []);
+    const candidates = experimentalSafeJsonClone(projection?.candidateStructures || []);
     const memory = protocol.memoryGraph || {};
-    const openQuestions = safeJsonClone(projection?.questions || (protocol.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-24));
+    const openQuestions = experimentalSafeJsonClone(projection?.questions || (protocol.questions || []).filter(question => ['open', 'deferred'].includes(question.status)).slice(-24));
     const knownCharacters = [
         ...(world.entities || []).filter(entity => ['npc', 'character', 'person'].includes(String(entity?.type || '').toLowerCase())).map(entity => ({ id: entity.id, name: entity.name || entity.id, canonical: true, entity })),
         ...candidates.filter(candidate => String(candidate.candidateType || '').toLowerCase() === 'character').map(candidate => ({ id: candidate.candidateId, name: candidate.label || candidate.role || 'Scene character', canonical: false, candidate }))
@@ -7205,7 +7205,7 @@ function buildSidecarWorkspaceModel(world, sess, options = {}) {
     return {
         protocol, hierarchy, frame, clock, reader, activeSnapshot, selectedSnapshot, selectedTurn, projection, latestTurn, failedTurn, incompleteCommit,
         cast, candidates, relationships, activeCharacters: people, knownCharacters, snapshots, openQuestions, memory, workspaceUi, readerEnabled, historical,
-        location: safeJsonClone(projection?.location || { name: frame?.location_name || frame?.locationName || 'Unknown location', localSpace: '' }),
+        location: experimentalSafeJsonClone(projection?.location || { name: frame?.location_name || frame?.locationName || 'Unknown location', localSpace: '' }),
         readerFresh, readerStale, legacyReader, readerCoverage, requiredCharacterSubjects, snapshotMatchesLatestTurn, pendingReaderRefresh,
         status: incompleteCommit ? 'blocked' : failedTurn ? 'warning' : !readerEnabled ? 'muted' : readerStale ? 'stale' : (reader ? 'ready' : 'pending'), worldTime
     };
@@ -7219,7 +7219,7 @@ function packetCastFallback(protocol, sess, mode) {
 }
 
 function sidecarWorkspaceAvatar(name) {
-    return escapeHTML(String(name || '?').trim().split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?');
+    return experimentalEscapeHTML(String(name || '?').trim().split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || '?');
 }
 
 // ScenePulse uses a tiny inline graph rather than a numeric wall of text for
@@ -7273,13 +7273,13 @@ function sidecarWorkspaceDimensions(model) {
 
 function sidecarWorkspaceList(items, empty, fields = ['text', 'summary', 'description', 'label', 'name', 'evidence']) {
     const values = Array.isArray(items) ? items : [];
-    if (!values.length) return `<div class="si-empty-inline">${escapeHTML(empty)}</div>`;
+    if (!values.length) return `<div class="si-empty-inline">${experimentalEscapeHTML(empty)}</div>`;
     const textOf = item => {
-        if (!isPlainObject(item)) return String(item || '');
+        if (!experimentalIsPlainObject(item)) return String(item || '');
         for (const field of fields) if (item[field]) return String(item[field]);
         return Object.values(item).find(value => typeof value === 'string') || '';
     };
-    return `<ul class="si-evidence-list">${values.slice(0, 12).map(item => `<li>${escapeHTML(textOf(item).slice(0, 520))}</li>`).join('')}</ul>`;
+    return `<ul class="si-evidence-list">${values.slice(0, 12).map(item => `<li>${experimentalEscapeHTML(textOf(item).slice(0, 520))}</li>`).join('')}</ul>`;
 }
 
 function sidecarWorkspaceCharacterCard(entry, model) {
@@ -7314,13 +7314,13 @@ function sidecarWorkspaceCharacterCard(entry, model) {
     ].filter(Boolean);
     const epistemic = entry.intelligence?.epistemicLabel || entry.intelligence?.epistemicKind || 'Reader-derived, provisional';
     const meta = [mode, entry.channel, entry.reason].filter(Boolean).join(' · ') || 'Scene-relevant character';
-    return `<article class="sp-char-card si-character-card ${mode === 'active' || mode === 'remote' ? 'sp-card-open' : ''}" style="--char-accent:${accent};--char-border:${accent};" data-si-character="${escapeHTML(entry.id)}">
+    return `<article class="sp-char-card si-character-card ${mode === 'active' || mode === 'remote' ? 'sp-card-open' : ''}" style="--char-accent:${accent};--char-border:${accent};" data-si-character="${experimentalEscapeHTML(entry.id)}">
         <header class="sp-char-header" data-si-toggle="character">
             <span class="sp-char-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.name)}</span></span>
-            <span class="sp-char-name-col"><span class="sp-char-name-row"><strong class="sp-char-name">${escapeHTML(entry.name)}</strong><span class="sp-char-archetype sp-char-archetype-${mode === 'active' ? 'ally' : 'background'}">${escapeHTML(mode)}</span></span><span class="sp-char-meta">${escapeHTML(meta.slice(0, 160))}</span></span>
+            <span class="sp-char-name-col"><span class="sp-char-name-row"><strong class="sp-char-name">${experimentalEscapeHTML(entry.name)}</strong><span class="sp-char-archetype sp-char-archetype-${mode === 'active' ? 'ally' : 'background'}">${experimentalEscapeHTML(mode)}</span></span><span class="sp-char-meta">${experimentalEscapeHTML(meta.slice(0, 160))}</span></span>
             <span class="sp-char-header-spacer"></span>
         </header>
-        <div class="sp-char-body"><div class="sp-char-subsection-label"><span class="sp-char-subsection-text">Right now</span></div><div class="sp-char-grid">${nowRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div>${appearanceRows.length ? `<div class="sp-char-subsection-label"><span class="sp-char-subsection-text">Visible state</span></div><div class="sp-char-grid">${appearanceRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div>` : ''}${interpretationRows.length || thought ? `<div class="sp-char-subsection-label si-provisional-label"><span class="sp-char-subsection-text">Private scene reading</span><small>${escapeHTML(epistemic)}</small></div>${thought ? `<blockquote class="sp-char-thought-block">“${escapeHTML(thought)}”</blockquote>` : ''}<div class="sp-char-grid">${interpretationRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div>` : `<div class="sp-char-empty">No private-state inference was warranted for this character in this beat.</div>`}${goalRows.length ? `<div class="sp-char-goals">${goalRows.map(([label, value]) => `<div class="sp-char-goal-item"><strong>${escapeHTML(label)}:</strong> ${escapeHTML(String(value))}</div>`).join('')}</div>` : ''}</div>
+        <div class="sp-char-body"><div class="sp-char-subsection-label"><span class="sp-char-subsection-text">Right now</span></div><div class="sp-char-grid">${nowRows.map(([label, value]) => `<span class="sp-char-field">${experimentalEscapeHTML(label)}</span><span class="sp-char-val">${experimentalEscapeHTML(String(value))}</span>`).join('')}</div>${appearanceRows.length ? `<div class="sp-char-subsection-label"><span class="sp-char-subsection-text">Visible state</span></div><div class="sp-char-grid">${appearanceRows.map(([label, value]) => `<span class="sp-char-field">${experimentalEscapeHTML(label)}</span><span class="sp-char-val">${experimentalEscapeHTML(String(value))}</span>`).join('')}</div>` : ''}${interpretationRows.length || thought ? `<div class="sp-char-subsection-label si-provisional-label"><span class="sp-char-subsection-text">Private scene reading</span><small>${experimentalEscapeHTML(epistemic)}</small></div>${thought ? `<blockquote class="sp-char-thought-block">“${experimentalEscapeHTML(thought)}”</blockquote>` : ''}<div class="sp-char-grid">${interpretationRows.map(([label, value]) => `<span class="sp-char-field">${experimentalEscapeHTML(label)}</span><span class="sp-char-val">${experimentalEscapeHTML(String(value))}</span>`).join('')}</div>` : `<div class="sp-char-empty">No private-state inference was warranted for this character in this beat.</div>`}${goalRows.length ? `<div class="sp-char-goals">${goalRows.map(([label, value]) => `<div class="sp-char-goal-item"><strong>${experimentalEscapeHTML(label)}:</strong> ${experimentalEscapeHTML(String(value))}</div>`).join('')}</div>` : ''}</div>
     </article>`;
 }
 
@@ -7334,9 +7334,9 @@ function sidecarWorkspaceHistoryTimeline(model) {
         const title = scene.topic || envelope.summary || 'Scene update';
         const time = envelope.temporal?.meaning || envelope.timeSemantics?.meaning || snapshot.createdAt || '';
         const status = snapshot.status || 'active';
-        return `<button type="button" class="sp-history-item si-history-item ${current ? 'is-current' : ''}" data-si-snapshot="${escapeHTML(String(snapshot.id || ''))}"><span class="sp-history-marker ${current ? 'is-current' : ''}">${current ? '●' : '○'}</span><span class="sp-history-content"><span class="sp-history-heading"><strong>${escapeHTML(String(title).slice(0, 180))}</strong><span class="sp-history-badge ${status === 'active' ? 'is-current' : ''}">${escapeHTML(status)}</span></span><span class="sp-history-meta">${escapeHTML(String(snapshot.turnId || 'turn'))} · ${escapeHTML(String(envelope.snapshotMode || 'delta'))} · ${escapeHTML(String(time).slice(0, 180))}</span><span class="si-history-summary">${escapeHTML(String(envelope.summary || 'Reader snapshot attached to the accepted turn.').slice(0, 320))}</span></span></button>`;
+        return `<button type="button" class="sp-history-item si-history-item ${current ? 'is-current' : ''}" data-si-snapshot="${experimentalEscapeHTML(String(snapshot.id || ''))}"><span class="sp-history-marker ${current ? 'is-current' : ''}">${current ? '●' : '○'}</span><span class="sp-history-content"><span class="sp-history-heading"><strong>${experimentalEscapeHTML(String(title).slice(0, 180))}</strong><span class="sp-history-badge ${status === 'active' ? 'is-current' : ''}">${experimentalEscapeHTML(status)}</span></span><span class="sp-history-meta">${experimentalEscapeHTML(String(snapshot.turnId || 'turn'))} · ${experimentalEscapeHTML(String(envelope.snapshotMode || 'delta'))} · ${experimentalEscapeHTML(String(time).slice(0, 180))}</span><span class="si-history-summary">${experimentalEscapeHTML(String(envelope.summary || 'Reader snapshot attached to the accepted turn.').slice(0, 320))}</span></span></button>`;
     }).join('');
-    const nodes = snapshots.slice().reverse().map((snapshot, index) => `<span class="sp-tl-node" style="left:${snapshots.length === 1 ? 50 : (index / (snapshots.length - 1)) * 100}%" title="${escapeHTML(String(snapshot.turnId || 'turn'))}"><span class="sp-tl-dot ${index === 0 ? 'sp-tl-dot-latest' : ''}"></span><span class="sp-tl-label ${index === 0 ? 'sp-tl-label-active' : ''}">${escapeHTML(String(snapshot.turnId || '').slice(-8))}</span></span>`).join('');
+    const nodes = snapshots.slice().reverse().map((snapshot, index) => `<span class="sp-tl-node" style="left:${snapshots.length === 1 ? 50 : (index / (snapshots.length - 1)) * 100}%" title="${experimentalEscapeHTML(String(snapshot.turnId || 'turn'))}"><span class="sp-tl-dot ${index === 0 ? 'sp-tl-dot-latest' : ''}"></span><span class="sp-tl-label ${index === 0 ? 'sp-tl-label-active' : ''}">${experimentalEscapeHTML(String(snapshot.turnId || '').slice(-8))}</span></span>`).join('');
     return `<div class="sp-tl-bar si-timeline-bar">${nodes}</div><div class="sp-history-list">${timeline}</div>`;
 }
 
@@ -7351,7 +7351,7 @@ function sidecarWorkspaceThoughts(model) {
         const posture = sidecarProjectionClaimText(entry.emotionalPosture);
         const attention = sidecarProjectionClaimText(entry.attentionFocus);
         const noticed = sidecarProjectionClaimText(entry.noticed);
-        return `<article class="sp-thought-card si-thought-card"><header><span class="sp-thought-avatar">${sidecarWorkspaceAvatar(entry.name)}</span><span><strong>${escapeHTML(entry.name)}</strong><small>${escapeHTML(entry.mode || 'relevant')} · provisional reading</small></span></header>${thought ? `<blockquote>“${escapeHTML(thought)}”</blockquote>` : ''}${[posture && ['Emotional posture', posture], attention && ['Attention', attention], noticed && ['Noticed', noticed]].filter(Boolean).map(([label, value]) => `<div class="sp-row si-intelligence-row"><span class="sp-row-label">${escapeHTML(label)}</span><span class="sp-row-value">${escapeHTML(value)}</span></div>`).join('')}</article>`;
+        return `<article class="sp-thought-card si-thought-card"><header><span class="sp-thought-avatar">${sidecarWorkspaceAvatar(entry.name)}</span><span><strong>${experimentalEscapeHTML(entry.name)}</strong><small>${experimentalEscapeHTML(entry.mode || 'relevant')} · provisional reading</small></span></header>${thought ? `<blockquote>“${experimentalEscapeHTML(thought)}”</blockquote>` : ''}${[posture && ['Emotional posture', posture], attention && ['Attention', attention], noticed && ['Noticed', noticed]].filter(Boolean).map(([label, value]) => `<div class="sp-row si-intelligence-row"><span class="sp-row-label">${experimentalEscapeHTML(label)}</span><span class="sp-row-value">${experimentalEscapeHTML(value)}</span></div>`).join('')}</article>`;
     }).join('')}</div>`;
 }
 
@@ -7359,7 +7359,7 @@ function sidecarWorkspaceKnownCharacters(model) {
     const relevantIds = new Set((model.activeCharacters || []).map(entry => String(entry.entityId || entry.id || '')));
     const known = (model.knownCharacters || []).filter(entry => !relevantIds.has(String(entry.id || '')));
     if (!known.length) return '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">♙</div><strong class="sp-empty-title">No other known characters</strong><span class="sp-empty-sub">Characters with current scene relevance are already shown in the scene roster.</span></div>';
-    return `<div class="si-known-explainer">This is the canonical registry browser. These characters are not inserted into the current scene merely because they exist in the world.</div><div class="si-known-list">${known.map(entry => `<article class="si-known-character"><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.name)}</span></span><span><strong>${escapeHTML(entry.name)}</strong><small>${entry.canonical ? 'Canonical character · no current scene relevance' : 'Scene candidate'}</small></span></article>`).join('')}</div>`;
+    return `<div class="si-known-explainer">This is the canonical registry browser. These characters are not inserted into the current scene merely because they exist in the world.</div><div class="si-known-list">${known.map(entry => `<article class="si-known-character"><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.name)}</span></span><span><strong>${experimentalEscapeHTML(entry.name)}</strong><small>${entry.canonical ? 'Canonical character · no current scene relevance' : 'Scene candidate'}</small></span></article>`).join('')}</div>`;
 }
 
 // ScenePulse's relationship blocks are deliberately a separate renderer: the
@@ -7374,8 +7374,8 @@ function sidecarWorkspaceRelationshipMarkup(model) {
         const display = entry.posture ?? 'unresolved';
         const meter = width === null
             ? '<div class="sp-meter-row"><span class="sp-meter-label">Posture</span><span class="sp-meter-bar-na"></span><span class="sp-meter-value-na">qualitative</span></div>'
-            : `<div class="sp-meter-row"><span class="sp-meter-label">Posture</span><span class="sp-meter-bar-wrap"><span class="sp-meter-bar-track"><span class="sp-meter-bar-fill" style="width:${width}%"></span></span></span><span class="sp-meter-value">${escapeHTML(String(display))}</span>${sidecarWorkspaceSparkline(model, entry)}</div>`;
-        return `<article class="sp-rel-block si-rel-block ${entry.proposal ? 'is-proposal' : ''}" style="--char-accent:${entry.proposal ? '#d4a855' : '#4db8a4'};--char-border:${entry.proposal ? '#d4a855' : '#4db8a4'}"><header class="sp-rel-header"><span class="sp-rel-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.label)}</span></span><span class="sp-rel-name">${escapeHTML(entry.label)}</span><span class="sp-rel-type-badge">${escapeHTML(entry.proposal ? 'proposal' : 'canonical')}</span><span class="sp-rel-phase-badge">${escapeHTML(String(display))}</span></header><div class="sp-rel-body si-rel-body"><div class="sp-rel-meta"><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Evidence</span><span>${escapeHTML(entry.evidence || (entry.proposal ? 'Reader proposal awaiting Sidecar review.' : 'Canonical relationship state.'))}</span></div></div>${meter}${entry.proposal ? '<div class="si-card-actions"><button type="button" class="btn btn-ghost" data-si-action="relationship:' + escapeHTML(entry.id) + '">Review evidence</button></div>' : ''}</div></article>`;
+            : `<div class="sp-meter-row"><span class="sp-meter-label">Posture</span><span class="sp-meter-bar-wrap"><span class="sp-meter-bar-track"><span class="sp-meter-bar-fill" style="width:${width}%"></span></span></span><span class="sp-meter-value">${experimentalEscapeHTML(String(display))}</span>${sidecarWorkspaceSparkline(model, entry)}</div>`;
+        return `<article class="sp-rel-block si-rel-block ${entry.proposal ? 'is-proposal' : ''}" style="--char-accent:${entry.proposal ? '#d4a855' : '#4db8a4'};--char-border:${entry.proposal ? '#d4a855' : '#4db8a4'}"><header class="sp-rel-header"><span class="sp-rel-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${sidecarWorkspaceAvatar(entry.label)}</span></span><span class="sp-rel-name">${experimentalEscapeHTML(entry.label)}</span><span class="sp-rel-type-badge">${experimentalEscapeHTML(entry.proposal ? 'proposal' : 'canonical')}</span><span class="sp-rel-phase-badge">${experimentalEscapeHTML(String(display))}</span></header><div class="sp-rel-body si-rel-body"><div class="sp-rel-meta"><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Evidence</span><span>${experimentalEscapeHTML(entry.evidence || (entry.proposal ? 'Reader proposal awaiting Sidecar review.' : 'Canonical relationship state.'))}</span></div></div>${meter}${entry.proposal ? '<div class="si-card-actions"><button type="button" class="btn btn-ghost" data-si-action="relationship:' + experimentalEscapeHTML(entry.id) + '">Review evidence</button></div>' : ''}</div></article>`;
     }).join('')}`;
 }
 
@@ -7464,7 +7464,7 @@ function scenePulseTourState() {
                 id: 'scenepulse-tour-example-data-accepted',
                 status: 'accepted_fixture',
                 source: 'ScenePulse TOUR_EXAMPLE_DATA (v6.27.20)',
-                scenePulse: sealScenePulseTourFixture(safeJsonClone(SCENEPULSE_TOUR_EXAMPLE_DATA))
+                scenePulse: sealScenePulseTourFixture(experimentalSafeJsonClone(SCENEPULSE_TOUR_EXAMPLE_DATA))
             })
         };
     }
@@ -7551,15 +7551,15 @@ function scenePulseCandidateReviewProjection(world, sess, protocol, options = {}
             role: String(candidate.role || '').slice(0, 180), description: String(candidate.description || '').slice(0, 1800),
             confidence: Number.isFinite(Number(candidate.confidence)) ? Number(candidate.confidence) : null,
             settlementStatus: String(candidate.settlementStatus || ''), candidateStatus: String(candidate.status || ''),
-            sourceTurnIds: safeJsonClone(scenePulseCandidateSourceTurnIds(candidate)), readerSnapshotId: String(candidate.readerSnapshotId || ''),
+            sourceTurnIds: experimentalSafeJsonClone(scenePulseCandidateSourceTurnIds(candidate)), readerSnapshotId: String(candidate.readerSnapshotId || ''),
             sourceSceneId: String(candidate.sourceSceneId || ''), eligibility,
             staged: staged ? {
                 id: String(staged.id || ''), status: String(staged.status || ''),
                 promotionRequested: staged.promotionRequested === true,
-                sourceTurnIds: safeJsonClone(staged.readerSourceTurnIds || []),
+                sourceTurnIds: experimentalSafeJsonClone(staged.readerSourceTurnIds || []),
                 disposition: String(staged.scenePulseDisposition || ''),
                 duplicateCandidates: (Array.isArray(staged.duplicateCanonicalCandidates) ? staged.duplicateCanonicalCandidates : [])
-                    .filter(entry => isPlainObject(entry) && String(entry?.id || '').trim())
+                    .filter(entry => experimentalIsPlainObject(entry) && String(entry?.id || '').trim())
                     .slice(-8).map(entry => ({
                         id: String(entry.id || '').slice(0, 180), name: String(entry.name || entry.id || '').slice(0, 240),
                         kind: String(entry.kind || '').slice(0, 40)
@@ -7575,8 +7575,8 @@ function scenePulseCandidateReviewProjection(world, sess, protocol, options = {}
 
 function scenePulseCandidatePromotionDraft(candidate = {}) {
     const kind = scenePulseCandidatePromotionKind(candidate);
-    const details = isPlainObject(candidate?.details) ? candidate.details : {};
-    const sourceCharacter = isPlainObject(candidate?.scenePulseCharacter) ? candidate.scenePulseCharacter : {};
+    const details = experimentalIsPlainObject(candidate?.details) ? candidate.details : {};
+    const sourceCharacter = experimentalIsPlainObject(candidate?.scenePulseCharacter) ? candidate.scenePulseCharacter : {};
     const appearance = {
         hair: String(details.hair || sourceCharacter.hair || '').trim().slice(0, 600),
         face: String(details.face || sourceCharacter.face || '').trim().slice(0, 600),
@@ -7657,16 +7657,16 @@ async function stageScenePulseCandidateForWorldReview(world, sess, candidateId) 
     staged.readerSnapshotIds = [...new Set([...(staged.readerSnapshotIds || []), candidate.readerSnapshotId]
         .map(value => String(value || '').trim()).filter(Boolean))].slice(-30);
     staged.readerSourceTurnIds = [...new Set([...(staged.readerSourceTurnIds || []), ...sourceTurnIds])].slice(-30);
-    staged.scenePulseEvidence = safeJsonClone((candidate.evidence || []).slice(-24));
-    staged.scenePulseAppearance = safeJsonClone(draft.appearance);
-    staged.scenePulseSpecialist = safeJsonClone(draft.specialist);
-    staged.scenePulseGoals = safeJsonClone(draft.goals);
-    staged.scenePulsePresentation = safeJsonClone(draft.presentation);
-    staged.promotionEligibility = safeJsonClone(eligibility);
+    staged.scenePulseEvidence = experimentalSafeJsonClone((candidate.evidence || []).slice(-24));
+    staged.scenePulseAppearance = experimentalSafeJsonClone(draft.appearance);
+    staged.scenePulseSpecialist = experimentalSafeJsonClone(draft.specialist);
+    staged.scenePulseGoals = experimentalSafeJsonClone(draft.goals);
+    staged.scenePulsePresentation = experimentalSafeJsonClone(draft.presentation);
+    staged.promotionEligibility = experimentalSafeJsonClone(eligibility);
     staged.scenePulseDisposition = eligibility.ready ? 'world_review_ready' : 'awaiting_scene_evidence';
     staged.reviewProvenance = {
         source: 'explicit_scenepulse_comparison_review', reviewedAt: new Date().toISOString(),
-        candidateId: staged.scenePulseCandidateId, readerSnapshotId: String(candidate.readerSnapshotId || ''), sourceTurnIds: safeJsonClone(sourceTurnIds)
+        candidateId: staged.scenePulseCandidateId, readerSnapshotId: String(candidate.readerSnapshotId || ''), sourceTurnIds: experimentalSafeJsonClone(sourceTurnIds)
     };
     candidate.provisionalId = staged.id;
     candidate.promotionDisposition = staged.scenePulseDisposition;
@@ -7678,12 +7678,12 @@ async function stageScenePulseCandidateForWorldReview(world, sess, candidateId) 
 
 function applyScenePulsePromotionAppearance(canonical, staged) {
     if (!canonical || canonical.type !== 'npc') return null;
-    const appearance = isPlainObject(staged?.scenePulseAppearance) ? staged.scenePulseAppearance : {};
-    const specialist = isPlainObject(staged?.scenePulseSpecialist) ? staged.scenePulseSpecialist : {};
-    const goals = isPlainObject(staged?.scenePulseGoals) ? staged.scenePulseGoals : {};
-    const presentation = isPlainObject(staged?.scenePulsePresentation) ? staged.scenePulsePresentation : {};
+    const appearance = experimentalIsPlainObject(staged?.scenePulseAppearance) ? staged.scenePulseAppearance : {};
+    const specialist = experimentalIsPlainObject(staged?.scenePulseSpecialist) ? staged.scenePulseSpecialist : {};
+    const goals = experimentalIsPlainObject(staged?.scenePulseGoals) ? staged.scenePulseGoals : {};
+    const presentation = experimentalIsPlainObject(staged?.scenePulsePresentation) ? staged.scenePulsePresentation : {};
     const outfitDescription = String(appearance.outfit || '').trim().slice(0, 1200);
-    canonical.visuals = isPlainObject(canonical.visuals) ? canonical.visuals : {};
+    canonical.visuals = experimentalIsPlainObject(canonical.visuals) ? canonical.visuals : {};
     const outcomes = {};
     if (outfitDescription) {
         const outfits = worldOutfits(canonical);
@@ -7721,18 +7721,18 @@ function applyScenePulsePromotionAppearance(canonical, staged) {
     }
     const source = {
         source: 'explicit_scenepulse_candidate_promotion', promotedAt: new Date().toISOString(),
-        candidateId: String(staged?.scenePulseCandidateId || ''), readerSnapshotIds: safeJsonClone(staged?.readerSnapshotIds || []),
-        sourceTurnIds: safeJsonClone(staged?.readerSourceTurnIds || [])
+        candidateId: String(staged?.scenePulseCandidateId || ''), readerSnapshotIds: experimentalSafeJsonClone(staged?.readerSnapshotIds || []),
+        sourceTurnIds: experimentalSafeJsonClone(staged?.readerSourceTurnIds || [])
     };
-    canonical.scenePulseAppearanceEvidence = { ...source, appearance: safeJsonClone(appearance) };
+    canonical.scenePulseAppearanceEvidence = { ...source, appearance: experimentalSafeJsonClone(appearance) };
     // These fields are intentionally kept as observed graduation evidence,
     // not flattened into a generic personality or permanent-state schema.
     // They retain provenance and can be revised by a later accepted scene.
     const observedState = {
         ...source,
-        presentation: safeJsonClone(presentation),
-        specialist: safeJsonClone(specialist),
-        goals: safeJsonClone(goals)
+        presentation: experimentalSafeJsonClone(presentation),
+        specialist: experimentalSafeJsonClone(specialist),
+        goals: experimentalSafeJsonClone(goals)
     };
     if (Object.values(specialist).some(Boolean) || Object.values(goals).some(Boolean)
         || Object.values(presentation).some(value => Array.isArray(value) ? value.length : value)) {
@@ -7758,8 +7758,8 @@ function applyScenePulsePromotionLocation(canonical, staged) {
     if (!canonical || String(staged?.kind || '') !== 'location') return null;
     const source = {
         source: 'explicit_scenepulse_candidate_promotion', promotedAt: new Date().toISOString(),
-        candidateId: String(staged?.scenePulseCandidateId || ''), readerSnapshotIds: safeJsonClone(staged?.readerSnapshotIds || []),
-        sourceTurnIds: safeJsonClone(staged?.readerSourceTurnIds || [])
+        candidateId: String(staged?.scenePulseCandidateId || ''), readerSnapshotIds: experimentalSafeJsonClone(staged?.readerSnapshotIds || []),
+        sourceTurnIds: experimentalSafeJsonClone(staged?.readerSourceTurnIds || [])
     };
     const observedLocation = {
         description: String(staged?.description || '').trim().slice(0, 1800),
@@ -7771,7 +7771,7 @@ function applyScenePulsePromotionLocation(canonical, staged) {
     canonical.scenePulseLocationEvidence = {
         ...source,
         location: observedLocation,
-        evidence: safeJsonClone((staged?.scenePulseEvidence || []).slice(-24))
+        evidence: experimentalSafeJsonClone((staged?.scenePulseEvidence || []).slice(-24))
     };
     return { locationEvidence: true };
 }
@@ -7787,7 +7787,7 @@ function markScenePulseCandidatePromotionOutcome(protocol, staged, canonical, ou
     candidate.promotionProvenance = {
         source: outcome === 'matched' ? 'explicit_scenepulse_identity_link' : 'explicit_scenepulse_candidate_promotion',
         at: new Date().toISOString(), canonicalId: String(canonical.id || ''), provisionalId: String(staged.id || ''),
-        readerSnapshotIds: safeJsonClone(staged.readerSnapshotIds || []), sourceTurnIds: safeJsonClone(staged.readerSourceTurnIds || [])
+        readerSnapshotIds: experimentalSafeJsonClone(staged.readerSnapshotIds || []), sourceTurnIds: experimentalSafeJsonClone(staged.readerSourceTurnIds || [])
     };
     return candidate;
 }
@@ -7868,7 +7868,7 @@ async function keepScenePulseCandidateSceneOnly(world, sess, candidateId) {
     candidate.promotionDisposition = 'scene_only_by_author';
     candidate.promotionProvenance = {
         source: 'explicit_scenepulse_scene_only', at: new Date().toISOString(),
-        readerSnapshotId: String(candidate.readerSnapshotId || ''), sourceTurnIds: safeJsonClone(scenePulseCandidateSourceTurnIds(candidate))
+        readerSnapshotId: String(candidate.readerSnapshotId || ''), sourceTurnIds: experimentalSafeJsonClone(scenePulseCandidateSourceTurnIds(candidate))
     };
     const staged = scenePulsePromotionRecordForCandidate(protocol, candidateId);
     if (staged && staged.status !== 'promoted') {
@@ -7885,8 +7885,8 @@ async function keepScenePulseCandidateSceneOnly(world, sess, candidateId) {
 // compact Reader packet that created it. Older snapshots predate rawEnvelope;
 // only those use the authored turn's legacy Reader packet as a fallback.
 function sidecarReaderSnapshotRawEnvelope(snapshot, sourceTurn = null) {
-    if (isPlainObject(snapshot?.rawEnvelope)) return snapshot.rawEnvelope;
-    return isPlainObject(sourceTurn?.reader) ? sourceTurn.reader : {};
+    if (experimentalIsPlainObject(snapshot?.rawEnvelope)) return snapshot.rawEnvelope;
+    return experimentalIsPlainObject(sourceTurn?.reader) ? sourceTurn.reader : {};
 }
 
 // Gate B is intentionally a very small host boundary.  ScenePulse receives
@@ -7935,12 +7935,12 @@ function scenePulseAcceptedHandoff(world, sess) {
     // receives this snapshot's exact compact packet; a focused reread must
     // not show the older packet stored on its authored turn.
     const rawReaderEnvelope = sidecarReaderSnapshotRawEnvelope(settled, sourceTurn);
-    const deltaScenePulse = isPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
+    const deltaScenePulse = experimentalIsPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
     // Persisted snapshots may predate a source-shape repair. Normalize the
     // accepted display clone on read as well as on new Reader input, so a
     // scalar witness in an older settled packet remains visible to the
     // upstream renderer without mutating its raw evidence record.
-    const settledScenePulse = isPlainObject(envelope?.scenePulse)
+    const settledScenePulse = experimentalIsPlainObject(envelope?.scenePulse)
         ? normalizeSidecarScenePulseShape(envelope.scenePulse) : null;
     // attachSidecarReaderSnapshot already materializes compact deltas. Do not
     // apply meterDeltas again at render time: that would double an accepted
@@ -7954,15 +7954,15 @@ function scenePulseAcceptedHandoff(world, sess) {
     const history = historySnapshots.slice(0, currentIndex + 1).map((snapshot, index, snapshots) => {
         const sourceTurn = (protocol.turns || []).find(turn => String(turn?.id || '') === String(snapshot.turnId || '')) || null;
         const rawReaderEnvelope = sidecarReaderSnapshotRawEnvelope(snapshot, sourceTurn);
-        const rawDelta = isPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
-        const storedProjection = isPlainObject(snapshot.envelope?.scenePulse)
+        const rawDelta = experimentalIsPlainObject(rawReaderEnvelope?.scenePulse) ? rawReaderEnvelope.scenePulse : {};
+        const storedProjection = experimentalIsPlainObject(snapshot.envelope?.scenePulse)
             ? normalizeSidecarScenePulseShape(snapshot.envelope.scenePulse) : {};
         const projection = storedProjection;
         const priorSnapshot = index > 0 ? snapshots[index - 1] : null;
         const priorTurn = priorSnapshot && (protocol.turns || []).find(turn => String(turn?.id || '') === String(priorSnapshot.turnId || ''));
         const priorRawEnvelope = sidecarReaderSnapshotRawEnvelope(priorSnapshot, priorTurn);
-        const priorDelta = isPlainObject(priorRawEnvelope?.scenePulse) ? priorRawEnvelope.scenePulse : {};
-        const priorStored = isPlainObject(priorSnapshot?.envelope?.scenePulse) ? priorSnapshot.envelope.scenePulse : null;
+        const priorDelta = experimentalIsPlainObject(priorRawEnvelope?.scenePulse) ? priorRawEnvelope.scenePulse : {};
+        const priorStored = experimentalIsPlainObject(priorSnapshot?.envelope?.scenePulse) ? priorSnapshot.envelope.scenePulse : null;
         const usage = snapshot.envelope?.metadata?.usage;
         // Historic snapshots may have placeholder zeroes from before calls
         // measured their own lifetime. Only the explicit reader-call marker is
@@ -7987,29 +7987,29 @@ function scenePulseAcceptedHandoff(world, sess) {
                 deltaBytes: JSON.stringify(rawDelta).length,
                 changedFields: Object.keys(rawDelta).filter(key => !['clearFields', 'clear_fields', 'replaceCollections', 'replace_collections'].includes(key)).length
             },
-            scenePulse: safeJsonClone(projection),
-            previousScenePulse: priorStored ? safeJsonClone(priorStored) : null,
-            deltaScenePulse: safeJsonClone(rawDelta),
-            clearFields: Array.isArray(rawDelta.clearFields || rawDelta.clear_fields) ? safeJsonClone(rawDelta.clearFields || rawDelta.clear_fields) : [],
-            replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? safeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : [],
+            scenePulse: experimentalSafeJsonClone(projection),
+            previousScenePulse: priorStored ? experimentalSafeJsonClone(priorStored) : null,
+            deltaScenePulse: experimentalSafeJsonClone(rawDelta),
+            clearFields: Array.isArray(rawDelta.clearFields || rawDelta.clear_fields) ? experimentalSafeJsonClone(rawDelta.clearFields || rawDelta.clear_fields) : [],
+            replaceCollections: Array.isArray(rawDelta.replaceCollections || rawDelta.replace_collections) ? experimentalSafeJsonClone(rawDelta.replaceCollections || rawDelta.replace_collections) : [],
             // The graph travels beside this historical source projection so
             // Inspect can show a Reader-derived web without treating it as a
             // tracker field or a canonical relationship record.
-            npcRelationshipGraph: safeJsonClone(snapshot.envelope?.npcRelationshipGraph || null),
+            npcRelationshipGraph: experimentalSafeJsonClone(snapshot.envelope?.npcRelationshipGraph || null),
             // This lives beside the source tracker, never inside it. The
             // native panel remains a ScenePulse rendering; Inspect can show
             // whether a settled scene candidate has a parallel Horde review.
-            candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
+            candidateReview: experimentalSafeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
                 snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
             })),
             // A Quest Journal action is translated only from an explicit
             // source save. Its compact outcome remains beside this historical
             // scene snapshot for Inspect; no Horde quest is used to fill the
             // source tracker.
-            questReview: safeJsonClone(scenePulseQuestReviewProjection(protocol, {
+            questReview: experimentalSafeJsonClone(scenePulseQuestReviewProjection(protocol, {
                 snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
             })),
-            relationshipReview: safeJsonClone(scenePulseRelationshipReviewProjection(protocol, {
+            relationshipReview: experimentalSafeJsonClone(scenePulseRelationshipReviewProjection(protocol, {
                 snapshotId: String(snapshot.id || ''), turnId: String(snapshot.turnId || '')
             }))
         };
@@ -8020,21 +8020,21 @@ function scenePulseAcceptedHandoff(world, sess) {
         source: `${retainingLastKnownScene ? 'Last known accepted' : 'Accepted'} Horde Reader handoff · ${settled.id}`,
         lastKnown: retainingLastKnownScene,
         fixtureScenePulse: fixture.scenePulse,
-        scenePulse: safeJsonClone(acceptedScenePulse),
-        previousScenePulse: predecessor?.envelope?.scenePulse ? safeJsonClone(predecessor.envelope.scenePulse) : null,
-        deltaScenePulse: safeJsonClone(deltaScenePulse),
-        clearFields: Array.isArray(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) ? safeJsonClone(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) : [],
-        replaceCollections: Array.isArray(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) ? safeJsonClone(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) : [],
-        npcRelationshipGraph: safeJsonClone(envelope.npcRelationshipGraph || null),
-        history: safeJsonClone(history),
-        readerPreset: safeJsonClone(readerPreset),
-        candidateReview: safeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
+        scenePulse: experimentalSafeJsonClone(acceptedScenePulse),
+        previousScenePulse: predecessor?.envelope?.scenePulse ? experimentalSafeJsonClone(predecessor.envelope.scenePulse) : null,
+        deltaScenePulse: experimentalSafeJsonClone(deltaScenePulse),
+        clearFields: Array.isArray(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) ? experimentalSafeJsonClone(deltaScenePulse.clearFields || deltaScenePulse.clear_fields) : [],
+        replaceCollections: Array.isArray(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) ? experimentalSafeJsonClone(deltaScenePulse.replaceCollections || deltaScenePulse.replace_collections) : [],
+        npcRelationshipGraph: experimentalSafeJsonClone(envelope.npcRelationshipGraph || null),
+        history: experimentalSafeJsonClone(history),
+        readerPreset: experimentalSafeJsonClone(readerPreset),
+        candidateReview: experimentalSafeJsonClone(scenePulseCandidateReviewProjection(world, sess, protocol, {
             snapshotId: String(settled.id || ''), turnId: String(sourceTurn?.id || '')
         })),
-        questReview: safeJsonClone(scenePulseQuestReviewProjection(protocol, {
+        questReview: experimentalSafeJsonClone(scenePulseQuestReviewProjection(protocol, {
             snapshotId: String(settled.id || ''), turnId: String(sourceTurn?.id || '')
         })),
-        relationshipReview: safeJsonClone(scenePulseRelationshipReviewProjection(protocol, {
+        relationshipReview: experimentalSafeJsonClone(scenePulseRelationshipReviewProjection(protocol, {
             snapshotId: String(settled.id || ''), turnId: String(sourceTurn?.id || '')
         })),
         uiPreferences,
@@ -8116,7 +8116,7 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
     // The vendored card hands its source object across the named host
     // boundary. Convert that object to the source's own OOC direction here;
     // coercing it with String() would put "[object Object]" in the draft.
-    const raw = isPlainObject(direction) ? direction : null;
+    const raw = experimentalIsPlainObject(direction) ? direction : null;
     const category = String(raw?.type || raw?.category || '').trim().toLowerCase();
     const type = ['dramatic', 'intense', 'comedic', 'twist', 'exploratory'].includes(category) ? category : 'exploratory';
     const article = /^[aeiou]/i.test(type) ? 'an' : 'a';
@@ -8149,7 +8149,7 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
 // provenance and no Narrator or canonical state is replayed.
 async function applyScenePulseReaderPreset(world, sess, rawPreset = {}) {
     const existing = world?.sidecarConfig?.tracker?.readerProfile || {};
-    if (!isPlainObject(rawPreset) || !Object.keys(rawPreset).length) {
+    if (!experimentalIsPlainObject(rawPreset) || !Object.keys(rawPreset).length) {
         const { scenePulsePreset, ...withoutScenePulsePreset } = existing;
         world.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.({
             ...world,
@@ -8183,16 +8183,16 @@ function exportScenePulseReaderHistory(world, sess) {
     const profile = effectiveSidecarReaderProfile(world, sess);
     const exportData = {
         extension: 'ScenePulse', version: '6.27.20', exportedAt: new Date().toISOString(),
-        scope: 'accepted_reader_scenepulse_projections_only', readerPreset: safeJsonClone(profile.scenePulsePreset || null), snapshotCount: snapshots.length,
+        scope: 'accepted_reader_scenepulse_projections_only', readerPreset: experimentalSafeJsonClone(profile.scenePulsePreset || null), snapshotCount: snapshots.length,
         snapshots: snapshots.map(snapshot => {
             const sourceTurn = (protocol.turns || []).find(turn => String(turn?.id || '') === String(snapshot.turnId || '')) || null;
-            const rawDelta = isPlainObject(sourceTurn?.reader?.scenePulse) ? sourceTurn.reader.scenePulse : {};
+            const rawDelta = experimentalIsPlainObject(sourceTurn?.reader?.scenePulse) ? sourceTurn.reader.scenePulse : {};
             return {
                 id: snapshot.id, createdAt: snapshot.createdAt, turnId: snapshot.turnId, mode: snapshot.envelope?.snapshotMode || 'delta',
-                changedFields: safeJsonClone(snapshot.envelope?.changedFields || []), compactScenePulseDelta: safeJsonClone(rawDelta),
-                scenePulse: safeJsonClone(snapshot.envelope?.scenePulse || {}), preset: safeJsonClone(snapshot.envelope?.metadata?.scenePulsePreset || null),
-                npcRelationshipGraph: safeJsonClone(snapshot.envelope?.npcRelationshipGraph || null),
-                usage: safeJsonClone(snapshot.envelope?.metadata?.usage || {})
+                changedFields: experimentalSafeJsonClone(snapshot.envelope?.changedFields || []), compactScenePulseDelta: experimentalSafeJsonClone(rawDelta),
+                scenePulse: experimentalSafeJsonClone(snapshot.envelope?.scenePulse || {}), preset: experimentalSafeJsonClone(snapshot.envelope?.metadata?.scenePulsePreset || null),
+                npcRelationshipGraph: experimentalSafeJsonClone(snapshot.envelope?.npcRelationshipGraph || null),
+                usage: experimentalSafeJsonClone(snapshot.envelope?.metadata?.usage || {})
             };
         })
     };
@@ -8231,14 +8231,14 @@ async function clearScenePulseReaderHistory(world, sess) {
 // a compact, whitelisted source-panel shape per World timeline so a source
 // control never smuggles registry/canonical state into the adapter boundary.
 function normalizeScenePulseWorldsPreferences(raw = {}) {
-    const source = isPlainObject(raw) ? raw : {};
+    const source = experimentalIsPlainObject(raw) ? raw : {};
     const bools = (value, keys) => Object.fromEntries(keys.map(key => [key, value?.[key] !== false]));
     const panels = bools(source.panels, ['dashboard', 'scene', 'quests', 'relationships', 'characters', 'branches']);
     const features = bools(source.features, ['thoughts', 'weather', 'timeTint', 'transitions']);
     const dashCards = bools(source.dashCards, ['date', 'time', 'weather', 'temperature', 'location']);
     const theme = ['default', 'midnight', 'fantasy', 'cyberpunk', 'minimal'].includes(String(source.theme || '')) ? source.theme : 'default';
     const number = (value, fallback, min, max) => Number.isFinite(Number(value)) ? Math.max(min, Math.min(max, Number(value))) : fallback;
-    const normalizeBooleanMap = (value, limit = 640) => Object.fromEntries(Object.entries(isPlainObject(value) ? value : {})
+    const normalizeBooleanMap = (value, limit = 640) => Object.fromEntries(Object.entries(experimentalIsPlainObject(value) ? value : {})
         .filter(([key, item]) => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(String(key)) && typeof item === 'boolean')
         .slice(0, limit));
     const normalizeCustomPanels = value => Array.isArray(value) ? value.slice(0, 20).map(panel => ({
@@ -8253,7 +8253,7 @@ function normalizeScenePulseWorldsPreferences(raw = {}) {
         }))
     })) : [];
     const customPanels = normalizeCustomPanels(source.customPanels);
-    const identityMap = (value, valueLimit) => Object.fromEntries(Object.entries(isPlainObject(value) ? value : {})
+    const identityMap = (value, valueLimit) => Object.fromEntries(Object.entries(experimentalIsPlainObject(value) ? value : {})
         .filter(([identity, item]) => /^(?:reader|fixture):[A-Za-z0-9_.:-]{1,180}$/.test(String(identity || '')) && String(item || '').trim())
         .slice(0, 120)
         .map(([identity, item]) => [String(identity), String(item).trim().slice(0, valueLimit)]));
@@ -8263,7 +8263,7 @@ function normalizeScenePulseWorldsPreferences(raw = {}) {
         ? [...new Set(source.nativeFieldAuthority.map(key => String(key || '').trim()).filter(key => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(key)))].slice(0, 80)
         : [];
     const sourceProfiles = Array.isArray(source.sourceProfiles) ? source.sourceProfiles.slice(0, 16).map((profile, index) => {
-        const promptOverrides = Object.fromEntries(Object.entries(isPlainObject(profile?.promptOverrides) ? profile.promptOverrides : {})
+        const promptOverrides = Object.fromEntries(Object.entries(experimentalIsPlainObject(profile?.promptOverrides) ? profile.promptOverrides : {})
             .filter(([key, value]) => /^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(String(key)) && typeof value === 'string')
             .slice(0, 32)
             .map(([key, value]) => [String(key), String(value).slice(0, 48_000)]));
@@ -8313,13 +8313,13 @@ function scenePulseWorldsHandoffPreferences(world, rawPreferences = {}) {
     // The source runtime receives the resolved schema, not a separate Horde
     // fallback. This makes the upstream tour panel a real mounted surface and
     // lets a compact Reader delta replace one of its keys when evidence exists.
-    return { ...preferences, customPanels: safeJsonClone(scenePulseEffectiveSourceCustomPanels(preferences)), portraitSources };
+    return { ...preferences, customPanels: experimentalSafeJsonClone(scenePulseEffectiveSourceCustomPanels(preferences)), portraitSources };
 }
 
 async function persistScenePulseWorldsPreferences(world, sess, rawPreferences = {}) {
     const protocol = protocolForSidecarTimeline(world, sess);
     if (!protocol) throw new Error('No World timeline is available for ScenePulse preferences.');
-    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    protocol.workspaceUi = experimentalIsPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(rawPreferences);
     await ExperimentalWorldsHost.persist();
     return protocol.workspaceUi.scenePulseWorlds;
@@ -8332,9 +8332,9 @@ async function persistScenePulseWorldsPreferences(world, sess, rawPreferences = 
 async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePreferences = {}, chatPanels = undefined, hasChatPanels = false) {
     const protocol = protocolForSidecarTimeline(world, sess);
     if (!protocol) throw new Error('No World timeline is available for ScenePulse source preferences.');
-    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    protocol.workspaceUi = experimentalIsPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const previous = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
-    const incoming = isPlainObject(sourcePreferences) ? sourcePreferences : {};
+    const incoming = experimentalIsPlainObject(sourcePreferences) ? sourcePreferences : {};
     // Upstream ScenePulse uses the *presence* of chatPanels as the authority
     // signal: an empty array means the author deliberately removed every
     // chat-local panel. Older runtime payloads did not carry that signal, so
@@ -8373,12 +8373,12 @@ async function persistScenePulseSourceRuntimePreferences(world, sess, sourcePref
 }
 
 function scenePulseSourceSnapshot(value) {
-    if (!isPlainObject(value)) throw new Error('ScenePulse source edit did not contain a tracker snapshot.');
-    const snapshot = safeJsonClone(value);
+    if (!experimentalIsPlainObject(value)) throw new Error('ScenePulse source edit did not contain a tracker snapshot.');
+    const snapshot = experimentalSafeJsonClone(value);
     // Source runtime metadata describes its rendering path, not evidence.
     // Keep any normal source metadata required by its history tools but do not
     // promote bridge bookkeeping into a human semantic edit.
-    if (isPlainObject(snapshot._spMeta)) {
+    if (experimentalIsPlainObject(snapshot._spMeta)) {
         delete snapshot._spMeta.hordeScenePulseBridge;
         delete snapshot._spMeta.hordeSource;
         delete snapshot._spMeta.hordeSnapshotId;
@@ -8454,8 +8454,8 @@ function scenePulseQuestChange(operation, before, after, reason = '') {
         tier: source.tier,
         sourceKey: String(after?.sourceKey || before?.sourceKey || ''),
         previousSourceKey: String(before?.sourceKey || ''),
-        sourceQuest: safeJsonClone(after || before),
-        previousQuest: safeJsonClone(before || null),
+        sourceQuest: experimentalSafeJsonClone(after || before),
+        previousQuest: experimentalSafeJsonClone(before || null),
         reason: String(reason || '').slice(0, 300)
     });
 }
@@ -8519,7 +8519,7 @@ function scenePulseQuestChanges(before = {}, after = {}) {
 
 function scenePulseQuestLinks(protocol) {
     const raw = Array.isArray(protocol?.scenePulseQuestLinks) ? protocol.scenePulseQuestLinks : [];
-    const links = raw.filter(link => isPlainObject(link)
+    const links = raw.filter(link => experimentalIsPlainObject(link)
         && String(link?.questId || '').trim()
         && Array.isArray(link?.sourceKeys))
         .slice(-500).map(link => ({
@@ -8602,8 +8602,8 @@ function scenePulseQuestTranslationResult(change, status, options = {}) {
         tier: change.tier,
         sourceKey: change.sourceKey,
         previousSourceKey: change.previousSourceKey,
-        sourceQuest: safeJsonClone(change.sourceQuest),
-        previousQuest: safeJsonClone(change.previousQuest),
+        sourceQuest: experimentalSafeJsonClone(change.sourceQuest),
+        previousQuest: experimentalSafeJsonClone(change.previousQuest),
         questId: String(options.questId || '').slice(0, 160),
         collisionQuestId: String(options.collisionQuestId || '').slice(0, 160),
         reason: String(options.reason || change.reason || '').slice(0, 600),
@@ -8699,7 +8699,7 @@ function scenePulseQuestReviewProjection(protocol, options = {}) {
                 : (snapshotId
                     ? String(item?.targetSnapshotId || '') === snapshotId
                     : (!turnId || String(item?.targetTurnId || '') === turnId))))
-        .slice(-24).map(item => safeJsonClone(item));
+        .slice(-24).map(item => experimentalSafeJsonClone(item));
 }
 
 function applyScenePulseQuestEditTranslations(world, sess, protocol, edit) {
@@ -8731,8 +8731,8 @@ async function resolveScenePulseQuestTranslation(world, sess, translationId, cho
         tier: translation.tier,
         sourceKey: translation.sourceKey,
         previousSourceKey: translation.previousSourceKey,
-        sourceQuest: safeJsonClone(translation.sourceQuest || {}),
-        previousQuest: safeJsonClone(translation.previousQuest || {}),
+        sourceQuest: experimentalSafeJsonClone(translation.sourceQuest || {}),
+        previousQuest: experimentalSafeJsonClone(translation.previousQuest || {}),
         reason: translation.reason || ''
     };
     const outcome = applyScenePulseQuestChange(world, sess, protocol, change, {
@@ -8782,7 +8782,7 @@ function scenePulseRelationshipMeter(value) {
 }
 
 function scenePulseRelationshipSourceEntry(raw, index = 0) {
-    if (!isPlainObject(raw)) return null;
+    if (!experimentalIsPlainObject(raw)) return null;
     const relationshipId = scenePulseRelationshipSafeId(raw.relationshipId || raw.relationship_id || raw.id);
     const characterId = scenePulseRelationshipSafeId(raw.characterId || raw.character_id || raw.subjectRef || raw.subject_ref);
     const identityKind = relationshipId ? 'relationship' : characterId ? 'character' : 'unlinked';
@@ -8854,9 +8854,9 @@ function scenePulseRelationshipChange(operation, before, after, reason = '') {
         operation,
         sourceKey: String(source.sourceKey || ''),
         previousSourceKey: String(before?.sourceKey || ''),
-        sourceRelationship: safeJsonClone(after || before),
-        previousRelationship: safeJsonClone(before || null),
-        meterDeltas: safeJsonClone(scenePulseRelationshipChangedMeters(before, after)),
+        sourceRelationship: experimentalSafeJsonClone(after || before),
+        previousRelationship: experimentalSafeJsonClone(before || null),
+        meterDeltas: experimentalSafeJsonClone(scenePulseRelationshipChangedMeters(before, after)),
         changedFields: scenePulseRelationshipChangedFields(before || {}, after || {}),
         reason: String(reason || '').slice(0, 400)
     });
@@ -8894,7 +8894,7 @@ function scenePulseRelationshipChanges(before = {}, after = {}) {
 
 function scenePulseRelationshipLinks(protocol) {
     const links = (Array.isArray(protocol?.scenePulseRelationshipLinks) ? protocol.scenePulseRelationshipLinks : [])
-        .filter(link => isPlainObject(link))
+        .filter(link => experimentalIsPlainObject(link))
         .map(link => ({
             sourceKeys: [...new Set((Array.isArray(link.sourceKeys) ? link.sourceKeys : [])
                 .map(value => String(value || '').trim())
@@ -8986,10 +8986,10 @@ function scenePulseRelationshipTranslationResult(change, status, options = {}) {
         operation: String(change?.operation || 'update'),
         sourceKey: String(change?.sourceKey || '').slice(0, 240),
         previousSourceKey: String(change?.previousSourceKey || '').slice(0, 240),
-        sourceRelationship: safeJsonClone(change?.sourceRelationship || {}),
-        previousRelationship: safeJsonClone(change?.previousRelationship || null),
-        meterDeltas: safeJsonClone(change?.meterDeltas || {}),
-        changedFields: safeJsonClone(change?.changedFields || []),
+        sourceRelationship: experimentalSafeJsonClone(change?.sourceRelationship || {}),
+        previousRelationship: experimentalSafeJsonClone(change?.previousRelationship || null),
+        meterDeltas: experimentalSafeJsonClone(change?.meterDeltas || {}),
+        changedFields: experimentalSafeJsonClone(change?.changedFields || []),
         relationshipKey: String(options.relationshipKey || '').slice(0, 400),
         controlledEntityId: String(options.controlledEntityId || '').slice(0, 180),
         targetEntityId: String(options.targetEntityId || '').slice(0, 180),
@@ -9016,8 +9016,8 @@ function applyScenePulseRelationshipChange(world, sess, protocol, change, option
         });
     }
     const key = relationshipKey(resolution.controlled.id, resolution.target.id);
-    if (!isPlainObject(sess.npcRelationships)) sess.npcRelationships = {};
-    const existing = isPlainObject(sess.npcRelationships[key]) ? sess.npcRelationships[key] : null;
+    if (!experimentalIsPlainObject(sess.npcRelationships)) sess.npcRelationships = {};
+    const existing = experimentalIsPlainObject(sess.npcRelationships[key]) ? sess.npcRelationships[key] : null;
     if (change.operation === 'remove' && !existing) {
         return scenePulseRelationshipTranslationResult(change, 'scene_only', {
             ...options, relationshipKey: key, controlledEntityId: resolution.controlled.id,
@@ -9026,14 +9026,14 @@ function applyScenePulseRelationshipChange(world, sess, protocol, change, option
         });
     }
     const record = existing || { score: 0, label: '', reason: '', lastChangedTurn: 0, autoManaged: false };
-    const previousScenePulse = isPlainObject(record.scenePulse) ? record.scenePulse : {};
+    const previousScenePulse = experimentalIsPlainObject(record.scenePulse) ? record.scenePulse : {};
     const history = Array.isArray(previousScenePulse.history) ? previousScenePulse.history.slice(-47) : [];
-    const relationSnapshot = safeJsonClone(source);
+    const relationSnapshot = experimentalSafeJsonClone(source);
     const event = {
         at: new Date().toISOString(), operation: change.operation,
         sourceEditId: String(options.sourceEditId || ''), targetSnapshotId: String(options.targetSnapshotId || ''),
-        targetTurnId: String(options.targetTurnId || ''), meterDeltas: safeJsonClone(change.meterDeltas || {}),
-        changedFields: safeJsonClone(change.changedFields || []), relationship: relationSnapshot
+        targetTurnId: String(options.targetTurnId || ''), meterDeltas: experimentalSafeJsonClone(change.meterDeltas || {}),
+        changedFields: experimentalSafeJsonClone(change.changedFields || []), relationship: relationSnapshot
     };
     history.push(event);
     // Source removal is a current-scene change, not evidence that a Person's
@@ -9050,8 +9050,8 @@ function applyScenePulseRelationshipChange(world, sess, protocol, change, option
             version: 1, sourceKey: source.sourceKey, relationshipId: source.relationshipId || '',
             characterId: source.characterId || '', name: source.name || '', status: 'current',
             relType: source.relType || '', relPhase: source.relPhase || '', timeTogether: source.timeTogether || '',
-            milestone: source.milestone || '', meters: safeJsonClone(source.meters || {}), labels: safeJsonClone(source.labels || {}),
-            lastMeterDeltas: safeJsonClone(change.meterDeltas || {}), lastChangedFields: safeJsonClone(change.changedFields || []),
+            milestone: source.milestone || '', meters: experimentalSafeJsonClone(source.meters || {}), labels: experimentalSafeJsonClone(source.labels || {}),
+            lastMeterDeltas: experimentalSafeJsonClone(change.meterDeltas || {}), lastChangedFields: experimentalSafeJsonClone(change.changedFields || []),
             lastSeenAt: event.at, lastSourceTurnId: event.targetTurnId, lastSourceSnapshotId: event.targetSnapshotId,
             source: 'explicit_scenepulse_relationship_edit', history
         };
@@ -9073,7 +9073,7 @@ function scenePulseRelationshipReviewProjection(protocol, options = {}) {
         .filter(item => item?.type === 'scene_pulse_relationship_translation'
             && (!snapshotId || String(item?.targetSnapshotId || '') === snapshotId)
             && (!turnId || String(item?.targetTurnId || '') === turnId))
-        .slice(-32).map(item => safeJsonClone(item));
+        .slice(-32).map(item => experimentalSafeJsonClone(item));
 }
 
 function applyScenePulseRelationshipEditTranslations(world, sess, protocol, edit) {
@@ -9099,9 +9099,9 @@ function applyScenePulseRelationshipEditTranslations(world, sess, protocol, edit
 function scenePulseRelationshipPromptProjection(sess, relevantEntityIds = [], controlledEntityId = 'player') {
     const relevant = new Set([controlledEntityId, ...(Array.isArray(relevantEntityIds) ? relevantEntityIds : [])]
         .map(value => String(value || '').trim()).filter(Boolean));
-    return Object.entries(isPlainObject(sess?.npcRelationships) ? sess.npcRelationships : {})
+    return Object.entries(experimentalIsPlainObject(sess?.npcRelationships) ? sess.npcRelationships : {})
         .map(([key, record]) => {
-            const source = isPlainObject(record?.scenePulse) ? record.scenePulse : null;
+            const source = experimentalIsPlainObject(record?.scenePulse) ? record.scenePulse : null;
             if (!source || String(source.status || '') !== 'current') return null;
             const participants = String(key || '').split('|').filter(Boolean);
             if (participants.length !== 2 || !participants.some(id => relevant.has(id))) return null;
@@ -9138,7 +9138,7 @@ function scenePulseHumanStatePromptContext(protocol = null) {
             id: String(edit.id || ''),
             at: String(edit.createdAt || ''),
             sourceTurnId: String(edit.targetTurnId || ''),
-            sceneStatePatch: safeJsonClone(edit.rawPatch)
+            sceneStatePatch: experimentalSafeJsonClone(edit.rawPatch)
         }));
     if (!edits.length) return '';
     return `\n\n[AUTHOR-SET SCENE STATE]\nThe author has explicitly set the following current scene-state values. Treat these as authored state for continuity and as the base for future compact ScenePulse deltas. They are not narration, do not describe them as editing, and do not treat them as a canonical-world commit without supporting visible story evidence. A later explicit authored beat may supersede them.\n${JSON.stringify(edits)}`;
@@ -9153,7 +9153,7 @@ async function commitScenePulseSourceEdit(world, sess, payload = {}) {
     if (!protocol) throw new Error('No World timeline is available for this ScenePulse edit.');
     const before = scenePulseSourceSnapshot(payload.before);
     const after = scenePulseSourceSnapshot(payload.after);
-    const patch = Array.isArray(payload.patch) ? safeJsonClone(payload.patch).slice(0, 240) : [];
+    const patch = Array.isArray(payload.patch) ? experimentalSafeJsonClone(payload.patch).slice(0, 240) : [];
     if (!patch.length) return { saved: false, reason: 'no_tracker_change' };
     const serializedSize = JSON.stringify({ before, after, patch }).length;
     if (serializedSize > 1_500_000) throw new Error('ScenePulse edit is too large to preserve safely in timeline history.');
@@ -9190,13 +9190,13 @@ async function commitScenePulseSourceEdit(world, sess, payload = {}) {
     // outcomes on that node as well as in the timeline-wide action ledger:
     // a later protocol migration or filtered historic projection must never
     // make a successfully saved ScenePulse action disappear after reload.
-    edit.questReview = safeJsonClone(questTranslations);
-    edit.relationshipReview = safeJsonClone(relationshipTranslations);
+    edit.questReview = experimentalSafeJsonClone(questTranslations);
+    edit.relationshipReview = experimentalSafeJsonClone(relationshipTranslations);
     await ExperimentalWorldsHost.persist();
     return {
         saved: true, id: edit.id, edit,
-        questTranslations: safeJsonClone(questTranslations),
-        relationshipTranslations: safeJsonClone(relationshipTranslations)
+        questTranslations: experimentalSafeJsonClone(questTranslations),
+        relationshipTranslations: experimentalSafeJsonClone(relationshipTranslations)
     };
 }
 
@@ -9209,11 +9209,11 @@ function scenePulseHumanReviewRecords(edit, projected, persistedKey) {
     // author-chosen resolution.
     persisted.forEach((record, index) => {
         const id = String(record?.id || `saved-${index}`);
-        records.set(id, safeJsonClone(record));
+        records.set(id, experimentalSafeJsonClone(record));
     });
     (Array.isArray(projected) ? projected : []).forEach((record, index) => {
         const id = String(record?.id || `projected-${index}`);
-        records.set(id, safeJsonClone(record));
+        records.set(id, experimentalSafeJsonClone(record));
     });
     return [...records.values()].slice(-24);
 }
@@ -9228,9 +9228,9 @@ function scenePulseHumanHistoryEntry(protocol, edit) {
         createdAt: edit?.createdAt || '',
         summary: `Human tracker edit: ${(edit?.rawPatch || []).map(change => change?.key).filter(Boolean).join(', ') || 'source fields'}`,
         turnId,
-        scenePulse: safeJsonClone(edit?.after || {}),
-        previousScenePulse: safeJsonClone(edit?.before || {}),
-        deltaScenePulse: safeJsonClone(edit?.rawPatch || []),
+        scenePulse: experimentalSafeJsonClone(edit?.after || {}),
+        previousScenePulse: experimentalSafeJsonClone(edit?.before || {}),
+        deltaScenePulse: experimentalSafeJsonClone(edit?.rawPatch || []),
         clearFields: [],
         replaceCollections: [],
         // A human edit is a separate source-history node, but its World
@@ -9246,7 +9246,7 @@ function scenePulseHumanHistoryEntry(protocol, edit) {
 }
 
 function scenePulseHumanHistory(protocol, handoff, edits) {
-    const sourceHistory = Array.isArray(handoff?.history) ? safeJsonClone(handoff.history) : [];
+    const sourceHistory = Array.isArray(handoff?.history) ? experimentalSafeJsonClone(handoff.history) : [];
     if (!sourceHistory.length || !edits.length) return sourceHistory;
     const childrenByTarget = new Map();
     edits.forEach(edit => {
@@ -9285,7 +9285,7 @@ function scenePulseCurrentHumanSuccessor(edits, snapshotId) {
 
 function scenePulseHumanOverlay(protocol, handoff) {
     const edits = (Array.isArray(protocol?.scenePulseHumanEdits) ? protocol.scenePulseHumanEdits : [])
-        .filter(item => item?.status === 'active' && isPlainObject(item?.after))
+        .filter(item => item?.status === 'active' && experimentalIsPlainObject(item?.after))
         .sort((left, right) => String(left?.createdAt || '').localeCompare(String(right?.createdAt || '')));
     const currentSnapshotId = String(handoff?.provenance?.snapshotId || (handoff?.status === 'accepted_fixture' ? 'fixture' : ''));
     // Every direct save is a successor of the exact scene state the author
@@ -9311,12 +9311,12 @@ function scenePulseHumanOverlay(protocol, handoff) {
         ...handoff,
         id: `${handoff?.id || 'scenepulse'}:${currentEdit.id}`,
         status: 'accepted_human',
-        fixtureScenePulse: safeJsonClone(handoff?.fixtureScenePulse || handoff?.scenePulse || {}),
+        fixtureScenePulse: experimentalSafeJsonClone(handoff?.fixtureScenePulse || handoff?.scenePulse || {}),
         // The native source panel renders the human selected snapshot. The
         // unmodified Sidecar reading remains separately available for the
         // visible comparison rather than being overwritten in place.
-        sidecarScenePulse: safeJsonClone(handoff?.scenePulse || {}),
-        scenePulse: safeJsonClone(currentEdit.after),
+        sidecarScenePulse: experimentalSafeJsonClone(handoff?.scenePulse || {}),
+        scenePulse: experimentalSafeJsonClone(currentEdit.after),
         history,
         // Inspecting the current authored successor must retain the exact
         // World outcomes produced by this save.  Without this projection the
@@ -9333,7 +9333,7 @@ function scenePulseHumanOverlay(protocol, handoff) {
                 snapshotId: currentSnapshotId,
                 turnId: String(currentEdit.targetTurnId || '')
             }), 'relationshipReview'),
-        humanEdit: Object.freeze({ id: currentEdit.id, author: 'human', createdAt: currentEdit.createdAt, rawPatch: safeJsonClone(currentEdit.rawPatch || []), undo: safeJsonClone(currentEdit.undo || {}) }),
+        humanEdit: Object.freeze({ id: currentEdit.id, author: 'human', createdAt: currentEdit.createdAt, rawPatch: experimentalSafeJsonClone(currentEdit.rawPatch || []), undo: experimentalSafeJsonClone(currentEdit.undo || {}) }),
         provenance: Object.freeze({ ...(handoff?.provenance || {}), humanEditId: currentEdit.id, source: 'human_scene_pulse_edit' })
     });
 }
@@ -9348,7 +9348,7 @@ async function saveScenePulsePortraitOverride(world, sess, payload = {}) {
     const assetId = addWorldMediaAsset(world, data, 'scenepulse_portrait', String(payload?.label || 'ScenePulse portrait').slice(0, 240), {
         prompt: `Manual ScenePulse portrait override for ${identity}. This is presentation media, not Reader evidence.`
     });
-    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    protocol.workspaceUi = experimentalIsPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const preferences = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
     preferences.portraitAssetIds[identity] = assetId;
     protocol.workspaceUi.scenePulseWorlds = normalizeScenePulseWorldsPreferences(preferences);
@@ -9361,7 +9361,7 @@ async function clearScenePulsePortraitOverride(world, sess, payload = {}) {
     if (!/^(?:reader|fixture):[A-Za-z0-9_.:-]{1,180}$/.test(identity)) throw new Error('ScenePulse portrait identity is invalid.');
     const protocol = protocolForSidecarTimeline(world, sess);
     if (!protocol) throw new Error('No World timeline is available for this ScenePulse portrait.');
-    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    protocol.workspaceUi = experimentalIsPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const preferences = normalizeScenePulseWorldsPreferences(protocol.workspaceUi.scenePulseWorlds || {});
     delete preferences.portraitAssetIds[identity];
     // Retain the shared/reusable media asset. Clearing an override changes
@@ -9491,14 +9491,14 @@ function unbindScenePulseWorldsHostActions(host) {
 
 function scenePulseTourDossiers(data) {
     return (data.characters || []).map((character, index) => ({
-        ...safeJsonClone(character), id: `tour-character-${index}`, canonical: false, current: safeJsonClone(character),
+        ...experimentalSafeJsonClone(character), id: `tour-character-${index}`, canonical: false, current: experimentalSafeJsonClone(character),
         observations: [{ at: 'Tour fixture', snapshotId: 'tour-26', thought: String(character.innerThought || ''), summary: String(data.sceneSummary || ''), location: String(data.location || '') }]
     }));
 }
 
 function scenePulseClaimText(value) {
     if (Array.isArray(value)) return value.map(scenePulseClaimText).filter(Boolean).join(' · ');
-    if (isPlainObject(value)) return String(value.text || value.thought || value.value || value.summary || value.description || '').trim();
+    if (experimentalIsPlainObject(value)) return String(value.text || value.thought || value.value || value.summary || value.description || '').trim();
     return String(value || '').trim();
 }
 
@@ -9583,7 +9583,7 @@ function scenePulseDossiers(world, model, data) {
 }
 
 function scenePulseWorldsAdapter(world, sess, model, useDemo = false) {
-    if (useDemo) return safeJsonClone(SCENEPULSE_TOUR_EXAMPLE_DATA);
+    if (useDemo) return experimentalSafeJsonClone(SCENEPULSE_TOUR_EXAMPLE_DATA);
     // The selected history snapshot is intentionally independent of the
     // latest turn.  ScenePulse's normal Live view must instead begin at that
     // latest accepted authored beat; otherwise an old active snapshot can
@@ -9666,7 +9666,7 @@ function scenePulseMeter(label, value, text) {
     const number = Number(value);
     if (!Number.isFinite(number)) return '';
     const width = Math.max(0, Math.min(100, number));
-    return `<div class="sp-meter-row"><span class="sp-meter-label">${escapeHTML(label)}</span><span class="sp-meter-bar-wrap"><span class="sp-meter-bar-track"><span class="sp-meter-bar-fill" style="width:${width}%"></span></span></span><span class="sp-meter-value">${escapeHTML(text || String(number))}</span></div>`;
+    return `<div class="sp-meter-row"><span class="sp-meter-label">${experimentalEscapeHTML(label)}</span><span class="sp-meter-bar-wrap"><span class="sp-meter-bar-track"><span class="sp-meter-bar-fill" style="width:${width}%"></span></span></span><span class="sp-meter-value">${experimentalEscapeHTML(text || String(number))}</span></div>`;
 }
 
 function scenePulseThoughtPanel(data, ui, persist, onRegenerate = null) {
@@ -9678,7 +9678,7 @@ function scenePulseThoughtPanel(data, ui, persist, onRegenerate = null) {
     panel.style.left = `${Math.max(8, Number(ui.thoughtLeft) || 12)}px`;
     panel.style.top = `${Math.max(48, Number(ui.thoughtTop) || 88)}px`;
     if (ui.thoughtWidth) panel.style.width = `${Math.max(240, Number(ui.thoughtWidth))}px`;
-    const cards = data.characters.filter(character => character.innerThought).map(character => `<article class="sp-tp-card"><header class="sp-tp-name"><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(character.name))}</span></span><span class="sp-tp-name-text">${escapeHTML(character.name)}</span><span class="sp-tp-name-icon">◌</span></header><blockquote class="sp-tp-monologue">${escapeHTML(character.innerThought)}</blockquote><div class="sp-tp-goals">${character.immediateNeed ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">◆</span>${escapeHTML(character.immediateNeed)}</div>` : ''}${character.shortTermGoal ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">→</span>${escapeHTML(character.shortTermGoal)}</div>` : ''}</div></article>`).join('') || '<div class="sp-empty-state"><strong class="sp-empty-title">No inner thoughts yet</strong></div>';
+    const cards = data.characters.filter(character => character.innerThought).map(character => `<article class="sp-tp-card"><header class="sp-tp-name"><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${experimentalEscapeHTML(sidecarWorkspaceAvatar(character.name))}</span></span><span class="sp-tp-name-text">${experimentalEscapeHTML(character.name)}</span><span class="sp-tp-name-icon">◌</span></header><blockquote class="sp-tp-monologue">${experimentalEscapeHTML(character.innerThought)}</blockquote><div class="sp-tp-goals">${character.immediateNeed ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">◆</span>${experimentalEscapeHTML(character.immediateNeed)}</div>` : ''}${character.shortTermGoal ? `<div class="sp-tp-goal"><span class="sp-tp-goal-icon">→</span>${experimentalEscapeHTML(character.shortTermGoal)}</div>` : ''}</div></article>`).join('') || '<div class="sp-empty-state"><strong class="sp-empty-title">No inner thoughts yet</strong></div>';
     panel.innerHTML = `<header class="sp-tp-header" id="sp-tp-drag"><span class="sp-tp-drag-grip">━━</span><span class="sp-tp-title">Inner Thoughts</span><span class="sp-tp-header-spacer"></span>${onRegenerate ? '<button type="button" class="sp-tp-refresh" title="Regenerate inner thoughts">↻</button>' : ''}<button type="button" class="sp-tp-snapleft" title="Snap left">⇤</button><button type="button" class="sp-tp-ghost" title="Ghost mode">◌</button><button type="button" class="sp-tp-close" title="Hide thoughts">×</button></header><div id="sp-tp-body">${cards}</div><div class="sp-tp-resize" title="Resize">◢</div>`;
     document.body.appendChild(panel);
     const save = () => { persist(); };
@@ -9755,37 +9755,37 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     const model = buildSidecarWorkspaceModel(world, sess);
     if (!model) return;
     const protocol = model.protocol;
-    protocol.workspaceUi = isPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
+    protocol.workspaceUi = experimentalIsPlainObject(protocol.workspaceUi) ? protocol.workspaceUi : {};
     const ui = protocol.workspaceUi.scenePulse = { demo: protocol.workspaceUi.scenePulse?.demo !== false, view: protocol.workspaceUi.scenePulse?.view || 'scene', open: protocol.workspaceUi.scenePulse?.open || {}, panels: protocol.workspaceUi.scenePulse?.panels || {}, features: { thoughts: protocol.workspaceUi.scenePulse?.features?.thoughts !== false, weather: protocol.workspaceUi.scenePulse?.features?.weather !== false, timeTint: protocol.workspaceUi.scenePulse?.features?.timeTint !== false, transitions: protocol.workspaceUi.scenePulse?.features?.transitions !== false }, panelsOpen: protocol.workspaceUi.scenePulse?.panelsOpen === true, compact: protocol.workspaceUi.scenePulse?.compact === true, edit: protocol.workspaceUi.scenePulse?.edit === true, showEmpty: protocol.workspaceUi.scenePulse?.showEmpty === true, fontScale: Math.max(0.7, Math.min(1.5, Number(protocol.workspaceUi.scenePulse?.fontScale) || 1)), theme: protocol.workspaceUi.scenePulse?.theme || 'default', reduceEffects: protocol.workspaceUi.scenePulse?.reduceEffects === true, thoughtGhost: protocol.workspaceUi.scenePulse?.thoughtGhost === true, thoughtLeft: protocol.workspaceUi.scenePulse?.thoughtLeft || 12, thoughtTop: protocol.workspaceUi.scenePulse?.thoughtTop || 88, thoughtWidth: protocol.workspaceUi.scenePulse?.thoughtWidth || 360, liveLocation: protocol.workspaceUi.scenePulse?.liveLocation || '', dossierId: protocol.workspaceUi.scenePulse?.dossierId || '' };
     const persist = () => { sess.sidecar = protocol; ExperimentalWorldsHost.persist().catch(error => console.warn('ScenePulse UI setting save failed:', error)); };
     const tour = ui.demo ? scenePulseTourState() : null;
     const data = tour ? tour.data : scenePulseWorldsAdapter(world, sess, model, false);
     const dossiers = tour ? scenePulseTourDossiers(data) : scenePulseDossiers(world, model, data);
     const view = ['scene', 'characters', 'dossiers', 'relationships', 'journal', 'ideas', 'history', 'settings'].includes(ui.view) ? ui.view : 'scene';
-    const section = (key, title, icon, body, badge = '') => `<section class="sp-section ${ui.open[key] !== false ? 'sp-open' : ''}" data-sp-section="${escapeHTML(key)}"><header class="sp-section-header" data-sp-section-toggle="${escapeHTML(key)}"><span class="sp-section-chevron">›</span><span class="sp-section-icon">${icon}</span><span class="sp-section-title">${escapeHTML(title)}</span>${badge ? `<span class="sp-section-badge">${escapeHTML(badge)}</span>` : ''}<span class="sp-section-spacer"></span><button type="button" class="sp-section-refresh" data-sp-action="refresh" title="Refresh">↻</button></header><div class="sp-section-body"><div class="sp-section-content">${body}</div></div></section>`;
+    const section = (key, title, icon, body, badge = '') => `<section class="sp-section ${ui.open[key] !== false ? 'sp-open' : ''}" data-sp-section="${experimentalEscapeHTML(key)}"><header class="sp-section-header" data-sp-section-toggle="${experimentalEscapeHTML(key)}"><span class="sp-section-chevron">›</span><span class="sp-section-icon">${icon}</span><span class="sp-section-title">${experimentalEscapeHTML(title)}</span>${badge ? `<span class="sp-section-badge">${experimentalEscapeHTML(badge)}</span>` : ''}<span class="sp-section-spacer"></span><button type="button" class="sp-section-refresh" data-sp-action="refresh" title="Refresh">↻</button></header><div class="sp-section-body"><div class="sp-section-content">${body}</div></div></section>`;
     const tension = String(data.sceneTension || 'calm').toLowerCase();
     const tensionClass = /critical/.test(tension) ? 'sp-tension-critical' : /high/.test(tension) ? 'sp-tension-high' : /moderate/.test(tension) ? 'sp-tension-moderate' : /low/.test(tension) ? 'sp-tension-low' : 'sp-tension-calm';
-    const dashboard = `<div class="sp-dashboard spw-dashboard"><article class="sp-dash-card sp-dash-card-date"><span class="sp-dash-sub">${escapeHTML(data.date)}</span><strong class="sp-dash-day">${escapeHTML(data.date.match(/\(([^)]+)\)/)?.[1] || '')}</strong></article><article class="sp-dash-card sp-dash-card-time"><span class="sp-dash-clock">◷</span><strong class="sp-time-value">${escapeHTML(data.time)}</strong></article><article class="sp-dash-card sp-dash-card-temp ${tensionClass}"><div class="sp-temp-bar-wrap"><i style="width:${tension === 'critical' ? 100 : tension === 'high' ? 78 : tension === 'moderate' ? 56 : tension === 'low' ? 32 : 12}%"></i></div><strong class="sp-temp-bar-label">${escapeHTML(data.sceneTension || 'calm')} · ${escapeHTML(data.sceneMood || '')}</strong></article><article class="sp-dash-card sp-dash-card-weather"><span class="sp-dash-icon">${/rain|storm/i.test(data.weather) ? '≋' : '☁'}</span><strong class="sp-dash-value">${escapeHTML(data.weather || 'Unknown')}</strong><small>${escapeHTML(data.temperature || '')}</small></article></div><div class="sp-dash-location"><span class="sp-dash-loc-icon">⌖</span><span class="sp-dash-loc-text">${escapeHTML(data.location || 'Unknown')}</span></div>`;
-    const sceneDetails = `<div class="sp-scene-summary-row"><div class="sp-scene-summary">${escapeHTML(data.sceneSummary || 'No scene details yet.')}</div></div>${[['Topic', data.sceneTopic], ['Mood', data.sceneMood], ['Interaction', data.sceneInteraction], ['Tension', data.sceneTension], ['Elapsed', data.elapsed], ['Temporal intent', data.temporalIntent], ['Sounds', data.soundEnvironment], ['Witnesses', Array.isArray(data.witnesses) ? data.witnesses.map(scenePulseClaimText).filter(Boolean).join(' · ') : scenePulseClaimText(data.witnesses)]].filter(([, value]) => value).map(([label, value]) => `<div class="sp-row ${label === 'Tension' ? `sp-scene-tension-row ${tensionClass}` : label === 'Sounds' ? 'sp-scene-sounds-row' : ''}"><span class="sp-row-label">${escapeHTML(label)}</span><span class="sp-row-value">${escapeHTML(value)}</span></div>`).join('')}`;
+    const dashboard = `<div class="sp-dashboard spw-dashboard"><article class="sp-dash-card sp-dash-card-date"><span class="sp-dash-sub">${experimentalEscapeHTML(data.date)}</span><strong class="sp-dash-day">${experimentalEscapeHTML(data.date.match(/\(([^)]+)\)/)?.[1] || '')}</strong></article><article class="sp-dash-card sp-dash-card-time"><span class="sp-dash-clock">◷</span><strong class="sp-time-value">${experimentalEscapeHTML(data.time)}</strong></article><article class="sp-dash-card sp-dash-card-temp ${tensionClass}"><div class="sp-temp-bar-wrap"><i style="width:${tension === 'critical' ? 100 : tension === 'high' ? 78 : tension === 'moderate' ? 56 : tension === 'low' ? 32 : 12}%"></i></div><strong class="sp-temp-bar-label">${experimentalEscapeHTML(data.sceneTension || 'calm')} · ${experimentalEscapeHTML(data.sceneMood || '')}</strong></article><article class="sp-dash-card sp-dash-card-weather"><span class="sp-dash-icon">${/rain|storm/i.test(data.weather) ? '≋' : '☁'}</span><strong class="sp-dash-value">${experimentalEscapeHTML(data.weather || 'Unknown')}</strong><small>${experimentalEscapeHTML(data.temperature || '')}</small></article></div><div class="sp-dash-location"><span class="sp-dash-loc-icon">⌖</span><span class="sp-dash-loc-text">${experimentalEscapeHTML(data.location || 'Unknown')}</span></div>`;
+    const sceneDetails = `<div class="sp-scene-summary-row"><div class="sp-scene-summary">${experimentalEscapeHTML(data.sceneSummary || 'No scene details yet.')}</div></div>${[['Topic', data.sceneTopic], ['Mood', data.sceneMood], ['Interaction', data.sceneInteraction], ['Tension', data.sceneTension], ['Elapsed', data.elapsed], ['Temporal intent', data.temporalIntent], ['Sounds', data.soundEnvironment], ['Witnesses', Array.isArray(data.witnesses) ? data.witnesses.map(scenePulseClaimText).filter(Boolean).join(' · ') : scenePulseClaimText(data.witnesses)]].filter(([, value]) => value).map(([label, value]) => `<div class="sp-row ${label === 'Tension' ? `sp-scene-tension-row ${tensionClass}` : label === 'Sounds' ? 'sp-scene-sounds-row' : ''}"><span class="sp-row-label">${experimentalEscapeHTML(label)}</span><span class="sp-row-value">${experimentalEscapeHTML(value)}</span></div>`).join('')}`;
     const characterCards = data.characters.length ? data.characters.map((character, index) => {
         const accent = scenePulseIdentityColor(character.id || character.name);
-        return `<article class="sp-char-card ${index === 0 ? 'sp-card-open' : ''}" style="--char-accent:${accent};--char-border:${accent};--char-bg:color-mix(in srgb,${accent} 10%,transparent);" data-sp-character data-sp-character-id="${escapeHTML(character.id || character.name)}"><header class="sp-char-header"><span class="sp-char-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(character.name))}</span></span><span class="sp-char-name-col"><span class="sp-char-name-row"><strong class="sp-char-name">${escapeHTML(character.name)}</strong><span class="sp-char-archetype">${escapeHTML(character.archetype || character.presence || 'present')}</span></span><small class="sp-char-meta">${escapeHTML(character.role || '')}</small></span></header><div class="sp-char-body">${character.innerThought ? `<blockquote class="sp-char-thought-block">${escapeHTML(character.innerThought)}</blockquote>` : ''}<div class="sp-char-grid">${[['Aliases', character.aliases?.join(' · ')], ['Hair', character.hair], ['Face', character.face], ['Outfit', character.outfit], ['Posture', character.posture], ['Proximity', character.proximity], ['Details', character.notableDetails], ['Fertility', [character.fertStatus, character.fertNotes].filter(Boolean).join(' — ')]].filter(([, value]) => value).map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(value)}</span>`).join('')}</div><div class="sp-char-goals">${[['Now', character.immediateNeed], ['Soon', character.shortTermGoal], ['Long term', character.longTermGoal]].filter(([, value]) => value).map(([label, value]) => `<div class="sp-char-goal-item"><strong>${escapeHTML(label)}:</strong> ${escapeHTML(value)}</div>`).join('')}</div>${character.inventory?.length ? `<div class="sp-char-goals"><div class="sp-char-goal-item"><strong>Inventory:</strong> ${escapeHTML(character.inventory.join(' · '))}</div></div>` : ''}<div class="sp-card-actions"><button type="button" class="btn btn-ghost" data-sp-dossier="${escapeHTML(character.id || character.name)}">Open dossier</button></div></div></article>`;
+        return `<article class="sp-char-card ${index === 0 ? 'sp-card-open' : ''}" style="--char-accent:${accent};--char-border:${accent};--char-bg:color-mix(in srgb,${accent} 10%,transparent);" data-sp-character data-sp-character-id="${experimentalEscapeHTML(character.id || character.name)}"><header class="sp-char-header"><span class="sp-char-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${experimentalEscapeHTML(sidecarWorkspaceAvatar(character.name))}</span></span><span class="sp-char-name-col"><span class="sp-char-name-row"><strong class="sp-char-name">${experimentalEscapeHTML(character.name)}</strong><span class="sp-char-archetype">${experimentalEscapeHTML(character.archetype || character.presence || 'present')}</span></span><small class="sp-char-meta">${experimentalEscapeHTML(character.role || '')}</small></span></header><div class="sp-char-body">${character.innerThought ? `<blockquote class="sp-char-thought-block">${experimentalEscapeHTML(character.innerThought)}</blockquote>` : ''}<div class="sp-char-grid">${[['Aliases', character.aliases?.join(' · ')], ['Hair', character.hair], ['Face', character.face], ['Outfit', character.outfit], ['Posture', character.posture], ['Proximity', character.proximity], ['Details', character.notableDetails], ['Fertility', [character.fertStatus, character.fertNotes].filter(Boolean).join(' — ')]].filter(([, value]) => value).map(([label, value]) => `<span class="sp-char-field">${experimentalEscapeHTML(label)}</span><span class="sp-char-val">${experimentalEscapeHTML(value)}</span>`).join('')}</div><div class="sp-char-goals">${[['Now', character.immediateNeed], ['Soon', character.shortTermGoal], ['Long term', character.longTermGoal]].filter(([, value]) => value).map(([label, value]) => `<div class="sp-char-goal-item"><strong>${experimentalEscapeHTML(label)}:</strong> ${experimentalEscapeHTML(value)}</div>`).join('')}</div>${character.inventory?.length ? `<div class="sp-char-goals"><div class="sp-char-goal-item"><strong>Inventory:</strong> ${experimentalEscapeHTML(character.inventory.join(' · '))}</div></div>` : ''}<div class="sp-card-actions"><button type="button" class="btn btn-ghost" data-sp-dossier="${experimentalEscapeHTML(character.id || character.name)}">Open dossier</button></div></div></article>`;
     }).join('') : '<div class="sp-empty-state"><strong class="sp-empty-title">No characters in this scene</strong></div>';
-    const relationshipCards = data.relationships.length ? data.relationships.map((relationship, index) => `<article class="sp-rel-block ${index === 0 ? 'sp-card-open' : ''}" data-sp-relationship><header class="sp-rel-header"><span class="sp-rel-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(relationship.name))}</span></span><strong class="sp-rel-name">${escapeHTML(relationship.name)}</strong><span class="sp-rel-type-badge">${escapeHTML(relationship.relType || '')}</span><span class="sp-rel-phase-badge">${escapeHTML(relationship.relPhase || '')}</span></header><div class="sp-rel-body"><div class="sp-rel-meta"><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Known</span><span>${escapeHTML(relationship.timeTogether || '')}</span></div><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Milestone</span><span>${escapeHTML(relationship.milestone || '')}</span></div></div>${scenePulseMeter('Affection', relationship.affection, relationship.affectionLabel)}${scenePulseMeter('Trust', relationship.trust, relationship.trustLabel)}${scenePulseMeter('Desire', relationship.desire, relationship.desireLabel)}${scenePulseMeter('Stress', relationship.stress, relationship.stressLabel)}${scenePulseMeter('Compatibility', relationship.compatibility, relationship.compatibilityLabel)}</div></article>`).join('') : '<div class="sp-empty-state"><strong class="sp-empty-title">No relationships for this scene</strong></div>';
-    const questTier = (title, quests, cls) => quests.length ? `<div class="sp-plot-tier ${cls}"><div class="sp-plot-tier-title"><span class="sp-tier-chevron">›</span><span>${escapeHTML(title)}</span><span class="sp-section-badge">${quests.length}</span></div><div class="sp-tier-body">${quests.map(quest => {
+    const relationshipCards = data.relationships.length ? data.relationships.map((relationship, index) => `<article class="sp-rel-block ${index === 0 ? 'sp-card-open' : ''}" data-sp-relationship><header class="sp-rel-header"><span class="sp-rel-chevron">›</span><span class="sp-char-portrait"><span class="sp-char-portrait-monogram">${experimentalEscapeHTML(sidecarWorkspaceAvatar(relationship.name))}</span></span><strong class="sp-rel-name">${experimentalEscapeHTML(relationship.name)}</strong><span class="sp-rel-type-badge">${experimentalEscapeHTML(relationship.relType || '')}</span><span class="sp-rel-phase-badge">${experimentalEscapeHTML(relationship.relPhase || '')}</span></header><div class="sp-rel-body"><div class="sp-rel-meta"><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Known</span><span>${experimentalEscapeHTML(relationship.timeTogether || '')}</span></div><div class="sp-rel-meta-item"><span class="sp-rel-meta-label">Milestone</span><span>${experimentalEscapeHTML(relationship.milestone || '')}</span></div></div>${scenePulseMeter('Affection', relationship.affection, relationship.affectionLabel)}${scenePulseMeter('Trust', relationship.trust, relationship.trustLabel)}${scenePulseMeter('Desire', relationship.desire, relationship.desireLabel)}${scenePulseMeter('Stress', relationship.stress, relationship.stressLabel)}${scenePulseMeter('Compatibility', relationship.compatibility, relationship.compatibilityLabel)}</div></article>`).join('') : '<div class="sp-empty-state"><strong class="sp-empty-title">No relationships for this scene</strong></div>';
+    const questTier = (title, quests, cls) => quests.length ? `<div class="sp-plot-tier ${cls}"><div class="sp-plot-tier-title"><span class="sp-tier-chevron">›</span><span>${experimentalEscapeHTML(title)}</span><span class="sp-section-badge">${quests.length}</span></div><div class="sp-tier-body">${quests.map(quest => {
         const status = String(quest.status || 'active').toLowerCase();
         const objectiveSummary = Array.isArray(quest.objectives) && quest.objectives.length
             ? `${quest.objectives.filter(item => item?.status === 'completed').length}/${quest.objectives.length} objectives` : '';
-        const controls = quest.hostManaged && quest.id ? `<div class="sp-quest-actions"><button type="button" class="btn btn-ghost" data-sp-quest-action="edit" data-sp-quest-id="${escapeHTML(quest.id)}">Edit</button><button type="button" class="btn btn-ghost" data-sp-quest-action="${status === 'active' ? 'complete' : 'restore'}" data-sp-quest-id="${escapeHTML(quest.id)}">${status === 'active' ? 'Complete' : 'Restore'}</button><button type="button" class="btn btn-ghost sp-quest-remove" data-sp-quest-action="remove" data-sp-quest-id="${escapeHTML(quest.id)}">Remove</button></div>` : '';
-        return `<article class="sp-plot-entry sp-card-open ${status === 'active' ? '' : 'sp-quest-resolved'}"><header class="sp-quest-header"><span class="sp-plot-status sp-urgency-${escapeHTML(status === 'active' ? String(quest.urgency || 'moderate').toLowerCase() : status)}">${escapeHTML(status === 'active' ? quest.urgency || 'open' : status)}</span><strong class="sp-plot-name">${escapeHTML(quest.name || 'Untitled')}</strong></header><div class="sp-quest-detail">${escapeHTML(quest.detail || '')}${objectiveSummary ? `<small>${escapeHTML(objectiveSummary)}</small>` : ''}</div>${controls}</article>`;
+        const controls = quest.hostManaged && quest.id ? `<div class="sp-quest-actions"><button type="button" class="btn btn-ghost" data-sp-quest-action="edit" data-sp-quest-id="${experimentalEscapeHTML(quest.id)}">Edit</button><button type="button" class="btn btn-ghost" data-sp-quest-action="${status === 'active' ? 'complete' : 'restore'}" data-sp-quest-id="${experimentalEscapeHTML(quest.id)}">${status === 'active' ? 'Complete' : 'Restore'}</button><button type="button" class="btn btn-ghost sp-quest-remove" data-sp-quest-action="remove" data-sp-quest-id="${experimentalEscapeHTML(quest.id)}">Remove</button></div>` : '';
+        return `<article class="sp-plot-entry sp-card-open ${status === 'active' ? '' : 'sp-quest-resolved'}"><header class="sp-quest-header"><span class="sp-plot-status sp-urgency-${experimentalEscapeHTML(status === 'active' ? String(quest.urgency || 'moderate').toLowerCase() : status)}">${experimentalEscapeHTML(status === 'active' ? quest.urgency || 'open' : status)}</span><strong class="sp-plot-name">${experimentalEscapeHTML(quest.name || 'Untitled')}</strong></header><div class="sp-quest-detail">${experimentalEscapeHTML(quest.detail || '')}${objectiveSummary ? `<small>${experimentalEscapeHTML(objectiveSummary)}</small>` : ''}</div>${controls}</article>`;
     }).join('')}</div></div>` : '';
-    const journal = `${data.northStar ? `<div class="sp-north-star"><span>North Star</span><strong>${escapeHTML(data.northStar)}</strong></div>` : ''}${questTier('Main quests', data.mainQuests || [], 'sp-tier-main')}${questTier('Side quests', data.sideQuests || [], 'sp-tier-side')}${!data.northStar && !(data.mainQuests || []).length && !(data.sideQuests || []).length ? '<div class="sp-empty-state"><strong class="sp-empty-title">No quests yet</strong></div>' : ''}<div class="sp-journal-actions"><button type="button" class="btn btn-ghost" data-sp-quest-action="add">Add quest</button></div>`;
-    const ideas = data.plotBranches.length ? `<div class="sp-ideas-list">${data.plotBranches.map((idea, index) => `<article class="sp-idea-card"><span class="sp-idea-type">${escapeHTML(idea.type || 'idea')}</span><strong>${escapeHTML(idea.name || '')}</strong><p>${escapeHTML(idea.hook || '')}</p><button type="button" class="btn btn-ghost" data-sp-idea="${index}">Use this direction</button></article>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No story ideas yet</strong></div>';
+    const journal = `${data.northStar ? `<div class="sp-north-star"><span>North Star</span><strong>${experimentalEscapeHTML(data.northStar)}</strong></div>` : ''}${questTier('Main quests', data.mainQuests || [], 'sp-tier-main')}${questTier('Side quests', data.sideQuests || [], 'sp-tier-side')}${!data.northStar && !(data.mainQuests || []).length && !(data.sideQuests || []).length ? '<div class="sp-empty-state"><strong class="sp-empty-title">No quests yet</strong></div>' : ''}<div class="sp-journal-actions"><button type="button" class="btn btn-ghost" data-sp-quest-action="add">Add quest</button></div>`;
+    const ideas = data.plotBranches.length ? `<div class="sp-ideas-list">${data.plotBranches.map((idea, index) => `<article class="sp-idea-card"><span class="sp-idea-type">${experimentalEscapeHTML(idea.type || 'idea')}</span><strong>${experimentalEscapeHTML(idea.name || '')}</strong><p>${experimentalEscapeHTML(idea.hook || '')}</p><button type="button" class="btn btn-ghost" data-sp-idea="${index}">Use this direction</button></article>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No story ideas yet</strong></div>';
     const history = tour
-        ? `<div class="sp-tl-bar sp-tour-timeline">${SCENEPULSE_TOUR_TIMELINE.map(item => `<button type="button" class="sp-tl-node" style="left:${SCENEPULSE_TOUR_TIMELINE.length === 1 ? 50 : 8 + (SCENEPULSE_TOUR_TIMELINE.indexOf(item) / (SCENEPULSE_TOUR_TIMELINE.length - 1)) * 84}%" data-sp-tour-history="${item.id}" title="ScenePulse guided-tour snapshot ${item.label}"><span class="sp-tl-dot ${item.current ? 'sp-tl-dot-latest' : ''} ${tour.selectedTimelineId === item.id ? 'sp-tl-dot-selected' : ''}"></span><span class="sp-tl-label ${tour.selectedTimelineId === item.id ? 'sp-tl-label-active' : ''}">${item.label}</span></button>`).join('')}</div><div class="sp-tour-history-note">Source guided-tour timeline · ${escapeHTML((SCENEPULSE_TOUR_TIMELINE.find(item => item.id === tour.selectedTimelineId) || SCENEPULSE_TOUR_TIMELINE.at(-1)).label)} · tour-only fixture</div><button type="button" class="sp-tl-browse-btn" data-sp-tour-browse>Browse All (${SCENEPULSE_TOUR_TIMELINE.length})</button>`
-        : model.snapshots.length ? `<div class="sp-timeline">${model.snapshots.slice().reverse().map(snapshot => `<button type="button" class="sp-timeline-entry" data-sp-history="${escapeHTML(snapshot.id)}"><span>${escapeHTML(new Date(snapshot.createdAt).toLocaleString())}</span><strong>${escapeHTML(snapshot.envelope?.summary || snapshot.envelope?.scene?.topic || 'Scene update')}</strong></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No scene history yet</strong></div>';
+        ? `<div class="sp-tl-bar sp-tour-timeline">${SCENEPULSE_TOUR_TIMELINE.map(item => `<button type="button" class="sp-tl-node" style="left:${SCENEPULSE_TOUR_TIMELINE.length === 1 ? 50 : 8 + (SCENEPULSE_TOUR_TIMELINE.indexOf(item) / (SCENEPULSE_TOUR_TIMELINE.length - 1)) * 84}%" data-sp-tour-history="${item.id}" title="ScenePulse guided-tour snapshot ${item.label}"><span class="sp-tl-dot ${item.current ? 'sp-tl-dot-latest' : ''} ${tour.selectedTimelineId === item.id ? 'sp-tl-dot-selected' : ''}"></span><span class="sp-tl-label ${tour.selectedTimelineId === item.id ? 'sp-tl-label-active' : ''}">${item.label}</span></button>`).join('')}</div><div class="sp-tour-history-note">Source guided-tour timeline · ${experimentalEscapeHTML((SCENEPULSE_TOUR_TIMELINE.find(item => item.id === tour.selectedTimelineId) || SCENEPULSE_TOUR_TIMELINE.at(-1)).label)} · tour-only fixture</div><button type="button" class="sp-tl-browse-btn" data-sp-tour-browse>Browse All (${SCENEPULSE_TOUR_TIMELINE.length})</button>`
+        : model.snapshots.length ? `<div class="sp-timeline">${model.snapshots.slice().reverse().map(snapshot => `<button type="button" class="sp-timeline-entry" data-sp-history="${experimentalEscapeHTML(snapshot.id)}"><span>${experimentalEscapeHTML(new Date(snapshot.createdAt).toLocaleString())}</span><strong>${experimentalEscapeHTML(snapshot.envelope?.summary || snapshot.envelope?.scene?.topic || 'Scene update')}</strong></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No scene history yet</strong></div>';
     const selectedDossier = dossiers.find(item => String(item.id) === String(ui.dossierId)) || null;
-    const dossierList = dossiers.length ? `<div class="sp-dossier-search"><input type="search" data-sp-dossier-search placeholder="Search encountered characters" aria-label="Search encountered characters"></div><div class="sp-dossier-list">${dossiers.map(record => `<button type="button" class="sp-dossier-row ${selectedDossier?.id === record.id ? 'is-selected' : ''}" data-sp-dossier="${escapeHTML(record.id)}" data-sp-dossier-name="${escapeHTML(`${record.name} ${record.aliases.join(' ')} ${record.role}`.toLowerCase())}"><span class="sp-char-portrait" style="--char-accent:${scenePulseIdentityColor(record.id || record.name)}"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(record.name))}</span></span><span><strong>${escapeHTML(record.name)}</strong><small>${escapeHTML([record.current ? 'in this scene' : '', record.role, record.observations.length ? `${record.observations.length} accepted reading${record.observations.length === 1 ? '' : 's'}` : record.canonical ? 'encountered record' : 'scene candidate'].filter(Boolean).join(' · '))}</small></span></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No encountered characters yet</strong></div>';
+    const dossierList = dossiers.length ? `<div class="sp-dossier-search"><input type="search" data-sp-dossier-search placeholder="Search encountered characters" aria-label="Search encountered characters"></div><div class="sp-dossier-list">${dossiers.map(record => `<button type="button" class="sp-dossier-row ${selectedDossier?.id === record.id ? 'is-selected' : ''}" data-sp-dossier="${experimentalEscapeHTML(record.id)}" data-sp-dossier-name="${experimentalEscapeHTML(`${record.name} ${record.aliases.join(' ')} ${record.role}`.toLowerCase())}"><span class="sp-char-portrait" style="--char-accent:${scenePulseIdentityColor(record.id || record.name)}"><span class="sp-char-portrait-monogram">${experimentalEscapeHTML(sidecarWorkspaceAvatar(record.name))}</span></span><span><strong>${experimentalEscapeHTML(record.name)}</strong><small>${experimentalEscapeHTML([record.current ? 'in this scene' : '', record.role, record.observations.length ? `${record.observations.length} accepted reading${record.observations.length === 1 ? '' : 's'}` : record.canonical ? 'encountered record' : 'scene candidate'].filter(Boolean).join(' · '))}</small></span></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No encountered characters yet</strong></div>';
     const dossierDetail = selectedDossier ? (() => {
         const current = selectedDossier.current || {};
         const entity = selectedDossier.entity || {};
@@ -9793,7 +9793,7 @@ function renderScenePulseWorldsWorkspace(world, sess) {
         const first = observations[0]; const last = observations.at(-1);
         const currentRows = [['Role', current.role || selectedDossier.role || entity.role], ['Archetype', current.archetype || selectedDossier.archetype], ['Aliases', selectedDossier.aliases.join(' · ')], ['Appearance', current.face || entity.appearance || entity.description], ['Outfit', current.outfit], ['Posture', current.posture], ['Proximity', current.proximity], ['Last-known location', last?.location]].filter(([, value]) => value);
         const historyAttribute = tour ? 'data-sp-tour-history' : 'data-sp-history';
-        return `<article class="sp-dossier-detail"><header><button type="button" class="btn btn-ghost" data-sp-dossier-back>‹ All dossiers</button><span class="sp-char-portrait" style="--char-accent:${scenePulseIdentityColor(selectedDossier.id || selectedDossier.name)}"><span class="sp-char-portrait-monogram">${escapeHTML(sidecarWorkspaceAvatar(selectedDossier.name))}</span></span><span><h3>${escapeHTML(selectedDossier.name)}</h3><small>${escapeHTML(tour ? 'ScenePulse tour character' : selectedDossier.canonical ? 'Horde identity linked' : 'Scene candidate')}</small></span></header><div class="sp-char-grid">${currentRows.map(([label, value]) => `<span class="sp-char-field">${escapeHTML(label)}</span><span class="sp-char-val">${escapeHTML(String(value))}</span>`).join('')}</div><div class="sp-dossier-stats"><span>First seen: ${escapeHTML(tour ? 'Tour fixture' : first?.at ? new Date(first.at).toLocaleString() : 'current scene')}</span><span>Last seen: ${escapeHTML(tour ? 'Tour fixture' : last?.at ? new Date(last.at).toLocaleString() : 'current scene')}</span><span>Appearances: ${observations.length || (current.name ? 1 : 0)}</span></div>${current.innerThought ? `<blockquote class="sp-char-thought-block">${escapeHTML(current.innerThought)}</blockquote>` : ''}<h4>Scene history</h4>${observations.length ? `<div class="sp-dossier-observations">${observations.slice().reverse().map(observation => `<button type="button" class="sp-dossier-observation" ${historyAttribute}="${escapeHTML(observation.snapshotId)}"><small>${escapeHTML(tour ? 'Tour fixture' : observation.at ? new Date(observation.at).toLocaleString() : 'Current scene')}</small>${observation.thought ? `<blockquote>${escapeHTML(observation.thought)}</blockquote>` : ''}<span>${escapeHTML(observation.summary || observation.location || 'Scene reading')}</span></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No accepted scene observations yet</strong></div>'}</article>`;
+        return `<article class="sp-dossier-detail"><header><button type="button" class="btn btn-ghost" data-sp-dossier-back>‹ All dossiers</button><span class="sp-char-portrait" style="--char-accent:${scenePulseIdentityColor(selectedDossier.id || selectedDossier.name)}"><span class="sp-char-portrait-monogram">${experimentalEscapeHTML(sidecarWorkspaceAvatar(selectedDossier.name))}</span></span><span><h3>${experimentalEscapeHTML(selectedDossier.name)}</h3><small>${experimentalEscapeHTML(tour ? 'ScenePulse tour character' : selectedDossier.canonical ? 'Horde identity linked' : 'Scene candidate')}</small></span></header><div class="sp-char-grid">${currentRows.map(([label, value]) => `<span class="sp-char-field">${experimentalEscapeHTML(label)}</span><span class="sp-char-val">${experimentalEscapeHTML(String(value))}</span>`).join('')}</div><div class="sp-dossier-stats"><span>First seen: ${experimentalEscapeHTML(tour ? 'Tour fixture' : first?.at ? new Date(first.at).toLocaleString() : 'current scene')}</span><span>Last seen: ${experimentalEscapeHTML(tour ? 'Tour fixture' : last?.at ? new Date(last.at).toLocaleString() : 'current scene')}</span><span>Appearances: ${observations.length || (current.name ? 1 : 0)}</span></div>${current.innerThought ? `<blockquote class="sp-char-thought-block">${experimentalEscapeHTML(current.innerThought)}</blockquote>` : ''}<h4>Scene history</h4>${observations.length ? `<div class="sp-dossier-observations">${observations.slice().reverse().map(observation => `<button type="button" class="sp-dossier-observation" ${historyAttribute}="${experimentalEscapeHTML(observation.snapshotId)}"><small>${experimentalEscapeHTML(tour ? 'Tour fixture' : observation.at ? new Date(observation.at).toLocaleString() : 'Current scene')}</small>${observation.thought ? `<blockquote>${experimentalEscapeHTML(observation.thought)}</blockquote>` : ''}<span>${experimentalEscapeHTML(observation.summary || observation.location || 'Scene reading')}</span></button>`).join('')}</div>` : '<div class="sp-empty-state"><strong class="sp-empty-title">No accepted scene observations yet</strong></div>'}</article>`;
     })() : dossierList;
     const dossierView = selectedDossier ? dossierDetail : dossierList;
     const settings = `<div class="sp-settings"><label>Theme<select data-sp-theme><option value="default" ${ui.theme === 'default' ? 'selected' : ''}>Default</option><option value="midnight" ${ui.theme === 'midnight' ? 'selected' : ''}>Midnight</option><option value="fantasy" ${ui.theme === 'fantasy' ? 'selected' : ''}>Fantasy</option><option value="cyberpunk" ${ui.theme === 'cyberpunk' ? 'selected' : ''}>Cyberpunk</option><option value="minimal" ${ui.theme === 'minimal' ? 'selected' : ''}>Minimal</option></select></label><label class="sp-setting-toggle"><input type="checkbox" data-sp-effects ${ui.reduceEffects ? '' : 'checked'}> Scene effects</label></div>`;
@@ -9802,7 +9802,7 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     const sceneContent = `${panelEnabled('dashboard') ? dashboard : ''}${panelEnabled('scene') ? section('scene', 'Scene Details', '◈', sceneDetails) : ''}${panelEnabled('characters') ? section('characters', 'Characters', '♙', characterCards, String(data.characters.length)) : ''}${panelEnabled('relationships') ? section('relationships', 'Relationships', '↔', relationshipCards, String(data.relationships.length)) : ''}${panelEnabled('journal') ? section('journal', 'Quest Journal', '▣', journal) : ''}${panelEnabled('ideas') ? section('ideas', 'Story Ideas', '✦', ideas, String(data.plotBranches.length)) : ''}${panelEnabled('history') ? section('history', 'History', '◷', history, String(historyCount)) : ''}`;
     const content = view === 'dossiers' ? section('dossiers', selectedDossier ? selectedDossier.name : 'Character Dossiers', '▤', dossierView, String(dossiers.length)) : sceneContent;
     const status = ui.demo ? '<span class="spw-demo-ribbon">Demo fixture · TOUR_EXAMPLE_DATA</span>' : '<span class="spw-live-ribbon">Live scene</span>';
-    const nav = (label, nextView, title) => `<button type="button" class="sp-toolbar-btn ${view === nextView ? 'sp-tb-active' : ''}" data-sp-view="${nextView}" title="${escapeHTML(title)}">${label}</button>`;
+    const nav = (label, nextView, title) => `<button type="button" class="sp-toolbar-btn ${view === nextView ? 'sp-tb-active' : ''}" data-sp-view="${nextView}" title="${experimentalEscapeHTML(title)}">${label}</button>`;
     const locationChanged = !ui.demo && !!ui.liveLocation && !!data.location && ui.liveLocation !== data.location;
     if (!ui.demo && data.location && ui.liveLocation !== data.location) { ui.liveLocation = data.location; persist(); }
     host.dataset.spTheme = ui.theme;
@@ -9810,7 +9810,7 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     host.dataset.spTimePhase = scenePulseTimePhase(data.time);
     host.classList.toggle('spw-reduce-effects', ui.reduceEffects);
     host.classList.toggle('spw-scene-transition', locationChanged);
-    host.innerHTML = `<div class="sp-toolbar"><div class="sp-brand"><span class="sp-brand-mark">◉</span><span class="sp-brand-word">Scene<span>Pulse</span></span><small>${escapeHTML(data.sceneTopic || 'Scene')}</small></div><span class="sp-toolbar-spacer"></span>${status}<button type="button" class="sp-toolbar-btn ${ui.demo ? 'sp-tb-active' : ''}" data-sp-action="demo" title="Toggle tour demo">▣</button><button type="button" class="sp-toolbar-btn" data-sp-action="thoughts" title="Inner Thoughts">◌</button><button type="button" class="sp-toolbar-btn" data-sp-action="refresh" title="Refresh">↻</button>${nav('⌂', 'scene', 'Scene Details')}${nav('♙', 'characters', 'Characters')}${nav('▤', 'dossiers', 'Character dossiers')}${nav('↔', 'relationships', 'Relationships')}${nav('▣', 'journal', 'Quest Journal')}${nav('✦', 'ideas', 'Story Ideas')}${nav('◷', 'history', 'History')}${nav('⚙', 'settings', 'Settings')}</div><div class="sp-panel-body spw-panel-body">${content}</div>`;
+    host.innerHTML = `<div class="sp-toolbar"><div class="sp-brand"><span class="sp-brand-mark">◉</span><span class="sp-brand-word">Scene<span>Pulse</span></span><small>${experimentalEscapeHTML(data.sceneTopic || 'Scene')}</small></div><span class="sp-toolbar-spacer"></span>${status}<button type="button" class="sp-toolbar-btn ${ui.demo ? 'sp-tb-active' : ''}" data-sp-action="demo" title="Toggle tour demo">▣</button><button type="button" class="sp-toolbar-btn" data-sp-action="thoughts" title="Inner Thoughts">◌</button><button type="button" class="sp-toolbar-btn" data-sp-action="refresh" title="Refresh">↻</button>${nav('⌂', 'scene', 'Scene Details')}${nav('♙', 'characters', 'Characters')}${nav('▤', 'dossiers', 'Character dossiers')}${nav('↔', 'relationships', 'Relationships')}${nav('▣', 'journal', 'Quest Journal')}${nav('✦', 'ideas', 'Story Ideas')}${nav('◷', 'history', 'History')}${nav('⚙', 'settings', 'Settings')}</div><div class="sp-panel-body spw-panel-body">${content}</div>`;
     if (locationChanged) setTimeout(() => host.classList.remove('spw-scene-transition'), 520);
     host.querySelectorAll('[data-sp-view]').forEach(button => button.addEventListener('click', () => { ui.view = button.dataset.spView; persist(); renderScenePulseWorldsWorkspace(world, sess); }));
     host.querySelectorAll('[data-sp-section-toggle]').forEach(header => header.addEventListener('click', event => { if (event.target.closest('button')) return; const sectionEl = header.closest('[data-sp-section]'); const key = header.dataset.spSectionToggle; ui.open[key] = !sectionEl.classList.contains('sp-open'); persist(); sectionEl.classList.toggle('sp-open', ui.open[key]); }));
@@ -9881,8 +9881,8 @@ function renderSidecarWorkspace(world, sess) {
     const statusClass = model.status === 'ready' ? '' : model.status === 'muted' ? 'is-muted' : 'is-warning';
     // Preserve ScenePulse's real full-width section rhythm. Refresh is a
     // pipeline action in the toolbar, not a decorative per-section spinner.
-    const section = (key, title, body, badge = '', icon = '◈') => `<section class="sp-section si-section ${workspaceUi.open[key] !== false ? 'sp-open' : ''}" data-si-section="${escapeHTML(key)}"><header class="sp-section-header si-section-header" data-si-section-toggle="${escapeHTML(key)}"><span class="sp-section-chevron">›</span><span class="sp-section-icon">${icon}</span><span class="sp-section-title">${escapeHTML(title)}</span>${badge ? `<span class="sp-section-badge">${escapeHTML(badge)}</span>` : ''}<span class="sp-section-spacer"></span></header><div class="sp-section-body si-section-body"><div class="sp-section-content">${body}</div></div></section>`;
-    const button = (label, action, cls = 'btn btn-ghost') => `<button type="button" class="${cls}" data-si-action="${escapeHTML(action)}">${escapeHTML(label)}</button>`;
+    const section = (key, title, body, badge = '', icon = '◈') => `<section class="sp-section si-section ${workspaceUi.open[key] !== false ? 'sp-open' : ''}" data-si-section="${experimentalEscapeHTML(key)}"><header class="sp-section-header si-section-header" data-si-section-toggle="${experimentalEscapeHTML(key)}"><span class="sp-section-chevron">›</span><span class="sp-section-icon">${icon}</span><span class="sp-section-title">${experimentalEscapeHTML(title)}</span>${badge ? `<span class="sp-section-badge">${experimentalEscapeHTML(badge)}</span>` : ''}<span class="sp-section-spacer"></span></header><div class="sp-section-body si-section-body"><div class="sp-section-content">${body}</div></div></section>`;
+    const button = (label, action, cls = 'btn btn-ghost') => `<button type="button" class="${cls}" data-si-action="${experimentalEscapeHTML(action)}">${experimentalEscapeHTML(label)}</button>`;
     const failure = !model.readerEnabled
         ? `<div class="si-failure is-muted"><strong>Reader disabled</strong><span>New Sidecar turns use the Narrator handoff only until the semantic Reader is enabled for this world.</span><div class="si-retry-row">${button('Enable Reader', 'enable-reader', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
         : model.readerEnabled && !model.reader && model.latestTurn
@@ -9892,7 +9892,7 @@ function renderSidecarWorkspace(world, sess) {
         : model.incompleteCommit
         ? `<div class="si-failure"><strong>Canonical commit incomplete</strong><span>Progression is blocked. The journaled receipt must be recovered through World GM.</span><div class="si-retry-row">${button('Open World GM', 'gm', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
         : model.failedTurn
-            ? `<div class="si-failure"><strong>${escapeHTML(model.failedTurn.failure?.stage === 'reader' ? 'Reader update incomplete' : 'Scene update incomplete')}</strong><span>Narration is preserved; downstream interpretation has not settled.</span><div class="si-retry-row">${button('Retry Scene Update', 'retry', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
+            ? `<div class="si-failure"><strong>${experimentalEscapeHTML(model.failedTurn.failure?.stage === 'reader' ? 'Reader update incomplete' : 'Scene update incomplete')}</strong><span>Narration is preserved; downstream interpretation has not settled.</span><div class="si-retry-row">${button('Retry Scene Update', 'retry', 'btn btn-primary')}${button('Backstage', 'backstage')}</div></div>`
             : '';
     const refreshReview = model.pendingReaderRefresh
         ? `<div class="si-refresh-review"><strong>Fresh Reader interpretation ready for review</strong><span>It was derived from the preserved current narration. Accepting it updates Scene Intelligence only; it does not rerun Narrator or replay the canonical receipt.</span><div class="si-retry-row">${button('Use this reading', `accept-refresh:${model.pendingReaderRefresh.id}`, 'btn btn-primary')}${button('Discard', `discard-refresh:${model.pendingReaderRefresh.id}`)}</div></div>`
@@ -9920,23 +9920,23 @@ function renderSidecarWorkspace(world, sess) {
         ['Interaction', scene.interactionStyle], ['Sound', environment.sound || scene.sound],
         ['Local space', model.location?.localSpace || model.location?.authoredDescription]
     ].filter(([, value]) => String(value || '').trim());
-    const sceneDetails = `<div class="sp-scene-summary-row"><div class="sp-scene-summary">${escapeHTML(sceneSummary)}</div></div>${sceneDetailRows.map(([label, value]) => `<div class="sp-row ${label === 'Tension' ? `sp-scene-tension-row ${tensionClass}` : label === 'Sound' ? 'sp-scene-sounds-row' : ''}"><span class="sp-row-label">${escapeHTML(label)}</span><span class="sp-row-value">${escapeHTML(String(value))}</span></div>`).join('')}`;
+    const sceneDetails = `<div class="sp-scene-summary-row"><div class="sp-scene-summary">${experimentalEscapeHTML(sceneSummary)}</div></div>${sceneDetailRows.map(([label, value]) => `<div class="sp-row ${label === 'Tension' ? `sp-scene-tension-row ${tensionClass}` : label === 'Sound' ? 'sp-scene-sounds-row' : ''}"><span class="sp-row-label">${experimentalEscapeHTML(label)}</span><span class="sp-row-value">${experimentalEscapeHTML(String(value))}</span></div>`).join('')}`;
     const questEntries = (model.projection?.currentThreads || model.projection?.pressures || []).slice(0, 12);
-    const questJournal = questEntries.length ? `<div class="sp-plot-tier sp-tier-open sp-tier-main"><div class="sp-plot-tier-title"><span class="sp-tier-chevron">›</span><span class="sp-tier-icon">▣</span><span>Active tasks</span><span class="sp-section-badge">${questEntries.length}</span></div><div class="sp-tier-body">${questEntries.map(item => `<article class="sp-plot-entry sp-card-open"><header class="sp-quest-header"><span class="sp-quest-chevron">›</span><span class="sp-plot-status sp-urgency-moderate">active</span><strong class="sp-plot-name">${escapeHTML(String(item.label || item.name || item.threadId || 'Current thread'))}</strong></header><div class="sp-quest-detail">${escapeHTML(String(item.details || item.description || item.evidence || 'Current scene pressure.'))}</div></article>`).join('')}</div></div>` : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">▣</div><strong class="sp-empty-title">No active scene tasks</strong><span class="sp-empty-sub">Threads and obligations appear here when the authored beat makes them relevant.</span></div>';
+    const questJournal = questEntries.length ? `<div class="sp-plot-tier sp-tier-open sp-tier-main"><div class="sp-plot-tier-title"><span class="sp-tier-chevron">›</span><span class="sp-tier-icon">▣</span><span>Active tasks</span><span class="sp-section-badge">${questEntries.length}</span></div><div class="sp-tier-body">${questEntries.map(item => `<article class="sp-plot-entry sp-card-open"><header class="sp-quest-header"><span class="sp-quest-chevron">›</span><span class="sp-plot-status sp-urgency-moderate">active</span><strong class="sp-plot-name">${experimentalEscapeHTML(String(item.label || item.name || item.threadId || 'Current thread'))}</strong></header><div class="sp-quest-detail">${experimentalEscapeHTML(String(item.details || item.description || item.evidence || 'Current scene pressure.'))}</div></article>`).join('')}</div></div>` : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">▣</div><strong class="sp-empty-title">No active scene tasks</strong><span class="sp-empty-sub">Threads and obligations appear here when the authored beat makes them relevant.</span></div>';
     const dashboard = `<div class="sp-dashboard si-source-dashboard">
-        <article class="sp-dash-card sp-dash-card-date"><span class="sp-dash-sub">${escapeHTML(date)}</span><strong class="sp-dash-day">${escapeHTML(day)}</strong></article>
-        <article class="sp-dash-card sp-dash-card-time"><span class="sp-dash-clock">◷</span><strong class="sp-time-value">${escapeHTML(model.worldTime)}</strong></article>
-        <article class="sp-dash-card sp-dash-card-temp ${tensionClass}"><div class="sp-temp-bar-wrap"><div class="si-source-tension-bar"><i></i></div></div><strong class="sp-temp-bar-label">${escapeHTML(tension)} · ${escapeHTML(scene.mood || 'scene mood unknown')}</strong></article>
-        <article class="sp-dash-card sp-dash-card-weather"><span class="sp-dash-icon">${/rain|storm|wind/i.test(weather) ? '≋' : '☁'}</span><strong class="sp-dash-value">${escapeHTML(environmentalText)}</strong></article>
-    </div><div class="sp-dash-location"><span class="sp-dash-loc-icon">⌖</span><span class="sp-dash-loc-text">${escapeHTML([model.location?.name, ...(model.location?.parentLocations || []).map(item => item.name)].filter(Boolean).join(' ← ') || 'Unknown location')}</span></div>`;
+        <article class="sp-dash-card sp-dash-card-date"><span class="sp-dash-sub">${experimentalEscapeHTML(date)}</span><strong class="sp-dash-day">${experimentalEscapeHTML(day)}</strong></article>
+        <article class="sp-dash-card sp-dash-card-time"><span class="sp-dash-clock">◷</span><strong class="sp-time-value">${experimentalEscapeHTML(model.worldTime)}</strong></article>
+        <article class="sp-dash-card sp-dash-card-temp ${tensionClass}"><div class="sp-temp-bar-wrap"><div class="si-source-tension-bar"><i></i></div></div><strong class="sp-temp-bar-label">${experimentalEscapeHTML(tension)} · ${experimentalEscapeHTML(scene.mood || 'scene mood unknown')}</strong></article>
+        <article class="sp-dash-card sp-dash-card-weather"><span class="sp-dash-icon">${/rain|storm|wind/i.test(weather) ? '≋' : '☁'}</span><strong class="sp-dash-value">${experimentalEscapeHTML(environmentalText)}</strong></article>
+    </div><div class="sp-dash-location"><span class="sp-dash-loc-icon">⌖</span><span class="sp-dash-loc-text">${experimentalEscapeHTML([model.location?.name, ...(model.location?.parentLocations || []).map(item => item.name)].filter(Boolean).join(' ← ') || 'Unknown location')}</span></div>`;
     const sceneBody = `${failure}${refreshReview}${dashboard}
         ${section('scene-details', 'Scene details', sceneDetails, scene.topic ? 'live' : '', '▸')}
         ${section('characters', 'Characters', characterBody, `${model.activeCharacters.length}`, '♙')}
         ${section('relationships', 'Relationships', sidecarWorkspaceRelationshipMarkup(model), `${model.relationships.length}`, '↔')}
         ${section('quest-journal', 'Quest journal', questJournal, `${questEntries.length}`, '▣')}
         ${section('changes', 'Changes, places & objects', `<div class="si-source-change-grid"><div><strong>What changed</strong>${sidecarWorkspaceList(model.projection?.changes, 'No material change was extracted for this beat.')}</div><div><strong>Relevant objects</strong>${sidecarWorkspaceList(model.projection?.salientObjects, 'No object has current scene relevance.')}</div><div><strong>Relevant places</strong>${sidecarWorkspaceList(model.projection?.salientLocations, 'No additional place is currently salient.')}</div></div>`, `${(model.projection?.changes || []).length}`, '◇')}
-        ${section('candidates', 'Scene evidence', model.candidates.length ? model.candidates.slice(-12).reverse().map(candidate => `<article class="sp-candidate-card si-candidate-card"><header><span class="si-avatar">${sidecarWorkspaceAvatar(candidate.label || candidate.role)}</span><span class="si-candidate-title"><strong>${escapeHTML(candidate.label || candidate.role || candidate.candidateType || 'Scene candidate')}</strong><small>${escapeHTML(candidate.candidateType || 'candidate')} · ${escapeHTML(candidate.status || 'evidence')}</small></span></header><p>${escapeHTML(String(candidate.description || candidate.evidence || candidate.clothingDescription || 'Pre-canonical evidence; review required.').slice(0, 420))}</p><div class="si-card-actions">${button('Review evidence', `candidate:${escapeHTML(candidate.candidateId || '')}`)}${button('World GM', `candidate-gm:${escapeHTML(candidate.candidateId || '')}`)}</div></article>`).join('') : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◇</div><strong class="sp-empty-title">No scene candidates</strong><span class="sp-empty-sub">New people, places and props remain evidence until reviewed.</span></div>', `${model.candidates.length}`, '◇')}
-        ${section('questions', 'Questions & pressures', model.openQuestions.length ? model.openQuestions.slice(0, 10).map(question => `<article class="si-question-card"><div class="si-question-heading"><span class="si-question-mark">?</span><strong>${escapeHTML(question.prompt || question.id)}</strong><span class="sp-section-badge">${escapeHTML(question.priority || question.pressure || 'open')}</span></div><p>${escapeHTML(String(question.evidence || 'The answer remains unresolved and will be carried only while relevant.').slice(0, 360))}</p><div class="si-card-actions">${button('Open World GM', 'gm')}</div></article>`).join('') : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">?</div><strong class="sp-empty-title">No open questions</strong><span class="sp-empty-sub">Uncertainty is carried only when it remains relevant to continuity.</span></div>', `${model.openQuestions.length}`, '?')}`;
+        ${section('candidates', 'Scene evidence', model.candidates.length ? model.candidates.slice(-12).reverse().map(candidate => `<article class="sp-candidate-card si-candidate-card"><header><span class="si-avatar">${sidecarWorkspaceAvatar(candidate.label || candidate.role)}</span><span class="si-candidate-title"><strong>${experimentalEscapeHTML(candidate.label || candidate.role || candidate.candidateType || 'Scene candidate')}</strong><small>${experimentalEscapeHTML(candidate.candidateType || 'candidate')} · ${experimentalEscapeHTML(candidate.status || 'evidence')}</small></span></header><p>${experimentalEscapeHTML(String(candidate.description || candidate.evidence || candidate.clothingDescription || 'Pre-canonical evidence; review required.').slice(0, 420))}</p><div class="si-card-actions">${button('Review evidence', `candidate:${experimentalEscapeHTML(candidate.candidateId || '')}`)}${button('World GM', `candidate-gm:${experimentalEscapeHTML(candidate.candidateId || '')}`)}</div></article>`).join('') : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◇</div><strong class="sp-empty-title">No scene candidates</strong><span class="sp-empty-sub">New people, places and props remain evidence until reviewed.</span></div>', `${model.candidates.length}`, '◇')}
+        ${section('questions', 'Questions & pressures', model.openQuestions.length ? model.openQuestions.slice(0, 10).map(question => `<article class="si-question-card"><div class="si-question-heading"><span class="si-question-mark">?</span><strong>${experimentalEscapeHTML(question.prompt || question.id)}</strong><span class="sp-section-badge">${experimentalEscapeHTML(question.priority || question.pressure || 'open')}</span></div><p>${experimentalEscapeHTML(String(question.evidence || 'The answer remains unresolved and will be carried only while relevant.').slice(0, 360))}</p><div class="si-card-actions">${button('Open World GM', 'gm')}</div></article>`).join('') : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">?</div><strong class="sp-empty-title">No open questions</strong><span class="sp-empty-sub">Uncertainty is carried only when it remains relevant to continuity.</span></div>', `${model.openQuestions.length}`, '?')}`;
     const relationshipBody = sidecarWorkspaceRelationshipMarkup(model);
     const characterBrowserBody = model.activeCharacters.length ? `<div class="si-character-intro">Characters are grouped by what the authored beat establishes: active, nearby, audible and remote. Expand a card for scoped evidence.</div>${model.activeCharacters.map(entry => sidecarWorkspaceCharacterCard(entry, model)).join('')}` : '<div class="sp-empty-state si-empty-state"><div class="sp-empty-icon">◌</div><strong class="sp-empty-title">No character evidence</strong><span class="sp-empty-sub">No character-specific presence has settled for this scene.</span></div>';
     const historyBody = sidecarWorkspaceHistoryTimeline(model);
@@ -9969,11 +9969,11 @@ function renderSidecarWorkspace(world, sess) {
         });
         window.__hordeSceneWorkspaceDocumentListener = true;
     }
-    const toolbarButton = (label, view, title) => `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn ${workspaceUi.view === view ? 'sp-tb-active' : ''}" data-si-view="${view}" title="${escapeHTML(title)}" aria-label="${escapeHTML(title)}">${label}</button>`;
+    const toolbarButton = (label, view, title) => `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn ${workspaceUi.view === view ? 'sp-tb-active' : ''}" data-si-view="${view}" title="${experimentalEscapeHTML(title)}" aria-label="${experimentalEscapeHTML(title)}">${label}</button>`;
     const compactPipelineAction = model.historical
         ? `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="return-current" title="Return to the current scene" aria-label="Return to the current scene">↩</button>`
         : `<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="refresh" title="Refresh Scene Intelligence" aria-label="Refresh Scene Intelligence">↻</button>`;
-    host.innerHTML = `<div class="sp-toolbar si-source-toolbar"><div class="sp-brand si-source-brand"><span class="sp-brand-mark" aria-hidden="true">◉</span><span class="sp-brand-word">Scene<span>Pulse</span></span><small>${escapeHTML(model.hierarchy.scene?.title || model.location?.name || 'Current scene')}</small></div><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${statusClass}">${escapeHTML(model.historical ? 'History mode' : statusLabel)}</span>${compactPipelineAction}${toolbarButton('⌂', 'scene', 'Open current scene')}${toolbarButton('◌', 'thoughts', 'Open character thoughts')}${toolbarButton('◷', 'history', 'Open accepted scene history')}${toolbarButton('♙', 'all-known', 'Browse all known characters')}<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="collapse-all" title="Collapse or expand scene sections" aria-label="Collapse or expand scene sections">▦</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="backstage" title="Open Backstage evidence" aria-label="Open Backstage evidence">≡</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="gm" title="Open World GM" aria-label="Open World GM">✎</button></div><div class="sp-panel-body si-body">${viewBody}</div>`;
+    host.innerHTML = `<div class="sp-toolbar si-source-toolbar"><div class="sp-brand si-source-brand"><span class="sp-brand-mark" aria-hidden="true">◉</span><span class="sp-brand-word">Scene<span>Pulse</span></span><small>${experimentalEscapeHTML(model.hierarchy.scene?.title || model.location?.name || 'Current scene')}</small></div><span class="sp-toolbar-spacer"></span><span class="sidecar-status-pill ${statusClass}">${experimentalEscapeHTML(model.historical ? 'History mode' : statusLabel)}</span>${compactPipelineAction}${toolbarButton('⌂', 'scene', 'Open current scene')}${toolbarButton('◌', 'thoughts', 'Open character thoughts')}${toolbarButton('◷', 'history', 'Open accepted scene history')}${toolbarButton('♙', 'all-known', 'Browse all known characters')}<button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="collapse-all" title="Collapse or expand scene sections" aria-label="Collapse or expand scene sections">▦</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="backstage" title="Open Backstage evidence" aria-label="Open Backstage evidence">≡</button><button type="button" class="sp-toolbar-btn si-source-toolbar-btn" data-si-action="gm" title="Open World GM" aria-label="Open World GM">✎</button></div><div class="sp-panel-body si-body">${viewBody}</div>`;
     // Bind the generated tab controls directly after each redraw.  The
     // workspace is rebuilt during Sidecar updates, so a one-time listener on
     // an earlier DOM node is not sufficient.  The document-level bridge above
@@ -10125,7 +10125,7 @@ function openWorldSidecarInspector(view = 'scene') {
         : null;
     const incompleteCommit = sess?.sidecarIncompleteCommit || null;
     const readerBackfillTurns = isSidecar ? (protocol.turns || []).filter(turn => turn.status !== 'superseded').slice(-120) : [];
-    const readerBackfillTurnOptions = readerBackfillTurns.map((turn, index) => `<option value="${escapeHTML(String(turn.id || ''))}">Turn ${index + 1} · ${escapeHTML(String(turn.id || '').slice(-28))}</option>`).join('');
+    const readerBackfillTurnOptions = readerBackfillTurns.map((turn, index) => `<option value="${experimentalEscapeHTML(String(turn.id || ''))}">Turn ${index + 1} · ${experimentalEscapeHTML(String(turn.id || '').slice(-28))}</option>`).join('');
     const title = view === 'line' ? 'World GM · private Sidecar line'
         : view === 'backstage' ? 'Backstage handoff'
         : view === 'migration' ? 'Enable Sidecar for this world'
@@ -10152,7 +10152,7 @@ function openWorldSidecarInspector(view = 'scene') {
         if (view === 'line') { openWorldSidecarLine(); return; }
         else if (view === 'backstage') body = `${tabs}${sidecarInspectorJson({ narratorHandoff: latestTurn?.handoff || latestTurn?.sceneHandoff || null, sidecarReader: latestTurn?.reader || null, sidecarReceipt: latestTurn?.receipt || latestTurn?.reconciliationReceipt || null, roleplayOS: latestTurn?.ff54 || null, temporalBreakdown: latestTurn?.sceneHeader || null, controlledCharacterEvidence: latestTurn?.controlledCharacterEvidence || null, nextScenePacket: packet, proposals: (protocol.backgroundProposals || []).slice(-12), refinements: (protocol.refinements || []).slice(-12), readerRefreshes: (protocol.readerRefreshes || []).slice(-20), commitJournal: (sess.sidecarCommitJournal || []).slice(-40), incompleteCommit: sess.sidecarIncompleteCommit || null }, 'No Sidecar turn has been committed yet.')}`;
         else if (view === 'questions') body = `${tabs}${sidecarInspectorJson((protocol.questions || []).filter(question => question.status !== 'resolved'), 'There are no open Sidecar questions.')}`;
-        else if (view === 'memory') body = `${tabs}<div style="display:grid; gap:8px; margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:8px;"><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><strong>Reader backfill</strong><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><label class="form-label" style="min-width:210px;">From turn<select id="world-sidecar-reader-backfill-start" class="form-select"><option value="">First eligible turn</option>${readerBackfillTurnOptions}</select></label><label class="form-label" style="min-width:210px;">Through turn<select id="world-sidecar-reader-backfill-end" class="form-select"><option value="">Last eligible turn</option>${readerBackfillTurnOptions}</select></label><button class="btn btn-primary" id="world-sidecar-reader-backfill">Backfill selected range</button></div></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${escapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${escapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
+        else if (view === 'memory') body = `${tabs}<div style="display:grid; gap:8px; margin-bottom:10px; padding:10px; border:1px solid var(--border); border-radius:8px;"><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><strong>Reader backfill</strong><span class="form-hint">Derived evidence only; canonical turns and world history are never rewritten.</span></div><div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;"><label class="form-label" style="min-width:210px;">From turn<select id="world-sidecar-reader-backfill-start" class="form-select"><option value="">First eligible turn</option>${readerBackfillTurnOptions}</select></label><label class="form-label" style="min-width:210px;">Through turn<select id="world-sidecar-reader-backfill-end" class="form-select"><option value="">Last eligible turn</option>${readerBackfillTurnOptions}</select></label><button class="btn btn-primary" id="world-sidecar-reader-backfill">Backfill selected range</button></div></div>${protocol.readerBackfill ? `<div class="form-hint" style="margin-bottom:8px;">Reader backfill: ${experimentalEscapeHTML(protocol.readerBackfill.status || 'idle')} · ${Number(protocol.readerBackfill.completed) || 0} completed · ${Number(protocol.readerBackfill.failed) || 0} failed${protocol.readerBackfill.lastError ? ` · ${experimentalEscapeHTML(protocol.readerBackfill.lastError)}` : ''}</div>` : ''}${sidecarInspectorJson({
             configuration: effectiveSidecarMemoryConfig(world),
             readerProfile: effectiveSidecarReaderProfile(world, sess),
             readerBackfill: protocol.readerBackfill || null,
@@ -10168,7 +10168,7 @@ function openWorldSidecarInspector(view = 'scene') {
         else if (view === 'scene') body = `${tabs}${sidecarSceneProjectionMarkup(world, sess)}`;
         else body = `${tabs}${sidecarInspectorJson(packet, 'The next-turn scene packet has not been prepared yet.')}`;
     }
-    overlay.innerHTML = `<div class="modal" style="width:min(900px, calc(100vw - 36px)); max-height:86vh; display:flex; flex-direction:column;"><div class="modal-header"><h2>${escapeHTML(title)}</h2><button class="modal-close" id="close-world-sidecar-inspector">×</button></div><div class="modal-body" style="overflow:auto;">${body}</div></div>`;
+    overlay.innerHTML = `<div class="modal" style="width:min(900px, calc(100vw - 36px)); max-height:86vh; display:flex; flex-direction:column;"><div class="modal-header"><h2>${experimentalEscapeHTML(title)}</h2><button class="modal-close" id="close-world-sidecar-inspector">×</button></div><div class="modal-body" style="overflow:auto;">${body}</div></div>`;
     document.body.appendChild(overlay);
     overlay.addEventListener('click', event => { if (event.target === overlay) closeWorldSidecarInspector(); });
     document.getElementById('close-world-sidecar-inspector')?.addEventListener('click', closeWorldSidecarInspector);
@@ -10260,7 +10260,7 @@ async function reviseWorldAgentProposal(world, sess, proposal, guidance) {
     const sanitized = sanitizeWorldAgentActions(parsed);
     const target = protocolForSidecarTimeline(world, sess);
     if (!target) throw new Error('Sidecar timeline unavailable.');
-    proposal.actions = safeJsonClone(sanitized.actions);
+    proposal.actions = experimentalSafeJsonClone(sanitized.actions);
     proposal.dropped = sanitized.dropped;
     proposal.summary = (Array.isArray(parsed.developments) ? parsed.developments : proposal.summary || []).map(item => String(item?.summary || item || '').trim()).filter(Boolean).slice(0, 5);
     proposal.status = 'pending_sidecar_review';
@@ -10280,8 +10280,8 @@ function extractInlineWorldTurnReceipt(text) {
     const source = String(text || '');
     const tagged = source.match(/<world_turn_receipt>\s*([\s\S]*?)\s*<\/world_turn_receipt>/i);
     if (tagged) {
-        const parsed = safeParseJSONRepair(tagged[1]);
-        if (isPlainObject(parsed)) return parsed;
+        const parsed = experimentalSafeParseJSONRepair(tagged[1]);
+        if (experimentalIsPlainObject(parsed)) return parsed;
     }
     const legacy = extractInlineWorldStatePayload(source);
     if (legacy) return {
@@ -10412,7 +10412,7 @@ function syncCurrentWorldSnapshotLedger(session) {
         snapshot.session.ledgerRevision = session.ledgerRevision;
         snapshot.session.ledgerManualRevision = session.ledgerManualRevision;
         snapshot.session.ledgerManualOverrideText = session.ledgerManualOverrideText;
-        snapshot.session.ledgerDiagnostics = safeJsonClone(session.ledgerDiagnostics || {});
+        snapshot.session.ledgerDiagnostics = experimentalSafeJsonClone(session.ledgerDiagnostics || {});
     };
     patch(message.postSnapshot);
     const currentVersion = message.currentVersion ?? ((message.versions || []).length - 1);

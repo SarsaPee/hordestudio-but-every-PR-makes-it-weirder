@@ -146,7 +146,7 @@ async function deriveWorldNpcPortraitDisplay(world, entity, focusX = 50, focusY 
     const assetId = addWorldMediaAsset(world, cropped, 'npc_portrait',
         `${entity?.name || 'NPC'} (profile frame)`,
         { prompt: `Derived ${WORLD_NPC_PORTRAIT_DISPLAY_ASPECT} profile frame of source asset ${sourceId}.`, entityId: entity?.id, sourceAssetId: sourceId });
-    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
     entity.visuals.portraitDisplayAssetId = assetId;
     return assetId;
 }
@@ -158,7 +158,7 @@ function worldVisualHistoryKeys(kind) {
 }
 
 function worldVisualHistory(world, target, kind) {
-    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    target.visuals = experimentalIsPlainObject(target.visuals) ? target.visuals : {};
     const keys = worldVisualHistoryKeys(kind);
     const valid = new Set((world?.mediaAssets || []).map(asset => asset.id));
     const history = [];
@@ -192,7 +192,7 @@ function registerWorldVisualVariant(world, target, kind, assetId) {
 }
 
 function clearWorldVisualVariants(target, kind) {
-    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    target.visuals = experimentalIsPlainObject(target.visuals) ? target.visuals : {};
     const keys = worldVisualHistoryKeys(kind);
     target.visuals[keys.current] = '';
     target.visuals[keys.history] = [];
@@ -235,9 +235,9 @@ function renderWorldVisualOutfitGallery() {
     if (unassigned.length) groups.push({ outfit: { id: 'unassigned', name: 'Unassigned images' }, assets: unassigned });
     const populated = groups.filter(group => group.assets.length);
     gallery.hidden = !populated.length;
-    gallery.innerHTML = populated.map(group => `<section class="world-visual-outfit-gallery-group"><div class="world-visual-outfit-gallery-title">${escapeHTML(group.outfit.name)} <span>${group.assets.length}</span></div><div class="world-visual-outfit-gallery-grid">${group.assets.map(assetId => {
+    gallery.innerHTML = populated.map(group => `<section class="world-visual-outfit-gallery-group"><div class="world-visual-outfit-gallery-title">${experimentalEscapeHTML(group.outfit.name)} <span>${group.assets.length}</span></div><div class="world-visual-outfit-gallery-grid">${group.assets.map(assetId => {
         const source = worldMediaSource(editor.world, assetId);
-        return `<button type="button" class="world-visual-outfit-gallery-thumb ${assetId === worldVisualEditorAssetId(editor) ? 'is-selected' : ''}" data-asset-id="${escapeHTML(assetId)}" data-outfit-id="${escapeHTML(group.outfit.id)}" title="Use ${escapeHTML(group.outfit.name)} image"><span style="background-image:url('${cssUrl(source)}')"></span></button>`;
+        return `<button type="button" class="world-visual-outfit-gallery-thumb ${assetId === worldVisualEditorAssetId(editor) ? 'is-selected' : ''}" data-asset-id="${experimentalEscapeHTML(assetId)}" data-outfit-id="${experimentalEscapeHTML(group.outfit.id)}" title="Use ${experimentalEscapeHTML(group.outfit.name)} image"><span style="background-image:url('${experimentalCssUrl(source)}')"></span></button>`;
     }).join('')}</div></section>`).join('');
     gallery.querySelectorAll('.world-visual-outfit-gallery-thumb').forEach(button => button.onclick = () => {
         const outfitId = button.dataset.outfitId;
@@ -269,11 +269,11 @@ function renderWorldVisualActiveOutfit() {
         const active = outfit.id === selectedId;
         const selectedIndex = Math.max(0, imageIds.indexOf(String(editor.target.visuals?.portraitAssetId || '')));
         const imagePicker = imageIds.length
-            ? `<span class="world-inline-outfit-image-picker"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous ${escapeHTML(outfit.name)} image">‹</button><span class="world-inline-outfit-image-count">${selectedIndex + 1} / ${imageIds.length}</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next ${escapeHTML(outfit.name)} image">›</button></span>`
+            ? `<span class="world-inline-outfit-image-picker"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous ${experimentalEscapeHTML(outfit.name)} image">‹</button><span class="world-inline-outfit-image-count">${selectedIndex + 1} / ${imageIds.length}</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next ${experimentalEscapeHTML(outfit.name)} image">›</button></span>`
             : `<span class="world-inline-outfit-image-picker is-empty"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous image" disabled>‹</button><span class="world-inline-outfit-image-count">0 / 0</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next image" disabled>›</button></span>`;
         const warning = outfitHasAlternatives(outfit.description)
             ? '<span class="form-hint world-outfit-warning">This outfit contains alternatives; FIBO may combine them.</span>' : '';
-        return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}"><div class="world-inline-outfit-image-column"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-image-open" title="Select ${escapeHTML(outfit.name)}" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button>${imagePicker}</div><div class="world-inline-outfit-copy"><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…"><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…">${escapeHTML(outfit.description)}</textarea>${warning}<div class="world-inline-outfit-meta"><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-select ${active ? 'is-current' : ''}">${active ? 'Current outfit' : 'Wear this outfit'}</button><button type="button" class="world-visual-outfit-generate">Generate</button><button type="button" class="world-visual-outfit-delete">Delete</button></span></div></div></div>`;
+        return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${experimentalEscapeHTML(outfit.id)}"><div class="world-inline-outfit-image-column"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-image-open" title="Select ${experimentalEscapeHTML(outfit.name)}" ${image ? `style="background-image:url('${experimentalCssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button>${imagePicker}</div><div class="world-inline-outfit-copy"><input class="world-inline-outfit-name-input" value="${experimentalEscapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…"><textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…">${experimentalEscapeHTML(outfit.description)}</textarea>${warning}<div class="world-inline-outfit-meta"><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-select ${active ? 'is-current' : ''}">${active ? 'Current outfit' : 'Wear this outfit'}</button><button type="button" class="world-visual-outfit-generate">Generate</button><button type="button" class="world-visual-outfit-delete">Delete</button></span></div></div></div>`;
     }).join('') : '<span class="form-hint">No outfits yet. Use New outfit to author the first one.</span>';
     list.querySelectorAll('.world-inline-outfit-editor').forEach(card => {
         const outfit = outfits.find(entry => entry.id === card.dataset.outfitId);
@@ -338,7 +338,7 @@ function renderWorldVisualActiveOutfit() {
                 if (asset) {
                     asset.entityId = editor.target.id;
                     asset.outfitId = outfit.id;
-                    asset.outfitSnapshot = safeJsonClone(outfit);
+                    asset.outfitSnapshot = experimentalSafeJsonClone(outfit);
                 }
                 await deriveWorldNpcPortraitDisplay(editor.world, editor.target);
                 pruneWorldMediaAssets(editor.world);
@@ -514,8 +514,8 @@ function renderStructuredVisualDocumentEditor(project) {
     list.innerHTML = doc.objects.map((object, index) => {
         const objectId = ids[index] || newStructuredVisualObjectId('obj');
         const meta = project.hordeObjectMetadata?.[objectId] || {};
-        const field = (key, label, multiline = false) => `<label class="form-label">${label}${multiline ? `<textarea class="form-textarea world-visual-object-field" data-field="${key}" rows="2">${escapeHTML(object[key] || '')}</textarea>` : `<input class="form-input world-visual-object-field" data-field="${key}" value="${escapeHTML(object[key] || '')}">`}</label>`;
-        return `<article class="world-visual-object-card ${meta.salience === 'primary' ? 'is-primary' : ''}" data-object-id="${escapeHTML(objectId)}"><div class="world-visual-object-card-header"><span class="world-visual-object-card-title">Object ${index + 1}</span><div class="world-visual-object-actions"><select class="form-select world-visual-object-meta" data-meta="salience" title="How important this object is to the composition"><option value="primary" ${meta.salience === 'primary' ? 'selected' : ''}>Primary</option><option value="secondary" ${meta.salience === 'secondary' ? 'selected' : ''}>Secondary</option><option value="tertiary" ${meta.salience === 'tertiary' ? 'selected' : ''}>Tertiary</option></select><select class="form-select world-visual-object-meta" data-meta="kind" title="What sort of visual object this is"><option value="subject" ${meta.kind === 'subject' ? 'selected' : ''}>Subject</option><option value="scene_object" ${meta.kind === 'scene_object' ? 'selected' : ''}>Scene object</option><option value="integrated_component" ${meta.kind === 'integrated_component' ? 'selected' : ''}>Integrated component</option><option value="background_detail" ${meta.kind === 'background_detail' ? 'selected' : ''}>Background detail</option></select><button type="button" class="tool-btn world-visual-object-up" title="Move object up">↑</button><button type="button" class="tool-btn world-visual-object-down" title="Move object down">↓</button><button type="button" class="tool-btn world-visual-object-remove" title="Remove object">Remove</button></div></div><div class="world-visual-grid-2">${field('description','Description',true)}${field('relationship','Relationship',true)}${field('location','Location')}${field('relative_size','Relative size')}${field('shape_and_color','Shape and colour')}${field('texture','Texture')}${field('appearance_details','Appearance details',true)}${field('number_of_objects','Number of objects')}${field('pose','Pose')}${field('expression','Expression')}${field('clothing','Clothing')}${field('action','Action')}${field('gender','Gender')}${field('skin_tone_and_texture','Skin tone and texture')}${field('orientation','Orientation')}</div></article>`;
+        const field = (key, label, multiline = false) => `<label class="form-label">${label}${multiline ? `<textarea class="form-textarea world-visual-object-field" data-field="${key}" rows="2">${experimentalEscapeHTML(object[key] || '')}</textarea>` : `<input class="form-input world-visual-object-field" data-field="${key}" value="${experimentalEscapeHTML(object[key] || '')}">`}</label>`;
+        return `<article class="world-visual-object-card ${meta.salience === 'primary' ? 'is-primary' : ''}" data-object-id="${experimentalEscapeHTML(objectId)}"><div class="world-visual-object-card-header"><span class="world-visual-object-card-title">Object ${index + 1}</span><div class="world-visual-object-actions"><select class="form-select world-visual-object-meta" data-meta="salience" title="How important this object is to the composition"><option value="primary" ${meta.salience === 'primary' ? 'selected' : ''}>Primary</option><option value="secondary" ${meta.salience === 'secondary' ? 'selected' : ''}>Secondary</option><option value="tertiary" ${meta.salience === 'tertiary' ? 'selected' : ''}>Tertiary</option></select><select class="form-select world-visual-object-meta" data-meta="kind" title="What sort of visual object this is"><option value="subject" ${meta.kind === 'subject' ? 'selected' : ''}>Subject</option><option value="scene_object" ${meta.kind === 'scene_object' ? 'selected' : ''}>Scene object</option><option value="integrated_component" ${meta.kind === 'integrated_component' ? 'selected' : ''}>Integrated component</option><option value="background_detail" ${meta.kind === 'background_detail' ? 'selected' : ''}>Background detail</option></select><button type="button" class="tool-btn world-visual-object-up" title="Move object up">↑</button><button type="button" class="tool-btn world-visual-object-down" title="Move object down">↓</button><button type="button" class="tool-btn world-visual-object-remove" title="Remove object">Remove</button></div></div><div class="world-visual-grid-2">${field('description','Description',true)}${field('relationship','Relationship',true)}${field('location','Location')}${field('relative_size','Relative size')}${field('shape_and_color','Shape and colour')}${field('texture','Texture')}${field('appearance_details','Appearance details',true)}${field('number_of_objects','Number of objects')}${field('pose','Pose')}${field('expression','Expression')}${field('clothing','Clothing')}${field('action','Action')}${field('gender','Gender')}${field('skin_tone_and_texture','Skin tone and texture')}${field('orientation','Orientation')}</div></article>`;
     }).join('');
     const count = document.getElementById('world-visual-object-count');
     if (count) count.textContent = `${doc.objects.length}/${STRUCTURED_VISUAL_MAX_OBJECTS}`;
@@ -590,15 +590,15 @@ function recordStructuredVisualRevision(project, {
         revisionId,
         parentRevisionId: String(project.activeRevisionId || ''),
         operation,
-        authoredDocument: safeJsonClone(document),
-        submittedStructuredPrompt: submittedStructuredPrompt ? safeJsonClone(submittedStructuredPrompt) : null,
-        resolvedStructuredPrompt: resolvedStructuredPrompt ? safeJsonClone(resolvedStructuredPrompt) : null,
-        providerRequest: providerRequest ? safeJsonClone(providerRequest) : null,
-        diff: diff ? safeJsonClone(diff) : null,
+        authoredDocument: experimentalSafeJsonClone(document),
+        submittedStructuredPrompt: submittedStructuredPrompt ? experimentalSafeJsonClone(submittedStructuredPrompt) : null,
+        resolvedStructuredPrompt: resolvedStructuredPrompt ? experimentalSafeJsonClone(resolvedStructuredPrompt) : null,
+        providerRequest: providerRequest ? experimentalSafeJsonClone(providerRequest) : null,
+        diff: diff ? experimentalSafeJsonClone(diff) : null,
         provenance,
         resolvedOutputPolicy,
         objectOrder: Array.isArray(project.objectOrder) ? project.objectOrder.slice() : [],
-        hordeObjectMetadata: safeJsonClone(project.hordeObjectMetadata || {}),
+        hordeObjectMetadata: experimentalSafeJsonClone(project.hordeObjectMetadata || {}),
         createdAt: new Date().toISOString()
     };
     project.revisions.push(revision);
@@ -620,8 +620,8 @@ function parseStructuredVisualJson(text) {
     catch (error) { throw new Error(`Invalid structured JSON: ${error.message}`); }
     // Accept either the FIBO-shaped document itself or a wrapper used by
     // model authoring calls, but never let Horde metadata enter the document.
-    const candidate = isPlainObject(parsed.structuredDocument) ? parsed.structuredDocument
-        : isPlainObject(parsed.structured_prompt) ? parsed.structured_prompt : parsed;
+    const candidate = experimentalIsPlainObject(parsed.structuredDocument) ? parsed.structuredDocument
+        : experimentalIsPlainObject(parsed.structured_prompt) ? parsed.structured_prompt : parsed;
     return normalizeStructuredVisualDocument(candidate);
 }
 
@@ -720,7 +720,7 @@ function saveWorldVisualEditorFields() {
     const project = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
     readStructuredVisualEditorIntoProject(project);
     const target = editor.target;
-    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    target.visuals = experimentalIsPlainObject(target.visuals) ? target.visuals : {};
     // Keep legacy export aliases synchronized for older worlds/importers, but
     // never read them back as active authoring truth.
     const structured = project.structuredDocument;
@@ -839,7 +839,7 @@ function renderWorldOutfitManager() {
     const manager = worldOutfitManagerState;
     if (!manager) return;
     const entity = manager.entity;
-    entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+    entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
     const outfits = worldOutfits(entity);
     const currentId = String(entity.visuals.currentOutfitId || '');
     const header = document.getElementById('world-outfit-manager-title');
@@ -849,14 +849,14 @@ function renderWorldOutfitManager() {
     list.innerHTML = outfits.length ? outfits.map(outfit => {
         const thumbnails = (outfit.imageAssetIds || []).map(assetId => {
             const source = worldMediaSource(manager.world, assetId);
-            return source ? `<button type="button" class="world-outfit-thumb" data-asset-id="${escapeHTML(assetId)}" title="Open this outfit image"><span style="background-image:url('${cssUrl(source)}')"></span></button>` : '';
+            return source ? `<button type="button" class="world-outfit-thumb" data-asset-id="${experimentalEscapeHTML(assetId)}" title="Open this outfit image"><span style="background-image:url('${experimentalCssUrl(source)}')"></span></button>` : '';
         }).join('');
         return `
-        <div class="world-outfit-row" data-outfit-id="${escapeHTML(outfit.id)}">
+        <div class="world-outfit-row" data-outfit-id="${experimentalEscapeHTML(outfit.id)}">
             <div class="world-outfit-images">${thumbnails || '<span class="form-hint">No images yet</span>'}</div>
             <div class="world-outfit-copy">
-                <strong>${escapeHTML(outfit.name)}${outfit.id === currentId ? ' <span class="form-hint">· worn now</span>' : ''}</strong>
-                <p class="form-hint" style="margin:0;">${escapeHTML(outfit.description)}</p>
+                <strong>${experimentalEscapeHTML(outfit.name)}${outfit.id === currentId ? ' <span class="form-hint">· worn now</span>' : ''}</strong>
+                <p class="form-hint" style="margin:0;">${experimentalEscapeHTML(outfit.description)}</p>
             </div>
             <div class="world-media-actions">
                 ${outfit.id === currentId ? '' : '<button type="button" class="tool-btn world-outfit-wear">Wear</button>'}
@@ -921,7 +921,7 @@ function ensureWorldOutfitManagerBound() {
         const name = String(document.getElementById('world-outfit-name')?.value || '').trim().slice(0, 80);
         const description = String(document.getElementById('world-outfit-description')?.value || '').trim().slice(0, 1200);
         if (!name || !description) return ExperimentalWorldsHost.notify('An outfit needs a name and a description.', 'error');
-        entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+        entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
         const outfits = worldOutfits(entity);
         if (manager.editId) {
             const existing = outfits.find(outfit => outfit.id === manager.editId);
@@ -1077,7 +1077,7 @@ async function refineWorldVisualPromptWithAI(event, instructionOverride = '', op
         let revised;
         try { revised = JSON.parse(text.slice(firstBrace, lastBrace + 1)); }
         catch { throw new Error('the model returned malformed field changes'); }
-        if (!isPlainObject(revised)) throw new Error('the model returned no field changes');
+        if (!experimentalIsPlainObject(revised)) throw new Error('the model returned no field changes');
         const applied = [];
         fields.forEach(field => {
             if (!(field.key in revised)) return;
@@ -1528,7 +1528,7 @@ function ensureWorldVisualEditorBound() {
         const project = ensureWorldVisualProject(editor.world, editor.target, editor.kind === 'npc' ? 'character' : 'location');
         const doc = project.structuredDocument;
         const guide = normalizeWorldImageGuide(preset);
-        const savedPatch = isPlainObject(preset.structuredPatch) ? preset.structuredPatch : null;
+        const savedPatch = experimentalIsPlainObject(preset.structuredPatch) ? preset.structuredPatch : null;
         const sourcePatch = savedPatch || {};
         if (sourcePatch.background_setting || guide.backgroundSetting) doc.background_setting = sourcePatch.background_setting || guide.backgroundSetting;
         if (sourcePatch.aesthetics?.composition || guide.composition) doc.aesthetics.composition = sourcePatch.aesthetics?.composition || guide.composition;
@@ -1572,7 +1572,7 @@ function ensureWorldVisualEditorBound() {
         const aspect = document.getElementById('world-visual-aspect')?.value || '';
         const framing = editor.kind === 'npc' ? document.getElementById('world-visual-framing')?.value || '' : '';
         const project = saveStructuredVisualEditorDraft();
-        const structured = project ? safeJsonClone(project.structuredDocument) : null;
+        const structured = project ? experimentalSafeJsonClone(project.structuredDocument) : null;
         presets[name] = {
             ...normalizeImageBriefPreset({ ...guide, aspectRatio: aspect, framing, description: `Saved from ${editor.target.name || 'visual editor'}.` }),
             schemaVersion: 2,
@@ -1590,7 +1590,7 @@ function ensureWorldVisualEditorBound() {
         editor.activeBriefName = name;
         if (picker) {
             picker.innerHTML = '<option value="">Apply a visual brief…</option>'
-                + Object.keys(presets).sort((a, b) => a.localeCompare(b)).map(key => `<option value="${escapeHTML(key)}">${escapeHTML(key)}</option>`).join('');
+                + Object.keys(presets).sort((a, b) => a.localeCompare(b)).map(key => `<option value="${experimentalEscapeHTML(key)}">${experimentalEscapeHTML(key)}</option>`).join('');
             picker.value = name;
         }
         if (input) input.value = '';
@@ -1630,7 +1630,7 @@ function ensureWorldVisualEditorBound() {
 
 function openWorldVisualEditor(world, target, kind) {
     ensureWorldVisualEditorBound();
-    target.visuals = isPlainObject(target.visuals) ? target.visuals : {};
+    target.visuals = experimentalIsPlainObject(target.visuals) ? target.visuals : {};
     const visualProject = ensureWorldVisualProject(world, target, kind === 'npc' ? 'character' : 'location');
     worldVisualEditorState = {
         world, target, kind, variantFilter: 'all', visualProject,
@@ -1699,7 +1699,7 @@ function openWorldVisualEditor(world, target, kind) {
         if (npc) {
             const outfits = worldOutfits(target);
             outfitSelect.innerHTML = '<option value="">No outfit selected</option>'
-                + outfits.map(outfit => `<option value="${escapeHTML(outfit.id)}">${escapeHTML(outfit.name)}</option>`).join('');
+                + outfits.map(outfit => `<option value="${experimentalEscapeHTML(outfit.id)}">${experimentalEscapeHTML(outfit.name)}</option>`).join('');
             outfitSelect.value = String(target.visuals.currentOutfitId || '');
         } else outfitSelect.innerHTML = '';
     }
@@ -1714,7 +1714,7 @@ function openWorldVisualEditor(world, target, kind) {
         const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
         briefPicker.innerHTML = `<option value="">Apply a visual brief…</option>`
-            + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+            + names.map(name => `<option value="${experimentalEscapeHTML(name)}">${experimentalEscapeHTML(name)}</option>`).join('');
         briefPicker.value = npc ? String(worldVisualEditorState.activeBriefName || '') : '';
         const activeLabel = document.getElementById('world-visual-brief-active');
         if (activeLabel) activeLabel.textContent = briefPicker.value ? `Active: ${briefPicker.value}` : 'No preset selected';
@@ -1735,7 +1735,7 @@ function openWorldVisualEditor(world, target, kind) {
         if (npc) {
             const outfits = worldOutfits(target);
             variantFilter.innerHTML = '<option value="all">All images</option>'
-                + outfits.map(outfit => `<option value="${escapeHTML(outfit.id)}">${escapeHTML(outfit.name)}</option>`).join('')
+                + outfits.map(outfit => `<option value="${experimentalEscapeHTML(outfit.id)}">${experimentalEscapeHTML(outfit.name)}</option>`).join('')
                 + '<option value="unassigned">Unassigned images</option>';
             variantFilter.classList.remove('hidden');
         } else {
@@ -1900,9 +1900,9 @@ async function generateWorldVisual(world, prompt, {
     // reversible derived-asset action and Crop & Fill is the API-backed way
     // to outpaint a new target frame without sacrificing source pixels.
     const providerResult = requestCompanionPhoto.lastResult || {};
-    const providerResponseMetadata = isPlainObject(providerResult)
+    const providerResponseMetadata = experimentalIsPlainObject(providerResult)
         ? Object.fromEntries(Object.entries(providerResult).filter(([key]) => key !== 'image')) : null;
-    const resolved = isPlainObject(providerResult.resolved_structured_prompt)
+    const resolved = experimentalIsPlainObject(providerResult.resolved_structured_prompt)
         ? providerResult.resolved_structured_prompt : (resolvedStructuredPrompt || composedRequest.structuredPrompt || null);
     const generatedSeed = Number.isInteger(providerResult.seed) ? providerResult.seed : (Number.isInteger(seed) ? seed : null);
     const exactRequest = {

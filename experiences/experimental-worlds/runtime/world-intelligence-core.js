@@ -191,7 +191,7 @@ Omit any array you are not using. Current turn is ${turn}; schedule events a few
             protocol.backgroundProposals.push({
                 id: `world_agent_${turn}_${Date.now().toString(36)}`,
                 status: 'pending_sidecar_review', createdAt: new Date().toISOString(), turn,
-                summary: developments, actions: safeJsonClone(actions), dropped,
+                summary: developments, actions: experimentalSafeJsonClone(actions), dropped,
                 provenance: { source: 'world_agent', model: config.model || structuredModelFor(world), triggerReason, sceneId: protocol.activeSceneId || '' }
             });
             protocol.backgroundProposals = protocol.backgroundProposals.slice(-80);
@@ -392,7 +392,7 @@ Return ONLY this JSON, nothing else:
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || response.statusText);
     const raw = (await response.json()).choices?.[0]?.message?.content || '';
-    const parsed = extractJSON(raw);
+    const parsed = experimentalExtractJSON(raw);
     const blocks = Array.isArray(parsed) ? parsed : parsed.schedule;
     if (!Array.isArray(blocks) || blocks.length === 0) throw new Error('Model returned no schedule blocks');
 
@@ -435,7 +435,7 @@ function renderWorldScheduler() {
 
         div.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                <h3 style="margin:0; color:var(--accent);">${escapeHTML(npc.name)}</h3>
+                <h3 style="margin:0; color:var(--accent);">${experimentalEscapeHTML(npc.name)}</h3>
                 <div style="display:flex; gap:8px;">
                     <button class="btn btn-ghost gen-sched-btn" style="font-size:0.75rem; color:var(--accent);">✨ Auto-Generate</button>
                     <button class="btn btn-ghost add-block-btn" style="font-size:0.75rem;">+ Add Time Block</button>
@@ -454,7 +454,7 @@ function renderWorldScheduler() {
                     <div class="world-schedule-block">
                         <div style="flex:1">
                             <label style="font-size:10px; opacity:0.6; display:block; margin-bottom:4px;">Start Time</label>
-                            <input type="time" class="form-input block-time" value="${escapeHTML(block.time)}" data-idx="${idx}">
+                            <input type="time" class="form-input block-time" value="${experimentalEscapeHTML(block.time)}" data-idx="${idx}">
                         </div>
                         <div class="world-schedule-days">
                             <label style="font-size:10px; opacity:0.6; display:block; margin-bottom:4px;">Days</label>
@@ -467,12 +467,12 @@ function renderWorldScheduler() {
                             <label style="font-size:10px; opacity:0.6; display:block; margin-bottom:4px;">Location</label>
                             <select class="form-select block-loc" data-idx="${idx}">
                                 <option value="">Select Location...</option>
-                                ${world.locations.map(l => `<option value="${escapeHTML(l.id)}" ${l.id === block.locationId ? 'selected' : ''}>${escapeHTML(l.name)}</option>`).join('')}
+                                ${world.locations.map(l => `<option value="${experimentalEscapeHTML(l.id)}" ${l.id === block.locationId ? 'selected' : ''}>${experimentalEscapeHTML(l.name)}</option>`).join('')}
                             </select>
                         </div>
                         <div style="flex:3">
                             <label style="font-size:10px; opacity:0.6; display:block; margin-bottom:4px;">Activity / Intent</label>
-                            <input type="text" class="form-input block-act" placeholder="e.g. Sleeping, Patrolling..." value="${escapeHTML(block.activity || '')}" data-idx="${idx}">
+                            <input type="text" class="form-input block-act" placeholder="e.g. Sleeping, Patrolling..." value="${experimentalEscapeHTML(block.activity || '')}" data-idx="${idx}">
                         </div>
                         <button class="tool-btn del-block-btn" data-idx="${idx}" style="align-self:flex-end; margin-bottom:5px;">✕</button>
                     </div>
@@ -1059,7 +1059,7 @@ function applyCalibrationFinding(world, finding) {
             const gender = String(finding.patch.gender || '').trim().slice(0, 100);
             if (!entity || entity.gender || !gender) return false;
             entity.gender = gender;
-            entity.visuals = isPlainObject(entity.visuals) ? entity.visuals : {};
+            entity.visuals = experimentalIsPlainObject(entity.visuals) ? entity.visuals : {};
             const identity = normalizeWorldVisualIdentityGuide(entity.visuals.portraitIdentityGuide);
             if (!identity.gender) identity.gender = gender;
             entity.visuals.portraitIdentityGuide = identity;
@@ -1154,7 +1154,7 @@ function applyCalibrationFinding(world, finding) {
         case 'set_schedule': {
             const entity = (world.entities || []).find(e => e.id === finding.patch.entityId);
             if (!entity || (entity.schedule || []).length) return false;
-            entity.schedule = safeJsonClone(finding.patch.schedule);
+            entity.schedule = experimentalSafeJsonClone(finding.patch.schedule);
             return true;
         }
         case 'set_agenda': {
@@ -1198,7 +1198,7 @@ function applyCalibrationFinding(world, finding) {
             world.relationshipClaims.push({
                 id: `relclaim_${Date.now().toString(36)}_${world.relationshipClaims.length + 1}`,
                 sourceCharacterId, targetCharacterId, axis,
-                value: safeJsonClone(finding.patch.value), confidence: finding.patch.confidence,
+                value: experimentalSafeJsonClone(finding.patch.value), confidence: finding.patch.confidence,
                 reason: finding.patch.reason, origin: 'world_health_check',
                 provenance: { pass: 'relationships', appliedAt: new Date().toISOString() }, status: 'active'
             });
@@ -2053,7 +2053,7 @@ function calibrationFindingsFromPeople(world, payload) {
                 `Tag ${entity.name} for search`, tags.join(' · '), { entityId: entity.id, tags });
         }
 
-        const proposedGroup = isPlainObject(entry?.group) ? entry.group : null;
+        const proposedGroup = experimentalIsPlainObject(entry?.group) ? entry.group : null;
         if (proposedGroup && !(entity.groupIds || []).length) {
             const groupName = String(proposedGroup.name || '').trim();
             const groupType = String(proposedGroup.type || '').trim().toLowerCase();
@@ -2215,7 +2215,7 @@ function calibrationFindingsFromRelationships(world, payload) {
             type: 'add_directional_relationship_claim', severity: confidence < 0.7 ? 'suggestion' : 'warning',
             title: `${source?.name || sourceCharacterId} → ${target?.name || targetCharacterId}: ${axis}`,
             detail: `${typeof entry.value === 'string' ? entry.value : JSON.stringify(entry.value)} · ${Math.round(confidence * 100)}% confidence — ${reason}`,
-            patch: { sourceCharacterId, targetCharacterId, axis, value: safeJsonClone(entry.value), confidence, reason }
+            patch: { sourceCharacterId, targetCharacterId, axis, value: experimentalSafeJsonClone(entry.value), confidence, reason }
         });
     });
     return findings;
@@ -2610,7 +2610,7 @@ let worldMigrationPreviewState = null; // { worldId, sourceVersion, result }
 
 function downloadLegacyWorldBackup(world) {
     if (!world) return;
-    const backup = safeJsonClone(world);
+    const backup = experimentalSafeJsonClone(world);
     backup._format = 'horde-world';
     backup._version = 2;
     backup._migrationBackup = {
@@ -2629,18 +2629,18 @@ function downloadLegacyWorldBackup(world) {
 }
 
 function normalizeMigratedWorldInstance(world, instance) {
-    if (!isPlainObject(instance)) return instance;
+    if (!experimentalIsPlainObject(instance)) return instance;
     const canonical = value => getLocationRef(world, value)?.id || value;
     (Array.isArray(instance.sessions) ? instance.sessions : []).forEach(session => {
-        if (!isPlainObject(session)) return;
+        if (!experimentalIsPlainObject(session)) return;
         session.playerLocation = canonical(session.playerLocation);
         (Array.isArray(session.scheduledEvents) ? session.scheduledEvents : []).forEach(event => {
             if (event?.locationId) event.locationId = canonical(event.locationId);
         });
-        Object.values(isPlainObject(session.npcScheduleOverrides) ? session.npcScheduleOverrides : {}).forEach(override => {
+        Object.values(experimentalIsPlainObject(session.npcScheduleOverrides) ? session.npcScheduleOverrides : {}).forEach(override => {
             if (override?.locationId) override.locationId = canonical(override.locationId);
         });
-        if (isPlainObject(session.locationStates)) {
+        if (experimentalIsPlainObject(session.locationStates)) {
             const canonicalStates = {};
             Object.entries(session.locationStates).forEach(([key, value]) => {
                 canonicalStates[canonical(key)] = value;
@@ -2675,14 +2675,14 @@ function renderWorldMigrationSection(world) {
         return `<div class="world-migration-card current">
             <div class="world-migration-icon">✓</div>
             <div><span class="vh-eyebrow">WORLD SCHEMA ${WORLD_SCHEMA_VERSION}</span><h3>Current world format</h3>
-            <p>${escapeHTML(WORLD_SCHEMA_LABEL)}${history?.migratedAt ? ` · upgraded ${escapeHTML(new Date(history.migratedAt).toLocaleDateString())}` : ''}</p></div>
+            <p>${experimentalEscapeHTML(WORLD_SCHEMA_LABEL)}${history?.migratedAt ? ` · upgraded ${experimentalEscapeHTML(new Date(history.migratedAt).toLocaleDateString())}` : ''}</p></div>
         </div>`;
     }
     const result = worldMigrationPreview(world);
     if (result?.error) {
         return `<div class="world-migration-card blocked"><div class="world-migration-icon">!</div><div>
             <span class="vh-eyebrow">LEGACY WORLD</span><h3>Upgrade preview could not be built</h3>
-            <p>${escapeHTML(result.error.message || 'This world contains invalid legacy data.')}</p></div></div>`;
+            <p>${experimentalEscapeHTML(result.error.message || 'This world contains invalid legacy data.')}</p></div></div>`;
     }
     const changed = (result?.changes || []).reduce((sum, item) => sum + Math.max(1, Number(item.count) || 1), 0);
     return `<section class="world-migration-card legacy" aria-labelledby="world-migration-title">
@@ -2692,9 +2692,9 @@ function renderWorldMigrationSection(world) {
             <h3 id="world-migration-title">Upgrade to the new world directory</h3>
             <p>A transactional migration creates canonical regions, rooms, travel links, People, Items and Groups. Ambiguous geography is reported, never guessed.</p>
             <div class="world-migration-summary">
-                ${(result?.changes || []).length ? result.changes.map(item => `<span><b>${item.count || 1}</b> ${escapeHTML(item.area)}<small>${escapeHTML(item.detail)}</small></span>`).join('') : '<span><b>0</b> structural rewrites<small>The schema receipt and validation gate will still be added.</small></span>'}
+                ${(result?.changes || []).length ? result.changes.map(item => `<span><b>${item.count || 1}</b> ${experimentalEscapeHTML(item.area)}<small>${experimentalEscapeHTML(item.detail)}</small></span>`).join('') : '<span><b>0</b> structural rewrites<small>The schema receipt and validation gate will still be added.</small></span>'}
             </div>
-            ${(result?.warnings || []).length ? `<details class="world-migration-warnings"><summary>${result.warnings.length} decision${result.warnings.length === 1 ? '' : 's'} still need your review</summary>${result.warnings.map(item => `<p><b>${escapeHTML(item.area)}:</b> ${escapeHTML(item.detail)}</p>`).join('')}</details>` : ''}
+            ${(result?.warnings || []).length ? `<details class="world-migration-warnings"><summary>${result.warnings.length} decision${result.warnings.length === 1 ? '' : 's'} still need your review</summary>${result.warnings.map(item => `<p><b>${experimentalEscapeHTML(item.area)}:</b> ${experimentalEscapeHTML(item.detail)}</p>`).join('')}</details>` : ''}
             <div class="world-migration-actions">
                 <button id="world-migration-backup-btn" class="btn btn-ghost" type="button">Download original</button>
                 <button id="world-migration-apply-btn" class="btn btn-primary" type="button">Upgrade &amp; save${changed ? ` · ${changed} changes` : ''}</button>
@@ -2716,16 +2716,16 @@ function wireWorldMigrationControls(world) {
         applyButton.disabled = true;
         applyButton.textContent = 'Upgrading…';
         const worldIndex = ExperimentalWorldsState.worlds.findIndex(entry => entry.id === world.id);
-        const previousStored = worldIndex >= 0 ? safeJsonClone(ExperimentalWorldsState.worlds[worldIndex]) : null;
-        const previousDraft = safeJsonClone(ExperimentalWorldsState.editingWorld);
-        const previousInstance = ExperimentalWorldsState.worldInstances?.[world.id] ? safeJsonClone(ExperimentalWorldsState.worldInstances[world.id]) : null;
+        const previousStored = worldIndex >= 0 ? experimentalSafeJsonClone(ExperimentalWorldsState.worlds[worldIndex]) : null;
+        const previousDraft = experimentalSafeJsonClone(ExperimentalWorldsState.editingWorld);
+        const previousInstance = ExperimentalWorldsState.worldInstances?.[world.id] ? experimentalSafeJsonClone(ExperimentalWorldsState.worldInstances[world.id]) : null;
         const previousWorldMediaDirty = ExperimentalWorldsHost.mediaDirty();
         try {
-            const migrated = safeJsonClone(result.world);
+            const migrated = experimentalSafeJsonClone(result.world);
             validateWorldData(migrated, 'Migrated world');
             ExperimentalWorldsState.editingWorld = migrated;
-            if (worldIndex >= 0) ExperimentalWorldsState.worlds[worldIndex] = safeJsonClone(migrated);
-            else ExperimentalWorldsState.worlds.push(safeJsonClone(migrated));
+            if (worldIndex >= 0) ExperimentalWorldsState.worlds[worldIndex] = experimentalSafeJsonClone(migrated);
+            else ExperimentalWorldsState.worlds.push(experimentalSafeJsonClone(migrated));
             if (ExperimentalWorldsState.worldInstances?.[world.id]) normalizeMigratedWorldInstance(migrated, ExperimentalWorldsState.worldInstances[world.id]);
             worldMigrationPreviewState = null;
             ExperimentalWorldsHost.markMediaChanged();
@@ -2796,13 +2796,13 @@ function wireCalibrationControls(world, calibration, container) {
             }
             const chosen = String(ExperimentalWorldsState.globalSettings.structuredModel || '').trim();
             picker.innerHTML =
-                `<option value="">Use this world's model (${escapeHTML(fallbackLabel)})</option>`
+                `<option value="">Use this world's model (${experimentalEscapeHTML(fallbackLabel)})</option>`
                 + ranked.map(model =>
-                    `<option value="${escapeHTML(model.id)}" ${chosen === model.id ? 'selected' : ''}>${escapeHTML(model.id)} — ${escapeHTML(model.note)}</option>`).join('')
+                    `<option value="${experimentalEscapeHTML(model.id)}" ${chosen === model.id ? 'selected' : ''}>${experimentalEscapeHTML(model.id)} — ${experimentalEscapeHTML(model.note)}</option>`).join('')
                 // A model the author typed, or picked before the catalog moved,
                 // stays selectable rather than silently resetting to blank.
                 + (chosen && !ranked.some(model => model.id === chosen)
-                    ? `<option value="${escapeHTML(chosen)}" selected>${escapeHTML(chosen)} (typed)</option>` : '');
+                    ? `<option value="${experimentalEscapeHTML(chosen)}" selected>${experimentalEscapeHTML(chosen)} (typed)</option>` : '');
             if (!status) return;
             status.textContent = ranked.length
                 ? `${ranked.length} models offered, cheapest first — live from ${ExperimentalWorldsHost.isLocalProvider() ? 'your local server' : ExperimentalWorldsHost.cloudProviderName()}, so nothing here is a stale id.`
@@ -2857,12 +2857,12 @@ function wireCalibrationControls(world, calibration, container) {
             if (!ExperimentalWorldsHost.hasApiCredentials()) return ExperimentalWorldsHost.notify('API Key missing (Settings).', 'error');
             container.querySelectorAll('.calibrate-pass-run').forEach(other => { other.disabled = true; });
             passButton.textContent = '⏳ Working...';
-            passResults.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Reading the world for the ${escapeHTML(CALIBRATION_PASSES[pass]?.label || pass)} pass...</div>`;
+            passResults.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Reading the world for the ${experimentalEscapeHTML(CALIBRATION_PASSES[pass]?.label || pass)} pass...</div>`;
             try {
                 // A big world takes several calls, so say which one is running
                 // rather than leaving the author watching a frozen spinner.
                 const result = await runCalibrationPass(world, pass, (done, total) => {
-                    passResults.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Reading the world for the ${escapeHTML(CALIBRATION_PASSES[pass]?.label || pass)} pass — batch ${done + 1} of ${total}...</div>`;
+                    passResults.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Reading the world for the ${experimentalEscapeHTML(CALIBRATION_PASSES[pass]?.label || pass)} pass — batch ${done + 1} of ${total}...</div>`;
                 });
                 calibrationPassState = {
                     worldId: world.id, pass, findings: result.findings,
@@ -2872,7 +2872,7 @@ function wireCalibrationControls(world, calibration, container) {
             } catch (error) {
                 console.error('Calibration pass failed', error);
                 calibrationPassState = null;
-                passResults.innerHTML = `<div style="color:var(--red); font-size:0.85rem;">${escapeHTML(error.message || 'The pass failed.')} Nothing was changed — you can run it again.</div>`;
+                passResults.innerHTML = `<div style="color:var(--red); font-size:0.85rem;">${experimentalEscapeHTML(error.message || 'The pass failed.')} Nothing was changed — you can run it again.</div>`;
             } finally {
                 container.querySelectorAll('.calibrate-pass-run').forEach(other => { other.disabled = false; });
                 passButton.textContent = 'Run';
@@ -2888,7 +2888,7 @@ function renderCalibrationPassFindings(world, host) {
     const applied = state.applied instanceof Set ? state.applied : (state.applied = new Set());
     const dismissed = state.dismissed instanceof Set ? state.dismissed : (state.dismissed = new Set());
     if (!findings.length) {
-        host.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Nothing to add — this world already says everything the ${escapeHTML(String(CALIBRATION_PASSES[state.pass]?.label || state.pass).toLowerCase())} pass looks for.</div>`;
+        host.innerHTML = `<div style="color:var(--text-3); font-size:0.85rem;">Nothing to add — this world already says everything the ${experimentalEscapeHTML(String(CALIBRATION_PASSES[state.pass]?.label || state.pass).toLowerCase())} pass looks for.</div>`;
         return;
     }
     const sevStyle = { critical: 'var(--red)', warning: 'var(--warning, #F4A261)', suggestion: 'var(--text-3)' };
@@ -2897,7 +2897,7 @@ function renderCalibrationPassFindings(world, host) {
     const remaining = remainingIndexes.length;
     host.innerHTML = `
         <div class="calibration-proposal-head">
-            <strong>${escapeHTML(CALIBRATION_PASSES[state.pass]?.label || '')} — ${remaining} open · ${applied.size} applied · ${dismissed.size} dismissed${state.note ? ` · ${escapeHTML(state.note)}` : ''}</strong>
+            <strong>${experimentalEscapeHTML(CALIBRATION_PASSES[state.pass]?.label || '')} — ${remaining} open · ${applied.size} applied · ${dismissed.size} dismissed${state.note ? ` · ${experimentalEscapeHTML(state.note)}` : ''}</strong>
             <div class="calibration-proposal-actions">
                 ${remaining ? `<button id="calibrate-pass-apply-all" class="btn btn-primary">Apply remaining</button>
                     <button id="calibrate-pass-dismiss-all" class="btn btn-ghost">Dismiss remaining</button>` : ''}
@@ -2909,8 +2909,8 @@ function renderCalibrationPassFindings(world, host) {
                 const finding = findings[index];
                 return `<div class="calibration-proposal" style="border-left-color:${sevStyle[finding.severity] || 'var(--text-3)'};">
                     <div style="flex:1;">
-                        <div style="font-weight:bold;">${escapeHTML(finding.title)}</div>
-                        <div style="color:var(--text-3); margin-top:2px;">${escapeHTML(finding.detail)}</div>
+                        <div style="font-weight:bold;">${experimentalEscapeHTML(finding.title)}</div>
+                        <div style="color:var(--text-3); margin-top:2px;">${experimentalEscapeHTML(finding.detail)}</div>
                     </div>
                     <div class="calibration-proposal-actions">
                         <button class="btn btn-ghost calibrate-pass-dismiss" data-index="${index}">Dismiss</button>
@@ -3034,7 +3034,7 @@ function renderWorldAutonomyHealthResult(world, host) {
         <div><h3>7-day autonomy forecast</h3>
         <p>${report.stats.npcs} people · ${report.stats.locations} places · ${report.stats.scheduleTransitions} schedule transitions · ${report.stats.providerCalls} model calls</p>
         ${report.findings.length ? `<div class="world-health-gaps">${report.findings.map(item =>
-            `<span><b>${item.severity === 'critical' ? '!' : '•'}</b> ${escapeHTML(item.text)}</span>`).join('')}</div>`
+            `<span><b>${item.severity === 'critical' ? '!' : '•'}</b> ${experimentalEscapeHTML(item.text)}</span>`).join('')}</div>`
             : '<p class="world-health-complete">No spam loops, impossible travel, duplicate events or major directory gaps were detected.</p>'}
         <p class="form-hint">This is a deterministic dry run. It never edits the world, spends credits or calls a model.</p></div>
     </div>`;
@@ -3055,7 +3055,7 @@ function renderWorldAudit() {
         <div style="display:flex; flex-direction:column; gap:8px;">
             ${lint.map(f => `
                 <div style="background:var(--surface2); padding:10px 12px; border-radius:8px; border-left:4px solid ${sevStyle[f.sev]}; font-size:0.82rem;">
-                    <span class="mini-tag" style="margin-right:8px;">${escapeHTML(f.area)}</span>${escapeHTML(f.msg)}
+                    <span class="mini-tag" style="margin-right:8px;">${experimentalEscapeHTML(f.area)}</span>${experimentalEscapeHTML(f.msg)}
                 </div>`).join('')}
         </div>` : '';
 
@@ -3075,7 +3075,7 @@ function renderWorldAudit() {
                     <option value="">Loading provider models…</option>
                 </select>
                 <input type="text" id="structured-model-custom" class="form-input" style="flex:1; min-width:200px;"
-                       placeholder="…or type any OpenRouter model id" value="${escapeHTML(activeStructured)}">
+                       placeholder="…or type any OpenRouter model id" value="${experimentalEscapeHTML(activeStructured)}">
             </div>
             <div class="form-hint" id="structured-model-status" style="margin-top:6px;">Checking which models can do this…</div>
         </div>`;
@@ -3089,7 +3089,7 @@ function renderWorldAudit() {
     const directoryHealthHtml = `${renderWorldMigrationSection(world)}<div class="world-health-card">
         <div class="world-health-score"><strong>${directoryHealth.score}</strong><span>/100</span></div>
         <div><h3>Directory readiness</h3><p>${directoryHealth.counts.locations} locations · ${directoryHealth.counts.people} people · ${directoryHealth.counts.items} items · ${directoryHealth.counts.groups} groups</p>
-        ${directoryHealth.issues.length ? `<div class="world-health-gaps">${directoryHealth.issues.map(issue => `<span><b>${issue.count}</b> ${escapeHTML(issue.area)} · ${escapeHTML(issue.detail)}</span>`).join('')}</div>` : '<p class="world-health-complete">Every new-format directory field is represented.</p>'}</div>
+        ${directoryHealth.issues.length ? `<div class="world-health-gaps">${directoryHealth.issues.map(issue => `<span><b>${issue.count}</b> ${experimentalEscapeHTML(issue.area)} · ${experimentalEscapeHTML(issue.detail)}</span>`).join('')}</div>` : '<p class="world-health-complete">Every new-format directory field is represented.</p>'}</div>
     </div>`;
     const calibrationSection = `
         <div style="margin-top:24px; padding-top:16px; border-top:1px solid var(--border);">
@@ -3107,8 +3107,8 @@ function renderWorldAudit() {
                     ${calibration.map((f, index) => `
                         <div style="background:var(--surface2); padding:10px 12px; border-radius:8px; border-left:4px solid ${sevStyle[f.severity] || 'var(--text-3)'}; font-size:0.82rem; display:flex; gap:10px; align-items:flex-start;">
                             <div style="flex:1;">
-                                <div style="font-weight:bold;">${escapeHTML(f.title)}</div>
-                                <div style="color:var(--text-3); margin-top:2px;">${escapeHTML(f.detail)}</div>
+                                <div style="font-weight:bold;">${experimentalEscapeHTML(f.title)}</div>
+                                <div style="color:var(--text-3); margin-top:2px;">${experimentalEscapeHTML(f.detail)}</div>
                             </div>
                             ${directlyFixableTypes.has(f.type)
                                 ? `<button class="btn btn-ghost calibrate-one-btn" data-index="${index}" style="font-size:0.7rem; padding:4px 8px; white-space:nowrap;">Apply</button>`
@@ -3121,10 +3121,10 @@ function renderWorldAudit() {
                 ${Object.entries(CALIBRATION_PASSES).map(([key, pass]) => `
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
                         <div>
-                            <strong style="font-size:0.9rem;">✨ ${escapeHTML(pass.label)} pass <span class="mini-tag">batched</span></strong>
-                            <p class="form-hint" style="margin:4px 0 0;">${escapeHTML(pass.blurb)} Fills only what this world has not already said, and proposes everything for review first.</p>
+                            <strong style="font-size:0.9rem;">✨ ${experimentalEscapeHTML(pass.label)} pass <span class="mini-tag">batched</span></strong>
+                            <p class="form-hint" style="margin:4px 0 0;">${experimentalEscapeHTML(pass.blurb)} Fills only what this world has not already said, and proposes everything for review first.</p>
                         </div>
-                        <button class="btn btn-ghost calibrate-pass-run" data-pass="${escapeHTML(key)}" style="white-space:nowrap;">Run</button>
+                        <button class="btn btn-ghost calibrate-pass-run" data-pass="${experimentalEscapeHTML(key)}" style="white-space:nowrap;">Run</button>
                     </div>`).join('')}
                 <div id="calibrate-pass-results" style="margin-top:12px;"></div>
             </div>
@@ -3181,14 +3181,14 @@ function renderWorldAudit() {
                 const suggestion = report.suggestions[item.ref];
                 return `
                     <div style="background:var(--surface2); padding:12px; border-radius:8px; border-left:4px solid var(--red);">
-                        <div style="font-size:0.75rem; color:var(--text-3); text-transform:uppercase; font-weight:bold;">${escapeHTML(item.source)}</div>
+                        <div style="font-size:0.75rem; color:var(--text-3); text-transform:uppercase; font-weight:bold;">${experimentalEscapeHTML(item.source)}</div>
                         <div style="margin:8px 0; font-family:monospace; background:rgba(255,0,0,0.1); padding:4px 8px; border-radius:4px;">
-                            Invalid Reference: "${escapeHTML(item.ref)}"
+                            Invalid Reference: "${experimentalEscapeHTML(item.ref)}"
                         </div>
                         ${suggestion ? `
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
-                                <div style="font-size:0.8rem;">Suggest fixing to: <span style="color:var(--accent); font-weight:bold;">${escapeHTML(suggestion)}</span></div>
-                                <button class="btn btn-ghost fix-ref-btn" data-old="${escapeHTML(item.ref)}" data-new="${escapeHTML(suggestion)}" style="font-size:0.7rem; padding:4px 8px;">Apply Fix</button>
+                                <div style="font-size:0.8rem;">Suggest fixing to: <span style="color:var(--accent); font-weight:bold;">${experimentalEscapeHTML(suggestion)}</span></div>
+                                <button class="btn btn-ghost fix-ref-btn" data-old="${experimentalEscapeHTML(item.ref)}" data-new="${experimentalEscapeHTML(suggestion)}" style="font-size:0.7rem; padding:4px 8px;">Apply Fix</button>
                             </div>
                         ` : '<div style="font-size:0.8rem; color:var(--text-3);">No matching location found. Please fix manually.</div>'}
                     </div>
@@ -3336,7 +3336,7 @@ function parseAuditFindings(raw) {
     if (fence) attempts.push(fence[1]);
     for (const candidate of attempts) {
         try {
-            const p = extractJSON(candidate);
+            const p = experimentalExtractJSON(candidate);
             if (Array.isArray(p)) return p;
             if (p && Array.isArray(p.findings)) return p.findings;
         } catch (e) { /* try next strategy */ }
@@ -3429,13 +3429,13 @@ Return ONLY JSON:
         results.innerHTML = `<div style="display:flex; flex-direction:column; gap:10px;">${findings.map((f, i) => `
             <div style="background:var(--surface2); padding:12px; border-radius:8px; border-left:4px solid ${sevStyle[f.severity] || sevStyle.suggestion};">
                 <div style="font-size:0.7rem; color:var(--text-3); text-transform:uppercase; font-weight:bold; margin-bottom:4px;">
-                    ${escapeHTML(f.severity || 'note')} · ${escapeHTML(f.target_type || '')} ${escapeHTML(f.target_id || '')}${f.secret_label ? ` / ${escapeHTML(f.secret_label)}` : ''}
+                    ${experimentalEscapeHTML(f.severity || 'note')} · ${experimentalEscapeHTML(f.target_type || '')} ${experimentalEscapeHTML(f.target_id || '')}${f.secret_label ? ` / ${experimentalEscapeHTML(f.secret_label)}` : ''}
                 </div>
-                <div style="font-size:0.85rem; margin-bottom:6px;">${escapeHTML(f.issue || '')}</div>
-                <div style="font-size:0.78rem; color:var(--text-2);">💡 ${escapeHTML(f.fix_description || 'No suggestion')}</div>
+                <div style="font-size:0.85rem; margin-bottom:6px;">${experimentalEscapeHTML(f.issue || '')}</div>
+                <div style="font-size:0.78rem; color:var(--text-2);">💡 ${experimentalEscapeHTML(f.fix_description || 'No suggestion')}</div>
                 ${f.new_value && f.field ? `
                     <div style="margin-top:8px; display:flex; gap:8px; align-items:flex-start;">
-                        <div style="flex:1; font-size:0.75rem; font-family:monospace; background:var(--bg); padding:6px 8px; border-radius:6px; max-height:80px; overflow-y:auto;">${escapeHTML(String(f.new_value).slice(0, 400))}</div>
+                        <div style="flex:1; font-size:0.75rem; font-family:monospace; background:var(--bg); padding:6px 8px; border-radius:6px; max-height:80px; overflow-y:auto;">${experimentalEscapeHTML(String(f.new_value).slice(0, 400))}</div>
                         <button class="btn btn-ghost ai-fix-btn" data-idx="${i}" style="font-size:0.72rem; white-space:nowrap;">✅ Apply</button>
                     </div>` : ''}
             </div>`).join('')}</div>`;
@@ -3455,7 +3455,7 @@ Return ONLY JSON:
             };
         });
     } catch (err) {
-        results.innerHTML = `<div style="color:var(--red); font-size:0.85rem;">Audit failed after retry: ${escapeHTML(err.message)}<br>
+        results.innerHTML = `<div style="color:var(--red); font-size:0.85rem;">Audit failed after retry: ${experimentalEscapeHTML(err.message)}<br>
             <span style="color:var(--text-3);">Reasoning-heavy models sometimes can't produce structured output — try again, or temporarily set a non-reasoning model on this world for the audit.</span></div>`;
     } finally {
         btn.disabled = false;
@@ -4154,7 +4154,7 @@ function updateVectorTabUI() {
     const ids = [...new Set((graph?.cognition || []).map(record => record.characterId).filter(Boolean))];
     const names = new Map((world?.entities || []).map(entity => [entity.id, entity.name || entity.id]));
     characterFilter.innerHTML = '<option value="">All characters</option>' + ids.map(id =>
-        `<option value="${escapeHTML(id)}">${escapeHTML(names.get(id) || id)}</option>`
+        `<option value="${experimentalEscapeHTML(id)}">${experimentalEscapeHTML(names.get(id) || id)}</option>`
     ).join('');
     if (ids.includes(selected)) characterFilter.value = selected;
 }
@@ -4451,7 +4451,7 @@ async function renderVectorMemoryList(filterQuery = "") {
                 <div style="display:flex; gap:8px; align-items:center;">${cacheTag}${scoreTag}</div>
                 ${actionBtns}
             </div>
-            ${metadata ? `<div style="font-size:0.68rem; color:var(--text-3); text-transform:uppercase; letter-spacing:.04em;">${escapeHTML(metadata)}</div>` : ''}
+            ${metadata ? `<div style="font-size:0.68rem; color:var(--text-3); text-transform:uppercase; letter-spacing:.04em;">${experimentalEscapeHTML(metadata)}</div>` : ''}
             <div class="epi-text" style="font-size:0.9rem; line-height:1.5; color:var(--text); white-space:pre-wrap;">${escaped}</div>
             ${editable ? `<textarea class="form-textarea epi-edit-box" rows="6" style="display:none;">${escaped}</textarea>` : ''}
         `;

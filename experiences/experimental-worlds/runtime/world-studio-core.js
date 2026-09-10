@@ -136,7 +136,7 @@ function renderWorldOverviewSidecarMigration(world = ExperimentalWorldsState.edi
             <div>
                 <span class="vh-eyebrow">STATE PIPELINE</span>
                 <h3>This world is using Inline Legacy</h3>
-                <p>Move this world to Sidecar before authoring Sidecar-only travel, vehicle, and reconciliation features. The migration wizard creates a recoverable backup and retains raw roleplay and canonical records. ${escapeHTML(timelineLabel)}</p>
+                <p>Move this world to Sidecar before authoring Sidecar-only travel, vehicle, and reconciliation features. The migration wizard creates a recoverable backup and retains raw roleplay and canonical records. ${experimentalEscapeHTML(timelineLabel)}</p>
             </div>
             <button id="w-overview-sidecar-migrate-btn" type="button" class="btn btn-primary">Review Sidecar migration</button>
         </div>`;
@@ -278,7 +278,7 @@ function setupWorldStudioLogic() {
         if (!ExperimentalWorldsState.editingWorld) return;
         // Never hand someone a world carrying references to things that are gone.
         normalizeAuthoredWorld(ExperimentalWorldsState.editingWorld);
-        const exportedWorld = safeJsonClone(ExperimentalWorldsState.editingWorld);
+        const exportedWorld = experimentalSafeJsonClone(ExperimentalWorldsState.editingWorld);
         pruneWorldMediaAssets(exportedWorld);
         const media = worldMediaSummary(exportedWorld);
         exportedWorld._format = 'horde-world';
@@ -498,7 +498,7 @@ function setupWorldStudioLogic() {
             try {
                 // Optimize like character images do — banners are used full-bleed
                 // as the chat background, so 1280px wide at 0.7 quality is plenty.
-                const optimized = await normalizeUploadedImage(file, 1280, 0.7);
+                const optimized = await experimentalNormalizeUploadedImage(file, 1280, 0.7);
                 ExperimentalWorldsState.editingWorld.banner = optimized;
                 const preview = document.getElementById('w-banner-preview');
                 preview.style.backgroundImage = `url('${optimized}')`;
@@ -592,7 +592,7 @@ function setupWorldImport() {
                     // Shrink oversized images BEFORE validation — genAI-sized
                     // banners (1024px+) must be resized, not rejected
                     if (rawWorld && typeof rawWorld.banner === 'string' && rawWorld.banner.length > 400_000) {
-                        try { rawWorld.banner = await optimizeImage(rawWorld.banner, 1280, 0.8); }
+                        try { rawWorld.banner = await experimentalOptimizeImage(rawWorld.banner, 1280, 0.8); }
                         catch (e) { console.warn('Banner re-optimization failed on import:', e); }
                     }
 
@@ -700,7 +700,7 @@ function renderSidecarModelSearchResults() {
             option.type = 'button';
             option.className = 'searchable-dropdown-item';
             option.setAttribute('role', 'option');
-            option.innerHTML = `<span class="model-display-name">${escapeHTML(model.name || model.id)}</span><span class="model-display-id">${escapeHTML(model.id)}</span>`;
+            option.innerHTML = `<span class="model-display-name">${experimentalEscapeHTML(model.name || model.id)}</span><span class="model-display-id">${experimentalEscapeHTML(model.id)}</span>`;
             option.onclick = () => {
                 input.value = model.id;
                 results.classList.add('hidden');
@@ -826,8 +826,8 @@ const FF54_CHOICE_ANNOTATIONS = Object.freeze({
 });
 
 function roleplayOSDraft(world) {
-    if (!isPlainObject(world.sidecarConfig)) world.sidecarConfig = {};
-    if (!isPlainObject(world.sidecarConfig.roleplayOS)) world.sidecarConfig.roleplayOS = {};
+    if (!experimentalIsPlainObject(world.sidecarConfig)) world.sidecarConfig = {};
+    if (!experimentalIsPlainObject(world.sidecarConfig.roleplayOS)) world.sidecarConfig.roleplayOS = {};
     return world.sidecarConfig.roleplayOS;
 }
 
@@ -847,9 +847,9 @@ function renderRoleplayOSChoiceChipRow(variable, options, effective, { multi = f
         if (locked) classes.push('locked');
         if (replaced) classes.push('replaced');
         if (option.stray) classes.push('preserved');
-        return '<button type="button" class="' + classes.join(' ') + '" data-os-variable="' + escapeHTML(variable) + '" data-os-value="' + escapeHTML(value) + '"'
+        return '<button type="button" class="' + classes.join(' ') + '" data-os-variable="' + experimentalEscapeHTML(variable) + '" data-os-value="' + experimentalEscapeHTML(value) + '"'
             + (locked ? ' disabled' : '')
-            + ' title="' + escapeHTML(value) + '">' + escapeHTML(option.label || value) + '</button>';
+            + ' title="' + experimentalEscapeHTML(value) + '">' + experimentalEscapeHTML(option.label || value) + '</button>';
     });
     return '<div class="os-chip-row">' + chips.join('') + '</div>';
 }
@@ -877,7 +877,7 @@ function renderRoleplayOSChoiceBlock(block, os, hasSource) {
     const chipRow = renderRoleplayOSChoiceChipRow(block.variableName, options, effective, { multi, locked, replaced });
     const notes = roleplayOSChoiceNotes(block.variableName, hasSource);
     return '<div class="os-choice-row">'
-        + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(block.question || block.variableName) + '</span>' + tags.join('') + '</div>'
+        + '<div class="os-choice-head"><span class="os-choice-label">' + experimentalEscapeHTML(block.question || block.variableName) + '</span>' + tags.join('') + '</div>'
         + chipRow
         + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(escapeHTML).join(' ') + '</div>' : '')
         + (strays.length ? '<div class="form-hint os-choice-note">Preserved values are kept from an earlier source; they still gate any sections that reference them.</div>' : '')
@@ -889,7 +889,7 @@ function renderRoleplayOSConfigEditor(world) {
     const sourceSelect = document.getElementById('w-roleplay-os-source');
     if (!host || !sourceSelect || !world) return;
     const registry = getInstalledRoleplayOSSources();
-    const stored = isPlainObject(world?.sidecarConfig?.roleplayOS) ? world.sidecarConfig.roleplayOS : {};
+    const stored = experimentalIsPlainObject(world?.sidecarConfig?.roleplayOS) ? world.sidecarConfig.roleplayOS : {};
     const os = worldRoleplayOS(world);
     const source = os.sourcePreset || null;
     const hasSource = !!source;
@@ -900,11 +900,11 @@ function renderRoleplayOSConfigEditor(world) {
     const selected = stored.sourceId || (source ? source.id : 'builtin');
     const options = ['<option value="builtin"' + (selected === 'builtin' ? ' selected' : '') + '>Built-in adapted registry</option>'];
     registry.forEach(entry => {
-        options.push('<option value="' + escapeHTML(entry.id) + '"' + (selected === entry.id ? ' selected' : '') + '>'
-            + escapeHTML(entry.presetName) + ' &middot; ' + entry.sections.length + ' sections</option>');
+        options.push('<option value="' + experimentalEscapeHTML(entry.id) + '"' + (selected === entry.id ? ' selected' : '') + '>'
+            + experimentalEscapeHTML(entry.presetName) + ' &middot; ' + entry.sections.length + ' sections</option>');
     });
     if (stored.sourceId && stored.sourceId !== 'builtin' && !registry.some(entry => entry.id === stored.sourceId)) {
-        options.push('<option value="' + escapeHTML(stored.sourceId) + '" selected disabled>Missing pinned source &middot; ' + escapeHTML(stored.sourceId.slice(0, 48)) + '</option>');
+        options.push('<option value="' + experimentalEscapeHTML(stored.sourceId) + '" selected disabled>Missing pinned source &middot; ' + experimentalEscapeHTML(stored.sourceId.slice(0, 48)) + '</option>');
     }
     sourceSelect.innerHTML = options.join('');
 
@@ -912,10 +912,10 @@ function renderRoleplayOSConfigEditor(world) {
     if (info) {
         if (source) {
             const label = stored.sourceId && stored.sourceId !== 'builtin' ? 'Source active' : 'Auto-detected source';
-            info.innerHTML = '<strong>' + label + ':</strong> ' + escapeHTML(source.presetName)
+            info.innerHTML = '<strong>' + label + ':</strong> ' + experimentalEscapeHTML(source.presetName)
                 + ' &middot; ' + source.sections.length + ' sections resolved verbatim through the preset\'s own gating'
-                + ' &middot; content hash <code>' + escapeHTML(source.provenance.contentHash.slice(0, 12)) + '</code>'
-                + ' &middot; adapter v' + escapeHTML(String(source.provenance.adapter));
+                + ' &middot; content hash <code>' + experimentalEscapeHTML(source.provenance.contentHash.slice(0, 12)) + '</code>'
+                + ' &middot; adapter v' + experimentalEscapeHTML(String(source.provenance.adapter));
         } else {
             info.innerHTML = '<strong>Built-in adapted registry active.</strong> Import the author\'s Marinara export to resolve the full upstream stack &mdash; including its policy, NSFW and bypass sections &mdash; verbatim, with every choice exposed below.';
         }
@@ -923,7 +923,7 @@ function renderRoleplayOSConfigEditor(world) {
 
     const stateBadge = document.getElementById('w-roleplay-os-state');
     if (stateBadge) {
-        const customCount = Object.keys(isPlainObject(stored.choices) ? stored.choices : {}).filter(key => key !== 'state_mode').length;
+        const customCount = Object.keys(experimentalIsPlainObject(stored.choices) ? stored.choices : {}).filter(key => key !== 'state_mode').length;
         stateBadge.textContent = customCount ? 'Customized · ' + customCount + ' choice' + (customCount === 1 ? '' : 's') : 'Defaults active';
     }
 
@@ -937,7 +937,7 @@ function renderRoleplayOSConfigEditor(world) {
         html.push('<div class="os-choice-row">'
             + '<div class="os-choice-head"><span class="os-choice-label">state_mode</span><span class="os-tag os-tag-pinned">pinned</span></div>'
             + renderRoleplayOSChoiceChipRow('state_mode', [{ value: FF54_STATE_MODE_PIN, label: FF54_STATE_MODE_PIN }], FF54_STATE_MODE_PIN, { locked: true })
-            + '<div class="form-hint os-choice-note">' + escapeHTML(FF54_CHOICE_ANNOTATIONS.state_mode.note) + '</div>'
+            + '<div class="form-hint os-choice-note">' + experimentalEscapeHTML(FF54_CHOICE_ANNOTATIONS.state_mode.note) + '</div>'
             + '</div>');
         html.push('<div class="form-hint" style="margin:8px 0 0;">Built-in defaults (adapter-curated). Import a source preset to configure the complete choice surface.</div>');
         Object.keys(FF54_BUILT_IN_DEFAULTS).filter(key => key !== 'state_mode').forEach(variable => {
@@ -946,10 +946,10 @@ function renderRoleplayOSConfigEditor(world) {
             const notes = roleplayOSChoiceNotes(variable, hasSource);
             const annotation = FF54_CHOICE_ANNOTATIONS[variable] || {};
             html.push('<div class="os-choice-row">'
-                + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(variable) + '</span>'
+                + '<div class="os-choice-head"><span class="os-choice-label">' + experimentalEscapeHTML(variable) + '</span>'
                 + (annotation.pinned ? '<span class="os-tag os-tag-pinned">pinned</span>' : '')
                 + (annotation.replaced ? '<span class="os-tag os-tag-replaced">replaced</span>' : '') + '</div>'
-                + '<code class="os-builtin-value">' + escapeHTML(shown || '&mdash;') + '</code>'
+                + '<code class="os-builtin-value">' + experimentalEscapeHTML(shown || '&mdash;') + '</code>'
                 + (notes.length ? '<div class="form-hint os-choice-note">' + notes.map(escapeHTML).join(' ') + '</div>' : '')
                 + '</div>');
         });
@@ -966,13 +966,13 @@ function renderRoleplayOSConfigEditor(world) {
             if (Array.isArray(value)) {
                 if (!value.length) return;
                 html.push('<div class="os-choice-row">'
-                    + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(variable) + '</span><span class="os-tag">preserved</span><span class="os-tag">multi-select</span></div>'
+                    + '<div class="os-choice-head"><span class="os-choice-label">' + experimentalEscapeHTML(variable) + '</span><span class="os-tag">preserved</span><span class="os-tag">multi-select</span></div>'
                     + renderRoleplayOSChoiceChipRow(variable, value.map(item => ({ value: item, label: item })), value.slice(), { multi: true })
                     + '<div class="form-hint os-choice-note">Kept from an earlier source; it still gates any sections that reference it.</div>'
                     + '</div>');
             } else if (value !== undefined && value !== null && String(value)) {
                 html.push('<div class="os-choice-row">'
-                    + '<div class="os-choice-head"><span class="os-choice-label">' + escapeHTML(variable) + '</span><span class="os-tag">preserved</span></div>'
+                    + '<div class="os-choice-head"><span class="os-choice-label">' + experimentalEscapeHTML(variable) + '</span><span class="os-tag">preserved</span></div>'
                     + renderRoleplayOSChoiceChipRow(variable, [{ value: String(value), label: String(value) }], String(value), {})
                     + '<div class="form-hint os-choice-note">Kept from an earlier source; it still gates any sections that reference it.</div>'
                     + '</div>');
@@ -986,14 +986,14 @@ function renderRoleplayOSConfigEditor(world) {
 function renderRoleplayOSMigration(world) {
     const host = document.getElementById('w-roleplay-os-migration');
     if (!host) return;
-    const migration = isPlainObject(world?.sidecarConfig?.roleplayOS?.lastMigration) ? world.sidecarConfig.roleplayOS.lastMigration : null;
+    const migration = experimentalIsPlainObject(world?.sidecarConfig?.roleplayOS?.lastMigration) ? world.sidecarConfig.roleplayOS.lastMigration : null;
     const notes = migration ? (Array.isArray(migration.notes) ? migration.notes : []) : [];
     if (!notes.length) {
         host.innerHTML = '';
         return;
     }
     host.innerHTML = '<div class="os-migration-report"><strong>Selection reconciliation</strong>'
-        + '<ul>' + notes.map(note => '<li>' + escapeHTML(note) + '</li>').join('') + '</ul>'
+        + '<ul>' + notes.map(note => '<li>' + experimentalEscapeHTML(note) + '</li>').join('') + '</ul>'
         + '<button type="button" id="w-roleplay-os-migration-dismiss" class="btn btn-ghost" style="font-size:0.7rem; padding:2px 10px;">Dismiss</button></div>';
 }
 
@@ -1004,13 +1004,13 @@ function setRoleplayOSChoice(world, variable, value) {
         ? os.sourcePreset.choiceBlocks.find(item => item.variableName === variable) : null;
     const multi = block ? block.multiSelect === true : Array.isArray(os.choices[variable]);
     const draft = roleplayOSDraft(world);
-    const stored = { ...(isPlainObject(draft.choices) ? draft.choices : {}) };
+    const stored = { ...(experimentalIsPlainObject(draft.choices) ? draft.choices : {}) };
     if (multi) {
         const effective = Array.isArray(os.choices[variable]) ? os.choices[variable].slice() : [];
         const next = effective.indexOf(value) !== -1
             ? effective.filter(item => item !== value)
             : effective.concat([value]);
-        const defaults = os.sourcePreset && isPlainObject(os.sourcePreset.defaults) ? os.sourcePreset.defaults : FF54_BUILT_IN_DEFAULTS;
+        const defaults = os.sourcePreset && experimentalIsPlainObject(os.sourcePreset.defaults) ? os.sourcePreset.defaults : FF54_BUILT_IN_DEFAULTS;
         const defaultList = Array.isArray(defaults[variable]) ? defaults[variable] : [];
         const sameAsDefault = next.length === defaultList.length && next.every(item => defaultList.indexOf(item) !== -1);
         if (sameAsDefault) delete stored[variable];
@@ -1029,7 +1029,7 @@ async function pinRoleplayOSSource(world, sourceId) {
     const registry = getInstalledRoleplayOSSources();
     const entry = registry.find(item => item.id === sourceId) || null;
     const draft = roleplayOSDraft(world);
-    const stored = isPlainObject(draft.choices) ? draft.choices : {};
+    const stored = experimentalIsPlainObject(draft.choices) ? draft.choices : {};
     if (entry) {
         const reconciled = reconcileFF54WorldChoices(stored, entry);
         draft.sourceId = entry.id;
@@ -1172,11 +1172,11 @@ function renderWorldSidecarConfigEditor(world) {
         restore.onclick = async () => {
             const backup = backups.at(-1);
             if (!backup?.world || !confirm('Restore this selected world and its saved runtime to the pre-Sidecar Inline backup? Current Sidecar-only derived data will be replaced.')) return;
-            const restored = safeJsonClone(backup.world);
+            const restored = experimentalSafeJsonClone(backup.world);
             const index = ExperimentalWorldsState.worlds.findIndex(item => item.id === world.id);
             if (index >= 0) ExperimentalWorldsState.worlds[index] = restored;
-            ExperimentalWorldsState.editingWorld = safeJsonClone(restored);
-            if (backup.runtime) ExperimentalWorldsState.worldInstances[restored.id] = safeJsonClone(backup.runtime);
+            ExperimentalWorldsState.editingWorld = experimentalSafeJsonClone(restored);
+            if (backup.runtime) ExperimentalWorldsState.worldInstances[restored.id] = experimentalSafeJsonClone(backup.runtime);
             await ExperimentalWorldsHost.persist();
             openWorldStudio(restored.id);
             ExperimentalWorldsHost.notify('Restored the selected pre-Sidecar migration backup.', 'success');
@@ -1199,7 +1199,7 @@ function renderWorldSidecarConfigEditor(world) {
         const migrations = sessions.map(session => session.sidecar?.migration).filter(Boolean);
         const warnings = migrations.flatMap(migration => migration.warnings || []);
         if (migrations.length) {
-            report.innerHTML = `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${escapeHTML(warnings.join(' · '))}</span>` : ''}`;
+            report.innerHTML = `<strong>Migration readiness:</strong> ${migrations.length}/${sessions.length || migrations.length} timeline${migrations.length === 1 ? '' : 's'} prepared · raw history and canonical receipts retained · derived vector caches cleared.${warnings.length ? `<br><span style="color:var(--warning)">${experimentalEscapeHTML(warnings.join(' · '))}</span>` : ''}`;
         } else if (inlineSessions.length) {
             report.innerHTML = `<strong>Migration readiness:</strong> ${inlineSessions.length} Inline timeline${inlineSessions.length === 1 ? '' : 's'} can be backed up and switched to Sidecar without rewriting raw history.`;
         } else if (sessions.length) {
@@ -1236,7 +1236,7 @@ function openWorldStudio(worldId = null, options = {}) {
     
     const bannerPreview = document.getElementById('w-banner-preview');
     if (w.banner) {
-        bannerPreview.style.backgroundImage = `url('${cssUrl(w.banner)}')`;
+        bannerPreview.style.backgroundImage = `url('${experimentalCssUrl(w.banner)}')`;
         bannerPreview.innerHTML = '';
     } else {
         bannerPreview.style.backgroundImage = 'none';
@@ -1343,7 +1343,7 @@ function migrateWorldTimelinesToSidecar(world, legacyConfig = null, options = {}
             warnings,
             // Canonical source history and receipts remain in their existing
             // stores. This compact audit supports a future rollback/import UI.
-            legacyConfig: safeJsonClone(legacyConfig || world.sidecarConfig || {})
+            legacyConfig: experimentalSafeJsonClone(legacyConfig || world.sidecarConfig || {})
         };
         protocol.mode = 'sidecar';
         (sess.history || []).forEach(message => { delete message.embedding; });
@@ -1381,7 +1381,7 @@ function openSidecarMigrationWizard(worldId = ExperimentalWorldsState.editingWor
             sess.unresolvedDestination ? 'unresolved destination' : '',
             (sess.worldTurnReceipts || []).some(entry => entry?.audit?.rejected?.length) ? 'rejected legacy proposals' : ''
         ].filter(Boolean);
-        return `<label class="world-migration-card" style="display:flex; align-items:flex-start; gap:10px; padding:10px; cursor:pointer;"><input type="checkbox" class="sidecar-migration-session" data-session-id="${escapeHTML(sess.id)}" checked><span style="flex:1;"><strong>${escapeHTML(sess.name || sess.id)}</strong><small style="display:block; color:var(--text-3);">${sess.history?.length || 0} messages · ${sess.worldTurnReceipts?.length || 0} receipts · ${protocol?.mode === 'sidecar' ? 'already Sidecar' : 'Inline Legacy'}${warnings.length ? ` · <span style="color:var(--warning)">${escapeHTML(warnings.join(', '))}</span>` : ''}</small></span></label>`;
+        return `<label class="world-migration-card" style="display:flex; align-items:flex-start; gap:10px; padding:10px; cursor:pointer;"><input type="checkbox" class="sidecar-migration-session" data-session-id="${experimentalEscapeHTML(sess.id)}" checked><span style="flex:1;"><strong>${experimentalEscapeHTML(sess.name || sess.id)}</strong><small style="display:block; color:var(--text-3);">${sess.history?.length || 0} messages · ${sess.worldTurnReceipts?.length || 0} receipts · ${protocol?.mode === 'sidecar' ? 'already Sidecar' : 'Inline Legacy'}${warnings.length ? ` · <span style="color:var(--warning)">${experimentalEscapeHTML(warnings.join(', '))}</span>` : ''}</small></span></label>`;
     }).join('') : (sessions.length
         ? '<div class="form-hint">No Inline Legacy timelines are waiting for migration.</div>'
         : `<div class="form-hint">${alreadySidecar ? 'This world is already set to Sidecar. New play sessions will use the Sidecar pipeline.' : 'This world has no play sessions yet. Enabling Sidecar switches the world so the next session uses the new pipeline.'}</div>`);
@@ -1407,14 +1407,14 @@ function openSidecarMigrationWizard(worldId = ExperimentalWorldsState.editingWor
         if (inline.length && !selectedIds.length) return ExperimentalWorldsHost.notify('Select at least one Inline timeline to migrate.', 'info');
         if (!inline.length && world.sidecarConfig?.mode === 'sidecar') return ExperimentalWorldsHost.notify('This world is already on Sidecar.', 'info');
         const backupList = Array.isArray(world.sidecarMigrationBackups) ? world.sidecarMigrationBackups : [];
-        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: cloneSidecarMigrationRollbackWorld(world), runtime: safeJsonClone(ExperimentalWorldsState.worldInstances?.[world.id] || null), note: inline.length ? 'Selected-timeline migration backup.' : 'World-level Sidecar enablement backup.' });
+        backupList.push({ id: `sidecar_migration_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), from: 'inline_legacy', to: 'sidecar', selectedSessionIds: selectedIds.slice(), world: cloneSidecarMigrationRollbackWorld(world), runtime: experimentalSafeJsonClone(ExperimentalWorldsState.worldInstances?.[world.id] || null), note: inline.length ? 'Selected-timeline migration backup.' : 'World-level Sidecar enablement backup.' });
         world.sidecarMigrationBackups = backupList.slice(-5);
         world.sidecarConfig = window.ExperimentalWorldsSidecarMode?.normalizeWorldConfig?.({ ...world, sidecarConfig: { ...(world.sidecarConfig || {}), mode: 'sidecar' } }) || { ...(world.sidecarConfig || {}), mode: 'sidecar' };
         const reports = inline.length ? migrateWorldTimelinesToSidecar(world, world.sidecarConfig, { selectedSessionIds: selectedIds }) : [];
         const index = ExperimentalWorldsState.worlds.findIndex(item => item.id === world.id);
-        if (index >= 0) ExperimentalWorldsState.worlds[index] = safeJsonClone(world);
+        if (index >= 0) ExperimentalWorldsState.worlds[index] = experimentalSafeJsonClone(world);
         if (ExperimentalWorldsState.editingWorld?.id === world.id) {
-            ExperimentalWorldsState.editingWorld = safeJsonClone(world);
+            ExperimentalWorldsState.editingWorld = experimentalSafeJsonClone(world);
             const modeSelect = document.getElementById('w-sidecar-mode');
             if (modeSelect) modeSelect.value = 'sidecar';
         }
@@ -1524,7 +1524,7 @@ async function saveWorld() {
             createdAt: new Date().toISOString(),
             from: 'inline_legacy', to: 'sidecar',
             world: cloneSidecarMigrationRollbackWorld(storedBeforeSave),
-            runtime: safeJsonClone(ExperimentalWorldsState.worldInstances?.[w.id] || null),
+            runtime: experimentalSafeJsonClone(ExperimentalWorldsState.worldInstances?.[w.id] || null),
             note: 'Raw history and canonical receipts are preserved in the migrated runtime; this backup exists for explicit rollback/re-import.'
         });
         w.sidecarMigrationBackups = backups.slice(-3);
@@ -2151,8 +2151,8 @@ function updateExitAutocomplete(inputEl, loc) {
         const finalVal = directionPrefix + m.name;
         
         item.innerHTML = `
-            <span class="direction-part">${escapeHTML(directionPrefix)}</span>
-            <span class="location-part">${escapeHTML(m.name)}</span>
+            <span class="direction-part">${experimentalEscapeHTML(directionPrefix)}</span>
+            <span class="location-part">${experimentalEscapeHTML(m.name)}</span>
         `;
         
         item.onmousedown = (ev) => {
@@ -2687,7 +2687,7 @@ function renderWorldVisuals() {
         const presets = normalizeImageGuidePresets(ExperimentalWorldsState.globalSettings.imageGuidePresets);
         const names = Object.keys(presets).sort((a, b) => a.localeCompare(b));
         presetSelect.innerHTML = `<option value="">${names.length ? 'Choose a saved preset…' : 'No saved presets yet'}</option>`
-            + names.map(name => `<option value="${escapeHTML(name)}">${escapeHTML(name)}</option>`).join('');
+            + names.map(name => `<option value="${experimentalEscapeHTML(name)}">${experimentalEscapeHTML(name)}</option>`).join('');
         return presets;
     };
     if (presetSelect) {
@@ -2751,7 +2751,7 @@ function renderWorldVisuals() {
     byId('w-visual-media-summary').textContent = `${summary.count} asset${summary.count === 1 ? '' : 's'} · ${formatByteSize(summary.bytes)}`;
     const mapSkin = worldMediaSource(world, presentation.mapSkinAssetId);
     const mapPreview = byId('w-visual-map-skin-preview');
-    mapPreview.style.backgroundImage = mapSkin ? `url('${cssUrl(mapSkin)}')` : 'none';
+    mapPreview.style.backgroundImage = mapSkin ? `url('${experimentalCssUrl(mapSkin)}')` : 'none';
     mapPreview.textContent = mapSkin ? '' : 'No map skin';
     byId('w-visual-map-skin-clear').disabled = !mapSkin;
 
@@ -2761,7 +2761,7 @@ function renderWorldVisuals() {
         const file = event.target.files?.[0];
         if (!file) return;
         try {
-            const image = await normalizeUploadedImage(file, 1600, 0.76);
+            const image = await experimentalNormalizeUploadedImage(file, 1600, 0.76);
             presentation.mapSkinAssetId = addWorldMediaAsset(world, image, 'map_skin', `${world.name} map skin`);
             pruneWorldMediaAssets(world);
             renderWorldVisuals();
@@ -2925,8 +2925,8 @@ function uniqueWorldRecordId(records, preferred, prefix, name, reserved = new Se
  * failed validation can never leave half a migration in the live world.
  */
 function upgradeWorldSchemaData(sourceWorld, { source = 'manual' } = {}) {
-    const before = safeJsonClone(sourceWorld || {});
-    const world = safeJsonClone(sourceWorld || {});
+    const before = experimentalSafeJsonClone(sourceWorld || {});
+    const world = experimentalSafeJsonClone(sourceWorld || {});
     const fromVersion = worldSchemaVersion(world);
     const changes = [];
     const warnings = [];
@@ -3315,7 +3315,7 @@ function setWorldInspectorTab(tab) {
             // shift if an extra child landed inside them.
             const heading = document.createElement('div');
             heading.className = 'world-inspector-section-heading';
-            heading.innerHTML = `<h3>${escapeHTML(labels[id])}</h3>`;
+            heading.innerHTML = `<h3>${experimentalEscapeHTML(labels[id])}</h3>`;
             section.parentElement.insertBefore(heading, section);
         }
         headed.add(id);
@@ -3423,7 +3423,7 @@ function appendWorldStudioListToolbar(container, kind, pageData, rerender, noun)
     const toolbar = document.createElement('div');
     toolbar.style.cssText = 'display:flex;gap:8px;align-items:center;position:sticky;top:0;z-index:4;padding:10px;margin-bottom:12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;';
     toolbar.innerHTML = `
-        <input class="form-input studio-list-search" style="flex:1" value="${escapeHTML(pageData.view.query)}" placeholder="Search ${escapeHTML(noun)}…">
+        <input class="form-input studio-list-search" style="flex:1" value="${experimentalEscapeHTML(pageData.view.query)}" placeholder="Search ${experimentalEscapeHTML(noun)}…">
         <span class="form-hint" style="white-space:nowrap">${pageData.filtered.length} / ${ExperimentalWorldsState.editingWorld[kind].length}</span>
         <button class="tool-btn studio-page-prev" ${pageData.view.page === 0 ? 'disabled' : ''}>←</button>
         <span class="form-hint" style="white-space:nowrap">${pageData.view.page + 1} / ${pageData.pages}</span>
@@ -3553,9 +3553,9 @@ function renderWorldRegionLocationTreeHTML(world, locations) {
             .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
         const next = new Set(ancestry).add(location.id);
         return `<div class="world-location-tree-node ${depth ? 'is-child' : ''}">
-            <button type="button" class="world-directory-card ${depth ? 'is-contained-location' : ''}" data-region-location="${escapeHTML(location.id)}">
-                <div class="world-directory-card-copy"><h3>${escapeHTML(location.name || 'Unnamed location')}</h3><p>${escapeHTML(location.description || 'No description yet.')}</p>
-                <div class="world-directory-badges"><span class="world-directory-badge">${escapeHTML(formatWorldMapType(location.mapType || inferWorldMapType(location)))}</span>${depth ? `<span class="world-directory-badge is-containment">↳ contained place</span>` : ''}${children.length ? `<span class="world-directory-badge">contains ${children.length}</span>` : ''}<span class="world-directory-badge">${(location.exits || []).length} exits</span></div></div>
+            <button type="button" class="world-directory-card ${depth ? 'is-contained-location' : ''}" data-region-location="${experimentalEscapeHTML(location.id)}">
+                <div class="world-directory-card-copy"><h3>${experimentalEscapeHTML(location.name || 'Unnamed location')}</h3><p>${experimentalEscapeHTML(location.description || 'No description yet.')}</p>
+                <div class="world-directory-badges"><span class="world-directory-badge">${experimentalEscapeHTML(formatWorldMapType(location.mapType || inferWorldMapType(location)))}</span>${depth ? `<span class="world-directory-badge is-containment">↳ contained place</span>` : ''}${children.length ? `<span class="world-directory-badge">contains ${children.length}</span>` : ''}<span class="world-directory-badge">${(location.exits || []).length} exits</span></div></div>
             </button>${children.length ? `<div class="world-location-tree-children">${children.map(child => renderNode(child, depth + 1, next)).join('')}</div>` : ''}
         </div>`;
     };
@@ -3576,21 +3576,21 @@ function renderWorldRegionInspector() {
     const travelLinks = worldRegionTravelLinks(world, region.id);
     container.innerHTML = `<div class="world-region-inspector">
         <section class="world-inspector-section" data-inspector-section="overview">
-            <div class="world-region-form-grid"><label><span class="form-label">Region name</span><input class="form-input region-name" value="${escapeHTML(region.name)}"></label>
-            <label><span class="form-label">Tags</span><input class="form-input region-tags" value="${escapeHTML((region.tags || []).join(', '))}" placeholder="coastal, urban, dangerous…"></label></div>
-            <label><span class="form-label">Description</span><textarea class="form-textarea region-description" rows="7" placeholder="What makes this region distinct?">${escapeHTML(region.description || '')}</textarea></label>
+            <div class="world-region-form-grid"><label><span class="form-label">Region name</span><input class="form-input region-name" value="${experimentalEscapeHTML(region.name)}"></label>
+            <label><span class="form-label">Tags</span><input class="form-input region-tags" value="${experimentalEscapeHTML((region.tags || []).join(', '))}" placeholder="coastal, urban, dangerous…"></label></div>
+            <label><span class="form-label">Description</span><textarea class="form-textarea region-description" rows="7" placeholder="What makes this region distinct?">${experimentalEscapeHTML(region.description || '')}</textarea></label>
             <div class="world-region-stat-row"><span><b>${locations.length}</b> locations</span><span><b>${travelLinks.length}</b> outgoing travel links</span></div>
             <button type="button" class="btn btn-danger region-delete">Delete region</button>
         </section>
         <section class="world-inspector-section" data-inspector-section="locations">
-            <div class="world-region-section-head"><div><h3>Locations in ${escapeHTML(region.name)}</h3><p>Playable places live inside a stable region. Their canonical links survive renames.</p></div><button type="button" class="btn btn-primary region-add-location">+ New location</button></div>
+            <div class="world-region-section-head"><div><h3>Locations in ${experimentalEscapeHTML(region.name)}</h3><p>Playable places live inside a stable region. Their canonical links survive renames.</p></div><button type="button" class="btn btn-primary region-add-location">+ New location</button></div>
             <div class="world-directory-grid world-location-tree-grid region-location-grid">${renderWorldRegionLocationTreeHTML(world, locations) || '<div class="world-directory-empty">No locations yet. Create the first place players can actually visit.</div>'}</div>
         </section>
         <section class="world-inspector-section" data-inspector-section="travel">
             <div class="world-region-section-head"><div><h3>Cross-region travel</h3><p>Connect actual departure and arrival places. Transport is author-defined: walking, horse, dragon, train, starship—or anything your world supports.</p></div></div>
             <div class="world-travel-builder">
-                <label><span>Depart from</span><select class="form-select travel-origin"><option value="">Choose a location…</option>${locations.map(location => `<option value="${escapeHTML(location.id)}">${escapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
-                <label><span>Arrive at</span><select class="form-select travel-target"><option value="">Choose another region's location…</option>${otherLocations.map(location => { const targetRegion = world.regions.find(item => item.id === location.regionId); return `<option value="${escapeHTML(location.id)}">${escapeHTML(targetRegion?.name || 'Unassigned')} · ${escapeHTML(location.name || location.id)}</option>`; }).join('')}</select></label>
+                <label><span>Depart from</span><select class="form-select travel-origin"><option value="">Choose a location…</option>${locations.map(location => `<option value="${experimentalEscapeHTML(location.id)}">${experimentalEscapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
+                <label><span>Arrive at</span><select class="form-select travel-target"><option value="">Choose another region's location…</option>${otherLocations.map(location => { const targetRegion = world.regions.find(item => item.id === location.regionId); return `<option value="${experimentalEscapeHTML(location.id)}">${experimentalEscapeHTML(targetRegion?.name || 'Unassigned')} · ${experimentalEscapeHTML(location.name || location.id)}</option>`; }).join('')}</select></label>
                 <label><span>Transport</span><input class="form-input travel-mode" list="world-transport-suggestions" value="walk" placeholder="horse, dragon, train…"><datalist id="world-transport-suggestions">${Object.entries(WORLD_TRAVEL_MODES).map(([id, label]) => `<option value="${id}">${label}</option>`).join('')}</datalist></label>
                 <label><span>Minutes</span><input type="number" min="0" class="form-input travel-minutes" value="15"></label>
                 <label><span>Route / service</span><input class="form-input travel-route" placeholder="A12, Red Line, Ferry 4…"></label>
@@ -3598,7 +3598,7 @@ function renderWorldRegionInspector() {
                 <label class="travel-one-way"><input type="checkbox"> One way only</label>
                 <button type="button" class="btn btn-primary travel-connect">Connect locations</button>
             </div>
-            <div class="world-travel-list">${travelLinks.map(({ origin, target, exit, exitIndex }) => `<article><div><strong>${escapeHTML(origin.name || origin.id)} → ${escapeHTML(target.name || target.id)}</strong><span>${escapeHTML(formatWorldTravelMode(exit.mode))} · ${Number(exit.travelTime) || 0} min${exit.routeName ? ` · ${escapeHTML(exit.routeName)}` : ''}${exit.cost ? ` · ${escapeHTML(exit.cost)}` : ''}</span></div><button type="button" class="tool-btn" data-remove-region-travel="${escapeHTML(origin.id)}:${exitIndex}">Remove</button></article>`).join('') || '<div class="world-directory-empty">No cross-region travel yet. Players cannot naturally leave this region until you connect it.</div>'}</div>
+            <div class="world-travel-list">${travelLinks.map(({ origin, target, exit, exitIndex }) => `<article><div><strong>${experimentalEscapeHTML(origin.name || origin.id)} → ${experimentalEscapeHTML(target.name || target.id)}</strong><span>${experimentalEscapeHTML(formatWorldTravelMode(exit.mode))} · ${Number(exit.travelTime) || 0} min${exit.routeName ? ` · ${experimentalEscapeHTML(exit.routeName)}` : ''}${exit.cost ? ` · ${experimentalEscapeHTML(exit.cost)}` : ''}</span></div><button type="button" class="tool-btn" data-remove-region-travel="${experimentalEscapeHTML(origin.id)}:${exitIndex}">Remove</button></article>`).join('') || '<div class="world-directory-empty">No cross-region travel yet. Players cannot naturally leave this region until you connect it.</div>'}</div>
         </section>
     </div>`;
     container.querySelector('.region-name').onchange = event => {
@@ -3664,7 +3664,7 @@ function renderWorldLocationDirectory(world, container) {
     const directory = document.createElement('div');
     directory.className = 'world-directory';
     directory.innerHTML = `<div class="world-directory-toolbar">
-        <input type="search" class="form-input world-directory-search" value="${escapeHTML(view.query)}" placeholder="Search names, regions, descriptions or tags…" aria-label="Search locations">
+        <input type="search" class="form-input world-directory-search" value="${experimentalEscapeHTML(view.query)}" placeholder="Search names, regions, descriptions or tags…" aria-label="Search locations">
         <select class="form-select world-directory-filter" aria-label="Filter location type">${typeOptions.map(type => `<option value="${type}" ${filter === type ? 'selected' : ''}>${type === 'all' ? 'All types' : formatWorldMapType(type)}</option>`).join('')}</select>
         <span class="world-directory-summary">${matches.length} of ${world.locations.length} locations</span>
         <button type="button" class="btn btn-ghost world-new-region">+ Region</button>
@@ -3673,7 +3673,7 @@ function renderWorldLocationDirectory(world, container) {
     <section class="world-region-shelf"><div class="world-region-shelf-head"><div><h3>Regions</h3><p>Organize large worlds, then connect their locations with explicit travel.</p></div></div><div class="world-region-card-grid">${world.regions.map(region => {
         const regionLocations = world.locations.filter(location => location.regionId === region.id);
         const links = worldRegionTravelLinks(world, region.id);
-        return `<article class="world-region-card" data-region-card="${escapeHTML(region.id)}"><button type="button" class="world-region-card-main"><span class="world-region-icon">⌖</span><div><h3>${escapeHTML(region.name)}</h3><p>${escapeHTML(region.description || 'No regional description yet.')}</p><div class="world-directory-badges"><span class="world-directory-badge">${regionLocations.length} places</span><span class="world-directory-badge">${links.length} travel links</span></div></div></button><button type="button" class="tool-btn world-region-add-place" title="Add a location inside ${escapeHTML(region.name)}">＋ Location</button></article>`;
+        return `<article class="world-region-card" data-region-card="${experimentalEscapeHTML(region.id)}"><button type="button" class="world-region-card-main"><span class="world-region-icon">⌖</span><div><h3>${experimentalEscapeHTML(region.name)}</h3><p>${experimentalEscapeHTML(region.description || 'No regional description yet.')}</p><div class="world-directory-badges"><span class="world-directory-badge">${regionLocations.length} places</span><span class="world-directory-badge">${links.length} travel links</span></div></div></button><button type="button" class="tool-btn world-region-add-place" title="Add a location inside ${experimentalEscapeHTML(region.name)}">＋ Location</button></article>`;
     }).join('') || '<div class="world-directory-empty">No regions yet. Create one to organize locations and cross-region travel.</div>'}</div></section>`;
     directory.querySelector('.world-new-region').onclick = addWorldRegion;
     directory.querySelector('.world-new-location').onclick = () => addWorldLocation();
@@ -3696,7 +3696,7 @@ function renderWorldLocationDirectory(world, container) {
         // endless wall. Searches expand every matching region; otherwise the
         // first region opens as an orientation point and the rest stay compact.
         section.open = Boolean(query) || regionEntries.length <= 8 || regionIndex === 0;
-        section.innerHTML = `<summary><strong>${escapeHTML(regionName)}</strong><span>${locations.length} location${locations.length === 1 ? '' : 's'}</span></summary><div class="world-directory-grid"></div>`;
+        section.innerHTML = `<summary><strong>${experimentalEscapeHTML(regionName)}</strong><span>${locations.length} location${locations.length === 1 ? '' : 's'}</span></summary><div class="world-directory-grid"></div>`;
         const grid = section.querySelector('.world-directory-grid');
         const makeLocationCard = (location, nested = false) => {
             const parent = getLocationRef(world, location.parentLocationId);
@@ -3706,12 +3706,12 @@ function renderWorldLocationDirectory(world, container) {
             card.type = 'button';
             card.className = `world-directory-card${nested ? ' is-contained-location' : ''}`;
             card.dataset.recordId = location.id;
-            card.innerHTML = `<div class="world-directory-card-media" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '⌖'}</div>
-                <div class="world-directory-card-copy"><h3>${escapeHTML(location.name || 'Unnamed location')}</h3>
-                <p>${escapeHTML(location.description || 'No player-facing description yet.')}</p>
+            card.innerHTML = `<div class="world-directory-card-media" ${image ? `style="background-image:url('${experimentalCssUrl(image)}')"` : ''}>${image ? '' : '⌖'}</div>
+                <div class="world-directory-card-copy"><h3>${experimentalEscapeHTML(location.name || 'Unnamed location')}</h3>
+                <p>${experimentalEscapeHTML(location.description || 'No player-facing description yet.')}</p>
                 <div class="world-directory-badges">
-                    <span class="world-directory-badge">${escapeHTML(formatWorldMapType(location.mapType || inferWorldMapType(location)))}</span>
-                    ${parent ? `<span class="world-directory-badge is-containment">↳ inside ${escapeHTML(parent.name)}</span>` : ''}
+                    <span class="world-directory-badge">${experimentalEscapeHTML(formatWorldMapType(location.mapType || inferWorldMapType(location)))}</span>
+                    ${parent ? `<span class="world-directory-badge is-containment">↳ inside ${experimentalEscapeHTML(parent.name)}</span>` : ''}
                     ${world.startLocationId === location.id ? '<span class="world-directory-badge is-core">★ start</span>' : ''}
                     <span class="world-directory-badge">${(location.exits || []).length} exits</span>
                     ${used.length ? `<span class="world-directory-badge">${used.length} links</span>` : ''}
@@ -3807,7 +3807,7 @@ function renderWorldLocations() {
         document.body.appendChild(regionDatalist);
     }
     regionDatalist.innerHTML = (world.regions || []).slice().sort((a, b) => a.name.localeCompare(b.name))
-        .map(region => `<option value="${escapeHTML(region.name)}"></option>`).join('');
+        .map(region => `<option value="${experimentalEscapeHTML(region.name)}"></option>`).join('');
     let floorDatalist = document.getElementById('world-floor-datalist');
     if (!floorDatalist) {
         floorDatalist = document.createElement('datalist');
@@ -3853,15 +3853,15 @@ function renderWorldLocations() {
                 <div class="world-inspector-section" data-inspector-section="overview" style="display:flex; gap:12px; margin-bottom:12px;">
                     <div style="flex:1">
                         <label class="form-label" style="font-size:0.7rem; opacity:0.6; display:flex; justify-content:space-between; gap:8px;">Location ID <button type="button" class="inline-link-btn edit-loc-id">Edit carefully</button></label>
-                        <input type="text" class="form-input loc-id" value="${escapeHTML(loc.id)}" placeholder="Generated automatically" readonly title="Horde Studio generates this stable link. Use Edit carefully only when repairing imported data.">
+                        <input type="text" class="form-input loc-id" value="${experimentalEscapeHTML(loc.id)}" placeholder="Generated automatically" readonly title="Horde Studio generates this stable link. Use Edit carefully only when repairing imported data.">
                     </div>
                     <div style="flex:1.5">
                         <label class="form-label" style="font-size:0.7rem; opacity:0.6;">Display Name</label>
-                        <input type="text" class="form-input loc-name" value="${escapeHTML(loc.name)}" placeholder="e.g. Tavern">
+                        <input type="text" class="form-input loc-name" value="${experimentalEscapeHTML(loc.name)}" placeholder="e.g. Tavern">
                     </div>
                     <div style="flex:1">
                         <label class="form-label" style="font-size:0.7rem; opacity:0.6;">Region</label>
-                        <input type="text" list="world-region-datalist" class="form-input loc-region" value="${escapeHTML(loc.region || '')}" placeholder="Search existing or create a region…">
+                        <input type="text" list="world-region-datalist" class="form-input loc-region" value="${experimentalEscapeHTML(loc.region || '')}" placeholder="Search existing or create a region…">
                     </div>
                     <div style="display:flex; flex-direction:column; gap:4px; align-self:flex-end;">
                         <button class="tool-btn set-start-btn ${world.startLocationId === loc.id ? 'btn-success' : ''}" style="width:100%; white-space:nowrap; font-size:10px;" title="Set as player starting point">
@@ -3874,22 +3874,22 @@ function renderWorldLocations() {
                 <div class="world-inspector-section" data-inspector-section="overview">
                     <div>
                         <label class="form-label" style="font-size:0.75rem;">Visible Description (to Player)</label>
-                        <textarea class="form-textarea loc-desc" rows="3" placeholder="What the player sees...">${escapeHTML(loc.description)}</textarea>
+                        <textarea class="form-textarea loc-desc" rows="3" placeholder="What the player sees...">${experimentalEscapeHTML(loc.description)}</textarea>
                     </div>
                 </div>
                 <div class="world-inspector-section" data-inspector-section="secrets">
                     <div>
                         <label class="form-label" style="font-size:0.75rem;">Hidden Details (DM Only)</label>
-                        <textarea class="form-textarea loc-hidden-desc" rows="3" placeholder="Secret info, list of items, vibes...">${escapeHTML(loc.hiddenDescription || '')}</textarea>
+                        <textarea class="form-textarea loc-hidden-desc" rows="3" placeholder="Secret info, list of items, vibes...">${experimentalEscapeHTML(loc.hiddenDescription || '')}</textarea>
                     </div>
                 </div>
                 <div class="world-inspector-section" data-inspector-section="overview" style="margin-top:10px;">
                     <label class="form-label" style="font-size:.72rem;">Search tags <span class="form-hint">(comma separated; classification only—not links)</span></label>
-                    <input class="form-input loc-tags" value="${escapeHTML((loc.tags || []).join(', '))}" placeholder="residential, restricted, haunted…">
+                    <input class="form-input loc-tags" value="${experimentalEscapeHTML((loc.tags || []).join(', '))}" placeholder="residential, restricted, haunted…">
                 </div>
 
                 <div class="world-media-editor world-inspector-section" data-inspector-section="visuals">
-                    <div class="world-media-preview" style="${worldMediaSource(world, loc.visuals?.backgroundAssetId) ? `background-image:url('${cssUrl(worldMediaSource(world, loc.visuals.backgroundAssetId))}')` : ''}">
+                    <div class="world-media-preview" style="${worldMediaSource(world, loc.visuals?.backgroundAssetId) ? `background-image:url('${experimentalCssUrl(worldMediaSource(world, loc.visuals.backgroundAssetId))}')` : ''}">
                         ${worldMediaSource(world, loc.visuals?.backgroundAssetId) ? '' : 'No location background'}
                     </div>
                     <div>
@@ -3909,15 +3909,15 @@ function renderWorldLocations() {
                         <strong>Geography vs containment</strong>
                         <span>A region is a broad geographic area (for example Greenfield). A building is a location in that region; its rooms are child locations inside the building.</span>
                     </div>
-                    ${parentLocation ? `<button type="button" class="world-containment-parent" data-open-parent="${escapeHTML(parentLocation.id)}">
-                        <span class="world-containment-parent-icon">↰</span><span><small>This place is inside</small><strong>${escapeHTML(parentLocation.name || parentLocation.id)}</strong></span><span>Open parent</span>
+                    ${parentLocation ? `<button type="button" class="world-containment-parent" data-open-parent="${experimentalEscapeHTML(parentLocation.id)}">
+                        <span class="world-containment-parent-icon">↰</span><span><small>This place is inside</small><strong>${experimentalEscapeHTML(parentLocation.name || parentLocation.id)}</strong></span><span>Open parent</span>
                     </button>` : ''}
                     <div>
                         <label class="form-label" style="font-size:0.7rem;">Map Role</label>
                         <select class="form-select loc-map-type">
-                            <option value="" ${!loc.mapType ? 'selected' : ''}>Auto-detect (${escapeHTML(formatWorldMapType(inferWorldMapType(loc)))})</option>
+                            <option value="" ${!loc.mapType ? 'selected' : ''}>Auto-detect (${experimentalEscapeHTML(formatWorldMapType(inferWorldMapType(loc)))})</option>
                             ${['transit', 'route', 'building', 'outdoor', 'room', 'area'].map(type =>
-                                `<option value="${type}" ${loc.mapType === type ? 'selected' : ''}>${escapeHTML(formatWorldMapType(type))}</option>`).join('')}
+                                `<option value="${type}" ${loc.mapType === type ? 'selected' : ''}>${experimentalEscapeHTML(formatWorldMapType(type))}</option>`).join('')}
                         </select>
                     </div>
                     <div>
@@ -3926,23 +3926,23 @@ function renderWorldLocations() {
                             <option value="">Auto-detect</option>
                             ${world.locations.filter(candidate => candidate.id !== loc.id
                                 && !worldLocationLineage(world, candidate).some(ancestor => ancestor.id === loc.id)).map(candidate =>
-                                `<option value="${escapeHTML(candidate.id)}" ${loc.parentLocationId === candidate.id ? 'selected' : ''}>${escapeHTML(candidate.name || candidate.id)}</option>`).join('')}
+                                `<option value="${experimentalEscapeHTML(candidate.id)}" ${loc.parentLocationId === candidate.id ? 'selected' : ''}>${experimentalEscapeHTML(candidate.name || candidate.id)}</option>`).join('')}
                         </select>
                         <small class="form-hint">Use this for rooms, floors, shops inside a mall, or places attached to another place.</small>
                     </div>
                     <div>
                         <label class="form-label" style="font-size:0.7rem;">Floor / Level</label>
-                        <input type="text" list="world-floor-datalist" class="form-input loc-map-floor" value="${escapeHTML(loc.mapFloor || '')}" placeholder="Choose or enter a floor…">
+                        <input type="text" list="world-floor-datalist" class="form-input loc-map-floor" value="${experimentalEscapeHTML(loc.mapFloor || '')}" placeholder="Choose or enter a floor…">
                     </div>
                     <div class="world-contained-places">
                         <div class="world-contained-places-head">
-                            <div><strong>Inside ${escapeHTML(loc.name || 'this place')}</strong><span>Rooms and contained places belong to this location. Open one to edit its full record.</span></div>
+                            <div><strong>Inside ${experimentalEscapeHTML(loc.name || 'this place')}</strong><span>Rooms and contained places belong to this location. Open one to edit its full record.</span></div>
                             <button type="button" class="tool-btn loc-add-child-room">+ Add room</button>
                         </div>
                         <div class="world-contained-place-grid">
-                            ${childLocations.map(child => `<button type="button" class="world-contained-place-card" data-open-child="${escapeHTML(child.id)}">
+                            ${childLocations.map(child => `<button type="button" class="world-contained-place-card" data-open-child="${experimentalEscapeHTML(child.id)}">
                                 <span class="world-contained-place-icon">${inferWorldMapType(child) === 'room' ? '▦' : '⌖'}</span>
-                                <span class="world-contained-place-copy"><strong>${escapeHTML(child.name || 'Unnamed room')}</strong><small>${escapeHTML(formatWorldMapType(child.mapType || inferWorldMapType(child)))}${child.mapFloor ? ` · ${escapeHTML(child.mapFloor)}` : ''}</small><em>${escapeHTML(child.description || 'No description yet.')}</em></span>
+                                <span class="world-contained-place-copy"><strong>${experimentalEscapeHTML(child.name || 'Unnamed room')}</strong><small>${experimentalEscapeHTML(formatWorldMapType(child.mapType || inferWorldMapType(child)))}${child.mapFloor ? ` · ${experimentalEscapeHTML(child.mapFloor)}` : ''}</small><em>${experimentalEscapeHTML(child.description || 'No description yet.')}</em></span>
                                 <span class="world-contained-place-open">Edit →</span>
                             </button>`).join('') || `<div class="world-contained-place-empty">No rooms yet. Add one here and it will remain visibly nested under this location.</div>`}
                         </div>
@@ -3967,9 +3967,9 @@ function renderWorldLocations() {
                             return `
                                 <div class="world-exit-row">
                                     <div style="flex:2" class="exit-autocomplete-container">
-                                        <input type="text" class="form-input exit-val ${checkExitTarget(val) ? 'valid-ref' : (isExitFormat(val) ? 'invalid-ref' : '')}" data-idx="${exIdx}" value="${escapeHTML(val)}" placeholder="e.g. North to The Gate">
+                                        <input type="text" class="form-input exit-val ${checkExitTarget(val) ? 'valid-ref' : (isExitFormat(val) ? 'invalid-ref' : '')}" data-idx="${exIdx}" value="${experimentalEscapeHTML(val)}" placeholder="e.g. North to The Gate">
                                     </div>
-                                    <input class="form-input exit-mode" data-idx="${exIdx}" aria-label="Transport" value="${escapeHTML(mode)}" placeholder="walk, horse, dragon…">
+                                    <input class="form-input exit-mode" data-idx="${exIdx}" aria-label="Transport" value="${experimentalEscapeHTML(mode)}" placeholder="walk, horse, dragon…">
                                     <div style="display:flex; align-items:center; gap:4px; flex:1">
                                         <label style="font-size:10px; color:var(--text-3);">Time:</label>
                                         <input type="number" class="form-input exit-time" style="width:50px; padding:4px;" value="${time}" data-idx="${exIdx}">
@@ -3981,7 +3981,7 @@ function renderWorldLocations() {
                                     </div>
                                     <button class="tool-btn del-exit" data-idx="${exIdx}">✕</button>
                                 </div>
-                                <div class="world-exit-details"><input class="form-input exit-route" data-idx="${exIdx}" value="${escapeHTML(routeName)}" placeholder="Route or service name (optional)"><input class="form-input exit-cost" data-idx="${exIdx}" value="${escapeHTML(cost)}" placeholder="Cost (optional)"></div>
+                                <div class="world-exit-details"><input class="form-input exit-route" data-idx="${exIdx}" value="${experimentalEscapeHTML(routeName)}" placeholder="Route or service name (optional)"><input class="form-input exit-cost" data-idx="${exIdx}" value="${experimentalEscapeHTML(cost)}" placeholder="Cost (optional)"></div>
                                 <span class="ref-hint ${checkExitTarget(val) ? 'valid' : 'invalid'}" style="margin-top:-6px; margin-bottom:4px; display:block;">${checkExitTarget(val) ? '✓ Verified Connection' : (isExitFormat(val) ? '⚠ Broken Connection' : 'Hint: Use \"Direction to Location\"')}</span>
                             `;
                         }).join('')}
@@ -3994,15 +3994,15 @@ function renderWorldLocations() {
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                         <div>
                             <label style="display:block; font-size:10px; color:var(--text-3);">Danger <span class="loc-danger-out" style="color:var(--accent);">${loc.danger == null || loc.danger === '' ? 'unset' : loc.danger}</span></label>
-                            <input type="range" class="loc-danger" min="0" max="100" value="${escapeHTML(String(loc.danger == null || loc.danger === '' ? 0 : loc.danger))}" style="width:100%;">
+                            <input type="range" class="loc-danger" min="0" max="100" value="${experimentalEscapeHTML(String(loc.danger == null || loc.danger === '' ? 0 : loc.danger))}" style="width:100%;">
                         </div>
                         <div>
                             <label style="display:block; font-size:10px; color:var(--text-3);">Prosperity <span class="loc-prosperity-out" style="color:var(--accent);">${loc.prosperity == null || loc.prosperity === '' ? 'unset' : loc.prosperity}</span></label>
-                            <input type="range" class="loc-prosperity" min="0" max="100" value="${escapeHTML(String(loc.prosperity == null || loc.prosperity === '' ? 50 : loc.prosperity))}" style="width:100%;">
+                            <input type="range" class="loc-prosperity" min="0" max="100" value="${experimentalEscapeHTML(String(loc.prosperity == null || loc.prosperity === '' ? 50 : loc.prosperity))}" style="width:100%;">
                         </div>
                     </div>
                     <label style="display:block; font-size:10px; color:var(--text-3); margin-top:8px;">Standing conditions <span style="opacity:0.7;">— one per line, e.g. "under curfew"</span></label>
-                    <textarea class="form-textarea loc-conditions" rows="2" placeholder="under curfew">${escapeHTML((Array.isArray(loc.conditions) ? loc.conditions : []).map(c => typeof c === 'string' ? c : (c && c.label) || '').filter(Boolean).join('\n'))}</textarea>
+                    <textarea class="form-textarea loc-conditions" rows="2" placeholder="under curfew">${experimentalEscapeHTML((Array.isArray(loc.conditions) ? loc.conditions : []).map(c => typeof c === 'string' ? c : (c && c.label) || '').filter(Boolean).join('\n'))}</textarea>
                     <details class="loc-community-settings" ${loc.simulateSettlement === true ? 'open' : ''}>
                         <summary><span><strong>Living population</strong><small>Advanced · usually leave on Automatic</small></span><span class="world-setting-state">${loc.simulateSettlement === true ? 'Enabled' : loc.simulateSettlement === false ? 'Disabled' : 'Automatic'}</span></summary>
                         <p class="form-hint">This creates an independent population, economy and political simulation for a town, district, camp or similarly important community. Do not enable it for every building or room—contained places inherit the nearest simulated parent.</p>
@@ -4012,13 +4012,13 @@ function renderWorldLocations() {
                             <option value="disabled" ${loc.simulateSettlement === false ? 'selected' : ''}>Never simulate this place</option>
                         </select></label>
                         <div class="loc-society-seed ${loc.simulateSettlement === true ? '' : 'hidden'}" style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:7px; margin-top:8px;">
-                            <label style="font-size:10px; color:var(--text-3);">Population<input type="number" class="form-input loc-population" min="1" value="${escapeHTML(String(loc.population ?? 100))}"></label>
-                            <label style="font-size:10px; color:var(--text-3);">Food 0–100<input type="number" class="form-input loc-food" min="0" max="100" value="${escapeHTML(String(loc.food ?? 60))}"></label>
-                            <label style="font-size:10px; color:var(--text-3);">Unrest 0–100<input type="number" class="form-input loc-unrest" min="0" max="100" value="${escapeHTML(String(loc.unrest ?? 10))}"></label>
+                            <label style="font-size:10px; color:var(--text-3);">Population<input type="number" class="form-input loc-population" min="1" value="${experimentalEscapeHTML(String(loc.population ?? 100))}"></label>
+                            <label style="font-size:10px; color:var(--text-3);">Food 0–100<input type="number" class="form-input loc-food" min="0" max="100" value="${experimentalEscapeHTML(String(loc.food ?? 60))}"></label>
+                            <label style="font-size:10px; color:var(--text-3);">Unrest 0–100<input type="number" class="form-input loc-unrest" min="0" max="100" value="${experimentalEscapeHTML(String(loc.unrest ?? 10))}"></label>
                             <label style="font-size:10px; color:var(--text-3);">Starting ruler
                                 <select class="form-select loc-control-faction">
                                     <option value="">No single controller</option>
-                                    ${(world.factions || []).map(faction => `<option value="${escapeHTML(faction.id)}" ${loc.controlFactionId === faction.id ? 'selected' : ''}>${escapeHTML(faction.name)}</option>`).join('')}
+                                    ${(world.factions || []).map(faction => `<option value="${experimentalEscapeHTML(faction.id)}" ${loc.controlFactionId === faction.id ? 'selected' : ''}>${experimentalEscapeHTML(faction.name)}</option>`).join('')}
                                 </select>
                             </label>
                         </div>
@@ -4037,11 +4037,11 @@ function renderWorldLocations() {
                         </div>` : `<div class="form-hint" style="margin-bottom:6px;">Nothing sold here. Without stock, buying anything at this location fails.</div>`}
                     ${(loc.shop || []).map((stock, shopIdx) => `
                         <div style="display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr auto; gap:6px; margin-bottom:5px;">
-                            <input type="text" class="form-input shop-item" data-shop="${shopIdx}" value="${escapeHTML(stock.item || '')}" placeholder="loaf of bread">
-                            <input type="number" class="form-input shop-price" data-shop="${shopIdx}" min="0" value="${escapeHTML(String(stock.price ?? 0))}">
-                            <input type="number" class="form-input shop-qty" data-shop="${shopIdx}" min="0" value="${escapeHTML(String(stock.quantity ?? 0))}">
-                            <input type="number" class="form-input shop-max" data-shop="${shopIdx}" min="0" value="${escapeHTML(String(stock.maxQuantity ?? 0))}">
-                            <input type="number" class="form-input shop-regen" data-shop="${shopIdx}" min="0" value="${escapeHTML(String(stock.regenPerTurn ?? 0))}">
+                            <input type="text" class="form-input shop-item" data-shop="${shopIdx}" value="${experimentalEscapeHTML(stock.item || '')}" placeholder="loaf of bread">
+                            <input type="number" class="form-input shop-price" data-shop="${shopIdx}" min="0" value="${experimentalEscapeHTML(String(stock.price ?? 0))}">
+                            <input type="number" class="form-input shop-qty" data-shop="${shopIdx}" min="0" value="${experimentalEscapeHTML(String(stock.quantity ?? 0))}">
+                            <input type="number" class="form-input shop-max" data-shop="${shopIdx}" min="0" value="${experimentalEscapeHTML(String(stock.maxQuantity ?? 0))}">
+                            <input type="number" class="form-input shop-regen" data-shop="${shopIdx}" min="0" value="${experimentalEscapeHTML(String(stock.regenPerTurn ?? 0))}">
                             <button class="tool-btn del-shop-item" data-shop="${shopIdx}" style="padding:2px 8px;">✕</button>
                         </div>`).join('')}
                 </div>
@@ -4070,7 +4070,7 @@ function renderWorldLocations() {
                 const file = event.target.files?.[0];
                 if (!file) return;
                 try {
-                    const image = await normalizeUploadedImage(file, 2048, 0.86);
+                    const image = await experimentalNormalizeUploadedImage(file, 2048, 0.86);
                     registerWorldVisualVariant(world, loc, 'location',
                         addWorldMediaAsset(world, image, 'location_background', loc.name));
                     pruneWorldMediaAssets(world);
@@ -4508,11 +4508,11 @@ function renderWorldSecrets(owner, container) {
         div.className = 'secret-card';
         div.innerHTML = `
             <div class="secret-label-row">
-                <input type="text" class="form-input secret-label" style="flex:1" value="${escapeHTML(s.label || '')}" placeholder="Secret ID (e.g. secret_wall)">
+                <input type="text" class="form-input secret-label" style="flex:1" value="${experimentalEscapeHTML(s.label || '')}" placeholder="Secret ID (e.g. secret_wall)">
                 <button class="tool-btn tool-btn-danger del-secret">✕</button>
             </div>
-            <textarea class="form-textarea secret-hint secret-input-hint" rows="2" placeholder="AI HINT: What can the AI mention? (e.g. 'A draft comes from the shelf')">${escapeHTML(s.hint || '')}</textarea>
-            <textarea class="form-textarea secret-truth secret-input-truth" style="margin-top:8px;" rows="2" placeholder="LOCKED TRUTH: AI only sees this after investigate_secret call!">${escapeHTML(s.truth || '')}</textarea>
+            <textarea class="form-textarea secret-hint secret-input-hint" rows="2" placeholder="AI HINT: What can the AI mention? (e.g. 'A draft comes from the shelf')">${experimentalEscapeHTML(s.hint || '')}</textarea>
+            <textarea class="form-textarea secret-truth secret-input-truth" style="margin-top:8px;" rows="2" placeholder="LOCKED TRUTH: AI only sees this after investigate_secret call!">${experimentalEscapeHTML(s.truth || '')}</textarea>
         `;
 
         div.querySelector('.secret-label').oninput = (e) => { s.label = e.target.value; updateWorldTokenCount(); };
@@ -5613,7 +5613,7 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
     const directory = document.createElement('div');
     directory.className = 'world-directory';
     directory.innerHTML = `<div class="world-directory-toolbar">
-        <input type="search" class="form-input world-directory-search" value="${escapeHTML(view.query)}" placeholder="${isItems ? 'Search item names, descriptions, locations or tags…' : 'Search names, personas, groups, goals or tags…'}" aria-label="Search ${isItems ? 'items' : 'people'}">
+        <input type="search" class="form-input world-directory-search" value="${experimentalEscapeHTML(view.query)}" placeholder="${isItems ? 'Search item names, descriptions, locations or tags…' : 'Search names, personas, groups, goals or tags…'}" aria-label="Search ${isItems ? 'items' : 'people'}">
         ${isItems ? '' : `<select class="form-select world-directory-filter" aria-label="Filter people"><option value="all">All people</option><option value="core" ${filter === 'core' ? 'selected' : ''}>Core cast</option><option value="recurring" ${filter === 'recurring' ? 'selected' : ''}>Recurring</option><option value="background" ${filter === 'background' ? 'selected' : ''}>Background</option></select>`}
         <select class="form-select world-directory-group" aria-label="Group ${isItems ? 'items' : 'people'} by">${isItems ? `<option value="location" ${groupBy === 'location' ? 'selected' : ''}>Group: location</option>` : `<option value="household" ${groupBy === 'household' ? 'selected' : ''}>Group: households</option><option value="organization" ${groupBy === 'organization' ? 'selected' : ''}>Group: organizations</option><option value="location" ${groupBy === 'location' ? 'selected' : ''}>Group: home</option><option value="depth" ${groupBy === 'depth' ? 'selected' : ''}>Group: simulation depth</option>`}<option value="all" ${groupBy === 'all' ? 'selected' : ''}>No grouping</option></select>
         <span class="world-directory-summary">${matches.length} of ${source.length} ${isItems ? 'items' : 'people'}</span>
@@ -5624,7 +5624,7 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
         const section = document.createElement('details');
         section.className = 'world-directory-section';
         section.open = Boolean(query) || groupEntries.length <= 8 || groupIndex === 0;
-        section.innerHTML = `<summary><strong>${escapeHTML(label.replace(/^./, char => char.toUpperCase()))}</strong><span>${entities.length} ${isItems ? 'item' : 'person'}${entities.length === 1 ? '' : 's'}</span></summary><div class="world-directory-grid"></div>`;
+        section.innerHTML = `<summary><strong>${experimentalEscapeHTML(label.replace(/^./, char => char.toUpperCase()))}</strong><span>${entities.length} ${isItems ? 'item' : 'person'}${entities.length === 1 ? '' : 's'}</span></summary><div class="world-directory-grid"></div>`;
         const grid = section.querySelector('.world-directory-grid');
         entities.sort((a, b) => String(a.name).localeCompare(String(b.name))).forEach(entity => {
             const image = worldNpcPortraitSource(world, entity);
@@ -5633,10 +5633,10 @@ function renderWorldEntityDirectory(world, container, mode = 'people') {
             const card = document.createElement('button');
             card.type = 'button';
             card.className = `world-directory-card ${entity.type === 'npc' ? 'is-person' : ''}`;
-            card.innerHTML = `<div class="world-directory-card-media" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : escapeHTML((entity.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}</div>
-                <div class="world-directory-card-copy"><h3>${escapeHTML(entity.name || 'Unnamed record')}</h3>
-                <p>${escapeHTML(isItems ? (entity.description || 'No item description yet.') : (entity.persona || entity.description || 'No personality or description yet.'))}</p>
-                <div class="world-directory-badges"><span class="world-directory-badge ${depth === 'core' ? 'is-core' : ''}">${escapeHTML(isItems ? 'item' : depth)}</span>${home ? `<span class="world-directory-badge">⌂ ${escapeHTML(home.name)}</span>` : ''}${!isItems && !entity.persona ? '<span class="world-directory-badge is-warning">persona missing</span>' : ''}</div></div>`;
+            card.innerHTML = `<div class="world-directory-card-media" ${image ? `style="background-image:url('${experimentalCssUrl(image)}')"` : ''}>${image ? '' : experimentalEscapeHTML((entity.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}</div>
+                <div class="world-directory-card-copy"><h3>${experimentalEscapeHTML(entity.name || 'Unnamed record')}</h3>
+                <p>${experimentalEscapeHTML(isItems ? (entity.description || 'No item description yet.') : (entity.persona || entity.description || 'No personality or description yet.'))}</p>
+                <div class="world-directory-badges"><span class="world-directory-badge ${depth === 'core' ? 'is-core' : ''}">${experimentalEscapeHTML(isItems ? 'item' : depth)}</span>${home ? `<span class="world-directory-badge">⌂ ${experimentalEscapeHTML(home.name)}</span>` : ''}${!isItems && !entity.persona ? '<span class="world-directory-badge is-warning">persona missing</span>' : ''}</div></div>`;
             card.onclick = () => openWorldRecordInspector('entity', entity.id, '', mode);
             grid.appendChild(card);
         });
@@ -5695,18 +5695,18 @@ function renderWorldTravel() {
         methodsHost.innerHTML = config.methods.length ? config.methods.map((method, index) => `
             <div class="world-inspector-section" data-traversal-index="${index}" style="padding:14px; border:1px solid var(--border); border-radius:10px;">
                 <div style="display:grid; grid-template-columns:minmax(0,1fr) 180px auto auto; gap:8px; align-items:center;">
-                    <input class="form-input traversal-name" value="${escapeHTML(method.name)}" placeholder="Train, walking, Uber…">
+                    <input class="form-input traversal-name" value="${experimentalEscapeHTML(method.name)}" placeholder="Train, walking, Uber…">
                     <select class="form-select traversal-type"><option value="point_to_point" ${method.coverageType === 'point_to_point' ? 'selected' : ''}>Point-to-point</option><option value="route_based" ${method.coverageType === 'route_based' ? 'selected' : ''}>Route-based</option></select>
                     <label class="vh-test-check"><input type="checkbox" class="traversal-enabled" ${method.enabled ? 'checked' : ''}> Enabled</label>
                     <button class="tool-btn tool-btn-danger traversal-delete" type="button">Delete</button>
                 </div>
                 <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:10px;">
-                    <label><span class="form-label">Provider / mode tag</span><input class="form-input traversal-provider" value="${escapeHTML(method.provider || '')}" placeholder="Metro, rideshare, bicycle…"></label>
-                    <label><span class="form-label">Tags</span><input class="form-input traversal-tags" value="${escapeHTML((method.tags || []).join(', '))}" placeholder="public, accessible, fast"></label>
-                    <label><span class="form-label">Exclusions</span><textarea class="form-textarea traversal-exclusions" rows="2" placeholder="One location ID or name per line">${escapeHTML((method.exclusions || []).join('\n'))}</textarea></label>
-                    <label class="traversal-route-wrap ${method.coverageType === 'route_based' ? '' : 'hidden'}"><span class="form-label">Ordered route stops</span><textarea class="form-textarea traversal-stops" rows="2" placeholder="One stop ID or name per line">${escapeHTML((method.routeStops || []).join('\n'))}</textarea></label>
+                    <label><span class="form-label">Provider / mode tag</span><input class="form-input traversal-provider" value="${experimentalEscapeHTML(method.provider || '')}" placeholder="Metro, rideshare, bicycle…"></label>
+                    <label><span class="form-label">Tags</span><input class="form-input traversal-tags" value="${experimentalEscapeHTML((method.tags || []).join(', '))}" placeholder="public, accessible, fast"></label>
+                    <label><span class="form-label">Exclusions</span><textarea class="form-textarea traversal-exclusions" rows="2" placeholder="One location ID or name per line">${experimentalEscapeHTML((method.exclusions || []).join('\n'))}</textarea></label>
+                    <label class="traversal-route-wrap ${method.coverageType === 'route_based' ? '' : 'hidden'}"><span class="form-label">Ordered route stops</span><textarea class="form-textarea traversal-stops" rows="2" placeholder="One stop ID or name per line">${experimentalEscapeHTML((method.routeStops || []).join('\n'))}</textarea></label>
                 </div>
-                <label style="display:block; margin-top:10px;"><span class="form-label">Author notes</span><textarea class="form-textarea traversal-notes" rows="2" placeholder="Legality, accessibility, or operating notes">${escapeHTML(method.notes || '')}</textarea></label>
+                <label style="display:block; margin-top:10px;"><span class="form-label">Author notes</span><textarea class="form-textarea traversal-notes" rows="2" placeholder="Legality, accessibility, or operating notes">${experimentalEscapeHTML(method.notes || '')}</textarea></label>
                 <p class="form-hint" style="margin:8px 0 0;">${method.coverageType === 'route_based' ? 'Default-deny: only the ordered stops above are traversable.' : 'Default-allow across eligible external spatial scopes, subject to exclusions.'}</p>
             </div>`).join('') : '<div class="form-hint">No traversal methods yet. Add one to author trains, buses, walking, bicycles, elevators, or rideshare coverage.</div>';
         methodsHost.querySelectorAll('[data-traversal-index]').forEach(card => {
@@ -5735,15 +5735,15 @@ function renderWorldTravel() {
             const data = window.ExperimentalWorldsSidecarTraversal?.normalizeVehicle?.(vehicle) || vehicle.vehicle || {};
             const owner = (world.entities || []).find(entity => entity.id === data.ownerEntityId);
             return `<div class="world-inspector-section" data-vehicle-index="${index}" style="padding:14px; border:1px solid var(--border); border-radius:10px;">
-                <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 180px; gap:8px; align-items:center;"><strong>${escapeHTML(vehicle.name || 'Unnamed vehicle')}</strong><span class="form-hint">${data.persistent === false ? 'Runtime/staged' : 'Persistent entity'}</span><span class="form-hint">Owner: ${escapeHTML(owner?.name || data.ownerEntityId || 'none')}</span></div>
+                <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 180px; gap:8px; align-items:center;"><strong>${experimentalEscapeHTML(vehicle.name || 'Unnamed vehicle')}</strong><span class="form-hint">${data.persistent === false ? 'Runtime/staged' : 'Persistent entity'}</span><span class="form-hint">Owner: ${experimentalEscapeHTML(owner?.name || data.ownerEntityId || 'none')}</span></div>
                 <div style="display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:10px;">
-                    <label><span class="form-label">Parked anchor</span><select class="form-select vehicle-anchor"><option value="">No parked anchor</option>${locations.map(location => `<option value="${escapeHTML(location.id)}" ${data.parkedAnchorId === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
-                    <label><span class="form-label">Owner entity ID</span><input class="form-input vehicle-owner" value="${escapeHTML(data.ownerEntityId || '')}" placeholder="ent_…"></label>
-                    <label><span class="form-label">Access entity IDs</span><input class="form-input vehicle-access" value="${escapeHTML((data.access || []).map(entry => entry.entityId || entry).join(', '))}" placeholder="comma separated"></label>
+                    <label><span class="form-label">Parked anchor</span><select class="form-select vehicle-anchor"><option value="">No parked anchor</option>${locations.map(location => `<option value="${experimentalEscapeHTML(location.id)}" ${data.parkedAnchorId === location.id ? 'selected' : ''}>${experimentalEscapeHTML(location.name || location.id)}</option>`).join('')}</select></label>
+                    <label><span class="form-label">Owner entity ID</span><input class="form-input vehicle-owner" value="${experimentalEscapeHTML(data.ownerEntityId || '')}" placeholder="ent_…"></label>
+                    <label><span class="form-label">Access entity IDs</span><input class="form-input vehicle-access" value="${experimentalEscapeHTML((data.access || []).map(entry => entry.entityId || entry).join(', '))}" placeholder="comma separated"></label>
                 </div>
                 <div style="display:grid; grid-template-columns:minmax(0,1fr) 180px; gap:10px; margin-top:10px;">
-                    <label><span class="form-label">Interior / runtime hint</span><textarea class="form-textarea vehicle-interior" rows="2">${escapeHTML(data.interiorHint || '')}</textarea></label>
-                    <label><span class="form-label">Vehicle tags</span><input class="form-input vehicle-tags" value="${escapeHTML((data.tags || []).join(', '))}" placeholder="car, taxi, bicycle"></label>
+                    <label><span class="form-label">Interior / runtime hint</span><textarea class="form-textarea vehicle-interior" rows="2">${experimentalEscapeHTML(data.interiorHint || '')}</textarea></label>
+                    <label><span class="form-label">Vehicle tags</span><input class="form-input vehicle-tags" value="${experimentalEscapeHTML((data.tags || []).join(', '))}" placeholder="car, taxi, bicycle"></label>
                 </div>
                 <label class="vh-test-check" style="margin-top:8px;"><input type="checkbox" class="vehicle-persistent" ${data.persistent !== false ? 'checked' : ''}> Persistent vehicle (uncheck only for authored staged/runtime fixtures)</label>
             </div>`;
@@ -5767,7 +5767,7 @@ function renderWorldTravel() {
     }
     const sessions = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
     const journeys = sessions.flatMap(session => ((window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, session)?.traversalState?.journeys) || []).map(journey => ({ ...journey, sessionName: session.name || session.id }))).slice(-40).reverse();
-    if (journeysHost) journeysHost.innerHTML = journeys.length ? journeys.map(journey => `<div style="padding:10px 12px; border:1px solid var(--border); border-radius:8px;"><strong>${escapeHTML(journey.status || 'prepared')}</strong> · ${escapeHTML(journey.sessionName)} · ${escapeHTML(journey.methodId || 'untyped journey')}<br><span class="form-hint">${escapeHTML(locationName(journey.originAnchorId))} → ${escapeHTML(locationName(journey.destinationAnchorId))} · occupants: ${escapeHTML((journey.occupants || []).join(', ') || 'none')} ${journey.runtimeContainer ? `· runtime ${escapeHTML(journey.runtimeContainer.kind || 'vehicle')}` : ''}</span></div>`).join('') : '<div class="form-hint">No journeys have been staged or completed in this world yet.</div>';
+    if (journeysHost) journeysHost.innerHTML = journeys.length ? journeys.map(journey => `<div style="padding:10px 12px; border:1px solid var(--border); border-radius:8px;"><strong>${experimentalEscapeHTML(journey.status || 'prepared')}</strong> · ${experimentalEscapeHTML(journey.sessionName)} · ${experimentalEscapeHTML(journey.methodId || 'untyped journey')}<br><span class="form-hint">${experimentalEscapeHTML(locationName(journey.originAnchorId))} → ${experimentalEscapeHTML(locationName(journey.destinationAnchorId))} · occupants: ${experimentalEscapeHTML((journey.occupants || []).join(', ') || 'none')} ${journey.runtimeContainer ? `· runtime ${experimentalEscapeHTML(journey.runtimeContainer.kind || 'vehicle')}` : ''}</span></div>`).join('') : '<div class="form-hint">No journeys have been staged or completed in this world yet.</div>';
 }
 
 function renderWorldItems() {
@@ -5803,7 +5803,7 @@ function renderWorldEntities(mode = 'people') {
 
         div.innerHTML = `
             <div class="world-inspector-section" data-inspector-section="overview" style="display:flex; gap:12px; margin-bottom:12px; align-items:center;">
-                <input type="text" class="form-input ent-name" style="flex:1" value="${escapeHTML(ent.name)}" placeholder="${ent.type === 'vehicle' ? 'Vehicle name' : ent.type === 'item' ? 'Item name' : 'Person name'}">
+                <input type="text" class="form-input ent-name" style="flex:1" value="${experimentalEscapeHTML(ent.name)}" placeholder="${ent.type === 'vehicle' ? 'Vehicle name' : ent.type === 'item' ? 'Item name' : 'Person name'}">
                 <span class="mini-tag" style="padding:8px 12px;">${ent.type === 'vehicle' ? 'Vehicle' : ent.type === 'item' ? 'Object' : 'Person'}</span>
                 ${ent.type === 'npc' ? `
                     <select class="form-select ent-simulation-depth" style="width:170px;" title="Controls simulation and context priority; every person keeps a persona.">
@@ -5818,16 +5818,16 @@ function renderWorldEntities(mode = 'people') {
             <div style="display:flex; flex-direction:column; gap:12px;">
                 <div class="world-inspector-section" data-inspector-section="overview">
                     <label class="form-label" style="font-size:0.75rem;">${ent.type === 'item' ? 'Description & purpose' : 'Appearance & public impression'}</label>
-                    <textarea class="form-textarea ent-desc" rows="2" placeholder="${ent.type === 'item' ? 'What the object looks like, what it does and why it matters…' : 'What another person notices: appearance, role, visible condition and reputation…'}">${escapeHTML(ent.description)}</textarea>
-                    ${ent.type === 'npc' ? `<label class="form-label" style="font-size:0.75rem; margin-top:10px;">Gender <span class="help-glyph" title="Stable dossier information used by visual generation and character context. Leave blank when the world has not established it; a name alone is not evidence.">?</span></label><input class="form-input ent-gender" value="${escapeHTML(ent.gender || ent.visuals?.portraitIdentityGuide?.gender || '')}" placeholder="woman, man, non-binary, or another authored description…" autocomplete="off">` : ''}
+                    <textarea class="form-textarea ent-desc" rows="2" placeholder="${ent.type === 'item' ? 'What the object looks like, what it does and why it matters…' : 'What another person notices: appearance, role, visible condition and reputation…'}">${experimentalEscapeHTML(ent.description)}</textarea>
+                    ${ent.type === 'npc' ? `<label class="form-label" style="font-size:0.75rem; margin-top:10px;">Gender <span class="help-glyph" title="Stable dossier information used by visual generation and character context. Leave blank when the world has not established it; a name alone is not evidence.">?</span></label><input class="form-input ent-gender" value="${experimentalEscapeHTML(ent.gender || ent.visuals?.portraitIdentityGuide?.gender || '')}" placeholder="woman, man, non-binary, or another authored description…" autocomplete="off">` : ''}
                     <label class="form-label" style="font-size:.72rem;margin-top:10px;">Search tags <span class="form-hint">(classification only—not relationships)</span></label>
-                    <input class="form-input ent-tags" value="${escapeHTML((ent.tags || []).join(', '))}" placeholder="${ent.type === 'item' ? 'evidence, key, weapon, fragile…' : 'student, wealthy, guard, suspicious…'}">
+                    <input class="form-input ent-tags" value="${experimentalEscapeHTML((ent.tags || []).join(', '))}" placeholder="${ent.type === 'item' ? 'evidence, key, weapon, fragile…' : 'student, wealthy, guard, suspicious…'}">
                 </div>
 
                 ${ent.type === 'npc' ? `
                     <div class="world-media-editor world-inspector-section" data-inspector-section="visuals">
-                        <div class="world-media-preview is-portrait" style="${worldNpcPortraitSource(world, ent) ? `background-image:url('${cssUrl(worldNpcPortraitSource(world, ent))}')` : ''}">
-                            ${worldNpcPortraitSource(world, ent) ? '' : escapeHTML((ent.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}
+                        <div class="world-media-preview is-portrait" style="${worldNpcPortraitSource(world, ent) ? `background-image:url('${experimentalCssUrl(worldNpcPortraitSource(world, ent))}')` : ''}">
+                            ${worldNpcPortraitSource(world, ent) ? '' : experimentalEscapeHTML((ent.name || '?').split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase())}
                         </div>
                         <div>
                             <label class="form-label" style="font-size:.75rem;">NPC Portrait</label>
@@ -5840,7 +5840,7 @@ function renderWorldEntities(mode = 'people') {
                                 <button class="tool-btn ent-portrait-clear" type="button" ${ent.visuals?.portraitAssetId ? '' : 'disabled'}>Clear</button>
                             </div>
                         </div>
-                        <div class="world-inline-outfits" data-entity-id="${escapeHTML(ent.id)}">
+                        <div class="world-inline-outfits" data-entity-id="${experimentalEscapeHTML(ent.id)}">
                             <div class="world-inline-outfits-head"><span class="form-label">Active outfits <span class="help-glyph" title="Select the outfit used for this character's next image generation and current visible presentation. Images stay grouped with the outfit.">?</span></span></div>
                             <div class="world-inline-outfit-list">${worldOutfits(ent).length ? worldOutfits(ent).map(outfit => {
                                 const imageIds = (outfit.imageAssetIds || []).filter(id => worldMediaSource(world, id));
@@ -5851,12 +5851,12 @@ function renderWorldEntities(mode = 'people') {
                                 const active = outfit.id === ent.visuals?.currentOutfitId;
                                 const selectedIndex = Math.max(0, imageIds.indexOf(String(ent.visuals?.portraitAssetId || '')));
                                 const imagePicker = imageIds.length
-                                    ? `<span class="world-inline-outfit-image-picker"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous ${escapeHTML(outfit.name)} image">‹</button><span class="world-inline-outfit-image-count">${selectedIndex + 1} / ${imageIds.length}</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next ${escapeHTML(outfit.name)} image">›</button></span>`
+                                    ? `<span class="world-inline-outfit-image-picker"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous ${experimentalEscapeHTML(outfit.name)} image">‹</button><span class="world-inline-outfit-image-count">${selectedIndex + 1} / ${imageIds.length}</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next ${experimentalEscapeHTML(outfit.name)} image">›</button></span>`
                                     : `<span class="world-inline-outfit-image-picker is-empty"><button type="button" class="world-inline-outfit-image-prev" aria-label="Previous image" disabled>‹</button><span class="world-inline-outfit-image-count">0 / 0</span><button type="button" class="world-inline-outfit-image-next" aria-label="Next image" disabled>›</button></span>`;
-                                return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${escapeHTML(outfit.id)}">
-                                    <div class="world-inline-outfit-image-column"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-image-open" title="Open ${escapeHTML(outfit.name)} images" ${image ? `style="background-image:url('${cssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button>${imagePicker}</div>
-                                    <div class="world-inline-outfit-copy"><input class="world-inline-outfit-name-input" value="${escapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…">
-                                    <textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…">${escapeHTML(outfit.description)}</textarea>
+                                return `<div class="world-inline-outfit-editor ${active ? 'is-active' : ''}" data-outfit-id="${experimentalEscapeHTML(outfit.id)}">
+                                    <div class="world-inline-outfit-image-column"><button type="button" class="world-inline-outfit-thumb world-inline-outfit-image-open" title="Open ${experimentalEscapeHTML(outfit.name)} images" ${image ? `style="background-image:url('${experimentalCssUrl(image)}')"` : ''}>${image ? '' : '＋'}</button>${imagePicker}</div>
+                                    <div class="world-inline-outfit-copy"><input class="world-inline-outfit-name-input" value="${experimentalEscapeHTML(outfit.name)}" aria-label="Outfit name" placeholder="Outfit name…">
+                                    <textarea class="world-inline-outfit-description-input" rows="2" aria-label="Outfit description" placeholder="What they are wearing…">${experimentalEscapeHTML(outfit.description)}</textarea>
                                     <div class="world-inline-outfit-meta"><span class="world-inline-outfit-actions"><button type="button" class="world-inline-outfit-select ${active ? 'is-current' : ''}">${active ? 'Current outfit' : 'Wear this outfit'}</button><button type="button" class="world-inline-outfit-generate">Generate</button><button type="button" class="world-inline-outfit-delete">Delete</button></span></div></div>
                                 </div>`;
                             }).join('') : ''}<button type="button" class="world-inline-new-outfit ent-add-outfit">+ New outfit</button></div>
@@ -5865,7 +5865,7 @@ function renderWorldEntities(mode = 'people') {
                     <div class="world-inspector-section" data-inspector-section="visuals" style="display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px; align-items:end;">
                         <div>
                             <label class="form-label" style="font-size:.75rem;">Dialogue Color</label>
-                            <input class="ent-dialogue-color" type="color" value="${escapeHTML(ent.visuals?.dialogueColor || '#E63946')}" style="width:100%; height:42px; padding:3px; border:1px solid var(--border); border-radius:9px; background:var(--surface);">
+                            <input class="ent-dialogue-color" type="color" value="${experimentalEscapeHTML(ent.visuals?.dialogueColor || '#E63946')}" style="width:100%; height:42px; padding:3px; border:1px solid var(--border); border-radius:9px; background:var(--surface);">
                         </div>
                         <p class="form-hint" style="margin:0 0 8px;">Colors this NPC’s name, border and dialogue panel in Cinematic mode. Stored with the world.</p>
                     </div>
@@ -5874,7 +5874,7 @@ function renderWorldEntities(mode = 'people') {
                 ${ent.type === 'npc' ? `
                     <div class="world-inspector-section" data-inspector-section="persona">
                         <label class="form-label" style="font-size:0.75rem; color:var(--red);">Persona &amp; voice</label>
-                        <textarea class="form-textarea ent-persona" rows="6" placeholder="Temperament, values, contradictions, mannerisms, speech rhythm, boundaries and how they behave under pressure…">${escapeHTML(ent.persona || '')}</textarea>
+                        <textarea class="form-textarea ent-persona" rows="6" placeholder="Temperament, values, contradictions, mannerisms, speech rhythm, boundaries and how they behave under pressure…">${experimentalEscapeHTML(ent.persona || '')}</textarea>
                         <p class="form-hint">Every person has a persona. Simulation depth controls priority—not whether their personality exists.</p>
                     </div>
                 ` : ''}
@@ -5882,7 +5882,7 @@ function renderWorldEntities(mode = 'people') {
                     <div class="world-inspector-section" data-inspector-section="simulation" style="display:grid; grid-template-columns:minmax(0, 1fr) 150px; gap:12px;">
                         <div>
                             <label class="form-label" style="font-size:0.75rem; color:var(--accent);">Starting Living World Agenda</label>
-                            <textarea class="form-textarea ent-goal" rows="2" placeholder="A persistent goal this character pursues off-screen...">${escapeHTML(ent.goal || ent.agenda || '')}</textarea>
+                            <textarea class="form-textarea ent-goal" rows="2" placeholder="A persistent goal this character pursues off-screen...">${experimentalEscapeHTML(ent.goal || ent.agenda || '')}</textarea>
                         </div>
                         <div>
                             <label class="form-label" style="font-size:0.75rem;">Autonomy</label>
@@ -5902,24 +5902,24 @@ function renderWorldEntities(mode = 'people') {
                             <label class="form-label" style="font-size:0.72rem; margin:0;">Beats — the concrete things they do, one per line</label>
                             <button class="btn btn-ghost ent-generate-beats" data-idx="${idx}" style="font-size:0.65rem; padding:3px 8px; white-space:nowrap;">✨ Generate</button>
                         </div>
-                        <textarea class="form-textarea ent-goal-steps" rows="4" placeholder="asked the mason about the old seal&#10;copied the seal onto wax&#10;bought a crowbar and told no one">${escapeHTML((ent.goalSteps || []).join('\n'))}</textarea>
+                        <textarea class="form-textarea ent-goal-steps" rows="4" placeholder="asked the mason about the old seal&#10;copied the seal onto wax&#10;bought a crowbar and told no one">${experimentalEscapeHTML((ent.goalSteps || []).join('\n'))}</textarea>
                         <div class="form-hint" style="margin-top:4px;">Each beat is reported once, in order, as something the player can later discover. Without these the world can only say "made progress".</div>
 
                         <label class="form-label" style="font-size:0.72rem; margin-top:10px;">What they turn to next, one per line</label>
-                        <textarea class="form-textarea ent-goal-pool" rows="2" placeholder="Stand watch over the village&#10;Find out who paid the rider">${escapeHTML((ent.goalPool || []).map(entry => typeof entry === 'string' ? entry : (entry?.goal || '')).filter(Boolean).join('\n'))}</textarea>
+                        <textarea class="form-textarea ent-goal-pool" rows="2" placeholder="Stand watch over the village&#10;Find out who paid the rider">${experimentalEscapeHTML((ent.goalPool || []).map(entry => typeof entry === 'string' ? entry : (entry?.goal || '')).filter(Boolean).join('\n'))}</textarea>
                         <div class="form-hint" style="margin-top:4px;">When this agenda resolves they take the next one up, instead of going inert for the rest of the campaign.</div>
 
                         <div style="display:flex; gap:12px; margin-top:10px;">
                             <div style="flex:1;">
                                 <label class="form-label" style="font-size:0.72rem;">Difficulty (0–100)</label>
                                 <input type="number" class="form-input ent-goal-difficulty" min="0" max="100" step="5"
-                                       value="${ent.goalDifficulty == null ? 50 : escapeHTML(String(ent.goalDifficulty))}">
+                                       value="${ent.goalDifficulty == null ? 50 : experimentalEscapeHTML(String(ent.goalDifficulty))}">
                                 <div class="form-hint">Higher is slower going.</div>
                             </div>
                             <div style="flex:1;">
                                 <label class="form-label" style="font-size:0.72rem;">Deadline turn <span class="form-hint">(optional)</span></label>
                                 <input type="number" class="form-input ent-goal-deadline" min="1" step="1"
-                                       value="${ent.goalDeadlineTurn ? escapeHTML(String(ent.goalDeadlineTurn)) : ''}" placeholder="none">
+                                       value="${ent.goalDeadlineTurn ? experimentalEscapeHTML(String(ent.goalDeadlineTurn)) : ''}" placeholder="none">
                                 <div class="form-hint">Miss it and the agenda fails.</div>
                             </div>
                         </div>
@@ -5933,7 +5933,7 @@ function renderWorldEntities(mode = 'people') {
                     <select class="form-select ent-vendor">
                         <option value="">Not a vendor</option>
                         ${(ExperimentalWorldsState.editingWorld.locations || []).map(location => `
-                            <option value="${escapeHTML(location.id)}" ${ent.vendorFor === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}${(location.shop || []).length ? ` (${location.shop.length})` : ' — no shop yet'}</option>`).join('')}
+                            <option value="${experimentalEscapeHTML(location.id)}" ${ent.vendorFor === location.id ? 'selected' : ''}>${experimentalEscapeHTML(location.name || location.id)}${(location.shop || []).length ? ` (${location.shop.length})` : ' — no shop yet'}</option>`).join('')}
                     </select>
                 </div>
                 <div style="flex:1;">
@@ -5941,20 +5941,20 @@ function renderWorldEntities(mode = 'people') {
                     <select class="form-select ent-faction">
                         <option value="">Unaffiliated</option>
                         ${(ExperimentalWorldsState.editingWorld.factions || []).map(faction => `
-                            <option value="${escapeHTML(faction.id)}" ${ent.factionId === faction.id ? 'selected' : ''}>${escapeHTML(faction.name || faction.id)}</option>`).join('')}
+                            <option value="${experimentalEscapeHTML(faction.id)}" ${ent.factionId === faction.id ? 'selected' : ''}>${experimentalEscapeHTML(faction.name || faction.id)}</option>`).join('')}
                     </select>
                 </div>
                 <div style="flex:1;">
                     <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Initial Location · Canon Link</label>
-                    <select class="form-select ent-loc"><option value="">No initial location</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
+                    <select class="form-select ent-loc"><option value="">No initial location</option>${world.locations.map(location => `<option value="${experimentalEscapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${experimentalEscapeHTML(location.name || location.id)}</option>`).join('')}</select>
                 </div>
                 <div style="flex:1;">
                     <label style="display:block; font-size: 10px; color: var(--text-3); margin-bottom: 2px;">Home Location · Canon Link</label>
-                    <select class="form-select ent-home"><option value="">No home location</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.homeLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
+                    <select class="form-select ent-home"><option value="">No home location</option>${world.locations.map(location => `<option value="${experimentalEscapeHTML(location.id)}" ${getLocationRef(world, ent.homeLocation)?.id === location.id ? 'selected' : ''}>${experimentalEscapeHTML(location.name || location.id)}</option>`).join('')}</select>
                 </div>
             </div>` : `<div class="world-inspector-section" data-inspector-section="placement" style="margin-top:12px;">
                 <label class="form-label">Located at · Canon Link</label>
-                <select class="form-select ent-loc"><option value="">Unplaced item</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select>
+                <select class="form-select ent-loc"><option value="">Unplaced item</option>${world.locations.map(location => `<option value="${experimentalEscapeHTML(location.id)}" ${getLocationRef(world, ent.startLocation)?.id === location.id ? 'selected' : ''}>${experimentalEscapeHTML(location.name || location.id)}</option>`).join('')}</select>
                 <p class="form-hint">This is where the object exists at the start of a new session. It is not a person, household member or autonomous actor.</p>
             </div>`}
             ${ent.type === 'npc' ? `<div class="world-inspector-section" data-inspector-section="overview" style="margin-top:12px;">
@@ -5964,19 +5964,19 @@ function renderWorldEntities(mode = 'people') {
                     const owners = Array.isArray(vehicle.vehicle?.owners) ? vehicle.vehicle.owners : [];
                     const hasAccess = access.some(entry => (entry.entityId || entry) === ent.id);
                     const owns = owners.some(entry => (entry.entityId || entry) === ent.id);
-                    return `<label class="canon-link"><input type="checkbox" class="ent-vehicle-owned" data-vehicle-id="${escapeHTML(vehicle.id)}" ${owns ? 'checked' : ''}> Owns ${escapeHTML(vehicle.name || vehicle.id)}</label><label class="canon-link"><input type="checkbox" class="ent-vehicle-access-grant" data-vehicle-id="${escapeHTML(vehicle.id)}" ${hasAccess ? 'checked' : ''}> Access</label>`;
+                    return `<label class="canon-link"><input type="checkbox" class="ent-vehicle-owned" data-vehicle-id="${experimentalEscapeHTML(vehicle.id)}" ${owns ? 'checked' : ''}> Owns ${experimentalEscapeHTML(vehicle.name || vehicle.id)}</label><label class="canon-link"><input type="checkbox" class="ent-vehicle-access-grant" data-vehicle-id="${experimentalEscapeHTML(vehicle.id)}" ${hasAccess ? 'checked' : ''}> Access</label>`;
                 }).join('') : '<span class="form-hint">Create a Vehicle in Items & Objects first.</span>'}</div>
                 <p class="form-hint">Ownership persists across parked and moving states. Access grants use the same vehicle entity; rideshares remain temporary runtime containers.</p>
             </div>` : ''}
             ${ent.type === 'vehicle' ? `<div class="world-inspector-section" data-inspector-section="placement" style="margin-top:12px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;">
-                <div><label class="form-label">Parked anchor · Canon Link</label><select class="form-select ent-vehicle-anchor"><option value="">No parked anchor</option>${world.locations.map(location => `<option value="${escapeHTML(location.id)}" ${ent.vehicle?.parkedAnchorId === location.id ? 'selected' : ''}>${escapeHTML(location.name || location.id)}</option>`).join('')}</select></div>
-                <div><label class="form-label">Owners & access</label><input class="form-input ent-vehicle-access" value="${escapeHTML((ent.vehicle?.access || []).map(entry => entry.entityId || entry).join(', '))}" placeholder="entity IDs with access"></div>
+                <div><label class="form-label">Parked anchor · Canon Link</label><select class="form-select ent-vehicle-anchor"><option value="">No parked anchor</option>${world.locations.map(location => `<option value="${experimentalEscapeHTML(location.id)}" ${ent.vehicle?.parkedAnchorId === location.id ? 'selected' : ''}>${experimentalEscapeHTML(location.name || location.id)}</option>`).join('')}</select></div>
+                <div><label class="form-label">Owners & access</label><input class="form-input ent-vehicle-access" value="${experimentalEscapeHTML((ent.vehicle?.access || []).map(entry => entry.entityId || entry).join(', '))}" placeholder="entity IDs with access"></div>
                 <label class="vh-test-check"><input class="ent-vehicle-persistent" type="checkbox" ${ent.vehicle?.persistent !== false ? 'checked' : ''}> Persistent personal vehicle</label>
                 <p class="form-hint" style="margin:0;">Moving vehicles become runtime journey containers. They are not authored map locations.</p>
             </div>` : ''}
             ${ent.type === 'npc' ? `<div class="world-inspector-section" data-inspector-section="relationships" style="margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:12px;">
                 <label class="form-label">Households, families &amp; organizations</label>
-                <div class="canon-link-row ent-group-links">${world.groups.length ? world.groups.map(group => `<label class="canon-link"><input type="checkbox" class="ent-group" value="${escapeHTML(group.id)}" ${(ent.groupIds || []).includes(group.id) ? 'checked' : ''}> ${escapeHTML(group.name)} · ${escapeHTML(group.type)}</label>`).join('') : '<span class="form-hint">No groups yet. Create one below, then reuse it across the cast.</span>'}</div>
+                <div class="canon-link-row ent-group-links">${world.groups.length ? world.groups.map(group => `<label class="canon-link"><input type="checkbox" class="ent-group" value="${experimentalEscapeHTML(group.id)}" ${(ent.groupIds || []).includes(group.id) ? 'checked' : ''}> ${experimentalEscapeHTML(group.name)} · ${experimentalEscapeHTML(group.type)}</label>`).join('') : '<span class="form-hint">No groups yet. Create one below, then reuse it across the cast.</span>'}</div>
                 <div style="display:grid;grid-template-columns:minmax(0,1fr) 150px auto;gap:8px;margin-top:10px;"><input class="form-input ent-new-group-name" placeholder="New household or group name"><select class="form-select ent-new-group-type"><option value="household">Household</option><option value="family">Family</option><option value="organization">Organization</option><option value="crew">Crew / team</option><option value="other">Other</option></select><button type="button" class="tool-btn ent-create-group">+ Create</button></div>
             </div>` : ''}
             ${ent.type === 'npc' ? `
@@ -5989,7 +5989,7 @@ function renderWorldEntities(mode = 'people') {
                             .filter(other => other.type === 'npc' && other.id !== ent.id
                                 && !(ExperimentalWorldsState.editingWorld.relationships || []).some(rel =>
                                     relationshipKey(rel.a, rel.b) === relationshipKey(ent.id, other.id)))
-                            .map(other => `<option value="${escapeHTML(other.id)}">${escapeHTML(other.name || other.id)}</option>`).join('')}
+                            .map(other => `<option value="${experimentalEscapeHTML(other.id)}">${experimentalEscapeHTML(other.name || other.id)}</option>`).join('')}
                     </select>
                 </div>
                 ${(() => {
@@ -6004,10 +6004,10 @@ function renderWorldEntities(mode = 'people') {
                         const other = (ExperimentalWorldsState.editingWorld.entities || []).find(e => e.id === otherId);
                         return `
                         <div style="display:grid; grid-template-columns:1.1fr 1fr 1.6fr 70px auto; gap:6px; align-items:center; margin-bottom:5px;">
-                            <div style="font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(other?.name || otherId)}</div>
-                            <input type="text" class="form-input rel-label" data-rel="${relIdx}" value="${escapeHTML(rel.label || '')}" placeholder="wife, rival…" style="font-size:11px;">
-                            <input type="range" class="rel-score" data-rel="${relIdx}" min="-100" max="100" value="${escapeHTML(String(rel.score ?? 0))}">
-                            <div class="rel-score-out" data-rel="${relIdx}" style="font-size:10px; color:var(--text-3); text-align:right;">${escapeHTML(String(rel.score ?? 0))}</div>
+                            <div style="font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${experimentalEscapeHTML(other?.name || otherId)}</div>
+                            <input type="text" class="form-input rel-label" data-rel="${relIdx}" value="${experimentalEscapeHTML(rel.label || '')}" placeholder="wife, rival…" style="font-size:11px;">
+                            <input type="range" class="rel-score" data-rel="${relIdx}" min="-100" max="100" value="${experimentalEscapeHTML(String(rel.score ?? 0))}">
+                            <div class="rel-score-out" data-rel="${relIdx}" style="font-size:10px; color:var(--text-3); text-align:right;">${experimentalEscapeHTML(String(rel.score ?? 0))}</div>
                             <button class="tool-btn del-rel" data-rel="${relIdx}" style="padding:2px 8px;">✕</button>
                         </div>`;
                     }).join('');
@@ -6036,7 +6036,7 @@ function renderWorldEntities(mode = 'people') {
         div.querySelector('.ent-desc').oninput = (e) => { ent.description = e.target.value; updateWorldTokenCount(); };
         div.querySelector('.ent-gender')?.addEventListener('input', event => {
             ent.gender = String(event.target.value || '').trim().slice(0, 100);
-            ent.visuals = isPlainObject(ent.visuals) ? ent.visuals : {};
+            ent.visuals = experimentalIsPlainObject(ent.visuals) ? ent.visuals : {};
             const identity = normalizeWorldVisualIdentityGuide(ent.visuals.portraitIdentityGuide);
             if (!identity.gender || identity.gender === ent.gender || !ent.gender) identity.gender = ent.gender;
             ent.visuals.portraitIdentityGuide = identity;
@@ -6048,7 +6048,7 @@ function renderWorldEntities(mode = 'people') {
         };
         
         if (ent.type === 'npc') {
-            ent.visuals = isPlainObject(ent.visuals) ? ent.visuals : {};
+            ent.visuals = experimentalIsPlainObject(ent.visuals) ? ent.visuals : {};
             div.querySelector('.ent-dialogue-color').oninput = event => {
                 ent.visuals.dialogueColor = /^#[0-9a-f]{6}$/i.test(event.target.value)
                     ? event.target.value.toUpperCase() : '';
@@ -6059,7 +6059,7 @@ function renderWorldEntities(mode = 'people') {
                 const file = event.target.files?.[0];
                 if (!file) return;
                 try {
-                    const image = await normalizeUploadedImage(file, 2048, 0.88);
+                    const image = await experimentalNormalizeUploadedImage(file, 2048, 0.88);
                     registerWorldVisualVariant(world, ent, 'npc',
                         addWorldMediaAsset(world, image, 'npc_portrait', ent.name));
                     // Uploads can arrive at any aspect ratio: derive a
@@ -6114,7 +6114,7 @@ function renderWorldEntities(mode = 'people') {
                     const imageButton = card.querySelector('.world-inline-outfit-image-open');
                     const source = worldMediaSource(world, imageIds[nextIndex]);
                     if (imageButton) {
-                        imageButton.style.backgroundImage = source ? `url('${cssUrl(source)}')` : '';
+                        imageButton.style.backgroundImage = source ? `url('${experimentalCssUrl(source)}')` : '';
                         imageButton.textContent = source ? '' : '＋';
                     }
                     const count = card.querySelector('.world-inline-outfit-image-count');
@@ -6383,7 +6383,7 @@ function renderWorldFactions() {
         div.className = 'loc-card';
         div.innerHTML = `
             <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
-                <input type="text" class="form-input faction-name" value="${escapeHTML(faction.name || '')}" placeholder="The Ashen Hand" style="font-weight:700;">
+                <input type="text" class="form-input faction-name" value="${experimentalEscapeHTML(faction.name || '')}" placeholder="The Ashen Hand" style="font-weight:700;">
                 <select class="form-select faction-status" style="max-width:140px;">
                     ${FACTION_STATUSES.map(status => `
                         <option value="${status}" ${faction.status === status ? 'selected' : ''}>${status[0].toUpperCase()}${status.slice(1)}</option>`).join('')}
@@ -6391,12 +6391,12 @@ function renderWorldFactions() {
                 <button class="tool-btn del-faction" title="Delete faction">✕</button>
             </div>
             <div class="form-hint" style="margin:-4px 0 8px;">
-                id <code>${escapeHTML(faction.id)}</code> ·
+                id <code>${experimentalEscapeHTML(faction.id)}</code> ·
                 ${members.length ? `${members.length} member${members.length === 1 ? '' : 's'}` : 'no members yet'} ·
                 ${territoryNames.length ? `${territoryNames.length} holding${territoryNames.length === 1 ? '' : 's'}` : 'holds no ground'}
             </div>
 
-            <textarea class="form-textarea faction-desc" rows="2" placeholder="Who they are and how the world sees them.">${escapeHTML(faction.description || '')}</textarea>
+            <textarea class="form-textarea faction-desc" rows="2" placeholder="Who they are and how the world sees them.">${experimentalEscapeHTML(faction.description || '')}</textarea>
 
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-top:10px;">
                 <div>
@@ -6409,15 +6409,15 @@ function renderWorldFactions() {
                 </div>
                 <div>
                     <label style="display:block; font-size:10px; color:var(--text-3);">Resources <span style="opacity:0.7;">— coin, arms, supply</span></label>
-                    <input type="number" class="form-input faction-resources" min="0" value="${escapeHTML(String(faction.resources))}">
+                    <input type="number" class="form-input faction-resources" min="0" value="${experimentalEscapeHTML(String(faction.resources))}">
                 </div>
             </div>
 
             <div style="margin-top:10px;">
                 <label style="display:block; font-size:10px; color:var(--text-3);">Current aim</label>
-                <input type="text" class="form-input faction-goal" value="${escapeHTML(faction.goal || '')}" placeholder="Seize the river crossing before the thaw">
+                <input type="text" class="form-input faction-goal" value="${experimentalEscapeHTML(faction.goal || '')}" placeholder="Seize the river crossing before the thaw">
                 <label style="display:block; font-size:10px; color:var(--text-3); margin-top:8px;">Later aims <span style="opacity:0.7;">— one per line; taken up when the current one is won or lost</span></label>
-                <textarea class="form-textarea faction-goal-pool" rows="2" placeholder="Buy the toll rights&#10;Put their own claimant on the seat">${escapeHTML((faction.goalPool || []).join('\n'))}</textarea>
+                <textarea class="form-textarea faction-goal-pool" rows="2" placeholder="Buy the toll rights&#10;Put their own claimant on the seat">${experimentalEscapeHTML((faction.goalPool || []).join('\n'))}</textarea>
             </div>
 
             <div class="secret-group" style="border-color:var(--border);">
@@ -6434,9 +6434,9 @@ function renderWorldFactions() {
                     const score = (faction.relations.find(relation => relation.factionId === other.id) || {}).score || 0;
                     return `
                     <div style="display:grid; grid-template-columns:1fr 2fr 90px; gap:8px; align-items:center; margin-bottom:5px;">
-                        <div style="font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(other.name || other.id)}</div>
-                        <input type="range" class="faction-relation" data-other="${escapeHTML(other.id)}" min="-100" max="100" value="${score}">
-                        <div class="faction-relation-out" data-other="${escapeHTML(other.id)}" style="font-size:10px; color:var(--text-3); text-align:right;">${factionRelationLabel(score)} (${score})</div>
+                        <div style="font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${experimentalEscapeHTML(other.name || other.id)}</div>
+                        <input type="range" class="faction-relation" data-other="${experimentalEscapeHTML(other.id)}" min="-100" max="100" value="${score}">
+                        <div class="faction-relation-out" data-other="${experimentalEscapeHTML(other.id)}" style="font-size:10px; color:var(--text-3); text-align:right;">${factionRelationLabel(score)} (${score})</div>
                     </div>`;
                 }).join('') + `<div class="form-hint" style="margin-top:4px;">Standing is mutual — setting it here sets it on both sides, which is how the world then drifts it.</div>`
                 : `<div class="form-hint">Add a second faction to set who stands with whom.</div>`}
@@ -6465,13 +6465,13 @@ function renderWorldFactions() {
                 return `
                 <div style="margin-bottom:6px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:10px; color:var(--text-3); text-transform:uppercase; letter-spacing:0.04em;">
-                        <input type="checkbox" class="faction-region-all" data-region="${escapeHTML(region)}" ${allHeld ? 'checked' : ''}>
-                        ${escapeHTML(region)}
+                        <input type="checkbox" class="faction-region-all" data-region="${experimentalEscapeHTML(region)}" ${allHeld ? 'checked' : ''}>
+                        ${experimentalEscapeHTML(region)}
                     </label>
                     ${inRegion.map(location => `
                         <label style="display:flex; align-items:center; gap:6px; font-size:11px; padding-left:14px;">
-                            <input type="checkbox" class="faction-territory" data-loc="${escapeHTML(location.id)}" ${faction.territory.includes(location.id) ? 'checked' : ''}>
-                            ${escapeHTML(location.name || location.id)}
+                            <input type="checkbox" class="faction-territory" data-loc="${experimentalEscapeHTML(location.id)}" ${faction.territory.includes(location.id) ? 'checked' : ''}>
+                            ${experimentalEscapeHTML(location.name || location.id)}
                         </label>`).join('')}
                 </div>`;
             }).join('');
@@ -6630,9 +6630,9 @@ function renderWorldSandboxStudio() {
         return;
     }
     const locationOptions = (world.locations || []).map(location =>
-        `<option value="${escapeHTML(location.id)}">${escapeHTML(location.name)}</option>`).join('');
+        `<option value="${experimentalEscapeHTML(location.id)}">${experimentalEscapeHTML(location.name)}</option>`).join('');
     const factionOptions = (world.factions || []).map(faction =>
-        `<option value="${escapeHTML(faction.id)}">${escapeHTML(faction.name)}</option>`).join('');
+        `<option value="${experimentalEscapeHTML(faction.id)}">${experimentalEscapeHTML(faction.name)}</option>`).join('');
     const ensureOptions = (id, values) => {
         let datalist = document.getElementById(id);
         if (!datalist) {
@@ -6641,7 +6641,7 @@ function renderWorldSandboxStudio() {
             document.body.appendChild(datalist);
         }
         datalist.innerHTML = [...new Set(values.filter(Boolean))]
-            .map(value => `<option value="${escapeHTML(value)}"></option>`).join('');
+            .map(value => `<option value="${experimentalEscapeHTML(value)}"></option>`).join('');
     };
     ensureOptions('world-origin-icons', ['◈', '⚔️', '👑', '🛡️', '🏹', '🪓', '🧙', '🎭', '🔧', '📚', '🌾', '💰', '🕵️', '💉', '🚀']);
     ensureOptions('world-origin-roles', ['wanderer', 'peasant', 'student', 'merchant', 'guard', 'knight', 'healer', 'criminal', 'noble', 'ruler',
@@ -6656,31 +6656,31 @@ function renderWorldSandboxStudio() {
             if (!statDefinitions.some(stat => stat.id === id)) statDefinitions.push({ id, name: id });
         });
         const statControls = statDefinitions.length
-            ? `<div class="origin-wide smart-field-group"><span class="smart-field-label">Starting stat overrides <small>Leave blank to use the world's default</small></span><div class="origin-stat-grid">${statDefinitions.map(stat => `<label><span>${escapeHTML(stat.name || stat.id)}</span><input class="form-input origin-stat-override" type="number" data-stat-id="${escapeHTML(stat.id)}" value="${life.statOverrides?.[stat.id] == null ? '' : escapeHTML(String(life.statOverrides[stat.id]))}" placeholder="Default"></label>`).join('')}</div></div>`
+            ? `<div class="origin-wide smart-field-group"><span class="smart-field-label">Starting stat overrides <small>Leave blank to use the world's default</small></span><div class="origin-stat-grid">${statDefinitions.map(stat => `<label><span>${experimentalEscapeHTML(stat.name || stat.id)}</span><input class="form-input origin-stat-override" type="number" data-stat-id="${experimentalEscapeHTML(stat.id)}" value="${life.statOverrides?.[stat.id] == null ? '' : experimentalEscapeHTML(String(life.statOverrides[stat.id]))}" placeholder="Default"></label>`).join('')}</div></div>`
             : '<div class="origin-wide form-hint">Add HUD stats under Systems to configure starting stat overrides here.</div>';
         const card = document.createElement('div');
         card.className = 'sandbox-origin-editor';
         card.innerHTML = `
             <div class="sandbox-origin-editor-grid">
-                <input class="form-input origin-name" value="${escapeHTML(life.name)}" placeholder="Starting life name">
-                <input class="form-input origin-icon" list="world-origin-icons" value="${escapeHTML(life.icon)}" placeholder="Choose an icon">
-                <input class="form-input origin-role" list="world-origin-roles" value="${escapeHTML(life.role)}" placeholder="Choose or enter a role">
-                <input class="form-input origin-rank" list="world-origin-ranks" value="${escapeHTML(life.socialRank)}" placeholder="Choose or enter a social rank">
-                <input class="form-input origin-title" value="${escapeHTML(life.title)}" placeholder="Title (optional)">
-                <input class="form-input origin-legal" list="world-origin-legal" value="${escapeHTML(life.legalStatus)}" placeholder="Choose or enter legal status">
+                <input class="form-input origin-name" value="${experimentalEscapeHTML(life.name)}" placeholder="Starting life name">
+                <input class="form-input origin-icon" list="world-origin-icons" value="${experimentalEscapeHTML(life.icon)}" placeholder="Choose an icon">
+                <input class="form-input origin-role" list="world-origin-roles" value="${experimentalEscapeHTML(life.role)}" placeholder="Choose or enter a role">
+                <input class="form-input origin-rank" list="world-origin-ranks" value="${experimentalEscapeHTML(life.socialRank)}" placeholder="Choose or enter a social rank">
+                <input class="form-input origin-title" value="${experimentalEscapeHTML(life.title)}" placeholder="Title (optional)">
+                <input class="form-input origin-legal" list="world-origin-legal" value="${experimentalEscapeHTML(life.legalStatus)}" placeholder="Choose or enter legal status">
                 <select class="form-select origin-location"><option value="">Default starting location</option>${locationOptions}</select>
                 <select class="form-select origin-faction"><option value="">No starting allegiance</option>${factionOptions}</select>
                 <input class="form-input origin-faction-rep" type="number" min="-100" max="100" value="${life.factionReputation}" placeholder="Faction reputation">
-                <textarea class="form-textarea origin-desc origin-wide" rows="2" placeholder="What this life feels like and what makes its opening distinct.">${escapeHTML(life.description)}</textarea>
-                <input class="form-input origin-inventory origin-wide" value="${escapeHTML((life.inventory || []).map(item => globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', '))}" placeholder="Starting possessions, comma separated">
+                <textarea class="form-textarea origin-desc origin-wide" rows="2" placeholder="What this life feels like and what makes its opening distinct.">${experimentalEscapeHTML(life.description)}</textarea>
+                <input class="form-input origin-inventory origin-wide" value="${experimentalEscapeHTML((life.inventory || []).map(item => globalThis.ExperimentalWorldsRpgMechanics?.itemName(item) || String(item || '')).filter(Boolean).join(', '))}" placeholder="Starting possessions, comma separated">
                 ${statControls}
-                <textarea class="form-textarea origin-obligations" rows="3" placeholder="Obligations, one per line">${escapeHTML((life.obligations || []).join('\n'))}</textarea>
-                <textarea class="form-textarea origin-privileges" rows="3" placeholder="Privileges, one per line">${escapeHTML((life.privileges || []).join('\n'))}</textarea>
-                <textarea class="form-textarea origin-skills" rows="3" placeholder="World-specific skills, one per line">${escapeHTML((life.skills || []).join('\n'))}</textarea>
-                <textarea class="form-textarea origin-perks" rows="3" placeholder="Starting perks, one per line">${escapeHTML((life.perks || []).join('\n'))}</textarea>
-                <textarea class="form-textarea origin-holdings" rows="3" placeholder="Holdings, comma separated">${escapeHTML((life.holdings || []).join(', '))}</textarea>
-                <textarea class="form-textarea origin-outfit origin-wide" rows="2" placeholder="Starting clothing / visible status">${escapeHTML(life.outfit || '')}</textarea>
-                <textarea class="form-textarea origin-intro origin-wide" rows="4" placeholder="Optional exact opening narration for this life">${escapeHTML(life.intro || '')}</textarea>
+                <textarea class="form-textarea origin-obligations" rows="3" placeholder="Obligations, one per line">${experimentalEscapeHTML((life.obligations || []).join('\n'))}</textarea>
+                <textarea class="form-textarea origin-privileges" rows="3" placeholder="Privileges, one per line">${experimentalEscapeHTML((life.privileges || []).join('\n'))}</textarea>
+                <textarea class="form-textarea origin-skills" rows="3" placeholder="World-specific skills, one per line">${experimentalEscapeHTML((life.skills || []).join('\n'))}</textarea>
+                <textarea class="form-textarea origin-perks" rows="3" placeholder="Starting perks, one per line">${experimentalEscapeHTML((life.perks || []).join('\n'))}</textarea>
+                <textarea class="form-textarea origin-holdings" rows="3" placeholder="Holdings, comma separated">${experimentalEscapeHTML((life.holdings || []).join(', '))}</textarea>
+                <textarea class="form-textarea origin-outfit origin-wide" rows="2" placeholder="Starting clothing / visible status">${experimentalEscapeHTML(life.outfit || '')}</textarea>
+                <textarea class="form-textarea origin-intro origin-wide" rows="4" placeholder="Optional exact opening narration for this life">${experimentalEscapeHTML(life.intro || '')}</textarea>
             </div>
             <div class="sandbox-origin-editor-actions"><button class="btn btn-danger delete-origin">Delete starting life</button></div>`;
         card.querySelector('.origin-location').value = life.startLocationId || '';
@@ -6713,7 +6713,7 @@ function renderWorldSandboxStudio() {
             input.onchange = event => {
                 const id = event.target.dataset.statId;
                 const raw = event.target.value.trim();
-                life.statOverrides = isPlainObject(life.statOverrides) ? life.statOverrides : {};
+                life.statOverrides = experimentalIsPlainObject(life.statOverrides) ? life.statOverrides : {};
                 if (!raw || !Number.isFinite(Number(raw))) {
                     delete life.statOverrides[id];
                     event.target.value = '';
@@ -6738,10 +6738,10 @@ function importStWorldInfoPack(world, rawData) {
     // lorebook entries. Angle-bracket routing keys (<ROUTER:...>, <BSM:...>)
     // are preserved verbatim — they do not collide with prose keyword
     // triggers and stay addressable for mechanics reference routing.
-    if (!isPlainObject(rawData)) return { added: 0, skipped: 0, error: 'not a JSON object' };
+    if (!experimentalIsPlainObject(rawData)) return { added: 0, skipped: 0, error: 'not a JSON object' };
     const rawEntries = Array.isArray(rawData.entries)
         ? rawData.entries
-        : (isPlainObject(rawData.entries) ? Object.values(rawData.entries) : null);
+        : (experimentalIsPlainObject(rawData.entries) ? Object.values(rawData.entries) : null);
     if (!rawEntries) return { added: 0, skipped: 0, error: 'no "entries" field — not a SillyTavern world-info pack' };
     const packName = String(rawData.name || 'pack').replace(/[^a-z0-9_-]+/gi, '_')
         .replace(/^_+|_+$/g, '').slice(0, 40) || 'pack';
@@ -6749,7 +6749,7 @@ function importStWorldInfoPack(world, rawData) {
     const added = [];
     let skipped = 0;
     rawEntries.forEach((raw, index) => {
-        if (!isPlainObject(raw)) { skipped += 1; return; }
+        if (!experimentalIsPlainObject(raw)) { skipped += 1; return; }
         const text = String(raw.content || '').trim();
         if (!text || raw.disable === true) { skipped += 1; return; }
         if ((world.lorebook || []).length + added.length >= 2000) { skipped += 1; return; }
@@ -6833,10 +6833,10 @@ function renderWorldLore() {
         
         div.innerHTML = `
             <div style="display:flex; gap:8px; margin-bottom:8px;">
-                <input type="text" class="form-input lore-key" style="flex:1" value="${escapeHTML(entry.keyword)}" placeholder="Keywords...">
+                <input type="text" class="form-input lore-key" style="flex:1" value="${experimentalEscapeHTML(entry.keyword)}" placeholder="Keywords...">
                 <button class="tool-btn del-lore">✕</button>
             </div>
-            <textarea class="form-textarea lore-text" rows="3" placeholder="Lore details...">${escapeHTML(entry.text)}</textarea>
+            <textarea class="form-textarea lore-text" rows="3" placeholder="Lore details...">${experimentalEscapeHTML(entry.text)}</textarea>
         `;
 
         div.querySelector('.lore-key').oninput = (e) => entry.keyword = e.target.value;
@@ -6887,8 +6887,8 @@ function parseWorldItemModifiers(value) {
 
 function parseSequencePlanningPacket(content, fallback = {}) {
     const raw = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-    const parsed = safeParseJSONRepair(raw);
-    const packet = isPlainObject(parsed) ? parsed : {};
+    const parsed = experimentalSafeParseJSONRepair(raw);
+    const packet = experimentalIsPlainObject(parsed) ? parsed : {};
     return {
         title: String(packet.title || fallback.title || 'New sequence').trim().slice(0, 180),
         sceneTitle: String(packet.sceneTitle || packet.scene_title || fallback.sceneTitle || 'New scene').trim().slice(0, 180),
@@ -6940,7 +6940,7 @@ async function requestSequenceClosureReconciliation(world, sess, options = {}) {
     const model = world.model || ExperimentalWorldsState.globalSettings.defaultModel;
     const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.attributionHeaders() }, body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: 1000, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Reconcile sequence closure.' }] }, world, { scope: 'sidecar' })) });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Sequence closure failed (${response.status})`);
-    const parsed = safeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
+    const parsed = experimentalSafeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
     const reconciliation = { status: ['ready', 'blocked', 'needs_author'].includes(parsed.status) ? parsed.status : 'needs_author', summary: String(parsed.summary || '').slice(0, 2000), blockingQuestionIds: Array.isArray(parsed.blockingQuestionIds) ? parsed.blockingQuestionIds.slice(0, 30) : [], provisionalReview: String(parsed.provisionalReview || '').slice(0, 1200), generatedAt: new Date().toISOString(), provenance: { source: 'sequence_closure_reconciliation', model } };
     sequence.closure = { ...(sequence.closure || {}), reconciliation };
     (Array.isArray(parsed.questions) ? parsed.questions : []).slice(0, 8).forEach(question => queueSidecarQuestion(world, sess, question.prompt || 'Closure clarification required.', reconciliation.summary, { id: question.id || '', origin: 'sequence_closure', target: 'user', priority: question.blocking ? 'high' : 'medium', blocking: question.blocking === true, scope: 'sequence', sequenceId: sequence.id }));
@@ -6958,7 +6958,7 @@ async function requestSceneBoundaryReview(world, sess, options = {}) {
     const prompt = `[SCENE BOUNDARY REVIEW]\nDetermine whether a material circumstance change warrants proposing a new scene. Do not mutate canon. Return JSON only: {"shouldClose":true|false,"title":"short title","mode":"continuous|discontinuous","evidence":"why","questionIds":["existing IDs"]}. A scene boundary is a proposal for author review, never an automatic close.\nREASON: ${String(options.reason || 'author requested review').slice(0, 500)}\nPACKET: ${JSON.stringify(packet)}\nRECENT TURNS: ${JSON.stringify((protocol.turns || []).slice(-8).map(turn => ({ id: turn.id, narration: String(turn.narration || '').slice(0, 1000), sceneId: turn.sceneId })))} `;
     const response = await fetch(ExperimentalWorldsHost.apiBase() + '/chat/completions', { method: 'POST', signal: options.signal, headers: { ...ExperimentalWorldsHost.authHeaders(), 'Content-Type': 'application/json', ...ExperimentalWorldsHost.attributionHeaders() }, body: JSON.stringify(ExperimentalWorldsHost.applyOpenRouterRouting({ model, max_tokens: 700, temperature: 0, messages: [{ role: 'system', content: prompt }, { role: 'user', content: 'Review the current scene boundary.' }] }, world, { scope: 'sidecar' })) });
     if (!response.ok) throw new Error((await response.text()).slice(0, 800) || `Scene review failed (${response.status})`);
-    const parsed = safeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
+    const parsed = experimentalSafeParseJSONRepair((await response.json())?.choices?.[0]?.message?.content || '{}') || {};
     const review = { id: `scene_review_${Date.now().toString(36)}`, sceneId: hierarchy.scene.id, shouldClose: parsed.shouldClose === true, title: String(parsed.title || 'New scene').slice(0, 180), mode: parsed.mode === 'discontinuous' ? 'discontinuous' : 'continuous', evidence: String(parsed.evidence || '').slice(0, 1600), questionIds: Array.isArray(parsed.questionIds) ? parsed.questionIds.slice(0, 12) : [], status: 'proposed', createdAt: new Date().toISOString(), provenance: { source: 'scene_boundary_review', model, reason: options.reason || 'author_requested' } };
     protocol.sceneBoundaryReviews = Array.isArray(protocol.sceneBoundaryReviews) ? protocol.sceneBoundaryReviews : [];
     protocol.sceneBoundaryReviews.push(review); protocol.sceneBoundaryReviews = protocol.sceneBoundaryReviews.slice(-40);
@@ -7048,7 +7048,7 @@ async function promoteImpliedWorldRecord(options = {}) {
     if (readerCandidate && !eligibility?.ready && options.allowEarly !== true) {
         record.status = 'awaiting_evidence';
         record.scenePulseDisposition = 'awaiting_scene_evidence';
-        record.promotionEligibility = safeJsonClone(eligibility);
+        record.promotionEligibility = experimentalSafeJsonClone(eligibility);
         protocol.packet = buildSidecarScenePacket(world, sess);
         await ExperimentalWorldsHost.persist();
         renderWorldPlayState();
@@ -7118,8 +7118,8 @@ async function promoteImpliedWorldRecord(options = {}) {
         };
         if (readerCandidate) markScenePulseCandidatePromotionOutcome(protocol, record, canonical, 'promoted');
         protocol.refinements.push({ id: `promotion_${Date.now().toString(36)}`, createdAt: new Date().toISOString(), source: 'direct_user_refinement',
-            userText: `Promoted implied ${record.kind}: ${record.name}`, committed: true, audit: safeJsonClone(commit.audit), provisionalId: record.id, canonicalId: canonical.id,
-            candidateId: String(record.scenePulseCandidateId || ''), visualOutcome: safeJsonClone(visualOutcome || {}) });
+            userText: `Promoted implied ${record.kind}: ${record.name}`, committed: true, audit: experimentalSafeJsonClone(commit.audit), provisionalId: record.id, canonicalId: canonical.id,
+            candidateId: String(record.scenePulseCandidateId || ''), visualOutcome: experimentalSafeJsonClone(visualOutcome || {}) });
         protocol.refinements = protocol.refinements.slice(-200);
         protocol.packet = buildSidecarScenePacket(world, sess);
         await ExperimentalWorldsHost.persist();
@@ -7134,9 +7134,9 @@ function renderWorldItemCatalogControls(world = ExperimentalWorldsState.editingW
     if (!container || !world || !globalThis.ExperimentalWorldsRpgMechanics) return;
     const rules = normalizeWorldGameRules(world);
     container.innerHTML = rules.itemCatalog.length ? rules.itemCatalog.map(item => `
-        <article class="world-item-card" data-world-item-id="${escapeHTML(item.id)}">
-            <div><span>${escapeHTML(item.type)}${item.slot ? ` · ${escapeHTML(item.slot)}` : ''}</span><strong>${escapeHTML(item.name)}</strong>
-            <small>${escapeHTML([item.damage && `Damage ${item.damage}`, item.armor && `Armor ${item.armor}`, globalThis.ExperimentalWorldsRpgMechanics.describeModifiers(item)].filter(Boolean).join(' · ') || item.description || 'Narrative item')}</small></div>
+        <article class="world-item-card" data-world-item-id="${experimentalEscapeHTML(item.id)}">
+            <div><span>${experimentalEscapeHTML(item.type)}${item.slot ? ` · ${experimentalEscapeHTML(item.slot)}` : ''}</span><strong>${experimentalEscapeHTML(item.name)}</strong>
+            <small>${experimentalEscapeHTML([item.damage && `Damage ${item.damage}`, item.armor && `Armor ${item.armor}`, globalThis.ExperimentalWorldsRpgMechanics.describeModifiers(item)].filter(Boolean).join(' · ') || item.description || 'Narrative item')}</small></div>
             <div><button class="btn btn-ghost btn-small" data-world-item-edit type="button">Edit</button><button class="btn btn-ghost btn-small" data-world-item-delete type="button">Remove</button></div>
         </article>`).join('') : '<div class="form-hint">No authored items yet. Old text inventories still work; add cards when equipment needs real stats or bonuses.</div>';
     container.querySelectorAll('[data-world-item-id]').forEach(card => {
@@ -7160,16 +7160,16 @@ function openWorldItemEditor(world, value = null) {
     if (!overlay) { overlay = document.createElement('div'); overlay.id = 'world-item-editor-overlay'; overlay.className = 'modal-overlay'; document.body.appendChild(overlay); }
     const options = globalThis.ExperimentalWorldsRpgMechanics.TYPES.map(type => `<option value="${type}" ${item.type === type ? 'selected' : ''}>${type}</option>`).join('');
     const slots = [...new Set(['', ...(rules.equipmentSlots || []), item.slot].filter(value => value !== undefined))]
-        .map(slot => `<option value="${escapeHTML(slot)}" ${item.slot === slot ? 'selected' : ''}>${escapeHTML(slot || 'Not equipable')}</option>`).join('');
+        .map(slot => `<option value="${experimentalEscapeHTML(slot)}" ${item.slot === slot ? 'selected' : ''}>${experimentalEscapeHTML(slot || 'Not equipable')}</option>`).join('');
     overlay.innerHTML = `<div class="modal world-item-editor-modal" role="dialog" aria-modal="true"><header><div><span class="vh-eyebrow">WORLD ITEM</span><h2>${value ? 'Edit item' : 'Create item'}</h2><p>One reusable definition for inventories, shops, rewards and loadouts.</p></div><button class="labs-close-btn" data-item-close type="button">✕</button></header><div class="world-item-editor-grid">
-        <label><span>Name</span><input class="form-input" data-item-name value="${escapeHTML(item.name)}"></label><label><span>Type</span><select class="form-select" data-item-type>${options}</select></label>
+        <label><span>Name</span><input class="form-input" data-item-name value="${experimentalEscapeHTML(item.name)}"></label><label><span>Type</span><select class="form-select" data-item-type>${options}</select></label>
         <label><span>Equipment slot</span><select class="form-select" data-item-slot>${slots}</select></label><label><span>Quantity</span><input class="form-input" data-item-quantity type="number" min="1" value="${item.quantity}"></label>
-        <label><span>Damage dice</span><input class="form-input" data-item-damage value="${escapeHTML(item.damage)}" placeholder="1d8+2"></label><label><span>Damage type</span><input class="form-input" data-item-damage-type value="${escapeHTML(item.damageType)}" placeholder="slashing, fire…"></label>
+        <label><span>Damage dice</span><input class="form-input" data-item-damage value="${experimentalEscapeHTML(item.damage)}" placeholder="1d8+2"></label><label><span>Damage type</span><input class="form-input" data-item-damage-type value="${experimentalEscapeHTML(item.damageType)}" placeholder="slashing, fire…"></label>
         <label><span>Armor</span><input class="form-input" data-item-armor type="number" value="${item.armor}"></label><label><span>Value / price</span><input class="form-input" data-item-value type="number" min="0" value="${item.value}"></label>
-        <label><span>Weight</span><input class="form-input" data-item-weight type="number" min="0" step="0.1" value="${item.weight}"></label><label><span>Rarity</span><input class="form-input" data-item-rarity value="${escapeHTML(item.rarity)}"></label>
-        <label class="world-item-wide"><span>Description</span><textarea class="form-textarea" data-item-description rows="3">${escapeHTML(item.description)}</textarea></label>
-        <label class="world-item-wide"><span>Mechanical bonuses · one per line</span><textarea class="form-textarea" data-item-modifiers rows="6" placeholder="checks=1&#10;stats:hp=5&#10;skills:stealth=2">${escapeHTML(worldItemModifierLines(item))}</textarea><small>checks, damage, armor, attributes:Name, skills:Name, stats:ID, defenses:Name and resources:Name are supported.</small></label>
-        <label class="world-item-wide"><span>Requirements</span><div class="world-item-inline"><input class="form-input" data-item-level type="number" min="0" value="${item.requirements?.level || 0}" placeholder="Level"><input class="form-input" data-item-requirement-text value="${escapeHTML(item.requirements?.text || '')}" placeholder="Narrative requirement"></div></label>
+        <label><span>Weight</span><input class="form-input" data-item-weight type="number" min="0" step="0.1" value="${item.weight}"></label><label><span>Rarity</span><input class="form-input" data-item-rarity value="${experimentalEscapeHTML(item.rarity)}"></label>
+        <label class="world-item-wide"><span>Description</span><textarea class="form-textarea" data-item-description rows="3">${experimentalEscapeHTML(item.description)}</textarea></label>
+        <label class="world-item-wide"><span>Mechanical bonuses · one per line</span><textarea class="form-textarea" data-item-modifiers rows="6" placeholder="checks=1&#10;stats:hp=5&#10;skills:stealth=2">${experimentalEscapeHTML(worldItemModifierLines(item))}</textarea><small>checks, damage, armor, attributes:Name, skills:Name, stats:ID, defenses:Name and resources:Name are supported.</small></label>
+        <label class="world-item-wide"><span>Requirements</span><div class="world-item-inline"><input class="form-input" data-item-level type="number" min="0" value="${item.requirements?.level || 0}" placeholder="Level"><input class="form-input" data-item-requirement-text value="${experimentalEscapeHTML(item.requirements?.text || '')}" placeholder="Narrative requirement"></div></label>
     </div><footer><button class="btn btn-ghost" data-item-cancel type="button">Cancel</button><button class="btn btn-primary" data-item-save type="button">Save item</button></footer></div>`;
     overlay.classList.remove('hidden');
     const close = () => overlay.classList.add('hidden');
@@ -7199,7 +7199,7 @@ function loadWorldGameRuleControls(world) {
     const currency = document.getElementById('w-rules-currency-stat');
     if (!vital || !currency) return;
     const options = (world.hudConfig?.stats || [])
-        .map(stat => `<option value="${escapeHTML(stat.id)}">${escapeHTML(stat.name || stat.id)}</option>`).join('');
+        .map(stat => `<option value="${experimentalEscapeHTML(stat.id)}">${experimentalEscapeHTML(stat.name || stat.id)}</option>`).join('');
     vital.innerHTML = `<option value="">None</option>${options}`;
     currency.innerHTML = `<option value="">None</option>${options}`;
     vital.value = rules.vitalStatId;
@@ -7249,7 +7249,7 @@ function saveWorldGameRuleControls(world, statIdRenames = new Map()) {
     const currencyControl = document.getElementById('w-rules-currency-stat');
     const requestedVital = statIdRenames.get(vitalControl?.value || '') || vitalControl?.value || '';
     const requestedCurrency = statIdRenames.get(currencyControl?.value || '') || currencyControl?.value || '';
-    world.gameRules = isPlainObject(world.gameRules) ? world.gameRules : {};
+    world.gameRules = experimentalIsPlainObject(world.gameRules) ? world.gameRules : {};
     world.gameRules.profileId = document.getElementById('w-rules-profile')?.value || 'custom';
     world.gameRules.modules = {};
     document.querySelectorAll('#w-rules-modules-grid [data-rule-module]').forEach(input => {
@@ -7362,27 +7362,27 @@ function renderWorldStudioStats() {
         div.innerHTML = `
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Internal ID</label>
-                <input type="text" class="form-input stat-id" value="${escapeHTML(stat.id)}" placeholder="hp">
+                <input type="text" class="form-input stat-id" value="${experimentalEscapeHTML(stat.id)}" placeholder="hp">
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Display Name</label>
-                <input type="text" class="form-input stat-name" value="${escapeHTML(stat.name)}" placeholder="Health">
+                <input type="text" class="form-input stat-name" value="${experimentalEscapeHTML(stat.name)}" placeholder="Health">
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Initial Value</label>
-                <input type="number" class="form-input stat-val" value="${escapeHTML(String(stat.value))}">
+                <input type="number" class="form-input stat-val" value="${experimentalEscapeHTML(String(stat.value))}">
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Minimum</label>
-                <input type="number" class="form-input stat-min" value="${escapeHTML(String(stat.min ?? 0))}">
+                <input type="number" class="form-input stat-min" value="${experimentalEscapeHTML(String(stat.min ?? 0))}">
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Maximum (0 = none)</label>
-                <input type="number" class="form-input stat-max" value="${escapeHTML(String(stat.max ?? 0))}" min="0">
+                <input type="number" class="form-input stat-max" value="${experimentalEscapeHTML(String(stat.max ?? 0))}" min="0">
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Color</label>
-                <input type="color" class="form-input stat-color smart-color-input" value="${escapeHTML(worldStatColorHex(stat.color))}" title="Choose the HUD color">
+                <input type="color" class="form-input stat-color smart-color-input" value="${experimentalEscapeHTML(worldStatColorHex(stat.color))}" title="Choose the HUD color">
             </div>
             <label class="stat-roll-toggle">
                 <input type="checkbox" class="stat-roll-enabled" ${rollConfig.enabled ? 'checked' : ''}>
@@ -7403,11 +7403,11 @@ function renderWorldStudioStats() {
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Direct scale</label>
-                <input type="number" class="form-input stat-roll-scale" min="1" value="${escapeHTML(String(rollConfig.scale))}">
+                <input type="number" class="form-input stat-roll-scale" min="1" value="${experimentalEscapeHTML(String(rollConfig.scale))}">
             </div>
             <div>
                 <label style="font-size:0.6rem; opacity:0.6;">Fixed modifier</label>
-                <input type="number" class="form-input stat-roll-fixed" min="-10" max="10" value="${escapeHTML(String(rollConfig.fixedModifier))}">
+                <input type="number" class="form-input stat-roll-fixed" min="-10" max="10" value="${experimentalEscapeHTML(String(rollConfig.fixedModifier))}">
             </div>
             <button class="tool-btn tool-btn-danger del-stat" style="margin-top:15px;">✕</button>
         `;
@@ -7463,15 +7463,15 @@ function renderWorlds() {
         const timelines = ExperimentalWorldsState.worldInstances?.[world.id]?.sessions || [];
         const selectedTimelineId = ExperimentalWorldsState.worldInstances?.[world.id]?.activeSessionId || timelines[0]?.id || '';
         const timelineOptions = timelines.map(session =>
-            `<option value="${escapeHTML(session.id)}"${session.id === selectedTimelineId ? ' selected' : ''}>${escapeHTML(session.name || session.id)} · ${Number(session.turnCount || 0)} turns</option>`
+            `<option value="${experimentalEscapeHTML(session.id)}"${session.id === selectedTimelineId ? ' selected' : ''}>${experimentalEscapeHTML(session.name || session.id)} · ${Number(session.turnCount || 0)} turns</option>`
         ).join('');
-        const bannerStyle = world.banner ? `background-image: url('${cssUrl(world.banner)}'); background-size: cover; background-position: center;` : `background: linear-gradient(135deg, var(--red), var(--surface));`;
+        const bannerStyle = world.banner ? `background-image: url('${experimentalCssUrl(world.banner)}'); background-size: cover; background-position: center;` : `background: linear-gradient(135deg, var(--red), var(--surface));`;
         card.innerHTML = `
             <div class="char-card-banner" style="height: 100px; ${bannerStyle}"></div>
             <div class="char-card-body">
-                <div class="char-card-name">${escapeHTML(world.name)}</div>
-                ${ExperimentalWorldsHost.worldLoadWarning(world.id) ? `<div class="world-library-warning">Needs repair · ${escapeHTML(ExperimentalWorldsHost.worldLoadWarning(world.id))}</div>` : ''}
-                <div class="char-card-desc">${escapeHTML(world.description || 'No description')}</div>
+                <div class="char-card-name">${experimentalEscapeHTML(world.name)}</div>
+                ${ExperimentalWorldsHost.worldLoadWarning(world.id) ? `<div class="world-library-warning">Needs repair · ${experimentalEscapeHTML(ExperimentalWorldsHost.worldLoadWarning(world.id))}</div>` : ''}
+                <div class="char-card-desc">${experimentalEscapeHTML(world.description || 'No description')}</div>
                 <div style="display:flex; gap:8px; margin-top:12px;">
                     <button class="btn btn-ghost btn-full enter-world-btn">Enter World →</button>
                     <button class="btn btn-ghost edit-world-btn" title="Open this world in World Studio">Edit</button>
@@ -7499,7 +7499,7 @@ function renderWorlds() {
     });
 
     const recoverable = Object.values(ExperimentalWorldsState.worldRecoverySnapshots || {})
-        .filter(snapshot => isPlainObject(snapshot?.world)
+        .filter(snapshot => experimentalIsPlainObject(snapshot?.world)
             && !ExperimentalWorldsState.worlds.some(world => world.id === snapshot.world.id)
             && String(snapshot.world.name || '').toLowerCase().includes(searchVal));
     recoverable.forEach(snapshot => {
@@ -7508,13 +7508,13 @@ function renderWorlds() {
         card.className = 'char-card world-recovery-card';
         card.innerHTML = `<div class="char-card-banner world-recovery-banner">↶</div>
             <div class="char-card-body">
-                <div class="char-card-name">${escapeHTML(world.name || 'Recovered World')}</div>
-                <div class="char-card-desc">Safety copy from ${escapeHTML(snapshot.capturedAt ? new Date(snapshot.capturedAt).toLocaleString() : 'an earlier save')}.</div>
+                <div class="char-card-name">${experimentalEscapeHTML(world.name || 'Recovered World')}</div>
+                <div class="char-card-desc">Safety copy from ${experimentalEscapeHTML(snapshot.capturedAt ? new Date(snapshot.capturedAt).toLocaleString() : 'an earlier save')}.</div>
                 <button class="btn btn-primary btn-full recover-world-card-btn">Restore World</button>
             </div>`;
         card.querySelector('.recover-world-card-btn').onclick = async () => {
             if (ExperimentalWorldsState.worlds.some(item => item.id === world.id)) return;
-            const restored = safeJsonClone(world);
+            const restored = experimentalSafeJsonClone(world);
             // World recovery belongs to the Experimental authority.  Reading
             // the host database here would make a stock-host cleanup or a
             // future upstream store change silently break this mode.
