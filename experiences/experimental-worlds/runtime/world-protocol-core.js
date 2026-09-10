@@ -982,10 +982,10 @@ function extractSidecarNarratorHandoff(value) {
 // receipt envelope, not a second reducer or mutation path. Once the normal
 // catalogue exists it remains the source of truth and replaces this shape.
 function sidecarCommitToolFor(world = null, sess = null) {
-    if (experimentalIsPlainObject(window.__hordeCommitTool)
-        && window.__hordeCommitTool?.function?.name === 'commit_world_turn'
-        && window.__hordeCommitTool?.function?.parameters) {
-        return experimentalSafeJsonClone(window.__hordeCommitTool);
+    if (experimentalIsPlainObject(window.__experimentalWorldsCommitTool)
+        && window.__experimentalWorldsCommitTool?.function?.name === 'commit_world_turn'
+        && window.__experimentalWorldsCommitTool?.function?.parameters) {
+        return experimentalSafeJsonClone(window.__experimentalWorldsCommitTool);
     }
     return {
         type: 'function',

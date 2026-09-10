@@ -262,6 +262,7 @@ const restoredPlay = restoreOptionalMultiplayerHostContract(restoreHostContract(
     // calls without pretending a host lookup remains an allowed dependency.
     .replaceAll('experimentalParseLoreKeywords', 'parseLoreKeywords')
     .replaceAll('experimentalLoreKeywordMatches', 'loreKeywordMatches')
+    .replaceAll('__experimentalWorldsCommitTool', '__hordeCommitTool')
     .replace('        saveState().catch(() => {});\n        saveState();', '        saveState().catch(() => {});\n        persistWorkspaceSoon();')
     .replace(`    document.getElementById('world-persona-btn').onclick = () => {
         if (ExperimentalWorldsHost.openSharedPersonaManager()) {
@@ -469,6 +470,7 @@ const restoredProtocol = restoreExperimentalWorkspaceListener(restoreHostContrac
     .replace(/\n\/\/ A Sidecar request is a World operation,[\s\S]*?\n}\n\nasync function runSidecarQuestionRepair/, '\nasync function runSidecarQuestionRepair')
     .replaceAll('    const requestOwner = captureExperimentalSidecarOwner(world, sess);\n', '')
     .replace(/^\s*assertExperimentalSidecarOwner\(requestOwner\);\n/gm, '')
+    .replaceAll('__experimentalWorldsCommitTool', '__hordeCommitTool')
     .replace(/\n    \/\/ Do this before Reader evidence is attached to the protocol\.[\s\S]*?\n    \/\/ that the author has left while the transport was in flight\./, '')
     .replace(/\n        \/\/ The old owner may no longer be current\.[\s\S]*?if \(error\?\.code === 'experimental_world_owner_changed'\) throw error;\n/, '\n');
 const comparedRestoredProtocol = compareSource(restoredProtocol);

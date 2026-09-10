@@ -7567,7 +7567,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         const worldStateTool = toolsConfig.find(tool => tool.function?.name === 'commit_world_turn');
         // Keep the native receipt schema available to downstream retries and
         // opening reconciliation without creating another tool definition.
-        window.__hordeCommitTool = experimentalSafeJsonClone(worldStateTool);
+        window.__experimentalWorldsCommitTool = experimentalSafeJsonClone(worldStateTool);
         const worldStateProperties = worldStateTool.function.parameters.properties;
         worldStateTool.function.description = `MANDATORY canonical receipt for every response. Propose actor-scoped events, complete ending scene/cast, entity activity, and enabled module updates (${WORLD_RULE_MODULE_KEYS.filter(key => ruleModules[key]).join(', ') || 'narrative core only'}).`;
         const removeToolFields = fields => fields.forEach(field => delete worldStateProperties[field]);
