@@ -688,32 +688,43 @@ function openRouterProvidersForDraft(scope) {
     const draft = openRouterRoutingDrafts.get(scope);
     const route = openRouterRoutingDraftValue(scope);
     const map = new Map();
-    openRouterProviderCatalog.forEach(provider => map.set(provider.slug.toLowerCase(), {
-        ...provider, available: draft?.endpointsLoaded ? false : null, endpoint: null
-    }));
-    (draft?.endpoints || []).forEach(endpoint => {
-        const key = endpoint.slug.toLowerCase();
-        const catalog = map.get(key);
-        map.set(key, {
-            slug: endpoint.slug,
-            name: catalog?.name || endpoint.name || endpoint.slug,
-            available: true,
-            endpoint
-        });
-    });
-    // OpenRouter base slugs target their endpoint variants. Preserve the exact
-    // catalog slug while attaching metrics from a matching variant.
+    const catalogBySlug = new Map(openRouterProviderCatalog.map(provider => [provider.slug.toLowerCase(), provider]));
     if (draft?.endpointsLoaded) {
-        map.forEach((provider, key) => {
-            if (provider.available) return;
-            const endpoint = openRouterEndpointForSlug(provider.slug, draft.endpoints);
-            if (endpoint) map.set(key, { ...provider, available: true, endpoint });
+        // A successful endpoint refresh is the authority for this model. Do
+        // not turn the global provider catalogue into a sea of unavailable
+        // options: expose only endpoints OpenRouter actually returned.
+        (draft.endpoints || []).forEach(endpoint => {
+            const key = endpoint.slug.toLowerCase();
+            const catalog = catalogBySlug.get(key);
+            map.set(key, {
+                slug: endpoint.slug,
+                name: catalog?.name || endpoint.name || endpoint.slug,
+                available: true,
+                endpoint
+            });
         });
+    } else {
+        // Before a model-specific refresh, the shared catalogue is still a
+        // useful discovery list, but it deliberately does not claim that any
+        // particular provider can serve this model.
+        openRouterProviderCatalog.forEach(provider => map.set(provider.slug.toLowerCase(), {
+            ...provider, available: null, endpoint: null
+        }));
     }
     route.order.forEach(slug => {
         const key = slug.toLowerCase();
-        if (!map.has(key)) map.set(key, {
-            slug, name: slug, available: draft?.endpointsLoaded ? false : null, endpoint: null
+        if (map.has(key)) return;
+        // Keep saved choices visible so a refresh never mutates an existing
+        // route. A base provider slug can represent one of the returned
+        // variants, so attach that endpoint when present.
+        const endpoint = draft?.endpointsLoaded
+            ? openRouterEndpointForSlug(slug, draft.endpoints || []) : null;
+        const catalog = catalogBySlug.get(key);
+        map.set(key, {
+            slug,
+            name: catalog?.name || endpoint?.name || slug,
+            available: endpoint ? true : (draft?.endpointsLoaded ? false : null),
+            endpoint
         });
     });
     const providers = [...map.values()];
@@ -761,7 +772,7 @@ function openRouterProviderAvailability(provider, test) {
     if (test?.ok === true) return '<span class="or-provider-live ok">live test passed</span>';
     if (test?.ok === false) return `<span class="or-provider-live fail">live test failed${test.error ? ` · ${escapeHTML(test.error)}` : ''}</span>`;
     if (provider?.available === true) return '<span class="or-provider-advisory ok">listed for this model</span>';
-    if (provider?.available === false) return '<span class="or-provider-advisory warn">not listed for this model · still selectable</span>';
+    if (provider?.available === false) return '<span class="or-provider-advisory warn">not listed for this model · retained saved selection</span>';
     return '<span class="or-provider-advisory">availability unknown</span>';
 }
 
@@ -774,6 +785,7 @@ function renderOpenRouterProviderSearchResults(scope) {
     const selected = new Set(openRouterRoutingDraftValue(scope).order.map(slug => slug.toLowerCase()));
     const providers = openRouterProvidersForDraft(scope)
         .filter(provider => !selected.has(provider.slug.toLowerCase()))
+        .filter(provider => !draft.endpointsLoaded || provider.available !== false)
         .filter(provider => !query || provider.slug.toLowerCase().includes(query) || provider.name.toLowerCase().includes(query))
         .slice(0, 40);
     if (!providers.length) {
@@ -809,6 +821,20 @@ function addOpenRouterProvider(scope, slug) {
     draft.search = '';
     persistOpenRouterRoutingDraft(scope);
     renderOpenRouterRoutingPanel(scope);
+}
+
+// A child route normally reads its parent unchanged. Selecting one of the
+// routing controls is an explicit request to diverge, though, so make that
+// transition at the point of interaction rather than leaving a control that
+// looks editable but has no effect. This applies to every scope using the
+// shared routing panel (Virtual Humans, Worlds, Studio, and Settings).
+function ensureOpenRouterRoutingOverride(scope) {
+    const draft = openRouterRoutingDrafts.get(scope);
+    if (!draft || !draft.inherit) return draft;
+    draft.inherit = false;
+    draft.routing = normalizeOpenRouterRouting(openRouterRoutingParent(scope));
+    draft.tests.clear();
+    return draft;
 }
 
 function moveOpenRouterProvider(scope, sourceSlug, targetSlug) {
@@ -867,13 +893,13 @@ function renderOpenRouterRoutingPanel(scope) {
             </div>
             <div class="or-routing-controls">
                 <label class="or-fallback-toggle"><input type="checkbox" data-or-fallback ${route.allowFallbacks ? 'checked' : ''} ${disabled || (!route.order.length ? 'disabled' : '')}> Allow unrestricted provider fallbacks</label>
-                <label><span>Latency / throughput percentile</span><select class="form-select" data-or-percentile ${disabled}>
+                <label><span>Latency / throughput percentile</span><select class="form-select" data-or-percentile>
                     <option value="p50" ${route.performancePercentile === 'p50' ? 'selected' : ''}>P50 · median</option>
                     <option value="p75" ${route.performancePercentile === 'p75' ? 'selected' : ''}>P75</option>
                     <option value="p90" ${route.performancePercentile === 'p90' ? 'selected' : ''}>P90 · default</option>
                     <option value="p99" ${route.performancePercentile === 'p99' ? 'selected' : ''}>P99</option>
                 </select></label>
-                <label><span>Rank fallbacks by</span><select class="form-select" data-or-sort ${disabled || (!route.allowFallbacks ? 'disabled' : '')}>
+                <label><span>Rank fallbacks by</span><select class="form-select" data-or-sort>
                     <option value="throughput" ${route.fallbackSort === 'throughput' ? 'selected' : ''}>Highest throughput</option>
                     <option value="latency" ${route.fallbackSort === 'latency' ? 'selected' : ''}>Lowest latency</option>
                     <option value="price" ${route.fallbackSort === 'price' ? 'selected' : ''}>Lowest price</option>
@@ -914,23 +940,37 @@ function renderOpenRouterRoutingPanel(scope) {
     };
     const fallback = host.querySelector('[data-or-fallback]');
     if (fallback) fallback.onchange = () => {
-        draft.routing.allowFallbacks = fallback.checked;
+        const activeDraft = ensureOpenRouterRoutingOverride(scope) || draft;
+        activeDraft.routing.allowFallbacks = fallback.checked;
         persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
     };
     const sort = host.querySelector('[data-or-sort]');
-    if (sort) sort.onchange = () => {
-        draft.routing.fallbackSort = OPENROUTER_ROUTING_SORTS.includes(sort.value) ? sort.value : 'throughput';
+    const applySort = () => {
+        const activeDraft = ensureOpenRouterRoutingOverride(scope) || draft;
+        activeDraft.routing.fallbackSort = OPENROUTER_ROUTING_SORTS.includes(sort.value) ? sort.value : 'throughput';
+        // Ranking only applies while fallback routing is available. Choosing a
+        // rank is affirmative intent to enable it, rather than a no-op.
+        activeDraft.routing.allowFallbacks = true;
         persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
     };
+    if (sort) {
+        sort.oninput = applySort;
+        sort.onchange = applySort;
+    }
     const percentile = host.querySelector('[data-or-percentile]');
-    if (percentile) percentile.onchange = () => {
-        draft.routing.performancePercentile = OPENROUTER_METRIC_PERCENTILES.includes(percentile.value)
+    const applyPercentile = () => {
+        const activeDraft = ensureOpenRouterRoutingOverride(scope) || draft;
+        activeDraft.routing.performancePercentile = OPENROUTER_METRIC_PERCENTILES.includes(percentile.value)
             ? percentile.value : DEFAULT_OPENROUTER_ROUTING.performancePercentile;
         persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
     };
+    if (percentile) {
+        percentile.oninput = applyPercentile;
+        percentile.onchange = applyPercentile;
+    }
     const search = host.querySelector('[data-or-search]');
     if (search) {
         search.oninput = () => {

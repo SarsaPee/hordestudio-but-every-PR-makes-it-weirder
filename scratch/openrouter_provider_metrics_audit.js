@@ -34,4 +34,19 @@ assert.match(source, /authenticatedRequested: Boolean\(authenticated\),[\s\S]*?k
 assert.match(source, /requestOpenRouterModelEndpoints\(url, \{ authenticated: true, cache: 'no-store' \}\)[\s\S]*?requestOpenRouterModelEndpoints\(url, \{ authenticated: false, cache: 'no-store' \}\)/,
     'auth comparison must bypass browser HTTP cache in both requests');
 
+assert.match(source, /function ensureOpenRouterRoutingOverride\(scope\)/,
+    'an inherited route must be able to become a local override on explicit selection');
+assert.doesNotMatch(source, /data-or-percentile \$\{disabled\}/,
+    'the percentile selector must remain actionable in inherited scopes');
+assert.doesNotMatch(source, /data-or-sort \$\{disabled \|\| \(!route\.allowFallbacks \? 'disabled' : ''\)\}/,
+    'the fallback ranking selector must remain actionable in inherited scopes');
+assert.match(source, /sort\.oninput = applySort;[\s\S]*?sort\.onchange = applySort;/,
+    'ranking selector must react consistently as its value changes');
+assert.match(source, /percentile\.oninput = applyPercentile;[\s\S]*?percentile\.onchange = applyPercentile;/,
+    'percentile selector must react consistently as its value changes');
+assert.match(source, /if \(draft\?\.endpointsLoaded\) \{[\s\S]*?expose only endpoints OpenRouter actually returned\./,
+    'a successful refresh must treat model endpoints, not the global catalogue, as the available provider set');
+assert.match(source, /\.filter\(provider => !draft\.endpointsLoaded \|\| provider\.available !== false\)/,
+    'unavailable providers must be hidden from the refreshed endpoint picker');
+
 console.log('OpenRouter provider-metrics audit passed.');
