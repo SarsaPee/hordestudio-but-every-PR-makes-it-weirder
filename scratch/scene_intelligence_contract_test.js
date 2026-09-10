@@ -309,13 +309,13 @@ assert.match(merger, /providedField\('npcRelationshipGraph'\)/, 'NPC graph cache
 assert.match(acceptedHandoff, /npcRelationshipGraph/, 'accepted handoffs must retain Reader graph data beside the source tracker');
 
 assert.match(html, /scenepulse-source-runtime\.js/, 'native source runtime must be loaded before app.js');
-assert.match(panelMount, /HordeScenePulseSourceRuntime\.mount\(host, handoff\)/, 'World HUD must mount native source runtime');
+assert.match(panelMount, /ExperimentalWorldsScenePulseSourceRuntime\.mount\(host, handoff\)/, 'World HUD must mount native source runtime');
 assert.match(panelMount, /if \(sidecar\) restoreScenePulseStatusColumnWidth\(column\);/, 'ScenePulse must restore its own compact sidebar width rather than inherit an oversized HUD column');
-assert.doesNotMatch(panelMount.slice(0, panelMount.indexOf('// Gate B adapter below')), /HordeScenePulseWorlds\.mount\(host, handoff\)/, 'native source failure must not silently fall back to the hand-drawn adapter');
+assert.doesNotMatch(panelMount.slice(0, panelMount.indexOf('// Gate B adapter below')), /ExperimentalWorldsScenePulse\.mount\(host, handoff\)/, 'native source failure must not silently fall back to the hand-drawn adapter');
 assert.match(panelMount, /intentionally not substituted with a host lookalike/, 'failure state must remain truthful');
-assert.match(panelMount, /if \((?:ExperimentalWorldsState|state)\.view !== 'worldPlay'\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount/, 'a late World redraw may not mount ScenePulse over a library route');
+assert.match(panelMount, /if \((?:ExperimentalWorldsState|state)\.view !== 'worldPlay'\)[\s\S]*?ExperimentalWorldsScenePulseSourceRuntime\?\.unmount/, 'a late World redraw may not mount ScenePulse over a library route');
 assert.match(switchViewFunction, /state\.view === 'worldPlay' && viewName !== 'worldPlay'[\s\S]*?teardownExperimentalWorldsRoute\(\)/, 'leaving World Play must invoke the explicit Experimental route teardown');
-assert.match(app, /function teardownExperimentalWorldsRoute\(\)[\s\S]*?HordeScenePulseSourceRuntime\?\.unmount[\s\S]*?ExperimentalWorldsDom\?\.clearPortal/, 'Experimental route teardown must remove the source runtime and its portal-owned document effects');
+assert.match(app, /function teardownExperimentalWorldsRoute\(\)[\s\S]*?ExperimentalWorldsScenePulseSourceRuntime\?\.unmount[\s\S]*?ExperimentalWorldsDom\?\.clearPortal/, 'Experimental route teardown must remove the source runtime and its portal-owned document effects');
 assert.ok(enterWorldFunction.indexOf("switchView('worldPlay');") < enterWorldFunction.indexOf('renderWorldPlayState();'), 'entering a World must activate the World route before mounting the ScenePulse runtime');
 
 assert.match(runtime, /native-source-modules-via-horde-compatibility-scaffold/, 'runtime must identify its temporary compatibility role');
@@ -1043,7 +1043,7 @@ const sourceRuntimeContext = {
 sourceRuntimeContext.window.setTimeout = sourceRuntimeContext.setTimeout;
 sourceRuntimeContext.window.clearTimeout = sourceRuntimeContext.clearTimeout;
 vm.runInNewContext(runtime, sourceRuntimeContext);
-const materializeSourceTracker = sourceRuntimeContext.window.HordeScenePulseSourceRuntime.materializeNativeTracker;
+const materializeSourceTracker = sourceRuntimeContext.window.ExperimentalWorldsScenePulseSourceRuntime.materializeNativeTracker;
 const customPanelAuthoritySource = [
     "const SCENEPULSE_TOUR_CUSTOM_PANELS = [{ name: 'RPG Stats (Tour Example)', fields: [{ key: 'health' }, { key: 'mana' }, { key: 'reputation' }] }];",
     "const SCENEPULSE_NATIVE_PRESENTATION_FIELDS = ['time'];",

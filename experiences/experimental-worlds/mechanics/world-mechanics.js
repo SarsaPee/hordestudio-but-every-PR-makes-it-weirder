@@ -1,8 +1,8 @@
-(function initHordeWorldMechanics(root, factory) {
+(function initExperimentalWorldsMechanics(root, factory) {
     const api = factory();
     if (typeof module === 'object' && module.exports) module.exports = api;
-    if (root) root.HordeWorldMechanics = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function buildHordeWorldMechanics() {
+    if (root) root.ExperimentalWorldsMechanics = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function buildExperimentalWorldsMechanics() {
     'use strict';
 
     const PROFILE_ID = 'world_mechanics_v1';

@@ -1,8 +1,8 @@
-(function initHordePortraitPromptCompiler(root, factory) {
+(function initExperimentalWorldsPortraitPromptCompiler(root, factory) {
     const api = factory();
     if (typeof module === 'object' && module.exports) module.exports = api;
-    if (root) root.HordePortraitPromptCompiler = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this, function createHordePortraitPromptCompiler() {
+    if (root) root.ExperimentalWorldsPortraitPromptCompiler = api;
+}(typeof globalThis !== 'undefined' ? globalThis : this, function createExperimentalWorldsPortraitPromptCompiler() {
     'use strict';
 
     const NAMED_STYLES = Object.freeze({

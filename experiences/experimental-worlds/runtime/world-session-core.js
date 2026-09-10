@@ -2977,8 +2977,8 @@ function applyStartingLifeToSession(world, sess, originId) {
     // World mechanics checkpoint overlay: a starting life may carry durable
     // facts, relationships, inventory containers, cognition and an intro
     // that the engine applies before play begins.
-    if (window.HordeWorldMechanics?.isEnabled?.(world) && life.checkpointOverlay) {
-        window.HordeWorldMechanics.applyCheckpoint(world, sess, life);
+    if (window.ExperimentalWorldsMechanics?.isEnabled?.(world) && life.checkpointOverlay) {
+        window.ExperimentalWorldsMechanics.applyCheckpoint(world, sess, life);
     }
     return life;
 }

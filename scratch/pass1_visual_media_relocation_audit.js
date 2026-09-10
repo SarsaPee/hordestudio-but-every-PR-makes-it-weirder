@@ -97,6 +97,13 @@ const restoreHostContract = source => [
     .replaceAll('ExperimentalWorldsRpgMechanics', 'HordeRpgMechanics')
     .replaceAll('ExperimentalWorldsDossierClaims', 'HordeDossierClaims')
     .replaceAll('ExperimentalWorldsCanonicalImageComposer', 'HordeCanonicalImageComposer')
+    .replaceAll('ExperimentalWorldsMechanicsRegistry', 'HordeWorldMechanicsRegistry')
+    .replaceAll('ExperimentalWorldsMechanics', 'HordeWorldMechanics')
+    .replaceAll('ExperimentalWorldsPortraitPromptCompiler', 'HordePortraitPromptCompiler')
+    .replaceAll('ExperimentalWorldsScenePulseSourceRuntime', 'HordeScenePulseSourceRuntime')
+    .replaceAll('ExperimentalWorldsScenePulseTour', 'HordeScenePulseTour')
+    .replaceAll('ExperimentalWorldsScenePulse', 'HordeScenePulseWorlds')
+    .replaceAll('ExperimentalWorldsVectorMemory', 'HordeVectorMemory')
     .replaceAll('ExperimentalWorldsState.', 'state.')
     .replaceAll('ExperimentalWorldsHost.persist()', 'saveState()')
     .replaceAll('window.HordeLabs()', 'window.HordeLabs');
@@ -119,7 +126,14 @@ const restorePrivateUtilities = source => [
     ['experimentalNormalizeUploadedImage', 'normalizeUploadedImage'],
     ['experimentalOptimizeImage', 'optimizeImage'],
     ['ExperimentalWorldsDossierClaims', 'HordeDossierClaims'],
-    ['ExperimentalWorldsCanonicalImageComposer', 'HordeCanonicalImageComposer']
+    ['ExperimentalWorldsCanonicalImageComposer', 'HordeCanonicalImageComposer'],
+    ['ExperimentalWorldsMechanicsRegistry', 'HordeWorldMechanicsRegistry'],
+    ['ExperimentalWorldsMechanics', 'HordeWorldMechanics'],
+    ['ExperimentalWorldsPortraitPromptCompiler', 'HordePortraitPromptCompiler'],
+    ['ExperimentalWorldsScenePulseSourceRuntime', 'HordeScenePulseSourceRuntime'],
+    ['ExperimentalWorldsScenePulseTour', 'HordeScenePulseTour'],
+    ['ExperimentalWorldsScenePulse', 'HordeScenePulseWorlds'],
+    ['ExperimentalWorldsVectorMemory', 'HordeVectorMemory']
 ].reduce((next, [from, to]) => next.replaceAll(from, to), source);
 
 const relocatedPath = 'experiences/experimental-worlds/visuals/world-visual-media-core.js';
@@ -419,8 +433,29 @@ assert(visualEditorIndex >= 0 && visualEditorIndex < appIndex,
 const protocolStart = acceptedApp.indexOf('function normalizeWorldTurnReceipt');
 const protocolEnd = acceptedApp.indexOf('async function impersonateUser()', protocolStart);
 assert(protocolStart >= 0 && protocolEnd > protocolStart, 'Pass-0 Sidecar/ScenePulse protocol source unit is present');
+const acceptedProtocol = acceptedApp.slice(protocolStart, protocolEnd);
+const restoreExperimentalWorkspaceListener = source => {
+    // This is the one deliberate lifecycle change in the source-shaped
+    // workspace renderer: Pass 0 used a durable window/document bridge for
+    // generated tab controls, whereas the detached mode binds the equivalent
+    // handlers directly to its freshly mounted DOM. Reconstitute only that
+    // exact control-binding span for the source-faithfulness comparison.
+    const startMarker = '    const rerender = () => { renderSidecarWorkspace(world, sess); };';
+    const endMarker = "    host.querySelectorAll('[data-si-section-toggle]')";
+    const acceptedStart = acceptedProtocol.indexOf(startMarker);
+    const acceptedEnd = acceptedProtocol.indexOf(endMarker, acceptedStart);
+    const currentStart = source.indexOf(startMarker);
+    const currentEnd = source.indexOf(endMarker, currentStart);
+    assert(acceptedStart >= 0 && acceptedEnd > acceptedStart,
+        'Pass-0 protocol contains the generated-workspace listener span');
+    assert(currentStart >= 0 && currentEnd > currentStart,
+        'detached protocol contains the generated-workspace listener span');
+    return source.slice(0, currentStart)
+        + acceptedProtocol.slice(acceptedStart, acceptedEnd)
+        + source.slice(currentEnd);
+};
 const relocatedProtocol = fs.readFileSync('experiences/experimental-worlds/runtime/world-protocol-core.js', 'utf8');
-const restoredProtocol = restoreHostContract(relocatedProtocol)
+const restoredProtocol = restoreExperimentalWorkspaceListener(restoreHostContract(relocatedProtocol))
     // Explicit Pass-1 lifecycle seam: all user-invoked Sidecar provider work
     // captures Experimental ownership and cannot attach a late result after a
     // mode/world/timeline/restore change. Strip only that small guard when
@@ -430,8 +465,16 @@ const restoredProtocol = restoreHostContract(relocatedProtocol)
     .replace(/^\s*assertExperimentalSidecarOwner\(requestOwner\);\n/gm, '')
     .replace(/\n    \/\/ Do this before Reader evidence is attached to the protocol\.[\s\S]*?\n    \/\/ that the author has left while the transport was in flight\./, '')
     .replace(/\n        \/\/ The old owner may no longer be current\.[\s\S]*?if \(error\?\.code === 'experimental_world_owner_changed'\) throw error;\n/, '\n');
-assert.equal(compareSource(restoredProtocol), compareSource(acceptedApp.slice(protocolStart, protocolEnd)),
-    'Sidecar/ScenePulse protocol core differs from the Pass-0 oracle beyond the explicit late-result ownership seam');
+const comparedRestoredProtocol = compareSource(restoredProtocol);
+const comparedAcceptedProtocol = compareSource(acceptedProtocol);
+if (comparedRestoredProtocol !== comparedAcceptedProtocol) {
+    let difference = 0;
+    while (comparedRestoredProtocol[difference] === comparedAcceptedProtocol[difference]
+        && difference < Math.max(comparedRestoredProtocol.length, comparedAcceptedProtocol.length)) difference += 1;
+    const start = Math.max(0, difference - 180);
+    const end = difference + 280;
+    throw new Error(`Sidecar/ScenePulse protocol oracle mismatch at ${difference}: actual=${JSON.stringify(comparedRestoredProtocol.slice(start, end))} expected=${JSON.stringify(comparedAcceptedProtocol.slice(start, end))}`);
+}
 assert(relocatedProtocol.includes('captureExperimentalSidecarOwner') && relocatedProtocol.includes('assertExperimentalSidecarOwner'),
     'Sidecar provider paths must capture and validate Experimental ownership around completion');
 assert(!fs.readFileSync('app.js', 'utf8').includes('function normalizeWorldTurnReceipt'),

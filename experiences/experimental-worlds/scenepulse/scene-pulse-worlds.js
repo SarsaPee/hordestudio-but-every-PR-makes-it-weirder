@@ -1757,5 +1757,5 @@
         if (state?.viewportTimer) clearTimeout(state.viewportTimer);
         if (host) delete host.__scenePulseWorldsState;
     }
-    global.HordeScenePulseWorlds = Object.freeze({ mount, unmount, SOURCE, TOUR_TIMELINE });
+    global.ExperimentalWorldsScenePulse = Object.freeze({ mount, unmount, SOURCE, TOUR_TIMELINE });
 })(window);

@@ -3863,11 +3863,11 @@ Begin your response with: [EPISODIC ARCHIVE]:`
             pendingEmbeddings = inserted;
             totalMemories = continuity.records.filter(record => record.status !== 'superseded').length;
         } else {
-            const embedding = await HordeVectorMemory.getCachedEmbedding(summary);
+            const embedding = await ExperimentalWorldsVectorMemory.getCachedEmbedding(summary);
             session.episodicMemories = session.episodicMemories || [];
             session.episodicMemories.push({
                 text: summary, embedding,
-                embeddingNamespace: embedding ? HordeVectorMemory.namespace() : '',
+                embeddingNamespace: embedding ? ExperimentalWorldsVectorMemory.namespace() : '',
                 createdAt: Date.now(), startIndex: lastIdx, endIndex: chunkEnd
             });
             totalMemories = session.episodicMemories.length;
@@ -4302,7 +4302,7 @@ async function renderVectorMemoryList(filterQuery = "") {
         const scoped = currentVectorTab === 'cognition' && document.getElementById('vector-character-filter')?.value
             ? candidates.filter(candidate => candidate.ref?.characterId === document.getElementById('vector-character-filter').value) : candidates;
         const missing = scoped.filter(candidate => !Array.isArray(candidate.ref?.embedding)).length;
-        const stale = scoped.filter(candidate => candidate.ref?.embeddingNamespace && candidate.ref.embeddingNamespace !== HordeVectorMemory.namespace()).length;
+        const stale = scoped.filter(candidate => candidate.ref?.embeddingNamespace && candidate.ref.embeddingNamespace !== ExperimentalWorldsVectorMemory.namespace()).length;
         const prerequisites = graph ? `Prerequisites: ${graph.worldHistory.filter(record => Array.isArray(record.embedding)).length}/${graph.worldHistory.length} World History and ${graph.episodes.filter(record => Array.isArray(record.embedding)).length}/${graph.episodes.length} Episodes embedded.` : '';
         statusEl.textContent = `${scoped.length} record${scoped.length === 1 ? '' : 's'} in this view · ${missing} missing · ${stale} stale${prerequisites ? ` · ${prerequisites}` : ''}`;
     } else if (statusEl) statusEl.textContent = `${candidates.length} record${candidates.length === 1 ? '' : 's'} in this view.`;
@@ -4321,19 +4321,19 @@ async function renderVectorMemoryList(filterQuery = "") {
             // Check cache for candidates missing embeddings to be fast
             for (const cand of candidates) {
                 if (!cand.embedding) {
-                    const key = `${HordeVectorMemory.namespace()}|${HordeVectorMemory.hashText(cand.text)}`;
-                    if (HordeVectorMemory.cache.has(key)) {
-                        cand.embedding = HordeVectorMemory.cache.get(key);
+                    const key = `${ExperimentalWorldsVectorMemory.namespace()}|${ExperimentalWorldsVectorMemory.hashText(cand.text)}`;
+                    if (ExperimentalWorldsVectorMemory.cache.has(key)) {
+                        cand.embedding = ExperimentalWorldsVectorMemory.cache.get(key);
                     }
                 }
             }
             
-            const queryVec = await HordeVectorMemory.getCachedEmbedding(filterQuery);
-            if (queryVec && !HordeVectorMemory.isFallbackActive) {
+            const queryVec = await ExperimentalWorldsVectorMemory.getCachedEmbedding(filterQuery);
+            if (queryVec && !ExperimentalWorldsVectorMemory.isFallbackActive) {
                 displayList = candidates.map(cand => {
                     let score = 0;
                     if (Array.isArray(cand.embedding) && cand.embedding.length > 0
-                        && (!cand.embeddingNamespace || cand.embeddingNamespace === HordeVectorMemory.namespace())) {
+                        && (!cand.embeddingNamespace || cand.embeddingNamespace === ExperimentalWorldsVectorMemory.namespace())) {
                         score = cosineSimilarity(queryVec, cand.embedding);
                     }
                     return {
@@ -4493,7 +4493,7 @@ async function renderVectorMemoryList(filterQuery = "") {
                     ref.text = newText;
                     try {
                         ref.embedding = await ExperimentalWorldsHost.getEmbedding(newText);
-                        ref.embeddingNamespace = HordeVectorMemory.namespace();
+                        ref.embeddingNamespace = ExperimentalWorldsVectorMemory.namespace();
                         ref.updatedAt = Date.now();
                     } catch (e) {
                         console.warn('Re-embed failed, keeping text only:', e);

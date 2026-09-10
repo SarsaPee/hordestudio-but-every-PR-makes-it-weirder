@@ -2965,5 +2965,5 @@
         if (host) host.replaceChildren();
     }
 
-    global.HordeScenePulseSourceRuntime = Object.freeze({ mount, unmount, SOURCE, materializeNativeTracker });
+    global.ExperimentalWorldsScenePulseSourceRuntime = Object.freeze({ mount, unmount, SOURCE, materializeNativeTracker });
 })(window);

@@ -7561,8 +7561,8 @@ function teardownExperimentalWorldsRoute() {
     window.ExperimentalWorldsRuntime?.abortAll?.();
     const scenePulseHost = document.getElementById('world-sidecar-workspace');
     unbindScenePulseWorldsHostActions(scenePulseHost);
-    window.HordeScenePulseSourceRuntime?.unmount?.(scenePulseHost);
-    window.HordeScenePulseWorlds?.unmount?.(scenePulseHost);
+    window.ExperimentalWorldsScenePulseSourceRuntime?.unmount?.(scenePulseHost);
+    window.ExperimentalWorldsScenePulse?.unmount?.(scenePulseHost);
     window.ExperimentalWorldsDom?.clearPortal?.();
 }
 

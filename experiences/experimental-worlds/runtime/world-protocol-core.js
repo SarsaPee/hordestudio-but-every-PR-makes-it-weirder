@@ -30,9 +30,9 @@ function normalizeWorldTurnReceipt(world, sess, rawReceipt) {
                     } : {}])) : {},
             // World mechanics owns scene telemetry and boundary evidence;
             // normalization must not strip them before the engine reads them.
-            ...((window.HordeWorldMechanics?.isEnabled?.(world) && experimentalIsPlainObject(sceneSource.telemetry))
+            ...((window.ExperimentalWorldsMechanics?.isEnabled?.(world) && experimentalIsPlainObject(sceneSource.telemetry))
                 ? { telemetry: sceneSource.telemetry } : {}),
-            ...((window.HordeWorldMechanics?.isEnabled?.(world) && experimentalIsPlainObject(sceneSource.transition))
+            ...((window.ExperimentalWorldsMechanics?.isEnabled?.(world) && experimentalIsPlainObject(sceneSource.transition))
                 ? { transition: sceneSource.transition } : {})
         },
         events: (Array.isArray(source.events) ? source.events : []).slice(0, 100),
@@ -127,7 +127,7 @@ function validateWorldTurnReceipt(world, sess, rawReceipt, context = {}) {
             // Annex A execution evidence: intent, explicit compensation and
             // the declared mechanic-conditioned execution survive into the
             // committed event so the engine can validate them at commit.
-            ...(window.HordeWorldMechanics?.isEnabled?.(world)
+            ...(window.ExperimentalWorldsMechanics?.isEnabled?.(world)
                 && experimentalIsPlainObject(event.mechanic_conditioned_execution) ? {
                 actor_intention: String(event.actor_intention || '').slice(0, 300),
                 compensatory_strategy: (Array.isArray(event.compensatory_strategy) ? event.compensatory_strategy : [])
@@ -762,7 +762,7 @@ function commitWorldTurnReceipt(world, sess, rawReceipt, context = {}, source = 
     // records project into the claims ledger inside its own pipeline), so
     // the app-level staging below is bypassed to avoid double-applying
     // claims.
-    const mechanicsEngine = window.HordeWorldMechanics?.isEnabled?.(world) ? window.HordeWorldMechanics : null;
+    const mechanicsEngine = window.ExperimentalWorldsMechanics?.isEnabled?.(world) ? window.ExperimentalWorldsMechanics : null;
     let mechanicsGuard = null;
     let preparedMechanics = { enabled: false, accepted: true, errors: [], dropped: [] };
     if (mechanicsEngine) {
@@ -2424,7 +2424,7 @@ function worldMechanicsRegistryFor(world) {
     if (world?.mechanicsRegistry) return world.mechanicsRegistry;
     const globalName = String(world?.bunnyRxRegistry?.globalName || '').trim();
     if (globalName && window[globalName]) return window[globalName];
-    return window.HordeWorldMechanicsRegistry || null;
+    return window.ExperimentalWorldsMechanicsRegistry || null;
 }
 
 function compileFF54SidecarContext(world, sess, opt = {}) {
@@ -2587,8 +2587,8 @@ function compileFF54SidecarContext(world, sess, opt = {}) {
     // audience and these on-stage entities, and each candidate competes
     // for the budget on its own relevance. Mandatory candidates are real:
     // the compiler keeps them even under budget pressure.
-    const mechanicsCandidates = window.HordeWorldMechanics?.isEnabled?.(world)
-        ? (window.HordeWorldMechanics.contextCandidates?.(world, sess,
+    const mechanicsCandidates = window.ExperimentalWorldsMechanics?.isEnabled?.(world)
+        ? (window.ExperimentalWorldsMechanics.contextCandidates?.(world, sess,
             worldMechanicsRegistryFor(world), {
             audience: 'narrator',
             relevantEntityIds: ['player', ...castIds],
@@ -4579,8 +4579,8 @@ async function runSidecarSemanticReading(world, sess, options = {}) {
     const defaultTokens = tracker.reasoning === true ? 7000 : 6000;
     const configuredTokens = Number(profile.maxTokens) || Number(tracker.readerMaxTokens) || 0;
     const maxTokens = configuredTokens > 0 ? Math.max(1200, Math.min(100000, Math.trunc(configuredTokens))) : defaultTokens;
-    const readerMechanicsFrame = window.HordeWorldMechanics?.isEnabled?.(world)
-        ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
+    const readerMechanicsFrame = window.ExperimentalWorldsMechanics?.isEnabled?.(world)
+        ? String(window.ExperimentalWorldsMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
         : '';
     const readerProtocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
@@ -5822,8 +5822,8 @@ async function runSidecarReconciliation(world, sess, options = {}) {
         if (currentAttempt) currentAttempt.readerStatus = 'succeeded';
     }
     options.onStage?.('reconciling');
-    const mechanicsFrame = window.HordeWorldMechanics?.isEnabled?.(world)
-        ? String(window.HordeWorldMechanics.reconcilerFrame?.(world, sess,
+    const mechanicsFrame = window.ExperimentalWorldsMechanics?.isEnabled?.(world)
+        ? String(window.ExperimentalWorldsMechanics.reconcilerFrame?.(world, sess,
             worldMechanicsRegistryFor(world)) || '')
         : '';
     const compactCommitTransport = sidecarUsesCompactCommitTransport(provider, model, commitTool);
@@ -6413,7 +6413,7 @@ function sidecarLocationEmbeddingText(world, location) {
 }
 
 async function vectorizeSidecarMemoryRecords(records, options = {}) {
-    const namespace = HordeVectorMemory.namespace();
+    const namespace = ExperimentalWorldsVectorMemory.namespace();
     const pending = records.filter(record => record && (record.text || record.vectorText)
         && (!Array.isArray(record.embedding) || (record.embeddingNamespace && record.embeddingNamespace !== namespace)));
     let cursor = 0;
@@ -6422,8 +6422,8 @@ async function vectorizeSidecarMemoryRecords(records, options = {}) {
         while (cursor < pending.length) {
             const record = pending[cursor++];
             try {
-                record.embedding = await HordeVectorMemory.getCachedEmbedding(record.vectorText || record.text);
-                record.embeddingNamespace = HordeVectorMemory.namespace();
+                record.embedding = await ExperimentalWorldsVectorMemory.getCachedEmbedding(record.vectorText || record.text);
+                record.embeddingNamespace = ExperimentalWorldsVectorMemory.namespace();
                 record.vectorizedAt = new Date().toISOString();
                 completed++;
                 options.onProgress?.({ completed, attempted: pending.length, record });
@@ -6438,9 +6438,9 @@ async function retrieveSidecarMemory(world, sess, query, limit = 8, options = {}
     const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const graph = window.ExperimentalWorldsSidecarMemoryGraph?.graph(protocol);
     const text = String(query || '').trim();
-    if (!graph || !text || !HordeVectorMemory) return [];
+    if (!graph || !text || !ExperimentalWorldsVectorMemory) return [];
     let queryEmbedding;
-    try { queryEmbedding = await HordeVectorMemory.getCachedEmbedding(text); } catch (_) { return []; }
+    try { queryEmbedding = await ExperimentalWorldsVectorMemory.getCachedEmbedding(text); } catch (_) { return []; }
     if (!Array.isArray(queryEmbedding)) return [];
     const historyCandidates = (graph.worldHistory || []).filter(record => record.status === 'active').map(record => ({ kind: 'world_history', text: record.text || record.narration, record }));
     const episodeCandidates = (graph.episodes || []).filter(record => record.status === 'active').map(record => ({ kind: 'episode', text: record.text || `${record.summary}\n${record.objectiveHistory || ''}`, record }));
@@ -7455,8 +7455,8 @@ function sealScenePulseTourFixture(value) {
 }
 
 function scenePulseTourState() {
-    if (!window.HordeScenePulseTour) {
-        window.HordeScenePulseTour = {
+    if (!window.ExperimentalWorldsScenePulseTour) {
+        window.ExperimentalWorldsScenePulseTour = {
             // Gate A's only input.  The integrated ScenePulse module accepts
             // this handoff alone; it cannot see a Horde world, model result,
             // canonical registry, quest store, or timeline until Gate B.
@@ -7468,7 +7468,7 @@ function scenePulseTourState() {
             })
         };
     }
-    return window.HordeScenePulseTour;
+    return window.ExperimentalWorldsScenePulseTour;
 }
 
 // ScenePulse candidates are deliberately scene evidence first.  These helpers
@@ -9714,8 +9714,8 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     // route simply because a World remains selected in workspace state.
     if (ExperimentalWorldsState.view !== 'worldPlay') {
         unbindScenePulseWorldsHostActions(host);
-        window.HordeScenePulseSourceRuntime?.unmount?.(host);
-        window.HordeScenePulseWorlds?.unmount?.(host);
+        window.ExperimentalWorldsScenePulseSourceRuntime?.unmount?.(host);
+        window.ExperimentalWorldsScenePulse?.unmount?.(host);
         host.replaceChildren();
         return;
     }
@@ -9725,8 +9725,8 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     else clearScenePulseStatusColumnWidth(column);
     if (!sidecar) {
         unbindScenePulseWorldsHostActions(host);
-        window.HordeScenePulseSourceRuntime?.unmount?.(host);
-        window.HordeScenePulseWorlds?.unmount?.(host);
+        window.ExperimentalWorldsScenePulseSourceRuntime?.unmount?.(host);
+        window.ExperimentalWorldsScenePulse?.unmount?.(host);
         host.replaceChildren();
         return;
     }
@@ -9735,7 +9735,7 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     // source-shaped delta projection; it never substitutes Melbourne/world
     // registry data for incomplete ScenePulse fields.
     const handoff = scenePulseAcceptedHandoff(world, sess);
-    if (!window.HordeScenePulseSourceRuntime?.mount) {
+    if (!window.ExperimentalWorldsScenePulseSourceRuntime?.mount) {
         host.innerHTML = '<div class="sp-empty-state"><div class="sp-empty-title">Native ScenePulse source runtime did not load</div><div class="sp-empty-sub">The compatibility scaffold is unavailable, so the source panel is intentionally not substituted with a host lookalike.</div></div>';
         return;
     }
@@ -9743,8 +9743,8 @@ function renderScenePulseWorldsWorkspace(world, sess) {
     // The default World HUD is the actual ScenePulse panel/runtime. The older
     // host-drawn adapter remains vendored as a migration reference only; do
     // not silently fall back to it when the native source bridge fails.
-    window.HordeScenePulseWorlds?.unmount?.(host);
-    window.HordeScenePulseSourceRuntime.mount(host, handoff).catch(error => {
+    window.ExperimentalWorldsScenePulse?.unmount?.(host);
+    window.ExperimentalWorldsScenePulseSourceRuntime.mount(host, handoff).catch(error => {
         console.error('Native ScenePulse source runtime failed:', error);
     });
     return;

@@ -3757,7 +3757,7 @@ function renderWorldPlayState() {
     const statsContainer = document.getElementById('world-stats-container');
     if (statsContainer) {
         statsContainer.innerHTML = '';
-        statsContainer.style.display = (ruleModules.stats || ruleModules.conditions || window.HordeWorldMechanics?.isEnabled?.(world)) ? 'flex' : 'none';
+        statsContainer.style.display = (ruleModules.stats || ruleModules.conditions || window.ExperimentalWorldsMechanics?.isEnabled?.(world)) ? 'flex' : 'none';
         const playerState = normalizePlayerRulesState(world, sess);
         if ((ruleModules.health && playerState.status !== 'active')
             || (ruleModules.conditions && playerState.conditions.length)) {
@@ -3774,7 +3774,7 @@ function renderWorldPlayState() {
         // state plus authorial canonical-input controls for on-screen
         // actors. Controls adjust canonical INPUTS; the engine recomputes
         // phases — never a downstream prose flag.
-        if (window.HordeWorldMechanics?.isEnabled?.(world)) {
+        if (window.ExperimentalWorldsMechanics?.isEnabled?.(world)) {
             const mechRegistry = worldMechanicsRegistryFor(world);
             const mechCard = document.createElement('div');
             mechCard.className = 'world-card';
@@ -3792,7 +3792,7 @@ function renderWorldPlayState() {
                     }));
             const mechRows = [];
             mechActors.forEach(actorInfo => {
-                const mechPanel = window.HordeWorldMechanics.actorStatePanel(world, sess, actorInfo.id, mechRegistry);
+                const mechPanel = window.ExperimentalWorldsMechanics.actorStatePanel(world, sess, actorInfo.id, mechRegistry);
                 (mechPanel.states || []).forEach(mechState => {
                     mechRows.push(`
                         <div class="wm-state-row" data-actor="${experimentalEscapeHTML(actorInfo.id)}" data-profile="${experimentalEscapeHTML(mechState.profileKey)}" style="display:flex; align-items:center; gap:6px; margin:3px 0; font-size:0.8rem; flex-wrap:wrap;">
@@ -3816,7 +3816,7 @@ function renderWorldPlayState() {
                 <div style="display:flex; gap:4px; margin-top:6px; font-size:0.75rem; flex-wrap:wrap;">
                     <select class="wm-add-actor">${mechActors.map(actorInfo => `<option value="${experimentalEscapeHTML(actorInfo.id)}">${experimentalEscapeHTML(actorInfo.name)}</option>`).join('')}</select>
                     <select class="wm-add-profile">${mechProfiles.map(profile => `<option value="${experimentalEscapeHTML(profile.key)}">${experimentalEscapeHTML(profile.label || profile.key)}</option>`).join('')}</select>
-                    <select class="wm-add-phase">${(window.HordeWorldMechanics.ALTERED_PHASES || []).map(phase => `<option value="${experimentalEscapeHTML(phase)}">${experimentalEscapeHTML(phase)}</option>`).join('')}</select>
+                    <select class="wm-add-phase">${(window.ExperimentalWorldsMechanics.ALTERED_PHASES || []).map(phase => `<option value="${experimentalEscapeHTML(phase)}">${experimentalEscapeHTML(phase)}</option>`).join('')}</select>
                     <button type="button" class="wm-add-apply">Set</button>
                 </div>
                 ${gmProposals.length ? `
@@ -3832,11 +3832,11 @@ function renderWorldPlayState() {
             mechCard.querySelectorAll('.wm-state-row').forEach(row => {
                 const actorId = row.dataset.actor, profileKey = row.dataset.profile;
                 row.querySelector('.wm-dose-dec')?.addEventListener('click', () => mechApply(() =>
-                    window.HordeWorldMechanics.adjustDoseCount(world, sess, actorId, profileKey, -1, mechRegistry)));
+                    window.ExperimentalWorldsMechanics.adjustDoseCount(world, sess, actorId, profileKey, -1, mechRegistry)));
                 row.querySelector('.wm-dose-inc')?.addEventListener('click', () => mechApply(() =>
-                    window.HordeWorldMechanics.adjustDoseCount(world, sess, actorId, profileKey, 1, mechRegistry)));
+                    window.ExperimentalWorldsMechanics.adjustDoseCount(world, sess, actorId, profileKey, 1, mechRegistry)));
                 row.querySelector('.wm-state-clear')?.addEventListener('click', () => mechApply(() =>
-                    window.HordeWorldMechanics.resolveAlteredState(world, sess, actorId, profileKey)));
+                    window.ExperimentalWorldsMechanics.resolveAlteredState(world, sess, actorId, profileKey)));
             });
             mechCard.querySelector('.wm-add-apply')?.addEventListener('click', () => {
                 const actorId = mechCard.querySelector('.wm-add-actor')?.value || 'player';
@@ -3844,7 +3844,7 @@ function renderWorldPlayState() {
                 const phase = mechCard.querySelector('.wm-add-phase')?.value || 'active';
                 const profile = mechRegistry?.profiles?.[profileKey];
                 if (!profile) return;
-                mechApply(() => window.HordeWorldMechanics.setManualAlteredState(world, sess, actorId, {
+                mechApply(() => window.ExperimentalWorldsMechanics.setManualAlteredState(world, sess, actorId, {
                     profileKey, phase, observable: 'noticeable', domains: profile.domains || []
                 }, mechRegistry));
             });
@@ -3887,7 +3887,7 @@ function renderWorldPlayState() {
                         renderWorldPlayState();
                         return;
                     }
-                    window.HordeWorldMechanics?.approveGmProposal?.(world, sess, proposal.id,
+                    window.ExperimentalWorldsMechanics?.approveGmProposal?.(world, sess, proposal.id,
                         receipt.turn_id, proposalAudit.world_state_version);
                     ExperimentalWorldsHost.notify('GM proposal committed and marked approved', 'success');
                     ExperimentalWorldsHost.persist().catch(() => {});
@@ -4096,9 +4096,9 @@ function renderWorldPlayState() {
             div.onmouseenter = () => { div.style.background = 'var(--surface3)'; };
             div.onmouseleave = () => { div.style.background = 'var(--surface2)'; };
             // World mechanics: altered-state chips for on-screen NPCs.
-            if (window.HordeWorldMechanics?.isEnabled?.(world)) {
+            if (window.ExperimentalWorldsMechanics?.isEnabled?.(world)) {
                 const chipRegistry = worldMechanicsRegistryFor(world);
-                const mechPanel = window.HordeWorldMechanics.actorStatePanel(world, activeSess, npc.id, chipRegistry);
+                const mechPanel = window.ExperimentalWorldsMechanics.actorStatePanel(world, activeSess, npc.id, chipRegistry);
                 (mechPanel.states || []).forEach(mechState => {
                     const chip = document.createElement('span');
                     chip.style.cssText = 'margin-left:6px; padding:1px 6px; border-radius:10px; font-size:0.7rem; font-weight:700; background:rgba(139,92,246,0.25); color:#c4b5fd; white-space:nowrap;';
@@ -5624,7 +5624,7 @@ function addWorldMessage(role, text, metadata = {}) {
         const msgRef = targetMsgRef;
         (async () => {
             try {
-                const emb = await HordeVectorMemory.getCachedEmbedding(msgText);
+                const emb = await ExperimentalWorldsVectorMemory.getCachedEmbedding(msgText);
                 if (emb) {
                     msgRef.embedding = emb;
                     await ExperimentalWorldsHost.persist();
@@ -5690,14 +5690,14 @@ async function getMemoryMatrixContext(world, sess, userInput) {
             // Check cache for ledger lines or other missing embeddings to be fast
             for (const cand of allCandidates) {
                 if (!cand.embedding) {
-                    const key = HordeVectorMemory.hashText(cand.text);
-                    if (HordeVectorMemory.cache.has(key)) {
-                        cand.embedding = HordeVectorMemory.cache.get(key);
+                    const key = ExperimentalWorldsVectorMemory.hashText(cand.text);
+                    if (ExperimentalWorldsVectorMemory.cache.has(key)) {
+                        cand.embedding = ExperimentalWorldsVectorMemory.cache.get(key);
                     }
                 }
             }
 
-            retrieved = await HordeVectorMemory.search(allCandidates, userInput, topk, thresh);
+            retrieved = await ExperimentalWorldsVectorMemory.search(allCandidates, userInput, topk, thresh);
         } catch (e) {
             console.warn("World mode hybrid search failed:", e);
         }
@@ -5731,7 +5731,7 @@ async function getMemoryMatrixContext(world, sess, userInput) {
     let retrievedEpisodic = [];
     if (useSemanticMemory && sess.episodicMemories && sess.episodicMemories.length > 0 && userInput) {
         try {
-            retrievedEpisodic = await HordeVectorMemory.search(sess.episodicMemories, userInput, topk, thresh);
+            retrievedEpisodic = await ExperimentalWorldsVectorMemory.search(sess.episodicMemories, userInput, topk, thresh);
         } catch (e) {
             console.warn("World mode episodic search failed:", e);
         }
@@ -7592,8 +7592,8 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         if (window.ExperimentalWorldsDossierClaims?.isEnabled?.(world)) {
             window.ExperimentalWorldsDossierClaims.extendReceiptSchema(worldStateTool.function.parameters);
         }
-        if (window.HordeWorldMechanics?.isEnabled?.(world)) {
-            window.HordeWorldMechanics.extendReceiptSchema(world, worldStateTool.function.parameters);
+        if (window.ExperimentalWorldsMechanics?.isEnabled?.(world)) {
+            window.ExperimentalWorldsMechanics.extendReceiptSchema(world, worldStateTool.function.parameters);
         }
 
         const failureCostProperties = worldStateProperties.checks?.items?.properties?.failure_cost?.properties;
