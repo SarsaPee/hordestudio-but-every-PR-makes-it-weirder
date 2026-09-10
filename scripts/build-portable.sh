@@ -62,6 +62,7 @@ mkdir -p "$APP_DIR/experiences/experimental-worlds/runtime" \
   "$APP_DIR/host-adapters/experimental-worlds"
 cp "$ROOT_DIR/experiences/experimental-worlds/runtime/sidecar-core.js" \
   "$ROOT_DIR/experiences/experimental-worlds/runtime/dossier-claims.js" \
+  "$ROOT_DIR/experiences/experimental-worlds/runtime/world-studio-core.js" \
   "$APP_DIR/experiences/experimental-worlds/runtime/"
 mkdir -p "$APP_DIR/experiences/experimental-worlds/mechanics" \
   "$APP_DIR/experiences/experimental-worlds/visuals" \
@@ -79,6 +80,7 @@ cp "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scene-pulse-worlds.js" 
   "$ROOT_DIR/experiences/experimental-worlds/scenepulse/scenepulse-source-runtime.js" \
   "$APP_DIR/experiences/experimental-worlds/scenepulse/"
 cp "$ROOT_DIR/experiences/experimental-worlds/styles/scene-pulse-worlds.css" \
+  "$ROOT_DIR/experiences/experimental-worlds/styles/world-visuals-and-sidecar.css" \
   "$APP_DIR/experiences/experimental-worlds/styles/"
 # The native Source Runtime dynamically imports its pinned local ScenePulse
 # source modules. Keep that licensed vendor tree in the portable build; it is

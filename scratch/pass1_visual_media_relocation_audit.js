@@ -46,4 +46,26 @@ const appIndex = html.indexOf('src="app.js');
 assert(adapterIndex >= 0 && adapterIndex < coreIndex && coreIndex < providerIndex && providerIndex < appIndex,
     'adapter and relocated core load before the single host bootstrap');
 
+const studioStart = acceptedApp.indexOf('// --- World Engine ---');
+const studioEnd = acceptedApp.indexOf('// --- World Play & Engine ---', studioStart);
+assert(studioStart >= 0 && studioEnd > studioStart, 'Pass-0 World Studio source unit is present');
+const relocatedStudio = fs.readFileSync('experiences/experimental-worlds/runtime/world-studio-core.js', 'utf8');
+assert.equal(relocatedStudio.trimEnd(), acceptedApp.slice(studioStart, studioEnd).trimEnd(),
+    'World Studio core differs from the Pass-0 oracle');
+assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Engine ---'),
+    'World Studio core is no longer ambiguously retained in the host bootstrap');
+const studioIndex = html.indexOf('experiences/experimental-worlds/runtime/world-studio-core.js');
+assert(studioIndex >= 0 && studioIndex < appIndex,
+    'relocated World Studio core loads before the single host bootstrap');
+
+const acceptedStyle = execFileSync('git', ['show', `${sourceRevision}:style.css`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+const visualStyleStart = acceptedStyle.lastIndexOf('/* ─── WORLD ENGINE ─── */');
+const visualStyleEnd = acceptedStyle.indexOf('/* ScenePulse-inspired in-place Scene Intelligence Workspace.', visualStyleStart);
+assert(visualStyleStart >= 0 && visualStyleEnd > visualStyleStart, 'Pass-0 visual/Sidecar stylesheet source unit is present');
+const relocatedVisualStyles = fs.readFileSync('experiences/experimental-worlds/styles/world-visuals-and-sidecar.css', 'utf8');
+assert.equal(relocatedVisualStyles.trimEnd(), acceptedStyle.slice(visualStyleStart, visualStyleEnd).trimEnd(),
+    'visual, outfit, Scene Inspector and Sidecar styles differ from the Pass-0 oracle');
+assert(html.includes('experiences/experimental-worlds/styles/world-visuals-and-sidecar.css'),
+    'relocated visual and Sidecar stylesheet is registered by the same document');
+
 console.log('Pass-1 visual/media relocation audit passed.');
