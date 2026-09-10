@@ -7570,6 +7570,26 @@ function isExperimentalWorldsView(viewName) {
     return viewName === 'worlds' || viewName === 'worldStudio' || viewName === 'worldPlay';
 }
 
+// These are preserved, mode-owned stylesheet copies rather than a shared
+// World stylesheet.  They contain source-faithful ScenePulse viewport rules
+// and intentionally duplicated World presentation rules, so keeping them in
+// the document while stock Worlds, Chat, or VH is active would be a CSS
+// ownership leak.  Enabling the exact same files only for an Experimental
+// route retains the real renderer while leaving every other experience
+// untouched after teardown.
+const EXPERIMENTAL_WORLD_STYLE_IDS = Object.freeze([
+    'experimental-scenepulse-vendor-style',
+    'experimental-scenepulse-host-style',
+    'experimental-worlds-visual-style',
+    'experimental-worlds-private-style'
+]);
+function setExperimentalWorldStylesActive(active) {
+    EXPERIMENTAL_WORLD_STYLE_IDS.forEach(id => {
+        const stylesheet = document.getElementById(id);
+        if (stylesheet) stylesheet.disabled = !active;
+    });
+}
+
 function teardownExperimentalWorldsRoute() {
     // The World runtime owns real viewport surfaces and document captures.
     // Leaving the mode releases them as a unit; a hidden World must never
@@ -7581,6 +7601,7 @@ function teardownExperimentalWorldsRoute() {
     window.ExperimentalWorldsScenePulseSourceRuntime?.unmount?.(scenePulseHost);
     window.ExperimentalWorldsScenePulse?.unmount?.(scenePulseHost);
     window.ExperimentalWorldsDom?.clearPortal?.();
+    setExperimentalWorldStylesActive(false);
 }
 
 function switchView(viewName) {
@@ -7600,6 +7621,9 @@ function switchView(viewName) {
     if (state.view === 'stockWorlds' && viewName !== 'stockWorlds') {
         window.StockWorlds17Pass0?.unmount?.();
     }
+    // Activate before the target renderer writes its source-faithful DOM, not
+    // after it has had a paint without its retained World stylesheet.
+    if (isExperimentalWorldsView(viewName)) setExperimentalWorldStylesActive(true);
     state.view = viewName;
     persistWorkspaceSoon();
     
