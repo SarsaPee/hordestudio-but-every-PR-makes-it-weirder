@@ -3625,8 +3625,19 @@ async function loadState() {
     if (interruptedExperimentalRestore?.recovered) {
         console.info('Recovered an interrupted Experimental Worlds restore from its verified stage.');
     }
-    const experimentalStored = await window.ExperimentalWorldsRepository?.snapshot?.() || null;
-    const experimentalJournal = await window.ExperimentalWorldsRepository?.migrationJournal?.() || null;
+    // A crash between the verified copy and removal of the legacy host keys
+    // must resume that narrow cutover *before* ordinary host startup can read
+    // or migrate those keys. The immutable journal/preimage is already in the
+    // Experimental authority at this point; repeating this operation is safe.
+    let experimentalStored = await window.ExperimentalWorldsRepository?.snapshot?.() || null;
+    let experimentalJournal = await window.ExperimentalWorldsRepository?.migrationJournal?.() || null;
+    if (experimentalJournal?.status === 'staged-and-verified') {
+        const resumedCutover = await finalizeExperimentalLegacyCutover();
+        if (!resumedCutover) throw new Error('Experimental Worlds migration recovery could not verify its staged copy; legacy World records were retained.');
+        experimentalStored = await window.ExperimentalWorldsRepository?.snapshot?.() || null;
+        experimentalJournal = await window.ExperimentalWorldsRepository?.migrationJournal?.() || null;
+        console.info('Resumed the verified Experimental Worlds ownership cutover before host startup.');
+    }
     const hasExperimentalAuthority = !!(experimentalJournal || experimentalStored?.worlds?.length);
     await HordeVectorMemory.init();
     pendingWorkspaceState = await loadWorkspaceState();
@@ -4477,11 +4488,16 @@ async function finalizeExperimentalLegacyCutover() {
     const repository = window.ExperimentalWorldsRepository;
     const journal = await repository?.migrationJournal?.();
     if (!journal || journal.status === 'legacy-host-records-removed') return false;
-    if (journal.status !== 'staged-and-verified' || !journal.legacyPreimage || !journal.stagedDigest
+    if (journal.status !== 'staged-and-verified' || !journal.legacyPreimage || !journal.legacyPreimageDigest || !journal.stagedDigest
         || !journal.legacyHostPreimage || !journal.legacyHostPreimageDigest) return false;
-    const preservedHostDigest = await repository.digest(journal.legacyHostPreimage);
+    const [preservedHostDigest, preservedWorldDigest] = await Promise.all([
+        repository.digest(journal.legacyHostPreimage), repository.digest(journal.legacyPreimage)
+    ]);
     if (preservedHostDigest !== journal.legacyHostPreimageDigest) {
         throw new Error('Experimental Worlds migration host preimage checksum changed; legacy World records were retained.');
+    }
+    if (preservedWorldDigest !== journal.legacyPreimageDigest) {
+        throw new Error('Experimental Worlds migration World preimage checksum changed; legacy World records were retained.');
     }
     const restored = await repository.snapshot();
     const restoredDigest = await repository.digest({
@@ -4489,11 +4505,11 @@ async function finalizeExperimentalLegacyCutover() {
         activeWorldId: restored.activeWorldId, worldRecoverySnapshots: restored.worldRecoverySnapshots,
         worldMediaAssets: restored.worldMediaAssets
     });
-    // The original staged bytes need not equal a later normal save, but the
-    // repository must still be readable and the immutable source preimage must
-    // be intact before removing the active host copies.
-    if (!restored.worlds.length && journal.legacyPreimage.worlds?.length) {
-        throw new Error('Experimental Worlds migration readback is incomplete; host records were retained.');
+    // This is the one ownership-cutover transaction: no normal Experimental
+    // save may intervene between its verified stage and removal of host keys.
+    // Exact digest equality is therefore mandatory, not merely non-empty data.
+    if (restoredDigest !== journal.stagedDigest) {
+        throw new Error('Experimental Worlds migration readback differs from its verified stage; host records were retained.');
     }
     await HordeDB.deleteMultiple(['worlds', 'worldRecoverySnapshots', 'worldInstances', 'activeWorldId', 'worldMediaAssets']);
     await repository.setMany({ migrationJournal: {
