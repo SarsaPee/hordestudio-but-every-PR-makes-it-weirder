@@ -738,7 +738,7 @@ assert.match(app, /if \(!workspaceEntityExists\(state\.worlds, state\.activeWorl
 assert.match(app, /activeWorldSessionId: workspaceString\(state\.activeWorldId/, 'workspace state must retain the selected World timeline as well as the World');
 assert.match(app, /enterWorld\(state\.activeWorldId, lastWorldSessionId\)/, 'World restore must request the exact saved timeline');
 assert.match(app, /activeSessionId = e\.target\.value;\s*ExperimentalWorldsHost\.persist\(\)\.catch\(\(\) => \{\}\);/s, 'changing the World timeline must persist through the Experimental-owned workspace snapshot');
-assert.match(acceptedRefresh, /scenePulseReaderRefreshController/, 'a ScenePulse stop must use a separate Reader controller');
+assert.match(acceptedRefresh, /ExperimentalWorldsRuntime\.readerRefreshController/, 'a ScenePulse stop must use an Experimental-owned Reader controller separate from Narrator generation');
 assert.match(acceptedRefresh, /The current scene was left unchanged/, 'stopping a reread must preserve the accepted scene');
 assert.match(readerRefresh, /signal: options\.signal/, 'the Sidecar Reader fetch must receive the native stop signal');
 assert.match(app, /forceFull: detail\.forceFull === true/, 'Horde must preserve source regen versus full-refresh intent');

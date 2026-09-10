@@ -1198,8 +1198,6 @@ function memoryDedupeKey(memory) {
 }
 
 let generationController = null;
-let worldTurnInProgress = false; // re-entry guard for executeWorldTurn
-let sidecarRetryInProgress = false;
 let lastPresetContextWarningKey = '';
 
 // --- API Provider Abstraction ---
@@ -2154,12 +2152,6 @@ function attributionHeaders() {
         ? { 'HTTP-Referer': 'https://horde-studio.ai', 'X-Title': 'Horde Studio' }
         : {};
 }
-let worldGenController = null;   // AbortController for the in-flight world turn (user Stop)
-// Source ScenePulse refreshes reread an already-authored beat.  Keep their
-// stop control separate from the narrator's in-flight turn controller: a
-// stopped reread must never cancel, alter, or rewind the World turn itself.
-let scenePulseReaderRefreshController = null;
-
 let state = {
     view: 'library',
     apiKey: '',
@@ -7512,7 +7504,7 @@ function teardownExperimentalWorldsRoute() {
     // Leaving the mode releases them as a unit; a hidden World must never
     // keep handling shortcuts, weather, thoughts, or provider completions in
     // another Horde experience.
-    if (worldGenController) worldGenController.abort();
+    window.ExperimentalWorldsRuntime?.abortAll?.();
     const scenePulseHost = document.getElementById('world-sidecar-workspace');
     unbindScenePulseWorldsHostActions(scenePulseHost);
     window.HordeScenePulseSourceRuntime?.unmount?.(scenePulseHost);

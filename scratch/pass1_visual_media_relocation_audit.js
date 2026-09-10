@@ -63,7 +63,19 @@ const restoreHostContract = source => [
     ['ExperimentalWorldsHost.recordSharedLibraryAssistantTurn', 'recordSharedLibraryAssistantTurn'],
     ['ExperimentalWorldsHost.labsProposal', 'labsProposal'],
     ['ExperimentalWorldsHost.labsAvailable', 'window.HordeLabs'],
-    ['ExperimentalWorldsHost.sharedPersonas()', 'state.personas']
+    ['ExperimentalWorldsHost.sharedPersonas()', 'state.personas'],
+    ['ExperimentalWorldsRuntime.turnInProgress()', 'worldTurnInProgress'],
+    ['ExperimentalWorldsRuntime.setTurnInProgress(true)', 'worldTurnInProgress = true'],
+    ['ExperimentalWorldsRuntime.setTurnInProgress(false)', 'worldTurnInProgress = false'],
+    ['ExperimentalWorldsRuntime.generationController()', 'worldGenController'],
+    ['ExperimentalWorldsRuntime.setGenerationController(controller)', 'worldGenController = controller'],
+    ['ExperimentalWorldsRuntime.setGenerationController(null)', 'worldGenController = null'],
+    ['ExperimentalWorldsRuntime.sidecarRetryInProgress()', 'sidecarRetryInProgress'],
+    ['ExperimentalWorldsRuntime.setSidecarRetryInProgress(true)', 'sidecarRetryInProgress = true'],
+    ['ExperimentalWorldsRuntime.setSidecarRetryInProgress(false)', 'sidecarRetryInProgress = false'],
+    ['ExperimentalWorldsRuntime.readerRefreshController()', 'scenePulseReaderRefreshController'],
+    ['ExperimentalWorldsRuntime.setReaderRefreshController(controller)', 'scenePulseReaderRefreshController = controller'],
+    ['ExperimentalWorldsRuntime.setReaderRefreshController(null)', 'scenePulseReaderRefreshController = null']
 ].reduce((next, [from, to]) => next.replaceAll(from, to), source)
     .replaceAll('globalThis.ExperimentalWorldsDom.portalRoot().appendChild', 'document.body.appendChild')
     .replaceAll('global.ExperimentalWorldsDom.portalRoot().appendChild', 'document.body.appendChild')

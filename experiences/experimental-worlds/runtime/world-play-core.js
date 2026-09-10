@@ -10,7 +10,7 @@ function rollSecureDie(sides) {
 }
 
 function openWorldCheckModal() {
-    if (worldTurnInProgress) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
+    if (ExperimentalWorldsRuntime.turnInProgress()) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
@@ -93,7 +93,7 @@ function renderWorldCheckPreview() {
 }
 
 async function resolveWorldCheckFromModal() {
-    if (worldTurnInProgress) return;
+    if (ExperimentalWorldsRuntime.turnInProgress()) return;
     const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
     const sess = getCurrentWorldSession();
     if (!world || !sess) return;
@@ -879,8 +879,8 @@ function setupWorldPlayLogic() {
     installExperimentalWorldMessageResizeHandle(input, resizeHandle);
 
     const sendWorldInput = async () => {
-        if (worldTurnInProgress) {
-            if (worldGenController) worldGenController.abort();
+        if (ExperimentalWorldsRuntime.turnInProgress()) {
+            if (ExperimentalWorldsRuntime.generationController()) ExperimentalWorldsRuntime.generationController().abort();
             return;
         }
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
@@ -891,7 +891,7 @@ function setupWorldPlayLogic() {
         if (!sidecarSelected) return executeWorldTurn();
         const text = input.value.trim();
         if (!text) return;
-        worldTurnInProgress = true;
+        ExperimentalWorldsRuntime.setTurnInProgress(true);
         resetExperimentalWorldMessageInput(input);
         sendBtn.classList.add('stop');
         sendBtn.innerHTML = '⏹';
@@ -907,7 +907,7 @@ function setupWorldPlayLogic() {
             ExperimentalWorldsHost.notify(`Sidecar conversation failed: ${ExperimentalWorldsHost.humanizeApiError(error) || error.message || error}`, 'error');
         } finally {
             if (typing) typing.style.display = 'none';
-            worldTurnInProgress = false;
+            ExperimentalWorldsRuntime.setTurnInProgress(false);
             sendBtn.classList.remove('stop');
             sendBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
         }
@@ -917,7 +917,7 @@ function setupWorldPlayLogic() {
     input.onkeydown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            if (worldTurnInProgress) return; // don't queue while generating
+            if (ExperimentalWorldsRuntime.turnInProgress()) return; // don't queue while generating
             void sendWorldInput();
         }
     };
@@ -1210,7 +1210,7 @@ function setupWorldPlayLogic() {
     document.getElementById('world-v3-gm-btn')?.addEventListener('click', () => openWorldSidecarLine());
 
     document.getElementById('world-continue-btn').onclick = () => {
-        if (worldTurnInProgress) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
+        if (ExperimentalWorldsRuntime.turnInProgress()) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
         const sess = getCurrentWorldSession();
         if (!sess || !sess.history.length) return ExperimentalWorldsHost.notify('Nothing to continue yet.', 'info');
         executeWorldTurn('continue');
@@ -3978,7 +3978,7 @@ function renderWorldPlayState() {
                     return;
                 }
                 if (sidecarMode) {
-                    if (worldTurnInProgress) {
+                    if (ExperimentalWorldsRuntime.turnInProgress()) {
                         ExperimentalWorldsHost.notify('The narrator is still responding — please wait.', 'info');
                         return;
                     }
@@ -4045,7 +4045,7 @@ function renderWorldPlayState() {
             `;
             const inputEl = document.getElementById('world-user-input');
             const sendIntent = (text) => {
-                if (worldTurnInProgress) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
+                if (ExperimentalWorldsRuntime.turnInProgress()) return ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
                 inputEl.value = text;
                 inputEl.focus();
             };
@@ -5165,7 +5165,7 @@ function appendWorldMessageUI(msg, index = null) {
         const sess = getCurrentWorldSession();
         const world = ExperimentalWorldsState.worlds.find(item => item.id === ExperimentalWorldsState.activeWorldId);
         div.querySelector('.sidecar-retry-scene-update')?.addEventListener('click', async event => {
-            if (!world || !sess || sidecarRetryInProgress) return;
+            if (!world || !sess || ExperimentalWorldsRuntime.sidecarRetryInProgress()) return;
             const button = event.currentTarget;
             button.disabled = true;
             button.textContent = 'Retrying…';
@@ -6020,12 +6020,12 @@ async function executeWorldTurn(commandOrReroll = null) {
     // Re-entry guard: a world turn mutates sess.history, the clock, and NPC
     // spawns — running two concurrently corrupts state. Block until the
     // in-flight turn finishes.
-    if (worldTurnInProgress) {
+    if (ExperimentalWorldsRuntime.turnInProgress()) {
         ExperimentalWorldsHost.notify('The DM is still responding — please wait.', 'info');
         return;
     }
     if (!(await ExperimentalWorldsHost.ensureSharedLibraryFresh())) return;
-    worldTurnInProgress = true;
+    ExperimentalWorldsRuntime.setTurnInProgress(true);
     const worldSendBtn = document.getElementById('world-send-btn');
     if (worldSendBtn) {
         // Turn the send button into a Stop button for the duration of the turn
@@ -7013,7 +7013,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         }
 
         const controller = new AbortController();
-        worldGenController = controller; // expose for the user Stop button
+        ExperimentalWorldsRuntime.setGenerationController(controller); // expose for the user Stop button
         const configuredIdleTimeout = ExperimentalWorldsHost.isLocalProvider() ? ExperimentalWorldsHost.localGenerationIdleTimeoutMs() : ExperimentalWorldsHost.cloudGenerationIdleTimeoutMs();
         const armGenerationIdleTimeout = (overrideMs = configuredIdleTimeout) => {
             if (timeoutId) clearTimeout(timeoutId);
@@ -8762,8 +8762,8 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         }
     } finally {
         if (timeoutId) clearTimeout(timeoutId);
-        worldTurnInProgress = false;
-        worldGenController = null;
+        ExperimentalWorldsRuntime.setTurnInProgress(false);
+        ExperimentalWorldsRuntime.setGenerationController(null);
         const btn = document.getElementById('world-send-btn');
         if (btn) {
             const ended = world && sess && normalizePlayerRulesState(world, sess)?.status === 'dead';

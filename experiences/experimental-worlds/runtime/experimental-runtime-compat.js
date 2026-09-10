@@ -36,6 +36,35 @@
         }
     });
 
+    // Request ownership is World-domain state, not a host-wide generation
+    // lock.  Keeping these controllers here means the Experimental engine can
+    // be mounted with only its adapter and settings host; Chat/VH/Video or a
+    // stock World runtime cannot accidentally own, clear, or reuse its work.
+    const requestRuntime = {
+        turnInProgress: false,
+        generationController: null,
+        sidecarRetryInProgress: false,
+        readerRefreshController: null
+    };
+    global.ExperimentalWorldsRuntime = Object.freeze({
+        turnInProgress: () => requestRuntime.turnInProgress,
+        setTurnInProgress: value => { requestRuntime.turnInProgress = value === true; },
+        generationController: () => requestRuntime.generationController,
+        setGenerationController: controller => { requestRuntime.generationController = controller || null; },
+        sidecarRetryInProgress: () => requestRuntime.sidecarRetryInProgress,
+        setSidecarRetryInProgress: value => { requestRuntime.sidecarRetryInProgress = value === true; },
+        readerRefreshController: () => requestRuntime.readerRefreshController,
+        setReaderRefreshController: controller => { requestRuntime.readerRefreshController = controller || null; },
+        abortAll() {
+            requestRuntime.generationController?.abort?.();
+            requestRuntime.readerRefreshController?.abort?.();
+            requestRuntime.generationController = null;
+            requestRuntime.readerRefreshController = null;
+            requestRuntime.turnInProgress = false;
+            requestRuntime.sidecarRetryInProgress = false;
+        }
+    });
+
     global.experimentalIsPlainObject = function experimentalIsPlainObject(value) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
         const proto = Object.getPrototypeOf(value);

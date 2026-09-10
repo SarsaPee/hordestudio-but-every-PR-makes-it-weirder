@@ -6087,19 +6087,19 @@ function recoverSidecarDerivedSettlement(world, sess, turn) {
 // turn. The failed Sidecar turn remains the durable source record; retries are
 // attempt records on that same turn and reuse a successful Reader envelope.
 async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
-    if (sidecarRetryInProgress) return;
+    if (ExperimentalWorldsRuntime.sidecarRetryInProgress()) return;
     const protocol = window.ExperimentalWorldsSidecarHooks?.normalizeWorldTimeline?.(world, sess);
     const turn = protocol?.turns?.find(item => item.id === sidecarTurnId);
     if (!protocol || !turn) throw new Error('The authored Sidecar turn is no longer available.');
     if (turn.status === 'settlement_incomplete') {
-        sidecarRetryInProgress = true;
+        ExperimentalWorldsRuntime.setSidecarRetryInProgress(true);
         try {
             const result = recoverSidecarDerivedSettlement(world, sess, turn);
             await ExperimentalWorldsHost.persist(); renderWorldPlayState();
             runSidecarBackgroundMemoryJobs(world, sess, { force: true, source: 'sidecar_settlement_recovery' }).catch(error => console.warn('Sidecar settlement memory dispatch skipped —', error.message));
             ExperimentalWorldsHost.notify('Scene Intelligence caught up without replaying the canonical receipt.', 'success');
             return result;
-        } finally { sidecarRetryInProgress = false; }
+        } finally { ExperimentalWorldsRuntime.setSidecarRetryInProgress(false); }
     }
     if (!sidecarTurnNeedsDownstreamRecovery(turn)) {
         ExperimentalWorldsHost.notify('This authored beat is already settled.', 'info');
@@ -6117,7 +6117,7 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
         ExperimentalWorldsHost.notify(stale.message, 'warning');
         return;
     }
-    sidecarRetryInProgress = true;
+    ExperimentalWorldsRuntime.setSidecarRetryInProgress(true);
     // Reuse only a Reader result which crossed the snapshot boundary. A
     // packet rejected before attachment (for example a wrong delta base) is
     // not a successful Reader artifact and must be reread from the exact
@@ -6170,7 +6170,7 @@ async function retrySidecarSceneUpdate(world, sess, sidecarTurnId) {
         ExperimentalWorldsHost.notify(`Scene update still incomplete: ${error.message || error}`, 'warning');
         throw error;
     } finally {
-        sidecarRetryInProgress = false;
+        ExperimentalWorldsRuntime.setSidecarRetryInProgress(false);
     }
 }
 
@@ -8053,10 +8053,10 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
     const protocol = protocolForSidecarTimeline(world, sess);
     const latestTurn = currentSidecarAuthoredTurn(protocol, sess);
     if (!latestTurn) throw new Error('No authored scene is available to refresh.');
-    if (scenePulseReaderRefreshController) throw new Error('ScenePulse is already updating this scene.');
+    if (ExperimentalWorldsRuntime.readerRefreshController()) throw new Error('ScenePulse is already updating this scene.');
     const section = String(options?.section || '');
     const controller = new AbortController();
-    scenePulseReaderRefreshController = controller;
+    ExperimentalWorldsRuntime.setReaderRefreshController(controller);
     try {
         if (section === 'thoughts') {
             const refreshedThoughts = await refreshScenePulseThoughts(world, sess, latestTurn.id, { signal: controller.signal });
@@ -8098,13 +8098,13 @@ async function refreshAcceptedScenePulseProjection(world, sess, options = {}) {
         }
         throw error;
     } finally {
-        if (scenePulseReaderRefreshController === controller) scenePulseReaderRefreshController = null;
+        if (ExperimentalWorldsRuntime.readerRefreshController() === controller) ExperimentalWorldsRuntime.setReaderRefreshController(null);
     }
 }
 
 function stopScenePulseReaderRefresh() {
-    if (!scenePulseReaderRefreshController) return { stopped: false };
-    scenePulseReaderRefreshController.abort();
+    if (!ExperimentalWorldsRuntime.readerRefreshController()) return { stopped: false };
+    ExperimentalWorldsRuntime.readerRefreshController().abort();
     return { stopped: true };
 }
 
@@ -8128,7 +8128,7 @@ function stageScenePulseStoryIdea({ direction = '', inject = false } = {}) {
     if (!text) throw new Error('The selected Story Idea has no direction text.');
     const input = document.getElementById('world-user-input');
     if (!input) throw new Error('The World composer is unavailable.');
-    if (inject && worldTurnInProgress) throw new Error('The current World turn is still generating.');
+    if (inject && ExperimentalWorldsRuntime.turnInProgress()) throw new Error('The current World turn is still generating.');
     input.value = text;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     resizeExperimentalWorldMessageInput(input);
