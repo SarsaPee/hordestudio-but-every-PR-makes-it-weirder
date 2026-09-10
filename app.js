@@ -7294,6 +7294,10 @@ function switchView(viewName) {
     // needs an explicit lifecycle cleanup; merely hiding the column would
     // leave the previous fixture's ambient layer over another Horde view.
     if (state.view === 'worldPlay' && viewName !== 'worldPlay') {
+        // Never let a provider completion from a hidden Experimental World
+        // publish after navigation. The World core also validates its captured
+        // owner before every mutation; aborting here makes the fast path cheap.
+        if (worldGenController) worldGenController.abort();
         const scenePulseHost = document.getElementById('world-sidecar-workspace');
         unbindScenePulseWorldsHostActions(scenePulseHost);
         window.HordeScenePulseSourceRuntime?.unmount?.(scenePulseHost);

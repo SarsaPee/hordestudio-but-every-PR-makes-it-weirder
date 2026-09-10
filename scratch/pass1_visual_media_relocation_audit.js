@@ -69,8 +69,18 @@ const acceptedPlay = acceptedApp.slice(playStart, playEnd)
     .replace("            })),\n            ...(window.StockWorlds17Pass0?.listMultiplayerSources?.() || [])", '            }))')
     .replace("        if (state.view === 'stockWorlds') {\n            const stockContext = window.StockWorlds17Pass0?.currentMultiplayerContext?.();\n            if (stockContext) return stockContext;\n        }\n", '')
     .replace("    if (context.stockWorlds17Pass0) {\n        return window.StockWorlds17Pass0?.multiplayerCampaignTemplate?.(context) || null;\n    }", "    // This runtime owns Experimental Worlds only. Stock Worlds has its own\n    // multiplayer source surface; no stock record or helper can cross this\n    // boundary into an Experimental campaign.\n    if (context.stockWorlds17Pass0) return null;");
-assert.equal(relocatedPlay.trimEnd(), acceptedPlay.trimEnd(),
-    'World Play core differs from the Pass-0 oracle beyond the explicit stock-removal compatibility boundary');
+const restoredPlay = relocatedPlay
+    // Explicit Pass-1 lifecycle seam: provider work captures Experimental
+    // ownership and cannot publish after a mode/world/timeline/restore change.
+    // Strip it only for the source-body comparison below.
+    .replace(/\n\/\/ Provider output belongs to the World\/timeline\/revision[\s\S]*?\n}\n\nfunction trustedWorldMicroMove/, '\nfunction trustedWorldMicroMove')
+    .replace('    let turnOwner = null;\n', '')
+    .replace('        turnOwner = captureExperimentalTurnOwner(world, sess);\n', '')
+    .replace(/^\s*assertExperimentalTurnOwner\(turnOwner\);\n/gm, '');
+assert.equal(restoredPlay.trimEnd(), acceptedPlay.trimEnd(),
+    'World Play core differs from the Pass-0 oracle beyond stock-removal and explicit late-result ownership seams');
+assert(relocatedPlay.includes('captureExperimentalTurnOwner') && relocatedPlay.includes('assertExperimentalTurnOwner'),
+    'Experimental World Play must capture and validate owner identity around provider completion');
 assert(!relocatedPlay.includes('StockWorlds17Pass0'),
     'Experimental World Play must not require a stock Worlds helper or record');
 assert(!fs.readFileSync('app.js', 'utf8').includes('// --- World Play & Engine ---'),

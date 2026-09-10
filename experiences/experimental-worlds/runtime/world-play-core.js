@@ -5952,6 +5952,38 @@ async function requestWorldMicroFrame(world, sess, userInput) {
         'worlds', { priority: 135 });
 }
 
+// Provider output belongs to the World/timeline/revision that existed at the
+// moment the request was started, never to whichever view happens to be open
+// when a slow response arrives.  This is deliberately local to Experimental
+// Worlds: it is not a shared stock-World lifecycle contract.
+function captureExperimentalTurnOwner(world, sess) {
+    return Object.freeze({
+        mode: 'experimental-worlds',
+        worldId: String(world?.id || ''),
+        timelineId: String(sess?.id || ''),
+        worldEpoch: Number(sess?._worldEpoch) || 0,
+        restoreGeneration: Number(window.ExperimentalWorldsRestoreGeneration) || 0,
+        effectiveSettings: Object.freeze({
+            model: String(world?.model || state.globalSettings?.defaultModel || ''),
+            provider: String(world?.provider || state.globalSettings?.apiProvider || '')
+        })
+    });
+}
+
+function assertExperimentalTurnOwner(owner) {
+    const currentWorld = state.worlds.find(candidate => candidate.id === owner.worldId);
+    const currentSession = getCurrentWorldSession();
+    const valid = state.view === 'worldPlay'
+        && currentWorld === state.worlds.find(candidate => candidate.id === state.activeWorldId)
+        && String(currentSession?.id || '') === owner.timelineId
+        && Number(currentSession?._worldEpoch) === owner.worldEpoch
+        && Number(window.ExperimentalWorldsRestoreGeneration) === owner.restoreGeneration;
+    if (valid) return;
+    const error = new Error('A late Experimental Worlds response was discarded because its captured World, timeline, revision, or mode is no longer current.');
+    error.code = 'experimental_world_owner_changed';
+    throw error;
+}
+
 function trustedWorldMicroMove(world, sess, userInput, candidate) {
     if (!candidate || candidate.actorId !== 'player' || candidate.intent !== 'move'
         || candidate.phase !== 'completed' || Number(candidate.confidence) < 0.72
@@ -6070,6 +6102,7 @@ async function executeWorldTurn(commandOrReroll = null) {
     // to restore the player's draft or preserve a completed narration.
     let fullText = '';
     let sidecarTurnId = null;
+    let turnOwner = null;
 
     try {
         world = state.worlds.find(w => w.id === state.activeWorldId);
@@ -6111,6 +6144,7 @@ async function executeWorldTurn(commandOrReroll = null) {
             return;
         }
         if (!isReroll) bumpWorldEpoch(sess);
+        turnOwner = captureExperimentalTurnOwner(world, sess);
         turnCallAudit = {
             main: 0,
             providerFallback: 0,
@@ -7995,6 +8029,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
         // reconciliation receipt is the only state-authority call. Secret
         // investigation remains a read/authorise action and may still be
         // handled after the visible turn.
+        assertExperimentalTurnOwner(turnOwner);
         const foregroundToolCalls = sidecarMode
             ? toolCalls.filter(call => call.function?.name === 'investigate_secret')
             : toolCalls;
@@ -8015,6 +8050,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     const validEnvelope = isPlainObject(args.scene)
                         && Array.isArray(args.events) && Array.isArray(args.entity_updates);
                     if (!validEnvelope) throw new Error('Turn receipt must include scene, events, and entity_updates.');
+                    assertExperimentalTurnOwner(turnOwner);
                     const committed = commitWorldTurnReceipt(world, sess, args, receiptContext, 'tool_call');
                     const actionResult = committed.actionResult;
                     if (actionResult?.ledgerEntry) structuredChronicle = actionResult.ledgerEntry;
@@ -8079,6 +8115,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             const inlineReceipt = extractInlineWorldTurnReceipt(fullText);
             if (inlineReceipt) {
                 try {
+                    assertExperimentalTurnOwner(turnOwner);
                     const committed = commitWorldTurnReceipt(world, sess, inlineReceipt, receiptContext, 'inline_receipt');
                     if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
                     inlineStateApplied = true;
@@ -8127,6 +8164,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     if (isPlainObject(repairedReceipt?.scene)
                         && Array.isArray(repairedReceipt.events)
                         && Array.isArray(repairedReceipt.entity_updates)) {
+                        assertExperimentalTurnOwner(turnOwner);
                         const committed = commitWorldTurnReceipt(world, sess, repairedReceipt, receiptContext, 'repair_receipt');
                         if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
                         repairedReceiptApplied = true;
@@ -8161,6 +8199,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                 })),
                 state_updates: {}
             };
+            assertExperimentalTurnOwner(turnOwner);
             const committed = commitWorldTurnReceipt(world, sess, noOpReceipt, receiptContext, 'frozen_no_receipt');
             committed.audit.rejected.push({
                 index: -1, type: 'receipt', reason: 'missing_mandatory_receipt',
@@ -8245,6 +8284,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             const fallbackQuestUpdate = extractQuestUpdateDirective(fullText);
             fullText = fallbackQuestUpdate.text;
             if (fallbackQuestUpdate.updates.length) {
+                assertExperimentalTurnOwner(turnOwner);
                 applyQuestUpdates(world, sess, fallbackQuestUpdate.updates);
             }
             questFallbackMode = false;
@@ -8314,6 +8354,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
                     if (!repaired) repaired = extractInlineWorldTurnReceipt(message.content || '');
                     if (isPlainObject(repaired?.scene) && Array.isArray(repaired.events)
                         && Array.isArray(repaired.entity_updates)) {
+                        assertExperimentalTurnOwner(turnOwner);
                         const committed = commitWorldTurnReceipt(world, sess, repaired, receiptContext, 'repair_receipt');
                         if (committed.actionResult?.ledgerEntry) structuredChronicle = committed.actionResult.ledgerEntry;
                         repairedReceiptApplied = true;
@@ -8325,6 +8366,7 @@ Per-NPC evidence packets are closed-world inputs. An NPC may use only that chara
             }
             if (!repairedReceiptApplied) {
                 const frame = buildWorldSceneFrame(world, sess);
+                assertExperimentalTurnOwner(turnOwner);
                 const committed = commitWorldTurnReceipt(world, sess, {
                     summary: 'No model-authored state receipt was available; unverified state was frozen.',
                     scene: {
