@@ -1,0 +1,226 @@
+/* ═══ CHARACTERS ═══ */
+/* v6.8.33: background is layered — top: per-character SVG pattern
+   (data URI, low-alpha tint), bottom: flat color from --char-bg.
+   The pattern paints first in the stack so it reads as a subtle
+   texture over the flat tint. When --char-pattern is unset (stub
+   entries, absent characters, {{user}} node) the top layer resolves
+   to `none` and the flat bg remains.
+   Note on multi-background fallback: each layer in the comma list
+   needs its own explicit value, so we repeat the color in both the
+   pattern fallback AND the base. */
+/* contain:layout style scopes stacking contexts from portrait
+   transforms so they can't escape the card or section boundary */
+.sp-char-card {
+    background-image: var(--char-pattern, none);
+    background-color: var(--char-bg, var(--sp-surface));
+    background-repeat: repeat;
+    border-radius: var(--sp-radius);
+    padding: 0;
+    margin-bottom: 5px;
+    border-left: 3px solid var(--char-border, var(--sp-border));
+    contain: layout style;
+}
+.sp-char-card:last-child { margin-bottom: 0; }
+.sp-char-header { display: flex; align-items: center; gap: 6px; padding: 6px 8px; cursor: pointer; user-select: none; overflow: hidden; flex-wrap: wrap; }
+.sp-char-header:hover { background: rgba(255,255,255,0.02); }
+/* v6.8.20: character portrait in the card header. 26px circular thumbnail
+   sits to the left of the chevron. Resolves to (1) user override from
+   settings.charPortraits, (2) SillyTavern character avatar, (3) alias-
+   matched ST avatar, or (4) monogram fallback on the character's accent
+   color. Click the portrait to upload a replacement (wired in JS). */
+.sp-char-portrait { width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--sp-border); background: var(--sp-surface); position: relative; }
+.sp-char-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* v6.9.6: #fff → var(--sp-text-bright) for theme compliance */
+.sp-char-portrait-monogram { color: var(--sp-text-bright); font-weight: 700; font-size: var(--sp-fs-sm); letter-spacing: 0; text-shadow: 0 1px 2px rgba(0,0,0,0.45); }
+.sp-char-portrait-monogram .sp-char-portrait-letter { display: inline-block; line-height: 1; }
+.sp-char-portrait-errored { background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); }
+.sp-char-portrait { cursor: pointer; transition: transform 120ms ease, border-color 120ms ease; }
+.sp-char-portrait:hover { transform: scale(1.06); border-color: var(--char-accent, var(--sp-accent)); }
+
+/* v6.8.44: universal hover-enlarged portrait preview. A single
+   positioned overlay pinned near the cursor and driven by a single
+   delegated listener in src/ui/portraits.js. Any element anywhere in
+   the extension with a `data-sp-preview-url` attribute triggers the
+   preview on hover; monogram avatars omit the attribute and therefore
+   never trigger (enlarging a single letter carries no information).
+   This is the sole cross-panel preview UI — do not duplicate styles. */
+.sp-portrait-preview {
+    position: fixed;
+    z-index: 100015;
+    width: 224px;
+    background: rgba(12,14,20,0.97);
+    border: 1px solid var(--sp-border);
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+    padding: 6px 6px 8px;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    animation: sp-glass-in 0.12s ease-out;
+}
+.sp-portrait-preview img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 8px;
+    background: #0c0e14;
+    display: block;
+}
+.sp-portrait-preview-caption {
+    font-size: var(--sp-fs-base);
+    font-weight: 700;
+    text-align: center;
+    padding: 0 6px;
+    line-height: 1.2;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    word-break: break-word;
+}
+
+/* v6.8.19: archetype pill in the character card header. Each archetype
+   has a distinct color + subtle background tint so readers can tell
+   allies from rivals from antagonists at a glance. Uses text-only, no
+   icon, to keep the header compact. */
+.sp-char-archetype { font-size: var(--sp-fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 9px; border: 1px solid currentColor; background: rgba(255,255,255,0.035); flex-shrink: 0; line-height: 1; }
+/* v6.8.26 archetype palette — 11 values. Colors chosen for contrast
+   against the character's accent border and readable against both dark
+   and light panel backgrounds. Each archetype gets a distinct hue so
+   users can scan a character roster and identify roles at a glance. */
+.sp-char-archetype-ally { color: #6ab8e0; }        /* blue — support */
+.sp-char-archetype-friend { color: #7dd3c0; }      /* soft cyan — bond */
+.sp-char-archetype-rival { color: #d4a855; }       /* amber — tension */
+.sp-char-archetype-mentor { color: #a1d080; }      /* green — growth */
+.sp-char-archetype-authority { color: #8a9bb5; }   /* steel blue-gray — hierarchy */
+.sp-char-archetype-antagonist { color: #d45050; }  /* red — opposition */
+.sp-char-archetype-family { color: #b68ae0; }      /* lilac — kin */
+.sp-char-archetype-lover { color: #e07ab0; }       /* pink — romance */
+.sp-char-archetype-lust { color: #c74a6a; }        /* crimson — physical */
+.sp-char-archetype-pet { color: #5fc8b8; }         /* teal — companion animal */
+.sp-char-archetype-background { color: #7a8794; }  /* slate gray-blue — peripheral */
+
+/* v6.8.18: alias badge and merge button in the character card header. */
+.sp-char-alias-badge { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); font-style: italic; padding: 1px 5px; background: rgba(255,255,255,0.04); border: 1px solid var(--sp-border); border-radius: 3px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+/* v6.8.21: two-line header layout — name row on top, meta (shared-scene
+   counter) dim text below. .sp-char-name-col is the flex column that
+   holds both lines so they align vertically under the portrait. */
+.sp-char-name-col { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.sp-char-name-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.sp-char-meta { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); opacity: 0.85; line-height: 1.2; }
+.sp-char-header-spacer { flex: 0 0 auto; min-width: 0; }
+
+/* v6.8.21 Feature D: off-scene stubs. A separate section appended after
+   the main character cards, showing characters who were present in a
+   recent snapshot but not in the current one. Renders as a compact row
+   with portrait + name + "last seen" meta line. No body, no expand. */
+.sp-char-offscene-header { font-size: var(--sp-fs-xs); font-weight: 700; color: var(--sp-text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin: 10px 4px 4px; padding-top: 6px; border-top: 1px dashed var(--sp-border); }
+.sp-char-offscene-stub { opacity: 0.6; background-image: var(--char-pattern, none); background-color: var(--char-bg, var(--sp-surface)); background-repeat: repeat; border-left-width: 2px; padding: 0; margin-bottom: 3px; }
+.sp-char-offscene-stub:hover { opacity: 1; }
+.sp-char-offscene-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; }
+.sp-char-offscene-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.sp-char-offscene-name { font-size: var(--sp-fs-base); font-weight: 600; color: var(--sp-text); line-height: 1.2; }
+.sp-char-offscene-last { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-char-offscene-stub .sp-char-portrait { width: 20px; height: 20px; }
+.sp-char-offscene-stub .sp-char-portrait-monogram { font-size: var(--sp-fs-xs); }
+.sp-char-merge-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 1px solid transparent; background: transparent; color: var(--sp-text-dim); border-radius: 3px; cursor: pointer; flex-shrink: 0; }
+.sp-char-merge-btn:hover { color: var(--char-accent, var(--sp-accent)); border-color: var(--sp-border); background: rgba(255,255,255,0.04); }
+.sp-char-merge-btn svg { display: block; }
+/* Merge picker modal — reuses sp-confirm-overlay styling, adds a scrollable list. */
+.sp-merge-picker-dialog { max-width: 320px; }
+.sp-merge-picker-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; margin: 8px 0 4px; padding: 2px; }
+.sp-merge-picker-option { font-size: var(--sp-fs-base); padding: 6px 10px; text-align: left; background: var(--sp-surface); color: var(--sp-text); border: 1px solid var(--sp-border); border-radius: var(--sp-radius); cursor: pointer; }
+.sp-merge-picker-option:hover { background: rgba(255,255,255,0.06); border-color: var(--sp-accent); }
+.sp-char-chevron { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); transition: transform 0.2s ease; flex-shrink: 0; }
+.sp-char-card.sp-card-open .sp-char-chevron { transform: rotate(90deg); }
+.sp-char-body { display: none; padding: 0 8px 6px 8px; border-top: 1px solid var(--sp-border); }
+.sp-char-card.sp-card-open .sp-char-body { display: block; }
+.sp-char-name { font-size: var(--sp-fs-sm); font-weight: 700; color: var(--char-accent, var(--sp-text-bright)); flex-shrink: 0; }
+/* v6.8.15: primary character (bot in single-chat, all group members in group chat)
+   gets a subtle left-border accent to distinguish them from incidental NPCs. */
+.sp-char-card.sp-char-primary { border-left-width: 4px; border-left-color: var(--char-accent, var(--sp-accent)); }
+/* v6.8.15: role and inner thought are first-class card-body rows now — full
+   editable text instead of a truncated header badge / hidden-from-main-panel field. */
+.sp-char-role-row,
+.sp-char-thought-row { display: grid; grid-template-columns: auto 1fr; gap: 2px 6px; padding: 4px 0 2px 2px; align-items: baseline; }
+.sp-char-thought-row { border-top: 1px dashed var(--sp-border); margin-top: 4px; padding-top: 5px; }
+.sp-char-role-val { font-size: var(--sp-fs-xs); color: var(--sp-text); line-height: 1.35; }
+.sp-char-thought-val { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); font-style: italic; line-height: 1.4; }
+.sp-char-grid { display: grid; grid-template-columns: auto 1fr; gap: 1px 6px; padding-left: 2px; }
+.sp-char-field { font-size: var(--sp-fs-xs); font-weight: 600; color: var(--sp-text-dim); text-transform: uppercase; letter-spacing: 0.03em; text-align: right; padding: 1px 0; }
+.sp-char-val { font-size: var(--sp-fs-xs); color: var(--sp-text); padding: 1px 0; }
+/* v6.8.16+: labeled subsection headers inside the character card body.
+   Bold uppercase text with an SVG icon tinted in the character's accent
+   color, sitting above a solid top rule. The visual anchor that tells
+   readers which group of fields follows (Right Now, Appearance, Carrying,
+   Goals, Fertility). v6.8.17 bumps visual weight: icons + solid rule +
+   brighter text + slightly larger. */
+.sp-char-subsection-label { display: flex; align-items: center; gap: 6px; font-size: var(--sp-fs-xs); font-weight: 700; color: var(--sp-text); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 8px; padding: 5px 4px 3px 4px; border-top: 1px solid var(--sp-border); }
+.sp-char-subsection-label:first-child { margin-top: 4px; }
+.sp-char-subsection-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 14px; height: 14px; color: var(--char-accent, var(--sp-accent)); opacity: 0.95; }
+.sp-char-subsection-icon svg { display: block; }
+.sp-char-subsection-text { line-height: 1; }
+/* Inner thought as a block quote — italic, left-border accent in the
+   character's color, visually distinct from plain grid rows so the
+   voice of the character reads like speech not metadata. */
+.sp-char-thought-block { font-size: var(--sp-fs-xs); color: var(--sp-text); font-style: italic; line-height: 1.45; padding: 3px 6px 3px 8px; margin: 3px 2px 4px 2px; border-left: 2px solid var(--char-accent, var(--sp-accent)); background: rgba(255,255,255,0.02); border-radius: 4px; }
+.sp-char-thought-block.sp-empty-field { font-style: normal; }
+/* v6.8.17: Carrying/inventory rendered as flex-wrap pill chips.
+   Each item is its own rounded chip with a colored dot, so individual
+   items are visually distinct instead of melting into a comma-separated
+   run-on line. Long items wrap onto their own row; short items pack
+   horizontally. */
+.sp-char-inventory { display: flex; flex-wrap: wrap; gap: 4px 5px; padding: 4px 2px 3px 4px; }
+.sp-char-inventory-item { display: inline-flex; align-items: center; gap: 5px; font-size: var(--sp-fs-xs); color: var(--sp-text); line-height: 1.3; padding: 2px 7px 2px 6px; background: rgba(255,255,255,0.035); border: 1px solid var(--sp-border); border-radius: 10px; max-width: 100%; }
+.sp-char-inventory-item::before { content: ''; width: 4px; height: 4px; background: var(--char-accent, var(--sp-accent)); border-radius: 50%; opacity: 0.8; flex-shrink: 0; }
+.sp-char-inventory-item:hover { background: rgba(255,255,255,0.06); border-color: var(--char-accent, var(--sp-border)); }
+/* v6.8.25: placeholder chip shown when the CARRYING section renders
+   empty (via show-empty or edit-mode toggle). Dim italic styling so
+   the reader clearly sees this is "no items" not an actual object. */
+.sp-char-inventory-empty { font-style: italic; color: var(--sp-text-dim); opacity: 0.7; border-style: dashed; }
+.sp-char-inventory-empty::before { display: none; }
+/* v6.8.22 Feature I: delta indicators — a small colored dot appended to
+   any field value that differs from the previous snapshot. The dot is
+   tinted in the character's accent color and sits after the value text
+   as a ::after pseudo-element, so there's no extra DOM per field. */
+/* v6.9.10: changed-this-turn indicator. The class is added to the
+   VALUE element by update-panel.js. The ::before dot renders at the
+   start of the value text. Scene panel uses a matching ::before dot
+   on the ROW element (sections.css .sp-scene-changed). Both produce
+   a visible teal dot near the changed content. */
+.sp-char-val-changed { position: relative; }
+.sp-char-val-changed::before {
+    content: '\25CF'; font-size: var(--sp-fs-xs); color: var(--sp-accent);
+    margin-right: 4px; vertical-align: middle;
+}
+/* Inner thought block gets a slightly brighter background when changed
+   so the "new thought" signal is unmissable. */
+.sp-char-thought-block.sp-char-val-changed { background: rgba(255,255,255,0.045); }
+/* v6.9.6: thought block's ::before is now the unified teal dot, so
+   override with a positioned version for the block context. */
+.sp-char-thought-block.sp-char-val-changed::before {
+    position: absolute;
+    top: 3px; right: 3px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--char-accent, var(--sp-accent));
+    box-shadow: 0 0 4px var(--char-accent, var(--sp-accent));
+}
+/* Newly-added inventory items get the accent dot bullet replaced with
+   a pulsing highlight to flag them as "new this turn". */
+.sp-char-inventory-item-added {
+    border-color: var(--char-accent, var(--sp-accent));
+    background: rgba(255,255,255,0.06);
+}
+.sp-char-inventory-item-added::before {
+    box-shadow: 0 0 4px var(--char-accent, var(--sp-accent));
+    opacity: 1;
+}
+.sp-char-goals { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--sp-border); }
+.sp-char-goal-item { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); padding: 1px 0 1px 4px; }
+.sp-char-goal-item strong { color: var(--sp-text); }
+/* v6.8.16: fertility section no longer needs its own border — the
+   subsection label above it already supplies the visual divider. */
+.sp-fert-section { padding-top: 2px; }
+.sp-fert-na { font-size: var(--sp-fs-xs); color: var(--sp-text-dim); font-style: italic; }
+.sp-fert-inline { display: inline-flex; align-items: baseline; gap: 3px; }
+.sp-fert-inline-label { font-size: var(--sp-fs-xs); font-weight: 600; color: var(--sp-text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
+.sp-fert-inline-val { font-size: var(--sp-fs-xs); color: var(--sp-text); }

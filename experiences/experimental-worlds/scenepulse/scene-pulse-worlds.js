@@ -45,7 +45,7 @@
         ['characters', 'Characters', 'Detailed current character state'],
         ['branches', 'Story Ideas', 'Five plot directions']
     ]);
-    const SOURCE_PRESET_MODULE = '/scenepulse/vendor/ScenePulse/src/presets/built-in.js';
+    const SOURCE_PRESET_MODULE = '/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/presets/built-in.js';
     // Directly lifted from src/macros.js and src/slash-commands.js.  The
     // console exposes the literal source vocabulary instead of inventing a
     // second command grammar for Worlds.
@@ -209,11 +209,11 @@
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
     const OVERLAY_ROOT_ID = 'sp-worlds-overlay-root';
     const SOURCE_PROFILE_ASSETS = Object.freeze({
-        prompt: '/scenepulse/vendor/ScenePulse/src/builtins/prompt.js',
-        schema: '/scenepulse/vendor/ScenePulse/src/builtins/schema.js',
-        slots: '/scenepulse/vendor/ScenePulse/src/prompts/slots.js'
+        prompt: '/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/builtins/prompt.js',
+        schema: '/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/builtins/schema.js',
+        slots: '/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/prompts/slots.js'
     });
-    const SOURCE_DASHBOARD_ASSET = '/scenepulse/vendor/ScenePulse/src/ui/update-panel.js';
+    const SOURCE_DASHBOARD_ASSET = '/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src/ui/update-panel.js';
 
     // Source ScenePulse deliberately appends focused views (wiki, web, graph,
     // diff and tour) above its narrow side panel.  Worlds keeps that contract:

@@ -32,7 +32,11 @@
             'slash-commands.js', 'presets/built-in.js'
         ])
     });
-    const ROOT = '/scenepulse/vendor/ScenePulse/src';
+    // The pinned source renderer is physically owned by Experimental Worlds.
+    // Keeping this URL under the mode prevents a stock Worlds or host update
+    // from changing the renderer, locale set, styles, or source helpers that
+    // define an accepted Experimental World.
+    const ROOT = '/experiences/experimental-worlds/scenepulse/vendor/ScenePulse/src';
     const RUNTIME_ROOT_ID = 'sp-horde-source-runtime-root';
     // Every source control that crosses into Horde has an explicit contract.
     // Do not let a newly added source button dispatch an unclaimed event and

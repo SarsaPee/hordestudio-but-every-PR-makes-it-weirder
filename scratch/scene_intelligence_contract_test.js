@@ -13,29 +13,43 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
-const app = read('app.js');
+// Pass 1 deliberately relocates the Experimental World implementation out of
+// the host bootstrap.  The integration contract therefore inspects the host
+// plus the complete mode-owned runtime, while still leaving ordinary host
+// checks (navigation, workspace persistence and backup seams) against app.js.
+const app = [
+    read('app.js'),
+    read('experiences', 'experimental-worlds', 'runtime', 'dossier-claims.js'),
+    read('experiences', 'experimental-worlds', 'runtime', 'sidecar-core.js'),
+    read('experiences', 'experimental-worlds', 'runtime', 'world-intelligence-core.js'),
+    read('experiences', 'experimental-worlds', 'runtime', 'world-play-core.js'),
+    read('experiences', 'experimental-worlds', 'runtime', 'world-protocol-core.js'),
+    read('experiences', 'experimental-worlds', 'runtime', 'world-session-core.js'),
+    read('experiences', 'experimental-worlds', 'runtime', 'world-studio-core.js')
+].join('\n');
 const sidecarCore = read('experiences', 'experimental-worlds', 'runtime', 'sidecar-core.js');
 const runtime = read('experiences', 'experimental-worlds', 'scenepulse', 'scenepulse-source-runtime.js');
 const css = read('experiences', 'experimental-worlds', 'styles', 'scene-pulse-worlds.css');
 const html = read('index.html');
-const sourcePanel = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'panel.js');
-const sourceUpdate = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'update-panel.js');
-const sourceNormalize = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'normalize.js');
-const sourceTimeline = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'timeline.js');
-const sourceWiki = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-wiki.js');
-const sourceCharacterHistory = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'character-history.js');
-const sourceWeb = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'relationship-web.js');
-const sourceSparklines = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'sparklines.js');
-const sourceRelationshipsCss = read('scenepulse', 'vendor', 'ScenePulse', 'css', 'relationships.css');
-const sourceConstants = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'constants.js');
-const sourceGuidedTour = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'guided-tour.js');
-const sourceLoading = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'ui', 'loading.js');
-const sourceSettings = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings.js');
-const sourceSetupGuide = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'settings-ui', 'setup-guide.js');
-const sourceI18n = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'i18n.js');
-const sourceSlots = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'prompts', 'slots.js');
-const sourceMacros = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'macros.js');
-const sourceCommands = read('scenepulse', 'vendor', 'ScenePulse', 'src', 'slash-commands.js');
+const source = (...parts) => read('experiences', 'experimental-worlds', 'scenepulse', 'vendor', 'ScenePulse', ...parts);
+const sourcePanel = source('src', 'ui', 'panel.js');
+const sourceUpdate = source('src', 'ui', 'update-panel.js');
+const sourceNormalize = source('src', 'normalize.js');
+const sourceTimeline = source('src', 'ui', 'timeline.js');
+const sourceWiki = source('src', 'ui', 'character-wiki.js');
+const sourceCharacterHistory = source('src', 'ui', 'character-history.js');
+const sourceWeb = source('src', 'ui', 'relationship-web.js');
+const sourceSparklines = source('src', 'ui', 'sparklines.js');
+const sourceRelationshipsCss = source('css', 'relationships.css');
+const sourceConstants = source('src', 'constants.js');
+const sourceGuidedTour = source('src', 'settings-ui', 'guided-tour.js');
+const sourceLoading = source('src', 'ui', 'loading.js');
+const sourceSettings = source('src', 'settings.js');
+const sourceSetupGuide = source('src', 'settings-ui', 'setup-guide.js');
+const sourceI18n = source('src', 'i18n.js');
+const sourceSlots = source('src', 'prompts', 'slots.js');
+const sourceMacros = source('src', 'macros.js');
+const sourceCommands = source('src', 'slash-commands.js');
 
 function lastFunction(name, prefix = 'function') {
     const start = app.lastIndexOf(`${prefix} ${name}(`);
@@ -379,7 +393,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(sourceCustomPanelValues)), {
 assert.match(sourceRelationshipsCss, /\.sp-meter-row \{ display: grid; grid-template-columns: auto 1fr minmax\(0, 70px\) 44px;/, 'source relationship meters must retain horizontal grid tracks');
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-fill \{ height: 100%;[\s\S]*?transition: width/, 'the coloured relationship fill must encode current horizontal width');
 assert.match(sourceRelationshipsCss, /\.sp-meter-bar-prev \{ position: absolute; top: 0; bottom: 0; width: 2px;/, 'the previous-value delta marker must remain a vertical line on the horizontal track');
-assert.ok(html.indexOf('scenepulse/vendor/ScenePulse/style.css') < html.indexOf('experiences/experimental-worlds/styles/scene-pulse-worlds.css'), 'the native Experimental Worlds bridge stylesheet must load after the vendored source CSS');
+assert.ok(html.indexOf('experiences/experimental-worlds/scenepulse/vendor/ScenePulse/style.css') < html.indexOf('experiences/experimental-worlds/styles/scene-pulse-worlds.css'), 'the native Experimental Worlds bridge stylesheet must load after the vendored source CSS');
 assert.match(css, /#world-sidecar-workspace > #sp-panel\[data-horde-source-runtime="true"\]:not\(\.sp-mode-mobile\):not\(\.sp-mode-tablet\) \{ position: relative !important; inset: auto !important;/, 'desktop native ScenePulse must stay contained in the World status column');
 assert.doesNotMatch(css, /#sp-panel\[data-horde-source-runtime="true"\] \{ position: fixed !important; inset: 0 !important;/, 'the native bridge must not turn the desktop ScenePulse sidebar into a viewport takeover');
 assert.match(css, /#world-play-view \.world-status-col\.is-sidecar \{ width: var\(--world-scenepulse-sidebar-w,340px\) !important; min-width: 280px !important; max-width: 520px !important; flex: 0 0 var\(--world-scenepulse-sidebar-w,340px\) !important; \}/, 'ScenePulse needs its own compact resizable World column');
