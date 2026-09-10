@@ -9,18 +9,20 @@
 // through it, while other providers receive the original request object by
 // identity so their payloads are not changed by this feature.
 const OPENROUTER_ROUTING_SORTS = Object.freeze(['throughput', 'latency', 'price']);
+const OPENROUTER_METRIC_PERCENTILES = Object.freeze(['p50', 'p75', 'p90', 'p99']);
 // Kept alongside the routing UI rather than relying on an app-global symbol:
 // this module owns the two metadata requests made by every routing surface.
 const OPENROUTER_PROVIDER_API = 'https://openrouter.ai/api/v1/providers';
 const OPENROUTER_ENDPOINT_API = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_ROUTING_METADATA_CACHE_KEY = 'openRouterRoutingMetadataV1';
-const OPENROUTER_ROUTING_METADATA_CACHE_VERSION = 2;
+const OPENROUTER_ROUTING_METADATA_CACHE_VERSION = 3;
 const OPENROUTER_ROUTING_METADATA_MAX_MODELS = 120;
 const OPENROUTER_ROUTING_METADATA_MAX_ENDPOINTS = 120;
 const DEFAULT_OPENROUTER_ROUTING = Object.freeze({
     order: Object.freeze([]),
     allowFallbacks: true,
-    fallbackSort: 'throughput'
+    fallbackSort: 'throughput',
+    performancePercentile: 'p90'
 });
 
 function isValidOpenRouterProviderSlug(value) {
@@ -45,6 +47,9 @@ function normalizeOpenRouterRouting(raw, { allowNull = false } = {}) {
     const requestedSort = String(source.fallbackSort || source.sort || '').trim().toLowerCase();
     const fallbackSort = OPENROUTER_ROUTING_SORTS.includes(requestedSort)
         ? requestedSort : DEFAULT_OPENROUTER_ROUTING.fallbackSort;
+    const requestedPercentile = String(source.performancePercentile || source.percentile || '').trim().toLowerCase();
+    const performancePercentile = OPENROUTER_METRIC_PERCENTILES.includes(requestedPercentile)
+        ? requestedPercentile : DEFAULT_OPENROUTER_ROUTING.performancePercentile;
     let allowFallbacks = source.allowFallbacks;
     if (allowFallbacks === undefined) allowFallbacks = source.allow_fallbacks;
     allowFallbacks = allowFallbacks === undefined ? true : allowFallbacks === true;
@@ -55,7 +60,7 @@ function normalizeOpenRouterRouting(raw, { allowNull = false } = {}) {
     // The model this pin was chosen for. A provider allowlist is only valid for
     // that model; see relaxRoutingForForeignModel().
     const model = String(source.model || '').trim().slice(0, 200);
-    return { order, allowFallbacks, fallbackSort, ...(model ? { model } : {}) };
+    return { order, allowFallbacks, fallbackSort, performancePercentile, ...(model ? { model } : {}) };
 }
 
 const OPENROUTER_ROUTE_CHAINS = Object.freeze({
@@ -199,6 +204,14 @@ function finiteMetadataNumber(value) {
     return Number.isFinite(number) ? number : null;
 }
 
+function normalizeOpenRouterMetricPercentiles(raw, legacyP50 = null) {
+    const source = isPlainObject(raw) ? raw : {};
+    return Object.fromEntries(OPENROUTER_METRIC_PERCENTILES.map(percentile => [
+        percentile,
+        finiteMetadataNumber(source[percentile] ?? (percentile === 'p50' ? legacyP50 : null))
+    ]));
+}
+
 function normalizeOpenRouterEndpointMetadata(raw) {
     const slug = String(raw?.slug || '').trim();
     if (!isValidOpenRouterProviderSlug(slug)) return null;
@@ -212,6 +225,8 @@ function normalizeOpenRouterEndpointMetadata(raw) {
         pricing: safeJsonClone(pricing),
         latency: finiteMetadataNumber(raw?.latency),
         throughput: finiteMetadataNumber(raw?.throughput),
+        latencyStats: normalizeOpenRouterMetricPercentiles(raw?.latencyStats, raw?.latency),
+        throughputStats: normalizeOpenRouterMetricPercentiles(raw?.throughputStats, raw?.throughput),
         uptime: finiteMetadataNumber(raw?.uptime),
         status: raw?.status === undefined ? null : raw.status
     };
@@ -548,14 +563,24 @@ function recordOpenRouterEndpointTrace(entry) {
     while (openRouterEndpointRequestTrace.length > 12) openRouterEndpointRequestTrace.shift();
 }
 
-async function requestOpenRouterModelEndpoints(url, { authenticated }) {
-    const headers = authenticated ? openRouterUiHeaders() : attributionHeaders();
-    const response = await fetch(url, { method: 'GET', headers });
+async function requestOpenRouterModelEndpoints(url, { authenticated, cache = 'default' }) {
+    // Keep credential state separate from whether this particular diagnostic
+    // request is allowed to attach it. The trace below records only presence
+    // and length, never the credential or header value.
+    const key = openRouterUiKey();
+    const headers = authenticated
+        ? { ...(key ? { Authorization: `Bearer ${key}` } : {}), ...attributionHeaders() }
+        : attributionHeaders();
+    const response = await fetch(url, { method: 'GET', headers, cache });
     const payload = await response.json().catch(() => null);
     const trace = {
         url,
         method: 'GET',
-        authenticated: Boolean(headers.Authorization),
+        cache,
+        authenticatedRequested: Boolean(authenticated),
+        keyPresent: Boolean(key),
+        keyLength: key.length,
+        authorizationHeaderPresent: Boolean(headers.Authorization),
         status: response.status,
         ok: response.ok,
         // This is the endpoint response before the display mapper. The values
@@ -566,6 +591,15 @@ async function requestOpenRouterModelEndpoints(url, { authenticated }) {
     recordOpenRouterEndpointTrace(trace);
     if (!response.ok) throw new Error(`model endpoints failed (${response.status})`);
     return { payload, trace };
+}
+
+function nullableOpenRouterMetric(value) {
+    // `Number(null)` is zero, which turns an unavailable upstream metric into
+    // a fabricated value. Preserve absence exactly while accepting genuine
+    // numeric values (including numeric strings from a future API revision).
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
 }
 
 async function fetchOpenRouterProviderCatalog({ force = false } = {}) {
@@ -600,9 +634,11 @@ async function fetchOpenRouterModelEndpoints(model, { force = false } = {}) {
         slug: String(row?.tag || '').trim(),
         name: String(row?.provider_name || row?.name || row?.tag || '').trim(),
         pricing: isPlainObject(row?.pricing) ? row.pricing : {},
-        latency: Number(row?.latency_last_30m?.p50),
-        throughput: Number(row?.throughput_last_30m?.p50),
-        uptime: Number(row?.uptime_last_30m),
+        latency: nullableOpenRouterMetric(row?.latency_last_30m?.p50),
+        throughput: nullableOpenRouterMetric(row?.throughput_last_30m?.p50),
+        latencyStats: normalizeOpenRouterMetricPercentiles(row?.latency_last_30m),
+        throughputStats: normalizeOpenRouterMetricPercentiles(row?.throughput_last_30m),
+        uptime: nullableOpenRouterMetric(row?.uptime_last_30m),
         status: row?.status
     })).filter(row => isValidOpenRouterProviderSlug(row.slug));
     openRouterEndpointCatalogs.set(cleanModel, { endpoints, fetchedAt: Date.now() });
@@ -615,12 +651,18 @@ async function diagnoseOpenRouterModelEndpointAuth(model) {
     if (!cleanModel.includes('/')) throw new Error('choose an OpenRouter model before diagnosing endpoint metadata');
     const splitAt = cleanModel.indexOf('/');
     const url = `${OPENROUTER_ENDPOINT_API}/${encodeURIComponent(cleanModel.slice(0, splitAt))}/${encodeURIComponent(cleanModel.slice(splitAt + 1))}/endpoints`;
-    const authenticated = await requestOpenRouterModelEndpoints(url, { authenticated: true })
+    const authenticated = await requestOpenRouterModelEndpoints(url, { authenticated: true, cache: 'no-store' })
         .then(({ trace }) => trace)
-        .catch(error => openRouterEndpointRequestTrace.at(-1) || { url, method: 'GET', authenticated: true, error: String(error?.message || error) });
-    const unauthenticated = await requestOpenRouterModelEndpoints(url, { authenticated: false })
+        .catch(error => openRouterEndpointRequestTrace.at(-1) || {
+            url, method: 'GET', cache: 'no-store', authenticatedRequested: true,
+            error: String(error?.message || error)
+        });
+    const unauthenticated = await requestOpenRouterModelEndpoints(url, { authenticated: false, cache: 'no-store' })
         .then(({ trace }) => trace)
-        .catch(error => openRouterEndpointRequestTrace.at(-1) || { url, method: 'GET', authenticated: false, error: String(error?.message || error) });
+        .catch(error => openRouterEndpointRequestTrace.at(-1) || {
+            url, method: 'GET', cache: 'no-store', authenticatedRequested: false,
+            error: String(error?.message || error)
+        });
     return { authenticated, unauthenticated };
 }
 
@@ -629,6 +671,17 @@ function openRouterEndpointForSlug(slug, endpoints) {
     if (exact) return exact;
     const variants = endpoints.filter(endpoint => endpoint.slug.toLowerCase().startsWith(`${slug.toLowerCase()}/`));
     return variants[0] || null;
+}
+
+function openRouterEndpointMetric(endpoint, kind, percentile) {
+    const selectedPercentile = OPENROUTER_METRIC_PERCENTILES.includes(percentile)
+        ? percentile : DEFAULT_OPENROUTER_ROUTING.performancePercentile;
+    const stats = kind === 'latency' ? endpoint?.latencyStats : endpoint?.throughputStats;
+    // Legacy persisted metadata only carried p50. It remains valid as p50,
+    // while a higher selected percentile correctly remains unavailable until a
+    // new endpoint refresh brings back its native percentile object.
+    return finiteMetadataNumber(stats?.[selectedPercentile]
+        ?? (selectedPercentile === 'p50' ? endpoint?.[kind] : null));
 }
 
 function openRouterProvidersForDraft(scope) {
@@ -666,8 +719,10 @@ function openRouterProvidersForDraft(scope) {
     const providers = [...map.values()];
     const metric = provider => {
         const endpoint = provider.endpoint;
-        if (route.fallbackSort === 'throughput') return Number.isFinite(endpoint?.throughput) ? -endpoint.throughput : Infinity;
-        if (route.fallbackSort === 'latency') return Number.isFinite(endpoint?.latency) ? endpoint.latency : Infinity;
+        const throughput = openRouterEndpointMetric(endpoint, 'throughput', route.performancePercentile);
+        const latency = openRouterEndpointMetric(endpoint, 'latency', route.performancePercentile);
+        if (route.fallbackSort === 'throughput') return Number.isFinite(throughput) ? -throughput : Infinity;
+        if (route.fallbackSort === 'latency') return Number.isFinite(latency) ? latency : Infinity;
         const input = Number(endpoint?.pricing?.prompt);
         const output = Number(endpoint?.pricing?.completion);
         return Number.isFinite(input) || Number.isFinite(output)
@@ -684,12 +739,22 @@ function formatOpenRouterPrice(value) {
     return Number.isFinite(number) ? `$${(number * 1_000_000).toFixed(number * 1_000_000 < 0.01 ? 4 : 2)}/M` : 'n/a';
 }
 
-function openRouterProviderMetrics(provider) {
+function formatOpenRouterLatency(milliseconds) {
+    // The documented endpoint uses milliseconds. Keep ranking on its native
+    // values, but present the same seconds unit as OpenRouter's model page.
+    return Number.isFinite(milliseconds) ? `${(milliseconds / 1_000).toFixed(2)}s latency` : 'latency n/a';
+}
+
+function openRouterProviderMetrics(provider, percentile = DEFAULT_OPENROUTER_ROUTING.performancePercentile) {
     const endpoint = provider?.endpoint;
     if (!endpoint) return 'metadata unavailable';
-    const latency = Number.isFinite(endpoint.latency) ? `${endpoint.latency.toFixed(2)}s latency` : 'latency n/a';
-    const throughput = Number.isFinite(endpoint.throughput) ? `${Math.round(endpoint.throughput)} t/s` : 'throughput n/a';
-    return `in ${formatOpenRouterPrice(endpoint.pricing?.prompt)} · out ${formatOpenRouterPrice(endpoint.pricing?.completion)} · ${latency} · ${throughput}`;
+    const selectedPercentile = OPENROUTER_METRIC_PERCENTILES.includes(percentile)
+        ? percentile : DEFAULT_OPENROUTER_ROUTING.performancePercentile;
+    const latency = openRouterEndpointMetric(endpoint, 'latency', selectedPercentile);
+    const throughput = openRouterEndpointMetric(endpoint, 'throughput', selectedPercentile);
+    const latencyText = formatOpenRouterLatency(latency);
+    const throughputText = Number.isFinite(throughput) ? `${Math.round(throughput)} t/s` : 'throughput n/a';
+    return `in ${formatOpenRouterPrice(endpoint.pricing?.prompt)} · out ${formatOpenRouterPrice(endpoint.pricing?.completion)} · ${selectedPercentile.toUpperCase()} ${latencyText} · ${throughputText}`;
 }
 
 function openRouterProviderAvailability(provider, test) {
@@ -705,6 +770,7 @@ function renderOpenRouterProviderSearchResults(scope) {
     const results = document.querySelector(`#${openRouterRoutingPanelDefinition(scope)?.hostId} [data-or-results]`);
     if (!draft || !results) return;
     const query = draft.search.trim().toLowerCase();
+    const route = openRouterRoutingDraftValue(scope);
     const selected = new Set(openRouterRoutingDraftValue(scope).order.map(slug => slug.toLowerCase()));
     const providers = openRouterProvidersForDraft(scope)
         .filter(provider => !selected.has(provider.slug.toLowerCase()))
@@ -721,7 +787,7 @@ function renderOpenRouterProviderSearchResults(scope) {
         const test = draft.tests.get(provider.slug.toLowerCase());
         return `<button type="button" class="or-provider-option" data-or-add="${escapeHTML(provider.slug)}">
             <span><strong>${escapeHTML(provider.name)}</strong><code>${escapeHTML(provider.slug)}</code></span>
-            <small>${escapeHTML(openRouterProviderMetrics(provider))} · ${test?.ok === true ? 'test passed' : provider.available === false ? 'not listed for model' : provider.available === true ? 'available' : 'unknown'}</small>
+            <small>${escapeHTML(openRouterProviderMetrics(provider, route.performancePercentile))} · ${test?.ok === true ? 'test passed' : provider.available === false ? 'not listed for model' : provider.available === true ? 'available' : 'unknown'}</small>
         </button>`;
     }).join('');
     results.querySelectorAll('[data-or-add]').forEach(button => {
@@ -790,7 +856,7 @@ function renderOpenRouterRoutingPanel(scope) {
                     return `<div class="or-selected-provider ${test?.ok === true ? 'test-ok' : test?.ok === false ? 'test-fail' : ''}" draggable="${!draft.inherit}" data-or-slug="${escapeHTML(slug)}">
                         <span class="or-drag-handle" aria-hidden="true">⠿</span>
                         <span class="or-provider-order">${index + 1}</span>
-                        <span class="or-provider-copy"><strong>${escapeHTML(provider.name)}</strong><code>${escapeHTML(slug)}</code><small>${escapeHTML(openRouterProviderMetrics(provider))}</small>${openRouterProviderAvailability(provider, test)}</span>
+                        <span class="or-provider-copy"><strong>${escapeHTML(provider.name)}</strong><code>${escapeHTML(slug)}</code><small>${escapeHTML(openRouterProviderMetrics(provider, route.performancePercentile))}</small>${openRouterProviderAvailability(provider, test)}</span>
                         <button type="button" class="or-remove-provider" data-or-remove="${escapeHTML(slug)}" ${disabled} aria-label="Remove ${escapeHTML(slug)}">×</button>
                     </div>`;
                 }).join('') : '<div class="or-provider-empty">No preferred providers. OpenRouter will use the fallback sorting strategy directly.</div>'}
@@ -801,6 +867,12 @@ function renderOpenRouterRoutingPanel(scope) {
             </div>
             <div class="or-routing-controls">
                 <label class="or-fallback-toggle"><input type="checkbox" data-or-fallback ${route.allowFallbacks ? 'checked' : ''} ${disabled || (!route.order.length ? 'disabled' : '')}> Allow unrestricted provider fallbacks</label>
+                <label><span>Latency / throughput percentile</span><select class="form-select" data-or-percentile ${disabled}>
+                    <option value="p50" ${route.performancePercentile === 'p50' ? 'selected' : ''}>P50 · median</option>
+                    <option value="p75" ${route.performancePercentile === 'p75' ? 'selected' : ''}>P75</option>
+                    <option value="p90" ${route.performancePercentile === 'p90' ? 'selected' : ''}>P90 · default</option>
+                    <option value="p99" ${route.performancePercentile === 'p99' ? 'selected' : ''}>P99</option>
+                </select></label>
                 <label><span>Rank fallbacks by</span><select class="form-select" data-or-sort ${disabled || (!route.allowFallbacks ? 'disabled' : '')}>
                     <option value="throughput" ${route.fallbackSort === 'throughput' ? 'selected' : ''}>Highest throughput</option>
                     <option value="latency" ${route.fallbackSort === 'latency' ? 'selected' : ''}>Lowest latency</option>
@@ -849,6 +921,13 @@ function renderOpenRouterRoutingPanel(scope) {
     const sort = host.querySelector('[data-or-sort]');
     if (sort) sort.onchange = () => {
         draft.routing.fallbackSort = OPENROUTER_ROUTING_SORTS.includes(sort.value) ? sort.value : 'throughput';
+        persistOpenRouterRoutingDraft(scope);
+        renderOpenRouterRoutingPanel(scope);
+    };
+    const percentile = host.querySelector('[data-or-percentile]');
+    if (percentile) percentile.onchange = () => {
+        draft.routing.performancePercentile = OPENROUTER_METRIC_PERCENTILES.includes(percentile.value)
+            ? percentile.value : DEFAULT_OPENROUTER_ROUTING.performancePercentile;
         persistOpenRouterRoutingDraft(scope);
         renderOpenRouterRoutingPanel(scope);
     };
