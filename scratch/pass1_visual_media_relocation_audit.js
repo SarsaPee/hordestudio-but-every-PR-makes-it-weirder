@@ -335,6 +335,7 @@ const restoredIntelligence = compareSource(restoreExperimentalWarning(restoreHos
                     const config = state.characters.find(c => c.id === state.activeCharId)
                                 || state.rooms.find(r => r.id === state.activeRoomId);`)
     .replace('const session = ExperimentalWorldsHost.chatMemoryContext()?.session;', 'const session = getCurrentSession();')
+    .replace('// Bare top-level array (the object-only recovery path hunts for {...})', '// Bare top-level array (extractJSON only hunts for {...})')
     .replace(`            const chatMemory = ExperimentalWorldsHost.chatMemoryContext();
             const session = chatMemory?.session;
             if (session) {
