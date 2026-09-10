@@ -116,4 +116,17 @@ const visualEditorIndex = html.indexOf('experiences/experimental-worlds/visuals/
 assert(visualEditorIndex >= 0 && visualEditorIndex < appIndex,
     'relocated visual editor core loads before the single host bootstrap');
 
+const protocolStart = acceptedApp.indexOf('function normalizeWorldTurnReceipt');
+const protocolEnd = acceptedApp.indexOf('async function impersonateUser()', protocolStart);
+assert(protocolStart >= 0 && protocolEnd > protocolStart, 'Pass-0 Sidecar/ScenePulse protocol source unit is present');
+const relocatedProtocol = fs.readFileSync('experiences/experimental-worlds/runtime/world-protocol-core.js', 'utf8');
+assert.equal(relocatedProtocol.trimEnd(), acceptedApp.slice(protocolStart, protocolEnd).trimEnd(),
+    'Sidecar/ScenePulse protocol core differs from the Pass-0 oracle');
+assert(!fs.readFileSync('app.js', 'utf8').includes('function normalizeWorldTurnReceipt'),
+    'Sidecar/ScenePulse protocol core is no longer ambiguously retained in the host bootstrap');
+const protocolIndex = html.indexOf('experiences/experimental-worlds/runtime/world-protocol-core.js');
+const sidecarIndex = html.indexOf('experiences/experimental-worlds/runtime/sidecar-core.js');
+assert(protocolIndex >= 0 && protocolIndex < sidecarIndex && sidecarIndex < appIndex,
+    'relocated Sidecar/ScenePulse protocol loads before the Sidecar bridge and single host bootstrap');
+
 console.log('Pass-1 visual/media relocation audit passed.');
